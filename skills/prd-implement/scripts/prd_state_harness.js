@@ -591,8 +591,15 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
   }
 
   if (status === "pass") {
-    if (/\b(?:TODO|TBD|FIXME)\b/i.test(text) || /<[^>\n]+>/.test(text)) {
-      violations.push("Passing requirements fidelity report must not contain placeholders, TODO, TBD, or FIXME");
+    // Strip fenced and inline code so legitimate generics/tags (`Array<string>`,
+    // `<button>`) do not read as unfilled template placeholders. Only angle
+    // tokens that carry a placeholder-style separator (space, slash, hash, or
+    // hyphen) after a leading letter are treated as leftover `<topic-slug>`-style
+    // markers.
+    const prose = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
+    const hasLeftoverPlaceholder = /<[A-Za-z][^>\n]*[ \/#-][^>\n]*>/.test(prose);
+    if (/\b(?:TODO|TBD|FIXME)\b/i.test(prose) || hasLeftoverPlaceholder) {
+      violations.push("Passing requirements fidelity report must not contain leftover <template> placeholders, TODO, TBD, or FIXME (code spans are exempt)");
     }
     const unresolvedGap = decisionTrace
       .split(/\r?\n/)
@@ -2728,8 +2735,81 @@ function buildCoverageMatrix(state, checks) {
   return coverage;
 }
 
-function buildVerificationGaps(state, checks, coverage, signals) {
+function hasAppStartupSignal(signals) {
+  const startupScripts = ["dev", "start", "serve", "preview", "dev:web", "start:dev", "web", "develop"];
+  if ((signals.packageScripts || []).some(script => startupScripts.includes(script))) return true;
+  if ((signals.dockerComposeFiles || []).length) return true;
+  return false;
+}
+
+// Structural integrity of the parsed PRD. Exact-heading parsing degrades
+// silently to empty arrays, and IDs referenced in one section may never be
+// defined in another. These are blocking because they mean whole gates would
+// otherwise vacuously pass (e.g. zero Acceptance Criteria enforced) or a user
+// decision recorded only as an R#/AC# would drop out with no trace.
+function structuralParseGaps(state) {
   const gaps = [];
+  const tasks = state.tasks || [];
+  const acs = state.acceptanceCriteria || [];
+  const verifications = state.verification || [];
+  const requirements = state.requirements || [];
+
+  if (tasks.length > 0 && acs.length === 0) {
+    gaps.push({
+      severity: "blocking",
+      code: "acceptance-section-empty",
+      item: "acceptance-criteria",
+      message: "PRD-Level Tasks parsed but no Acceptance Criteria were parsed; check the '## 7. Acceptance Criteria' heading text and bullet IDs",
+    });
+  }
+  if (tasks.length > 0 && verifications.length === 0) {
+    gaps.push({
+      severity: "blocking",
+      code: "verification-section-empty",
+      item: "verification",
+      message: "PRD-Level Tasks parsed but no Verification items were parsed; check the '## 9. Verification Contract' / Required Agent Verification table",
+    });
+  }
+
+  const acIds = new Set(acs.map(item => String(item.id).toUpperCase()));
+  const referencedAc = new Set();
+  for (const task of tasks) for (const id of task.acceptanceCriteria || []) referencedAc.add(String(id).toUpperCase());
+  for (const verification of verifications) for (const id of uniqueMatches(verification.text || "", /\bAC\d+\b/gi)) referencedAc.add(id.toUpperCase());
+  if (acs.length > 0) {
+    for (const id of referencedAc) {
+      if (!acIds.has(id)) {
+        gaps.push({
+          severity: "blocking",
+          code: "dangling-ac-reference",
+          item: id,
+          message: `${id} is referenced by a task or verification item but is not defined in Acceptance Criteria`,
+        });
+      }
+    }
+  }
+
+  if (requirements.length > 0) {
+    const referencedR = new Set();
+    for (const task of tasks) for (const id of task.requirements || []) referencedR.add(String(id).toUpperCase());
+    for (const verification of verifications) for (const id of uniqueMatches(verification.text || "", /\bR\d+\b/gi)) referencedR.add(id.toUpperCase());
+    for (const ac of acs) for (const id of uniqueMatches(ac.text || "", /\bR\d+\b/gi)) referencedR.add(id.toUpperCase());
+    for (const requirement of requirements) {
+      if (!referencedR.has(String(requirement.id).toUpperCase())) {
+        gaps.push({
+          severity: "blocking",
+          code: "requirement-uncovered",
+          item: requirement.id,
+          message: `${requirement.id} is defined in Requirements but is not covered by any task, acceptance criterion, or verification item`,
+        });
+      }
+    }
+  }
+
+  return gaps;
+}
+
+function buildVerificationGaps(state, checks, coverage, signals) {
+  const gaps = structuralParseGaps(state);
   for (const [acId, item] of Object.entries(coverage)) {
     if (!item.coveredBy.length) {
       gaps.push({
@@ -2786,12 +2866,12 @@ function buildVerificationGaps(state, checks, coverage, signals) {
 	      }
 	    }
 	  }
-  if (checks.some(check => check.category === "browser") && !signals.packageScripts.includes("dev")) {
+  if (checks.some(check => check.category === "browser") && !hasAppStartupSignal(signals)) {
     gaps.push({
-      severity: "blocking",
+      severity: "warning",
       code: "browser-server-missing",
       item: "environment",
-      message: "Browser QA is required but no package.json dev script was detected",
+      message: "Browser QA is required but no obvious app startup was detected (no dev/start/serve/preview script or docker-compose); confirm a startup command before browser verification",
     });
   }
   if (checks.some(check => check.category === "server") && !signals.dockerComposeFiles.length) {
@@ -2928,6 +3008,15 @@ function nextItem(state) {
 	  }
 	  return null;
 	}
+
+// Compact view of the next required item for per-mutation command output. The
+// full execution-node object (writeScope, covers, evidence history) is large and
+// unchanged between marks; callers that need the whole graph run `status`.
+function nextBrief(state) {
+  const next = nextItem(state);
+  if (!next) return null;
+  return { kind: next.kind, id: next.item.id, title: next.item.title, status: next.item.status };
+}
 
 function activePath(baseDir = cwd()) {
   return path.join(baseDir, ACTIVE_PATH);
@@ -3201,6 +3290,10 @@ function cmdInit(options) {
     "Acceptance Criteria",
     "12. Acceptance Criteria",
   ]), "AC", "AC");
+  const requirements = parseMarkdownItems(extractFirstSection(parsed.body, [
+    "6. Requirements",
+    "Requirements",
+  ]), "R", "R");
   const verificationSection = extractFirstSection(parsed.body, [
     "9. Verification Contract",
     "Verification Contract",
@@ -3253,6 +3346,7 @@ function cmdInit(options) {
 	      sha256: sha256Text(prdText),
 	      taskIds: tasks.map(item => item.id),
 	      acceptanceCriteriaIds: acceptanceCriteria.map(item => item.id),
+	      requirementIds: requirements.map(item => item.id),
 	      verificationIds: verification.map(item => item.id),
 	      testModeIds: testModeContract.map(item => item.id),
 	      decisionTraceHash: intentTrace.prdDecisionTraceHash,
@@ -3284,6 +3378,7 @@ function cmdInit(options) {
     activeSessionId: initialSessionId,
     tasks,
     acceptanceCriteria,
+    requirements,
     verification,
     testModeContract,
     verificationPlan: null,
@@ -3635,6 +3730,10 @@ function cmdPlanVerificationCheck(options) {
     "Acceptance Criteria",
     "12. Acceptance Criteria",
   ]), "AC", "AC");
+  const requirements = parseMarkdownItems(extractFirstSection(parsed.body, [
+    "6. Requirements",
+    "Requirements",
+  ]), "R", "R");
   const verificationSection = extractFirstSection(parsed.body, [
     "9. Verification Contract",
     "Verification Contract",
@@ -3655,6 +3754,7 @@ function cmdPlanVerificationCheck(options) {
     prdSnapshot: { sha256: sha256Text(prdText) },
     tasks,
     acceptanceCriteria,
+    requirements,
     verification,
     testModeContract,
   };
@@ -3803,10 +3903,7 @@ function cmdMarkNode(options) {
     ok: true,
     marked,
     counts: countState(state),
-    executionPlan: executionPlanSummary(state),
-    ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
-    next: nextItem(state),
+    next: nextBrief(state),
   }, null, 2) + "\n");
 }
 
@@ -3834,9 +3931,7 @@ function cmdAssignNode(options) {
   process.stdout.write(JSON.stringify({
     ok: true,
     assigned: { id, owner },
-    ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
-    next: nextItem(state),
+    next: nextBrief(state),
   }, null, 2) + "\n");
 }
 
@@ -3878,10 +3973,7 @@ function cmdMark(options) {
     ok: true,
     marked,
     counts: countState(state),
-    executionPlan: executionPlanSummary(state),
-    ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
-    next: nextItem(state),
+    next: nextBrief(state),
   }, null, 2) + "\n");
 }
 
@@ -3915,10 +4007,7 @@ function cmdRecordArtifact(options) {
     attachedTo: { kind: match.kind, id: match.item.id },
     artifact,
     counts: countState(state),
-    executionPlan: executionPlanSummary(state),
-    ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
-    next: nextItem(state),
+    next: nextBrief(state),
   }, null, 2) + "\n");
 }
 
@@ -4094,10 +4183,7 @@ function cmdVerifyRun(rawArgs) {
     exitCode,
     logPath: artifact.path,
     counts: countState(state),
-    executionPlan: executionPlanSummary(state),
-    ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
-    next: nextItem(state),
+    next: nextBrief(state),
   }, null, 2) + "\n");
   if (exitCode !== 0) process.exitCode = 2;
 }
@@ -5217,6 +5303,21 @@ function runStopHook(payload, started) {
   const counts = countState(state);
   const next = nextItem(state);
   if (!next && state.finalReceipt) return "";
+  // Re-inject the full step-by-step procedure only when the phase changes;
+  // otherwise emit the compact State block so the loop does not burn ~1.7k
+  // tokens repeating an unchanged procedure every turn.
+  const phase = directivePhase(next);
+  const verbose = state.lastStopPhase !== phase;
+  if (verbose) {
+    state.lastStopPhase = phase;
+    state.updatedAt = nowIso();
+    try {
+      writeJson(statePath, state);
+    } catch {
+      // Non-fatal: persistence of the phase marker is best-effort. Worst case is
+      // one extra verbose directive next turn.
+    }
+  }
   const directive = renderContinuationDirective({
     event,
     hookCwd,
@@ -5225,9 +5326,34 @@ function runStopHook(payload, started) {
     state,
     counts,
     next,
+    verbose,
+    recentLedger: recentLedgerEvents(path.dirname(statePath)),
     elapsedMs: Date.now() - started,
   });
   return JSON.stringify({ decision: "block", reason: directive });
+}
+
+function directivePhase(next) {
+  return next ? next.kind : "finalize";
+}
+
+function recentLedgerEvents(runDirAbs, limit = 3) {
+  try {
+    const file = path.join(runDirAbs, "ledger.jsonl");
+    if (!fs.existsSync(file)) return [];
+    const lines = fs.readFileSync(file, "utf8").trim().split(/\r?\n/).filter(Boolean);
+    return lines.slice(-limit).map(line => {
+      try {
+        const entry = JSON.parse(line);
+        const idPart = entry.id ? ` ${entry.id}` : Array.isArray(entry.ids) ? ` ${entry.ids.join(",")}` : "";
+        return `${entry.event || "event"}${idPart}`;
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function runPreToolUseHook(payload) {
@@ -5313,38 +5439,19 @@ function renderContinuationDirective(context) {
   const finalGateBlock = finalGateViolations.length
     ? `\n# Final gate gaps\n\n${finalGateViolations.map(item => `- ${item}`).join("\n")}\n`
     : "";
-  return `<prd-implement-continuation>
+  const recentActivity = Array.isArray(context.recentLedger) && context.recentLedger.length
+    ? context.recentLedger.join(" -> ")
+    : "none";
+  const proceduresBlock = context.verbose === false
+    ? `# This turn
 
-You are continuing an active PRD implementation. Do not ask whether to continue. The PRD and state files are the source of truth.
+The phase has not changed since the last directive, so the full procedure is not repeated. Follow the step-by-step procedure already given for this phase (also in SKILL.md sections 6-12).
 
-# State
-
-- PRD: \`${state.prdPath}\`
-- State JSON: \`${context.statePath}\`
-- Run dir: \`${state.runDir}\`
-- Delivery mode: ${(state.delivery && state.delivery.mode) || "local"}
-- Verification plan: ${verificationPlan.status} (${verificationPlan.checkCount} checks, ${verificationPlan.blockingGapCount} blocking gaps)
-- Execution plan: ${executionPlan.status} (${executionPlan.nodeCount} nodes, ${executionPlan.openNodeCount} open, ${executionPlan.blockingGapCount} blocking gaps)
-- Task graph: ${taskGraph.status} (${taskGraph.nodeCount} nodes, ${taskGraph.edgeCount} edges, ${taskGraph.openNodeCount} open)
-- Ready execution nodes: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}
-- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}
-- Blocked execution nodes: ${ready.blocked.length ? ready.blocked.map(item => `${item.id} waits for ${item.waitingFor.join(", ")}`).join("; ") : "none"}
-- Open execution nodes: ${counts.executionOpen}
-	- Open tasks: ${counts.tasksOpen}
-	- Open acceptance criteria: ${counts.acOpen}
-	- Open verification items: ${counts.verificationOpen}
-	- Required verification not passed: ${counts.requiredVerificationNotPassed}
-	- Blocked items: execution ${counts.blocked.execution}, tasks ${counts.blocked.tasks}, AC ${counts.blocked.acceptanceCriteria}, verification ${counts.blocked.verification}
-	- Artifact count: ${collectArtifacts(state).length}
-- Requirements fidelity review: ${requirementsReviewStatus}
-- Final review: ${finalReviewStatus}
-- Next required item: ${nextLine}
-${finalGateBlock}
-
-# Required procedure this turn
+Drive the Next required item above to done, then record it with the matching harness command: \`mark-node\` for execution nodes, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Run \`status\` if you need the full graph again.`
+    : `# Required procedure this turn
 
 1. Ensure the Codex Goal exists when goal tools are available: call \`get_goal\`; if no active goal exists, call \`create_goal\` for this PRD implementation. \`update_plan\` does not replace Goal state.
-2. Read the PRD, \`${context.statePath}\`, \`${state.runDir}/execution-plan.md\`, \`${state.runDir}/taskgraph.md\`, and \`${state.runDir}/ledger.jsonl\` first.
+2. Treat the State block above and \`${context.statePath}\` as the source of truth. Read \`${state.runDir}/execution-plan.md\` and \`${state.runDir}/taskgraph.md\` only when planning changed, and consult \`${state.runDir}/ledger.jsonl\` only when the recent-activity summary above is not enough. Do not re-read unchanged plan views every turn.
 3. If the next item is \`VERIFICATION_PLAN VP0\`, read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-verification\` before implementation.
 4. If the next item is \`EXECUTION_PLAN EP0\`, run \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-execution\`, inspect \`ready\`, and use \`${state.runDir}/execution-plan.md\` as the work map.
 5. After \`plan-execution\` and before material code edits, the main agent performs the coverage check. Inspect PRD/state/plan/taskgraph paths for intent, ambiguity, coverage, TaskGraph, and structure-lock drift; record material findings in \`${state.runDir}/context-notes.md\`.
@@ -5379,7 +5486,37 @@ ${finalReviewRequired ? "16" : "15"}. If completion is impossible and the next u
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\` with \`Status: FAIL\` when intent/PRD/evidence do not fully align.
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-record --status fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity blocker verdict>"\`
-   - Then use \`finalize --status blocked\` or \`finalize --status partial\`; do not report \`Done\`.
+   - Then use \`finalize --status blocked\` or \`finalize --status partial\`; do not report \`Done\`.`;
+  return `<prd-implement-continuation>
+
+You are continuing an active PRD implementation. Do not ask whether to continue. The PRD and state files are the source of truth.
+
+# State
+
+- PRD: \`${state.prdPath}\`
+- State JSON: \`${context.statePath}\`
+- Run dir: \`${state.runDir}\`
+- Delivery mode: ${(state.delivery && state.delivery.mode) || "local"}
+- Verification plan: ${verificationPlan.status} (${verificationPlan.checkCount} checks, ${verificationPlan.blockingGapCount} blocking gaps)
+- Execution plan: ${executionPlan.status} (${executionPlan.nodeCount} nodes, ${executionPlan.openNodeCount} open, ${executionPlan.blockingGapCount} blocking gaps)
+- Task graph: ${taskGraph.status} (${taskGraph.nodeCount} nodes, ${taskGraph.edgeCount} edges, ${taskGraph.openNodeCount} open)
+- Ready execution nodes: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}
+- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}
+- Blocked execution nodes: ${ready.blocked.length ? ready.blocked.map(item => `${item.id} waits for ${item.waitingFor.join(", ")}`).join("; ") : "none"}
+- Open execution nodes: ${counts.executionOpen}
+	- Open tasks: ${counts.tasksOpen}
+	- Open acceptance criteria: ${counts.acOpen}
+	- Open verification items: ${counts.verificationOpen}
+	- Required verification not passed: ${counts.requiredVerificationNotPassed}
+	- Blocked items: execution ${counts.blocked.execution}, tasks ${counts.blocked.tasks}, AC ${counts.blocked.acceptanceCriteria}, verification ${counts.blocked.verification}
+	- Artifact count: ${collectArtifacts(state).length}
+- Requirements fidelity review: ${requirementsReviewStatus}
+- Final review: ${finalReviewStatus}
+- Recent activity: ${recentActivity}
+- Next required item: ${nextLine}
+${finalGateBlock}
+
+${proceduresBlock}
 
 # Completion rule
 

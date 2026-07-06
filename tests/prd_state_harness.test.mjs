@@ -355,6 +355,210 @@ PASS.
   assert.equal(receipt.reviewProfile.profile, "trivial");
 });
 
+function fidelityReviewBody(logPath, extraProse = "") {
+  return `# Requirements Fidelity Review
+
+Status: PASS
+
+## Intent Sources Read
+
+- .hoyeon/prd/x/prd.md
+
+## Decision Trace
+
+- User approved the test scope: represented by R1, AC1, T1, V1 | gap: none
+
+## Findings
+
+- none: no material findings${extraProse}
+
+## Verification Intent Checklist
+
+- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
+
+## Coverage Judgment
+
+- Requirements: covered by V1.
+- Acceptance Criteria: AC1 is met.
+- User-visible behavior: no user-visible behavior.
+- Non-goals and rejected options: none reintroduced.
+- Human verification: none required.
+
+## Verdict
+
+PASS.
+`;
+}
+
+function driveToFidelity(projectRoot, slug, sessionId) {
+  const prdPath = writeApprovedPrd(projectRoot, slug);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", sessionId], projectRoot);
+  runJson(["plan-execution"], projectRoot);
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
+  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "done"], projectRoot);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  const after = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  return { logPath: after.verification[0].artifacts[0].path, reviewPath: path.join(projectRoot, ".hoyeon", "implement", slug, "review", "requirements-fidelity-review.md") };
+}
+
+test("fidelity review accepts code-span generics/tags but rejects leftover template placeholders", () => {
+  const projectRoot = initGitRepo();
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, "fidelity-placeholder", "fp-session");
+
+  // Legitimate generics and JSX tags inside code spans must not read as placeholders.
+  write(reviewPath, fidelityReviewBody(logPath, "\n- The handler returns `Array<string>` and renders a `<button>` element as intended."));
+  const ok = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  assert.equal(ok.ok, true);
+
+  // A leftover <topic-slug>-style placeholder in prose must still fail.
+  write(reviewPath, fidelityReviewBody(logPath, "\n- Implemented the <topic-slug> flow end to end."));
+  const bad = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /leftover <template> placeholders/);
+});
+
+test("browser verification without a dev script is a warning, not a blocking gap", () => {
+  const projectRoot = initGitRepo();
+  const slug = "browser-warn";
+  const prd = `---
+topic: "${slug}"
+status: "ready"
+human_approval: "approved"
+source_intake: "current conversation"
+created_at: "2026-07-06"
+updated_at: "2026-07-06"
+---
+
+# PRD: ${slug}
+
+## 1. Summary
+
+Browser flow. Approval checklist:
+- Scope: R1, AC1.
+
+## 4. Pre-Work And Required Decisions
+
+### 4.3 Decision Traceability For Fidelity Review
+
+- User approved scope: represented by R1, AC1, T1, V1.
+
+## 5. Major Technical Structure Changes
+
+No major technical structure change expected.
+
+## 6. Requirements
+
+- R1. Main flow works in the browser.
+
+## 7. Acceptance Criteria
+
+- AC1. V1 proves the browser flow.
+
+## 8. PRD-Level Tasks
+
+- T1. Build the browser flow. Covers R1, AC1.
+
+## 9. Verification Contract
+
+### 9.1 Test Mode Contract
+
+| Mode | Required For Done | Covers | Human Decision |
+| --- | --- | --- | --- |
+| browser/runtime | yes | main flow | final UX judgment |
+
+### 9.2 Required Agent Verification
+
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
+| --- | --- | --- | --- | --- | --- |
+| V1 | browser/runtime | R1, AC1, T1 | main flow works in browser runtime | yes | no |
+
+## 11. Implementation Guardrails
+
+Do not add scope.
+
+## 12. Implementation Result Report Contract
+
+Report status.
+`;
+  const prdPath = path.join(projectRoot, ".hoyeon", "prd", slug, "prd.md");
+  write(prdPath, prd);
+  const result = runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  assert.equal(result.ok, true);
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  const browserGaps = state.verificationPlan.gaps.filter(gap => gap.code === "browser-server-missing");
+  assert.equal(browserGaps.length, 1);
+  assert.equal(browserGaps[0].severity, "warning");
+  assert.equal(state.verificationPlan.gaps.some(gap => gap.severity === "blocking"), false);
+});
+
+test("mutation command output is compact and stop directive gates verbose procedure by phase", () => {
+  const projectRoot = initGitRepo();
+  const slug = "compact-output";
+  const prdPath = writeApprovedPrd(projectRoot, slug);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "co-session"], projectRoot);
+  runJson(["plan-execution"], projectRoot);
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  const firstNode = state.executionPlan.nodes[0].id;
+
+  const markOut = runJson(["mark-node", "--id", firstNode, "--status", "complete", "--evidence", "done"], projectRoot);
+  assert.equal(markOut.ok, true);
+  assert.equal(markOut.taskGraph, undefined);
+  assert.equal(markOut.executionPlan, undefined);
+  assert.equal(markOut.ready, undefined);
+  assert.equal(markOut.next.writeScope, undefined);
+
+  const stopInput = JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "co-session" });
+  const first = run(process.execPath, [harness, "hook", "stop"], { cwd: projectRoot, input: stopInput });
+  const firstReason = JSON.parse(first.stdout).reason;
+  assert.match(firstReason, /Required procedure this turn/);
+  assert.match(firstReason, /Recent activity:/);
+
+  const second = run(process.execPath, [harness, "hook", "stop"], { cwd: projectRoot, input: stopInput });
+  const secondReason = JSON.parse(second.stdout).reason;
+  assert.doesNotMatch(secondReason, /Required procedure this turn/);
+  assert.match(secondReason, /phase has not changed/);
+  assert.match(secondReason, /# Completion rule/);
+});
+
+test("structural parse gaps block the readiness gate on empty AC, orphan R#, and dangling AC refs", () => {
+  const projectRoot = initGitRepo();
+
+  // Case A: the Acceptance Criteria heading drifted, so it parses empty while tasks parse.
+  const prdA = writeApprovedPrd(projectRoot, "drift-ac");
+  write(prdA, fs.readFileSync(prdA, "utf8").replace("## 7. Acceptance Criteria", "## 7. Acceptance Criteria (User-Facing)"));
+  const a = runJson(["plan-verification", "--prd", prdA], projectRoot, { allowFailure: true });
+  assert.equal(a.ok, false);
+  assert(a.blockingGaps.some(gap => gap.code === "acceptance-section-empty"), JSON.stringify(a.blockingGaps));
+
+  // Case B: a requirement is defined but never referenced by any task/AC/verification.
+  const prdB = writeApprovedPrd(projectRoot, "orphan-req");
+  write(prdB, fs.readFileSync(prdB, "utf8").replace(
+    "- R1. The harness records a local command verification.",
+    "- R1. The harness records a local command verification.\n- R2. An orphan requirement referenced by nothing.",
+  ));
+  const b = runJson(["plan-verification", "--prd", prdB], projectRoot, { allowFailure: true });
+  assert.equal(b.ok, false);
+  assert(b.blockingGaps.some(gap => gap.code === "requirement-uncovered" && gap.item === "R2"), JSON.stringify(b.blockingGaps));
+
+  // Case C: a task cites an AC id that is not defined in Acceptance Criteria.
+  const prdC = writeApprovedPrd(projectRoot, "dangling-ac");
+  write(prdC, fs.readFileSync(prdC, "utf8").replace("Covers R1, AC1.", "Covers R1, AC9."));
+  const c = runJson(["plan-verification", "--prd", prdC], projectRoot, { allowFailure: true });
+  assert.equal(c.ok, false);
+  assert(c.blockingGaps.some(gap => gap.code === "dangling-ac-reference" && gap.item === "AC9"), JSON.stringify(c.blockingGaps));
+
+  // Control: the unmodified PRD has none of these structural gaps.
+  const prdOk = writeApprovedPrd(projectRoot, "structural-ok");
+  const ok = runJson(["plan-verification", "--prd", prdOk], projectRoot, { allowFailure: true });
+  const structuralCodes = new Set(["acceptance-section-empty", "verification-section-empty", "dangling-ac-reference", "requirement-uncovered"]);
+  assert.equal((ok.blockingGaps || []).some(gap => structuralCodes.has(gap.code)), false, JSON.stringify(ok.blockingGaps));
+});
+
 test("not-watched PR delivery ship log keeps hook delivery guard active", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "pr-not-watched");

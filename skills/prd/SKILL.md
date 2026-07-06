@@ -37,6 +37,13 @@ If no context path is provided, inspect `.hoyeon/intake/` first for the matching
 or most recent topic, then `.hoyeon/clarify/`. If no handoff exists and major
 ambiguity remains, ask one blocking question or recommend `$intake`.
 
+When a handoff exists, read its frontmatter `blocking_open_questions`. If it is
+missing or non-zero, do not draft the PRD from it: the intake still has
+unresolved blockers. Ask the user to resolve them or send it back to `$intake`.
+Read the handoff `Rejected And Deferred Alternatives` section and preserve every
+item in section 4.3 Decision Traceability; intake Non-Goals and rejected options
+are not machine-carried downstream, so the PRD is their last capture point.
+
 ## Output Contract
 
 Create:
@@ -481,10 +488,13 @@ This is stateless: it parses the PRD exactly the way `prd-implement` will,
 derives the verification plan against real repo signals, and writes nothing.
 Exit code 2 means the verification contract is not harness-readable (missing
 commands or artifact strategy, uncovered ACs, missing browser startup, unsafe
-external proof). Fix the PRD and rerun until `blockingGaps` is empty; resolve
-or consciously accept warnings. Skipping this gate pushes the same failures
-into `prd-implement`, where they cost a re-init and a re-plan instead of a
-one-second check.
+external proof). It also catches structural parse defects: a Tasks section that
+parses while Acceptance Criteria or Verification parse empty (a drifted
+heading), a task or verification that references an `AC#` never defined, and a
+requirement (`R#`) covered by no task, AC, or verification. Fix the PRD and
+rerun until `blockingGaps` is empty; resolve or consciously accept warnings.
+Skipping this gate pushes the same failures into `prd-implement`, where they
+cost a re-init and a re-plan instead of a one-second check.
 
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
@@ -550,7 +560,7 @@ Before finalizing:
 
 - Every in-scope behavior has an acceptance criterion.
 - Every acceptance criterion has agent verification or a human-only reason.
-- Every requirement maps to an acceptance criterion, verification item, human-only reason, deferred decision, or non-goal.
+- Every requirement maps to an acceptance criterion, verification item, human-only reason, deferred decision, or non-goal. An `R#` covered by no task, acceptance criterion, or verification item is a hard failure: it proves nothing and a decision recorded only there would silently drop. Fix coverage or remove the orphan requirement. The Harness Readiness Gate now enforces this mechanically.
 - Test Mode Contract covers build/static, automated behavior, runtime/browser
   when user-facing, and API/DB/external modes when relevant.
 - Changed behavior has automated regression coverage or a clear justified alternative verification mode.
