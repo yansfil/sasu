@@ -409,10 +409,15 @@ If the audit is `FAIL`, revise the PRD and rerun the audit before marking the PR
 
 ### Verification Contract Auditor
 
-After drafting the PRD, run a fresh independent read-only Verification Contract
-Auditor when multi-agent tools are available. Use a default subagent, not a
-`hoyeon-*` role, unless the user explicitly asks for that role. If subagents are
-not available, perform the same audit yourself and say so in the report.
+For non-trivial PRDs, run a fresh independent read-only Verification Contract
+Auditor after drafting the PRD when multi-agent tools are available.
+Use a default subagent, not a `hoyeon-*` role, unless the user explicitly asks
+for that role.
+If subagents are not available, perform the same audit yourself and say so in
+the report.
+For trivial PRDs, perform the coverage and pass-intent check yourself and rely
+on the Harness Readiness Gate for mechanical coverage instead of writing a
+separate audit file.
 
 The auditor does not write the PRD. It attacks the verification contract and
 reports whether implementation completion would actually prove the user's
@@ -524,15 +529,17 @@ Require the implementing agent to report:
 6. Derive PRD-level tasks from requirements and acceptance criteria.
 7. Add the Test Mode Contract and Required Agent Verification matrix.
 8. Run the Intent And Scope Audit and write `intent-scope-audit.md` for non-trivial PRDs.
-9. Run the Verification Contract Auditor and write
+9. For non-trivial PRDs, run the Verification Contract Auditor and write
    `verification-contract-audit.md`.
+   For trivial PRDs, do the same checks inline before the Harness Readiness
+   Gate without creating a separate audit file.
 10. Check for unverifiable requirements, untraceable tasks, missing verification
    modes, missing human decisions, and hidden scope.
 11. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
-12. Mark `status: ready` only when blocking decisions are resolved, the Intent
-   And Scope Audit is `PASS`, the Verification Contract Audit is `PASS`, and
-   the Harness Readiness Gate reports zero blocking gaps.
+12. Mark `status: ready` only when blocking decisions are resolved, required
+   non-trivial audits are `PASS`, and the Harness Readiness Gate reports zero
+   blocking gaps.
 13. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.

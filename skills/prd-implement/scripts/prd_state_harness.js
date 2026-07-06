@@ -35,6 +35,7 @@ function main() {
     if (command === "review-prompt") return cmdReviewPrompt(parseArgs(args));
     if (command === "review-record") return cmdReviewRecord(parseArgs(args));
     if (command === "finalize") return cmdFinalize(parseArgs(args));
+    if (command === "cleanup-active") return cmdCleanupActive(parseArgs(args));
     if (command === "hook") return cmdHook(args[0] || "stop");
     usage(1);
   } catch (error) {
@@ -46,7 +47,7 @@ function main() {
 function usage(exitCode) {
   const script = "~/.codex/skills/prd-implement/scripts/prd_state_harness.js";
   process.stderr.write(`Usage:
-  node ${script} init --prd <path> [--session-id <codex-session-id>] [--allow-unapproved-prd "<verbatim user approval>"] [--delivery local|pr] [--branch <branch>] [--skip-worktree] [--force]
+  node ${script} init --prd <path> [--session-id <codex-session-id>] [--allow-unapproved-prd "<verbatim user approval>"] [--delivery local|pr] [--branch <branch>] [--review-profile trivial|standard|high-risk] [--skip-worktree] [--force]
   node ${script} status [--state <path>]
   node ${script} verify-delivery [--state <path>]
   node ${script} doctor
@@ -55,9 +56,9 @@ function usage(exitCode) {
   node ${script} plan-verification --prd <path>   (stateless PRD contract precheck; no init, no writes)
   node ${script} plan-execution [--state <path>]
   node ${script} ready [--state <path>]
-  node ${script} mark-node --id <Nn> --status pending|in_progress|complete|blocked|deferred --evidence <text>
+  node ${script} mark-node --id <Nn[,Nn...]> --status pending|in_progress|complete|blocked|deferred --evidence <text>
   node ${script} assign-node --id <Nn> --owner coordinator|subagent:<id>|<short-owner>
-  node ${script} mark --kind task|ac|verification --id <id> --status <status> --evidence <text>
+  node ${script} mark --kind task|ac|verification --id <id[,id...]> --status <status> --evidence <text>
   node ${script} verify-run --id <Vn> -- <command...>
   node ${script} record-artifact --id <id> --kind screenshot|log|browser|api|db|file --path <path> --description <text>
   node ${script} refresh-artifacts [--id <id>] [--state <path>]
@@ -66,6 +67,7 @@ function usage(exitCode) {
   node ${script} review-prompt [--state <path>]
   node ${script} review-record --status pass|fail --report <path> --summary <text>
   node ${script} finalize --status complete|partial|blocked --summary <text>
+  node ${script} cleanup-active [--state <path>]
   node ${script} hook stop|subagent-stop|pretool-use
 `);
   process.exit(exitCode);
@@ -90,6 +92,13 @@ function parseArgs(args) {
     }
   }
   return out;
+}
+
+function parseIdList(value, normalize = item => item) {
+  return String(value || "")
+    .split(/[,\s]+/)
+    .map(item => normalize(item.trim()))
+    .filter(Boolean);
 }
 
 function nowIso() {
@@ -150,6 +159,20 @@ function shellQuote(value) {
 
 function formatCommandArgs(args) {
   return args.map(shellQuote).join(" ");
+}
+
+function commandArgsForCompare(args) {
+  const command = String(args[0] || "");
+  if (args.length >= 3 && /^(?:bash|sh|zsh)$/.test(path.basename(command)) && args[1] === "-c") {
+    return args.slice(2).join(" ");
+  }
+  if (args.length >= 4 && /^(?:bash|sh|zsh)$/.test(path.basename(command)) && args[1] === "-l" && args[2] === "-c") {
+    return args.slice(3).join(" ");
+  }
+  if (args.length >= 3 && /^(?:bash|sh|zsh)$/.test(path.basename(command)) && args[1] === "-lc") {
+    return args.slice(2).join(" ");
+  }
+  return formatCommandArgs(args);
 }
 
 function runCommand(command, args, options = {}) {
@@ -382,6 +405,14 @@ function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, a
     created = true;
   } else {
     runGit(targetRoot, ["rev-parse", "--git-dir"]);
+    const ownedRoots = gitWorktreeRoots(projectRoot).map(item => canonicalPath(item));
+    if (!ownedRoots.includes(canonicalPath(targetRoot))) {
+      throw new Error([
+        `Existing worktree at ${targetRoot} is not registered under the current checkout.`,
+        "Refusing to resume a PRD implementation from another repository or stale worktree root.",
+        "Remove the stale worktree, choose a different worktree.path, or run init from the checkout that owns it.",
+      ].join("\n"));
+    }
     const worktreeBranch = runGit(targetRoot, ["branch", "--show-current"]).stdout.trim();
     if (worktreeBranch !== deliveryConfig.branch) {
       throw new Error([
@@ -2327,12 +2358,14 @@ function buildTaskGraph(state) {
     evidenceCount: state.requirementsFidelityReview ? 1 : 0,
     artifactCount: state.requirementsFidelityReview && state.requirementsFidelityReview.reportPath ? 1 : 0,
   });
+  const finalReviewRequired = finalReviewRequiredForState(state);
   addNode({
     id: "REVIEW",
     kind: "final_review",
     title: "Adversarial final review",
-    status: state.finalReview ? state.finalReview.status : "pending",
-    closed: Boolean(state.finalReview && state.finalReview.status === "pass"),
+    status: state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped",
+    closed: finalReviewRequired ? Boolean(state.finalReview && state.finalReview.status === "pass") : true,
+    requiredForDone: finalReviewRequired,
     evidenceCount: state.finalReview ? 1 : 0,
     artifactCount: state.finalReview && state.finalReview.reportPath ? 1 : 0,
   });
@@ -2350,8 +2383,12 @@ function buildTaskGraph(state) {
     addEdge(item.id, "REQ_FIDELITY_REVIEW", "requirements_review_input", "requirements reviewer must audit this item against original user intent and PRD decisions");
     addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
   }
-  addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", "final reviewer must audit the requirements fidelity verdict");
-  addEdge("REVIEW", "FINALIZE", "gates", "receipt can be written only after passing final review");
+  addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", finalReviewRequired
+    ? "final reviewer must audit the requirements fidelity verdict"
+    : "trivial profile skips mandatory final review after requirements fidelity passes");
+  addEdge("REVIEW", "FINALIZE", "gates", finalReviewRequired
+    ? "receipt can be written only after passing final review"
+    : "receipt can be written after requirements fidelity review and mechanical gates pass");
 
   const openNodeCount = nodes.filter(node => !node.closed).length;
   return {
@@ -2499,8 +2536,59 @@ function plannedCommandForVerification(state, verificationId) {
   return item ? commandFromText(item.text || "") : null;
 }
 
+function shellLikeTokens(command) {
+  const tokens = [];
+  let current = "";
+  let quote = null;
+  let escaped = false;
+  for (const char of String(command || "")) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (escaped) current += "\\";
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function unwrapShellCommandTokens(tokens) {
+  if (tokens.length >= 3 && /^(?:bash|sh|zsh)$/.test(path.basename(tokens[0])) && tokens[1] === "-c") {
+    return shellLikeTokens(tokens.slice(2).join(" "));
+  }
+  if (tokens.length >= 4 && /^(?:bash|sh|zsh)$/.test(path.basename(tokens[0])) && tokens[1] === "-l" && tokens[2] === "-c") {
+    return shellLikeTokens(tokens.slice(3).join(" "));
+  }
+  if (tokens.length >= 3 && /^(?:bash|sh|zsh)$/.test(path.basename(tokens[0])) && tokens[1] === "-lc") {
+    return shellLikeTokens(tokens.slice(2).join(" "));
+  }
+  return tokens;
+}
+
 function normalizeCommandForCompare(command) {
-  return String(command || "").trim().replace(/\s+/g, " ");
+  return unwrapShellCommandTokens(shellLikeTokens(command)).join(" ").trim();
 }
 
 function commandsMatchContract(actual, expected) {
@@ -2744,6 +2832,44 @@ function countState(state) {
   };
 }
 
+function reviewProfileName(state) {
+  const profile = state && state.reviewProfile && typeof state.reviewProfile.profile === "string"
+    ? state.reviewProfile.profile
+    : "";
+  return ["trivial", "standard", "high-risk"].includes(profile) ? profile : "standard";
+}
+
+function finalReviewRequiredForState(state) {
+  return reviewProfileName(state) !== "trivial";
+}
+
+function classifyReviewProfile(input, explicitProfile) {
+  const explicit = String(explicitProfile || "").trim();
+  if (explicit) {
+    if (!["trivial", "standard", "high-risk"].includes(explicit)) {
+      throw new Error("--review-profile must be trivial, standard, or high-risk");
+    }
+    return { profile: explicit, source: "explicit", reason: "set by --review-profile" };
+  }
+  const tasks = input.tasks || [];
+  const acceptanceCriteria = input.acceptanceCriteria || [];
+  const verification = input.verification || [];
+  const haystack = [
+    input.technicalStructure,
+    input.implementationNotes,
+    ...tasks.map(item => item.text || item.title || ""),
+    ...acceptanceCriteria.map(item => item.text || item.title || ""),
+    ...verification.map(item => item.text || item.passIntent || item.title || ""),
+  ].join("\n").toLowerCase();
+  if (/\b(db|database|migration|schema|auth|security|payment|billing|credential|secret|production|external|live api|provider|pii|token|deploy|rollback)\b/.test(haystack)) {
+    return { profile: "high-risk", source: "auto", reason: "risk keywords found in PRD structure, tasks, ACs, or verification" };
+  }
+  if (tasks.length <= 2 && acceptanceCriteria.length <= 5 && verification.length <= 3) {
+    return { profile: "trivial", source: "auto", reason: "small PRD surface with at most 2 tasks, 5 ACs, and 3 verification items" };
+  }
+  return { profile: "standard", source: "auto", reason: "default profile for non-trivial work without high-risk signals" };
+}
+
 function nextItem(state) {
   if (verificationPlanBlocksImplementation(state)) {
     const summary = verificationPlanSummary(state);
@@ -2789,6 +2915,7 @@ function nextItem(state) {
 	      },
 	    };
 	  }
+	  if (!finalReviewRequiredForState(state)) return null;
 	  if (!state.finalReview || state.finalReview.status !== "pass") {
 	    return {
 	      kind: "final_review",
@@ -2855,6 +2982,129 @@ function readActive(baseDir = cwd(), options = {}) {
   return readActiveFile(activePath(baseDir));
 }
 
+function gitWorktreeRoots(projectRoot) {
+  const result = childProcess.spawnSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) return [];
+  const roots = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const match = line.match(/^worktree\s+(.+)$/);
+    if (match) roots.push(path.resolve(match[1]));
+  }
+  return roots;
+}
+
+function primaryWorktreeRoot(projectRoot) {
+  const roots = gitWorktreeRoots(projectRoot);
+  return roots.length ? roots[0] : null;
+}
+
+function activeRootsForState(state) {
+  const projectRoot = state.projectRoot || cwd();
+  const roots = [projectRoot];
+  const primary = primaryWorktreeRoot(projectRoot);
+  if (primary && canonicalPath(primary) !== canonicalPath(projectRoot)) roots.push(primary);
+  return Array.from(new Set(roots.map(item => canonicalPath(item))));
+}
+
+function writeActiveRecord(baseDir, statePath, state) {
+  const record = activeRecordForState(statePath, state, baseDir);
+  writeJson(activePath(baseDir), record);
+  if (state.activeSessionId) writeSessionActive(baseDir, state.activeSessionId, record);
+  return record;
+}
+
+function activeRecordStatePath(active, baseDir) {
+  if (!active || typeof active.statePath !== "string") return null;
+  return canonicalPath(resolveProjectPath(active.statePath, baseDir));
+}
+
+function removeActiveRecordForState(baseDir, statePath) {
+  const removed = [];
+  const target = canonicalPath(statePath);
+  const legacyPath = activePath(baseDir);
+  const legacy = readActiveFile(legacyPath);
+  if (legacy && activeRecordStatePath(legacy.active, baseDir) === target) {
+    fs.rmSync(legacyPath, { force: true });
+    removed.push(legacyPath);
+  }
+  const sessionsDir = activeSessionsDir(baseDir);
+  if (fs.existsSync(sessionsDir)) {
+    for (const entry of fs.readdirSync(sessionsDir)) {
+      if (!entry.endsWith(".json")) continue;
+      const file = path.join(sessionsDir, entry);
+      const active = readActiveFile(file);
+      if (active && activeRecordStatePath(active.active, baseDir) === target) {
+        fs.rmSync(file, { force: true });
+        removed.push(file);
+      }
+    }
+  }
+  return removed;
+}
+
+function activeDiagnostics(baseDir, selectedStatePath) {
+  const selected = canonicalPath(selectedStatePath);
+  const legacy = readActiveFile(activePath(baseDir));
+  const sessions = [];
+  const warnings = [];
+  const sessionsDir = activeSessionsDir(baseDir);
+  if (fs.existsSync(sessionsDir)) {
+    for (const entry of fs.readdirSync(sessionsDir)) {
+      if (!entry.endsWith(".json")) continue;
+      const file = path.join(sessionsDir, entry);
+      const active = readActiveFile(file);
+      if (!active) continue;
+      sessions.push({
+        file: toProjectRelative(file, baseDir),
+        statePath: active.active.statePath,
+        activeSessionId: active.active.activeSessionId || null,
+        status: active.active.status || null,
+        updatedAt: active.active.updatedAt || null,
+        selected: activeRecordStatePath(active.active, baseDir) === selected,
+      });
+    }
+  }
+  sessions.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+  if (legacy) {
+    const legacySelected = activeRecordStatePath(legacy.active, baseDir) === selected;
+    const newerDifferent = sessions.find(item => !item.selected && item.updatedAt && legacy.active.updatedAt && item.updatedAt > legacy.active.updatedAt);
+    if (!legacySelected) warnings.push("Legacy active pointer does not match the selected state");
+    if (newerDifferent) warnings.push(`A newer session active file points at another state: ${newerDifferent.statePath}`);
+  }
+  return {
+    baseDir,
+    legacy: legacy ? {
+      file: toProjectRelative(legacy.file, baseDir),
+      statePath: legacy.active.statePath,
+      activeSessionId: legacy.active.activeSessionId || null,
+      status: legacy.active.status || null,
+      updatedAt: legacy.active.updatedAt || null,
+      selected: activeRecordStatePath(legacy.active, baseDir) === selected,
+    } : null,
+    sessions,
+    warnings,
+  };
+}
+
+function prdCopyDriftWarnings(state) {
+  const projectRoot = state.projectRoot || cwd();
+  const primary = primaryWorktreeRoot(projectRoot);
+  if (!primary || canonicalPath(primary) === canonicalPath(projectRoot)) return [];
+  const prdPath = state.prdPath || (state.prdSnapshot && state.prdSnapshot.path);
+  if (!prdPath || path.isAbsolute(prdPath)) return [];
+  const worktreePrd = path.join(projectRoot, prdPath);
+  const primaryPrd = path.join(primary, prdPath);
+  if (!fs.existsSync(worktreePrd) || !fs.existsSync(primaryPrd)) return [];
+  const worktreeHash = sha256File(worktreePrd);
+  const primaryHash = sha256File(primaryPrd);
+  if (worktreeHash === primaryHash) return [];
+  return [`PRD copy drift: ${toProjectRelative(primaryPrd, primary)} in primary checkout differs from worktree source of truth ${toProjectRelative(worktreePrd, projectRoot)}`];
+}
+
 function resolveStatePath(options = {}, baseDir = cwd()) {
   if (options.state) return resolveProjectPath(options.state, baseDir);
   const active = readActive(baseDir);
@@ -2901,31 +3151,28 @@ function cmdInit(options) {
   const worktreePreparation = prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, approvalOverride, initialSessionId);
   if (worktreePreparation && worktreePreparation.active === false) {
     const pointerRunDir = path.join(".hoyeon", "implement", slug);
-    const pointerPath = activePath(projectRoot);
-    let pointerWritten = false;
-    if (!fs.existsSync(pointerPath)) {
-      writeJson(pointerPath, {
-        schema: "hoyeon.prd-implement.active.v1",
-        pointer: true,
-        statePath: path.join(worktreePreparation.path, pointerRunDir, "state.json"),
-        prdPath: toProjectRelative(prdAbs, projectRoot),
-        runDir: pointerRunDir,
-        status: "active",
-        delivery: {
-          mode: deliveryConfig.mode,
-          branch: deliveryConfig.branch,
-          worktreePath: worktreePreparation.path,
-        },
-        activeSessionId: initialSessionId || null,
-        updatedAt: nowIso(),
-      });
-      pointerWritten = true;
-    }
+    const pointerRecord = {
+      schema: "hoyeon.prd-implement.active.v1",
+      pointer: true,
+      statePath: path.join(worktreePreparation.path, pointerRunDir, "state.json"),
+      prdPath: toProjectRelative(prdAbs, projectRoot),
+      runDir: pointerRunDir,
+      status: worktreePreparation.resumed ? "resumed" : "active",
+      delivery: {
+        mode: deliveryConfig.mode,
+        branch: deliveryConfig.branch,
+        worktreePath: worktreePreparation.path,
+      },
+      activeSessionId: initialSessionId || null,
+      updatedAt: nowIso(),
+    };
+    writeJson(activePath(projectRoot), pointerRecord);
+    if (initialSessionId) writeSessionActive(projectRoot, initialSessionId, pointerRecord);
     process.stdout.write(JSON.stringify({
       ok: true,
       delivery: deliveryConfig,
       worktreePrepared: worktreePreparation,
-      mainRootPointerWritten: pointerWritten,
+      mainRootPointerWritten: true,
       message: worktreePreparation.resumed
         ? `PR delivery worktree already has implementation state. Continue the existing run from ${worktreePreparation.path} (use init --force there to reset it).`
         : `PR delivery worktree prepared. Continue implementation from ${worktreePreparation.path}.`,
@@ -2968,6 +3215,25 @@ function cmdInit(options) {
   const testModeContract = parseTestModeContract(testModeSection || verificationSection);
   applyTestModeDefaults(verification, testModeContract);
   const intentTrace = buildIntentTrace(parsed, projectRoot);
+  const technicalStructure = extractFirstSection(parsed.body, [
+    "5. Major Technical Structure Changes",
+    "Major Technical Structure Changes",
+    "2. Technical Structure And Changes",
+    "Technical Structure And Changes",
+  ]);
+  const implementationNotes = extractFirstSection(parsed.body, [
+    "11. Implementation Guardrails",
+    "Implementation Guardrails",
+    "14. Implementation Notes",
+    "Implementation Notes",
+  ]);
+  const reviewProfile = classifyReviewProfile({
+    tasks,
+    acceptanceCriteria,
+    verification,
+    technicalStructure,
+    implementationNotes,
+  }, options["review-profile"]);
 
   const state = {
     schema: SCHEMA,
@@ -3009,19 +3275,10 @@ function cmdInit(options) {
         },
       };
     })(),
+    reviewProfile,
     intentTrace,
-    technicalStructure: extractFirstSection(parsed.body, [
-      "5. Major Technical Structure Changes",
-      "Major Technical Structure Changes",
-      "2. Technical Structure And Changes",
-      "Technical Structure And Changes",
-    ]),
-    implementationNotes: extractFirstSection(parsed.body, [
-      "11. Implementation Guardrails",
-      "Implementation Guardrails",
-      "14. Implementation Notes",
-      "Implementation Notes",
-    ]),
+    technicalStructure,
+    implementationNotes,
     createdAt: nowIso(),
     updatedAt: nowIso(),
     activeSessionId: initialSessionId,
@@ -3047,9 +3304,7 @@ function cmdInit(options) {
   const statePath = path.join(runDirAbs, "state.json");
   state.verificationPlan = buildVerificationPlan(state, statePath);
   persistStateAndArtifacts(statePath, state);
-  const activeRecord = activeRecordForState(statePath, state, projectRoot);
-  writeJson(activePath(projectRoot), activeRecord);
-  if (initialSessionId) writeSessionActive(projectRoot, initialSessionId, activeRecord);
+  writeActiveRecord(projectRoot, statePath, state);
   appendJsonl(path.join(runDirAbs, "ledger.jsonl"), {
     ts: nowIso(),
     event: "initialized",
@@ -3084,6 +3339,7 @@ function cmdStatus(options) {
     ok: true,
     statePath: toProjectRelative(statePath),
     status: state.status,
+    reviewProfile: state.reviewProfile || { profile: reviewProfileName(state), source: "default" },
     prdPath: state.prdPath,
     runDir: state.runDir,
     delivery: state.delivery || null,
@@ -3092,6 +3348,8 @@ function cmdStatus(options) {
     executionPlan: executionPlanSummary(state),
     taskGraph: taskGraphSummary(state),
     ready: readyExecutionPlan(state),
+    active: activeDiagnostics(cwd(), statePath),
+    warnings: prdCopyDriftWarnings(state),
 	    artifactCount: collectArtifacts(state).length,
 	    artifactViolations: validateArtifacts(statePath, state),
 	    completion: completionReadiness(statePath, state, { includeFinalReview: true }),
@@ -3114,13 +3372,14 @@ function cmdVerifyDelivery(options) {
     }
   };
   requirePass(state.requirementsFidelityReview, "Requirements fidelity review");
-  requirePass(state.finalReview, "Final review");
+  if (finalReviewRequiredForState(state)) requirePass(state.finalReview, "Final review");
   violations.push(...reviewWorktreeSnapshotViolations(state));
   violations.push(...prdSnapshotViolations(statePath, state));
   process.stdout.write(JSON.stringify({
     ok: violations.length === 0,
     statePath: toProjectRelative(statePath),
     status: state.status,
+    reviewProfile: state.reviewProfile || { profile: reviewProfileName(state), source: "default" },
     delivery: state.delivery || null,
     receiptStatus: state.finalReceipt ? state.finalReceipt.status : null,
     violations,
@@ -3469,49 +3728,52 @@ function cmdReady(options) {
 }
 
 function cmdMarkNode(options) {
-  const id = String(options.id || "").toUpperCase();
+  const ids = parseIdList(options.id, value => value.toUpperCase());
   const status = String(options.status || "");
   const evidence = String(options.evidence || "").trim();
-  if (!id) throw new Error("--id is required");
+  if (!ids.length) throw new Error("--id is required");
   if (!status) throw new Error("--status is required");
   if (!evidence) throw new Error("--evidence is required");
   assertAllowedExecutionStatus(status);
   const { statePath, state } = loadState(options);
 	  if (!state.executionPlan || !Array.isArray(state.executionPlan.nodes)) throw new Error("Execution plan is missing; run plan-execution first");
-	  const node = state.executionPlan.nodes.find(entry => String(entry.id).toUpperCase() === id);
-	  if (!node) throw new Error(`Execution node ${id} not found`);
-	  let deviationEntry = null;
-	  if (status === "complete") {
-	    const ready = readyExecutionPlan(state);
-	    const wasAlreadyStarted = node.status === "in_progress";
-	    if (!wasAlreadyStarted && !ready.readySequential.includes(node.id)) {
-	      const blocker = ready.blocked.find(item => item.id === node.id);
-	      deviationEntry = recordDeviation(state, "ready_order", node.id, "Execution node completed outside ready guidance", {
-	        waitingFor: blocker ? blocker.waitingFor : [],
-	        readySequential: ready.readySequential,
-	      });
+  const marked = [];
+  for (const id of ids) {
+	    const node = state.executionPlan.nodes.find(entry => String(entry.id).toUpperCase() === id);
+	    if (!node) throw new Error(`Execution node ${id} not found`);
+	    let deviationEntry = null;
+	    if (status === "complete") {
+	      const ready = readyExecutionPlan(state);
+	      const wasAlreadyStarted = node.status === "in_progress";
+	      if (!wasAlreadyStarted && !ready.readySequential.includes(node.id)) {
+	        const blocker = ready.blocked.find(item => item.id === node.id);
+	        deviationEntry = recordDeviation(state, "ready_order", node.id, "Execution node completed outside ready guidance", {
+	          waitingFor: blocker ? blocker.waitingFor : [],
+	          readySequential: ready.readySequential,
+	        });
+	      }
 	    }
-	  }
-	  node.status = status;
-	  if (!node.evidence) node.evidence = [];
-	  node.evidence.push({ ts: nowIso(), text: evidence });
+	    node.status = status;
+	    if (!node.evidence) node.evidence = [];
+	    node.evidence.push({ ts: nowIso(), text: evidence });
+    marked.push({ kind: "execution_node", id, status, sourceTask: node.sourceTask, deviation: deviationEntry });
+  }
 	  rollupTasksFromExecutionPlan(state);
-	  markCompletionReviewsStale(state, `Execution node ${id} was marked after review`);
+	  markCompletionReviewsStale(state, `Execution node(s) ${ids.join(", ")} were marked after review`);
 	  state.updatedAt = nowIso();
   persistStateAndArtifacts(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "execution_node_marked",
-    id,
+    ids,
     status,
-	    sourceTask: node.sourceTask,
 	    evidence,
-	    deviation: deviationEntry,
+	    marked,
 	  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
-    marked: { kind: "execution_node", id, status },
+    marked,
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -3552,37 +3814,41 @@ function cmdAssignNode(options) {
 
 function cmdMark(options) {
   const kind = options.kind;
-  const id = String(options.id || "").toUpperCase();
+  const ids = parseIdList(options.id, value => value.toUpperCase());
   const status = String(options.status || "");
   const evidence = String(options.evidence || "").trim();
   if (!["task", "ac", "verification"].includes(kind)) throw new Error("--kind must be task, ac, or verification");
-  if (!id) throw new Error("--id is required");
+  if (!ids.length) throw new Error("--id is required");
   if (!status) throw new Error("--status is required");
   if (!evidence) throw new Error("--evidence is required");
 
   const { statePath, state } = loadState(options);
   const list = kind === "task" ? state.tasks : kind === "ac" ? state.acceptanceCriteria : state.verification;
-  const item = list.find(entry => String(entry.id).toUpperCase() === id);
-  if (!item) throw new Error(`${kind} ${id} not found`);
   assertAllowedStatus(kind, status);
+  const marked = [];
+  for (const id of ids) {
+    const item = list.find(entry => String(entry.id).toUpperCase() === id);
+    if (!item) throw new Error(`${kind} ${id} not found`);
 	  item.status = status;
 	  item.evidence.push({ ts: nowIso(), text: evidence });
+    marked.push({ kind, id, status });
+  }
 	  rollupTasksFromExecutionPlan(state);
-	  markCompletionReviewsStale(state, `${kind} ${id} was marked after review`);
+	  markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
 	  state.updatedAt = nowIso();
   persistStateAndArtifacts(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "marked",
     kind,
-    id,
+    ids,
     status,
     evidence,
   });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
-    marked: { kind, id, status },
+    marked,
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -3719,10 +3985,11 @@ function cmdVerifyRun(rawArgs) {
 	  const match = findTrackedItem(state, id, "verification");
 	  if (!match) throw new Error(`Verification ${id} not found`);
 	  const commandText = formatCommandArgs(commandArgs);
+	  const commandCompareText = commandArgsForCompare(commandArgs);
 	  const plannedCommand = plannedCommandForVerification(state, id);
 	  const deviation = String(options.deviation || "").trim();
 	  let deviationEntry = null;
-	  if (!commandsMatchContract(commandText, plannedCommand)) {
+	  if (!commandsMatchContract(commandCompareText, plannedCommand)) {
 	    if (!deviation) {
 	      throw new Error(`Verification ${id} command differs from PRD contract. Expected: ${plannedCommand}. Actual: ${commandText}. Re-run with --deviation <reason> if this is an intentional equivalent verifier.`);
 	    }
@@ -4013,7 +4280,7 @@ function completionViolations(statePath, state, options = {}) {
       violations.push("Requirements fidelity review has no report path");
     }
   }
-  if (includeFinalReview) {
+  if (includeFinalReview && finalReviewRequiredForState(state)) {
     if (!state.finalReview || state.finalReview.status !== "pass") {
       violations.push("Final adversarial review has not passed");
     } else if (!state.finalReview.reportPath) {
@@ -4131,6 +4398,7 @@ function cmdFinalize(options) {
     status,
     summary,
     verifiedAt: nowIso(),
+    reviewProfile: state.reviewProfile || { profile: reviewProfileName(state), source: "default" },
     counts,
     delivery: state.delivery || null,
     worktreeSnapshot: worktreeSnapshot(state),
@@ -4168,6 +4436,20 @@ function cmdFinalize(options) {
     status,
     receiptPath: toProjectRelative(path.join(path.dirname(statePath), "receipt.json")),
     reportPath: toProjectRelative(path.join(path.dirname(statePath), "implementation-result.md")),
+  }, null, 2) + "\n");
+}
+
+function cmdCleanupActive(options) {
+  const { statePath, state } = loadState(options);
+  const removed = [];
+  const roots = Array.from(new Set([cwd(), ...activeRootsForState(state)].map(item => canonicalPath(item))));
+  for (const root of roots) {
+    removed.push(...removeActiveRecordForState(root, statePath));
+  }
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    statePath: toProjectRelative(statePath, state.projectRoot || cwd()),
+    removed: removed.map(item => toProjectRelative(item, state.projectRoot || cwd())),
   }, null, 2) + "\n");
 }
 
@@ -4237,14 +4519,8 @@ function writeSessionActive(projectRoot, sessionId, record) {
 }
 
 function syncActive(statePath, state) {
-  const projectRoot = state.projectRoot || cwd();
-  const record = activeRecordForState(statePath, state, projectRoot);
-  const legacy = readActiveFile(activePath(projectRoot));
-  if (legacy && activeRecordMatchesState(legacy.active, statePath, projectRoot)) {
-    writeJson(legacy.file, record);
-  }
-  if (state.activeSessionId) {
-    writeSessionActive(projectRoot, state.activeSessionId, record);
+  for (const root of activeRootsForState(state)) {
+    writeActiveRecord(root, statePath, state);
   }
 }
 
@@ -4449,8 +4725,9 @@ function renderChecklist(state) {
     lines.push(`  - Summary: ${state.requirementsFidelityReview.summary}`);
   }
   lines.push("", "## Final Adversarial Review", "");
-  lines.push(`- ${checkbox(Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review`);
-  lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : "pending"}`);
+  const finalReviewRequired = finalReviewRequiredForState(state);
+  lines.push(`- ${checkbox(!finalReviewRequired || Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review${finalReviewRequired ? "" : " (skipped for trivial profile)"}`);
+  lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped"}`);
   if (state.finalReview) {
     lines.push(`  - Report: ${state.finalReview.reportPath}`);
     lines.push(`  - Summary: ${state.finalReview.summary}`);
@@ -4705,10 +4982,18 @@ PASS only if the user's original intent, accepted decisions, rejected alternativ
 function renderReviewPrompt(context) {
   const { state, statePath, reportPath } = context;
   const fidelity = state.requirementsFidelityReview || {};
+  const profile = reviewProfileName(state);
+  const profileGuidance = profile === "high-risk"
+    ? "Review profile: high-risk. Run the full adversarial review and reopen any risky semantic, security, data, migration, external-service, or delivery proof."
+    : profile === "standard"
+      ? "Review profile: standard. Keep this as a thin final gate: audit freshness, state consistency, artifact validity, deviations, and overclaiming; reopen full V-by-V proof only when the fidelity review is weak, generic, inconsistent, or suspicious."
+      : "Review profile: trivial. Final adversarial review is optional for receipt; if requested, keep it to a short freshness, artifact, and overclaim check.";
   const fidelityLine = fidelity.reportSha256
     ? `Recorded fidelity review: status ${fidelity.status}, report \`${fidelity.reportPath}\`, sha256 \`${fidelity.reportSha256}\`, recorded at ${fidelity.recordedAt}.`
     : "No requirements fidelity review is recorded yet; a passing final review is impossible until one is recorded.";
   return `You are the adversarial final reviewer for a PRD implementation.
+
+${profileGuidance}
 
 Your job is to audit the recorded requirements fidelity review, then find missing work, weak evidence, fake verification, and PRD drift that survived that review.
 Do not implement fixes. Do not mark anything complete. Review only.
@@ -4843,7 +5128,9 @@ function deliveryShipPending(statePath, state) {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
       const entry = JSON.parse(lines[index]);
-      if (entry.event === "ship" && entry.pr) return false;
+      if (entry.event === "ship" && entry.pr) {
+        return !["pass", "no-checks"].includes(String(entry.ciVerdict || ""));
+      }
     } catch {
       // ignore malformed lines
     }
@@ -4944,6 +5231,10 @@ function runPreToolUseHook(payload) {
   const counts = countState(state);
   const violations = completionViolations(statePath, state, { includeFinalReview: true });
   if (state.finalReceipt && counts.totalOpen === 0 && violations.length === 0) return "";
+  const finalReviewRequired = finalReviewRequiredForState(state);
+  const finalReviewRequirement = finalReviewRequired
+    ? "record a passing final review"
+    : "confirm the trivial review profile does not require final adversarial review";
   return JSON.stringify({
     decision: "block",
     reason: `<prd-implement-goal-guard>
@@ -4954,13 +5245,13 @@ State: \`${toProjectRelative(statePath, hookCwd)}\`
 	Open tracked items: ${counts.totalOpen}
 	Required verification not passed: ${counts.requiredVerificationNotPassed}
 	Verification plan: ${verificationPlanSummary(state).status} (${verificationPlanSummary(state).blockingGapCount} blocking gaps)
-Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openNodeCount} open nodes, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
-Requirements fidelity review: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}
-Final review: ${state.finalReview ? state.finalReview.status : "pending"}
-Receipt: ${state.finalReceipt ? "present" : "missing"}
+	Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openNodeCount} open nodes, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
+	Requirements fidelity review: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}
+	Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped by trivial profile"}
+	Receipt: ${state.finalReceipt ? "present" : "missing"}
 
-Run \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\`, close all execution nodes and PRD items with artifact-backed evidence, record a passing requirements fidelity review, record a passing final review, then finalize before marking the Codex goal complete.
-</prd-implement-goal-guard>`,
+	Run \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\`, close all execution nodes and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the Codex goal complete.
+	</prd-implement-goal-guard>`,
   });
 }
 
@@ -4975,7 +5266,8 @@ function isUpdateGoalCompleteAttempt(payload) {
 function renderContinuationDirective(context) {
   const { state, counts, next } = context;
   const requirementsReviewStatus = state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending";
-  const finalReviewStatus = state.finalReview ? state.finalReview.status : "pending";
+  const finalReviewRequired = finalReviewRequiredForState(state);
+  const finalReviewStatus = state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped by trivial profile";
   const verificationPlan = verificationPlanSummary(state);
   const executionPlan = executionPlanSummary(state);
   const ready = readyExecutionPlan(state);
@@ -4984,10 +5276,12 @@ function renderContinuationDirective(context) {
   const nextLine = next
     ? `${next.kind.toUpperCase()} ${next.item.id}: ${next.item.title}`
     : requirementsReviewStatus !== "pass"
-      ? "REQUIREMENTS FIDELITY REVIEW: tracked items are closed; run strict intent review before final adversarial review"
-    : finalReviewStatus !== "pass"
+      ? `REQUIREMENTS FIDELITY REVIEW: tracked items are closed; run strict intent review before ${finalReviewRequired ? "final adversarial review" : "finalize"}`
+    : finalReviewRequired && finalReviewStatus !== "pass"
       ? "FINAL REVIEW: tracked items are closed; run adversarial review before finalizing"
-      : "FINALIZE: final review passed; write receipt";
+      : finalReviewRequired
+        ? "FINALIZE: final review passed; write receipt"
+        : "FINALIZE: trivial profile gates passed; write receipt";
   const finalGateBlock = finalGateViolations.length
     ? `\n# Final gate gaps\n\n${finalGateViolations.map(item => `- ${item}`).join("\n")}\n`
     : "";
@@ -5035,23 +5329,25 @@ ${finalGateBlock}
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js verify-run --id <Vn> -- <command>\`
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js record-artifact --id <Vn> --kind screenshot|log|browser|api|db|file --path <artifact> --description "<what it proves>"\`
 10. Let task status roll up from execution nodes, ACs, and verification. Use \`mark --kind task\` only for an explicit blocked/deferred/manual correction with evidence.
-11. Do not call \`update_goal({status:"complete"})\` until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, final review is pass, verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\` reports no open items or final gate violations.
+11. Do not call \`update_goal({status:"complete"})\` until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\` reports no open items or final gate violations.
     If delivery mode is \`pr\`, do not call \`update_goal({status:"complete"})\` after receipt alone. Run \`$prd-ship\` and wait for PR creation plus required CI pass or an explicit delivery blocker.
 12. When no open items remain, run the final AC + Verification sweep, then run the strict requirements fidelity review:
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
    - The main agent writes this review by default. Do not spawn a requirements fidelity sidecar unless the user explicitly asks for one. It must compare original user intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result.
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\`.
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-record --status pass|fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity verdict>"\`
-13. Before final adversarial review, stop runtime servers, browser sessions, tunnels, or background processes started only for verification, unless explicitly left running and reported.
-14. Only after \`requirements-review-record --status pass\`, run:
+13. Before finalization${finalReviewRequired ? " or final adversarial review" : ""}, stop runtime servers, browser sessions, tunnels, or background processes started only for verification, unless explicitly left running and reported.
+${finalReviewRequired ? `14. Only after \`requirements-review-record --status pass\`, run:
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-prompt\`
    - Spawn a fresh independent adversarial reviewer sidecar with that prompt when multi-agent tools are available. This is the only required reviewer sidecar in the default workflow. Omit \`agent_type\`; do not use \`hoyeon-*\` roles unless the user explicitly asked for one.
    - Write \`${state.runDir}/review/final-review.md\`.
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-record --status pass|fail --report ${state.runDir}/review/final-review.md --summary "<review verdict>"\`
 15. Only after \`review-record --status pass\`, finalize:
+` : `14. This run uses the trivial review profile; final adversarial review is optional. After \`requirements-review-record --status pass\`, finalize:
+`}
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize --status complete --summary "<short evidence-backed summary>"\`
    - If delivery mode is \`pr\`, immediately hand off to \`$prd-ship\` with \`${context.statePath}\`.
-16. If completion is impossible and the next user-facing report will be blocked or partial, run the same requirements fidelity review first and record it before handoff:
+${finalReviewRequired ? "16" : "15"}. If completion is impossible and the next user-facing report will be blocked or partial, run the same requirements fidelity review first and record it before handoff:
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\` with \`Status: FAIL\` when intent/PRD/evidence do not fully align.
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-record --status fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity blocker verdict>"\`

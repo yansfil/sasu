@@ -5,8 +5,8 @@ description: |
   "$prd-implement", asks to execute or implement an approved PRD, or wants
   Codex to turn PRD-level tasks into an execution plan, TaskGraph, concrete
   verification plan, artifact-backed evidence, Codex Goal lifecycle,
-  main-agent-owned fidelity checks, strict completion receipt, and final
-  independent adversarial review.
+  main-agent-owned fidelity checks, profile-aware review gates, and strict
+  completion receipt.
 ---
 
 # prd-implement
@@ -14,8 +14,8 @@ description: |
 Use this skill to implement an approved PRD end to end.
 
 This is the execution counterpart to `prd`. It turns a human-reviewed PRD into
-implementation state, execution nodes, verification evidence, a final review,
-and a receipt. Completion accounting is strict; execution details can be
+implementation state, execution nodes, verification evidence, profile-aware
+reviews, and a receipt. Completion accounting is strict; execution details can be
 derived flexibly when they preserve the PRD contract.
 
 Match the user's language by default.
@@ -62,12 +62,10 @@ implementing a PRD, modifying this skill, or diagnosing TaskGraph behavior.
 
 ## Output Artifacts
 
-Create or update:
+Harness-managed state and derived views:
 
 ```text
 .hoyeon/implement/<topic-slug>/checklist.md
-.hoyeon/implement/<topic-slug>/context-notes.md
-.hoyeon/implement/<topic-slug>/verification.md
 .hoyeon/implement/<topic-slug>/verification-plan.json
 .hoyeon/implement/<topic-slug>/verification-plan.md
 .hoyeon/implement/<topic-slug>/execution-plan.json
@@ -76,7 +74,18 @@ Create or update:
 .hoyeon/implement/<topic-slug>/taskgraph.md
 .hoyeon/implement/<topic-slug>/state.json
 .hoyeon/implement/<topic-slug>/ledger.jsonl
+.hoyeon/implement/<topic-slug>/verification.md
 .hoyeon/implement/<topic-slug>/artifacts/manifest.jsonl
+.hoyeon/implement/<topic-slug>/receipt.json
+.hoyeon/implement/<topic-slug>/implementation-result.md
+.hoyeon/implement/.prd-implement-active.json
+.hoyeon/implement/.prd-implement-sessions/<encoded-session-id>.json
+```
+
+Agent-created run notes, review reports, and evidence artifacts:
+
+```text
+.hoyeon/implement/<topic-slug>/context-notes.md
 .hoyeon/implement/<topic-slug>/artifacts/logs/*.log
 .hoyeon/implement/<topic-slug>/artifacts/screenshots/*
 .hoyeon/implement/<topic-slug>/artifacts/browser/*
@@ -84,10 +93,6 @@ Create or update:
 .hoyeon/implement/<topic-slug>/artifacts/db/*
 .hoyeon/implement/<topic-slug>/review/requirements-fidelity-review.md
 .hoyeon/implement/<topic-slug>/review/final-review.md
-.hoyeon/implement/<topic-slug>/receipt.json
-.hoyeon/implement/<topic-slug>/implementation-result.md
-.hoyeon/implement/.prd-implement-active.json
-.hoyeon/implement/.prd-implement-sessions/<encoded-session-id>.json
 ```
 
 ## Required Flow
@@ -103,7 +108,7 @@ Codex Goal opened
   -> verify-run / record-artifact
   -> requirements fidelity review
   -> blocked/partial handoff when completion is impossible
-  -> final adversarial review
+  -> final adversarial review when required by review profile
   -> runtime cleanup
   -> receipt
   -> PR delivery handoff when delivery mode is pr
@@ -149,9 +154,8 @@ deploy actions.
 
 ## 2. Start Codex Goal
 
-When goal tools are available, `$prd-implement` owns an explicit Codex Goal.
-The Goal is lifecycle and progress control, not an independent completion
-proof.
+When goal tools are available, mirror progress into an explicit Codex Goal.
+The Goal is lifecycle and progress control, not an independent completion proof.
 The authoritative implementation proof is `receipt.json` produced by
 `finalize`; Goal completion only mirrors a successful receipt and any required
 PR delivery handoff.
@@ -199,6 +203,26 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}"
 ```
 
+The harness assigns a review profile at init:
+
+- `trivial`: small low-risk work. Required verification, artifact validation,
+  requirements fidelity review, and receipt are required. Mandatory final
+  adversarial review is skipped.
+- `standard`: normal product or code work. Required verification, requirements
+  fidelity review, a thin final gate, and receipt are required.
+- `high-risk`: DB/schema/migrations, auth/security, payments/billing,
+  credentials, production data, external/live providers, deploy/rollback, or
+  similar risk. Full requirements fidelity review and full adversarial review
+  are required.
+
+Override only when the risk classification is wrong:
+
+```sh
+node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
+  --prd <prd-path> \
+  --review-profile trivial|standard|high-risk
+```
+
 If `.hoyeon/config.json` contains `worktree.enabled: true`, `init` may prepare a
 PR branch worktree, sync configured local files, run configured setup commands,
 and initialize state in that worktree.
@@ -214,6 +238,9 @@ checkout, so relative paths are a trap:
   when shell commands in the same turn use an explicit worktree workdir.
 - Before writing run reports or reviews, confirm the target directory with the
   absolute path emitted by the harness prompt or `status`.
+- After `init` prepares a worktree, every subsequent command should run with
+  `workdir` set to the emitted worktree path or should pass an absolute
+  `--state` path.
 - If a file lands in the wrong checkout, move the existing file with `mv` (or
   `git mv`) to the correct absolute path. Do not delete it and re-author the
   content; regenerating a long file wastes minutes and risks content drift.
@@ -221,9 +248,14 @@ checkout, so relative paths are a trap:
 `init` refuses to overwrite an existing `state.json` without `--force`.
 If the worktree already holds implementation state, `init` from the main checkout resumes that
 run instead of resetting it; pass `--force` only when the user wants a clean restart.
-In worktree mode, `init` also leaves an active pointer at the main checkout root so statusline
-tooling can show the run from either checkout; the pointer is informational and may lag the
-worktree's own state.
+In worktree mode, `init` also writes active pointers and session-scoped active
+files at the main checkout root so statusline and hooks can find the run from
+either checkout.
+The latest legacy pointer is informational; session-scoped files are the
+authority when a hook payload includes a session id.
+Do not run two active PRD implementations from one checkout unless each has a
+distinct session id and all commands use the correct worktree or explicit
+`--state`.
 
 The harness extracts PRD-level tasks, acceptance criteria, verification items,
 test modes, and structure locks into durable state. It supports:
@@ -294,6 +326,21 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark \
   --id AC1 \
   --status met \
   --evidence "<evidence>"
+```
+
+For repeated same-status updates, comma-separated ids are allowed:
+
+```sh
+node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark-node \
+  --id N1,N2 \
+  --status complete \
+  --evidence "<shared evidence>"
+
+node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark \
+  --kind ac \
+  --id AC1,AC2 \
+  --status met \
+  --evidence "<shared evidence>"
 ```
 
 Do not manually close PRD tasks just because a node is done. Task completion
@@ -394,8 +441,9 @@ Review ownership rules:
   in `context-notes.md`, and stop on material blockers.
 - The main agent performs requirements fidelity review by default. Do not spawn
   a sidecar for this review unless the user explicitly asks for one.
-- The final adversarial review is the only mandatory independent review sidecar
-  in the default workflow when multi-agent tools are available.
+- The final adversarial review is mandatory for `standard` and `high-risk`
+  profiles when multi-agent tools are available.
+  It is optional for `trivial`.
 - Use a default independent subagent for the final sidecar by omitting
   `agent_type`. Do not choose `hoyeon-*` roles unless the user explicitly asks
   for that specific role.
@@ -504,9 +552,17 @@ explicit reason to leave them running. Record the shutdown evidence or the
 intentional left-running exception.
 
 Use a fresh independent read-only verifier/reviewer sidecar when multi-agent
-tools are available. This is the only mandatory independent review sidecar in
-the default workflow. Use a default subagent, not a `hoyeon-*` role, unless the
-user explicitly asks for that role. It must check:
+tools are available and the review profile requires final review.
+For `trivial` runs, final adversarial review is optional; the receipt can be
+written after required verification, artifact validation, and requirements
+fidelity review pass.
+For `standard` runs, keep the final review thin: audit freshness, state
+consistency, artifact validity, deviations, and overclaiming; reopen full
+V-by-V proof only when the requirements fidelity review is weak, generic,
+inconsistent, or suspicious.
+For `high-risk` runs, perform the full adversarial review.
+Use a default subagent, not a `hoyeon-*` role, unless the user explicitly asks
+for that role. It must check:
 
 - requirements fidelity review exists, passed, is fresh, and its findings are
   resolved or reflected in the final verdict.
@@ -550,8 +606,8 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-record \
 If review fails, fix findings, rerun relevant verification, and record a new
 passing review.
 
-The final review must be independent in time and content, and the harness
-enforces this:
+When final review is required, it must be independent in time and content, and
+the harness enforces this:
 
 - The reviewer runs only after `requirements-review-record` succeeded. The
   report file must be written after that record; a report authored earlier is
@@ -570,7 +626,7 @@ changes after review.
 
 ## 12. Finalize
 
-Only after a passing final review:
+Only after all gates required by the review profile pass:
 
 ```sh
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize \
@@ -587,7 +643,7 @@ Do not report done and do not call `update_goal complete` until:
 - TaskGraph has no blocking gate violations.
 - artifact validation reports no violations.
 - requirements fidelity review status is `pass` and fresh.
-- final review status is `pass` and fresh.
+- final review status is `pass` and fresh when the review profile requires it.
 - runtime processes started for verification are stopped or explicitly reported
   as intentionally left running.
 
@@ -596,6 +652,14 @@ If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not call
 Run `$prd-ship` after `finalize --status complete` and keep the goal open until
 the PR exists and required CI passes or the delivery handoff is explicitly
 blocked.
+After PR creation, `prd-ship` cleans the matching active pointer and
+session-scoped active files.
+For local-only runs or manual cleanup, use:
+
+```sh
+node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js cleanup-active \
+  --state .hoyeon/implement/<topic-slug>/state.json
+```
 
 For a blocked or partial handoff, do not write the final report until:
 

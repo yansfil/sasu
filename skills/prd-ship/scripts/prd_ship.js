@@ -291,6 +291,21 @@ function verifyDelivery(context) {
   return parsed;
 }
 
+function cleanupActive(context) {
+  const result = run(process.execPath, [harnessPath(), "cleanup-active", "--state", context.statePath], {
+    cwd: context.repoRoot,
+    allowFailure: true,
+  });
+  try {
+    return result.stdout.trim() ? JSON.parse(result.stdout) : { ok: result.status === 0 };
+  } catch {
+    return {
+      ok: false,
+      error: (result.stderr || result.stdout || "").trim(),
+    };
+  }
+}
+
 function requireReason(options, flag) {
   const reason = typeof options.reason === "string" ? options.reason.trim() : "";
   if (!reason) throw new Error(`--${flag} requires --reason "<why this override preserves the delivery contract>"`);
@@ -323,9 +338,13 @@ function summarizeAcceptance(state) {
 function summarizeReviews(state) {
   const requirements = state.requirementsFidelityReview || {};
   const final = state.finalReview || {};
+  const profile = state.reviewProfile && state.reviewProfile.profile ? state.reviewProfile.profile : "standard";
+  const finalLine = profile === "trivial" && !final.status
+    ? "- Final adversarial review: skipped by trivial review profile"
+    : `- Final adversarial review: ${final.status || "unknown"}${final.reportPath ? ` - ${final.reportPath}` : ""}`;
   return [
     `- Requirements fidelity review: ${requirements.status || "unknown"}${requirements.reportPath ? ` - ${requirements.reportPath}` : ""}`,
-    `- Final adversarial review: ${final.status || "unknown"}${final.reportPath ? ` - ${final.reportPath}` : ""}`,
+    finalLine,
   ].join("\n");
 }
 
@@ -787,8 +806,10 @@ function cmdShip(options) {
   run("git", ["push", "-u", "origin", branch], { cwd: context.repoRoot });
   const pr = createOrUpdatePr(context, config, title, bodyPath, Boolean(options.draft));
   const ci = options["no-watch"] ? null : watchCi(context, { ...options, pr: pr.url });
+  const ok = !ci || ci.ok;
+  const deliveryChecksPassed = ci ? ci.ok : false;
   const result = {
-    ok: !ci || ci.ok,
+    ok,
     branch,
     baseBranch: config.baseBranch,
     commit,
@@ -796,6 +817,9 @@ function cmdShip(options) {
     bodyPath: toRepoRelative(bodyPath, context.repoRoot),
     overrides,
     ci,
+    activeCleanup: deliveryChecksPassed
+      ? cleanupActive(context)
+      : { ok: false, skipped: true, reason: ci ? "delivery checks did not pass" : "delivery checks were not watched" },
   };
   appendJsonl(shipLogPath(context), {
     ts: new Date().toISOString(),
