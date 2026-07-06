@@ -1,0 +1,4 @@
+interface:
+  display_name: "PRD Implement"
+  short_description: "Implement PRDs with goals, graph, and proof"
+  default_prompt: "Use $prd-implement to implement the approved PRD with a Codex Goal, TaskGraph, main-agent fidelity checks, final adversarial review, and artifact-backed proof."
