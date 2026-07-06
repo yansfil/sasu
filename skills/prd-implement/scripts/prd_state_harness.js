@@ -3408,6 +3408,14 @@ function gitTracked(projectRoot, relPath) {
   }).status === 0;
 }
 
+function gitIgnored(projectRoot, relPath) {
+  return childProcess.spawnSync("git", ["check-ignore", "--quiet", "--no-index", "--", relPath], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+  }).status === 0;
+}
+
 function cmdDoctor() {
   const projectRoot = cwd();
   const checks = [];
@@ -3480,6 +3488,26 @@ function cmdDoctor() {
 
   if (prMode && gitOk && !originUrl) {
     add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");
+  }
+
+  if (gitOk) {
+    const prdProbe = path.join(".hoyeon", "prd", "__doctor-probe__", "prd.md");
+    const implementProbe = path.join(".hoyeon", "implement", "__doctor-probe__", "state.json");
+    if (gitIgnored(projectRoot, prdProbe)) {
+      add("warn", "gitignore", ".hoyeon/prd/** is ignored; PRD source files should be trackable");
+    } else {
+      add("ok", "gitignore", ".hoyeon/prd/** is trackable");
+    }
+    if (gitIgnored(projectRoot, PROJECT_CONFIG_PATH)) {
+      add("warn", "gitignore", `${PROJECT_CONFIG_PATH} is ignored; prd-setup project configuration should be trackable`);
+    } else {
+      add("ok", "gitignore", `${PROJECT_CONFIG_PATH} is trackable`);
+    }
+    if (gitIgnored(projectRoot, implementProbe)) {
+      add("ok", "gitignore", ".hoyeon/implement/** is ignored");
+    } else {
+      add("warn", "gitignore", ".hoyeon/implement/** is not ignored; implementation state and evidence should stay out of normal commits");
+    }
   }
 
   const ghVersion = childProcess.spawnSync("gh", ["--version"], { shell: false, encoding: "utf8" });

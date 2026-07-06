@@ -3,8 +3,9 @@ name: prd-setup
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
   "$prd-setup", asks to enable or change PR delivery mode, configure
-  worktree/secrets sync for prd-implement, inspect the current PRD pipeline
-  settings, or diagnose why prd-implement/prd-ship delivery is not working.
+  worktree/secrets sync for prd-implement, configure .hoyeon gitignore
+  policy, inspect the current PRD pipeline settings, or diagnose why
+  prd-implement/prd-ship delivery is not working.
 ---
 
 # prd-setup
@@ -12,7 +13,11 @@ description: |
 Use this skill to inspect or configure how the PRD pipeline
 (`prd-implement` and `prd-ship`) behaves in the current repository.
 
-This skill owns exactly one file: `.hoyeon/config.json`.
+This skill owns project setup files only:
+
+- `.hoyeon/config.json`
+- `.gitignore` entries that control which `.hoyeon` artifacts are tracked
+
 It never touches PRDs, implementation state, or delivery branches.
 Match the user's language by default.
 
@@ -34,8 +39,8 @@ and stop.
 
 ## Configure
 
-When the user wants to change settings, interview briefly with defaults and
-write `.hoyeon/config.json`:
+When the user wants to change settings, interview briefly with defaults, write
+`.hoyeon/config.json`, and keep `.gitignore` aligned:
 
 1. Delivery mode: `local` (default) or `pr`.
    Remind the user that `pr` means prd-implement runs end into `prd-ship`
@@ -51,6 +56,24 @@ write `.hoyeon/config.json`:
      (for example `pnpm install`).
    Warn that dev servers in two checkouts share ports and linked local DBs.
 4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
+5. `.hoyeon` tracking policy:
+   - PRD source files are trackable: `.hoyeon/prd/**`.
+   - Pipeline config is trackable: `.hoyeon/config.json`.
+   - Everything else under `.hoyeon/` is ignored by default, especially
+     `.hoyeon/implement/**`.
+
+Recommended `.gitignore` block:
+
+```gitignore
+# PRD pipeline artifacts
+.hoyeon/*
+!.hoyeon/config.json
+!.hoyeon/prd/
+!.hoyeon/prd/**
+```
+
+If `.gitignore` already has `.hoyeon` rules, merge with the existing block
+instead of adding contradictory duplicates.
 
 Reference shape:
 
@@ -77,9 +100,10 @@ Commit the config change like normal project work.
 
 ## Validate
 
-After writing the file, rerun `doctor` and resolve every `error` before
-finishing. Report remaining `warn` items to the user with a one-line judgment
-each (fix now, fix later, or intentional).
+After writing setup files, rerun `doctor` and resolve every `error` before
+finishing. Resolve gitignore warnings unless the user explicitly wants a
+different tracking policy. Report remaining `warn` items to the user with a
+one-line judgment each (fix now, fix later, or intentional).
 
 ## Hard Stops
 

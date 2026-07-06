@@ -179,6 +179,23 @@ test("worktree init overwrites main active pointer and writes main session activ
   assert.equal(fs.existsSync(sessionFile), false);
 });
 
+test("doctor recognizes PRD-trackable and implement-ignored gitignore policy", () => {
+  const projectRoot = initGitRepo();
+  write(path.join(projectRoot, ".gitignore"), [
+    "# PRD pipeline artifacts",
+    ".hoyeon/*",
+    "!.hoyeon/config.json",
+    "!.hoyeon/prd/",
+    "!.hoyeon/prd/**",
+    "",
+  ].join("\n"));
+  const doctor = runJson(["doctor"], projectRoot);
+  const gitignoreChecks = doctor.checks.filter(item => item.id === "gitignore");
+  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === ".hoyeon/prd/** is trackable"));
+  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === ".hoyeon/config.json is trackable"));
+  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === ".hoyeon/implement/** is ignored"));
+});
+
 test("init refuses an existing target worktree owned by another checkout", () => {
   const ownerRoot = initGitRepo();
   const targetParent = fs.mkdtempSync(path.join(os.tmpdir(), "foreign-worktree-target-"));
