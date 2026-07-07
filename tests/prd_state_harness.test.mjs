@@ -14,6 +14,7 @@ function run(command, args, options = {}) {
     shell: false,
     encoding: "utf8",
     input: options.input,
+    env: options.env,
     maxBuffer: 20 * 1024 * 1024,
   });
   if (!options.allowFailure && result.status !== 0) {
@@ -144,7 +145,36 @@ ${extra}
   return file;
 }
 
-test("worktree init overwrites main active pointer and writes main session active file", () => {
+test("an unbound pointer is claimed by the first hook session and isolated from others", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "bootstrap");
+  // Init without any session id (env stripped) leaves the pointer unbound.
+  const noSessionEnv = { ...process.env };
+  delete noSessionEnv.CODEX_SESSION_ID;
+  delete noSessionEnv.CODEX_THREAD_ID;
+  run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env: noSessionEnv });
+  const before = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", ".prd-implement-active.json"), "utf8"));
+  assert.equal(before.activeSessionId, null);
+  runJson(["plan-execution"], root);
+
+  // First hook with a session id claims the unbound run and binds it.
+  const claim = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "boot-s" }),
+  });
+  assert.match(JSON.parse(claim.stdout).reason, /prd-implement-continuation/);
+  const bound = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", "bootstrap", "state.json"), "utf8"));
+  assert.equal(bound.activeSessionId, "codex:boot-s");
+
+  // A different session must not pick up the now-bound run.
+  const foreign = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "other-s" }),
+  });
+  assert.equal(foreign.stdout.trim(), "");
+});
+
+test("worktree init overwrites the main active pointer bound to the session", () => {
   const projectRoot = initGitRepo();
   write(path.join(projectRoot, ".hoyeon", "config.json"), JSON.stringify({
     delivery: { mode: "pr", branchPrefix: "prd/" },
@@ -168,15 +198,9 @@ test("worktree init overwrites main active pointer and writes main session activ
   assert.match(active.statePath, /worktrees/);
   assert.equal(active.activeSessionId, "codex:new-session");
 
-  const sessionFile = path.join(projectRoot, ".hoyeon", "implement", ".prd-implement-sessions", "codex%3Anew-session.json");
-  assert.equal(fs.existsSync(sessionFile), true);
-  const sessionActive = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
-  assert.equal(sessionActive.statePath, active.statePath);
-
   const cleanup = runJson(["cleanup-active", "--state", active.statePath], projectRoot);
   assert.equal(cleanup.ok, true);
   assert.equal(fs.existsSync(path.join(projectRoot, ".hoyeon", "implement", ".prd-implement-active.json")), false);
-  assert.equal(fs.existsSync(sessionFile), false);
 });
 
 test("doctor recognizes PRD-trackable and implement-ignored gitignore policy", () => {

@@ -79,7 +79,6 @@ Harness-managed state and derived views:
 .hoyeon/implement/<topic-slug>/receipt.json
 .hoyeon/implement/<topic-slug>/implementation-result.md
 .hoyeon/implement/.prd-implement-active.json
-.hoyeon/implement/.prd-implement-sessions/<encoded-session-id>.json
 ```
 
 Agent-created run notes, review reports, and evidence artifacts:
@@ -248,14 +247,12 @@ checkout, so relative paths are a trap:
 `init` refuses to overwrite an existing `state.json` without `--force`.
 If the worktree already holds implementation state, `init` from the main checkout resumes that
 run instead of resetting it; pass `--force` only when the user wants a clean restart.
-In worktree mode, `init` also writes active pointers and session-scoped active
-files at the main checkout root so statusline and hooks can find the run from
-either checkout.
-The latest legacy pointer is informational; session-scoped files are the
-authority when a hook payload includes a session id.
-Do not run two active PRD implementations from one checkout unless each has a
-distinct session id and all commands use the correct worktree or explicit
-`--state`.
+Each checkout has one active pointer (`.prd-implement-active.json`). In worktree
+mode, `init` also writes it at the main checkout root so statusline and hooks can
+find the run from either checkout. The pointer records the bound session id when
+known; an unbound pointer is claimed by the first hook that carries a session id.
+Run at most one active PRD implementation per checkout; for parallel runs use a
+worktree, which gets its own pointer, or pass an explicit `--state`.
 
 The harness extracts PRD-level tasks, acceptance criteria, verification items,
 test modes, and structure locks into durable state. It supports:
@@ -662,8 +659,7 @@ If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not call
 Run `$prd-ship` after `finalize --status complete` and keep the goal open until
 the PR exists and required CI passes or the delivery handoff is explicitly
 blocked.
-After PR creation, `prd-ship` cleans the matching active pointer and
-session-scoped active files.
+After PR creation, `prd-ship` cleans the matching active pointer.
 For local-only runs or manual cleanup, use:
 
 ```sh

@@ -9,7 +9,6 @@ const childProcess = require("child_process");
 
 const SCHEMA = "hoyeon.prd-implement.state.v1";
 const ACTIVE_PATH = path.join(".hoyeon", "implement", ".prd-implement-active.json");
-const ACTIVE_SESSIONS_DIR = path.join(".hoyeon", "implement", ".prd-implement-sessions");
 const PROJECT_CONFIG_PATH = path.join(".hoyeon", "config.json");
 const DEFAULT_HOOK_TIMEOUT_MS = 9000;
 
@@ -702,7 +701,6 @@ function worktreeSnapshot(state) {
   const excludedPrefixes = [
     normalizeRelPath(state.runDir || ""),
     normalizeRelPath(ACTIVE_PATH),
-    normalizeRelPath(ACTIVE_SESSIONS_DIR),
   ].filter(Boolean);
   const entries = [];
   for (const raw of status.stdout.split("\0")) {
@@ -3088,20 +3086,6 @@ function activePath(baseDir = cwd()) {
   return path.join(baseDir, ACTIVE_PATH);
 }
 
-function activeSessionsDir(baseDir = cwd()) {
-  return path.join(baseDir, ACTIVE_SESSIONS_DIR);
-}
-
-function sessionActivePath(baseDir = cwd(), sessionId) {
-  const normalized = normalizeCodexSessionId(sessionId);
-  if (!normalized) throw new Error("session id is required for session active path");
-  return path.join(activeSessionsDir(baseDir), `${encodeSessionPathSegment(normalized)}.json`);
-}
-
-function encodeSessionPathSegment(value) {
-  return encodeURIComponent(value).replace(/\./g, "%2E");
-}
-
 function normalizeCodexSessionId(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -3122,19 +3106,19 @@ function readActiveFile(file) {
   return { file, active };
 }
 
+// A single active pointer per checkout (`.prd-implement-active.json`). Without a
+// session id, return it as-is (statusline, prd-ship). With one, an unbound
+// pointer is claimable (first-hook bootstrap) and a pointer bound to this session
+// matches; a pointer bound to a different session is not this session's run.
+// Concurrent runs in one checkout are not supported by design; use a worktree,
+// which gets its own pointer.
 function readActive(baseDir = cwd(), options = {}) {
+  const active = readActiveFile(activePath(baseDir));
+  if (!active) return null;
   const sessionId = normalizeCodexSessionId(options.sessionId);
-  if (sessionId) {
-    const sessionActive = readActiveFile(sessionActivePath(baseDir, sessionId));
-    if (sessionActive && (!sessionActive.active.activeSessionId || sessionActive.active.activeSessionId === sessionId)) {
-      return sessionActive;
-    }
-    const legacy = readActiveFile(activePath(baseDir));
-    if (legacy && legacy.active.activeSessionId === sessionId) return legacy;
-    if (legacy && !legacy.active.activeSessionId && options.allowUnboundLegacy === true) return legacy;
-    return null;
-  }
-  return readActiveFile(activePath(baseDir));
+  if (!sessionId) return active;
+  if (!active.active.activeSessionId || active.active.activeSessionId === sessionId) return active;
+  return null;
 }
 
 function gitWorktreeRoots(projectRoot) {
@@ -3168,7 +3152,6 @@ function activeRootsForState(state) {
 function writeActiveRecord(baseDir, statePath, state) {
   const record = activeRecordForState(statePath, state, baseDir);
   writeJson(activePath(baseDir), record);
-  if (state.activeSessionId) writeSessionActive(baseDir, state.activeSessionId, record);
   return record;
 }
 
@@ -3180,69 +3163,29 @@ function activeRecordStatePath(active, baseDir) {
 function removeActiveRecordForState(baseDir, statePath) {
   const removed = [];
   const target = canonicalPath(statePath);
-  const legacyPath = activePath(baseDir);
-  const legacy = readActiveFile(legacyPath);
-  if (legacy && activeRecordStatePath(legacy.active, baseDir) === target) {
-    fs.rmSync(legacyPath, { force: true });
-    removed.push(legacyPath);
-  }
-  const sessionsDir = activeSessionsDir(baseDir);
-  if (fs.existsSync(sessionsDir)) {
-    for (const entry of fs.readdirSync(sessionsDir)) {
-      if (!entry.endsWith(".json")) continue;
-      const file = path.join(sessionsDir, entry);
-      const active = readActiveFile(file);
-      if (active && activeRecordStatePath(active.active, baseDir) === target) {
-        fs.rmSync(file, { force: true });
-        removed.push(file);
-      }
-    }
+  const pointerPath = activePath(baseDir);
+  const pointer = readActiveFile(pointerPath);
+  if (pointer && activeRecordStatePath(pointer.active, baseDir) === target) {
+    fs.rmSync(pointerPath, { force: true });
+    removed.push(pointerPath);
   }
   return removed;
 }
 
 function activeDiagnostics(baseDir, selectedStatePath) {
   const selected = canonicalPath(selectedStatePath);
-  const legacy = readActiveFile(activePath(baseDir));
-  const sessions = [];
+  const pointer = readActiveFile(activePath(baseDir));
   const warnings = [];
-  const sessionsDir = activeSessionsDir(baseDir);
-  if (fs.existsSync(sessionsDir)) {
-    for (const entry of fs.readdirSync(sessionsDir)) {
-      if (!entry.endsWith(".json")) continue;
-      const file = path.join(sessionsDir, entry);
-      const active = readActiveFile(file);
-      if (!active) continue;
-      sessions.push({
-        file: toProjectRelative(file, baseDir),
-        statePath: active.active.statePath,
-        activeSessionId: active.active.activeSessionId || null,
-        status: active.active.status || null,
-        updatedAt: active.active.updatedAt || null,
-        selected: activeRecordStatePath(active.active, baseDir) === selected,
-      });
-    }
-  }
-  sessions.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
-  if (legacy) {
-    const legacySelected = activeRecordStatePath(legacy.active, baseDir) === selected;
-    const newerDifferent = sessions.find(item => !item.selected && item.updatedAt && legacy.active.updatedAt && item.updatedAt > legacy.active.updatedAt);
-    if (!legacySelected) warnings.push("Legacy active pointer does not match the selected state");
-    if (newerDifferent) warnings.push(`A newer session active file points at another state: ${newerDifferent.statePath}`);
-  }
-  return {
-    baseDir,
-    legacy: legacy ? {
-      file: toProjectRelative(legacy.file, baseDir),
-      statePath: legacy.active.statePath,
-      activeSessionId: legacy.active.activeSessionId || null,
-      status: legacy.active.status || null,
-      updatedAt: legacy.active.updatedAt || null,
-      selected: activeRecordStatePath(legacy.active, baseDir) === selected,
-    } : null,
-    sessions,
-    warnings,
-  };
+  const info = pointer ? {
+    file: toProjectRelative(pointer.file, baseDir),
+    statePath: pointer.active.statePath,
+    activeSessionId: pointer.active.activeSessionId || null,
+    status: pointer.active.status || null,
+    updatedAt: pointer.active.updatedAt || null,
+    selected: activeRecordStatePath(pointer.active, baseDir) === selected,
+  } : null;
+  if (info && !info.selected) warnings.push("Active pointer does not match the selected state");
+  return { baseDir, pointer: info, warnings };
 }
 
 function prdCopyDriftWarnings(state) {
@@ -3323,7 +3266,6 @@ function cmdInit(options) {
       updatedAt: nowIso(),
     };
     writeJson(activePath(projectRoot), pointerRecord);
-    if (initialSessionId) writeSessionActive(projectRoot, initialSessionId, pointerRecord);
     process.stdout.write(JSON.stringify({
       ok: true,
       delivery: deliveryConfig,
@@ -4705,15 +4647,6 @@ function activeRecordMatchesState(active, statePath, baseDir) {
   return canonicalPath(resolveProjectPath(active.statePath, baseDir)) === canonicalPath(statePath);
 }
 
-function writeSessionActive(projectRoot, sessionId, record) {
-  const normalized = normalizeCodexSessionId(sessionId);
-  if (!normalized) return;
-  writeJson(sessionActivePath(projectRoot, normalized), {
-    ...record,
-    activeSessionId: normalized,
-  });
-}
-
 function syncActive(statePath, state) {
   for (const root of activeRootsForState(state)) {
     writeActiveRecord(root, statePath, state);
@@ -5367,7 +5300,7 @@ function runStopHook(payload, started) {
   const hookCwd = typeof payload.cwd === "string" ? payload.cwd : cwd();
   const sessionId = sessionIdFromHookPayload(payload);
   if (!sessionId) return "";
-  const active = readActive(hookCwd, { sessionId, allowUnboundLegacy: true });
+  const active = readActive(hookCwd, { sessionId });
   if (!active) return "";
   const statePath = resolveProjectPath(active.active.statePath, hookCwd);
   if (!fs.existsSync(statePath)) return "";
@@ -5449,7 +5382,7 @@ function runPreToolUseHook(payload) {
   const hookCwd = typeof payload.cwd === "string" ? payload.cwd : cwd();
   const sessionId = sessionIdFromHookPayload(payload);
   if (!sessionId) return "";
-  const active = readActive(hookCwd, { sessionId, allowUnboundLegacy: true });
+  const active = readActive(hookCwd, { sessionId });
   if (!active) return "";
   const statePath = resolveProjectPath(active.active.statePath, hookCwd);
   if (!fs.existsSync(statePath)) return "";
