@@ -5135,6 +5135,8 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
+Keep the section headings and the Coverage Judgment label keys exactly as written below; they are machine-checked structural markers. Write all prose, findings, and values in the user's language.
+
 Use this format:
 
 # Requirements Fidelity Review
@@ -5149,7 +5151,7 @@ Status: PASS | FAIL
 
 - <user decision or proposal>: represented by <R/AC/T/V/non-goal/evidence> | gap: <none or issue>
 
-Include at least ${Math.max(1, intentTrace.decisionCount || 0)} concrete Decision Trace bullet(s). Do not collapse accepted, rejected, deferred, or open decisions into a generic statement.
+Include at least ${Math.min(Math.max(1, intentTrace.decisionCount || 0), 3)} Decision Trace entr${Math.min(Math.max(1, intentTrace.decisionCount || 0), 3) === 1 ? "y" : "ies"} as bullets or a markdown table. Do not collapse accepted, rejected, deferred, or open decisions into a generic statement.
 
 ## Findings
 
@@ -5236,6 +5238,8 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
+Keep the section headings exactly as written below; they are machine-checked structural markers. Write all prose in the user's language.
+
 Use this format:
 
 # Final Adversarial Review
@@ -5258,7 +5262,7 @@ Status: PASS | FAIL
 
 - Tasks:
 - Acceptance Criteria:
-- Verification: <reference every required V#; say whether it is accepted from the fidelity checklist or reopened here due to a specific concern>
+- Verification: <summarize verification coverage and defer to the fidelity review's per-V# checklist; reopen a specific V# only when you disagree with or distrust it. Do not re-list every V# from scratch.>
 - Execution Plan:
 - Task Graph:
 

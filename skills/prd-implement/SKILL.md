@@ -507,6 +507,13 @@ any gap. A passing review must fail if a required `V#` is missing, has no
 registered artifact path, or the artifact does not actually prove the covered
 requirement or acceptance criterion.
 
+The review report's section headings and the `Coverage Judgment` label keys are
+fixed structural markers that the harness checks; keep them exactly as the
+generated prompt writes them. Write the prose, findings, and values in the
+user's language. This matches the skill's language default without breaking the
+mechanical schema check. The `Decision Trace` may be bullets or a markdown
+table.
+
 Write:
 
 ```text
