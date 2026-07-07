@@ -611,6 +611,62 @@ test("review profile is config-driven with CLI override precedence", () => {
   assert.equal(status2.reviewProfile.source, "explicit");
 });
 
+test("commit-only source change makes a recorded review stale", () => {
+  const root = initGitRepo();
+  const { logPath, reviewPath } = driveToFidelity(root, "commit-stale", "cs-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
+  // Move HEAD with an empty commit; the working tree stays clean of source changes,
+  // so only the HEAD sha differs. Pre-fix this went undetected.
+  run("git", ["commit", "--allow-empty", "-m", "move head"], { cwd: root });
+  const fin = runJson(["finalize", "--status", "complete", "--summary", "done"], root, { allowFailure: true });
+  assert.equal(fin.ok, false);
+  assert(fin.violations.some(v => /stale/i.test(v)), JSON.stringify(fin.violations));
+});
+
+test("fidelity Decision Trace accepts a table trace instead of bullets", () => {
+  const root = initGitRepo();
+  const { logPath, reviewPath } = driveToFidelity(root, "table-trace", "tt-session");
+  // Decision Trace expressed as a markdown table (no bullets). Previously the
+  // bullet-only count would reject this.
+  write(reviewPath, `# Requirements Fidelity Review
+
+Status: PASS
+
+## Intent Sources Read
+
+- .hoyeon/prd/table-trace/prd.md
+
+## Decision Trace
+
+| Decision | Represented by | Gap |
+| --- | --- | --- |
+| User approved the test scope | R1, AC1, T1, V1 | none |
+
+## Findings
+
+- none: no material findings
+
+## Verification Intent Checklist
+
+- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
+
+## Coverage Judgment
+
+- Requirements: covered by V1.
+- Acceptance Criteria: AC1 is met.
+- User-visible behavior: no user-visible behavior.
+- Non-goals and rejected options: none reintroduced.
+- Human verification: none required.
+
+## Verdict
+
+PASS.
+`);
+  const rec = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
+  assert.equal(rec.ok, true);
+});
+
 test("not-watched PR delivery ship log keeps hook delivery guard active", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "pr-not-watched");

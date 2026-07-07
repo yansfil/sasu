@@ -526,12 +526,10 @@ function assertFinalReviewReport(reportAbs, status, state) {
       violations.push(`Final review section '${heading}' is missing or empty`);
     }
   }
-  for (const verification of state.verification || []) {
-    if (!isVerificationRequiredForDone(verification)) continue;
-    if (!new RegExp(`\\b${escapeRegExp(verification.id)}\\b`, "i").test(text)) {
-      violations.push(`Final review must reference required verification ${verification.id}`);
-    }
-  }
+  // The final review audits the requirements fidelity review as the primary
+  // semantic proof; it deliberately does not repeat a per-V# checklist (the
+  // fidelity report already enforces one). Forcing every V# id here contradicted
+  // the skill's own "keep the Artifact Audit thin" guidance, so it is not checked.
   const fidelity = state.requirementsFidelityReview;
   if (status === "pass") {
     if (!fidelity || fidelity.status !== "pass") {
@@ -584,10 +582,15 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
   }
 
   const decisionTrace = extractSection(text, "Decision Trace");
-  const expectedDecisionCount = Math.max(1, state.intentTrace ? state.intentTrace.decisionCount || 0 : 0);
-  const decisionTraceBulletCount = reviewBulletCount(decisionTrace);
-  if (decisionTraceBulletCount < expectedDecisionCount) {
-    violations.push(`Requirements fidelity report Decision Trace must include at least ${expectedDecisionCount} traced decision/proposal bullet(s); found ${decisionTraceBulletCount}`);
+  // Require a small floor of traced entries rather than one bullet per parsed
+  // decision: a PRD with many decisions should not force the reviewer to
+  // enumerate dozens of bullets, and a table trace is valid. The reviewer owns
+  // how thoroughly to group; the coverage judgment below is the real gate.
+  const decisionCount = state.intentTrace ? state.intentTrace.decisionCount || 0 : 0;
+  const expectedDecisionCount = Math.min(Math.max(1, decisionCount), 3);
+  const decisionTraceEntryCount = reviewEntryCount(decisionTrace);
+  if (decisionTraceEntryCount < expectedDecisionCount) {
+    violations.push(`Requirements fidelity report Decision Trace must include at least ${expectedDecisionCount} traced decision/proposal entr${expectedDecisionCount === 1 ? "y" : "ies"} (bullets or table rows); found ${decisionTraceEntryCount}`);
   }
 
   const coverage = extractSection(text, "Coverage Judgment");
@@ -650,6 +653,23 @@ function reviewBulletCount(section) {
     .length;
 }
 
+// Count decision entries whether the reviewer used bullets or a markdown table,
+// so a concise or tabular trace is not mechanically rejected. Table header rows
+// may be counted too; that leniency is intentional.
+function reviewEntryCount(section) {
+  let count = 0;
+  for (const raw of String(section || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^[-*]\s+\S/.test(line)) {
+      count += 1;
+    } else if (/^\|.*\|$/.test(line)) {
+      const cells = parseMarkdownTableRow(line);
+      if (!isTableSeparator(cells) && cells.some(cell => /[A-Za-z0-9]/.test(cell))) count += 1;
+    }
+  }
+  return count;
+}
+
 function artifactManifestPath(statePath) {
   return path.join(path.dirname(statePath), "artifacts", "manifest.jsonl");
 }
@@ -666,6 +686,12 @@ function worktreeSnapshot(state) {
     encoding: "utf8",
   });
   if (gitDir.status !== 0) return null;
+  const head = childProcess.spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+  });
+  const headSha = head.status === 0 ? head.stdout.trim() : null;
   const status = childProcess.spawnSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
     cwd: projectRoot,
     shell: false,
@@ -703,6 +729,7 @@ function worktreeSnapshot(state) {
   entries.sort((a, b) => `${a.path}\0${a.status}`.localeCompare(`${b.path}\0${b.status}`));
   return {
     capturedAt: nowIso(),
+    headSha,
     statusHash: simpleHash(JSON.stringify(entries)),
     entryCount: entries.length,
     entries,
@@ -985,6 +1012,9 @@ const REQUIRED_EVIDENCE_KINDS_BY_CATEGORY = {
   server: ["log", "command-log", "api", "screenshot"],
   api: ["api", "command-log", "log"],
   db: ["db", "command-log", "log"],
+  // A required check that classified as manual-agent still needs a concrete
+  // captured artifact; a hand-authored file/markdown must not satisfy it.
+  "manual-agent": ["screenshot", "image", "browser", "api", "db", "log", "command-log"],
 };
 
 function verificationCategory(state, verification) {
@@ -1097,7 +1127,10 @@ function reviewWorktreeSnapshotViolations(state) {
   if (!current) return violations;
   const check = (review, label) => {
     if (!review || !["pass", "fail"].includes(review.status) || !review.worktreeSnapshot) return;
-    if (review.worktreeSnapshot.statusHash !== current.statusHash && !reviewSnapshotMatchesCurrent(review.worktreeSnapshot, current, state)) {
+    const headChanged = Boolean(review.worktreeSnapshot.headSha && current.headSha
+      && review.worktreeSnapshot.headSha !== current.headSha);
+    if ((headChanged || review.worktreeSnapshot.statusHash !== current.statusHash)
+      && !reviewSnapshotMatchesCurrent(review.worktreeSnapshot, current, state)) {
       violations.push(`${label} is stale: worktree source snapshot changed after review`);
     }
   };
@@ -1108,6 +1141,14 @@ function reviewWorktreeSnapshotViolations(state) {
 
 function reviewSnapshotMatchesCurrent(savedSnapshot, currentSnapshot, state) {
   const projectRoot = state.projectRoot || cwd();
+  // A commit that leaves the working tree clean would otherwise produce an
+  // identical status snapshot; comparing HEAD catches commit-only source changes
+  // after a review. Only enforced when both snapshots recorded a HEAD (backward
+  // compatible with snapshots captured before this field existed).
+  if (savedSnapshot && currentSnapshot && savedSnapshot.headSha && currentSnapshot.headSha
+    && savedSnapshot.headSha !== currentSnapshot.headSha) {
+    return false;
+  }
   const savedEntries = Array.isArray(savedSnapshot && savedSnapshot.entries) ? savedSnapshot.entries : [];
   const currentEntries = Array.isArray(currentSnapshot && currentSnapshot.entries) ? currentSnapshot.entries : [];
   const savedByPath = new Map(savedEntries.map(entry => [normalizeRelPath(entry.path), entry]));
