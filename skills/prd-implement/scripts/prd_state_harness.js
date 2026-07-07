@@ -2941,13 +2941,20 @@ function finalReviewRequiredForState(state) {
   return reviewProfileName(state) !== "trivial";
 }
 
-function classifyReviewProfile(input, explicitProfile) {
+function classifyReviewProfile(input, explicitProfile, configProfile) {
   const explicit = String(explicitProfile || "").trim();
   if (explicit) {
     if (!["trivial", "standard", "high-risk"].includes(explicit)) {
       throw new Error("--review-profile must be trivial, standard, or high-risk");
     }
     return { profile: explicit, source: "explicit", reason: "set by --review-profile" };
+  }
+  const configured = String(configProfile || "").trim().toLowerCase();
+  if (configured && configured !== "auto") {
+    if (!["trivial", "standard", "high-risk"].includes(configured)) {
+      throw new Error("config review.profile must be trivial, standard, high-risk, or auto");
+    }
+    return { profile: configured, source: "config", reason: "set by .hoyeon/config.json review.profile" };
   }
   const tasks = input.tasks || [];
   const acceptanceCriteria = input.acceptanceCriteria || [];
@@ -3345,7 +3352,7 @@ function cmdInit(options) {
     verification,
     technicalStructure,
     implementationNotes,
-  }, options["review-profile"]);
+  }, options["review-profile"], projectConfig.review ? projectConfig.review.profile : null);
 
   const state = {
     schema: SCHEMA,
@@ -3579,6 +3586,7 @@ function cmdDoctor() {
     "delivery.ci": new Set(["watch", "maxFixAttempts", "timeoutSeconds", "intervalSeconds"]),
     worktree: new Set(["enabled", "root", "path", "link", "copy", "setup"]),
     execution: new Set(["parallel"]),
+    review: new Set(["profile"]),
   };
   const flagUnknown = (section, value) => {
     if (!value || typeof value !== "object") return;
@@ -3593,6 +3601,7 @@ function cmdDoctor() {
   flagUnknown("delivery", projectConfig.delivery);
   flagUnknown("worktree", projectConfig.worktree);
   flagUnknown("execution", projectConfig.execution);
+  flagUnknown("review", projectConfig.review);
 
   const slug = latestPrdSlug(projectRoot) || "<topic-slug>";
   let delivery = null;
@@ -3604,6 +3613,14 @@ function cmdDoctor() {
   const prMode = Boolean(delivery && delivery.mode === "pr");
   const execution = normalizeExecutionConfig(projectConfig, {});
   add("ok", "execution", `Execution mode: ${execution.parallel ? "parallel opt-in enabled (execution.parallel)" : "sequential (default; set execution.parallel to enable parallel ready groups)"}`);
+  const reviewProfileConfig = projectConfig.review && projectConfig.review.profile
+    ? String(projectConfig.review.profile).toLowerCase()
+    : "auto";
+  if (!["auto", "trivial", "standard", "high-risk"].includes(reviewProfileConfig)) {
+    add("error", "review-profile", `config review.profile '${reviewProfileConfig}' is invalid; use trivial, standard, high-risk, or auto`);
+  } else {
+    add("ok", "review-profile", `Review profile: ${reviewProfileConfig === "auto" ? "auto-classified from the PRD (default)" : `forced to ${reviewProfileConfig} by config review.profile`}`);
+  }
 
   if (prMode && gitOk && !originUrl) {
     add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");

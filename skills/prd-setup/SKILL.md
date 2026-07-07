@@ -61,7 +61,11 @@ When the user wants to change settings, interview briefly with defaults, write
    Turn it on only when the user wants the coordinator to consider dispatching
    safe, disjoint execution nodes to subagents in parallel. Parallelism is a
    suggestion the coordinator still owns; the harness never auto-spawns workers.
-6. `.hoyeon` tracking policy:
+6. Review: `review.profile` (default `auto`). `auto` lets the harness classify
+   the run as trivial, standard, or high-risk from the PRD. Set it to a fixed
+   `trivial`, `standard`, or `high-risk` when the user wants a repo-wide default
+   review strictness. A per-run `--review-profile` still overrides config.
+7. `.hoyeon` tracking policy:
    - PRD source files are trackable: `.hoyeon/prd/**`.
    - Pipeline config is trackable: `.hoyeon/config.json`.
    - Everything else under `.hoyeon/` is ignored by default, especially
@@ -99,6 +103,9 @@ Reference shape:
   },
   "execution": {
     "parallel": false
+  },
+  "review": {
+    "profile": "auto"
   }
 }
 ```

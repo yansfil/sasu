@@ -591,6 +591,26 @@ test("parallel ready groups are config-gated and off by default", () => {
   assert.match(JSON.parse(stopB.stdout).reason, /- Ready parallel groups:/);
 });
 
+test("review profile is config-driven with CLI override precedence", () => {
+  // config review.profile forces the profile the PRD would not auto-classify to.
+  const root = initGitRepo();
+  write(path.join(root, ".hoyeon", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
+  const prd = writeApprovedPrd(root, "review-config");
+  runJson(["init", "--prd", prd, "--session-id", "rc"], root);
+  const status = runJson(["status"], root);
+  assert.equal(status.reviewProfile.profile, "high-risk");
+  assert.equal(status.reviewProfile.source, "config");
+
+  // A per-run --review-profile still overrides config.
+  const root2 = initGitRepo();
+  write(path.join(root2, ".hoyeon", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
+  const prd2 = writeApprovedPrd(root2, "review-cli");
+  runJson(["init", "--prd", prd2, "--review-profile", "trivial", "--session-id", "rc2"], root2);
+  const status2 = runJson(["status"], root2);
+  assert.equal(status2.reviewProfile.profile, "trivial");
+  assert.equal(status2.reviewProfile.source, "explicit");
+});
+
 test("not-watched PR delivery ship log keeps hook delivery guard active", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "pr-not-watched");
