@@ -419,7 +419,10 @@ Blocked or skipped required verification cannot produce a complete receipt.
 
 ## 8. Subagents And Reviews
 
-Parallelize only when safe and useful.
+Execution is sequential by default. Parallel dispatch is opt-in through
+`.hoyeon/config.json` `execution.parallel` (configure it with `$prd-setup`); when
+it is off, `ready` never emits parallel groups and you work one node at a time.
+Parallelize only when the config enables it and the work is safe and useful.
 
 - Run `ready` first.
 - Assign bounded nodes with exact file ownership or read-only scope.

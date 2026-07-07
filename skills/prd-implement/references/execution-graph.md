@@ -106,13 +106,19 @@ Contract marks `Required For Done` as `no` or `no/blockable`.
 
 The harness recommends ready nodes. It does not start work or spawn subagents.
 
+Execution is sequential by default. Parallel ready groups are computed and shown
+only when `.hoyeon/config.json` sets `execution.parallel: true` (configured via
+`$prd-setup`). With the default off, `ready` returns `readyParallelGroups: []`
+and the coordinator works one node at a time.
+
 Use:
 
 ```sh
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js ready
 ```
 
-A node can appear in a parallel group only when:
+When `execution.parallel` is enabled, a node can appear in a parallel group only
+when:
 
 - all dependencies are complete
 - `parallelSafe` is true

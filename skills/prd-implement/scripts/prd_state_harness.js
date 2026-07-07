@@ -307,6 +307,21 @@ function normalizeDeliveryConfig(projectRoot, options, projectConfig, slug) {
   };
 }
 
+// Execution behavior is sequential/atomic by default. Parallel ready-group
+// suggestions are opt-in through `.hoyeon/config.json` `execution.parallel` (or
+// `--parallel` at init), so a simple run never carries parallel scaffolding and
+// a user who wants it turns it on via prd-setup.
+function normalizeExecutionConfig(projectConfig, options) {
+  const input = projectConfig && typeof projectConfig.execution === "object" && projectConfig.execution
+    ? projectConfig.execution
+    : {};
+  const flag = options ? options.parallel : undefined;
+  const parallel = flag !== undefined
+    ? flag === true || String(flag).toLowerCase() === "true"
+    : Boolean(input.parallel);
+  return { schema: "hoyeon.execution.v1", parallel };
+}
+
 function syncPathForWorktree(sourceRoot, targetRoot, relPath, mode, results) {
   const source = path.join(sourceRoot, relPath);
   const target = path.join(targetRoot, relPath);
@@ -2124,6 +2139,7 @@ function readyExecutionPlan(state) {
     return {
       readySequential: [],
       readyParallelGroups: [],
+      parallelEnabled: Boolean(state.execution && state.execution.parallel),
       blocked: [{ id: "EP0", waitingFor: verificationPlanBlocksImplementation(state) ? ["VP0"] : ["plan-execution"] }],
       plan: planSummary,
     };
@@ -2143,9 +2159,11 @@ function readyExecutionPlan(state) {
     if (waitingFor.length) blocked.push({ id: node.id, waitingFor: Array.from(new Set(waitingFor)) });
     else ready.push(node);
   }
+  const parallelEnabled = Boolean(state.execution && state.execution.parallel);
   return {
     readySequential: ready.map(node => node.id),
-    readyParallelGroups: buildParallelGroups(ready),
+    readyParallelGroups: parallelEnabled ? buildParallelGroups(ready) : [],
+    parallelEnabled,
     blocked,
     plan: planSummary,
   };
@@ -3237,6 +3255,7 @@ function cmdInit(options) {
   const slug = slugFromPrdPath(prdAbs);
   const projectConfig = readProjectConfig(projectRoot);
   const deliveryConfig = normalizeDeliveryConfig(projectRoot, options, projectConfig, slug);
+  const executionConfig = normalizeExecutionConfig(projectConfig, options);
   const worktreePreparation = prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, approvalOverride, initialSessionId);
   if (worktreePreparation && worktreePreparation.active === false) {
     const pointerRunDir = path.join(".hoyeon", "implement", slug);
@@ -3370,6 +3389,7 @@ function cmdInit(options) {
       };
     })(),
     reviewProfile,
+    execution: executionConfig,
     intentTrace,
     technicalStructure,
     implementationNotes,
@@ -3558,6 +3578,7 @@ function cmdDoctor() {
     "delivery.staging": new Set(["include", "exclude"]),
     "delivery.ci": new Set(["watch", "maxFixAttempts", "timeoutSeconds", "intervalSeconds"]),
     worktree: new Set(["enabled", "root", "path", "link", "copy", "setup"]),
+    execution: new Set(["parallel"]),
   };
   const flagUnknown = (section, value) => {
     if (!value || typeof value !== "object") return;
@@ -3571,6 +3592,7 @@ function cmdDoctor() {
   };
   flagUnknown("delivery", projectConfig.delivery);
   flagUnknown("worktree", projectConfig.worktree);
+  flagUnknown("execution", projectConfig.execution);
 
   const slug = latestPrdSlug(projectRoot) || "<topic-slug>";
   let delivery = null;
@@ -3580,6 +3602,8 @@ function cmdDoctor() {
     add("error", "delivery-config", error.message);
   }
   const prMode = Boolean(delivery && delivery.mode === "pr");
+  const execution = normalizeExecutionConfig(projectConfig, {});
+  add("ok", "execution", `Execution mode: ${execution.parallel ? "parallel opt-in enabled (execution.parallel)" : "sequential (default; set execution.parallel to enable parallel ready groups)"}`);
 
   if (prMode && gitOk && !originUrl) {
     add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");
@@ -5455,7 +5479,7 @@ Drive the Next required item above to done, then record it with the matching har
 3. If the next item is \`VERIFICATION_PLAN VP0\`, read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-verification\` before implementation.
 4. If the next item is \`EXECUTION_PLAN EP0\`, run \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-execution\`, inspect \`ready\`, and use \`${state.runDir}/execution-plan.md\` as the work map.
 5. After \`plan-execution\` and before material code edits, the main agent performs the coverage check. Inspect PRD/state/plan/taskgraph paths for intent, ambiguity, coverage, TaskGraph, and structure-lock drift; record material findings in \`${state.runDir}/context-notes.md\`.
-6. Work on the next ready execution node only unless the ready output shows a safe disjoint parallel group and the coordinator explicitly assigns subagents.
+6. Work sequentially on the next ready execution node. Parallel execution is opt-in via config (\`execution.parallel\`); only when the State block shows a Ready parallel groups line may the coordinator assign a safe disjoint group to subagents.
 7. Use the PRD's Major Technical Structure Changes or documented structure lock. Stop for approval before material deviations.
 8. Register artifacts immediately after producing them. Do not leave files under \`${state.runDir}/artifacts\` unregistered; record valid artifacts with \`record-artifact\` before using them as evidence.
 9. After evidence exists, update state with:
@@ -5500,8 +5524,7 @@ You are continuing an active PRD implementation. Do not ask whether to continue.
 - Verification plan: ${verificationPlan.status} (${verificationPlan.checkCount} checks, ${verificationPlan.blockingGapCount} blocking gaps)
 - Execution plan: ${executionPlan.status} (${executionPlan.nodeCount} nodes, ${executionPlan.openNodeCount} open, ${executionPlan.blockingGapCount} blocking gaps)
 - Task graph: ${taskGraph.status} (${taskGraph.nodeCount} nodes, ${taskGraph.edgeCount} edges, ${taskGraph.openNodeCount} open)
-- Ready execution nodes: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}
-- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}
+- Ready execution nodes: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}${ready.parallelEnabled ? `\n- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}` : ""}
 - Blocked execution nodes: ${ready.blocked.length ? ready.blocked.map(item => `${item.id} waits for ${item.waitingFor.join(", ")}`).join("; ") : "none"}
 - Open execution nodes: ${counts.executionOpen}
 	- Open tasks: ${counts.tasksOpen}

@@ -559,6 +559,38 @@ test("structural parse gaps block the readiness gate on empty AC, orphan R#, and
   assert.equal((ok.blockingGaps || []).some(gap => structuralCodes.has(gap.code)), false, JSON.stringify(ok.blockingGaps));
 });
 
+test("parallel ready groups are config-gated and off by default", () => {
+  // Default: no config -> sequential; ready emits no parallel groups and the
+  // Stop directive omits the parallel line.
+  const rootA = initGitRepo();
+  const prdA = writeApprovedPrd(rootA, "seq-default");
+  runJson(["init", "--prd", prdA, "--review-profile", "trivial", "--session-id", "seq-s"], rootA);
+  runJson(["plan-execution"], rootA);
+  const readyA = runJson(["ready"], rootA);
+  assert.equal(readyA.ready.parallelEnabled, false);
+  assert.deepEqual(readyA.ready.readyParallelGroups, []);
+  const stopA = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: rootA,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: rootA, session_id: "seq-s" }),
+  });
+  assert.doesNotMatch(JSON.parse(stopA.stdout).reason, /- Ready parallel groups:/);
+
+  // Opt-in: execution.parallel true -> ready reports enabled and the directive
+  // surfaces the parallel line.
+  const rootB = initGitRepo();
+  write(path.join(rootB, ".hoyeon", "config.json"), JSON.stringify({ execution: { parallel: true } }, null, 2));
+  const prdB = writeApprovedPrd(rootB, "par-on");
+  runJson(["init", "--prd", prdB, "--review-profile", "trivial", "--session-id", "par-s"], rootB);
+  runJson(["plan-execution"], rootB);
+  const readyB = runJson(["ready"], rootB);
+  assert.equal(readyB.ready.parallelEnabled, true);
+  const stopB = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: rootB,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: rootB, session_id: "par-s" }),
+  });
+  assert.match(JSON.parse(stopB.stdout).reason, /- Ready parallel groups:/);
+});
+
 test("not-watched PR delivery ship log keeps hook delivery guard active", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "pr-not-watched");

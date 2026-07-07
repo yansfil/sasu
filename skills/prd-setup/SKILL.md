@@ -56,7 +56,12 @@ When the user wants to change settings, interview briefly with defaults, write
      (for example `pnpm install`).
    Warn that dev servers in two checkouts share ports and linked local DBs.
 4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
-5. `.hoyeon` tracking policy:
+5. Execution: `execution.parallel` (default false). Off means prd-implement works
+   nodes sequentially (simple, atomic) and never surfaces parallel ready groups.
+   Turn it on only when the user wants the coordinator to consider dispatching
+   safe, disjoint execution nodes to subagents in parallel. Parallelism is a
+   suggestion the coordinator still owns; the harness never auto-spawns workers.
+6. `.hoyeon` tracking policy:
    - PRD source files are trackable: `.hoyeon/prd/**`.
    - Pipeline config is trackable: `.hoyeon/config.json`.
    - Everything else under `.hoyeon/` is ignored by default, especially
@@ -91,6 +96,9 @@ Reference shape:
     "link": [".env"],
     "copy": [],
     "setup": ["pnpm install"]
+  },
+  "execution": {
+    "parallel": false
   }
 }
 ```
