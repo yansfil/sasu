@@ -391,6 +391,10 @@ function buildBodyDraft(context) {
     "",
     agentFill("State the user-visible or developer-visible outcome, what the reviewer can now confirm, and what is explicitly not included."),
     "",
+    "## Screenshots / Demo",
+    "",
+    agentFill("If this PR changes a visual UI, browser, mobile, desktop, chart, document, slide, or generated image surface, include inline Markdown images for the key current screenshots. Prefer `![Alt](https://github.com/user-attachments/assets/<id>)` or committed screenshot URLs like `![Alt](https://github.com/<owner>/<repo>/blob/<commit-or-branch>/<path>.png?raw=true)`. Do not use `raw.githubusercontent.com` image URLs for private repos. If no visual surface changed, write `N/A - no visual surface changed`."),
+    "",
     "## Human Review Focus",
     "",
     agentFill("Separate what the recorded evidence already proves from what still needs reviewer judgment: product interpretation, UX/copy, risky files or flows, data/auth/security, deployment or rollback, and specific reviewer questions."),
@@ -449,6 +453,9 @@ function validateBodyText(text, bodyPath) {
   }
   if (!/receipt/i.test(text)) {
     problems.push("body does not reference the implementation receipt");
+  }
+  if (/!\[[^\]]*\]\(\s*https:\/\/raw\.githubusercontent\.com\//i.test(text)) {
+    problems.push("body embeds raw.githubusercontent.com images; use GitHub user-attachments or github.com/<owner>/<repo>/blob/<commit-or-branch>/<path>?raw=true so private repo screenshots render for reviewers");
   }
   if (problems.length) {
     throw new Error(`PR body at ${bodyPath} is not ready:\n- ${problems.join("\n- ")}`);

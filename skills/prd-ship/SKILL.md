@@ -207,6 +207,23 @@ Include:
 - requirements fidelity and final review verdicts.
 - deviations or remaining human review.
 
+For visual PRs, include reviewer-visible screenshots in `Screenshots / Demo`.
+Prefer inline Markdown images, not only text links.
+Use one of these forms:
+
+- Best: `![Alt](https://github.com/user-attachments/assets/<id>)` after pasting or uploading images to the PR body.
+- Good for committed screenshots: `![Alt](https://github.com/<owner>/<repo>/blob/<commit-or-branch>/<path>.png?raw=true)`.
+
+For private repositories, do not use `raw.githubusercontent.com` image URLs in
+the PR body.
+They often render as 404 for reviewers because they are unauthenticated.
+Do not paste GitHub API `download_url` values either; they can contain
+temporary tokens that expire or leak credential-bearing URLs.
+If inline rendering is not possible, use commit-pinned `blob/<sha>/<path>` links
+and explicitly say that they are screenshot links.
+After opening or updating the PR, inspect the `Screenshots / Demo` section and
+confirm key images render inline.
+
 Never add AI agent, model, vendor, or tool attribution.
 The script rejects common attribution patterns, but that check is a backstop, not the rule.
 
