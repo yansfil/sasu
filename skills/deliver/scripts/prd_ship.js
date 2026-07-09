@@ -8,9 +8,10 @@ const childProcess = require("child_process");
 
 const ACTIVE_PATH = path.join(".hoyeon", "implement", ".prd-implement-active.json");
 
-// Resolve the sibling prd-implement harness relative to this script so the
-// same file works from the repo, ~/.codex/skills (legacy dir names), and
-// ~/.claude/skills (butler dir names, fulfill).
+// Resolve the sibling fulfill harness relative to this script so the same
+// file works from the repo, ~/.codex/skills, and ~/.claude/skills. The
+// pre-rename legacy directory name (prd-implement) is kept as a fallback for
+// stale installs.
 function defaultHarnessPath() {
   const selfPath = path.resolve(process.argv[1] || __filename);
   const roots = [path.dirname(path.dirname(path.dirname(selfPath)))];
@@ -20,12 +21,12 @@ function defaultHarnessPath() {
     // Keep the argv-based root only.
   }
   for (const root of roots) {
-    for (const dir of ["prd-implement", "fulfill"]) {
+    for (const dir of ["fulfill", "prd-implement"]) {
       const candidate = path.join(root, dir, "scripts", "prd_state_harness.js");
       if (fs.existsSync(candidate)) return candidate;
     }
   }
-  return path.join(roots[0], "prd-implement", "scripts", "prd_state_harness.js");
+  return path.join(roots[0], "fulfill", "scripts", "prd_state_harness.js");
 }
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [

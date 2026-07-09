@@ -2,22 +2,24 @@
 
 // Installs the PRD workflow skills for both runtimes from this repository.
 //
-// - Codex   (~/.codex/skills):  legacy directory names (intake, prd, ...),
-//   SKILL.md copied verbatim. Codex resolves the skill name from frontmatter,
-//   so `$listen` etc. work with legacy directories.
-// - Claude  (~/.claude/skills): butler directory names (listen, promise, ...),
-//   because Claude Code derives the `/command` name from the directory.
-//   SKILL.md is copied with path and invocation substitutions so the text
-//   references the Claude install locations and `/name` invocations.
+// Both runtimes install under the butler directory names (listen, promise,
+// fulfill, pantry, deliver, please):
+//
+// - Codex   (~/.codex/skills/<name>/):  SKILL.md copied verbatim.
+// - Claude  (~/.claude/skills/<name>/): SKILL.md copied with substitutions
+//   (`~/.codex/skills/` becomes `~/.claude/skills/`, `$name` invocations
+//   become `/name`), because Claude Code derives the `/command` from the
+//   directory and renders the Codex invocation syntax meaningless.
 //
 // SKILL.md is always a real file (Codex skill loading can omit symlinked
 // SKILL.md files; Claude copies are substituted). Auxiliary entries such as
 // `scripts` and `references` are symlinked back to this repository so both
 // installs share one implementation.
 //
-// The installer also registers the harness Stop hook for Claude Code in
-// ~/.claude/settings.json and the Stop/PreToolUse hooks for Codex in
-// ~/.codex/hooks.json, idempotently.
+// The installer also registers the harness hooks idempotently
+// (~/.codex/hooks.json: Stop/PreToolUse/SubagentStop; ~/.claude/settings.json:
+// Stop only, since Claude Code has no update_goal tool) and removes legacy
+// pre-rename install directories it owns (intake, prd, prd-implement, ...).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -27,16 +29,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-// dir: repo + Codex install directory (legacy name). name: butler skill name,
-// used as the Claude install directory and the invocation token.
-const SKILLS = [
-  { dir: "intake", name: "listen" },
-  { dir: "prd", name: "promise" },
-  { dir: "prd-implement", name: "fulfill" },
-  { dir: "prd-setup", name: "pantry" },
-  { dir: "prd-ship", name: "deliver" },
-  { dir: "please", name: "please" },
-];
+const SKILL_NAMES = ["listen", "promise", "fulfill", "pantry", "deliver", "please"];
+
+// Pre-rename install directories that this pipeline used to own.
+const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship"];
 
 // Codex-only auxiliary entries that make no sense in the Claude install.
 const CODEX_ONLY_ENTRIES = new Set(["agents"]);
@@ -44,42 +40,18 @@ const CODEX_ONLY_ENTRIES = new Set(["agents"]);
 const TARGETS = {
   codex: {
     root: path.join(home, ".codex", "skills"),
-    installDir: skill => skill.dir,
     transformSkillMd: text => text,
   },
   claude: {
     root: path.join(home, ".claude", "skills"),
-    installDir: skill => skill.name,
     transformSkillMd: text => substituteForClaude(text),
   },
 };
 
 function substituteForClaude(text) {
-  let out = text;
-  // Path references: ~/.codex/skills/<legacy-dir>/ -> ~/.claude/skills/<butler>/
-  // Trailing slash keeps `prd/` distinct from `prd-implement/`.
-  for (const skill of SKILLS) {
-    out = out.split(`~/.codex/skills/${skill.dir}/`).join(`~/.claude/skills/${skill.name}/`);
-  }
-  // Invocation tokens: $listen -> /listen (legacy aliases map to butler names).
-  const invocation = {
-    "prd-implement": "fulfill",
-    "prd-setup": "pantry",
-    "prd-ship": "deliver",
-    intake: "listen",
-    prd: "promise",
-    listen: "listen",
-    promise: "promise",
-    fulfill: "fulfill",
-    deliver: "deliver",
-    pantry: "pantry",
-    please: "please",
-  };
-  out = out.replace(
-    /\$(prd-implement|prd-setup|prd-ship|intake|prd|listen|promise|fulfill|deliver|pantry|please)\b/g,
-    (match, token) => `/${invocation[token]}`,
-  );
-  return out;
+  const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
+  // Invocation tokens: $listen -> /listen.
+  return roots.replace(/\$(listen|promise|fulfill|pantry|deliver|please)\b/g, "/$1");
 }
 
 function ensureDir(dir) {
@@ -112,12 +84,12 @@ function assertNotForeign(targetDir, expectedName) {
   }
 }
 
-function installSkill(targetKey, skill) {
+function installSkill(targetKey, name) {
   const target = TARGETS[targetKey];
-  const sourceDir = path.join(skillsRoot, skill.dir);
+  const sourceDir = path.join(skillsRoot, name);
   if (!fs.existsSync(sourceDir)) throw new Error(`Missing skill source: ${sourceDir}`);
-  const targetDir = path.join(target.root, target.installDir(skill));
-  assertNotForeign(targetDir, skill.name);
+  const targetDir = path.join(target.root, name);
+  assertNotForeign(targetDir, name);
 
   ensureDir(targetDir);
   for (const entry of fs.readdirSync(targetDir)) {
@@ -139,7 +111,23 @@ function installSkill(targetKey, skill) {
     removePath(linkTarget);
     fs.symlinkSync(source, linkTarget, entry.isDirectory() ? "dir" : "file");
   }
-  return { skill: skill.name, sourceDir, targetDir };
+  return { skill: name, sourceDir, targetDir };
+}
+
+// Remove pre-rename install directories, but only when they are ours: their
+// SKILL.md frontmatter must carry one of the butler names. Anything else is
+// left alone.
+function cleanupLegacyDirs(targetKey) {
+  const removed = [];
+  for (const dir of LEGACY_DIRS) {
+    const targetDir = path.join(TARGETS[targetKey].root, dir);
+    if (!fs.existsSync(targetDir)) continue;
+    const name = frontmatterName(path.join(targetDir, "SKILL.md"));
+    if (!SKILL_NAMES.includes(name)) continue;
+    removePath(targetDir);
+    removed.push(targetDir);
+  }
+  return removed;
 }
 
 // Version-manager node paths (nvm, fnm) die on version switches, which would
@@ -152,8 +140,7 @@ function hookNodeBinary() {
 }
 
 function harnessHookCommand(targetKey) {
-  const fulfillDir = targetKey === "claude" ? "fulfill" : "prd-implement";
-  const script = path.join(TARGETS[targetKey].root, fulfillDir, "scripts", "prd_state_harness.js");
+  const script = path.join(TARGETS[targetKey].root, "fulfill", "scripts", "prd_state_harness.js");
   return kind => `"${hookNodeBinary()}" "${script}" hook ${kind}`;
 }
 
@@ -189,8 +176,13 @@ function ensureHooks(file, entriesByEvent) {
 for (const key of Object.keys(TARGETS)) ensureDir(TARGETS[key].root);
 
 const installed = {
-  codex: SKILLS.map(skill => installSkill("codex", skill)),
-  claude: SKILLS.map(skill => installSkill("claude", skill)),
+  codex: SKILL_NAMES.map(name => installSkill("codex", name)),
+  claude: SKILL_NAMES.map(name => installSkill("claude", name)),
+};
+
+const removedLegacy = {
+  codex: cleanupLegacyDirs("codex"),
+  claude: cleanupLegacyDirs("claude"),
 };
 
 const codexHookCommand = harnessHookCommand("codex");
@@ -199,6 +191,7 @@ const hooks = {
   // Codex uses the PreToolUse guard for premature `update_goal complete`.
   codex: ensureHooks(path.join(home, ".codex", "hooks.json"), {
     Stop: codexHookCommand("stop"),
+    SubagentStop: codexHookCommand("subagent-stop"),
     PreToolUse: codexHookCommand("pretool-use"),
   }),
   // Claude Code has no update_goal tool; the Stop hook is the only guard.
@@ -211,6 +204,7 @@ process.stdout.write(JSON.stringify({
   ok: true,
   repoRoot,
   installed,
+  removedLegacy,
   hooks,
   note: "SKILL.md files are real copies (Claude copies are path/invocation substituted); auxiliary entries are symlinks.",
 }, null, 2) + "\n");

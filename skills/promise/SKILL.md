@@ -11,7 +11,7 @@ description: |
 
 # promise
 
-Skill folder and artifact paths keep the legacy `prd` name (`.hoyeon/prd/**`).
+Artifact paths keep the legacy `prd` name (`.hoyeon/prd/**`).
 
 Use this skill to write an implementation-ready PRD from intake output or the
 current conversation.
@@ -402,7 +402,7 @@ After the audits pass, run the mechanical precheck from the target repository
 root before marking the PRD `ready`:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-verification --prd .hoyeon/prd/<topic-slug>/prd.md
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-verification --prd .hoyeon/prd/<topic-slug>/prd.md
 ```
 
 This is stateless: it parses the PRD exactly the way `fulfill` will,

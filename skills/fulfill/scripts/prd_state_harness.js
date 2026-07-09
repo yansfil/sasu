@@ -29,10 +29,10 @@ function harnessCommand() {
   return `node ${displayPath(SELF_PATH)}`;
 }
 
-// Sibling skills keep the legacy directory names in the repo and Codex install
-// (prd-ship) but butler names in the Claude install (deliver). Resolve against
-// the invoked path first so emitted paths match the current install, then fall
-// back through the symlink target to the repo layout.
+// Sibling skills use the butler directory names (deliver) everywhere, with the
+// pre-rename legacy names (prd-ship) kept as a fallback for stale installs.
+// Resolve against the invoked path first so emitted paths match the current
+// install, then fall back through the symlink target to the repo layout.
 function siblingSkillScript(candidateDirs, scriptName) {
   const roots = [path.dirname(path.dirname(path.dirname(SELF_PATH)))];
   try {
@@ -50,7 +50,7 @@ function siblingSkillScript(candidateDirs, scriptName) {
 }
 
 function shipScriptPath() {
-  return siblingSkillScript(["prd-ship", "deliver"], "prd_ship.js");
+  return siblingSkillScript(["deliver", "prd-ship"], "prd_ship.js");
 }
 
 function main() {

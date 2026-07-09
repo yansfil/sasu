@@ -15,7 +15,7 @@ Use this skill to run the full PRD pipeline from the current conversation to a f
 This skill is an orchestrator, not a new pipeline.
 It chains the existing `promise`, `fulfill`, and `deliver` skills and their harnesses exactly as written.
 Where this document is silent, the chained skill's own rules apply unchanged.
-Read `~/.codex/skills/prd/SKILL.md`, `~/.codex/skills/prd-implement/SKILL.md`, and (when delivery mode is `pr`) `~/.codex/skills/prd-ship/SKILL.md` before executing their stages.
+Read `~/.codex/skills/promise/SKILL.md`, `~/.codex/skills/fulfill/SKILL.md`, and (when delivery mode is `pr`) `~/.codex/skills/deliver/SKILL.md` before executing their stages.
 
 Match the user's language by default.
 
@@ -68,7 +68,7 @@ Continue immediately; the user can interrupt.
 Run the `fulfill` skill in full, with one difference at init:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
   --prd .hoyeon/prd/<topic-slug>/prd.md \
   --allow-unapproved-prd "<verbatim $please invocation message>" \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"

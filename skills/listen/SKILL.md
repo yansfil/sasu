@@ -13,7 +13,7 @@ description: |
 
 # listen
 
-Skill folder and artifact paths keep the legacy `intake` name.
+Artifact paths keep the legacy `intake` name (`.hoyeon/intake/**`).
 
 Use this skill before `promise` when the request is ambiguous or when the user wants the idea pressure-tested before implementation planning.
 The job is to reduce ambiguity and produce a PRD handoff artifact.

@@ -10,7 +10,7 @@ description: |
 
 # deliver
 
-Skill folder and script paths keep the legacy `prd-ship` name.
+Artifact paths keep the legacy `prd-ship` naming (`delivery/ship-log.jsonl`, `prd_ship.js`).
 
 Use this skill after `fulfill` has produced a complete receipt and the
 delivery target is a GitHub pull request.
@@ -128,11 +128,11 @@ Use an override only with the user's explicit approval, and quote that approval 
 ## Commands
 
 ```sh
-node ~/.codex/skills/prd-ship/scripts/prd_ship.js preflight --state .hoyeon/implement/<topic-slug>/state.json
-node ~/.codex/skills/prd-ship/scripts/prd_ship.js body --state .hoyeon/implement/<topic-slug>/state.json
-node ~/.codex/skills/prd-ship/scripts/prd_ship.js ship --state .hoyeon/implement/<topic-slug>/state.json --title "<PR title>"
-node ~/.codex/skills/prd-ship/scripts/prd_ship.js watch-ci --state .hoyeon/implement/<topic-slug>/state.json [--timeout <seconds>]
-node ~/.codex/skills/prd-ship/scripts/prd_ship.js status --state .hoyeon/implement/<topic-slug>/state.json
+node ~/.codex/skills/deliver/scripts/prd_ship.js preflight --state .hoyeon/implement/<topic-slug>/state.json
+node ~/.codex/skills/deliver/scripts/prd_ship.js body --state .hoyeon/implement/<topic-slug>/state.json
+node ~/.codex/skills/deliver/scripts/prd_ship.js ship --state .hoyeon/implement/<topic-slug>/state.json --title "<PR title>"
+node ~/.codex/skills/deliver/scripts/prd_ship.js watch-ci --state .hoyeon/implement/<topic-slug>/state.json [--timeout <seconds>]
+node ~/.codex/skills/deliver/scripts/prd_ship.js status --state .hoyeon/implement/<topic-slug>/state.json
 ```
 
 `body` writes a draft to `.hoyeon/implement/<topic-slug>/delivery/pr-body.md`.

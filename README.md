@@ -16,16 +16,16 @@ please = the whole chain in one invocation, stopping only for risky work
 
 ## The Butler Skills
 
-| Skill | Directory | What it owns |
-| --- | --- | --- |
-| `listen` | `intake` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
-| `promise` | `prd` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
-| `fulfill` | `prd-implement` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
-| `deliver` | `prd-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
-| `pantry` | `prd-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
-| `please` | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
+| Skill | What it owns |
+| --- | --- |
+| `listen` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
+| `promise` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
+| `fulfill` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
+| `deliver` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
+| `pantry` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
+| `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 
-Repository directories keep the legacy names; the butler names are what you invoke.
+Skill and directory names are the butler set everywhere; only run artifacts under `.hoyeon/` keep the pre-rename names (`.hoyeon/intake/**`, `.hoyeon/prd/**`, `.hoyeon/implement/**`) for data compatibility.
 
 ## Dual Runtime, One Source
 
@@ -38,16 +38,16 @@ node scripts/install-local-skills.mjs
 
 | | Codex | Claude Code |
 | --- | --- | --- |
-| Install root | `~/.codex/skills/<legacy-dir>/` | `~/.claude/skills/<butler-name>/` |
+| Install root | `~/.codex/skills/<name>/` | `~/.claude/skills/<name>/` |
 | Invocation | `$listen`, `$promise`, ... | `/listen`, `/promise`, ... |
-| `SKILL.md` | Copied verbatim (Codex reads the name from frontmatter) | Copied with path and invocation substitution (`~/.codex/skills/prd-implement/` becomes `~/.claude/skills/fulfill/`, `$fulfill` becomes `/fulfill`) |
+| `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$fulfill` becomes `/fulfill`) |
 | `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
-| Hooks | `Stop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
+| Hooks | `Stop` + `SubagentStop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
 
 The mechanics that make one source possible:
 
 - **Self-locating scripts.**
-  `prd_state_harness.js` and `prd_ship.js` resolve their own install location and their sibling scripts from the invoked path, trying both legacy and butler directory names with a realpath fallback through the symlink.
+  `prd_state_harness.js` and `prd_ship.js` resolve their own install location and their sibling scripts from the invoked path, with a realpath fallback through the symlink.
   Every command the hooks re-inject therefore matches the runtime that is actually running.
 - **Runtime-neutral session identity.**
   Session ids are canonicalized bare: `codex:`, `claude:`, and `opencode:` prefixes are stripped for storage and comparison, and legacy prefixed state files keep matching.
@@ -80,7 +80,7 @@ The harness treats "done" as a provable state, and the enforcement works identic
 
 ```sh
 node --test tests/*.test.mjs
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js doctor
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor
 ```
 
 `doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
@@ -93,12 +93,12 @@ After changing installed skills, confirm visibility:
 
 ```text
 skills/
-  intake/         listen   - SKILL.md
-  prd/            promise  - SKILL.md
-  prd-implement/  fulfill  - SKILL.md, scripts/prd_state_harness.js, references/
-  prd-setup/      pantry   - SKILL.md
-  prd-ship/       deliver  - SKILL.md, scripts/prd_ship.js
-  please/         please   - SKILL.md
+  listen/    SKILL.md
+  promise/   SKILL.md
+  fulfill/   SKILL.md, scripts/prd_state_harness.js, references/
+  pantry/    SKILL.md
+  deliver/   SKILL.md, scripts/prd_ship.js
+  please/    SKILL.md
 scripts/
   install-local-skills.mjs   dual-runtime installer + hook registration
 tests/

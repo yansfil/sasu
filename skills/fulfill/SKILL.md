@@ -11,8 +11,8 @@ description: |
 
 # fulfill
 
-Skill folder, harness script paths, and artifact paths keep the legacy
-`prd-implement` name.
+Artifact paths keep the legacy `prd-implement` naming (`.hoyeon/implement/**`,
+`.prd-implement-active.json`).
 
 Use this skill to implement an approved PRD end to end.
 
@@ -134,7 +134,7 @@ Before editing code:
    explicitly accepts the risk.
 6. Read Implementation Guardrails and Risks.
 7. Read `.hoyeon/config.json` when it exists.
-   `node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js doctor`
+   `node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor`
    reports the effective delivery config and environment readiness; run it when
    delivery mode, worktree sync, or PR/CI readiness is in question.
 8. Inspect `git status --short`.
@@ -191,8 +191,8 @@ acting as if the tracker exists.
 From the target repository root:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js status
 ```
 
 Bind the harness to the current agent session at initialization. In Codex,
@@ -206,7 +206,7 @@ When delivery mode should be PR-based, pass it explicitly or rely on
 `.hoyeon/config.json`:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --delivery pr \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
@@ -227,7 +227,7 @@ The harness assigns a review profile at init:
 Override only when the risk classification is wrong:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --review-profile trivial|standard|high-risk
 ```
@@ -275,7 +275,7 @@ test modes, and structure locks into durable state. It supports:
 ## 4. Plan Verification Before Implementation
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-verification
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-verification
 ```
 
 The planner binds the PRD verification contract to repo reality.
@@ -296,8 +296,8 @@ rerun `plan-verification`.
 ## 5. Plan Execution And TaskGraph
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-execution
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js ready
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-execution
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js ready
 ```
 
 `plan-execution` maps every PRD-level task to execution nodes, inferred write
@@ -325,12 +325,12 @@ For each ready execution node:
 5. Record evidence:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark-node \
   --id N1 \
   --status complete \
   --evidence "<file/test/runtime evidence>"
 
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark \
   --kind ac \
   --id AC1 \
   --status met \
@@ -340,12 +340,12 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark \
 For repeated same-status updates, comma-separated ids are allowed:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark-node \
   --id N1,N2 \
   --status complete \
   --evidence "<shared evidence>"
 
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark \
   --kind ac \
   --id AC1,AC2 \
   --status met \
@@ -366,7 +366,7 @@ Use the generated verification plan as the concrete proof plan.
 For shell-verifiable checks:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js verify-run \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js verify-run \
   --id V1 \
   -- <exact command>
 ```
@@ -375,7 +375,7 @@ When a PRD or planner produced a concrete command, `verify-run` must run that
 command exactly. If an equivalent command is necessary, use:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js verify-run \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js verify-run \
   --id V1 \
   --deviation "<why equivalent coverage is preserved>" \
   -- <replacement command>
@@ -384,7 +384,7 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js verify-run \
 For browser/API/DB/runtime evidence:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js record-artifact \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js record-artifact \
   --id V3 \
   --kind screenshot \
   --path <path-to-png-or-jpg> \
@@ -418,7 +418,7 @@ JSON, receipts, screenshots at fixed paths), do not edit `state.json` by hand
 and do not write ad-hoc scripts. Run:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js refresh-artifacts [--id V3]
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js refresh-artifacts [--id V3]
 ```
 
 It re-hashes the registered artifacts, records the refresh in the ledger, and
@@ -482,7 +482,7 @@ Keep working if any required AC is not met and no concrete blocker exists.
 Before final adversarial review, generate a strict intent-review prompt:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js requirements-review-prompt
 ```
 
 The main agent writes this review by default. Do not spawn a sidecar for
@@ -524,7 +524,7 @@ Write:
 Then record:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-record \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js requirements-review-record \
   --status pass \
   --report .hoyeon/implement/<topic-slug>/review/requirements-fidelity-review.md \
   --summary "<requirements fidelity verdict>"
@@ -554,7 +554,7 @@ the review stale.
 Generate a reviewer prompt:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-prompt
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js review-prompt
 ```
 
 Before this review, stop runtime servers, browser sessions, tunnels, or
@@ -608,7 +608,7 @@ Write:
 Then record:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-record \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js review-record \
   --status pass \
   --report .hoyeon/implement/<topic-slug>/review/final-review.md \
   --summary "<review verdict>"
@@ -640,7 +640,7 @@ changes after review.
 Only after all gates required by the review profile pass:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js finalize \
   --status complete \
   --summary "<evidence-backed summary>"
 ```
@@ -669,7 +669,7 @@ session-scoped active files.
 For local-only runs or manual cleanup, use:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js cleanup-active \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js cleanup-active \
   --state .hoyeon/implement/<topic-slug>/state.json
 ```
 
@@ -683,11 +683,11 @@ For a blocked or partial handoff, do not write the final report until:
 Use:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js finalize \
   --status blocked \
   --summary "<evidence-backed blocker summary>"
 
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js finalize \
   --status partial \
   --summary "<evidence-backed partial handoff summary>"
 ```

@@ -65,7 +65,7 @@ Each execution node has:
 Mark execution work with:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark-node \
   --id N1 \
   --status complete \
   --evidence "<command/test/file/screenshot evidence>"
@@ -74,7 +74,7 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark-node \
 Assign ownership with:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js assign-node \
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js assign-node \
   --id N1 \
   --owner subagent:<id>
 ```
@@ -114,7 +114,7 @@ and the coordinator works one node at a time.
 Use:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js ready
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js ready
 ```
 
 When `execution.parallel` is enabled, a node can appear in a parallel group only

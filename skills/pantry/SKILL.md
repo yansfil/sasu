@@ -10,8 +10,6 @@ description: |
 
 # pantry
 
-Skill folder keeps the legacy `prd-setup` name.
-
 Use this skill to inspect or configure how the PRD pipeline
 (`fulfill` and `deliver`) behaves in the current repository.
 
@@ -28,7 +26,7 @@ Match the user's language by default.
 Always start with the doctor:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js doctor
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor
 ```
 
 It reports the effective delivery config (config file plus defaults), unknown or
