@@ -76,29 +76,60 @@ function cmdDoctor() {
   const checks = [];
   const add = (level, id, message) => checks.push({ level, id, message });
 
-  let gitOk = false;
-  let originUrl = null;
+  const { gitOk, originUrl } = doctorCheckGitRepository(projectRoot, add);
+  const projectConfig = doctorCheckProjectConfig(projectRoot, add);
+  const slug = latestPrdSlug(projectRoot) || "<topic-slug>";
+  const delivery = doctorCheckDeliveryConfig(projectRoot, projectConfig, slug, add);
+  const prMode = Boolean(delivery && delivery.mode === "pr");
+  if (prMode && gitOk && !originUrl) {
+    add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");
+  }
+  if (gitOk) doctorCheckGitignorePolicy(projectRoot, add);
+  doctorCheckGithubCli(projectRoot, prMode, add);
+  doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add);
+  if (prMode) doctorCheckPrDeliveryAssets(projectRoot, delivery, add);
+  doctorCheckHookRegistration(add);
+  const activeRun = doctorCollectActiveRun(projectRoot, add);
+
+  const errors = checks.filter(item => item.level === "error").length;
+  const warnings = checks.filter(item => item.level === "warn").length;
+  process.stdout.write(JSON.stringify({
+    ok: errors === 0,
+    projectRoot,
+    effectiveDelivery: delivery,
+    latestPrdSlug: slug === "<topic-slug>" ? null : slug,
+    activeRun,
+    summary: { errors, warnings },
+    checks,
+  }, null, 2) + "\n");
+  if (errors) process.exitCode = 2;
+}
+
+function doctorCheckGitRepository(projectRoot, add) {
   const gitTop = childProcess.spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: projectRoot,
     shell: false,
     encoding: "utf8",
   });
-  if (gitTop.status === 0) {
-    gitOk = true;
-    add("ok", "git", `Git repository: ${gitTop.stdout.trim()}`);
-    const origin = childProcess.spawnSync("git", ["remote", "get-url", "origin"], {
-      cwd: projectRoot,
-      shell: false,
-      encoding: "utf8",
-    });
-    if (origin.status === 0) {
-      originUrl = origin.stdout.trim();
-      add("ok", "origin", `origin remote: ${originUrl}`);
-    }
-  } else {
+  if (gitTop.status !== 0) {
     add("error", "git", "Not inside a git repository; the PRD pipeline requires one");
+    return { gitOk: false, originUrl: null };
   }
+  add("ok", "git", `Git repository: ${gitTop.stdout.trim()}`);
+  const origin = childProcess.spawnSync("git", ["remote", "get-url", "origin"], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+  });
+  let originUrl = null;
+  if (origin.status === 0) {
+    originUrl = origin.stdout.trim();
+    add("ok", "origin", `origin remote: ${originUrl}`);
+  }
+  return { gitOk: true, originUrl };
+}
 
+function doctorCheckProjectConfig(projectRoot, add) {
   const configPath = path.join(projectRoot, PROJECT_CONFIG_PATH);
   let projectConfig = {};
   if (!fs.existsSync(configPath)) {
@@ -135,15 +166,16 @@ function cmdDoctor() {
   flagUnknown("worktree", projectConfig.worktree);
   flagUnknown("execution", projectConfig.execution);
   flagUnknown("review", projectConfig.review);
+  return projectConfig;
+}
 
-  const slug = latestPrdSlug(projectRoot) || "<topic-slug>";
+function doctorCheckDeliveryConfig(projectRoot, projectConfig, slug, add) {
   let delivery = null;
   try {
     delivery = normalizeDeliveryConfig(projectRoot, {}, projectConfig, slug);
   } catch (error) {
     add("error", "delivery-config", error.message);
   }
-  const prMode = Boolean(delivery && delivery.mode === "pr");
   const execution = normalizeExecutionConfig(projectConfig, {});
   add("ok", "execution", `Execution mode: ${execution.parallel ? "parallel opt-in enabled (execution.parallel)" : "sequential (default; set execution.parallel to enable parallel ready groups)"}`);
   const reviewProfileConfig = projectConfig.review && projectConfig.review.profile
@@ -154,70 +186,72 @@ function cmdDoctor() {
   } else {
     add("ok", "review-profile", `Review profile: ${reviewProfileConfig === "auto" ? "auto-classified from the PRD (default)" : `forced to ${reviewProfileConfig} by config review.profile`}`);
   }
+  return delivery;
+}
 
-  if (prMode && gitOk && !originUrl) {
-    add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");
+function doctorCheckGitignorePolicy(projectRoot, add) {
+  const prdProbe = path.join(".hoyeon", "prd", "__doctor-probe__", "prd.md");
+  const implementProbe = path.join(".hoyeon", "implement", "__doctor-probe__", "state.json");
+  if (gitIgnored(projectRoot, prdProbe)) {
+    add("warn", "gitignore", ".hoyeon/prd/** is ignored; PRD source files should be trackable");
+  } else {
+    add("ok", "gitignore", ".hoyeon/prd/** is trackable");
   }
-
-  if (gitOk) {
-    const prdProbe = path.join(".hoyeon", "prd", "__doctor-probe__", "prd.md");
-    const implementProbe = path.join(".hoyeon", "implement", "__doctor-probe__", "state.json");
-    if (gitIgnored(projectRoot, prdProbe)) {
-      add("warn", "gitignore", ".hoyeon/prd/** is ignored; PRD source files should be trackable");
-    } else {
-      add("ok", "gitignore", ".hoyeon/prd/** is trackable");
-    }
-    if (gitIgnored(projectRoot, PROJECT_CONFIG_PATH)) {
-      add("warn", "gitignore", `${PROJECT_CONFIG_PATH} is ignored; prd-setup project configuration should be trackable`);
-    } else {
-      add("ok", "gitignore", `${PROJECT_CONFIG_PATH} is trackable`);
-    }
-    if (gitIgnored(projectRoot, implementProbe)) {
-      add("ok", "gitignore", ".hoyeon/implement/** is ignored");
-    } else {
-      add("warn", "gitignore", ".hoyeon/implement/** is not ignored; implementation state and evidence should stay out of normal commits");
-    }
+  if (gitIgnored(projectRoot, PROJECT_CONFIG_PATH)) {
+    add("warn", "gitignore", `${PROJECT_CONFIG_PATH} is ignored; prd-setup project configuration should be trackable`);
+  } else {
+    add("ok", "gitignore", `${PROJECT_CONFIG_PATH} is trackable`);
   }
+  if (gitIgnored(projectRoot, implementProbe)) {
+    add("ok", "gitignore", ".hoyeon/implement/** is ignored");
+  } else {
+    add("warn", "gitignore", ".hoyeon/implement/** is not ignored; implementation state and evidence should stay out of normal commits");
+  }
+}
 
+function doctorCheckGithubCli(projectRoot, prMode, add) {
   const ghVersion = childProcess.spawnSync("gh", ["--version"], { shell: false, encoding: "utf8" });
   if (ghVersion.status !== 0) {
     add(prMode ? "error" : "warn", "gh", "GitHub CLI (gh) is not available");
-  } else {
-    const ghAuth = childProcess.spawnSync("gh", ["auth", "status"], { cwd: projectRoot, shell: false, encoding: "utf8" });
-    if (ghAuth.status === 0) add("ok", "gh", "gh installed and authenticated");
-    else add(prMode ? "error" : "warn", "gh", "gh is installed but not authenticated (gh auth login)");
+    return;
   }
+  const ghAuth = childProcess.spawnSync("gh", ["auth", "status"], { cwd: projectRoot, shell: false, encoding: "utf8" });
+  if (ghAuth.status === 0) add("ok", "gh", "gh installed and authenticated");
+  else add(prMode ? "error" : "warn", "gh", "gh is installed but not authenticated (gh auth login)");
+}
 
-  if (delivery && delivery.worktree.enabled) {
-    for (const rel of [...delivery.worktree.link, ...delivery.worktree.copy]) {
-      if (!fs.existsSync(path.join(projectRoot, rel))) {
-        add("warn", "worktree-sync", `worktree link/copy source '${rel}' does not exist in this checkout`);
-      } else if (gitOk && gitTracked(projectRoot, rel)) {
-        add("warn", "worktree-sync", `'${rel}' is tracked by git; link/copy is meant for gitignored local files`);
-      }
+function doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add) {
+  if (!delivery || !delivery.worktree.enabled) return;
+  for (const rel of [...delivery.worktree.link, ...delivery.worktree.copy]) {
+    if (!fs.existsSync(path.join(projectRoot, rel))) {
+      add("warn", "worktree-sync", `worktree link/copy source '${rel}' does not exist in this checkout`);
+    } else if (gitOk && gitTracked(projectRoot, rel)) {
+      add("warn", "worktree-sync", `'${rel}' is tracked by git; link/copy is meant for gitignored local files`);
     }
   }
+}
 
-  if (prMode) {
-    const templateCandidates = [
-      delivery && delivery.prTemplate,
-      ".github/pull_request_template.md",
-      ".github/PULL_REQUEST_TEMPLATE.md",
-      "docs/pull_request_template.md",
-      "pull_request_template.md",
-      "PULL_REQUEST_TEMPLATE.md",
-    ].filter(Boolean);
-    const found = templateCandidates.find(rel => fs.existsSync(path.join(projectRoot, rel)));
-    const fallback = path.join(os.homedir(), ".codex", "templates", "pull_request_template.md");
-    if (found) add("ok", "pr-template", `Repository PR template: ${found}`);
-    else if (fs.existsSync(fallback)) add("ok", "pr-template", `No repository PR template; global fallback exists: ${fallback}`);
-    else add("warn", "pr-template", "No repository or global PR template found");
+function doctorCheckPrDeliveryAssets(projectRoot, delivery, add) {
+  const templateCandidates = [
+    delivery && delivery.prTemplate,
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "docs/pull_request_template.md",
+    "pull_request_template.md",
+    "PULL_REQUEST_TEMPLATE.md",
+  ].filter(Boolean);
+  const found = templateCandidates.find(rel => fs.existsSync(path.join(projectRoot, rel)));
+  const fallback = path.join(os.homedir(), ".codex", "templates", "pull_request_template.md");
+  if (found) add("ok", "pr-template", `Repository PR template: ${found}`);
+  else if (fs.existsSync(fallback)) add("ok", "pr-template", `No repository PR template; global fallback exists: ${fallback}`);
+  else add("warn", "pr-template", "No repository or global PR template found");
 
-    const shipScript = shipScriptPath();
-    if (fs.existsSync(shipScript)) add("ok", "prd-ship", `deliver (prd-ship) script found: ${displayPath(shipScript)}`);
-    else add("error", "prd-ship", `Delivery mode is pr but ${displayPath(shipScript)} is missing`);
-  }
+  const shipScript = shipScriptPath();
+  if (fs.existsSync(shipScript)) add("ok", "prd-ship", `deliver (prd-ship) script found: ${displayPath(shipScript)}`);
+  else add("error", "prd-ship", `Delivery mode is pr but ${displayPath(shipScript)} is missing`);
+}
 
+function doctorCheckHookRegistration(add) {
   for (const { runtime, file } of [
     { runtime: "codex", file: path.join(os.homedir(), ".codex", "hooks.json") },
     { runtime: "claude", file: path.join(os.homedir(), ".claude", "settings.json") },
@@ -231,49 +265,32 @@ function cmdDoctor() {
     if (hooksRegistered) add("ok", "hooks", `Harness hooks are registered for ${runtime} in ${displayPath(file)}`);
     else add("warn", "hooks", `Harness hooks are not registered for ${runtime} in ${displayPath(file)}; in ${runtime} sessions the continuation loop and ship handoff rely on skill instructions only`);
   }
+}
 
-  let activeRun = null;
+function doctorCollectActiveRun(projectRoot, add) {
   const activeFile = activePath(projectRoot);
-  if (fs.existsSync(activeFile)) {
-    try {
-      const active = readJson(activeFile);
-      const stateAbs = resolveProjectPath(active.statePath, projectRoot);
-      let ship = null;
-      if (fs.existsSync(stateAbs)) {
-        const state = readJson(stateAbs);
-        ship = {
-          receipt: state.finalReceipt ? state.finalReceipt.status : null,
-          shipPending: deliveryShipPending(stateAbs, state),
-        };
-        activeRun = {
-          statePath: active.statePath,
-          runDir: active.runDir,
-          status: state.status,
-          delivery: active.delivery || null,
-          pointer: Boolean(active.pointer),
-          ...ship,
-        };
-      } else {
-        activeRun = { statePath: active.statePath, status: "state-file-missing", pointer: Boolean(active.pointer) };
-        add("warn", "active-run", `Active file points to missing state: ${active.statePath}`);
-      }
-    } catch (error) {
-      add("warn", "active-run", `Active file unreadable: ${error.message}`);
+  if (!fs.existsSync(activeFile)) return null;
+  try {
+    const active = readJson(activeFile);
+    const stateAbs = resolveProjectPath(active.statePath, projectRoot);
+    if (!fs.existsSync(stateAbs)) {
+      add("warn", "active-run", `Active file points to missing state: ${active.statePath}`);
+      return { statePath: active.statePath, status: "state-file-missing", pointer: Boolean(active.pointer) };
     }
+    const state = readJson(stateAbs);
+    return {
+      statePath: active.statePath,
+      runDir: active.runDir,
+      status: state.status,
+      delivery: active.delivery || null,
+      pointer: Boolean(active.pointer),
+      receipt: state.finalReceipt ? state.finalReceipt.status : null,
+      shipPending: deliveryShipPending(stateAbs, state),
+    };
+  } catch (error) {
+    add("warn", "active-run", `Active file unreadable: ${error.message}`);
+    return null;
   }
-
-  const errors = checks.filter(item => item.level === "error").length;
-  const warnings = checks.filter(item => item.level === "warn").length;
-  process.stdout.write(JSON.stringify({
-    ok: errors === 0,
-    projectRoot,
-    effectiveDelivery: delivery,
-    latestPrdSlug: slug === "<topic-slug>" ? null : slug,
-    activeRun,
-    summary: { errors, warnings },
-    checks,
-  }, null, 2) + "\n");
-  if (errors) process.exitCode = 2;
 }
 
 function cmdNext(options) {
