@@ -14,6 +14,69 @@ const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, writeActiveRecord, persistStateAndArtifacts } = require("../state_store");
 
 function cmdInit(options) {
+  const inputs = resolveInitInputs(options);
+  const worktreePreparation = prepareDeliveryWorktree(
+    inputs.projectRoot, inputs.prdAbs, inputs.deliveryConfig, options,
+    inputs.approvalOverride, inputs.initialSessionId,
+  );
+  // In PR delivery the real run lives inside the worktree (initialized by the
+  // child re-exec); the main checkout only keeps a pointer to it.
+  if (worktreePreparation && worktreePreparation.active === false) {
+    writeWorktreePointer(inputs, worktreePreparation);
+    return;
+  }
+
+  const runDirRel = path.join(".hoyeon", "implement", inputs.slug);
+  const runDirAbs = path.join(inputs.projectRoot, runDirRel);
+  const existingStatePath = path.join(runDirAbs, "state.json");
+  if (fs.existsSync(existingStatePath) && !options.force) {
+    throw new Error([
+      `Implementation state already exists: ${toProjectRelative(existingStatePath, inputs.projectRoot)}`,
+      "Use status/next to resume the existing run, or rerun init with --force to reinitialize and reset its progress.",
+    ].join("\n"));
+  }
+  ensureRunDirs(runDirAbs);
+
+  const contract = parsePrdContract(inputs.parsed, inputs.projectRoot);
+  const state = buildInitialState(inputs, contract, worktreePreparation, options, runDirRel);
+  if (inputs.approvalRaw !== "approved" && inputs.approvalOverride) {
+    recordDeviation(state, "prd_approval_override", "PRD", inputs.approvalOverride, {
+      frontmatterValue: inputs.approvalRaw || "missing",
+    });
+  }
+
+  const statePath = path.join(runDirAbs, "state.json");
+  state.verificationPlan = buildVerificationPlan(state, statePath);
+  persistStateAndArtifacts(statePath, state);
+  writeActiveRecord(inputs.projectRoot, statePath, state);
+  appendJsonl(path.join(runDirAbs, "ledger.jsonl"), {
+    ts: nowIso(),
+    event: "initialized",
+    prdPath: state.prdPath,
+    taskCount: contract.tasks.length,
+    acceptanceCriteriaCount: contract.acceptanceCriteria.length,
+    verificationCount: contract.verification.length,
+    verificationPlanStatus: state.verificationPlan.status,
+    verificationPlanGapCount: state.verificationPlan.gaps.length,
+  });
+
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    statePath: toProjectRelative(statePath, inputs.projectRoot),
+    runDir: state.runDir,
+    prdPath: state.prdPath,
+    counts: countState(state),
+    verificationPlan: verificationPlanSummary(state),
+    executionPlan: executionPlanSummary(state),
+    taskGraph: taskGraphSummary(state),
+    ready: readyExecutionPlan(state),
+    next: nextItem(state),
+  }, null, 2) + "\n");
+}
+
+// Resolve and validate everything init needs before any side effect:
+// PRD text/frontmatter, approval, session binding, and normalized configs.
+function resolveInitInputs(options) {
   const prdInput = options.prd;
   if (!prdInput) throw new Error("--prd is required");
   const projectRoot = cwd();
@@ -42,49 +105,53 @@ function cmdInit(options) {
   }
   const slug = slugFromPrdPath(prdAbs);
   const projectConfig = readProjectConfig(projectRoot);
-  const deliveryConfig = normalizeDeliveryConfig(projectRoot, options, projectConfig, slug);
-  const executionConfig = normalizeExecutionConfig(projectConfig, options);
-  const worktreePreparation = prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, approvalOverride, initialSessionId);
-  if (worktreePreparation && worktreePreparation.active === false) {
-    const pointerRunDir = path.join(".hoyeon", "implement", slug);
-    const pointerRecord = {
-      schema: "hoyeon.prd-implement.active.v1",
-      pointer: true,
-      statePath: path.join(worktreePreparation.path, pointerRunDir, "state.json"),
-      prdPath: toProjectRelative(prdAbs, projectRoot),
-      runDir: pointerRunDir,
-      status: worktreePreparation.resumed ? "resumed" : "active",
-      delivery: {
-        mode: deliveryConfig.mode,
-        branch: deliveryConfig.branch,
-        worktreePath: worktreePreparation.path,
-      },
-      activeSessionId: initialSessionId || null,
-      updatedAt: nowIso(),
-    };
-    writeJson(activePath(projectRoot), pointerRecord);
-    process.stdout.write(JSON.stringify({
-      ok: true,
-      delivery: deliveryConfig,
-      worktreePrepared: worktreePreparation,
-      mainRootPointerWritten: true,
-      message: worktreePreparation.resumed
-        ? `PR delivery worktree already has implementation state. Continue the existing run from ${worktreePreparation.path} (use init --force there to reset it).`
-        : `PR delivery worktree prepared. Continue implementation from ${worktreePreparation.path}.`,
-    }, null, 2) + "\n");
-    return;
-  }
-  const runDirRel = path.join(".hoyeon", "implement", slug);
-  const runDirAbs = path.join(projectRoot, runDirRel);
-  const existingStatePath = path.join(runDirAbs, "state.json");
-  if (fs.existsSync(existingStatePath) && !options.force) {
-    throw new Error([
-      `Implementation state already exists: ${toProjectRelative(existingStatePath, projectRoot)}`,
-      "Use status/next to resume the existing run, or rerun init with --force to reinitialize and reset its progress.",
-    ].join("\n"));
-  }
-  ensureRunDirs(runDirAbs);
+  return {
+    projectRoot,
+    initialSessionId,
+    prdAbs,
+    prdText,
+    parsed,
+    approvalRaw,
+    approvalOverride,
+    slug,
+    projectConfig,
+    deliveryConfig: normalizeDeliveryConfig(projectRoot, options, projectConfig, slug),
+    executionConfig: normalizeExecutionConfig(projectConfig, options),
+  };
+}
 
+function writeWorktreePointer(inputs, worktreePreparation) {
+  const pointerRunDir = path.join(".hoyeon", "implement", inputs.slug);
+  const pointerRecord = {
+    schema: "hoyeon.prd-implement.active.v1",
+    pointer: true,
+    statePath: path.join(worktreePreparation.path, pointerRunDir, "state.json"),
+    prdPath: toProjectRelative(inputs.prdAbs, inputs.projectRoot),
+    runDir: pointerRunDir,
+    status: worktreePreparation.resumed ? "resumed" : "active",
+    delivery: {
+      mode: inputs.deliveryConfig.mode,
+      branch: inputs.deliveryConfig.branch,
+      worktreePath: worktreePreparation.path,
+    },
+    activeSessionId: inputs.initialSessionId || null,
+    updatedAt: nowIso(),
+  };
+  writeJson(activePath(inputs.projectRoot), pointerRecord);
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    delivery: inputs.deliveryConfig,
+    worktreePrepared: worktreePreparation,
+    mainRootPointerWritten: true,
+    message: worktreePreparation.resumed
+      ? `PR delivery worktree already has implementation state. Continue the existing run from ${worktreePreparation.path} (use init --force there to reset it).`
+      : `PR delivery worktree prepared. Continue implementation from ${worktreePreparation.path}.`,
+  }, null, 2) + "\n");
+}
+
+// Parse every tracked collection out of the PRD body. Section headings accept
+// both the numbered canonical form and legacy unnumbered variants.
+function parsePrdContract(parsed, projectRoot) {
   const tasks = parseMarkdownItems(extractFirstSection(parsed.body, [
     "8. PRD-Level Tasks",
     "PRD-Level Tasks",
@@ -113,76 +180,85 @@ function cmdInit(options) {
   ]);
   const testModeContract = parseTestModeContract(testModeSection || verificationSection);
   applyTestModeDefaults(verification, testModeContract);
-  const intentTrace = buildIntentTrace(parsed, projectRoot);
-  const technicalStructure = extractFirstSection(parsed.body, [
-    "5. Major Technical Structure Changes",
-    "Major Technical Structure Changes",
-    "2. Technical Structure And Changes",
-    "Technical Structure And Changes",
-  ]);
-  const implementationNotes = extractFirstSection(parsed.body, [
-    "11. Implementation Guardrails",
-    "Implementation Guardrails",
-    "14. Implementation Notes",
-    "Implementation Notes",
-  ]);
+  return {
+    tasks,
+    acceptanceCriteria,
+    requirements,
+    verification,
+    testModeContract,
+    intentTrace: buildIntentTrace(parsed, projectRoot),
+    technicalStructure: extractFirstSection(parsed.body, [
+      "5. Major Technical Structure Changes",
+      "Major Technical Structure Changes",
+      "2. Technical Structure And Changes",
+      "Technical Structure And Changes",
+    ]),
+    implementationNotes: extractFirstSection(parsed.body, [
+      "11. Implementation Guardrails",
+      "Implementation Guardrails",
+      "14. Implementation Notes",
+      "Implementation Notes",
+    ]),
+  };
+}
+
+function buildInitialState(inputs, contract, worktreePreparation, options, runDirRel) {
+  const { projectRoot, prdAbs, prdText, parsed, approvalRaw, approvalOverride } = inputs;
+  const { tasks, acceptanceCriteria, requirements, verification, testModeContract, intentTrace } = contract;
   const reviewProfile = classifyReviewProfile({
     tasks,
     acceptanceCriteria,
     verification,
-    technicalStructure,
-    implementationNotes,
-  }, options["review-profile"], projectConfig.review ? projectConfig.review.profile : null);
-
-  const state = {
+    technicalStructure: contract.technicalStructure,
+    implementationNotes: contract.implementationNotes,
+  }, options["review-profile"], inputs.projectConfig.review ? inputs.projectConfig.review.profile : null);
+  const linkedWorktree = isLinkedWorktree(projectRoot);
+  return {
     schema: SCHEMA,
     status: "active",
-    topicSlug: slug,
+    topicSlug: inputs.slug,
     projectRoot,
-	    prdPath: toProjectRelative(prdAbs, projectRoot),
-	    prdStatus: parsed.frontmatter.status || null,
-	    prdApproval: {
-	      source: approvalRaw === "approved" ? "frontmatter" : "override",
-	      value: approvalRaw || null,
-	      overrideNote: approvalOverride || null,
-	      recordedAt: nowIso(),
-	    },
-	    prdSnapshot: {
-	      path: toProjectRelative(prdAbs, projectRoot),
-	      sha256: sha256Text(prdText),
-	      taskIds: tasks.map(item => item.id),
-	      acceptanceCriteriaIds: acceptanceCriteria.map(item => item.id),
-	      requirementIds: requirements.map(item => item.id),
-	      verificationIds: verification.map(item => item.id),
-	      testModeIds: testModeContract.map(item => item.id),
-	      decisionTraceHash: intentTrace.prdDecisionTraceHash,
-	      verificationContractHash: verificationContractHash({ verification, testModeContract }),
-	    },
-	    runDir: runDirRel,
-    delivery: (() => {
-      const linkedWorktree = isLinkedWorktree(projectRoot);
-      return {
-        ...deliveryConfig,
-        initializedAt: nowIso(),
-        worktree: {
-          ...deliveryConfig.worktree,
-          ...(linkedWorktree ? { path: projectRoot, root: path.dirname(projectRoot) } : {}),
-          current: linkedWorktree ||
-            (deliveryConfig.worktree.enabled &&
-              canonicalPath(projectRoot) === canonicalPath(deliveryConfig.worktree.path)),
-          skipped: Boolean(options["skip-worktree"]),
-          preparation: worktreePreparation,
-        },
-      };
-    })(),
+    prdPath: toProjectRelative(prdAbs, projectRoot),
+    prdStatus: parsed.frontmatter.status || null,
+    prdApproval: {
+      source: approvalRaw === "approved" ? "frontmatter" : "override",
+      value: approvalRaw || null,
+      overrideNote: approvalOverride || null,
+      recordedAt: nowIso(),
+    },
+    prdSnapshot: {
+      path: toProjectRelative(prdAbs, projectRoot),
+      sha256: sha256Text(prdText),
+      taskIds: tasks.map(item => item.id),
+      acceptanceCriteriaIds: acceptanceCriteria.map(item => item.id),
+      requirementIds: requirements.map(item => item.id),
+      verificationIds: verification.map(item => item.id),
+      testModeIds: testModeContract.map(item => item.id),
+      decisionTraceHash: intentTrace.prdDecisionTraceHash,
+      verificationContractHash: verificationContractHash({ verification, testModeContract }),
+    },
+    runDir: runDirRel,
+    delivery: {
+      ...inputs.deliveryConfig,
+      initializedAt: nowIso(),
+      worktree: {
+        ...inputs.deliveryConfig.worktree,
+        ...(linkedWorktree ? { path: projectRoot, root: path.dirname(projectRoot) } : {}),
+        current: linkedWorktree ||
+          (inputs.deliveryConfig.worktree.enabled &&
+            canonicalPath(projectRoot) === canonicalPath(inputs.deliveryConfig.worktree.path)),
+        skipped: Boolean(options["skip-worktree"]),
+        preparation: worktreePreparation,
+      },
+    },
     reviewProfile,
-    execution: executionConfig,
+    execution: inputs.executionConfig,
     intentTrace,
-    technicalStructure,
-    implementationNotes,
+    technicalStructure: contract.technicalStructure,
+    implementationNotes: contract.implementationNotes,
     createdAt: nowIso(),
     updatedAt: nowIso(),
-    activeSessionId: initialSessionId,
+    activeSessionId: inputs.initialSessionId,
     tasks,
     acceptanceCriteria,
     requirements,
@@ -190,47 +266,12 @@ function cmdInit(options) {
     testModeContract,
     verificationPlan: null,
     executionPlan: null,
-	    taskGraph: null,
-	    deviations: [],
-	    requirementsFidelityReview: null,
-	    finalReview: null,
+    taskGraph: null,
+    deviations: [],
+    requirementsFidelityReview: null,
+    finalReview: null,
     finalReceipt: null,
   };
-
-  if (approvalRaw !== "approved" && approvalOverride) {
-    recordDeviation(state, "prd_approval_override", "PRD", approvalOverride, {
-      frontmatterValue: approvalRaw || "missing",
-    });
-  }
-
-  const statePath = path.join(runDirAbs, "state.json");
-  state.verificationPlan = buildVerificationPlan(state, statePath);
-  persistStateAndArtifacts(statePath, state);
-  writeActiveRecord(projectRoot, statePath, state);
-  appendJsonl(path.join(runDirAbs, "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "initialized",
-    prdPath: state.prdPath,
-    taskCount: tasks.length,
-    acceptanceCriteriaCount: acceptanceCriteria.length,
-    verificationCount: verification.length,
-    verificationPlanStatus: state.verificationPlan.status,
-    verificationPlanGapCount: state.verificationPlan.gaps.length,
-  });
-
-  const counts = countState(state);
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    statePath: toProjectRelative(statePath, projectRoot),
-    runDir: state.runDir,
-    prdPath: state.prdPath,
-    counts,
-    verificationPlan: verificationPlanSummary(state),
-    executionPlan: executionPlanSummary(state),
-    taskGraph: taskGraphSummary(state),
-    ready: readyExecutionPlan(state),
-    next: nextItem(state),
-  }, null, 2) + "\n");
 }
 
 function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, approvalOverride, initialSessionId) {
