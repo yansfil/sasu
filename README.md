@@ -95,7 +95,7 @@ After changing installed skills, confirm visibility:
 skills/
   listen/    SKILL.md
   promise/   SKILL.md
-  fulfill/   SKILL.md, scripts/prd_state_harness.js, references/
+  fulfill/   SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
   pantry/    SKILL.md
   deliver/   SKILL.md, scripts/prd_ship.js
   please/    SKILL.md
@@ -103,7 +103,14 @@ scripts/
   install-local-skills.mjs   dual-runtime installer + hook registration
 tests/
   prd_state_harness.test.mjs
+  prd_state_regression.test.mjs   full standard-profile flow + golden artifact snapshots
+  prd_parser_unit.test.mjs        direct unit tests for scripts/lib/prd_parser.js
   install_local_skills.test.mjs
+  golden/                         normalized golden files (regenerate: UPDATE_GOLDEN=1)
 ```
+
+`prd_state_harness.js` is a thin dispatcher over `scripts/lib/`:
+`util` → `git` → `config` → `state_data` → `prd_parser` → `inference` → `planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` → `commands/*`.
+Modules only require layers to their left, so the dependency graph stays acyclic.
 
 Run artifacts live in the target project, not here: PRDs under `.hoyeon/prd/**` (trackable), implementation state and evidence under `.hoyeon/implement/**` (gitignored by policy, enforced by `doctor`).

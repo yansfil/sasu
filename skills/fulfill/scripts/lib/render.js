@@ -1,0 +1,576 @@
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+
+const { writeJson, writeMarkdown } = require("./util");
+const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState } = require("./state_data");
+const { taskGraphSummary, readyExecutionPlan, buildTaskGraph } = require("./planning");
+const { collectArtifacts } = require("./artifacts");
+
+function checkbox(done) {
+  return done ? "[x]" : "[ ]";
+}
+
+function evidenceText(item) {
+  if (!item.evidence || item.evidence.length === 0) return "";
+  return item.evidence.map(entry => `    - ${entry.ts}: ${entry.text}`).join("\n");
+}
+
+function artifactText(item) {
+  if (!item.artifacts || item.artifacts.length === 0) return "";
+  return item.artifacts.map(artifact => `    - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`).join("\n");
+}
+
+function renderExecutionPlan(state) {
+  const plan = state.executionPlan;
+  if (!plan) return "# Execution Plan\n\nStatus: missing\n";
+  const ready = readyExecutionPlan(state);
+  const lines = [
+    `# Execution Plan: ${state.topicSlug}`,
+    "",
+    `- PRD: ${state.prdPath}`,
+    `- Status: ${plan.status}`,
+    `- Generated: ${plan.generatedAt}`,
+    `- Nodes: ${(plan.nodes || []).length}`,
+    `- Blocking gaps: ${(plan.gaps || []).filter(gap => gap.severity === "blocking").length}`,
+    `- Warnings: ${(plan.gaps || []).filter(gap => gap.severity !== "blocking").length}`,
+    "",
+    "## Ready Guidance",
+    "",
+    `- Ready sequential: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}`,
+    `- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}`,
+    "",
+    "## Nodes",
+    "",
+  ];
+  for (const node of plan.nodes || []) {
+    lines.push(`### ${node.id}. ${node.title}`);
+    lines.push("");
+    lines.push(`- Status: ${node.status}`);
+    lines.push(`- Source task: ${node.sourceTask}`);
+    lines.push(`- Owner: ${node.owner || "unassigned"}`);
+    lines.push(`- Depends on: ${(node.dependsOn || []).length ? node.dependsOn.join(", ") : "none"}`);
+    lines.push(`- Write scope: ${(node.writeScope || []).length ? node.writeScope.join(", ") : "unknown"}`);
+    lines.push(`- Parallel safe: ${node.parallelSafe ? "yes" : "no"}`);
+    lines.push(`- Risk: ${node.risk}`);
+    lines.push(`- Covers: ${formatCoverage(node.covers)}`);
+    if (node.evidence && node.evidence.length) {
+      lines.push("- Evidence:");
+      for (const entry of node.evidence) lines.push(`  - ${entry.ts}: ${entry.text}`);
+    }
+    if (node.artifacts && node.artifacts.length) {
+      lines.push("- Artifacts:");
+      for (const artifact of node.artifacts) lines.push(`  - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`);
+    }
+    lines.push("");
+  }
+	  lines.push("## Rollups", "");
+	  for (const [taskId, rollup] of Object.entries((plan.rollups && plan.rollups.tasks) || {})) {
+	    lines.push(`- ${taskId}: nodes ${rollup.nodes.length ? rollup.nodes.join(", ") : "none"}; AC ${rollup.acceptanceCriteria.length ? rollup.acceptanceCriteria.join(", ") : "none"}; Verification ${rollup.verification.length ? rollup.verification.join(", ") : "none"}`);
+	  }
+	  lines.push("", "## Trace Matrix", "");
+	  for (const row of plan.traceMatrix || []) {
+	    lines.push(`- ${row.taskId}: N ${row.nodeIds.length ? row.nodeIds.join(", ") : "none"}; R ${row.requirements.length ? row.requirements.join(", ") : "none"}; AC ${row.acceptanceCriteria.length ? row.acceptanceCriteria.join(", ") : "none"}; required V ${row.requiredVerification.length ? row.requiredVerification.join(", ") : "none"}; optional V ${row.optionalVerification.length ? row.optionalVerification.join(", ") : "none"}`);
+	  }
+	  lines.push("", "## Gaps", "");
+  if (!plan.gaps || plan.gaps.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const gap of plan.gaps) lines.push(`- ${gap.severity}: ${gap.code} ${gap.item} - ${gap.message}`);
+  }
+  return lines.join("\n");
+}
+
+function renderTaskGraph(state, graph = state.taskGraph || buildTaskGraph(state)) {
+  const lines = [
+    `# Task Graph: ${state.topicSlug}`,
+    "",
+    `- PRD: ${state.prdPath}`,
+    `- Status: ${graph.status}`,
+    `- Generated: ${graph.generatedAt}`,
+    `- Nodes: ${graph.summary.nodeCount}`,
+    `- Edges: ${graph.summary.edgeCount}`,
+    `- Open nodes: ${graph.summary.openNodeCount}`,
+    `- Verification blocking gaps: ${graph.summary.blockingGapCount}`,
+    "",
+    "## Nodes",
+    "",
+  ];
+  for (const node of graph.nodes || []) {
+    lines.push(`- ${node.closed ? "[x]" : "[ ]"} ${node.id} (${node.kind}) - ${node.status}: ${node.title}`);
+    if (node.requirements && node.requirements.length) lines.push(`  - Requirements: ${node.requirements.join(", ")}`);
+    if (node.acceptanceCriteria && node.acceptanceCriteria.length) lines.push(`  - Acceptance Criteria: ${node.acceptanceCriteria.join(", ")}`);
+    if (node.sourceTask) lines.push(`  - Source Task: ${node.sourceTask}`);
+    if (node.dependsOn && node.dependsOn.length) lines.push(`  - Depends On: ${node.dependsOn.join(", ")}`);
+    if (node.writeScope && node.writeScope.length) lines.push(`  - Write Scope: ${node.writeScope.join(", ")}`);
+    if (node.risk) lines.push(`  - Risk: ${node.risk}`);
+    if (typeof node.parallelSafe === "boolean") lines.push(`  - Parallel Safe: ${node.parallelSafe ? "yes" : "no"}`);
+    if (node.owner) lines.push(`  - Owner: ${node.owner}`);
+    if (node.covers) lines.push(`  - Covers: ${formatCoverage(node.covers)}`);
+	    if (node.tool) lines.push(`  - Tool: ${node.tool}`);
+	    if (typeof node.requiredForDone === "boolean") lines.push(`  - Required For Done: ${node.requiredForDone ? "yes" : "no"}`);
+	    lines.push(`  - Evidence: ${node.evidenceCount}`);
+    lines.push(`  - Artifacts: ${node.artifactCount}`);
+  }
+  lines.push("", "## Edges", "");
+  if (!graph.edges || graph.edges.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const edge of graph.edges) {
+      lines.push(`- ${edge.from} -> ${edge.to} (${edge.type}): ${edge.reason}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function renderChecklist(state) {
+  const lines = [`# PRD Implementation Checklist: ${state.topicSlug}`, "", `Source PRD: ${state.prdPath}`, ""];
+  lines.push("## Execution Nodes", "");
+  if (state.executionPlan && state.executionPlan.nodes && state.executionPlan.nodes.length) {
+    for (const node of state.executionPlan.nodes) {
+	      lines.push(`- ${checkbox(node.status === "complete")} ${node.id}. ${node.title}`);
+      lines.push(`  - Status: ${node.status}`);
+      lines.push(`  - Source Task: ${node.sourceTask}`);
+      if (node.dependsOn && node.dependsOn.length) lines.push(`  - Depends On: ${node.dependsOn.join(", ")}`);
+      if (node.writeScope && node.writeScope.length) lines.push(`  - Write Scope: ${node.writeScope.join(", ")}`);
+      lines.push(`  - Parallel Safe: ${node.parallelSafe ? "yes" : "no"}`);
+      lines.push(`  - Risk: ${node.risk}`);
+      lines.push(`  - Covers: ${formatCoverage(node.covers)}`);
+      if (node.evidence && node.evidence.length) lines.push("  - Evidence:", evidenceText(node));
+      if (node.artifacts && node.artifacts.length) lines.push("  - Artifacts:", artifactText(node));
+    }
+  } else {
+    lines.push("- [ ] EP0. Run `plan-execution`");
+  }
+  lines.push("");
+  lines.push("## Tasks", "");
+	  for (const task of state.tasks) {
+	    lines.push(`- ${checkbox(task.status === "complete")} ${task.id}. ${task.title}`);
+    lines.push(`  - Status: ${task.status}`);
+    if (task.requirements.length) lines.push(`  - Requirements: ${task.requirements.join(", ")}`);
+    if (task.acceptanceCriteria.length) lines.push(`  - Acceptance Criteria: ${task.acceptanceCriteria.join(", ")}`);
+    if (task.evidence.length) lines.push("  - Evidence:", evidenceText(task));
+    if (task.artifacts && task.artifacts.length) lines.push("  - Artifacts:", artifactText(task));
+  }
+  lines.push("", "## Acceptance Criteria", "");
+	  for (const ac of state.acceptanceCriteria) {
+	    lines.push(`- ${checkbox(ac.status === "met")} ${ac.id}. ${ac.title}`);
+    lines.push(`  - Status: ${ac.status}`);
+    if (ac.requirements.length) lines.push(`  - Requirements: ${ac.requirements.join(", ")}`);
+    if (ac.evidence.length) lines.push("  - Evidence:", evidenceText(ac));
+    if (ac.artifacts && ac.artifacts.length) lines.push("  - Artifacts:", artifactText(ac));
+  }
+  lines.push("", "## Verification Evidence", "");
+	  for (const verification of state.verification) {
+	    lines.push(`- ${checkbox(verificationIsClosedForAccounting(verification))} ${verification.id}. ${verification.level}: ${verification.title}`);
+	    lines.push(`  - Status: ${verification.status}`);
+	    lines.push(`  - Required For Done: ${isVerificationRequiredForDone(verification) ? "yes" : "no"}`);
+    if (verification.evidence.length) lines.push("  - Evidence:", evidenceText(verification));
+    if (verification.artifacts && verification.artifacts.length) lines.push("  - Artifacts:", artifactText(verification));
+  }
+  lines.push("", "## Requirements Fidelity Review", "");
+  lines.push(`- ${checkbox(Boolean(state.requirementsFidelityReview && state.requirementsFidelityReview.status === "pass"))} REQ_FIDELITY_REVIEW. Requirements fidelity review`);
+  lines.push(`  - Status: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}`);
+  if (state.requirementsFidelityReview) {
+    lines.push(`  - Report: ${state.requirementsFidelityReview.reportPath}`);
+    lines.push(`  - Summary: ${state.requirementsFidelityReview.summary}`);
+  }
+  lines.push("", "## Final Adversarial Review", "");
+  const finalReviewRequired = finalReviewRequiredForState(state);
+  lines.push(`- ${checkbox(!finalReviewRequired || Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review${finalReviewRequired ? "" : " (skipped for trivial profile)"}`);
+  lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped"}`);
+  if (state.finalReview) {
+    lines.push(`  - Report: ${state.finalReview.reportPath}`);
+    lines.push(`  - Summary: ${state.finalReview.summary}`);
+  }
+  return lines.join("\n");
+}
+
+function renderVerificationPlan(state) {
+  const plan = state.verificationPlan;
+  if (!plan) return "# Verification Plan\n\nStatus: missing\n";
+  const lines = [
+    `# Verification Plan: ${state.topicSlug}`,
+    "",
+    `- Status: ${plan.status}`,
+    `- Generated: ${plan.generatedAt}`,
+    `- PRD: ${plan.prdPath}`,
+    "",
+    "## Environment",
+    "",
+    `- Package manager: ${plan.environment.packageManager || "unknown"}`,
+    `- Browser tool: ${plan.environment.browserTool}`,
+    `- Server strategy: ${plan.environment.serverStrategy}`,
+    `- Service strategy: ${plan.environment.serviceStrategy}`,
+    `- DB strategy: ${plan.environment.dbStrategy}`,
+    "",
+    "## Test Mode Contract",
+    "",
+  ];
+  if (state.testModeContract && state.testModeContract.length) {
+    for (const mode of state.testModeContract) {
+      lines.push(`- ${mode.mode}: required=${mode.requiredForDone ? "yes" : "no"}; blockable=${mode.canBeBlocked ? "yes" : "no"}; covers=${mode.covers || "unspecified"}; human=${mode.humanDecision || "none"}`);
+    }
+  } else {
+    lines.push("- None parsed");
+  }
+  lines.push(
+    "",
+    "## Checks",
+    "",
+  );
+  for (const check of plan.checks || []) {
+    lines.push(`### ${check.id}. ${check.verificationId} - ${check.category}`);
+    lines.push("");
+    lines.push(`- Level: ${check.level}`);
+    lines.push(`- Source: ${check.source}`);
+    if (check.testMode) lines.push(`- Test mode: ${check.testMode}`);
+    lines.push(`- Tool: ${check.tool}`);
+    if (check.command) lines.push(`- Command: \`${check.command}\``);
+    if (check.target) lines.push(`- Target: ${check.target}`);
+	    lines.push(`- Covers: ${formatCoverage(check.covers)}`);
+	    lines.push(`- Artifacts: ${check.artifactKinds.join(", ")}`);
+	    lines.push(`- Pass criteria: ${check.passCriteria}`);
+	    lines.push(`- Required for done: ${check.requiredForDone ? "yes" : "no"}`);
+	    lines.push(`- Can be blocked: ${check.canBeBlocked ? "yes" : "no"}`);
+	    if (check.contract) {
+	      lines.push(`- Contract method: ${check.contract.method || "missing"}`);
+	      lines.push(`- Contract artifact: ${check.contract.artifact || "missing"}`);
+	      if (check.contract.environment) lines.push(`- Contract environment: ${check.contract.environment}`);
+	      if (check.contract.safeProbe) lines.push(`- Safe probe: ${check.contract.safeProbe}`);
+	      if (check.contract.liveProof) lines.push(`- Live proof: ${check.contract.liveProof}`);
+	      if (check.contract.sideEffect) lines.push(`- Side effect: ${check.contract.sideEffect}`);
+	      if (check.contract.sensitiveDataPolicy) lines.push(`- Sensitive data policy: ${check.contract.sensitiveDataPolicy}`);
+	    }
+    lines.push(`- Status: ${check.status}`);
+    if (check.notes.length) {
+      lines.push("- Notes:");
+      for (const note of check.notes) lines.push(`  - ${note}`);
+    }
+    lines.push("");
+  }
+  lines.push("## Acceptance Coverage", "");
+  for (const [id, entry] of Object.entries(plan.coverage || {})) {
+    lines.push(`- ${id}: ${entry.status} (${entry.coveredBy.length ? entry.coveredBy.join(", ") : "no checks"}) - ${entry.title}`);
+  }
+  lines.push("", "## Gaps", "");
+  if (!plan.gaps || plan.gaps.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const gap of plan.gaps) lines.push(`- ${gap.severity}: ${gap.code} ${gap.item} - ${gap.message}`);
+  }
+  return lines.join("\n");
+}
+
+function formatCoverage(covers) {
+  covers = covers || {};
+  const parts = [];
+  if ((covers.requirements || []).length) parts.push(`R: ${covers.requirements.join(", ")}`);
+  if ((covers.acceptanceCriteria || []).length) parts.push(`AC: ${covers.acceptanceCriteria.join(", ")}`);
+  if ((covers.tasks || []).length) parts.push(`T: ${covers.tasks.join(", ")}`);
+  if ((covers.verification || []).length) parts.push(`V: ${covers.verification.join(", ")}`);
+  return parts.length ? parts.join("; ") : "unmapped";
+}
+
+function renderVerification(state) {
+  const lines = [`# Verification`, "", `PRD: ${state.prdPath}`, ""];
+  for (const item of state.verification) {
+    lines.push(`## ${item.id}. ${item.level}`);
+    lines.push("");
+    lines.push(`- Status: ${item.status}`);
+    if (item.source) lines.push(`- Source: ${item.source}`);
+    lines.push(`- Check: ${item.text}`);
+    if (item.evidence.length) {
+      lines.push("- Evidence:");
+      for (const entry of item.evidence) lines.push(`  - ${entry.ts}: ${entry.text}`);
+    }
+    if (item.artifacts && item.artifacts.length) {
+      lines.push("- Artifacts:");
+      for (const artifact of item.artifacts) lines.push(`  - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function writeImplementationReport(statePath, state) {
+  const lines = [`# Implementation Result: ${state.topicSlug}`, "", `Status: ${state.status}`, "", `PRD: ${state.prdPath}`, `Receipt: ${state.runDir}/receipt.json`, ""];
+  const executionPlan = executionPlanSummary(state);
+  lines.push("## Execution Plan", "");
+  lines.push(`- Status: ${executionPlan.status}`);
+  lines.push(`- Nodes: ${executionPlan.nodeCount}`);
+  lines.push(`- Open nodes: ${executionPlan.openNodeCount}`);
+  lines.push(`- Artifact: ${state.runDir}/execution-plan.md`);
+  if (state.executionPlan && state.executionPlan.nodes) {
+    for (const node of state.executionPlan.nodes) {
+      lines.push(`- ${node.id}: ${node.status} - ${node.title} (source: ${node.sourceTask}, risk: ${node.risk}, parallelSafe: ${node.parallelSafe ? "yes" : "no"})`);
+    }
+  }
+  lines.push("");
+  const graph = taskGraphSummary(state);
+  lines.push("## Task Graph", "");
+  lines.push(`- Status: ${graph.status}`);
+  lines.push(`- Nodes: ${graph.nodeCount}`);
+  lines.push(`- Edges: ${graph.edgeCount}`);
+  lines.push(`- Open nodes: ${graph.openNodeCount}`);
+  lines.push(`- Artifact: ${state.runDir}/taskgraph.md`);
+  lines.push("## Tasks", "");
+  for (const task of state.tasks) lines.push(`- ${task.id}: ${task.status} - ${task.title}`);
+  lines.push("", "## Acceptance Criteria", "");
+  for (const ac of state.acceptanceCriteria) lines.push(`- ${ac.id}: ${ac.status} - ${ac.title}`);
+  lines.push("", "## Verification Evidence", "");
+  for (const item of state.verification) lines.push(`- ${item.id}: ${item.status} - ${item.level}: ${item.title}`);
+  lines.push("", "## Artifact Evidence", "");
+  for (const entry of collectArtifacts(state)) {
+    lines.push(`- ${entry.ownerKind} ${entry.ownerId}: ${entry.artifact.kind} - ${entry.artifact.path}`);
+  }
+  lines.push("", "## Requirements Fidelity Review", "");
+  if (state.requirementsFidelityReview) {
+    lines.push(`- Status: ${state.requirementsFidelityReview.status}`);
+    lines.push(`- Report: ${state.requirementsFidelityReview.reportPath}`);
+    lines.push(`- Summary: ${state.requirementsFidelityReview.summary}`);
+  } else {
+    lines.push("- Status: pending");
+  }
+  lines.push("", "## Final Adversarial Review", "");
+  if (state.finalReview) {
+    lines.push(`- Status: ${state.finalReview.status}`);
+    lines.push(`- Report: ${state.finalReview.reportPath}`);
+    lines.push(`- Summary: ${state.finalReview.summary}`);
+  } else {
+    lines.push("- Status: pending");
+  }
+  lines.push("", "## Final Receipt", "", "```json", JSON.stringify(state.finalReceipt, null, 2), "```", "");
+  writeMarkdown(path.join(path.dirname(statePath), "implementation-result.md"), lines.join("\n"));
+}
+
+function renderRequirementsReviewPrompt(context) {
+  const { state, statePath, reportPath } = context;
+  const intentTrace = state.intentTrace || {};
+  const decisionLines = (intentTrace.decisions || [])
+    .slice(0, 40)
+    .map(item => `  - ${item.source} ${item.id} [${item.stance || "unspecified"}]: ${item.text}`)
+    .join("\n") || "  - No structured decision trace items were captured; treat missing traceability as a finding unless the PRD explicitly says none were needed.";
+  return `You are the requirements fidelity reviewer for a PRD implementation.
+
+Your job is to verify that the implementation still satisfies the user's original intent, accepted decisions, rejected alternatives, and PRD contract. Be strict. Find semantic drift, missing user-visible behavior, diluted acceptance criteria, hidden scope, and "technically complete but not what the user asked for" failures.
+
+Do not implement fixes. Do not mark anything complete. Review only.
+
+Source of truth:
+- PRD: \`${state.prdPath}\`
+- State JSON: \`${statePath}\`
+- Checklist: \`${state.runDir}/checklist.md\`
+- Context notes: \`${state.runDir}/context-notes.md\`
+- Execution plan: \`${state.runDir}/execution-plan.json\` and \`${state.runDir}/execution-plan.md\`
+- Task graph: \`${state.runDir}/taskgraph.json\` and \`${state.runDir}/taskgraph.md\`
+- Verification plan: \`${state.runDir}/verification-plan.json\` and \`${state.runDir}/verification-plan.md\`
+- Verification: \`${state.runDir}/verification.md\`
+- Ledger: \`${state.runDir}/ledger.jsonl\`
+- Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
+- Git diff/worktree: inspect current repository state
+- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`.hoyeon/intake/**\` or \`.hoyeon/clarify/**\` files that exist.
+- Intent trace snapshot: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources).
+${decisionLines}
+
+Required checks:
+1. Every explicit user decision from intake/clarify/current conversation is represented in PRD Scope, Non-Goals, Requirements, ACs, Verification, or Human Verification.
+2. Every accepted initial proposal is either implemented and evidenced or explicitly deferred/non-goal with user approval.
+3. Every rejected option, non-goal, and guardrail stayed rejected; implementation did not reintroduce it indirectly.
+4. PRD Requirements and ACs did not dilute the user's intended outcome into easier proxy checks.
+5. User-visible flows, copy, data behavior, runtime behavior, and external/live proof expectations match the user's goal, not only the executor's tasks.
+6. Each AC has evidence that proves the user intent behind the AC, not just a superficial DOM/file/test condition.
+7. Every required Verification item has a Verification Intent Checklist entry that maps Pass Intent and covered R#/AC# to concrete registered artifact paths.
+8. Any missing source artifact, ambiguous decision, or human taste judgment is called out as blocking unless the PRD explicitly made it non-required.
+9. No hidden scope, architecture, storage, API, auth, billing, production-data, or external-service decision was added without approval.
+10. The implementation result report does not overclaim Done when user intent is partially met, blocked, or still needs human judgment.
+
+Write the report to:
+\`${reportPath}\`
+
+This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
+
+Keep the section headings and the Coverage Judgment label keys exactly as written below; they are machine-checked structural markers. Write all prose, findings, and values in the user's language.
+
+Use this format:
+
+# Requirements Fidelity Review
+
+Status: PASS | FAIL
+
+## Intent Sources Read
+
+- <source path or PRD section>
+
+## Decision Trace
+
+- <user decision or proposal>: represented by <R/AC/T/V/non-goal/evidence> | gap: <none or issue>
+
+Include at least ${Math.min(Math.max(1, intentTrace.decisionCount || 0), 3)} Decision Trace entr${Math.min(Math.max(1, intentTrace.decisionCount || 0), 3) === 1 ? "y" : "ies"} as bullets or a markdown table. Do not collapse accepted, rejected, deferred, or open decisions into a generic statement.
+
+## Findings
+
+- <severity>: <finding with source, PRD, implementation, evidence, or artifact reference>
+
+## Verification Intent Checklist
+
+- <V#>: Pass Intent: <PRD pass intent or derived pass criteria>; Covers: <R#/AC#>; Artifacts checked: <registered artifact paths>; Judgment: PASS|FAIL; Gap: <none or issue>
+
+Include every required Verification item. A passing review must fail if a required V# is missing, has no registered artifact path, or the artifact does not actually prove the covered R#/AC#.
+
+## Coverage Judgment
+
+- Requirements:
+- Acceptance Criteria:
+- User-visible behavior:
+- Non-goals and rejected options:
+- Human verification:
+
+## Verdict
+
+PASS only if the user's original intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result all align. FAIL on any material semantic drift, missing decision, diluted AC, hidden scope, or overclaimed result.
+`;
+}
+
+function renderReviewPrompt(context) {
+  const { state, statePath, reportPath } = context;
+  const fidelity = state.requirementsFidelityReview || {};
+  const profile = reviewProfileName(state);
+  const profileGuidance = profile === "high-risk"
+    ? "Review profile: high-risk. Run the full adversarial review and reopen any risky semantic, security, data, migration, external-service, or delivery proof."
+    : profile === "standard"
+      ? "Review profile: standard. Keep this as a thin final gate: audit freshness, state consistency, artifact validity, deviations, and overclaiming; reopen full V-by-V proof only when the fidelity review is weak, generic, inconsistent, or suspicious."
+      : "Review profile: trivial. Final adversarial review is optional for receipt; if requested, keep it to a short freshness, artifact, and overclaim check.";
+  const fidelityLine = fidelity.reportSha256
+    ? `Recorded fidelity review: status ${fidelity.status}, report \`${fidelity.reportPath}\`, sha256 \`${fidelity.reportSha256}\`, recorded at ${fidelity.recordedAt}.`
+    : "No requirements fidelity review is recorded yet; a passing final review is impossible until one is recorded.";
+  return `You are the adversarial final reviewer for a PRD implementation.
+
+${profileGuidance}
+
+Your job is to audit the recorded requirements fidelity review, then find missing work, weak evidence, fake verification, and PRD drift that survived that review.
+Do not implement fixes. Do not mark anything complete. Review only.
+Do not repeat the full V-by-V semantic artifact proof from scratch when the requirements fidelity review already contains it and you agree with it.
+Instead, verify that the fidelity review is fresh, specific, and trustworthy, then focus on disagreement, omission, weak reasoning, risky artifacts, and final-report overclaiming.
+
+You are running AFTER the requirements fidelity review was recorded. ${fidelityLine}
+Read \`${statePath}\` yourself, confirm the recorded fidelity review status and report sha256, and cite that sha256 (at least its first 12 characters) in the 'Fidelity Review Checked' section of your report. Do not write the report from memory of earlier turns.
+
+Source of truth:
+- PRD: \`${state.prdPath}\`
+- State JSON: \`${statePath}\`
+- Checklist: \`${state.runDir}/checklist.md\`
+- Execution plan: \`${state.runDir}/execution-plan.json\` and \`${state.runDir}/execution-plan.md\`
+- Task graph: \`${state.runDir}/taskgraph.json\` and \`${state.runDir}/taskgraph.md\`
+- Verification plan: \`${state.runDir}/verification-plan.json\` and \`${state.runDir}/verification-plan.md\`
+- Verification: \`${state.runDir}/verification.md\`
+- Ledger: \`${state.runDir}/ledger.jsonl\`
+- Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
+- Requirements fidelity review: \`${state.runDir}/review/requirements-fidelity-review.md\`
+- Git diff/worktree: inspect current repository state
+
+Required checks:
+0. Requirements fidelity review exists, passed, is fresh, and its findings are either resolved or explicitly reflected in the final verdict.
+0a. Requirements fidelity review is the primary semantic artifact proof. Audit it as the proof owner, and only reopen full V-by-V artifact reasoning where it is missing, generic, inconsistent with state, or suspicious.
+1. The PRD stayed clean: product requirements, ACs, high-level tasks, and verification contract only; no executor-only fields such as writeScope, owner, parallelSafe, or low-level dependsOn.
+2. Every PRD Task maps to one or more execution-plan nodes.
+3. Every execution node maps back to a PRD task or approved verification/release hygiene and has evidence.
+4. Every PRD Task is complete and its roll-up is supported by execution node, AC, and verification evidence.
+5. Every Acceptance Criterion is met in state and is covered by evidence or by a credible fidelity-review judgment. Open the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the entire fidelity checklist.
+6. The Task Graph accounts for execution nodes, Task rollups, ACs, Verification items, final review, and receipt gate.
+7. The Verification Plan is ready, maps every AC to checks, and has no blocking gaps.
+8. Every required agent verification item passed with an artifact file, not just prose, and every required V# appears in the fidelity review's Verification Intent Checklist. Optional skipped/blocked verification must be explicitly marked non-required by the PRD contract and have evidence.
+9. The executed verification commands match the PRD Verification Contract or derived verification plan. Any command, order, or scope deviation must be recorded in \`state.deviations\` and justified by equivalent coverage.
+10. Screenshots, logs, browser dumps, API logs, or DB/query logs referenced in state actually exist and are non-empty. Screenshots must be real PNG/JPEG files.
+11. No artifact under \`${state.runDir}/artifacts\` is unregistered in state or \`artifacts/manifest.jsonl\`.
+12. The final review is not stale: no evidence, artifact, plan, or deviation was recorded after review.
+13. Ready parallel groups, if used, had disjoint write scopes and no high-risk DB/auth/security/config/migration/production-data work.
+14. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and does not add unmapped scope.
+15. The final report can be trusted by a human who only reads the PRD, state, ledger, and artifacts.
+
+Write the report to:
+\`${reportPath}\`
+
+This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
+
+Keep the section headings exactly as written below; they are machine-checked structural markers. Write all prose in the user's language.
+
+Use this format:
+
+# Final Adversarial Review
+
+Status: PASS | FAIL
+
+## Fidelity Review Checked
+
+- Report: <recorded requirements fidelity review report path>
+- Sha256: <recorded reportSha256 read from state.json>
+- Status: <recorded status>
+- Recorded at: <recordedAt>
+- Findings resolved or reflected: <how>
+
+## Findings
+
+- <severity>: <finding with file/artifact/state reference>
+
+## Checklist Coverage
+
+- Tasks:
+- Acceptance Criteria:
+- Verification: <summarize verification coverage and defer to the fidelity review's per-V# checklist; reopen a specific V# only when you disagree with or distrust it. Do not re-list every V# from scratch.>
+- Execution Plan:
+- Task Graph:
+
+## Artifact Audit
+
+- Harness-visible validity: <missing, empty, invalid, unregistered, hash drift, stale review, or wrong evidence kind findings, or none>
+- Spot-checks performed: <risky or user-critical artifacts opened, or why the fidelity checklist was sufficient>
+- Missing or weak artifacts: <only list semantic proof gaps or artifact concerns not already handled by the fidelity review>
+
+## Deviation Audit
+
+- Recorded deviations:
+- Accepted deviations:
+- Rejected deviations:
+
+## Verdict
+
+PASS only if all tracked work is complete, the requirements fidelity review is trustworthy, every required verification item has valid artifact-backed evidence, optional verification exceptions are explicitly non-required and justified, no stale review/artifact drift remains, and no PRD drift remains.`;
+}
+
+function writeArtifacts(statePath, state) {
+  const runDir = path.dirname(statePath);
+  const taskGraph = state.taskGraph || buildTaskGraph(state);
+  writeMarkdown(path.join(runDir, "checklist.md"), renderChecklist(state));
+  writeJson(path.join(runDir, "taskgraph.json"), taskGraph);
+  writeMarkdown(path.join(runDir, "taskgraph.md"), renderTaskGraph(state, taskGraph));
+  if (state.executionPlan) {
+    writeJson(path.join(runDir, "execution-plan.json"), state.executionPlan);
+    writeMarkdown(path.join(runDir, "execution-plan.md"), renderExecutionPlan(state));
+  }
+  if (state.verificationPlan) {
+    writeJson(path.join(runDir, "verification-plan.json"), state.verificationPlan);
+    writeMarkdown(path.join(runDir, "verification-plan.md"), renderVerificationPlan(state));
+  }
+  if (!fs.existsSync(path.join(runDir, "context-notes.md"))) {
+    writeMarkdown(path.join(runDir, "context-notes.md"), `# Context Notes\n\n- PRD: ${state.prdPath}\n`);
+  }
+  writeMarkdown(path.join(runDir, "verification.md"), renderVerification(state));
+}
+
+module.exports = {
+  checkbox,
+  evidenceText,
+  artifactText,
+  renderExecutionPlan,
+  renderTaskGraph,
+  renderChecklist,
+  renderVerificationPlan,
+  formatCoverage,
+  renderVerification,
+  writeImplementationReport,
+  renderRequirementsReviewPrompt,
+  renderReviewPrompt,
+  writeArtifacts,
+};
