@@ -478,23 +478,68 @@ function rollupTasksFromExecutionPlan(state, options = {}) {
 function buildTaskGraph(state) {
   const verificationPlan = verificationPlanSummary(state);
   const executionPlan = executionPlanSummary(state);
+  const graph = createTaskGraphBuilder();
+  const tasks = state.tasks || [];
+  const acceptanceCriteria = state.acceptanceCriteria || [];
+  const verificationItems = state.verification || [];
+  const executionNodes = state.executionPlan && Array.isArray(state.executionPlan.nodes) ? state.executionPlan.nodes : [];
+
+  addPlanGateNodes(graph, verificationPlan, executionPlan);
+  addTaskRollupNodes(graph, tasks);
+  addExecutionGraphNodes(graph, executionNodes);
+  addAcceptanceCriterionNodes(graph, acceptanceCriteria);
+  addVerificationGraphNodes(graph, state, tasks, acceptanceCriteria, verificationItems);
+  addReviewAndReceiptNodes(graph, state, [...tasks, ...executionNodes, ...acceptanceCriteria, ...verificationItems]);
+
+  const { nodes, edges } = graph;
+  return {
+    schema: "hoyeon.prd-implement.taskgraph.v2",
+    generatedAt: nowIso(),
+    prdPath: state.prdPath,
+    status: state.finalReceipt
+      ? "complete"
+      : verificationPlanBlocksImplementation(state)
+        ? "blocked_by_verification_plan"
+        : executionPlanBlocksImplementation(state)
+          ? "blocked_by_execution_plan"
+          : "active",
+    summary: {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      openNodeCount: nodes.filter(node => !node.closed).length,
+      blockingGapCount: verificationPlan.blockingGapCount + executionPlan.blockingGapCount,
+      executionNodeCount: executionPlan.nodeCount,
+      openExecutionNodeCount: executionPlan.openNodeCount,
+    },
+    nodes,
+    edges: edges.map(({ key, ...edge }) => edge),
+  };
+}
+
+function createTaskGraphBuilder() {
   const nodes = [];
   const edges = [];
-  const addNode = node => {
-    nodes.push({
-      ...node,
-      evidenceCount: Array.isArray(node.evidence) ? node.evidence.length : node.evidenceCount || 0,
-      artifactCount: Array.isArray(node.artifacts) ? node.artifacts.length : node.artifactCount || 0,
-    });
+  return {
+    nodes,
+    edges,
+    addNode(node) {
+      nodes.push({
+        ...node,
+        evidenceCount: Array.isArray(node.evidence) ? node.evidence.length : node.evidenceCount || 0,
+        artifactCount: Array.isArray(node.artifacts) ? node.artifacts.length : node.artifactCount || 0,
+      });
+    },
+    addEdge(from, to, type, reason) {
+      if (!from || !to || from === to) return;
+      const key = `${from}->${to}:${type}`;
+      if (edges.some(edge => edge.key === key)) return;
+      edges.push({ key, from, to, type, reason });
+    },
   };
-  const addEdge = (from, to, type, reason) => {
-    if (!from || !to || from === to) return;
-    const key = `${from}->${to}:${type}`;
-    if (edges.some(edge => edge.key === key)) return;
-    edges.push({ key, from, to, type, reason });
-  };
+}
 
-  addNode({
+function addPlanGateNodes(graph, verificationPlan, executionPlan) {
+  graph.addNode({
     id: "VP0",
     kind: "verification_plan",
     title: "Generate and resolve verification plan",
@@ -503,7 +548,7 @@ function buildTaskGraph(state) {
     blockingGapCount: verificationPlan.blockingGapCount,
     checkCount: verificationPlan.checkCount,
   });
-  addNode({
+  graph.addNode({
     id: "EP0",
     kind: "execution_plan",
     title: "Generate execution plan from PRD tasks",
@@ -512,15 +557,12 @@ function buildTaskGraph(state) {
     blockingGapCount: executionPlan.blockingGapCount,
     nodeCount: executionPlan.nodeCount,
   });
-  addEdge("VP0", "EP0", "unblocks", "execution planning starts after verification planning");
+  graph.addEdge("VP0", "EP0", "unblocks", "execution planning starts after verification planning");
+}
 
-  const tasks = state.tasks || [];
-  const acceptanceCriteria = state.acceptanceCriteria || [];
-  const verificationItems = state.verification || [];
-  const executionNodes = state.executionPlan && Array.isArray(state.executionPlan.nodes) ? state.executionPlan.nodes : [];
-
+function addTaskRollupNodes(graph, tasks) {
   for (const task of tasks) {
-    addNode({
+    graph.addNode({
       id: task.id,
       kind: "task_rollup",
       title: task.title,
@@ -532,9 +574,11 @@ function buildTaskGraph(state) {
       artifacts: task.artifacts || [],
     });
   }
+}
 
+function addExecutionGraphNodes(graph, executionNodes) {
   for (const node of executionNodes) {
-    addNode({
+    graph.addNode({
       id: node.id,
       kind: "execution_node",
       title: node.title,
@@ -550,15 +594,17 @@ function buildTaskGraph(state) {
       evidence: node.evidence || [],
       artifacts: node.artifacts || [],
     });
-    addEdge("EP0", node.id, "unblocks", "execution node comes from the execution plan");
-    addEdge(node.sourceTask, node.id, "decomposes_to", "PRD task is executed through this implementation node");
-    for (const depId of node.dependsOn || []) addEdge(depId, node.id, "depends_on", "execution dependency");
-    for (const acId of (node.covers && node.covers.acceptanceCriteria) || []) addEdge(node.id, acId, "satisfies", "execution node covers this acceptance criterion");
-    for (const verificationId of (node.covers && node.covers.verification) || []) addEdge(node.id, verificationId, "verified_by", "execution node is proven by this verification item");
+    graph.addEdge("EP0", node.id, "unblocks", "execution node comes from the execution plan");
+    graph.addEdge(node.sourceTask, node.id, "decomposes_to", "PRD task is executed through this implementation node");
+    for (const depId of node.dependsOn || []) graph.addEdge(depId, node.id, "depends_on", "execution dependency");
+    for (const acId of (node.covers && node.covers.acceptanceCriteria) || []) graph.addEdge(node.id, acId, "satisfies", "execution node covers this acceptance criterion");
+    for (const verificationId of (node.covers && node.covers.verification) || []) graph.addEdge(node.id, verificationId, "verified_by", "execution node is proven by this verification item");
   }
+}
 
+function addAcceptanceCriterionNodes(graph, acceptanceCriteria) {
   for (const ac of acceptanceCriteria) {
-    addNode({
+    graph.addNode({
       id: ac.id,
       kind: "acceptance_criterion",
       title: ac.title,
@@ -569,43 +615,46 @@ function buildTaskGraph(state) {
       artifacts: ac.artifacts || [],
     });
   }
+}
 
+function addVerificationGraphNodes(graph, state, tasks, acceptanceCriteria, verificationItems) {
   const checksByVerificationId = new Map();
   for (const check of (state.verificationPlan && state.verificationPlan.checks) || []) {
     checksByVerificationId.set(check.verificationId, check);
   }
-
   for (const verification of verificationItems) {
     const check = checksByVerificationId.get(verification.id);
     const covers = check ? check.covers : coverageFromText(verification.text || "");
-    addNode({
+    graph.addNode({
       id: verification.id,
-	      kind: "verification",
-	      title: verification.title,
-	      status: verification.status,
-	      closed: verificationIsClosedForAccounting(verification),
+      kind: "verification",
+      title: verification.title,
+      status: verification.status,
+      closed: verificationIsClosedForAccounting(verification),
       level: verification.level,
-	      category: check ? check.category : null,
-	      tool: check ? check.tool : null,
-	      requiredForDone: isVerificationRequiredForDone(verification),
-	      covers,
+      category: check ? check.category : null,
+      tool: check ? check.tool : null,
+      requiredForDone: isVerificationRequiredForDone(verification),
+      covers,
       evidence: verification.evidence || [],
       artifacts: verification.artifacts || [],
     });
-    addEdge("VP0", verification.id, "plans", "verification check comes from the verification plan");
-    for (const taskId of covers.tasks || []) addEdge(taskId, verification.id, "verified_by", "verification covers this task");
-    for (const acId of covers.acceptanceCriteria || []) addEdge(acId, verification.id, "verified_by", "verification covers this acceptance criterion");
+    graph.addEdge("VP0", verification.id, "plans", "verification check comes from the verification plan");
+    for (const taskId of covers.tasks || []) graph.addEdge(taskId, verification.id, "verified_by", "verification covers this task");
+    for (const acId of covers.acceptanceCriteria || []) graph.addEdge(acId, verification.id, "verified_by", "verification covers this acceptance criterion");
     for (const reqId of covers.requirements || []) {
       for (const task of tasks.filter(item => (item.requirements || []).includes(reqId))) {
-        addEdge(task.id, verification.id, "verified_by", `verification covers ${reqId}`);
+        graph.addEdge(task.id, verification.id, "verified_by", `verification covers ${reqId}`);
       }
       for (const ac of acceptanceCriteria.filter(item => (item.requirements || []).includes(reqId))) {
-        addEdge(ac.id, verification.id, "verified_by", `verification covers ${reqId}`);
+        graph.addEdge(ac.id, verification.id, "verified_by", `verification covers ${reqId}`);
       }
     }
   }
+}
 
-  addNode({
+function addReviewAndReceiptNodes(graph, state, reviewedItems) {
+  graph.addNode({
     id: "REQ_FIDELITY_REVIEW",
     kind: "requirements_fidelity_review",
     title: "Requirements fidelity review",
@@ -615,7 +664,7 @@ function buildTaskGraph(state) {
     artifactCount: state.requirementsFidelityReview && state.requirementsFidelityReview.reportPath ? 1 : 0,
   });
   const finalReviewRequired = finalReviewRequiredForState(state);
-  addNode({
+  graph.addNode({
     id: "REVIEW",
     kind: "final_review",
     title: "Adversarial final review",
@@ -625,7 +674,7 @@ function buildTaskGraph(state) {
     evidenceCount: state.finalReview ? 1 : 0,
     artifactCount: state.finalReview && state.finalReview.reportPath ? 1 : 0,
   });
-  addNode({
+  graph.addNode({
     id: "FINALIZE",
     kind: "receipt",
     title: "Final receipt",
@@ -635,40 +684,16 @@ function buildTaskGraph(state) {
     artifactCount: state.finalReceipt ? 1 : 0,
   });
 
-  for (const item of [...tasks, ...executionNodes, ...acceptanceCriteria, ...verificationItems]) {
-    addEdge(item.id, "REQ_FIDELITY_REVIEW", "requirements_review_input", "requirements reviewer must audit this item against original user intent and PRD decisions");
-    addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
+  for (const item of reviewedItems) {
+    graph.addEdge(item.id, "REQ_FIDELITY_REVIEW", "requirements_review_input", "requirements reviewer must audit this item against original user intent and PRD decisions");
+    graph.addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
   }
-  addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", finalReviewRequired
+  graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", finalReviewRequired
     ? "final reviewer must audit the requirements fidelity verdict"
     : "trivial profile skips mandatory final review after requirements fidelity passes");
-  addEdge("REVIEW", "FINALIZE", "gates", finalReviewRequired
+  graph.addEdge("REVIEW", "FINALIZE", "gates", finalReviewRequired
     ? "receipt can be written only after passing final review"
     : "receipt can be written after requirements fidelity review and mechanical gates pass");
-
-  const openNodeCount = nodes.filter(node => !node.closed).length;
-  return {
-    schema: "hoyeon.prd-implement.taskgraph.v2",
-    generatedAt: nowIso(),
-    prdPath: state.prdPath,
-    status: state.finalReceipt
-      ? "complete"
-      : verificationPlanBlocksImplementation(state)
-        ? "blocked_by_verification_plan"
-        : executionPlanBlocksImplementation(state)
-          ? "blocked_by_execution_plan"
-          : "active",
-    summary: {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      openNodeCount,
-      blockingGapCount: verificationPlan.blockingGapCount + executionPlan.blockingGapCount,
-      executionNodeCount: executionPlan.nodeCount,
-      openExecutionNodeCount: executionPlan.openNodeCount,
-    },
-    nodes,
-    edges: edges.map(({ key, ...edge }) => edge),
-  };
 }
 
 function plannedCommandForVerification(state, verificationId) {
