@@ -1,44 +1,80 @@
 # Engineering Harness
 
-Personal engineering workflow harness for Codex and Claude Code.
+**One PRD pipeline, two runtimes.**
+A personal engineering workflow harness that turns a conversation into a shipped pull request, with the same skills, the same state machine, and the same completion guarantees whether the agent is Codex or Claude Code.
 
-This repository owns the local PRD workflow skills.
-Skill names use the butler set; repository directories keep the legacy names.
+```text
+conversation
+  └─ listen    interview until the requirements stop being vague
+      └─ promise    write the PRD as a human decision contract
+          └─ fulfill    implement against a verification plan, with receipts
+              └─ deliver    branch, PR body, push, CI watch
+                              └─ merged PR
 
-- `listen` (directory `intake`) - pre-PRD requirements interview
-- `promise` (directory `prd`) - PRD as a human decision contract
-- `fulfill` (directory `prd-implement`) - harness-driven implementation
-- `deliver` (directory `prd-ship`) - GitHub PR delivery
-- `pantry` (directory `prd-setup`) - pipeline configuration
-- `please` (directory `please`) - all-in-one runner: conversation to promise to fulfill to deliver, no approval round-trips, stops only for risky work
+please = the whole chain in one invocation, stopping only for risky work
+```
 
-## Install Locally
+## The Butler Skills
+
+| Skill | Directory | What it owns |
+| --- | --- | --- |
+| `listen` | `intake` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
+| `promise` | `prd` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
+| `fulfill` | `prd-implement` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
+| `deliver` | `prd-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
+| `pantry` | `prd-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
+| `please` | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
+
+Repository directories keep the legacy names; the butler names are what you invoke.
+
+## Dual Runtime, One Source
+
+Every skill and script in this repository serves both runtimes.
+There are no forked copies to keep in sync.
 
 ```sh
 node scripts/install-local-skills.mjs
 ```
 
-One command installs both runtimes:
+| | Codex | Claude Code |
+| --- | --- | --- |
+| Install root | `~/.codex/skills/<legacy-dir>/` | `~/.claude/skills/<butler-name>/` |
+| Invocation | `$listen`, `$promise`, ... | `/listen`, `/promise`, ... |
+| `SKILL.md` | Copied verbatim (Codex reads the name from frontmatter) | Copied with path and invocation substitution (`~/.codex/skills/prd-implement/` becomes `~/.claude/skills/fulfill/`, `$fulfill` becomes `/fulfill`) |
+| `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
+| Hooks | `Stop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
 
-- **Codex** (`~/.codex/skills/<legacy-dir>/`): `SKILL.md` is copied verbatim as a real file
-  (current Codex skill loading can omit symlinked `SKILL.md` files).
-  Codex resolves the skill name from frontmatter, so `$listen` works with legacy directories.
-- **Claude Code** (`~/.claude/skills/<butler-name>/`): the `/command` name comes from the
-  directory, so skills install under butler names (`/listen`, `/promise`, ...).
-  `SKILL.md` is copied with path and invocation substitutions
-  (`~/.codex/skills/prd-implement/` becomes `~/.claude/skills/fulfill/`, `$fulfill` becomes `/fulfill`).
+The mechanics that make one source possible:
 
-Auxiliary files and directories such as `scripts` and `references` are symlinked back to this
-repository in both installs, so one implementation serves both runtimes.
-The `prd_state_harness.js` and `prd_ship.js` scripts locate themselves and their sibling scripts
-from the invoked path, so emitted commands always match the current install.
+- **Self-locating scripts.**
+  `prd_state_harness.js` and `prd_ship.js` resolve their own install location and their sibling scripts from the invoked path, trying both legacy and butler directory names with a realpath fallback through the symlink.
+  Every command the hooks re-inject therefore matches the runtime that is actually running.
+- **Runtime-neutral session identity.**
+  Session ids are canonicalized bare: `codex:`, `claude:`, and `opencode:` prefixes are stripped for storage and comparison, and legacy prefixed state files keep matching.
+  Init binds from `CODEX_SESSION_ID`, `CODEX_THREAD_ID`, or `CLAUDE_SESSION_ID`, and otherwise the first hook payload claims the run.
+- **Install-time substitution instead of forked docs.**
+  The Claude copies of `SKILL.md` are generated, so a skill edit in this repository lands in both runtimes on the next install.
+- **Idempotent hook registration.**
+  The installer merges harness hooks into existing hook files without touching unrelated entries, and refuses to overwrite a foreign skill directory.
 
-The installer also registers the harness hooks idempotently:
+## Completion Is Enforced, Not Promised
 
-- Codex: `Stop` and `PreToolUse` in `~/.codex/hooks.json`
-  (the `PreToolUse` guard blocks premature `update_goal complete`).
-- Claude Code: `Stop` in `~/.claude/settings.json`
-  (Claude Code has no `update_goal` tool; the Stop hook is the only guard).
+The harness treats "done" as a provable state, and the enforcement works identically in both runtimes:
+
+- **Stop-hook continuation loop.**
+  While a PRD run is active, ending the turn re-injects the current state and the next required item.
+  The loop only releases when the receipt exists or a concrete blocker is recorded.
+- **Evidence or it did not happen.**
+  Required verification items need registered artifacts of the right kind per mode (command logs, screenshots, API/DB probes).
+  Self-authored summaries never count as evidence, and artifact hashes plus git snapshots make stale reviews detectable.
+- **Two-stage review.**
+  A strict requirements fidelity review compares implementation evidence against the user's original intent, then a profile-aware adversarial review audits that proof.
+  Any source change after a passing review marks it stale.
+- **Fail-closed delivery.**
+  `deliver` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
+  Every override needs a `--reason` and lands in the ship log.
+- **Premature-completion guards.**
+  Codex gets a `PreToolUse` guard that blocks `update_goal complete` before the receipt; Claude Code has no goal tool, so the Stop hook carries the guarantee alone.
 
 ## Verify
 
@@ -47,9 +83,27 @@ node --test tests/*.test.mjs
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js doctor
 ```
 
-`doctor` reports hook registration for both runtimes.
-After changing installed skills, verify skill visibility:
+`doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
+After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
-- Claude Code: start a new session and check that `/listen`, `/promise`, `/fulfill`,
-  `/deliver`, `/pantry`, and `/please` appear in the skill list
+- Claude Code: start a new session and check that `/listen`, `/promise`, `/fulfill`, `/deliver`, `/pantry`, and `/please` appear in the skill list
+
+## Repository Layout
+
+```text
+skills/
+  intake/         listen   - SKILL.md
+  prd/            promise  - SKILL.md
+  prd-implement/  fulfill  - SKILL.md, scripts/prd_state_harness.js, references/
+  prd-setup/      pantry   - SKILL.md
+  prd-ship/       deliver  - SKILL.md, scripts/prd_ship.js
+  please/         please   - SKILL.md
+scripts/
+  install-local-skills.mjs   dual-runtime installer + hook registration
+tests/
+  prd_state_harness.test.mjs
+  install_local_skills.test.mjs
+```
+
+Run artifacts live in the target project, not here: PRDs under `.hoyeon/prd/**` (trackable), implementation state and evidence under `.hoyeon/implement/**` (gitignored by policy, enforced by `doctor`).
