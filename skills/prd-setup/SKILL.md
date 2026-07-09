@@ -1,17 +1,19 @@
 ---
-name: prd-setup
+name: pantry
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
-  "$prd-setup", asks to enable or change PR delivery mode, configure
+  "$pantry" (legacy alias "$prd-setup"), asks to enable or change PR delivery mode, configure
   worktree/secrets sync for prd-implement, configure .hoyeon gitignore
   policy, inspect the current PRD pipeline settings, or diagnose why
-  prd-implement/prd-ship delivery is not working.
+  fulfill/deliver delivery is not working.
 ---
 
-# prd-setup
+# pantry
+
+Skill folder keeps the legacy `prd-setup` name.
 
 Use this skill to inspect or configure how the PRD pipeline
-(`prd-implement` and `prd-ship`) behaves in the current repository.
+(`fulfill` and `deliver`) behaves in the current repository.
 
 This skill owns project setup files only:
 
@@ -31,7 +33,7 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js doctor
 
 It reports the effective delivery config (config file plus defaults), unknown or
 misspelled config keys, git/origin/gh readiness, worktree sync source problems,
-PR template resolution, prd-ship availability, hook registration, and any
+PR template resolution, deliver (prd-ship) availability, hook registration, and any
 active run with its ship-pending state.
 
 If the user only asked "what is the current setting", report the doctor output
@@ -43,11 +45,11 @@ When the user wants to change settings, interview briefly with defaults, write
 `.hoyeon/config.json`, and keep `.gitignore` aligned:
 
 1. Delivery mode: `local` (default) or `pr`.
-   Remind the user that `pr` means prd-implement runs end into `prd-ship`
+   Remind the user that `pr` means fulfill runs end into `deliver`
    (branch, PR, CI) automatically after the receipt, and that per-PRD approval
    still happens in the PRD Summary checklist.
 2. When mode is `pr`: base branch (default `main`) and branch prefix
-   (default `prd`).
+   (default `promise`).
 3. Worktree isolation: `worktree.enabled` (default false).
    When enabled, ask which gitignored local files the app needs:
    - `link`: read-only shared files (`.env`, certs).
@@ -56,16 +58,7 @@ When the user wants to change settings, interview briefly with defaults, write
      (for example `pnpm install`).
    Warn that dev servers in two checkouts share ports and linked local DBs.
 4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
-5. Execution: `execution.parallel` (default false). Off means prd-implement works
-   nodes sequentially (simple, atomic) and never surfaces parallel ready groups.
-   Turn it on only when the user wants the coordinator to consider dispatching
-   safe, disjoint execution nodes to subagents in parallel. Parallelism is a
-   suggestion the coordinator still owns; the harness never auto-spawns workers.
-6. Review: `review.profile` (default `auto`). `auto` lets the harness classify
-   the run as trivial, standard, or high-risk from the PRD. Set it to a fixed
-   `trivial`, `standard`, or `high-risk` when the user wants a repo-wide default
-   review strictness. A per-run `--review-profile` still overrides config.
-7. `.hoyeon` tracking policy:
+5. `.hoyeon` tracking policy:
    - PRD source files are trackable: `.hoyeon/prd/**`.
    - Pipeline config is trackable: `.hoyeon/config.json`.
    - Everything else under `.hoyeon/` is ignored by default, especially
@@ -100,12 +93,6 @@ Reference shape:
     "link": [".env"],
     "copy": [],
     "setup": ["pnpm install"]
-  },
-  "execution": {
-    "parallel": false
-  },
-  "review": {
-    "profile": "auto"
   }
 }
 ```

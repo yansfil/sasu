@@ -1,19 +1,22 @@
 ---
-name: prd-implement
+name: fulfill
 description: |
   Project-local PRD implementation orchestrator. Use when the user invokes
-  "$prd-implement", asks to execute or implement an approved PRD, or wants
+  "$fulfill" (legacy alias "$prd-implement"), asks to execute or implement an approved PRD, or wants
   Codex to turn PRD-level tasks into an execution plan, TaskGraph, concrete
   verification plan, artifact-backed evidence, Codex Goal lifecycle,
   main-agent-owned fidelity checks, profile-aware review gates, and strict
   completion receipt.
 ---
 
-# prd-implement
+# fulfill
+
+Skill folder, harness script paths, and artifact paths keep the legacy
+`prd-implement` name.
 
 Use this skill to implement an approved PRD end to end.
 
-This is the execution counterpart to `prd`. It turns a human-reviewed PRD into
+This is the execution counterpart to `promise`. It turns a human-reviewed PRD into
 implementation state, execution nodes, verification evidence, profile-aware
 reviews, and a receipt. Completion accounting is strict; execution details can be
 derived flexibly when they preserve the PRD contract.
@@ -41,13 +44,11 @@ The current PRD structure should include:
 - `## 11. Implementation Guardrails`
 - `## 12. Implementation Result Report Contract`
 
-For non-trivial current PRDs, also read the PRD-side Verification Contract
-Audit and Intent And Scope Audit when present:
-
-```text
-.hoyeon/prd/<topic-slug>/intent-scope-audit.md
-.hoyeon/prd/<topic-slug>/verification-contract-audit.md
-```
+Current PRDs ship as a single `prd.md`; PRD-side quality is an inline
+self-check plus the Harness Readiness Gate.
+Legacy PRDs may carry side audit files
+(`intent-scope-audit.md`, `verification-contract-audit.md`); read them when
+they exist.
 
 If required pre-work, approval, credentials, migration windows, production data,
 or product decisions are unresolved, stop and ask.
@@ -79,6 +80,7 @@ Harness-managed state and derived views:
 .hoyeon/implement/<topic-slug>/receipt.json
 .hoyeon/implement/<topic-slug>/implementation-result.md
 .hoyeon/implement/.prd-implement-active.json
+.hoyeon/implement/.prd-implement-sessions/<encoded-session-id>.json
 ```
 
 Agent-created run notes, review reports, and evidence artifacts:
@@ -99,7 +101,7 @@ Agent-created run notes, review reports, and evidence artifacts:
 ```text
 Codex Goal opened
   -> PRD Verification Contract
-  -> prd-implement Verification Planner
+  -> fulfill Verification Planner
   -> Execution Plan
   -> TaskGraph
   -> main-agent coverage check
@@ -127,9 +129,9 @@ Before editing code:
    records it as a deviation. `init` fails without one of these.
 3. Confirm blocking pre-work and human decisions are resolved.
 4. Treat Major Technical Structure Changes as the approved structure lock.
-5. Read the PRD-side Intent And Scope Audit and Verification Contract Audit
-   when they exist; unresolved audit failures block implementation until the
-   PRD is fixed or the user explicitly accepts the risk.
+5. For legacy PRDs with side audit files, read them; unresolved audit
+   failures block implementation until the PRD is fixed or the user
+   explicitly accepts the risk.
 6. Read Implementation Guardrails and Risks.
 7. Read `.hoyeon/config.json` when it exists.
    `node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js doctor`
@@ -144,7 +146,7 @@ Before editing code:
 If `.hoyeon/config.json` or the user's request sets delivery mode to `pr`, treat
 PR delivery as part of the user-facing workflow.
 The implementation receipt still proves implementation completion, but the
-thread is not done until `prd-ship` opens or updates the PR and required CI
+thread is not done until `deliver` opens or updates the PR and required CI
 passes or is explicitly reported as blocked.
 
 Pause for approval before material structure deviations, unmapped scope,
@@ -247,12 +249,14 @@ checkout, so relative paths are a trap:
 `init` refuses to overwrite an existing `state.json` without `--force`.
 If the worktree already holds implementation state, `init` from the main checkout resumes that
 run instead of resetting it; pass `--force` only when the user wants a clean restart.
-Each checkout has one active pointer (`.prd-implement-active.json`). In worktree
-mode, `init` also writes it at the main checkout root so statusline and hooks can
-find the run from either checkout. The pointer records the bound session id when
-known; an unbound pointer is claimed by the first hook that carries a session id.
-Run at most one active PRD implementation per checkout; for parallel runs use a
-worktree, which gets its own pointer, or pass an explicit `--state`.
+In worktree mode, `init` also writes active pointers and session-scoped active
+files at the main checkout root so statusline and hooks can find the run from
+either checkout.
+The latest legacy pointer is informational; session-scoped files are the
+authority when a hook payload includes a session id.
+Do not run two active PRD implementations from one checkout unless each has a
+distinct session id and all commands use the correct worktree or explicit
+`--state`.
 
 The harness extracts PRD-level tasks, acceptance criteria, verification items,
 test modes, and structure locks into durable state. It supports:
@@ -416,10 +420,7 @@ Blocked or skipped required verification cannot produce a complete receipt.
 
 ## 8. Subagents And Reviews
 
-Execution is sequential by default. Parallel dispatch is opt-in through
-`.hoyeon/config.json` `execution.parallel` (configure it with `$prd-setup`); when
-it is off, `ready` never emits parallel groups and you work one node at a time.
-Parallelize only when the config enables it and the work is safe and useful.
+Parallelize only when safe and useful.
 
 - Run `ready` first.
 - Assign bounded nodes with exact file ownership or read-only scope.
@@ -503,13 +504,6 @@ required `V#`, list the PRD Pass Intent or derived pass criteria, covered
 any gap. A passing review must fail if a required `V#` is missing, has no
 registered artifact path, or the artifact does not actually prove the covered
 requirement or acceptance criterion.
-
-The review report's section headings and the `Coverage Judgment` label keys are
-fixed structural markers that the harness checks; keep them exactly as the
-generated prompt writes them. Write the prose, findings, and values in the
-user's language. This matches the skill's language default without breaking the
-mechanical schema check. The `Decision Trace` may be bullets or a markdown
-table.
 
 Write:
 
@@ -656,10 +650,11 @@ Do not report done and do not call `update_goal complete` until:
 
 If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not call
 `update_goal complete` yet.
-Run `$prd-ship` after `finalize --status complete` and keep the goal open until
+Run `$deliver` after `finalize --status complete` and keep the goal open until
 the PR exists and required CI passes or the delivery handoff is explicitly
 blocked.
-After PR creation, `prd-ship` cleans the matching active pointer.
+After PR creation, `deliver` cleans the matching active pointer and
+session-scoped active files.
 For local-only runs or manual cleanup, use:
 
 ```sh
@@ -708,7 +703,7 @@ Use the PRD's Implementation Result Report Contract. At minimum report:
 - AC status.
 - verification evidence by test mode.
 - requirements fidelity review verdict.
-- delivery mode and, when `pr`, the `prd-ship` status, PR URL, branch, and CI
+- delivery mode and, when `pr`, the `deliver` status, PR URL, branch, and CI
   verdict.
 - deviations.
 - human review needed.

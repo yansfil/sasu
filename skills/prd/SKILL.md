@@ -1,7 +1,7 @@
 ---
-name: prd
+name: promise
 description: |
-  Project-local PRD writer. Use when the user invokes "$prd", asks for a PRD,
+  Project-local PRD writer. Use when the user invokes "$promise" (legacy alias "$prd"), asks for a PRD,
   product requirements document, implementation-ready requirements, or wants to
   turn intake/clarify output into a human-reviewable requirements contract with
   major technical structure changes, PRD-level tasks, a compact verification
@@ -9,7 +9,9 @@ description: |
   implementation result report contract.
 ---
 
-# prd
+# promise
+
+Skill folder and artifact paths keep the legacy `prd` name (`.hoyeon/prd/**`).
 
 Use this skill to write an implementation-ready PRD from intake output or the
 current conversation.
@@ -35,35 +37,21 @@ Legacy clarify summaries are still accepted:
 
 If no context path is provided, inspect `.hoyeon/intake/` first for the matching
 or most recent topic, then `.hoyeon/clarify/`. If no handoff exists and major
-ambiguity remains, ask one blocking question or recommend `$intake`.
-
-When a handoff exists, read its frontmatter `blocking_open_questions`. If it is
-missing or non-zero, do not draft the PRD from it: the intake still has
-unresolved blockers. Ask the user to resolve them or send it back to `$intake`.
-Read the handoff `Rejected And Deferred Alternatives` section and preserve every
-item in section 4.3 Decision Traceability; intake Non-Goals and rejected options
-are not machine-carried downstream, so the PRD is their last capture point.
+ambiguity remains, ask one blocking question or recommend `$listen`.
 
 ## Output Contract
 
-Create:
+Create exactly one file:
 
 ```text
 .hoyeon/prd/<topic-slug>/prd.md
 ```
 
-For non-trivial PRD work, also keep:
-
-```text
-.hoyeon/prd/<topic-slug>/context-notes.md
-.hoyeon/prd/<topic-slug>/intent-scope-audit.md
-.hoyeon/prd/<topic-slug>/verification-contract-audit.md
-```
-
-"Non-trivial" means any of: 3 or more PRD-level tasks, DB schema or migration
-changes, auth/security surfaces, payments or billing, external services or
-credentials, production data, or scope that spans more than one working
-session. Everything else is trivial.
+Do not write side files (context notes, audit reports).
+Decisions and traceability live inside `prd.md` (Decision Traceability);
+quality checks are inline self-checks plus the mechanical Harness Readiness
+Gate, and the implementation-side fidelity review re-verifies intent at the
+end.
 
 Use short kebab-case topic slugs. If the source intake topic exists, reuse the
 same slug.
@@ -137,7 +125,7 @@ Result Report Contract when they matter.
   approved it. The PRD-writing agent always writes `pending` and never sets
   `approved` on its own. Set `approved` only after the user explicitly approves,
   and quote or reference that approval when updating it.
-- `prd-implement` refuses to initialize against a PRD whose `human_approval` is
+- `fulfill` refuses to initialize against a PRD whose `human_approval` is
   not `approved`, so a PRD that skips human review cannot be executed silently.
 
 To make the human review fast, end the `## 1. Summary` section with a short
@@ -188,11 +176,18 @@ Define included and excluded behavior. This is a primary human review surface.
 
 Separate actions from approvals.
 
-`Pre-Work Before Implementation` is action-oriented:
+`Pre-Work Before Implementation` lists only work the agent genuinely cannot do
+itself: account ownership, purchases, credential issuance, permission grants,
+physical actions, or provider-side steps that require the user's identity.
+If the agent can do it (creating files, seed data, config, research, scaffolding,
+free-tier signup the user already approved), it is a PRD task or just gets done —
+never pre-work. Every pre-work item must say why it is human-only.
+
+Typical human-only items:
 
 - API keys, credentials, test accounts, billing, permissions.
-- source files, design assets, copy, seed data.
-- migration windows, backups, account setup.
+- source files, design assets, copy, or data only the user possesses.
+- migration windows, backups, account setup requiring owner identity.
 
 `Human Decisions Before PRD Approval` is decision-oriented:
 
@@ -206,7 +201,7 @@ Separate actions from approvals.
 If none are needed, write `None required` with a short reason.
 
 `Decision Traceability For Fidelity Review` is the handoff surface for the
-strict intent-review subagent that runs at the end of `prd-implement`.
+strict intent-review subagent that runs at the end of `fulfill`.
 
 Include compact bullets for:
 
@@ -253,7 +248,7 @@ Task rules:
   or release hygiene.
 - Tasks must not add hidden scope beyond approved requirements.
 - Do not include write scopes, owners, parallel safety, low-level dependencies,
-  or subagent scheduling. `prd-implement` derives those.
+  or subagent scheduling. `fulfill` derives those.
 - If implementation later needs an unmapped task or material structure change,
   the agent must ask for approval before continuing.
 
@@ -288,7 +283,7 @@ When the existing repo has weak or missing test infrastructure, include a PRD-le
 
 ### 9. Verification Contract
 
-The PRD defines verification intent and done requirements. `prd-implement`
+The PRD defines verification intent and done requirements. `fulfill`
 turns this into concrete commands, browser flows, DB/API probes, artifact
 paths, reruns, deviations, and receipts.
 
@@ -342,7 +337,7 @@ Rules:
 
 - `Required For Done` is `yes` by default.
 - The Test Mode Contract sets the mode-level default. Verification rows should
-  repeat `Required For Done`; if omitted, `prd-implement` inherits the mode
+  repeat `Required For Done`; if omitted, `fulfill` inherits the mode
   default.
 - A blocked required check prevents a complete receipt.
 - Optional or human-blockable checks must explicitly say `Required For Done:
@@ -374,106 +369,32 @@ Only include checks requiring human judgment:
 
 If none are needed, write `None required` with a short reason.
 
-### Intent And Scope Audit
+### Inline Self-Check Before Ready
 
-After drafting the PRD, run a read-only intent and scope audit before marking the PRD `ready`.
-For non-trivial PRDs, write the audit to:
+Quality checking splits by what can verify it:
 
-```text
-.hoyeon/prd/<topic-slug>/intent-scope-audit.md
-```
+- Mechanical checks belong to the Harness Readiness Gate below. Do not spend
+  agent effort re-deriving what the script already checks (AC coverage
+  mapping, missing commands, missing artifact strategy, missing browser
+  startup, unsafe external proof).
+- Semantic checks are an inline self-check. No separate audit file, no
+  auditor subagent; the implementation-side requirements fidelity review
+  re-verifies the same intent questions against evidence at the end.
 
-Required report format:
+After drafting and before marking the PRD `ready`, verify inline:
 
-```markdown
-# Intent And Scope Audit
+- Intent: every user decision and accepted proposal is represented in scope,
+  non-goals, `R#`, `AC#`, `T#`, `V#`, or human verification; rejected and
+  deferred options stayed rejected; the PRD does not quietly expand beyond
+  its sources.
+- Pass intent: each required `V#` states a pass intent whose success is
+  observable by an artifact or tool, and it actually proves the covered
+  requirement rather than a proxy condition.
+- Regression bias: every changed behavior has automated regression coverage
+  or an explicit reason why another mode is the better proof.
 
-Status: PASS | FAIL
-
-## Sources Read
-
-- <intake/clarify/current PRD paths and sections>
-
-## Intent Coverage
-
-- <user decision or source requirement>: represented by <scope/non-goal/R#/AC#/T#/V#/human verification> | gap: <none or issue>
-
-## Scope Boundary Audit
-
-- Included scope: <represented and bounded>
-- Non-goals/rejected/deferred items: <preserved or gap>
-
-## Findings
-
-- <severity>: <finding>
-
-## Verdict
-
-PASS only if the PRD preserves the user's accepted decisions, rejected options, non-goals, and intended outcome before implementation begins.
-```
-
-If the audit is `FAIL`, revise the PRD and rerun the audit before marking the PRD `status: ready`.
-
-### Verification Contract Auditor
-
-For non-trivial PRDs, run a fresh independent read-only Verification Contract
-Auditor after drafting the PRD when multi-agent tools are available.
-Use a default subagent, not a `hoyeon-*` role, unless the user explicitly asks
-for that role.
-If subagents are not available, perform the same audit yourself and say so in
-the report.
-For trivial PRDs, perform the coverage and pass-intent check yourself and rely
-on the Harness Readiness Gate for mechanical coverage instead of writing a
-separate audit file.
-
-The auditor does not write the PRD. It attacks the verification contract and
-reports whether implementation completion would actually prove the user's
-requirements.
-
-Write the audit to:
-
-```text
-.hoyeon/prd/<topic-slug>/verification-contract-audit.md
-```
-
-Required report format:
-
-```markdown
-# Verification Contract Audit
-
-Status: PASS | FAIL
-
-## Sources Read
-
-- <intake/clarify/current PRD paths and sections>
-
-## Coverage Audit
-
-- <R#/AC#/T#>: covered by <V# or human verification> | gap: <none or issue>
-
-## Pass Intent Audit
-
-- <V#>: pass intent is observable by <artifact/tool> | gap: <none or issue>
-
-## Human Judgment Boundary
-
-- <what remains human-only, blocked, or explicitly non-required>
-
-## Findings
-
-- <severity>: <finding>
-
-## Verdict
-
-PASS only if every in-scope AC has agent verification or a human-only reason,
-every R# coverage path is traceable, every required V# has observable Pass
-Intent and artifact expectations, and Required For Done / Can Be Blocked
-semantics are not diluted.
-PASS also requires every changed behavior to have automated regression coverage or a clear, explicit reason why another verification mode is the better proof.
-```
-
-If the audit is `FAIL`, revise the PRD verification contract and rerun the
-audit before marking the PRD `status: ready`.
+If a check fails, revise the PRD and re-check. State in the final report that
+the self-check passed; do not write it to a file.
 
 ### Harness Readiness Gate
 
@@ -484,24 +405,21 @@ root before marking the PRD `ready`:
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-verification --prd .hoyeon/prd/<topic-slug>/prd.md
 ```
 
-This is stateless: it parses the PRD exactly the way `prd-implement` will,
+This is stateless: it parses the PRD exactly the way `fulfill` will,
 derives the verification plan against real repo signals, and writes nothing.
 Exit code 2 means the verification contract is not harness-readable (missing
 commands or artifact strategy, uncovered ACs, missing browser startup, unsafe
-external proof). It also catches structural parse defects: a Tasks section that
-parses while Acceptance Criteria or Verification parse empty (a drifted
-heading), a task or verification that references an `AC#` never defined, and a
-requirement (`R#`) covered by no task, AC, or verification. Fix the PRD and
-rerun until `blockingGaps` is empty; resolve or consciously accept warnings.
-Skipping this gate pushes the same failures into `prd-implement`, where they
-cost a re-init and a re-plan instead of a one-second check.
+external proof). Fix the PRD and rerun until `blockingGaps` is empty; resolve
+or consciously accept warnings. Skipping this gate pushes the same failures
+into `fulfill`, where they cost a re-init and a re-plan instead of a
+one-second check.
 
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
 
 ### 11. Implementation Guardrails
 
-State what `prd-implement` must not do without asking:
+State what `fulfill` must not do without asking:
 
 - do not expand scope.
 - do not change major architecture.
@@ -533,24 +451,18 @@ Require the implementing agent to report:
 2. Read source artifacts and directly relevant project docs.
    Read `.hoyeon/config.json` when it exists or when the user asks for PR
    delivery, worktrees, or CI automation.
-3. Create `context-notes.md` for non-trivial PRDs.
-4. Draft `prd.md` with every required section and `human_approval: "pending"`.
-5. Ask only contract-breaking questions; do not rerun intake inside PRD.
-6. Derive PRD-level tasks from requirements and acceptance criteria.
-7. Add the Test Mode Contract and Required Agent Verification matrix.
-8. Run the Intent And Scope Audit and write `intent-scope-audit.md` for non-trivial PRDs.
-9. For non-trivial PRDs, run the Verification Contract Auditor and write
-   `verification-contract-audit.md`.
-   For trivial PRDs, do the same checks inline before the Harness Readiness
-   Gate without creating a separate audit file.
-10. Check for unverifiable requirements, untraceable tasks, missing verification
-   modes, missing human decisions, and hidden scope.
-11. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
+3. Draft `prd.md` with every required section and `human_approval: "pending"`.
+4. Ask only contract-breaking questions; do not rerun intake inside PRD.
+5. Derive PRD-level tasks from requirements and acceptance criteria.
+6. Add the Test Mode Contract and Required Agent Verification matrix.
+7. Run the Inline Self-Check Before Ready (intent, pass intent, regression
+   bias) and fix failures.
+8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
-12. Mark `status: ready` only when blocking decisions are resolved, required
-   non-trivial audits are `PASS`, and the Harness Readiness Gate reports zero
-   blocking gaps.
-13. Ask the user to review the PRD using the Approval checklist. Set
+9. Mark `status: ready` only when blocking decisions are resolved, the inline
+   self-check passes, and the Harness Readiness Gate reports zero blocking
+   gaps.
+10. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.
 
@@ -560,14 +472,13 @@ Before finalizing:
 
 - Every in-scope behavior has an acceptance criterion.
 - Every acceptance criterion has agent verification or a human-only reason.
-- Every requirement maps to an acceptance criterion, verification item, human-only reason, deferred decision, or non-goal. An `R#` covered by no task, acceptance criterion, or verification item is a hard failure: it proves nothing and a decision recorded only there would silently drop. Fix coverage or remove the orphan requirement. The Harness Readiness Gate now enforces this mechanically.
+- Every requirement maps to an acceptance criterion, verification item, human-only reason, deferred decision, or non-goal.
 - Test Mode Contract covers build/static, automated behavior, runtime/browser
   when user-facing, and API/DB/external modes when relevant.
 - Changed behavior has automated regression coverage or a clear justified alternative verification mode.
 - Required Agent Verification maps to `R#`, `AC#`, or `T#` IDs.
 - Required-for-done and blockable semantics are explicit.
-- Intent And Scope Audit exists for non-trivial PRDs and is `PASS`.
-- Verification Contract Audit exists for non-trivial PRDs and is `PASS`.
+- The Inline Self-Check Before Ready passed.
 - Harness Readiness Gate (`plan-verification --prd`) reports zero blocking gaps.
 - Every required `V#` has observable Pass Intent and artifact expectations.
 - Human verification is explicit, even when empty.
@@ -586,10 +497,10 @@ Before finalizing:
 After writing the PRD, report concisely:
 
 - PRD path.
-- verification contract audit path and verdict.
+- inline self-check result and Harness Readiness Gate result.
 - source intake or clarify path.
 - status and `human_approval` state, with the Approval checklist items the
-  user needs to review before `prd-implement` can run.
+  user needs to review before `fulfill` can run.
 - remaining blocking questions, if any.
 - summary of scope, technical structure, required decisions, verification
   modes, delivery mode when relevant, PRD-level tasks, human verification,

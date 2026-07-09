@@ -5280,7 +5280,7 @@ Implementation receipt is complete, but delivery mode is 'pr' and no pull reques
 PRD: \`${state.prdPath}\`
 State: \`${toProjectRelative(statePath, hookCwd)}\`
 
-The thread is not done until \`$prd-ship\` opens the PR and required CI passes or the delivery is explicitly reported as blocked. Run:
+The thread is not done until \`$deliver\` opens the PR and required CI passes or the delivery is explicitly reported as blocked. Run:
 
   node ~/.codex/skills/prd-ship/scripts/prd_ship.js body --state ${toProjectRelative(statePath, hookCwd)}
   (fill the AGENT-FILL prose sections from implementation-result.md)
@@ -5484,7 +5484,7 @@ Drive the Next required item above to done, then record it with the matching har
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js record-artifact --id <Vn> --kind screenshot|log|browser|api|db|file --path <artifact> --description "<what it proves>"\`
 10. Let task status roll up from execution nodes, ACs, and verification. Use \`mark --kind task\` only for an explicit blocked/deferred/manual correction with evidence.
 11. Do not call \`update_goal({status:"complete"})\` until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\` reports no open items or final gate violations.
-    If delivery mode is \`pr\`, do not call \`update_goal({status:"complete"})\` after receipt alone. Run \`$prd-ship\` and wait for PR creation plus required CI pass or an explicit delivery blocker.
+    If delivery mode is \`pr\`, do not call \`update_goal({status:"complete"})\` after receipt alone. Run \`$deliver\` and wait for PR creation plus required CI pass or an explicit delivery blocker.
 12. When no open items remain, run the final AC + Verification sweep, then run the strict requirements fidelity review:
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
    - The main agent writes this review by default. Do not spawn a requirements fidelity sidecar unless the user explicitly asks for one. It must compare original user intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result.
@@ -5500,7 +5500,7 @@ ${finalReviewRequired ? `14. Only after \`requirements-review-record --status pa
 ` : `14. This run uses the trivial review profile; final adversarial review is optional. After \`requirements-review-record --status pass\`, finalize:
 `}
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize --status complete --summary "<short evidence-backed summary>"\`
-   - If delivery mode is \`pr\`, immediately hand off to \`$prd-ship\` with \`${context.statePath}\`.
+   - If delivery mode is \`pr\`, immediately hand off to \`$deliver\` with \`${context.statePath}\`.
 ${finalReviewRequired ? "16" : "15"}. If completion is impossible and the next user-facing report will be blocked or partial, run the same requirements fidelity review first and record it before handoff:
    - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\` with \`Status: FAIL\` when intent/PRD/evidence do not fully align.

@@ -1,8 +1,8 @@
 ---
-name: intake
+name: listen
 description: |
   Project-local pre-PRD requirements intake. Use when the user invokes
-  "$intake", asks to clarify, pressure-test, reduce ambiguity, prepare a PRD
+  "$listen" (legacy alias "$intake"), asks to clarify, pressure-test, reduce ambiguity, prepare a PRD
   handoff, or wants requirements questioned across product, scope, UX/design,
   technical, verification, risk, operation, and documented-domain axes before
   writing a PRD.
@@ -11,9 +11,11 @@ description: |
   topics, and fully normalizing the log before prd-handoff.md.
 ---
 
-# intake
+# listen
 
-Use this skill before `prd` when the request is ambiguous or when the user wants the idea pressure-tested before implementation planning.
+Skill folder and artifact paths keep the legacy `intake` name.
+
+Use this skill before `promise` when the request is ambiguous or when the user wants the idea pressure-tested before implementation planning.
 The job is to reduce ambiguity and produce a PRD handoff artifact.
 Do not implement code, write the PRD itself, create execution plans, or mutate implementation state.
 Match the user's language by default.
@@ -239,12 +241,6 @@ final_auditor_status: "pending | pass | fail | unavailable | skipped"
 ## prd-handoff.md Shape
 
 ```markdown
----
-topic: "<topic>"
-source: ".hoyeon/intake/<topic-slug>/qa-log.md"
-blocking_open_questions: 0
----
-
 # PRD Handoff: <topic>
 
 > Date: YYYY-MM-DD
@@ -253,16 +249,6 @@ blocking_open_questions: 0
 ## Clear Outcome
 
 ## Axis Decisions
-
-<!-- One bullet per material decision. Prefix each with its closure status so the
-     assumption/deferred nuance survives into the PRD:
-     - [resolved] ... | [assumption] ... | [deferred] ... -->
-
-## Rejected And Deferred Alternatives
-
-<!-- Options or behaviors the user rejected or explicitly deferred, each with a
-     one-line reason. This is the only place prd reads them for Decision
-     Traceability; the PRD copies them into section 4.3. Write "None" if empty. -->
 
 ## Domain Terms And Documented Decisions
 
@@ -284,19 +270,8 @@ blocking_open_questions: 0
 
 ## Suggested Next Step
 
-`$prd --context .hoyeon/intake/<topic-slug>/prd-handoff.md "<topic>"`
+`$promise --context .hoyeon/intake/<topic-slug>/prd-handoff.md "<topic>"`
 ```
-
-Set `blocking_open_questions` to the number of open questions still classified
-`blocking` at emit time. Do not emit the handoff with a non-zero count: resolve
-each blocker, or downgrade it to `deferred` only after the user explicitly
-accepts deferral, then update the count. A non-zero count means the handoff is
-not ready and `prd` should not draft from it.
-
-Carry `assumption`, `deferred`, and rejected-option provenance into the handoff.
-Silently adopted default-assumption blocks must reach the PRD marked
-`[assumption]`, not as settled requirements, and rejected options must appear in
-`Rejected And Deferred Alternatives` rather than being dropped.
 
 ## Loop
 
@@ -312,7 +287,7 @@ Silently adopted default-assumption blocks must reach the PRD marked
 9. When the handoff seems good enough, restate the agreed goal in one sentence and get confirmation.
 10. Run final backfill, quality gate, and final auditor closure check or recorded local fallback.
 11. If closure finds a material blocker, ask one final blocking question or classify it as `blocking` or `deferred`.
-12. If closure passes or blockers are explicitly classified, write `prd-handoff.md` and point to `$prd`.
+12. If closure passes or blockers are explicitly classified, write `prd-handoff.md` and point to `$promise`.
 
 ## Closure Matrix
 
@@ -371,8 +346,6 @@ Before writing `prd-handoff.md`, verify:
 - Human decisions and pre-work are separated from implementation details.
 - Risks, side effects, credentials, PII, external services, and production data boundaries are explicit when relevant.
 - Open questions are classified as `blocking`, `deferred`, or human taste/approval.
-- Handoff frontmatter `blocking_open_questions` is `0`: every blocker is resolved or downgraded to `deferred` with explicit user acceptance before emit.
-- Accepted decisions carry `[resolved]`/`[assumption]`/`[deferred]` status, and rejected or deferred options are listed in `Rejected And Deferred Alternatives`.
 - Selected and risk-escalated axes have entries in the Axis Closure Matrix.
 - Material user decisions, accepted proposals, rejected options, deferred choices, and open decision blockers are captured in `qa-log.md` and reflected in `prd-handoff.md`.
 - The latest misunderstanding check has been answered, resolved, or recorded as `blocking` or `deferred`.

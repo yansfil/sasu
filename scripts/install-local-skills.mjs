@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skillsRoot = path.join(repoRoot, "skills");
 const targetRoot = path.join(process.env.HOME || "", ".codex", "skills");
-const skillNames = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship"];
+const skillNames = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "please"];
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
