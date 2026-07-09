@@ -1,4 +1,4 @@
 interface:
-  display_name: "PRD Ship"
+  display_name: "Deliver (PRD Ship)"
   short_description: "Ship PRD work through PR and CI"
-  default_prompt: "Use $prd-ship to publish the completed PRD implementation as a pull request and watch CI."
+  default_prompt: "Use $deliver to publish the completed PRD implementation as a pull request and watch CI."

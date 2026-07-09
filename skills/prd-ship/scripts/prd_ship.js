@@ -7,7 +7,26 @@ const path = require("path");
 const childProcess = require("child_process");
 
 const ACTIVE_PATH = path.join(".hoyeon", "implement", ".prd-implement-active.json");
-const DEFAULT_HARNESS_PATH = path.join(os.homedir(), ".codex", "skills", "prd-implement", "scripts", "prd_state_harness.js");
+
+// Resolve the sibling prd-implement harness relative to this script so the
+// same file works from the repo, ~/.codex/skills (legacy dir names), and
+// ~/.claude/skills (butler dir names, fulfill).
+function defaultHarnessPath() {
+  const selfPath = path.resolve(process.argv[1] || __filename);
+  const roots = [path.dirname(path.dirname(path.dirname(selfPath)))];
+  try {
+    roots.push(path.dirname(path.dirname(path.dirname(fs.realpathSync(selfPath)))));
+  } catch {
+    // Keep the argv-based root only.
+  }
+  for (const root of roots) {
+    for (const dir of ["prd-implement", "fulfill"]) {
+      const candidate = path.join(root, dir, "scripts", "prd_state_harness.js");
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return path.join(roots[0], "prd-implement", "scripts", "prd_state_harness.js");
+}
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
   /co-authored-by:.*\b(claude|codex|copilot|cursor|chatgpt|gpt|openai|anthropic|gemini)\b/i,
@@ -264,7 +283,7 @@ function deliveryConfig(context, options = {}) {
 
 function harnessPath() {
   const override = process.env.HOYEON_PRD_HARNESS;
-  const candidate = override ? resolveInput(override) : DEFAULT_HARNESS_PATH;
+  const candidate = override ? resolveInput(override) : defaultHarnessPath();
   if (!fs.existsSync(candidate)) {
     throw new Error(`prd-implement state harness not found at ${candidate}. Set HOYEON_PRD_HARNESS to override.`);
   }

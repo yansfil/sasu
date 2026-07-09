@@ -12,6 +12,47 @@ const ACTIVE_PATH = path.join(".hoyeon", "implement", ".prd-implement-active.jso
 const PROJECT_CONFIG_PATH = path.join(".hoyeon", "config.json");
 const DEFAULT_HOOK_TIMEOUT_MS = 9000;
 
+// The harness is installed under more than one skills root (~/.codex/skills,
+// ~/.claude/skills) with runtime-specific directory names. Every emitted
+// command and sibling-script lookup must derive from the invoked script path,
+// never from a hardcoded install location.
+const SELF_PATH = path.resolve(process.argv[1] || __filename);
+
+function displayPath(absPath) {
+  const home = os.homedir();
+  return absPath === home || absPath.startsWith(home + path.sep)
+    ? `~${absPath.slice(home.length)}`
+    : absPath;
+}
+
+function harnessCommand() {
+  return `node ${displayPath(SELF_PATH)}`;
+}
+
+// Sibling skills keep the legacy directory names in the repo and Codex install
+// (prd-ship) but butler names in the Claude install (deliver). Resolve against
+// the invoked path first so emitted paths match the current install, then fall
+// back through the symlink target to the repo layout.
+function siblingSkillScript(candidateDirs, scriptName) {
+  const roots = [path.dirname(path.dirname(path.dirname(SELF_PATH)))];
+  try {
+    roots.push(path.dirname(path.dirname(path.dirname(fs.realpathSync(SELF_PATH)))));
+  } catch {
+    // Keep the argv-based root only.
+  }
+  for (const root of roots) {
+    for (const dir of candidateDirs) {
+      const candidate = path.join(root, dir, "scripts", scriptName);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return path.join(roots[0], candidateDirs[0], "scripts", scriptName);
+}
+
+function shipScriptPath() {
+  return siblingSkillScript(["prd-ship", "deliver"], "prd_ship.js");
+}
+
 function main() {
   const [command, ...args] = process.argv.slice(2);
   try {
@@ -44,9 +85,9 @@ function main() {
 }
 
 function usage(exitCode) {
-  const script = "~/.codex/skills/prd-implement/scripts/prd_state_harness.js";
+  const script = displayPath(SELF_PATH);
   process.stderr.write(`Usage:
-  node ${script} init --prd <path> [--session-id <codex-session-id>] [--allow-unapproved-prd "<verbatim user approval>"] [--delivery local|pr] [--branch <branch>] [--review-profile trivial|standard|high-risk] [--skip-worktree] [--force]
+  node ${script} init --prd <path> [--session-id <session-id>] [--allow-unapproved-prd "<verbatim user approval>"] [--delivery local|pr] [--branch <branch>] [--review-profile trivial|standard|high-risk] [--skip-worktree] [--force]
   node ${script} status [--state <path>]
   node ${script} verify-delivery [--state <path>]
   node ${script} doctor
@@ -3086,17 +3127,23 @@ function activePath(baseDir = cwd()) {
   return path.join(baseDir, ACTIVE_PATH);
 }
 
-function normalizeCodexSessionId(value) {
+// Session ids arrive from Codex, Claude Code, or OpenCode; legacy state files
+// may hold `codex:`-prefixed values. Canonicalize to the bare id so the same
+// session compares equal regardless of which runtime supplied it.
+function normalizeSessionId(value) {
   if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (/^(codex|opencode):/.test(trimmed)) return trimmed;
-  return `codex:${trimmed}`;
+  const trimmed = value.trim().replace(/^(codex|claude|opencode):/, "");
+  return trimmed || null;
+}
+
+function sameSessionId(a, b) {
+  const left = normalizeSessionId(a);
+  return left !== null && left === normalizeSessionId(b);
 }
 
 function sessionIdFromHookPayload(payload) {
   if (!payload || typeof payload !== "object") return null;
-  return normalizeCodexSessionId(payload.session_id || payload.sessionId);
+  return normalizeSessionId(payload.session_id || payload.sessionId);
 }
 
 function readActiveFile(file) {
@@ -3115,9 +3162,9 @@ function readActiveFile(file) {
 function readActive(baseDir = cwd(), options = {}) {
   const active = readActiveFile(activePath(baseDir));
   if (!active) return null;
-  const sessionId = normalizeCodexSessionId(options.sessionId);
+  const sessionId = normalizeSessionId(options.sessionId);
   if (!sessionId) return active;
-  if (!active.active.activeSessionId || active.active.activeSessionId === sessionId) return active;
+  if (!active.active.activeSessionId || sameSessionId(active.active.activeSessionId, sessionId)) return active;
   return null;
 }
 
@@ -3221,11 +3268,12 @@ function cmdInit(options) {
   const prdInput = options.prd;
   if (!prdInput) throw new Error("--prd is required");
   const projectRoot = cwd();
-  const initialSessionId = normalizeCodexSessionId(
+  const initialSessionId = normalizeSessionId(
     options["session-id"] ||
     options.sessionId ||
     process.env.CODEX_SESSION_ID ||
-    process.env.CODEX_THREAD_ID,
+    process.env.CODEX_THREAD_ID ||
+    process.env.CLAUDE_SESSION_ID,
   );
   const prdAbs = resolveProjectPath(prdInput, projectRoot);
   if (!fs.existsSync(prdAbs)) throw new Error(`PRD not found: ${prdAbs}`);
@@ -3663,19 +3711,23 @@ function cmdDoctor() {
     else if (fs.existsSync(fallback)) add("ok", "pr-template", `No repository PR template; global fallback exists: ${fallback}`);
     else add("warn", "pr-template", "No repository or global PR template found");
 
-    const shipScript = path.join(os.homedir(), ".codex", "skills", "prd-ship", "scripts", "prd_ship.js");
-    if (fs.existsSync(shipScript)) add("ok", "prd-ship", "prd-ship script found");
-    else add("error", "prd-ship", `Delivery mode is pr but ${shipScript} is missing`);
+    const shipScript = shipScriptPath();
+    if (fs.existsSync(shipScript)) add("ok", "prd-ship", `deliver (prd-ship) script found: ${displayPath(shipScript)}`);
+    else add("error", "prd-ship", `Delivery mode is pr but ${displayPath(shipScript)} is missing`);
+  }
 
-    const hooksFile = path.join(os.homedir(), ".codex", "hooks.json");
+  for (const { runtime, file } of [
+    { runtime: "codex", file: path.join(os.homedir(), ".codex", "hooks.json") },
+    { runtime: "claude", file: path.join(os.homedir(), ".claude", "settings.json") },
+  ]) {
     let hooksRegistered = false;
     try {
-      hooksRegistered = fs.existsSync(hooksFile) && fs.readFileSync(hooksFile, "utf8").includes("prd_state_harness.js");
+      hooksRegistered = fs.existsSync(file) && fs.readFileSync(file, "utf8").includes("prd_state_harness.js");
     } catch {
       hooksRegistered = false;
     }
-    if (hooksRegistered) add("ok", "hooks", "Harness Stop/PreToolUse hooks are registered in ~/.codex/hooks.json");
-    else add("warn", "hooks", "Harness hooks are not registered in ~/.codex/hooks.json; ship handoff will rely on skill instructions only");
+    if (hooksRegistered) add("ok", "hooks", `Harness hooks are registered for ${runtime} in ${displayPath(file)}`);
+    else add("warn", "hooks", `Harness hooks are not registered for ${runtime} in ${displayPath(file)}; in ${runtime} sessions the continuation loop and ship handoff rely on skill instructions only`);
   }
 
   let activeRun = null;
@@ -5272,6 +5324,7 @@ function deliveryShipPending(statePath, state) {
 }
 
 function renderShipHandoffDirective(statePath, state, hookCwd) {
+  const shipCommand = `node ${displayPath(shipScriptPath())}`;
   return JSON.stringify({
     decision: "block",
     reason: `<prd-ship-handoff-guard>
@@ -5280,11 +5333,11 @@ Implementation receipt is complete, but delivery mode is 'pr' and no pull reques
 PRD: \`${state.prdPath}\`
 State: \`${toProjectRelative(statePath, hookCwd)}\`
 
-The thread is not done until \`$deliver\` opens the PR and required CI passes or the delivery is explicitly reported as blocked. Run:
+The thread is not done until the deliver skill opens the PR and required CI passes or the delivery is explicitly reported as blocked. Run:
 
-  node ~/.codex/skills/prd-ship/scripts/prd_ship.js body --state ${toProjectRelative(statePath, hookCwd)}
+  ${shipCommand} body --state ${toProjectRelative(statePath, hookCwd)}
   (fill the AGENT-FILL prose sections from implementation-result.md)
-  node ~/.codex/skills/prd-ship/scripts/prd_ship.js ship --state ${toProjectRelative(statePath, hookCwd)} --title "<PR title>"
+  ${shipCommand} ship --state ${toProjectRelative(statePath, hookCwd)} --title "<PR title>"
 
 If delivery is genuinely blocked, report the blocker explicitly to the user instead of stopping silently.
 </prd-ship-handoff-guard>`,
@@ -5306,7 +5359,7 @@ function runStopHook(payload, started) {
   if (!fs.existsSync(statePath)) return "";
   const state = readJson(statePath);
   if (state.schema !== SCHEMA) return "";
-  if (state.activeSessionId && state.activeSessionId !== sessionId) return "";
+  if (state.activeSessionId && !sameSessionId(state.activeSessionId, sessionId)) return "";
   if (state.status !== "active") {
     if (deliveryShipPending(statePath, state)) {
       return renderShipHandoffDirective(statePath, state, hookCwd);
@@ -5388,7 +5441,7 @@ function runPreToolUseHook(payload) {
   if (!fs.existsSync(statePath)) return "";
   const state = readJson(statePath);
   if (state.schema !== SCHEMA) return "";
-  if (state.activeSessionId && state.activeSessionId !== sessionId) return "";
+  if (state.activeSessionId && !sameSessionId(state.activeSessionId, sessionId)) return "";
   if (state.status !== "active") {
     if (deliveryShipPending(statePath, state)) {
       return renderShipHandoffDirective(statePath, state, hookCwd);
@@ -5423,7 +5476,7 @@ State: \`${toProjectRelative(statePath, hookCwd)}\`
 	Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped by trivial profile"}
 	Receipt: ${state.finalReceipt ? "present" : "missing"}
 
-	Run \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\`, close all execution nodes and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the Codex goal complete.
+	Run \`${harnessCommand()} status\`, close all execution nodes and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the goal complete.
 	</prd-implement-goal-guard>`,
   });
 }
@@ -5438,6 +5491,7 @@ function isUpdateGoalCompleteAttempt(payload) {
 
 function renderContinuationDirective(context) {
   const { state, counts, next } = context;
+  const HARNESS = harnessCommand();
   const requirementsReviewStatus = state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending";
   const finalReviewRequired = finalReviewRequiredForState(state);
   const finalReviewStatus = state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped by trivial profile";
@@ -5469,42 +5523,42 @@ The phase has not changed since the last directive, so the full procedure is not
 Drive the Next required item above to done, then record it with the matching harness command: \`mark-node\` for execution nodes, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Run \`status\` if you need the full graph again.`
     : `# Required procedure this turn
 
-1. Ensure the Codex Goal exists when goal tools are available: call \`get_goal\`; if no active goal exists, call \`create_goal\` for this PRD implementation. \`update_plan\` does not replace Goal state.
+1. Mirror progress in the runtime's tracking surface when one is available: with Codex goal tools, call \`get_goal\` and \`create_goal\` for this PRD implementation (\`update_plan\` does not replace Goal state); in Claude Code, use the task list. The harness state, not the tracker, is the completion authority.
 2. Treat the State block above and \`${context.statePath}\` as the source of truth. Read \`${state.runDir}/execution-plan.md\` and \`${state.runDir}/taskgraph.md\` only when planning changed, and consult \`${state.runDir}/ledger.jsonl\` only when the recent-activity summary above is not enough. Do not re-read unchanged plan views every turn.
-3. If the next item is \`VERIFICATION_PLAN VP0\`, read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-verification\` before implementation.
-4. If the next item is \`EXECUTION_PLAN EP0\`, run \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js plan-execution\`, inspect \`ready\`, and use \`${state.runDir}/execution-plan.md\` as the work map.
+3. If the next item is \`VERIFICATION_PLAN VP0\`, read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
+4. If the next item is \`EXECUTION_PLAN EP0\`, run \`${HARNESS} plan-execution\`, inspect \`ready\`, and use \`${state.runDir}/execution-plan.md\` as the work map.
 5. After \`plan-execution\` and before material code edits, the main agent performs the coverage check. Inspect PRD/state/plan/taskgraph paths for intent, ambiguity, coverage, TaskGraph, and structure-lock drift; record material findings in \`${state.runDir}/context-notes.md\`.
 6. Work sequentially on the next ready execution node. Parallel execution is opt-in via config (\`execution.parallel\`); only when the State block shows a Ready parallel groups line may the coordinator assign a safe disjoint group to subagents.
 7. Use the PRD's Major Technical Structure Changes or documented structure lock. Stop for approval before material deviations.
 8. Register artifacts immediately after producing them. Do not leave files under \`${state.runDir}/artifacts\` unregistered; record valid artifacts with \`record-artifact\` before using them as evidence.
 9. After evidence exists, update state with:
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark-node --id <Nn> --status complete --evidence "<command/test/file/screenshot evidence>"\`
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js mark --kind ac --id <ACn> --status met --evidence "<evidence>"\`
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js verify-run --id <Vn> -- <command>\`
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js record-artifact --id <Vn> --kind screenshot|log|browser|api|db|file --path <artifact> --description "<what it proves>"\`
+   - \`${HARNESS} mark-node --id <Nn> --status complete --evidence "<command/test/file/screenshot evidence>"\`
+   - \`${HARNESS} mark --kind ac --id <ACn> --status met --evidence "<evidence>"\`
+   - \`${HARNESS} verify-run --id <Vn> -- <command>\`
+   - \`${HARNESS} record-artifact --id <Vn> --kind screenshot|log|browser|api|db|file --path <artifact> --description "<what it proves>"\`
 10. Let task status roll up from execution nodes, ACs, and verification. Use \`mark --kind task\` only for an explicit blocked/deferred/manual correction with evidence.
-11. Do not call \`update_goal({status:"complete"})\` until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status\` reports no open items or final gate violations.
-    If delivery mode is \`pr\`, do not call \`update_goal({status:"complete"})\` after receipt alone. Run \`$deliver\` and wait for PR creation plus required CI pass or an explicit delivery blocker.
+11. Do not mark the tracked goal or report the run complete until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`${HARNESS} status\` reports no open items or final gate violations.
+    If delivery mode is \`pr\`, the receipt alone is not completion. Run the deliver skill and wait for PR creation plus required CI pass or an explicit delivery blocker.
 12. When no open items remain, run the final AC + Verification sweep, then run the strict requirements fidelity review:
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
+   - \`${HARNESS} requirements-review-prompt\`
    - The main agent writes this review by default. Do not spawn a requirements fidelity sidecar unless the user explicitly asks for one. It must compare original user intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result.
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\`.
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-record --status pass|fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity verdict>"\`
+   - \`${HARNESS} requirements-review-record --status pass|fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity verdict>"\`
 13. Before finalization${finalReviewRequired ? " or final adversarial review" : ""}, stop runtime servers, browser sessions, tunnels, or background processes started only for verification, unless explicitly left running and reported.
 ${finalReviewRequired ? `14. Only after \`requirements-review-record --status pass\`, run:
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-prompt\`
-   - Spawn a fresh independent adversarial reviewer sidecar with that prompt when multi-agent tools are available. This is the only required reviewer sidecar in the default workflow. Omit \`agent_type\`; do not use \`hoyeon-*\` roles unless the user explicitly asked for one.
+   - \`${HARNESS} review-prompt\`
+   - Spawn a fresh independent adversarial reviewer sidecar with that prompt when multi-agent tools are available. This is the only required reviewer sidecar in the default workflow. Use a default read-only subagent; do not use \`hoyeon-*\` roles unless the user explicitly asked for one.
    - Write \`${state.runDir}/review/final-review.md\`.
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js review-record --status pass|fail --report ${state.runDir}/review/final-review.md --summary "<review verdict>"\`
+   - \`${HARNESS} review-record --status pass|fail --report ${state.runDir}/review/final-review.md --summary "<review verdict>"\`
 15. Only after \`review-record --status pass\`, finalize:
 ` : `14. This run uses the trivial review profile; final adversarial review is optional. After \`requirements-review-record --status pass\`, finalize:
 `}
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize --status complete --summary "<short evidence-backed summary>"\`
-   - If delivery mode is \`pr\`, immediately hand off to \`$deliver\` with \`${context.statePath}\`.
+   - \`${HARNESS} finalize --status complete --summary "<short evidence-backed summary>"\`
+   - If delivery mode is \`pr\`, immediately hand off to the deliver skill with \`${context.statePath}\`.
 ${finalReviewRequired ? "16" : "15"}. If completion is impossible and the next user-facing report will be blocked or partial, run the same requirements fidelity review first and record it before handoff:
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-prompt\`
+   - \`${HARNESS} requirements-review-prompt\`
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\` with \`Status: FAIL\` when intent/PRD/evidence do not fully align.
-   - \`node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js requirements-review-record --status fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity blocker verdict>"\`
+   - \`${HARNESS} requirements-review-record --status fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity blocker verdict>"\`
    - Then use \`finalize --status blocked\` or \`finalize --status partial\`; do not report \`Done\`.`;
   return `<prd-implement-continuation>
 
@@ -5539,7 +5593,7 @@ ${proceduresBlock}
 # Completion rule
 
 The turn may end only after one tracked item is marked with evidence, artifact-backed verification is recorded, a concrete blocker is marked, or the final receipt is written.
-If delivery mode is \`pr\`, a final completion answer also requires the \`prd-ship\` PR URL and CI verdict.
+If delivery mode is \`pr\`, a final completion answer also requires the deliver (prd-ship) PR URL and CI verdict.
 Do not provide a final completion answer before the receipt exists.
 
 </prd-implement-continuation>

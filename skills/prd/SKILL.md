@@ -1,7 +1,7 @@
 ---
 name: promise
 description: |
-  Project-local PRD writer. Use when the user invokes "$promise" (legacy alias "$prd"), asks for a PRD,
+  Project-local PRD writer. Use when the user invokes "$promise" (legacy alias "prd"), asks for a PRD,
   product requirements document, implementation-ready requirements, or wants to
   turn intake/clarify output into a human-reviewable requirements contract with
   major technical structure changes, PRD-level tasks, a compact verification

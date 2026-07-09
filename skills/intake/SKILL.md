@@ -2,7 +2,7 @@
 name: listen
 description: |
   Project-local pre-PRD requirements intake. Use when the user invokes
-  "$listen" (legacy alias "$intake"), asks to clarify, pressure-test, reduce ambiguity, prepare a PRD
+  "$listen" (legacy alias "intake"), asks to clarify, pressure-test, reduce ambiguity, prepare a PRD
   handoff, or wants requirements questioned across product, scope, UX/design,
   technical, verification, risk, operation, and documented-domain axes before
   writing a PRD.

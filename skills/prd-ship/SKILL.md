@@ -2,7 +2,7 @@
 name: deliver
 description: |
   Publish a completed `fulfill` run through GitHub PR delivery. Use when
-  the user invokes "$deliver" (legacy alias "$prd-ship") or when
+  the user invokes "$deliver" (legacy alias "prd-ship") or when
   the user asks to ship, open a PR, push a completed PRD implementation, watch
   CI, use PR delivery mode, or continue after `fulfill` receipt until a
   pull request exists and required checks pass.

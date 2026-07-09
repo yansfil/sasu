@@ -71,7 +71,7 @@ Run the `fulfill` skill in full, with one difference at init:
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
   --prd .hoyeon/prd/<topic-slug>/prd.md \
   --allow-unapproved-prd "<verbatim $please invocation message>" \
-  --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}"
+  --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 ```
 
 Rules:

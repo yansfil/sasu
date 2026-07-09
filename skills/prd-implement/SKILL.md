@@ -2,9 +2,9 @@
 name: fulfill
 description: |
   Project-local PRD implementation orchestrator. Use when the user invokes
-  "$fulfill" (legacy alias "$prd-implement"), asks to execute or implement an approved PRD, or wants
-  Codex to turn PRD-level tasks into an execution plan, TaskGraph, concrete
-  verification plan, artifact-backed evidence, Codex Goal lifecycle,
+  "$fulfill" (legacy alias "prd-implement"), asks to execute or implement an approved PRD, or wants
+  the agent to turn PRD-level tasks into an execution plan, TaskGraph, concrete
+  verification plan, artifact-backed evidence, goal/progress tracking,
   main-agent-owned fidelity checks, profile-aware review gates, and strict
   completion receipt.
 ---
@@ -99,7 +99,7 @@ Agent-created run notes, review reports, and evidence artifacts:
 ## Required Flow
 
 ```text
-Codex Goal opened
+goal tracking opened
   -> PRD Verification Contract
   -> fulfill Verification Planner
   -> Execution Plan
@@ -153,13 +153,15 @@ Pause for approval before material structure deviations, unmapped scope,
 production data, credentials, destructive DB changes, billing, or irreversible
 deploy actions.
 
-## 2. Start Codex Goal
+## 2. Start Goal Tracking
 
-When goal tools are available, mirror progress into an explicit Codex Goal.
-The Goal is lifecycle and progress control, not an independent completion proof.
+Mirror progress into the runtime's goal/progress surface. The tracker is
+lifecycle and progress control, not an independent completion proof.
 The authoritative implementation proof is `receipt.json` produced by
-`finalize`; Goal completion only mirrors a successful receipt and any required
-PR delivery handoff.
+`finalize`; tracker completion only mirrors a successful receipt and any
+required PR delivery handoff.
+
+With Codex goal tools:
 
 1. Call `get_goal`.
 2. If no active goal exists, call `create_goal` with an objective like:
@@ -175,24 +177,30 @@ PR delivery handoff.
    satisfied; otherwise leave the Goal active and report the blocked/partial
    receipt state.
 
-If goal tools are not available in the current surface, record that limitation
-in `context-notes.md` or the final report instead of silently acting as if the
-Goal exists.
+In Claude Code, use the task list (TaskCreate/TaskUpdate) as the progress
+mirror under the same rules: do not mark the run's final task complete before
+the receipt exists and, when delivery mode is `pr`, before the PR delivery
+handoff is complete or explicitly blocked.
+
+If no goal or task tracking tools are available in the current surface, record
+that limitation in `context-notes.md` or the final report instead of silently
+acting as if the tracker exists.
 
 ## 3. Activate State Harness
 
 From the target repository root:
 
 ```sh
-node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}"
+node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js status
 ```
 
-Bind the harness to the current Codex session at initialization. Prefer
-`CODEX_SESSION_ID` when present; otherwise use `CODEX_THREAD_ID`. If neither
-is available, run `init --prd <prd-path>` and rely on the first Stop/PreToolUse
-hook payload to bind `activeSessionId`. Do not intentionally share one active
-state across unrelated Codex sessions.
+Bind the harness to the current agent session at initialization. In Codex,
+prefer `CODEX_SESSION_ID`, then `CODEX_THREAD_ID`. In Claude Code, the literal
+`${CLAUDE_SESSION_ID}` above is substituted with the real session id when the
+skill loads. If no session id is available, run `init --prd <prd-path>` and
+rely on the first Stop/PreToolUse hook payload to bind `activeSessionId`. Do
+not intentionally share one active state across unrelated agent sessions.
 
 When delivery mode should be PR-based, pass it explicitly or rely on
 `.hoyeon/config.json`:
@@ -201,7 +209,7 @@ When delivery mode should be PR-based, pass it explicitly or rely on
 node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --delivery pr \
-  --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}"
+  --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 ```
 
 The harness assigns a review profile at init:
@@ -445,11 +453,13 @@ Review ownership rules:
 - The final adversarial review is mandatory for `standard` and `high-risk`
   profiles when multi-agent tools are available.
   It is optional for `trivial`.
-- Use a default independent subagent for the final sidecar by omitting
-  `agent_type`. Do not choose `hoyeon-*` roles unless the user explicitly asks
-  for that specific role.
-- Use `fork_context: false` when the tool supports it. Pass raw artifact paths
-  and generated review prompts, not the coordinator's conclusions.
+- Use a default independent subagent for the final sidecar (in Codex, omit
+  `agent_type`; in Claude Code, use the default general-purpose subagent).
+  Do not choose `hoyeon-*` roles unless the user explicitly asks for that
+  specific role.
+- Give the reviewer a fresh context when the tool supports it (Codex:
+  `fork_context: false`). Pass raw artifact paths and generated review
+  prompts, not the coordinator's conclusions.
 - Sidecars must not edit files, run `mark`, run `requirements-review-record`,
   run `review-record`, run `finalize`, or update Goal state.
 - If multi-agent tools are unavailable for the final adversarial review, write
@@ -635,7 +645,8 @@ node ~/.codex/skills/prd-implement/scripts/prd_state_harness.js finalize \
   --summary "<evidence-backed summary>"
 ```
 
-Do not report done and do not call `update_goal complete` until:
+Do not report done and do not mark the tracked goal complete (`update_goal
+complete` in Codex, the run's final task in Claude Code) until:
 
 - `receipt.json` exists.
 - `status` reports zero open tracked items.
@@ -648,8 +659,8 @@ Do not report done and do not call `update_goal complete` until:
 - runtime processes started for verification are stopped or explicitly reported
   as intentionally left running.
 
-If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not call
-`update_goal complete` yet.
+If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not mark
+the tracked goal complete yet.
 Run `$deliver` after `finalize --status complete` and keep the goal open until
 the PR exists and required CI passes or the delivery handoff is explicitly
 blocked.

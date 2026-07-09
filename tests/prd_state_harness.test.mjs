@@ -152,6 +152,7 @@ test("an unbound pointer is claimed by the first hook session and isolated from 
   const noSessionEnv = { ...process.env };
   delete noSessionEnv.CODEX_SESSION_ID;
   delete noSessionEnv.CODEX_THREAD_ID;
+  delete noSessionEnv.CLAUDE_SESSION_ID;
   run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env: noSessionEnv });
   const before = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", ".prd-implement-active.json"), "utf8"));
   assert.equal(before.activeSessionId, null);
@@ -164,7 +165,7 @@ test("an unbound pointer is claimed by the first hook session and isolated from 
   });
   assert.match(JSON.parse(claim.stdout).reason, /prd-implement-continuation/);
   const bound = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", "bootstrap", "state.json"), "utf8"));
-  assert.equal(bound.activeSessionId, "codex:boot-s");
+  assert.equal(bound.activeSessionId, "boot-s");
 
   // A different session must not pick up the now-bound run.
   const foreign = run(process.execPath, [harness, "hook", "stop"], {
@@ -196,7 +197,7 @@ test("worktree init overwrites the main active pointer bound to the session", ()
   const active = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", ".prd-implement-active.json"), "utf8"));
   assert.match(active.statePath, /pointer-test\/state\.json$/);
   assert.match(active.statePath, /worktrees/);
-  assert.equal(active.activeSessionId, "codex:new-session");
+  assert.equal(active.activeSessionId, "new-session");
 
   const cleanup = runJson(["cleanup-active", "--state", active.statePath], projectRoot);
   assert.equal(cleanup.ok, true);
@@ -689,6 +690,93 @@ PASS.
 `);
   const rec = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
   assert.equal(rec.ok, true);
+});
+
+test("session ids match across runtime prefixes and legacy stored values", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "session-neutral");
+  // A prefixed --session-id is stored bare.
+  runJson(["init", "--prd", prd, "--review-profile", "trivial", "--session-id", "claude:sess-1"], root);
+  const statePath = path.join(root, ".hoyeon", "implement", "session-neutral", "state.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(state.activeSessionId, "sess-1");
+  runJson(["plan-execution"], root);
+
+  // A bare hook payload id (Claude Code) matches the stored session.
+  const bare = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "sess-1" }),
+  });
+  assert.match(JSON.parse(bare.stdout).reason, /prd-implement-continuation/);
+
+  // A legacy codex-prefixed payload id for the same session also matches.
+  const prefixed = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "codex:sess-1" }),
+  });
+  assert.match(JSON.parse(prefixed.stdout).reason, /prd-implement-continuation/);
+
+  // Legacy state files that stored a prefixed id keep matching bare payloads.
+  const legacy = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  legacy.activeSessionId = "codex:sess-1";
+  fs.writeFileSync(statePath, JSON.stringify(legacy, null, 2));
+  const legacyMatch = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "sess-1" }),
+  });
+  assert.match(JSON.parse(legacyMatch.stdout).reason, /prd-implement-continuation/);
+
+  // A different session still gets nothing.
+  const foreign = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "sess-2" }),
+  });
+  assert.equal(foreign.stdout.trim(), "");
+});
+
+test("CLAUDE_SESSION_ID env binds the session at init", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "claude-env");
+  const env = { ...process.env };
+  delete env.CODEX_SESSION_ID;
+  delete env.CODEX_THREAD_ID;
+  env.CLAUDE_SESSION_ID = "claude-env-session";
+  run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env });
+  const state = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", "claude-env", "state.json"), "utf8"));
+  assert.equal(state.activeSessionId, "claude-env-session");
+});
+
+test("hook directives emit the invoked harness path, not a hardcoded install root", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "self-path");
+  runJson(["init", "--prd", prd, "--review-profile", "trivial", "--session-id", "sp-session"], root);
+  const stop = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "sp-session" }),
+  });
+  const reason = JSON.parse(stop.stdout).reason;
+  const home = os.homedir();
+  const expected = harness.startsWith(home + path.sep) ? `~${harness.slice(home.length)}` : harness;
+  assert.ok(reason.includes(`node ${expected} plan-execution`), reason);
+  assert.doesNotMatch(reason, /~\/\.codex\/skills\/prd-implement/);
+});
+
+test("doctor reports hook registration per runtime from HOME", () => {
+  const root = initGitRepo();
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "harness-home-"));
+  write(path.join(fakeHome, ".claude", "settings.json"), JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: "command", command: `"node" "${harness}" hook stop`, timeout: 10 }] }] },
+  }, null, 2));
+  const result = run(process.execPath, [harness, "doctor"], {
+    cwd: root,
+    env: { ...process.env, HOME: fakeHome },
+    allowFailure: true,
+  });
+  const doctor = JSON.parse(result.stdout);
+  const hookChecks = doctor.checks.filter(item => item.id === "hooks");
+  assert.equal(hookChecks.length, 2);
+  assert(hookChecks.some(item => item.level === "ok" && item.message.includes("for claude")), JSON.stringify(hookChecks));
+  assert(hookChecks.some(item => item.level === "warn" && item.message.includes("for codex")), JSON.stringify(hookChecks));
 });
 
 test("not-watched PR delivery ship log keeps hook delivery guard active", () => {

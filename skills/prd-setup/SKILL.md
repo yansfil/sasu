@@ -2,7 +2,7 @@
 name: pantry
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
-  "$pantry" (legacy alias "$prd-setup"), asks to enable or change PR delivery mode, configure
+  "$pantry" (legacy alias "prd-setup"), asks to enable or change PR delivery mode, configure
   worktree/secrets sync for prd-implement, configure .hoyeon gitignore
   policy, inspect the current PRD pipeline settings, or diagnose why
   fulfill/deliver delivery is not working.
