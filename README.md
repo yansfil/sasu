@@ -83,6 +83,13 @@ node --test tests/*.test.mjs
 node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor
 ```
 
+Optional state-schema typecheck (no npm dependency; uses the JSDoc typedefs in `scripts/lib/types.js`):
+
+```sh
+npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --skipLibCheck \
+  skills/fulfill/scripts/lib/state_data.js skills/fulfill/scripts/lib/types.js
+```
+
 `doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
 After changing installed skills, confirm visibility:
 

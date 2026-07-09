@@ -1,14 +1,22 @@
+// @ts-check
 "use strict";
-
 
 const { nowIso } = require("./util");
 
+/** @typedef {import("./types").State} State */
+/** @typedef {import("./types").VerificationItem} VerificationItem */
+/** @typedef {import("./types").Deviation} Deviation */
+/** @typedef {import("./types").ReviewRecord} ReviewRecord */
+
+/** @param {VerificationItem} verification */
 function isVerificationRequiredForDone(verification) {
-  const matrix = verification && verification.matrix ? verification.matrix : {};
+  const matrix = (verification && verification.matrix) ||
+    /** @type {Partial<import("./types").VerificationMatrix>} */ ({});
   if (typeof matrix.requiredForDone === "boolean") return matrix.requiredForDone;
   return true;
 }
 
+/** @param {VerificationItem} verification */
 function verificationIsClosedForAccounting(verification) {
   if (!verification) return false;
   if (verification.status === "pass") return true;
@@ -16,6 +24,14 @@ function verificationIsClosedForAccounting(verification) {
   return false;
 }
 
+/**
+ * @param {State} state
+ * @param {string} type
+ * @param {string} targetId
+ * @param {string} summary
+ * @param {Object} [details]
+ * @returns {Deviation}
+ */
 function recordDeviation(state, type, targetId, summary, details = {}) {
   if (!state.deviations) state.deviations = [];
   const entry = {
@@ -30,6 +46,11 @@ function recordDeviation(state, type, targetId, summary, details = {}) {
   return entry;
 }
 
+/**
+ * @param {State} state
+ * @param {string} reason
+ * @returns {ReviewRecord|null}
+ */
 function markFinalReviewStale(state, reason) {
   if (!state.finalReview || state.finalReview.status !== "pass") return null;
   state.finalReview.status = "stale";
@@ -38,6 +59,11 @@ function markFinalReviewStale(state, reason) {
   return state.finalReview;
 }
 
+/**
+ * @param {State} state
+ * @param {string} reason
+ * @returns {ReviewRecord|null}
+ */
 function markRequirementsFidelityReviewStale(state, reason) {
   if (!state.requirementsFidelityReview || state.requirementsFidelityReview.status !== "pass") return null;
   state.requirementsFidelityReview.status = "stale";
@@ -46,11 +72,20 @@ function markRequirementsFidelityReviewStale(state, reason) {
   return state.requirementsFidelityReview;
 }
 
+/**
+ * @param {State} state
+ * @param {string} reason
+ */
 function markCompletionReviewsStale(state, reason) {
   markRequirementsFidelityReviewStale(state, reason);
   markFinalReviewStale(state, reason);
 }
 
+/**
+ * @param {State} state
+ * @param {string} id
+ * @param {string|null} [preferredKind]
+ */
 function findTrackedItem(state, id, preferredKind = null) {
   const normalized = String(id || "").toUpperCase();
   const groups = [
@@ -67,6 +102,7 @@ function findTrackedItem(state, id, preferredKind = null) {
   return null;
 }
 
+/** @param {State} state */
 function countState(state) {
   const executionOpen = state.executionPlan && Array.isArray(state.executionPlan.nodes)
     ? state.executionPlan.nodes.filter(item => !["complete", "deferred", "blocked"].includes(item.status)).length
@@ -94,6 +130,7 @@ function countState(state) {
   };
 }
 
+/** @param {State} state */
 function reviewProfileName(state) {
   const profile = state && state.reviewProfile && typeof state.reviewProfile.profile === "string"
     ? state.reviewProfile.profile
@@ -101,10 +138,12 @@ function reviewProfileName(state) {
   return ["trivial", "standard", "high-risk"].includes(profile) ? profile : "standard";
 }
 
+/** @param {State} state */
 function finalReviewRequiredForState(state) {
   return reviewProfileName(state) !== "trivial";
 }
 
+/** @param {State} state */
 function verificationPlanSummary(state) {
   const plan = state.verificationPlan;
   if (!plan) {
@@ -125,11 +164,13 @@ function verificationPlanSummary(state) {
   };
 }
 
+/** @param {State} state */
 function verificationPlanBlocksImplementation(state) {
   const summary = verificationPlanSummary(state);
   return summary.status === "missing" || summary.blockingGapCount > 0;
 }
 
+/** @param {State} state */
 function executionPlanSummary(state) {
   const plan = state.executionPlan;
   if (!plan) {
@@ -153,18 +194,23 @@ function executionPlanSummary(state) {
   };
 }
 
+/** @param {State} state */
 function executionPlanBlocksImplementation(state) {
   const summary = executionPlanSummary(state);
   return summary.status === "missing" || summary.blockingGapCount > 0;
 }
 
+/** @param {State} state */
 function latestEvidenceTimestamp(state) {
+  /** @type {{time: number, label: string}|null} */
   let latest = null;
+  /** @type {(value: string|undefined, label: string) => void} */
   const consider = (value, label) => {
     const time = Date.parse(value || "");
     if (!Number.isFinite(time)) return;
     if (!latest || time > latest.time) latest = { time, label };
   };
+  /** @type {Array<[string, Array<import("./types").TrackedItem|import("./types").VerificationItem|import("./types").ExecutionNode>]>} */
   const groups = [
     ["execution node", state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : []],
     ["task", state.tasks || []],

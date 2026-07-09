@@ -1,5 +1,8 @@
 "use strict";
 
+/** @typedef {import("./types").State} State */
+/** @typedef {import("./types").ActiveRecord} ActiveRecord */
+
 const fs = require("fs");
 const path = require("path");
 
@@ -108,6 +111,11 @@ function resolveStatePath(options = {}, baseDir = cwd()) {
   return resolveProjectPath(active.active.statePath, baseDir);
 }
 
+/**
+ * @param {Object} [options] parsed CLI options; supports options.state
+ * @param {string} [baseDir]
+ * @returns {{statePath: string, state: State}}
+ */
 function loadState(options = {}, baseDir = cwd()) {
   const statePath = resolveStatePath(options, baseDir);
   const state = readJson(statePath);
@@ -137,12 +145,21 @@ function activeRecordMatchesState(active, statePath, baseDir) {
   return canonicalPath(resolveProjectPath(active.statePath, baseDir)) === canonicalPath(statePath);
 }
 
+/**
+ * @param {string} statePath
+ * @param {State} state
+ */
 function syncActive(statePath, state) {
   for (const root of activeRootsForState(state)) {
     writeActiveRecord(root, statePath, state);
   }
 }
 
+/**
+ * Single write path for state.json plus every derived artifact document.
+ * @param {string} statePath
+ * @param {State} state
+ */
 function persistStateAndArtifacts(statePath, state) {
   refreshExecutionTraceMatrix(state);
   state.taskGraph = buildTaskGraph(state);

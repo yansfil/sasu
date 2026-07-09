@@ -1,11 +1,14 @@
 "use strict";
 
+/** @typedef {import("./types").State} State */
+
 
 const { nowIso, cwd, toProjectRelative, sha256Text, uniqueMatches } = require("./util");
 const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState } = require("./state_data");
 const { inferVerificationMode } = require("./prd_parser");
 const { repoSignals, classifyVerification, commandFromText, commandForMode, coverageFromText, artifactsForVerification, passCriteriaFromText, toolForVerification, targetForVerification, plannedCheckStatus, plannerNotes, hasAppStartupSignal } = require("./inference");
 
+/** @param {State} state */
 function taskGraphSummary(state) {
   const graph = state.taskGraph && state.taskGraph.schema === "hoyeon.prd-implement.taskgraph.v2"
     ? state.taskGraph
@@ -33,6 +36,11 @@ function verificationContractHash(state) {
   }));
 }
 
+/**
+ * @param {State} state
+ * @param {string} statePath
+ * @returns {import("./types").VerificationPlan}
+ */
 function buildVerificationPlan(state, statePath) {
   const projectRoot = state.projectRoot || cwd();
   const signals = repoSignals(projectRoot);
@@ -104,6 +112,11 @@ function buildVerificationPlan(state, statePath) {
   };
 }
 
+/**
+ * @param {State} state
+ * @param {string} statePath
+ * @returns {import("./types").ExecutionPlan}
+ */
 function buildExecutionPlan(state, statePath) {
   const previous = state.executionPlan && Array.isArray(state.executionPlan.nodes)
     ? new Map(state.executionPlan.nodes.map(node => [node.id, node]))
@@ -475,6 +488,7 @@ function rollupTasksFromExecutionPlan(state, options = {}) {
   }
 }
 
+/** @param {State} state */
 function buildTaskGraph(state) {
   const verificationPlan = verificationPlanSummary(state);
   const executionPlan = executionPlanSummary(state);
