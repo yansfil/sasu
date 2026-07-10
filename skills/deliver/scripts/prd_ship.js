@@ -8,9 +8,25 @@ const childProcess = require("child_process");
 
 // Namespace layout mirror of fulfill's util.js constants. Kept local so the
 // deliver skill stays installable without a fulfill checkout, but the values
-// must match; change both together. The legacy `.hoyeon` tree is a read-only
-// fallback for runs started before the agents/ namespace migration.
-const NAMESPACE_ROOT = "agents";
+// and the namespace.root override lookup must match; change both together.
+// The legacy `.hoyeon` tree is a read-only fallback for runs started before
+// the agents/ namespace migration.
+function readNamespaceOverride() {
+  for (const rel of [path.join("agents", "config.json"), path.join(".hoyeon", "config.json")]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), rel), "utf8"));
+      const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
+        ? parsed.namespace.root.trim()
+        : "";
+      if (root && /^[A-Za-z0-9._-]+$/.test(root) && root !== ".hoyeon") return root;
+    } catch {
+      // Missing or invalid config falls back to the default namespace.
+    }
+  }
+  return null;
+}
+
+const NAMESPACE_ROOT = readNamespaceOverride() || "agents";
 const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
 const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");

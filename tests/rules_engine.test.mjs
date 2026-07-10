@@ -240,3 +240,21 @@ test("seed-agents-md refuses a bare CLAUDE.md without --adopt-claude-md, then ad
   assert.match(agentsMd, /Harness Namespace/);
   assert.equal(fs.lstatSync(path.join(root, "CLAUDE.md")).isSymbolicLink(), true);
 });
+
+test("namespace.root override relocates harness artifacts", () => {
+  const root = initGitRepo();
+  write(path.join(root, "agents", "config.json"), JSON.stringify({
+    namespace: { root: "meta" },
+  }, null, 2));
+  // The rules engine and every artifact path must honor the override.
+  write(path.join(root, "draft.md"), invariantDraft());
+  runJson(["rules", "add", "--file", "draft.md"], root);
+  assert.equal(fs.existsSync(path.join(root, "meta", "rules", "INDEX.md")), true,
+    "ledger lands under the overridden namespace root");
+  assert.equal(fs.existsSync(path.join(root, "agents", "rules")), false);
+
+  const seeded = runJson(["seed-agents-md"], root).json;
+  assert.equal(seeded.ok, true);
+  const agentsMd = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+  assert.match(agentsMd, /meta\/rules/);
+});
