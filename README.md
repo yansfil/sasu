@@ -24,6 +24,7 @@ please = the whole chain in one invocation, stopping only for risky work
 | `deliver` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
 | `pantry` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
+| `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
 
 Skill and directory names are the butler set everywhere.
 Run artifacts live under the visible `agents/` namespace in the target project (`agents/intake/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`); a legacy `.hoyeon/` tree from older runs stays readable as a fallback, and new runs always write under `agents/`.
@@ -74,6 +75,9 @@ The harness treats "done" as a provable state, and the enforcement works identic
 - **Fail-closed delivery.**
   `deliver` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
   Every override needs a `--reason` and lands in the ship log.
+- **Learned invariants gate delivery.**
+  Lessons registered through `rules add` carry trigger globs and an executable check; `deliver` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
+  Evidence-free or unverifiable rules are rejected at registration, so the rulebook cannot decay into wishes.
 - **Premature-completion guards.**
   Codex gets a `PreToolUse` guard that blocks `update_goal complete` before the receipt; Claude Code has no goal tool, so the Stop hook carries the guarantee alone.
 
@@ -107,18 +111,20 @@ skills/
   pantry/    SKILL.md
   deliver/   SKILL.md, scripts/prd_ship.js
   please/    SKILL.md
+  remember/  SKILL.md
 scripts/
   install-local-skills.mjs   dual-runtime installer + hook registration
 tests/
   prd_state_harness.test.mjs
   prd_state_regression.test.mjs   full standard-profile flow + golden artifact snapshots
   prd_parser_unit.test.mjs        direct unit tests for scripts/lib/prd_parser.js
+  rules_engine.test.mjs           rules add/check/relevant + seed-agents-md
   install_local_skills.test.mjs
   golden/                         normalized golden files (regenerate: UPDATE_GOLDEN=1)
 ```
 
 `prd_state_harness.js` is a thin dispatcher over `scripts/lib/`:
-`util` → `git` → `config` → `state_data` → `prd_parser` → `inference` → `planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` → `commands/*`.
+`util` → `git` → `config` → `rules` → `state_data` → `prd_parser` → `inference` → `planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` → `commands/*`.
 Modules only require layers to their left, so the dependency graph stays acyclic.
 
 Run artifacts live in the target project, not here: PRDs under `agents/prd/**` (committed), implementation state and evidence under `agents/implement/**` (gitignored by the one-line policy `agents/implement/`, enforced by `doctor`).
