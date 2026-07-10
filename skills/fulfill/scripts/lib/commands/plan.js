@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath } = require("../util");
+const { nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
 const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummary } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { taskGraphSummary, buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, rollupTasksFromExecutionPlan, nextItem } = require("../planning");
@@ -57,7 +57,7 @@ function cmdPlanVerificationCheck(options) {
   };
   const plan = buildVerificationPlan(
     syntheticState,
-    path.join(projectRoot, ".hoyeon", "implement", slugFromPrdPath(prdAbs), "state.json"),
+    path.join(projectRoot, runDirRelFor(slugFromPrdPath(prdAbs)), "state.json"),
   );
   const blocking = plan.gaps.filter(gap => gap.severity === "blocking");
   process.stdout.write(JSON.stringify({

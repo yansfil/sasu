@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath } = require("../util");
+const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath, runDirRelFor, legacyRunDirRelFor } = require("../util");
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState } = require("../state_data");
@@ -26,9 +26,16 @@ function cmdInit(options) {
     return;
   }
 
-  const runDirRel = path.join(".hoyeon", "implement", inputs.slug);
+  const runDirRel = runDirRelFor(inputs.slug);
   const runDirAbs = path.join(inputs.projectRoot, runDirRel);
   const existingStatePath = path.join(runDirAbs, "state.json");
+  const legacyStatePath = path.join(inputs.projectRoot, legacyRunDirRelFor(inputs.slug), "state.json");
+  if (!fs.existsSync(existingStatePath) && fs.existsSync(legacyStatePath) && !options.force) {
+    throw new Error([
+      `A legacy-namespace run for this PRD already exists: ${toProjectRelative(legacyStatePath, inputs.projectRoot)}`,
+      "Resume it with status/next (pass --state if the pointer is gone), or rerun init with --force to start a fresh run under the new namespace.",
+    ].join("\n"));
+  }
   if (fs.existsSync(existingStatePath) && !options.force) {
     throw new Error([
       `Implementation state already exists: ${toProjectRelative(existingStatePath, inputs.projectRoot)}`,
@@ -121,7 +128,7 @@ function resolveInitInputs(options) {
 }
 
 function writeWorktreePointer(inputs, worktreePreparation) {
-  const pointerRunDir = path.join(".hoyeon", "implement", inputs.slug);
+  const pointerRunDir = runDirRelFor(inputs.slug);
   const pointerRecord = {
     schema: "hoyeon.prd-implement.active.v1",
     pointer: true,
@@ -310,7 +317,7 @@ function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, a
     }
   }
 
-  const worktreeStatePath = path.join(targetRoot, ".hoyeon", "implement", slugFromPrdPath(prdAbs), "state.json");
+  const worktreeStatePath = path.join(targetRoot, runDirRelFor(slugFromPrdPath(prdAbs)), "state.json");
   const resuming = fs.existsSync(worktreeStatePath) && !options.force;
   const syncResults = copyRequiredInitInputsToWorktree(projectRoot, targetRoot, prdAbs, deliveryConfig, resuming);
   if (!resuming) {

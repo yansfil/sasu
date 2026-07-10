@@ -11,8 +11,9 @@ description: |
 
 # fulfill
 
-Artifact paths keep the legacy `prd-implement` naming (`.hoyeon/implement/**`,
-`.prd-implement-active.json`).
+Artifacts live under the visible `agents/` namespace (`agents/implement/**`,
+`.prd-implement-active.json`); a legacy `.hoyeon/implement/**` tree from older
+runs stays readable as a fallback.
 
 Use this skill to implement an approved PRD end to end.
 
@@ -28,10 +29,10 @@ Match the user's language by default.
 Prefer an explicit PRD path:
 
 ```text
-.hoyeon/prd/<topic-slug>/prd.md
+agents/prd/<topic-slug>/prd.md
 ```
 
-If none is provided, inspect `.hoyeon/prd/` for the matching or most recent PRD.
+If none is provided, inspect `agents/prd/` for the matching or most recent PRD.
 
 The current PRD structure should include:
 
@@ -66,34 +67,34 @@ implementing a PRD, modifying this skill, or diagnosing TaskGraph behavior.
 Harness-managed state and derived views:
 
 ```text
-.hoyeon/implement/<topic-slug>/checklist.md
-.hoyeon/implement/<topic-slug>/verification-plan.json
-.hoyeon/implement/<topic-slug>/verification-plan.md
-.hoyeon/implement/<topic-slug>/execution-plan.json
-.hoyeon/implement/<topic-slug>/execution-plan.md
-.hoyeon/implement/<topic-slug>/taskgraph.json
-.hoyeon/implement/<topic-slug>/taskgraph.md
-.hoyeon/implement/<topic-slug>/state.json
-.hoyeon/implement/<topic-slug>/ledger.jsonl
-.hoyeon/implement/<topic-slug>/verification.md
-.hoyeon/implement/<topic-slug>/artifacts/manifest.jsonl
-.hoyeon/implement/<topic-slug>/receipt.json
-.hoyeon/implement/<topic-slug>/implementation-result.md
-.hoyeon/implement/.prd-implement-active.json
-.hoyeon/implement/.prd-implement-sessions/<encoded-session-id>.json
+agents/implement/<topic-slug>/checklist.md
+agents/implement/<topic-slug>/verification-plan.json
+agents/implement/<topic-slug>/verification-plan.md
+agents/implement/<topic-slug>/execution-plan.json
+agents/implement/<topic-slug>/execution-plan.md
+agents/implement/<topic-slug>/taskgraph.json
+agents/implement/<topic-slug>/taskgraph.md
+agents/implement/<topic-slug>/state.json
+agents/implement/<topic-slug>/ledger.jsonl
+agents/implement/<topic-slug>/verification.md
+agents/implement/<topic-slug>/artifacts/manifest.jsonl
+agents/implement/<topic-slug>/receipt.json
+agents/implement/<topic-slug>/implementation-result.md
+agents/implement/.prd-implement-active.json
+agents/implement/.prd-implement-sessions/<encoded-session-id>.json
 ```
 
 Agent-created run notes, review reports, and evidence artifacts:
 
 ```text
-.hoyeon/implement/<topic-slug>/context-notes.md
-.hoyeon/implement/<topic-slug>/artifacts/logs/*.log
-.hoyeon/implement/<topic-slug>/artifacts/screenshots/*
-.hoyeon/implement/<topic-slug>/artifacts/browser/*
-.hoyeon/implement/<topic-slug>/artifacts/api/*
-.hoyeon/implement/<topic-slug>/artifacts/db/*
-.hoyeon/implement/<topic-slug>/review/requirements-fidelity-review.md
-.hoyeon/implement/<topic-slug>/review/final-review.md
+agents/implement/<topic-slug>/context-notes.md
+agents/implement/<topic-slug>/artifacts/logs/*.log
+agents/implement/<topic-slug>/artifacts/screenshots/*
+agents/implement/<topic-slug>/artifacts/browser/*
+agents/implement/<topic-slug>/artifacts/api/*
+agents/implement/<topic-slug>/artifacts/db/*
+agents/implement/<topic-slug>/review/requirements-fidelity-review.md
+agents/implement/<topic-slug>/review/final-review.md
 ```
 
 ## Required Flow
@@ -133,7 +134,7 @@ Before editing code:
    failures block implementation until the PRD is fixed or the user
    explicitly accepts the risk.
 6. Read Implementation Guardrails and Risks.
-7. Read `.hoyeon/config.json` when it exists.
+7. Read `agents/config.json` when it exists.
    `node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor`
    reports the effective delivery config and environment readiness; run it when
    delivery mode, worktree sync, or PR/CI readiness is in question.
@@ -143,7 +144,7 @@ Before editing code:
    first and read only those ranges; reading whole large files repeatedly
    bloats context, forces compaction, and triggers costly re-reads later.
 
-If `.hoyeon/config.json` or the user's request sets delivery mode to `pr`, treat
+If `agents/config.json` or the user's request sets delivery mode to `pr`, treat
 PR delivery as part of the user-facing workflow.
 The implementation receipt still proves implementation completion, but the
 thread is not done until `deliver` opens or updates the PR and required CI
@@ -203,7 +204,7 @@ rely on the first Stop/PreToolUse hook payload to bind `activeSessionId`. Do
 not intentionally share one active state across unrelated agent sessions.
 
 When delivery mode should be PR-based, pass it explicitly or rely on
-`.hoyeon/config.json`:
+`agents/config.json`:
 
 ```sh
 node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
@@ -232,7 +233,7 @@ node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
   --review-profile trivial|standard|high-risk
 ```
 
-If `.hoyeon/config.json` contains `worktree.enabled: true`, `init` may prepare a
+If `agents/config.json` contains `worktree.enabled: true`, `init` may prepare a
 PR branch worktree, sync configured local files, run configured setup commands,
 and initialize state in that worktree.
 Continue implementation from the emitted worktree path.
@@ -518,7 +519,7 @@ requirement or acceptance criterion.
 Write:
 
 ```text
-.hoyeon/implement/<topic-slug>/review/requirements-fidelity-review.md
+agents/implement/<topic-slug>/review/requirements-fidelity-review.md
 ```
 
 Then record:
@@ -526,7 +527,7 @@ Then record:
 ```sh
 node ~/.codex/skills/fulfill/scripts/prd_state_harness.js requirements-review-record \
   --status pass \
-  --report .hoyeon/implement/<topic-slug>/review/requirements-fidelity-review.md \
+  --report agents/implement/<topic-slug>/review/requirements-fidelity-review.md \
   --summary "<requirements fidelity verdict>"
 ```
 
@@ -602,7 +603,7 @@ for that role. It must check:
 Write:
 
 ```text
-.hoyeon/implement/<topic-slug>/review/final-review.md
+agents/implement/<topic-slug>/review/final-review.md
 ```
 
 Then record:
@@ -610,7 +611,7 @@ Then record:
 ```sh
 node ~/.codex/skills/fulfill/scripts/prd_state_harness.js review-record \
   --status pass \
-  --report .hoyeon/implement/<topic-slug>/review/final-review.md \
+  --report agents/implement/<topic-slug>/review/final-review.md \
   --summary "<review verdict>"
 ```
 
@@ -670,7 +671,7 @@ For local-only runs or manual cleanup, use:
 
 ```sh
 node ~/.codex/skills/fulfill/scripts/prd_state_harness.js cleanup-active \
-  --state .hoyeon/implement/<topic-slug>/state.json
+  --state agents/implement/<topic-slug>/state.json
 ```
 
 For a blocked or partial handoff, do not write the final report until:

@@ -3,15 +3,16 @@
 const fs = require("fs");
 const path = require("path");
 
-const { PROJECT_CONFIG_PATH, resolveProjectPath, canonicalPath, readJson, stringArray, commandArray, safeBranchSegment } = require("./util");
+const { PROJECT_CONFIG_PATH, LEGACY_PROJECT_CONFIG_PATH, resolveReadRel, resolveProjectPath, canonicalPath, readJson, stringArray, commandArray, safeBranchSegment } = require("./util");
 const { currentBranch } = require("./git");
 
 function readProjectConfig(projectRoot) {
-  const configPath = path.join(projectRoot, PROJECT_CONFIG_PATH);
+  const configRel = resolveReadRel(projectRoot, PROJECT_CONFIG_PATH, LEGACY_PROJECT_CONFIG_PATH);
+  const configPath = path.join(projectRoot, configRel);
   if (!fs.existsSync(configPath)) return {};
   const parsed = readJson(configPath);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${PROJECT_CONFIG_PATH} must contain a JSON object`);
+    throw new Error(`${configRel} must contain a JSON object`);
   }
   return parsed;
 }
@@ -68,7 +69,7 @@ function normalizeDeliveryConfig(projectRoot, options, projectConfig, slug) {
 }
 
 // Execution behavior is sequential/atomic by default. Parallel ready-group
-// suggestions are opt-in through `.hoyeon/config.json` `execution.parallel` (or
+// suggestions are opt-in through `agents/config.json` `execution.parallel` (or
 // `--parallel` at init), so a simple run never carries parallel scaffolding and
 // a user who wants it turns it on via prd-setup.
 function normalizeExecutionConfig(projectConfig, options) {
@@ -95,7 +96,7 @@ function classifyReviewProfile(input, explicitProfile, configProfile) {
     if (!["trivial", "standard", "high-risk"].includes(configured)) {
       throw new Error("config review.profile must be trivial, standard, high-risk, or auto");
     }
-    return { profile: configured, source: "config", reason: "set by .hoyeon/config.json review.profile" };
+    return { profile: configured, source: "config", reason: `set by ${PROJECT_CONFIG_PATH} review.profile` };
   }
   const tasks = input.tasks || [];
   const acceptanceCriteria = input.acceptanceCriteria || [];

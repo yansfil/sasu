@@ -2,7 +2,7 @@
 
 - Status: ready
 - Generated: <TS>
-- PRD: .hoyeon/prd/standard-regression/prd.md
+- PRD: agents/prd/standard-regression/prd.md
 
 ## Environment
 

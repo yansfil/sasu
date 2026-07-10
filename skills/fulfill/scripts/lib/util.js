@@ -8,9 +8,54 @@ const childProcess = require("child_process");
 
 const SCHEMA = "hoyeon.prd-implement.state.v1";
 
-const ACTIVE_PATH = path.join(".hoyeon", "implement", ".prd-implement-active.json");
+// Single source of truth for where harness artifacts live inside a target
+// project. Every path the harness builds must derive from these constants;
+// scattered literals make namespace migrations unsafe.
+//
+// `agents/` is the visible agent namespace: prd/ and rules/ are committed,
+// implement/ is runtime state and stays gitignored. The pre-rename `.hoyeon`
+// tree is a read-only fallback so existing projects and in-flight runs keep
+// working; new runs always write under the active namespace.
+const NAMESPACE_ROOT = "agents";
+const PRD_ROOT_REL = path.join(NAMESPACE_ROOT, "prd");
+const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
+const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
+const RULES_ROOT_REL = path.join(NAMESPACE_ROOT, "rules");
 
-const PROJECT_CONFIG_PATH = path.join(".hoyeon", "config.json");
+const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
+
+const PROJECT_CONFIG_PATH = path.join(NAMESPACE_ROOT, "config.json");
+
+const LEGACY_NAMESPACE_ROOT = ".hoyeon";
+const LEGACY_PRD_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "prd");
+const LEGACY_IMPLEMENT_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "implement");
+const LEGACY_SESSIONS_DIR_REL = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
+const LEGACY_ACTIVE_PATH = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
+const LEGACY_PROJECT_CONFIG_PATH = path.join(LEGACY_NAMESPACE_ROOT, "config.json");
+
+function runDirRelFor(slug) {
+  return path.join(IMPLEMENT_ROOT_REL, slug);
+}
+
+function legacyRunDirRelFor(slug) {
+  return path.join(LEGACY_IMPLEMENT_ROOT_REL, slug);
+}
+
+// Read-side resolution: prefer the active namespace, fall back to the legacy
+// tree when only it exists. Writers must not use this; new artifacts always
+// land under the active namespace.
+function resolveReadRel(projectRoot, rel, legacyRel) {
+  if (fs.existsSync(path.join(projectRoot, rel))) return rel;
+  if (legacyRel && fs.existsSync(path.join(projectRoot, legacyRel))) return legacyRel;
+  return rel;
+}
+
+// True when a relative artifact path (runDir, statePath) belongs to the
+// legacy namespace; used to keep pointer writes for legacy runs consistent.
+function isLegacyNamespaceRel(rel) {
+  const normalized = String(rel || "").replace(/\\/g, "/");
+  return normalized === LEGACY_NAMESPACE_ROOT || normalized.startsWith(`${LEGACY_NAMESPACE_ROOT}/`);
+}
 
 const DEFAULT_HOOK_TIMEOUT_MS = 9000;
 
@@ -275,6 +320,21 @@ function parseArgs(args) {
 
 module.exports = {
   SCHEMA,
+  NAMESPACE_ROOT,
+  PRD_ROOT_REL,
+  IMPLEMENT_ROOT_REL,
+  SESSIONS_DIR_REL,
+  RULES_ROOT_REL,
+  LEGACY_NAMESPACE_ROOT,
+  LEGACY_PRD_ROOT_REL,
+  LEGACY_IMPLEMENT_ROOT_REL,
+  LEGACY_SESSIONS_DIR_REL,
+  LEGACY_ACTIVE_PATH,
+  LEGACY_PROJECT_CONFIG_PATH,
+  runDirRelFor,
+  legacyRunDirRelFor,
+  resolveReadRel,
+  isLegacyNamespaceRel,
   ACTIVE_PATH,
   PROJECT_CONFIG_PATH,
   DEFAULT_HOOK_TIMEOUT_MS,

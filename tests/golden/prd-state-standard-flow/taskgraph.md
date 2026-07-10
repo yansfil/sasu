@@ -1,6 +1,6 @@
 # Task Graph: standard-regression
 
-- PRD: .hoyeon/prd/standard-regression/prd.md
+- PRD: agents/prd/standard-regression/prd.md
 - Status: complete
 - Generated: <TS>
 - Nodes: 9

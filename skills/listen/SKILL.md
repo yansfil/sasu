@@ -13,13 +13,14 @@ description: |
 
 # listen
 
-Artifact paths keep the legacy `intake` name (`.hoyeon/intake/**`).
+Intake artifacts live under the visible `agents/` namespace (`agents/intake/**`);
+legacy `.hoyeon/intake/**` files stay readable as a fallback.
 
 Use this skill before `promise` when the request is ambiguous or when the user wants the idea pressure-tested before implementation planning.
 The job is to reduce ambiguity and produce a PRD handoff artifact.
 Do not implement code, write the PRD itself, create execution plans, or mutate implementation state.
 Match the user's language by default.
-Compatibility aliases follow this same flow and write to `.hoyeon/intake/`.
+Compatibility aliases follow this same flow and write to `agents/intake/`.
 
 ## Operating Contract
 
@@ -44,7 +45,7 @@ Compatibility aliases follow this same flow and write to `.hoyeon/intake/`.
 
 ## Low-Latency Logging
 
-Create `.hoyeon/intake/<topic-slug>/qa-log.md` before the first question.
+Create `agents/intake/<topic-slug>/qa-log.md` before the first question.
 The initial log may be a stub with current understanding, provisional Axis Map, and Q1 rationale.
 
 During Q&A, prefer this fast path:
@@ -134,7 +135,7 @@ This axis is often `watch`; select it only when terminology, documented decision
 Create a topic directory:
 
 ```text
-.hoyeon/intake/<topic-slug>/
+agents/intake/<topic-slug>/
   qa-log.md
   prd-handoff.md
 ```
@@ -244,7 +245,7 @@ final_auditor_status: "pending | pass | fail | unavailable | skipped"
 # PRD Handoff: <topic>
 
 > Date: YYYY-MM-DD
-> Source: `.hoyeon/intake/<topic-slug>/qa-log.md`
+> Source: `agents/intake/<topic-slug>/qa-log.md`
 
 ## Clear Outcome
 
@@ -270,7 +271,7 @@ final_auditor_status: "pending | pass | fail | unavailable | skipped"
 
 ## Suggested Next Step
 
-`$promise --context .hoyeon/intake/<topic-slug>/prd-handoff.md "<topic>"`
+`$promise --context agents/intake/<topic-slug>/prd-handoff.md "<topic>"`
 ```
 
 ## Loop

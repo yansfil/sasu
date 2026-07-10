@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { SCHEMA, ACTIVE_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson, writeJson, appendJsonl, safeTimestamp } = require("./util");
+const { SCHEMA, ACTIVE_PATH, LEGACY_ACTIVE_PATH, PRD_ROOT_REL, LEGACY_PRD_ROOT_REL, isLegacyNamespaceRel, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson, writeJson, appendJsonl, safeTimestamp } = require("./util");
 const { primaryWorktreeRoot } = require("./git");
 const { refreshExecutionTraceMatrix, buildTaskGraph } = require("./planning");
 const { artifactManifestPath, inspectArtifact, assertArtifactPathIsEvidence } = require("./artifacts");
@@ -14,6 +14,21 @@ const { writeArtifacts } = require("./render");
 
 function activePath(baseDir = cwd()) {
   return path.join(baseDir, ACTIVE_PATH);
+}
+
+function legacyActivePath(baseDir = cwd()) {
+  return path.join(baseDir, LEGACY_ACTIVE_PATH);
+}
+
+// Pointer writes follow the run they describe: a run living under the legacy
+// namespace keeps its pointer there so in-flight runs stay self-consistent,
+// while new-namespace runs get the new pointer path.
+function activePathForState(baseDir, state) {
+  return isLegacyNamespaceRel(state && state.runDir) ? legacyActivePath(baseDir) : activePath(baseDir);
+}
+
+function activePointerCandidates(baseDir = cwd()) {
+  return [activePath(baseDir), legacyActivePath(baseDir)];
 }
 
 // Session ids arrive from Codex, Claude Code, or OpenCode; legacy state files
@@ -49,7 +64,11 @@ function readActiveFile(file) {
 // Concurrent runs in one checkout are not supported by design; use a worktree,
 // which gets its own pointer.
 function readActive(baseDir = cwd(), options = {}) {
-  const active = readActiveFile(activePath(baseDir));
+  let active = null;
+  for (const candidate of activePointerCandidates(baseDir)) {
+    active = readActiveFile(candidate);
+    if (active) break;
+  }
   if (!active) return null;
   const sessionId = normalizeSessionId(options.sessionId);
   if (!sessionId) return active;
@@ -67,7 +86,7 @@ function activeRootsForState(state) {
 
 function writeActiveRecord(baseDir, statePath, state) {
   const record = activeRecordForState(statePath, state, baseDir);
-  writeJson(activePath(baseDir), record);
+  writeJson(activePathForState(baseDir, state), record);
   return record;
 }
 
@@ -79,18 +98,19 @@ function activeRecordStatePath(active, baseDir) {
 function removeActiveRecordForState(baseDir, statePath) {
   const removed = [];
   const target = canonicalPath(statePath);
-  const pointerPath = activePath(baseDir);
-  const pointer = readActiveFile(pointerPath);
-  if (pointer && activeRecordStatePath(pointer.active, baseDir) === target) {
-    fs.rmSync(pointerPath, { force: true });
-    removed.push(pointerPath);
+  for (const pointerPath of activePointerCandidates(baseDir)) {
+    const pointer = readActiveFile(pointerPath);
+    if (pointer && activeRecordStatePath(pointer.active, baseDir) === target) {
+      fs.rmSync(pointerPath, { force: true });
+      removed.push(pointerPath);
+    }
   }
   return removed;
 }
 
 function activeDiagnostics(baseDir, selectedStatePath) {
   const selected = canonicalPath(selectedStatePath);
-  const pointer = readActiveFile(activePath(baseDir));
+  const pointer = activePointerCandidates(baseDir).map(readActiveFile).find(Boolean) || null;
   const warnings = [];
   const info = pointer ? {
     file: toProjectRelative(pointer.file, baseDir),
@@ -107,7 +127,7 @@ function activeDiagnostics(baseDir, selectedStatePath) {
 function resolveStatePath(options = {}, baseDir = cwd()) {
   if (options.state) return resolveProjectPath(options.state, baseDir);
   const active = readActive(baseDir);
-  if (!active) throw new Error(`No active PRD implementation state found at ${ACTIVE_PATH}`);
+  if (!active) throw new Error(`No active PRD implementation state found at ${ACTIVE_PATH} (or legacy ${LEGACY_ACTIVE_PATH})`);
   return resolveProjectPath(active.active.statePath, baseDir);
 }
 
@@ -205,20 +225,25 @@ function attachArtifact(statePath, state, match, kind, inputPath, description, e
 }
 
 function latestPrdSlug(projectRoot) {
-  const prdRoot = path.join(projectRoot, ".hoyeon", "prd");
-  if (!fs.existsSync(prdRoot)) return null;
   let latest = null;
-  for (const entry of fs.readdirSync(prdRoot)) {
-    const prdFile = path.join(prdRoot, entry, "prd.md");
-    if (!fs.existsSync(prdFile)) continue;
-    const mtime = fs.statSync(prdFile).mtimeMs;
-    if (!latest || mtime > latest.mtime) latest = { slug: entry, mtime };
+  for (const rootRel of [PRD_ROOT_REL, LEGACY_PRD_ROOT_REL]) {
+    const prdRoot = path.join(projectRoot, rootRel);
+    if (!fs.existsSync(prdRoot)) continue;
+    for (const entry of fs.readdirSync(prdRoot)) {
+      const prdFile = path.join(prdRoot, entry, "prd.md");
+      if (!fs.existsSync(prdFile)) continue;
+      const mtime = fs.statSync(prdFile).mtimeMs;
+      if (!latest || mtime > latest.mtime) latest = { slug: entry, mtime };
+    }
   }
   return latest ? latest.slug : null;
 }
 
 module.exports = {
   activePath,
+  legacyActivePath,
+  activePathForState,
+  activePointerCandidates,
   normalizeSessionId,
   sameSessionId,
   sessionIdFromHookPayload,

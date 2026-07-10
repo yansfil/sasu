@@ -38,7 +38,7 @@ An argument after `$please` is a topic brief or emphasis, not a replacement for 
 Before starting, capture verbatim the user message that invoked `$please` (including any argument).
 This exact text is passed to `init --allow-unapproved-prd` later; losing it forces a stop to re-ask.
 
-If `.hoyeon/intake/<topic-slug>/prd-handoff.md` happens to exist for the same topic, use it as an additional source per the `promise` skill's normal input rules.
+If `agents/intake/<topic-slug>/prd-handoff.md` happens to exist for the same topic, use it as an additional source per the `promise` skill's normal input rules.
 
 ## Ambiguity Policy
 
@@ -51,7 +51,7 @@ Do not run an interview; the conversation already happened.
 
 Write the PRD by following the `promise` skill in full:
 
-- Output to `.hoyeon/prd/<topic-slug>/prd.md` with every required section.
+- Output to `agents/prd/<topic-slug>/prd.md` with every required section.
 - `source_intake: "current conversation"` unless a real intake file exists.
 - Preserve conversation decisions in Decision Traceability: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above.
 - Run the Inline Self-Check Before Ready and the Harness Readiness Gate (`plan-verification --prd`) exactly as the `promise` skill requires.
@@ -69,7 +69,7 @@ Run the `fulfill` skill in full, with one difference at init:
 
 ```sh
 node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
-  --prd .hoyeon/prd/<topic-slug>/prd.md \
+  --prd agents/prd/<topic-slug>/prd.md \
   --allow-unapproved-prd "<verbatim $please invocation message>" \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 ```
@@ -78,9 +78,9 @@ Rules:
 
 - The review profile is whatever the harness assigns.
   Do not lower it for speed; `trivial` already skips what can be skipped.
-- Worktree, parallel execution, and delivery mode come from `.hoyeon/config.json` as usual.
+- Worktree, parallel execution, and delivery mode come from `agents/config.json` as usual.
   An explicit delivery request in the conversation overrides the config for this run (pass `--delivery`).
-- If no `.hoyeon/config.json` exists, proceed with local-delivery defaults and mention `$pantry` once in the final report.
+- If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$pantry` once in the final report.
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - If `init` reports an existing active run for the same topic, resume it.
   Use `--force` only when the user explicitly asked for a clean restart.
@@ -109,9 +109,9 @@ When blocked, follow the `fulfill` blocked/partial handoff rules; do not soften 
 
 ## Artifacts
 
-Leave all `.hoyeon/prd/<slug>` and `.hoyeon/implement/<slug>` files in place.
+Leave all `agents/prd/<slug>` and `agents/implement/<slug>` files in place.
 No cleanup beyond what the chained skills already do.
-`.hoyeon/implement/**` is expected to be gitignored (the doctor enforces this), so these files never enter commits or PRs.
+`agents/implement/**` is expected to be gitignored (the doctor enforces this), so these files never enter commits or PRs.
 
 ## Final Report
 

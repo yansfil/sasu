@@ -107,7 +107,7 @@ Contract marks `Required For Done` as `no` or `no/blockable`.
 The harness recommends ready nodes. It does not start work or spawn subagents.
 
 Execution is sequential by default. Parallel ready groups are computed and shown
-only when `.hoyeon/config.json` sets `execution.parallel: true` (configured via
+only when `agents/config.json` sets `execution.parallel: true` (configured via
 `$prd-setup`). With the default off, `ready` returns `readyParallelGroups: []`
 and the coordinator works one node at a time.
 

@@ -1,6 +1,6 @@
 # Execution Plan: standard-regression
 
-- PRD: .hoyeon/prd/standard-regression/prd.md
+- PRD: agents/prd/standard-regression/prd.md
 - Status: ready
 - Generated: <TS>
 - Nodes: 1

@@ -140,7 +140,7 @@ Do not add scope.
 Report status and verification evidence.
 ${extra}
 `;
-  const file = path.join(projectRoot, ".hoyeon", "prd", slug, "prd.md");
+  const file = path.join(projectRoot, "agents", "prd", slug, "prd.md");
   write(file, prd);
   return file;
 }
@@ -154,7 +154,7 @@ test("an unbound pointer is claimed by the first hook session and isolated from 
   delete noSessionEnv.CODEX_THREAD_ID;
   delete noSessionEnv.CLAUDE_SESSION_ID;
   run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env: noSessionEnv });
-  const before = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", ".prd-implement-active.json"), "utf8"));
+  const before = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", ".prd-implement-active.json"), "utf8"));
   assert.equal(before.activeSessionId, null);
   runJson(["plan-execution"], root);
 
@@ -164,7 +164,7 @@ test("an unbound pointer is claimed by the first hook session and isolated from 
     input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "boot-s" }),
   });
   assert.match(JSON.parse(claim.stdout).reason, /prd-implement-continuation/);
-  const bound = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", "bootstrap", "state.json"), "utf8"));
+  const bound = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "bootstrap", "state.json"), "utf8"));
   assert.equal(bound.activeSessionId, "boot-s");
 
   // A different session must not pick up the now-bound run.
@@ -177,48 +177,45 @@ test("an unbound pointer is claimed by the first hook session and isolated from 
 
 test("worktree init overwrites the main active pointer bound to the session", () => {
   const projectRoot = initGitRepo();
-  write(path.join(projectRoot, ".hoyeon", "config.json"), JSON.stringify({
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({
     delivery: { mode: "pr", branchPrefix: "prd/" },
     worktree: { enabled: true, root: path.join(projectRoot, "..", `${path.basename(projectRoot)}.worktrees`) },
   }, null, 2));
   const prdPath = writeApprovedPrd(projectRoot, "pointer-test");
   const stale = {
     schema: "hoyeon.prd-implement.active.v1",
-    statePath: ".hoyeon/implement/stale/state.json",
+    statePath: "agents/implement/stale/state.json",
     activeSessionId: "codex:old",
     updatedAt: "2026-06-01T00:00:00.000Z",
   };
-  write(path.join(projectRoot, ".hoyeon", "implement", ".prd-implement-active.json"), JSON.stringify(stale, null, 2));
+  write(path.join(projectRoot, "agents", "implement", ".prd-implement-active.json"), JSON.stringify(stale, null, 2));
 
   const result = runJson(["init", "--prd", prdPath, "--delivery", "pr", "--session-id", "new-session"], projectRoot);
   assert.equal(result.ok, true);
   assert.equal(result.mainRootPointerWritten, true);
 
-  const active = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", ".prd-implement-active.json"), "utf8"));
+  const active = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", ".prd-implement-active.json"), "utf8"));
   assert.match(active.statePath, /pointer-test\/state\.json$/);
   assert.match(active.statePath, /worktrees/);
   assert.equal(active.activeSessionId, "new-session");
 
   const cleanup = runJson(["cleanup-active", "--state", active.statePath], projectRoot);
   assert.equal(cleanup.ok, true);
-  assert.equal(fs.existsSync(path.join(projectRoot, ".hoyeon", "implement", ".prd-implement-active.json")), false);
+  assert.equal(fs.existsSync(path.join(projectRoot, "agents", "implement", ".prd-implement-active.json")), false);
 });
 
 test("doctor recognizes PRD-trackable and implement-ignored gitignore policy", () => {
   const projectRoot = initGitRepo();
   write(path.join(projectRoot, ".gitignore"), [
-    "# PRD pipeline artifacts",
-    ".hoyeon/*",
-    "!.hoyeon/config.json",
-    "!.hoyeon/prd/",
-    "!.hoyeon/prd/**",
+    "# PRD pipeline runtime state",
+    "agents/implement/",
     "",
   ].join("\n"));
   const doctor = runJson(["doctor"], projectRoot);
   const gitignoreChecks = doctor.checks.filter(item => item.id === "gitignore");
-  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === ".hoyeon/prd/** is trackable"));
-  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === ".hoyeon/config.json is trackable"));
-  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === ".hoyeon/implement/** is ignored"));
+  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === "agents/prd/** is trackable"));
+  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === "agents/config.json is trackable"));
+  assert(gitignoreChecks.some(item => item.level === "ok" && item.message === "agents/implement/** is ignored"));
 });
 
 test("init refuses an existing target worktree owned by another checkout", () => {
@@ -228,7 +225,7 @@ test("init refuses an existing target worktree owned by another checkout", () =>
   run("git", ["worktree", "add", "-b", "prd/pointer-test", targetRoot, "HEAD"], { cwd: ownerRoot });
 
   const projectRoot = initGitRepo();
-  write(path.join(projectRoot, ".hoyeon", "config.json"), JSON.stringify({
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({
     delivery: { mode: "pr", branchPrefix: "prd/" },
     worktree: { enabled: true, path: targetRoot },
   }, null, 2));
@@ -247,7 +244,7 @@ test("verify-run treats bash -lc wrapper as the planned command", () => {
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
   const result = runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
   assert.equal(result.ok, true);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "command-normalization", "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "command-normalization", "state.json"), "utf8"));
   assert.deepEqual(state.deviations.filter(item => item.type === "verification_command"), []);
 });
 
@@ -264,7 +261,7 @@ The intended verifier may be wrapped by a login shell.
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
   const result = runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
   assert.equal(result.ok, true);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "planned-wrapper", "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "planned-wrapper", "state.json"), "utf8"));
   assert.deepEqual(state.deviations.filter(item => item.type === "verification_command"), []);
 });
 
@@ -288,7 +285,7 @@ test("batch mark-node with a bad id does not persist partial mutation", () => {
   const prdPath = writeApprovedPrd(projectRoot, "batch-bad-id");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
   runJson(["plan-execution"], projectRoot);
-  const statePath = path.join(projectRoot, ".hoyeon", "implement", "batch-bad-id", "state.json");
+  const statePath = path.join(projectRoot, "agents", "implement", "batch-bad-id", "state.json");
   const before = JSON.parse(fs.readFileSync(statePath, "utf8"));
   assert.equal(before.executionPlan.nodes[0].status, "pending");
   const result = run(process.execPath, [harness, "mark-node", "--id", `${before.executionPlan.nodes[0].id},N999`, "--status", "complete", "--evidence", "should not persist"], {
@@ -307,22 +304,22 @@ test("trivial review profile can finalize with requirements fidelity review only
   const prdPath = writeApprovedPrd(projectRoot, "trivial-finalize");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "trivial-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
-  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "trivial-finalize", "state.json"), "utf8"));
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
   const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
   runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
 
-  state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "trivial-finalize", "state.json"), "utf8"));
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
   const logPath = state.verification[0].artifacts[0].path;
-  const reviewPath = path.join(projectRoot, ".hoyeon", "implement", "trivial-finalize", "review", "requirements-fidelity-review.md");
+  const reviewPath = path.join(projectRoot, "agents", "implement", "trivial-finalize", "review", "requirements-fidelity-review.md");
   write(reviewPath, `# Requirements Fidelity Review
 
 Status: PASS
 
 ## Intent Sources Read
 
-- .hoyeon/prd/trivial-finalize/prd.md
+- agents/prd/trivial-finalize/prd.md
 
 ## Decision Trace
 
@@ -374,7 +371,7 @@ PASS.
   assert.match(preToolDirective.reason, /trivial review profile/);
   const finalized = runJson(["finalize", "--status", "complete", "--summary", "Trivial run completed."], projectRoot);
   assert.equal(finalized.ok, true);
-  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "trivial-finalize", "receipt.json"), "utf8"));
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "receipt.json"), "utf8"));
   assert.equal(receipt.status, "complete");
   assert.equal(receipt.finalReview, null);
   assert.equal(receipt.reviewProfile.profile, "trivial");
@@ -387,7 +384,7 @@ Status: PASS
 
 ## Intent Sources Read
 
-- .hoyeon/prd/x/prd.md
+- agents/prd/x/prd.md
 
 ## Decision Trace
 
@@ -419,13 +416,13 @@ function driveToFidelity(projectRoot, slug, sessionId) {
   const prdPath = writeApprovedPrd(projectRoot, slug);
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", sessionId], projectRoot);
   runJson(["plan-execution"], projectRoot);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
   const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
   runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "done"], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
-  const after = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
-  return { logPath: after.verification[0].artifacts[0].path, reviewPath: path.join(projectRoot, ".hoyeon", "implement", slug, "review", "requirements-fidelity-review.md") };
+  const after = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
+  return { logPath: after.verification[0].artifacts[0].path, reviewPath: path.join(projectRoot, "agents", "implement", slug, "review", "requirements-fidelity-review.md") };
 }
 
 test("fidelity review accepts code-span generics/tags but rejects leftover template placeholders", () => {
@@ -510,11 +507,11 @@ Do not add scope.
 
 Report status.
 `;
-  const prdPath = path.join(projectRoot, ".hoyeon", "prd", slug, "prd.md");
+  const prdPath = path.join(projectRoot, "agents", "prd", slug, "prd.md");
   write(prdPath, prd);
   const result = runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
   assert.equal(result.ok, true);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
   const browserGaps = state.verificationPlan.gaps.filter(gap => gap.code === "browser-server-missing");
   assert.equal(browserGaps.length, 1);
   assert.equal(browserGaps[0].severity, "warning");
@@ -527,7 +524,7 @@ test("mutation command output is compact and stop directive gates verbose proced
   const prdPath = writeApprovedPrd(projectRoot, slug);
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "co-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", slug, "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
   const firstNode = state.executionPlan.nodes[0].id;
 
   const markOut = runJson(["mark-node", "--id", firstNode, "--status", "complete", "--evidence", "done"], projectRoot);
@@ -603,7 +600,7 @@ test("parallel ready groups are config-gated and off by default", () => {
   // Opt-in: execution.parallel true -> ready reports enabled and the directive
   // surfaces the parallel line.
   const rootB = initGitRepo();
-  write(path.join(rootB, ".hoyeon", "config.json"), JSON.stringify({ execution: { parallel: true } }, null, 2));
+  write(path.join(rootB, "agents", "config.json"), JSON.stringify({ execution: { parallel: true } }, null, 2));
   const prdB = writeApprovedPrd(rootB, "par-on");
   runJson(["init", "--prd", prdB, "--review-profile", "trivial", "--session-id", "par-s"], rootB);
   runJson(["plan-execution"], rootB);
@@ -619,7 +616,7 @@ test("parallel ready groups are config-gated and off by default", () => {
 test("review profile is config-driven with CLI override precedence", () => {
   // config review.profile forces the profile the PRD would not auto-classify to.
   const root = initGitRepo();
-  write(path.join(root, ".hoyeon", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
+  write(path.join(root, "agents", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
   const prd = writeApprovedPrd(root, "review-config");
   runJson(["init", "--prd", prd, "--session-id", "rc"], root);
   const status = runJson(["status"], root);
@@ -628,7 +625,7 @@ test("review profile is config-driven with CLI override precedence", () => {
 
   // A per-run --review-profile still overrides config.
   const root2 = initGitRepo();
-  write(path.join(root2, ".hoyeon", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
+  write(path.join(root2, "agents", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
   const prd2 = writeApprovedPrd(root2, "review-cli");
   runJson(["init", "--prd", prd2, "--review-profile", "trivial", "--session-id", "rc2"], root2);
   const status2 = runJson(["status"], root2);
@@ -660,7 +657,7 @@ Status: PASS
 
 ## Intent Sources Read
 
-- .hoyeon/prd/table-trace/prd.md
+- agents/prd/table-trace/prd.md
 
 ## Decision Trace
 
@@ -697,7 +694,7 @@ test("session ids match across runtime prefixes and legacy stored values", () =>
   const prd = writeApprovedPrd(root, "session-neutral");
   // A prefixed --session-id is stored bare.
   runJson(["init", "--prd", prd, "--review-profile", "trivial", "--session-id", "claude:sess-1"], root);
-  const statePath = path.join(root, ".hoyeon", "implement", "session-neutral", "state.json");
+  const statePath = path.join(root, "agents", "implement", "session-neutral", "state.json");
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
   assert.equal(state.activeSessionId, "sess-1");
   runJson(["plan-execution"], root);
@@ -742,7 +739,7 @@ test("CLAUDE_SESSION_ID env binds the session at init", () => {
   delete env.CODEX_THREAD_ID;
   env.CLAUDE_SESSION_ID = "claude-env-session";
   run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env });
-  const state = JSON.parse(fs.readFileSync(path.join(root, ".hoyeon", "implement", "claude-env", "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "claude-env", "state.json"), "utf8"));
   assert.equal(state.activeSessionId, "claude-env-session");
 });
 
@@ -784,22 +781,22 @@ test("not-watched PR delivery ship log keeps hook delivery guard active", () => 
   const prdPath = writeApprovedPrd(projectRoot, "pr-not-watched");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--delivery", "pr", "--skip-worktree", "--session-id", "ship-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
-  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "pr-not-watched", "state.json"), "utf8"));
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "pr-not-watched", "state.json"), "utf8"));
   const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
   runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
 
-  state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".hoyeon", "implement", "pr-not-watched", "state.json"), "utf8"));
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "pr-not-watched", "state.json"), "utf8"));
   const logPath = state.verification[0].artifacts[0].path;
-  const reviewPath = path.join(projectRoot, ".hoyeon", "implement", "pr-not-watched", "review", "requirements-fidelity-review.md");
+  const reviewPath = path.join(projectRoot, "agents", "implement", "pr-not-watched", "review", "requirements-fidelity-review.md");
   write(reviewPath, `# Requirements Fidelity Review
 
 Status: PASS
 
 ## Intent Sources Read
 
-- .hoyeon/prd/pr-not-watched/prd.md
+- agents/prd/pr-not-watched/prd.md
 
 ## Decision Trace
 
@@ -827,7 +824,7 @@ PASS.
 `);
   runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
   runJson(["finalize", "--status", "complete", "--summary", "PR-mode trivial run completed."], projectRoot);
-  write(path.join(projectRoot, ".hoyeon", "implement", "pr-not-watched", "delivery", "ship-log.jsonl"), JSON.stringify({
+  write(path.join(projectRoot, "agents", "implement", "pr-not-watched", "delivery", "ship-log.jsonl"), JSON.stringify({
     ts: new Date().toISOString(),
     event: "ship",
     pr: "https://example.com/pr/1",
@@ -840,4 +837,53 @@ PASS.
   const stopDirective = JSON.parse(stopHook.stdout);
   assert.match(stopDirective.reason, /prd-ship-handoff-guard/);
   assert.match(stopDirective.reason, /required CI passes/);
+});
+
+test("legacy .hoyeon run keeps working through status, verify-run, and pointer updates", () => {
+  const root = initGitRepo();
+  writeApprovedPrd(root, "legacy-run");
+  runJson(["init", "--prd", "agents/prd/legacy-run/prd.md", "--session-id", "legacy-session"], root);
+
+  // Simulate a run that started before the agents/ namespace migration: the
+  // whole tree, including the active pointer, lives under .hoyeon and every
+  // recorded relative path uses the legacy prefix.
+  fs.renameSync(path.join(root, "agents"), path.join(root, ".hoyeon"));
+  const legacyStatePath = path.join(root, ".hoyeon", "implement", "legacy-run", "state.json");
+  const legacyPointerPath = path.join(root, ".hoyeon", "implement", ".prd-implement-active.json");
+  for (const file of [legacyStatePath, legacyPointerPath]) {
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").split("agents/").join(".hoyeon/"));
+  }
+
+  const status = runJson(["status"], root);
+  assert.equal(status.ok, true);
+  assert.equal(status.runDir, ".hoyeon/implement/legacy-run");
+
+  const verify = runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], root);
+  assert.equal(verify.ok, true);
+
+  const state = JSON.parse(fs.readFileSync(legacyStatePath, "utf8"));
+  assert.equal(state.verification[0].status, "pass");
+  assert.equal(fs.existsSync(path.join(root, "agents")), false,
+    "legacy run updates must not spill into the new namespace");
+  const pointer = JSON.parse(fs.readFileSync(legacyPointerPath, "utf8"));
+  assert.equal(pointer.statePath, ".hoyeon/implement/legacy-run/state.json");
+
+  const reinit = run(process.execPath, [harness, "init", "--prd", ".hoyeon/prd/legacy-run/prd.md", "--session-id", "other-session"], {
+    cwd: root,
+    allowFailure: true,
+  });
+  assert.notEqual(reinit.status, 0);
+  assert.match(String(reinit.stderr || reinit.stdout), /legacy-namespace run for this PRD already exists/);
+});
+
+test("legacy .hoyeon config.json is honored when no agents/config.json exists", () => {
+  const root = initGitRepo();
+  write(path.join(root, ".hoyeon", "config.json"), JSON.stringify({
+    review: { profile: "trivial" },
+  }, null, 2));
+  writeApprovedPrd(root, "legacy-config");
+  runJson(["init", "--prd", "agents/prd/legacy-config/prd.md", "--session-id", "legacy-config-session"], root);
+  const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "legacy-config", "state.json"), "utf8"));
+  assert.equal(state.reviewProfile.profile, "trivial");
+  assert.equal(state.reviewProfile.source, "config");
 });

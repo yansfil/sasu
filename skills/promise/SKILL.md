@@ -11,7 +11,8 @@ description: |
 
 # promise
 
-Artifact paths keep the legacy `prd` name (`.hoyeon/prd/**`).
+PRDs live under the visible `agents/` namespace (`agents/prd/**`); legacy
+`.hoyeon/prd/**` files stay readable as a fallback.
 
 Use this skill to write an implementation-ready PRD from intake output or the
 current conversation.
@@ -26,17 +27,17 @@ Match the user's language by default.
 Prefer an explicit context path. The default pre-PRD handoff is:
 
 ```text
-.hoyeon/intake/<topic-slug>/prd-handoff.md
+agents/intake/<topic-slug>/prd-handoff.md
 ```
 
 Legacy clarify summaries are still accepted:
 
 ```text
-.hoyeon/clarify/<topic-slug>/clarity-summary.md
+agents/clarify/<topic-slug>/clarity-summary.md
 ```
 
-If no context path is provided, inspect `.hoyeon/intake/` first for the matching
-or most recent topic, then `.hoyeon/clarify/`. If no handoff exists and major
+If no context path is provided, inspect `agents/intake/` first for the matching
+or most recent topic, then `agents/clarify/`. If no handoff exists and major
 ambiguity remains, ask one blocking question or recommend `$listen`.
 
 ## Output Contract
@@ -44,7 +45,7 @@ ambiguity remains, ask one blocking question or recommend `$listen`.
 Create exactly one file:
 
 ```text
-.hoyeon/prd/<topic-slug>/prd.md
+agents/prd/<topic-slug>/prd.md
 ```
 
 Do not write side files (context notes, audit reports).
@@ -65,8 +66,8 @@ same slug.
 topic: "<topic>"
 status: "draft | ready"
 human_approval: "pending | approved"
-source_intake: ".hoyeon/intake/<topic-slug>/prd-handoff.md | current conversation"
-source_clarity: ".hoyeon/clarify/<topic-slug>/clarity-summary.md | none"
+source_intake: "agents/intake/<topic-slug>/prd-handoff.md | current conversation"
+source_clarity: "agents/clarify/<topic-slug>/clarity-summary.md | none"
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
 ---
@@ -153,7 +154,7 @@ top-level section:
   only when the PRD itself requires delivery proof.
 - Add the delivery result to the Implementation Result Report Contract.
 
-When the repository has `.hoyeon/config.json`, read it before drafting and
+When the repository has `agents/config.json`, read it before drafting and
 reflect relevant defaults in the PRD.
 The config is not a substitute for human approval when delivery can create
 branches, commits, pull requests, deployments, external calls, or CI spend.
@@ -402,7 +403,7 @@ After the audits pass, run the mechanical precheck from the target repository
 root before marking the PRD `ready`:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-verification --prd .hoyeon/prd/<topic-slug>/prd.md
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-verification --prd agents/prd/<topic-slug>/prd.md
 ```
 
 This is stateless: it parses the PRD exactly the way `fulfill` will,
@@ -449,7 +450,7 @@ Require the implementing agent to report:
 
 1. Locate the intake handoff or infer the topic from the request.
 2. Read source artifacts and directly relevant project docs.
-   Read `.hoyeon/config.json` when it exists or when the user asks for PR
+   Read `agents/config.json` when it exists or when the user asks for PR
    delivery, worktrees, or CI automation.
 3. Draft `prd.md` with every required section and `human_approval: "pending"`.
 4. Ask only contract-breaking questions; do not rerun intake inside PRD.

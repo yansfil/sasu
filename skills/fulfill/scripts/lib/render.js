@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { writeJson, writeMarkdown } = require("./util");
+const { writeJson, writeMarkdown, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT } = require("./util");
 const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState } = require("./state_data");
 const { taskGraphSummary, readyExecutionPlan, buildTaskGraph } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
@@ -370,7 +370,7 @@ Source of truth:
 - Ledger: \`${state.runDir}/ledger.jsonl\`
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
 - Git diff/worktree: inspect current repository state
-- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`.hoyeon/intake/**\` or \`.hoyeon/clarify/**\` files that exist.
+- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` files (or their legacy \`${LEGACY_NAMESPACE_ROOT}/\` equivalents) that exist.
 - Intent trace snapshot: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources).
 ${decisionLines}
 

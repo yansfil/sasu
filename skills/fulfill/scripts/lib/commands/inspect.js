@@ -5,14 +5,14 @@ const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { PROJECT_CONFIG_PATH, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
+const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
 const { gitTracked, gitIgnored } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig } = require("../config");
 const { verificationPlanSummary, executionPlanSummary, countState, reviewProfileName, finalReviewRequiredForState } = require("../state_data");
 const { taskGraphSummary, refreshExecutionTraceMatrix, readyExecutionPlan, buildTaskGraph, nextItem } = require("../planning");
 const { collectArtifacts } = require("../artifacts");
 const { validateArtifacts, reviewWorktreeSnapshotViolations, prdCopyDriftWarnings, completionReadiness, prdSnapshotViolations } = require("../reviews");
-const { activePath, activeRootsForState, removeActiveRecordForState, activeDiagnostics, loadState, latestPrdSlug } = require("../state_store");
+const { activePointerCandidates, activeRootsForState, removeActiveRecordForState, activeDiagnostics, loadState, latestPrdSlug } = require("../state_store");
 const { deliveryShipPending } = require("../hooks");
 
 function cmdStatus(options) {
@@ -85,6 +85,7 @@ function cmdDoctor() {
     add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");
   }
   if (gitOk) doctorCheckGitignorePolicy(projectRoot, add);
+  doctorCheckLegacyNamespace(projectRoot, add);
   doctorCheckGithubCli(projectRoot, prMode, add);
   doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add);
   if (prMode) doctorCheckPrDeliveryAssets(projectRoot, delivery, add);
@@ -190,12 +191,14 @@ function doctorCheckDeliveryConfig(projectRoot, projectConfig, slug, add) {
 }
 
 function doctorCheckGitignorePolicy(projectRoot, add) {
-  const prdProbe = path.join(".hoyeon", "prd", "__doctor-probe__", "prd.md");
-  const implementProbe = path.join(".hoyeon", "implement", "__doctor-probe__", "state.json");
+  const prdProbe = path.join(PRD_ROOT_REL, "__doctor-probe__", "prd.md");
+  const implementProbe = path.join(IMPLEMENT_ROOT_REL, "__doctor-probe__", "state.json");
+  const prdGlob = `${PRD_ROOT_REL}/**`;
+  const implementGlob = `${IMPLEMENT_ROOT_REL}/**`;
   if (gitIgnored(projectRoot, prdProbe)) {
-    add("warn", "gitignore", ".hoyeon/prd/** is ignored; PRD source files should be trackable");
+    add("warn", "gitignore", `${prdGlob} is ignored; PRD source files should be trackable`);
   } else {
-    add("ok", "gitignore", ".hoyeon/prd/** is trackable");
+    add("ok", "gitignore", `${prdGlob} is trackable`);
   }
   if (gitIgnored(projectRoot, PROJECT_CONFIG_PATH)) {
     add("warn", "gitignore", `${PROJECT_CONFIG_PATH} is ignored; prd-setup project configuration should be trackable`);
@@ -203,10 +206,18 @@ function doctorCheckGitignorePolicy(projectRoot, add) {
     add("ok", "gitignore", `${PROJECT_CONFIG_PATH} is trackable`);
   }
   if (gitIgnored(projectRoot, implementProbe)) {
-    add("ok", "gitignore", ".hoyeon/implement/** is ignored");
+    add("ok", "gitignore", `${implementGlob} is ignored`);
   } else {
-    add("warn", "gitignore", ".hoyeon/implement/** is not ignored; implementation state and evidence should stay out of normal commits");
+    add("warn", "gitignore", `${implementGlob} is not ignored; implementation state and evidence should stay out of normal commits`);
   }
+}
+
+// Informational only: a legacy tree is a supported read-only fallback, not a
+// problem, so it must never surface as a warning (this repo itself keeps
+// in-flight legacy runs while migrating).
+function doctorCheckLegacyNamespace(projectRoot, add) {
+  if (!fs.existsSync(path.join(projectRoot, LEGACY_NAMESPACE_ROOT))) return;
+  add("ok", "legacy-namespace", `Legacy ${LEGACY_NAMESPACE_ROOT}/ tree detected; it stays readable as a fallback while new runs write under ${NAMESPACE_ROOT}/. Move committed PRDs to ${PRD_ROOT_REL}/ when convenient.`);
 }
 
 function doctorCheckGithubCli(projectRoot, prMode, add) {
@@ -268,8 +279,8 @@ function doctorCheckHookRegistration(add) {
 }
 
 function doctorCollectActiveRun(projectRoot, add) {
-  const activeFile = activePath(projectRoot);
-  if (!fs.existsSync(activeFile)) return null;
+  const activeFile = activePointerCandidates(projectRoot).find(candidate => fs.existsSync(candidate));
+  if (!activeFile) return null;
   try {
     const active = readJson(activeFile);
     const stateAbs = resolveProjectPath(active.statePath, projectRoot);

@@ -3,8 +3,8 @@ name: pantry
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
   "$pantry" (legacy alias "prd-setup"), asks to enable or change PR delivery mode, configure
-  worktree/secrets sync for prd-implement, configure .hoyeon gitignore
-  policy, inspect the current PRD pipeline settings, or diagnose why
+  worktree/secrets sync for prd-implement, configure the agents/ namespace
+  gitignore policy, inspect the current PRD pipeline settings, or diagnose why
   fulfill/deliver delivery is not working.
 ---
 
@@ -15,8 +15,8 @@ Use this skill to inspect or configure how the PRD pipeline
 
 This skill owns project setup files only:
 
-- `.hoyeon/config.json`
-- `.gitignore` entries that control which `.hoyeon` artifacts are tracked
+- `agents/config.json`
+- `.gitignore` entries that control which `agents/` artifacts are tracked
 
 It never touches PRDs, implementation state, or delivery branches.
 Match the user's language by default.
@@ -40,7 +40,7 @@ and stop.
 ## Configure
 
 When the user wants to change settings, interview briefly with defaults, write
-`.hoyeon/config.json`, and keep `.gitignore` aligned:
+`agents/config.json`, and keep `.gitignore` aligned:
 
 1. Delivery mode: `local` (default) or `pr`.
    Remind the user that `pr` means fulfill runs end into `deliver`
@@ -56,24 +56,21 @@ When the user wants to change settings, interview briefly with defaults, write
      (for example `pnpm install`).
    Warn that dev servers in two checkouts share ports and linked local DBs.
 4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
-5. `.hoyeon` tracking policy:
-   - PRD source files are trackable: `.hoyeon/prd/**`.
-   - Pipeline config is trackable: `.hoyeon/config.json`.
-   - Everything else under `.hoyeon/` is ignored by default, especially
-     `.hoyeon/implement/**`.
+5. `agents/` tracking policy:
+   - Everything under `agents/` is committed and reviewable by default:
+     `agents/prd/**`, `agents/rules/**`, `agents/config.json`.
+   - Only runtime state is ignored: `agents/implement/**`.
 
-Recommended `.gitignore` block:
+Recommended `.gitignore` block (one line):
 
 ```gitignore
-# PRD pipeline artifacts
-.hoyeon/*
-!.hoyeon/config.json
-!.hoyeon/prd/
-!.hoyeon/prd/**
+# PRD pipeline runtime state
+agents/implement/
 ```
 
-If `.gitignore` already has `.hoyeon` rules, merge with the existing block
-instead of adding contradictory duplicates.
+Projects that still have a legacy `.hoyeon` tree keep their old ignore rules
+untouched; the legacy tree is a read-only fallback and new runs write under
+`agents/`. Do not add contradictory duplicates for either namespace.
 
 Reference shape:
 

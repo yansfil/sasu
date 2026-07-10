@@ -6,7 +6,18 @@ const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 
-const ACTIVE_PATH = path.join(".hoyeon", "implement", ".prd-implement-active.json");
+// Namespace layout mirror of fulfill's util.js constants. Kept local so the
+// deliver skill stays installable without a fulfill checkout, but the values
+// must match; change both together. The legacy `.hoyeon` tree is a read-only
+// fallback for runs started before the agents/ namespace migration.
+const NAMESPACE_ROOT = "agents";
+const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
+const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
+const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
+const LEGACY_NAMESPACE_ROOT = ".hoyeon";
+const LEGACY_IMPLEMENT_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "implement");
+const LEGACY_SESSIONS_DIR_REL = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
+const LEGACY_ACTIVE_PATH = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
 // Resolve the sibling fulfill harness relative to this script so the same
 // file works from the repo, ~/.codex/skills, and ~/.claude/skills. The
@@ -234,8 +245,10 @@ function resolveState(options) {
   const repoRoot = findGitRoot(process.cwd());
   let statePath = options.state ? resolveInput(options.state, repoRoot) : null;
   if (!statePath) {
-    const activePath = path.join(repoRoot, ACTIVE_PATH);
-    if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active file at ${ACTIVE_PATH}`);
+    const activePath = [ACTIVE_PATH, LEGACY_ACTIVE_PATH]
+      .map(rel => path.join(repoRoot, rel))
+      .find(candidate => fs.existsSync(candidate));
+    if (!activePath) throw new Error(`No --state provided and no active file at ${ACTIVE_PATH} (or legacy ${LEGACY_ACTIVE_PATH})`);
     const active = readJson(activePath);
     statePath = resolveInput(active.statePath, repoRoot);
   }
@@ -499,8 +512,10 @@ function resolveBodyPath(context, options) {
 function defaultExcludedPaths(context) {
   const runDir = context.state.runDir || path.dirname(toRepoRelative(context.statePath, context.repoRoot));
   return [
-    path.join(".hoyeon", "implement", ".prd-implement-active.json"),
-    path.join(".hoyeon", "implement", ".prd-implement-sessions"),
+    ACTIVE_PATH,
+    SESSIONS_DIR_REL,
+    LEGACY_ACTIVE_PATH,
+    LEGACY_SESSIONS_DIR_REL,
     path.join(runDir, "artifacts"),
   ];
 }
@@ -543,7 +558,7 @@ function nodeWriteScopes(context) {
 
 function isUnsafeBroadWriteScope(item) {
   const rel = normalizeRepoPath(item);
-  return rel === "." || rel === "/" || rel === ".hoyeon";
+  return rel === "." || rel === "/" || rel === NAMESPACE_ROOT || rel === LEGACY_NAMESPACE_ROOT;
 }
 
 function defaultAllowedPaths(context, config, options = {}) {

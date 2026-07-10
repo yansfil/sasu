@@ -2,15 +2,15 @@
 
 Status: complete
 
-PRD: .hoyeon/prd/standard-regression/prd.md
-Receipt: .hoyeon/implement/standard-regression/receipt.json
+PRD: agents/prd/standard-regression/prd.md
+Receipt: agents/implement/standard-regression/receipt.json
 
 ## Execution Plan
 
 - Status: ready
 - Nodes: 1
 - Open nodes: 0
-- Artifact: .hoyeon/implement/standard-regression/execution-plan.md
+- Artifact: agents/implement/standard-regression/execution-plan.md
 - N1: complete - Run the local command verification. Covers R1, AC1. (source: T1, risk: low, parallelSafe: no)
 
 ## Task Graph
@@ -19,7 +19,7 @@ Receipt: .hoyeon/implement/standard-regression/receipt.json
 - Nodes: 9
 - Edges: 18
 - Open nodes: 0
-- Artifact: .hoyeon/implement/standard-regression/taskgraph.md
+- Artifact: agents/implement/standard-regression/taskgraph.md
 ## Tasks
 
 - T1: complete - Run the local command verification. Covers R1, AC1.
@@ -34,18 +34,18 @@ Receipt: .hoyeon/implement/standard-regression/receipt.json
 
 ## Artifact Evidence
 
-- verification V1: command-log - .hoyeon/implement/standard-regression/artifacts/logs/V1-<TS>.log
+- verification V1: command-log - agents/implement/standard-regression/artifacts/logs/V1-<TS>.log
 
 ## Requirements Fidelity Review
 
 - Status: pass
-- Report: .hoyeon/implement/standard-regression/review/requirements-fidelity-review.md
+- Report: agents/implement/standard-regression/review/requirements-fidelity-review.md
 - Summary: PASS
 
 ## Final Adversarial Review
 
 - Status: pass
-- Report: .hoyeon/implement/standard-regression/review/final-review.md
+- Report: agents/implement/standard-regression/review/final-review.md
 - Summary: PASS
 
 ## Final Receipt
@@ -107,12 +107,12 @@ Receipt: .hoyeon/implement/standard-regression/receipt.json
   "worktreeSnapshot": {
     "capturedAt": "<TS>",
     "headSha": "<SHA>",
-    "statusHash": "904b7f23",
+    "statusHash": "22ca735d",
     "entryCount": 1,
     "entries": [
       {
         "status": "??",
-        "path": ".hoyeon/prd/standard-regression/prd.md",
+        "path": "agents/prd/standard-regression/prd.md",
         "originalPath": null,
         "sha256": "<SHA>",
         "bytes": 1729
@@ -139,18 +139,18 @@ Receipt: .hoyeon/implement/standard-regression/receipt.json
   "requirementsFidelityReview": {
     "status": "pass",
     "summary": "PASS",
-    "reportPath": ".hoyeon/implement/standard-regression/review/requirements-fidelity-review.md",
-    "reportBytes": 720,
+    "reportPath": "agents/implement/standard-regression/review/requirements-fidelity-review.md",
+    "reportBytes": 718,
     "reportSha256": "<SHA>",
     "worktreeSnapshot": {
       "capturedAt": "<TS>",
       "headSha": "<SHA>",
-      "statusHash": "904b7f23",
+      "statusHash": "22ca735d",
       "entryCount": 1,
       "entries": [
         {
           "status": "??",
-          "path": ".hoyeon/prd/standard-regression/prd.md",
+          "path": "agents/prd/standard-regression/prd.md",
           "originalPath": null,
           "sha256": "<SHA>",
           "bytes": 1729
@@ -162,18 +162,18 @@ Receipt: .hoyeon/implement/standard-regression/receipt.json
   "finalReview": {
     "status": "pass",
     "summary": "PASS",
-    "reportPath": ".hoyeon/implement/standard-regression/review/final-review.md",
+    "reportPath": "agents/implement/standard-regression/review/final-review.md",
     "reportBytes": 600,
     "reportSha256": "<SHA>",
     "worktreeSnapshot": {
       "capturedAt": "<TS>",
       "headSha": "<SHA>",
-      "statusHash": "904b7f23",
+      "statusHash": "22ca735d",
       "entryCount": 1,
       "entries": [
         {
           "status": "??",
-          "path": ".hoyeon/prd/standard-regression/prd.md",
+          "path": "agents/prd/standard-regression/prd.md",
           "originalPath": null,
           "sha256": "<SHA>",
           "bytes": 1729

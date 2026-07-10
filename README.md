@@ -25,7 +25,8 @@ please = the whole chain in one invocation, stopping only for risky work
 | `pantry` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 
-Skill and directory names are the butler set everywhere; only run artifacts under `.hoyeon/` keep the pre-rename names (`.hoyeon/intake/**`, `.hoyeon/prd/**`, `.hoyeon/implement/**`) for data compatibility.
+Skill and directory names are the butler set everywhere.
+Run artifacts live under the visible `agents/` namespace in the target project (`agents/intake/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`); a legacy `.hoyeon/` tree from older runs stays readable as a fallback, and new runs always write under `agents/`.
 
 ## Dual Runtime, One Source
 
@@ -120,4 +121,5 @@ tests/
 `util` → `git` → `config` → `state_data` → `prd_parser` → `inference` → `planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` → `commands/*`.
 Modules only require layers to their left, so the dependency graph stays acyclic.
 
-Run artifacts live in the target project, not here: PRDs under `.hoyeon/prd/**` (trackable), implementation state and evidence under `.hoyeon/implement/**` (gitignored by policy, enforced by `doctor`).
+Run artifacts live in the target project, not here: PRDs under `agents/prd/**` (committed), implementation state and evidence under `agents/implement/**` (gitignored by the one-line policy `agents/implement/`, enforced by `doctor`).
+Legacy `.hoyeon/**` trees stay readable as a fallback for runs that started before the namespace migration.

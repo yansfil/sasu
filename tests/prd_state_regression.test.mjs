@@ -155,7 +155,7 @@ Do not add scope.
 
 Report status and verification evidence.
 `;
-  const file = path.join(projectRoot, ".hoyeon", "prd", slug, "prd.md");
+  const file = path.join(projectRoot, "agents", "prd", slug, "prd.md");
   write(file, prd);
   return file;
 }
@@ -267,7 +267,7 @@ test("standard profile full happy path finalizes and rendered artifacts match go
   const projectRoot = initGitRepo();
   const slug = "standard-regression";
   const prdPath = writeApprovedPrd(projectRoot, slug);
-  const runDir = path.join(projectRoot, ".hoyeon", "implement", slug);
+  const runDir = path.join(projectRoot, "agents", "implement", slug);
   const statePathAbs = path.join(runDir, "state.json");
   const readState = () => JSON.parse(fs.readFileSync(statePathAbs, "utf8"));
 
@@ -297,7 +297,7 @@ test("standard profile full happy path finalizes and rendered artifacts match go
     assert.ok(fidelityPrompt.includes(anchor), `requirements-review-prompt lost anchor: ${anchor}`);
   }
 
-  const prdRelPath = path.join(".hoyeon", "prd", slug, "prd.md");
+  const prdRelPath = path.join("agents", "prd", slug, "prd.md");
   const fidelityReportPath = path.join(runDir, "review", "requirements-fidelity-review.md");
   write(fidelityReportPath, fidelityReviewBody(prdRelPath, logPath));
   const fidelityRecord = runJson(
