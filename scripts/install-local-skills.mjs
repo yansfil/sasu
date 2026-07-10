@@ -2,8 +2,8 @@
 
 // Installs the PRD workflow skills for both runtimes from this repository.
 //
-// Both runtimes install under the butler directory names (listen, promise,
-// fulfill, pantry, deliver, please):
+// Both runtimes install under the checkshirt skill names (ho-scope, ho-spec,
+// ho-build, ho-setup, ho-ship, please, remember):
 //
 // - Codex   (~/.codex/skills/<name>/):  SKILL.md copied verbatim.
 // - Claude  (~/.claude/skills/<name>/): SKILL.md copied with substitutions
@@ -29,10 +29,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const SKILL_NAMES = ["listen", "promise", "fulfill", "pantry", "deliver", "please", "remember"];
+const SKILL_NAMES = ["ho-scope", "ho-spec", "ho-build", "ho-setup", "ho-ship", "please", "remember"];
 
 // Pre-rename install directories that this pipeline used to own.
-const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship"];
+const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver"];
+// Frontmatter names that mark a legacy install as ours: any current name plus
+// every earlier generation (butler set, pre-rename prd-* set).
+const OWNED_LEGACY_NAMES = [...SKILL_NAMES, ...LEGACY_DIRS];
 
 // Codex-only auxiliary entries that make no sense in the Claude install.
 const CODEX_ONLY_ENTRIES = new Set(["agents"]);
@@ -50,8 +53,8 @@ const TARGETS = {
 
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
-  // Invocation tokens: $listen -> /listen.
-  return roots.replace(/\$(listen|promise|fulfill|pantry|deliver|please|remember)\b/g, "/$1");
+  // Invocation tokens: $ho-scope -> /ho-scope.
+  return roots.replace(/\$(ho-scope|ho-spec|ho-build|ho-setup|ho-ship|please|remember)\b/g, "/$1");
 }
 
 function ensureDir(dir) {
@@ -115,15 +118,15 @@ function installSkill(targetKey, name) {
 }
 
 // Remove pre-rename install directories, but only when they are ours: their
-// SKILL.md frontmatter must carry one of the butler names. Anything else is
-// left alone.
+// SKILL.md frontmatter must carry one of our current or earlier skill names.
+// Anything else is left alone.
 function cleanupLegacyDirs(targetKey) {
   const removed = [];
   for (const dir of LEGACY_DIRS) {
     const targetDir = path.join(TARGETS[targetKey].root, dir);
     if (!fs.existsSync(targetDir)) continue;
     const name = frontmatterName(path.join(targetDir, "SKILL.md"));
-    if (!SKILL_NAMES.includes(name)) continue;
+    if (!OWNED_LEGACY_NAMES.includes(name)) continue;
     removePath(targetDir);
     removed.push(targetDir);
   }
@@ -140,7 +143,7 @@ function hookNodeBinary() {
 }
 
 function harnessHookCommand(targetKey) {
-  const script = path.join(TARGETS[targetKey].root, "fulfill", "scripts", "prd_state_harness.js");
+  const script = path.join(TARGETS[targetKey].root, "ho-build", "scripts", "prd_state_harness.js");
   return kind => `"${hookNodeBinary()}" "${script}" hook ${kind}`;
 }
 

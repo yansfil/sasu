@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const harness = path.join(repoRoot, "skills", "fulfill", "scripts", "prd_state_harness.js");
+const harness = path.join(repoRoot, "skills", "ho-build", "scripts", "prd_state_harness.js");
 
 function run(args, cwd, options = {}) {
   const result = spawnSync(process.execPath, [harness, ...args], {

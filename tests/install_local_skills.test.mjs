@@ -32,35 +32,35 @@ test("installer installs both runtimes under butler names with correct substitut
   assert.equal(report.ok, true);
 
   // Codex: butler directory names, verbatim SKILL.md.
-  const codexFulfill = path.join(home, ".codex", "skills", "fulfill", "SKILL.md");
+  const codexFulfill = path.join(home, ".codex", "skills", "ho-build", "SKILL.md");
   const codexText = fs.readFileSync(codexFulfill, "utf8");
-  assert.match(codexText, /~\/\.codex\/skills\/fulfill\/scripts\/prd_state_harness\.js/);
-  assert.match(codexText, /"\$fulfill"/);
+  assert.match(codexText, /~\/\.codex\/skills\/ho-build\/scripts\/prd_state_harness\.js/);
+  assert.match(codexText, /"\$ho-build"/);
 
   // Claude: butler directory names, substituted SKILL.md.
-  const claudeFulfill = path.join(home, ".claude", "skills", "fulfill", "SKILL.md");
+  const claudeFulfill = path.join(home, ".claude", "skills", "ho-build", "SKILL.md");
   const claudeText = fs.readFileSync(claudeFulfill, "utf8");
-  assert.match(claudeText, /~\/\.claude\/skills\/fulfill\/scripts\/prd_state_harness\.js/);
-  assert.match(claudeText, /"\/fulfill"/);
+  assert.match(claudeText, /~\/\.claude\/skills\/ho-build\/scripts\/prd_state_harness\.js/);
+  assert.match(claudeText, /"\/ho-build"/);
   assert.doesNotMatch(claudeText, /~\/\.codex\/skills\//);
   assert.doesNotMatch(claudeText, /\$(listen|promise|fulfill|deliver|pantry|please|remember)\b/);
 
   // remember installs on both runtimes with the substituted harness path.
   const claudeRemember = fs.readFileSync(path.join(home, ".claude", "skills", "remember", "SKILL.md"), "utf8");
-  assert.match(claudeRemember, /~\/\.claude\/skills\/fulfill\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(claudeRemember, /~\/\.claude\/skills\/ho-build\/scripts\/prd_state_harness\.js rules add/);
   const codexRemember = fs.readFileSync(path.join(home, ".codex", "skills", "remember", "SKILL.md"), "utf8");
-  assert.match(codexRemember, /~\/\.codex\/skills\/fulfill\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(codexRemember, /~\/\.codex\/skills\/ho-build\/scripts\/prd_state_harness\.js rules add/);
 
   // please references its siblings through the Claude install paths.
   const claudePlease = fs.readFileSync(path.join(home, ".claude", "skills", "please", "SKILL.md"), "utf8");
-  assert.match(claudePlease, /~\/\.claude\/skills\/promise\/SKILL\.md/);
+  assert.match(claudePlease, /~\/\.claude\/skills\/ho-spec\/SKILL\.md/);
 
   // Auxiliary entries are symlinks into the repo; Codex-only entries are skipped for Claude.
-  const claudeScripts = path.join(home, ".claude", "skills", "fulfill", "scripts");
+  const claudeScripts = path.join(home, ".claude", "skills", "ho-build", "scripts");
   assert.ok(fs.lstatSync(claudeScripts).isSymbolicLink());
-  assert.equal(fs.realpathSync(claudeScripts), fs.realpathSync(path.join(repoRoot, "skills", "fulfill", "scripts")));
-  assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "fulfill", "agents")));
-  assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "fulfill", "agents")), false);
+  assert.equal(fs.realpathSync(claudeScripts), fs.realpathSync(path.join(repoRoot, "skills", "ho-build", "scripts")));
+  assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "ho-build", "agents")));
+  assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "ho-build", "agents")), false);
 
   // Hooks: Codex gets Stop + SubagentStop + PreToolUse, Claude gets Stop only.
   const codexHooks = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
@@ -70,7 +70,7 @@ test("installer installs both runtimes under butler names with correct substitut
   const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.ok(claudeSettings.hooks.Stop.some(matcher => matcher.hooks.some(hook => hook.command.includes("prd_state_harness.js"))));
   assert.equal(claudeSettings.hooks.PreToolUse, undefined);
-  assert.match(claudeSettings.hooks.Stop[0].hooks[0].command, /\.claude\/skills\/fulfill\/scripts\/prd_state_harness\.js/);
+  assert.match(claudeSettings.hooks.Stop[0].hooks[0].command, /\.claude\/skills\/ho-build\/scripts\/prd_state_harness\.js/);
 });
 
 test("installer removes owned legacy directories and keeps foreign ones", () => {
@@ -116,7 +116,7 @@ test("installer is idempotent and preserves foreign hooks and settings", () => {
 
 test("installer refuses to overwrite a foreign skill directory", () => {
   const home = freshHome();
-  const foreign = path.join(home, ".claude", "skills", "listen");
+  const foreign = path.join(home, ".claude", "skills", "ho-scope");
   fs.mkdirSync(foreign, { recursive: true });
   fs.writeFileSync(path.join(foreign, "SKILL.md"), "---\nname: someone-elses-skill\n---\n\n# other\n");
   const result = runInstaller(home, { allowFailure: true });

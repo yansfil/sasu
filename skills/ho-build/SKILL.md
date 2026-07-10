@@ -1,15 +1,15 @@
 ---
-name: fulfill
+name: ho-build
 description: |
   Project-local PRD implementation orchestrator. Use when the user invokes
-  "$fulfill" (legacy alias "prd-implement"), asks to execute or implement an approved PRD, or wants
+  "$ho-build", asks to execute or implement an approved PRD, or wants
   the agent to turn PRD-level tasks into an execution plan, TaskGraph, concrete
   verification plan, artifact-backed evidence, goal/progress tracking,
   main-agent-owned fidelity checks, profile-aware review gates, and strict
   completion receipt.
 ---
 
-# fulfill
+# ho-build
 
 Artifacts live under the visible `agents/` namespace (`agents/implement/**`,
 `.prd-implement-active.json`); a legacy `.hoyeon/implement/**` tree from older
@@ -17,7 +17,7 @@ runs stays readable as a fallback.
 
 Use this skill to implement an approved PRD end to end.
 
-This is the execution counterpart to `promise`. It turns a human-reviewed PRD into
+This is the execution counterpart to `ho-spec`. It turns a human-reviewed PRD into
 implementation state, execution nodes, verification evidence, profile-aware
 reviews, and a receipt. Completion accounting is strict; execution details can be
 derived flexibly when they preserve the PRD contract.
@@ -102,7 +102,7 @@ agents/implement/<topic-slug>/review/final-review.md
 ```text
 goal tracking opened
   -> PRD Verification Contract
-  -> fulfill Verification Planner
+  -> ho-build Verification Planner
   -> Execution Plan
   -> TaskGraph
   -> main-agent coverage check
@@ -135,7 +135,7 @@ Before editing code:
    explicitly accepts the risk.
 6. Read Implementation Guardrails and Risks.
 7. Read `agents/config.json` when it exists.
-   `node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor`
+   `node ~/.codex/skills/ho-build/scripts/prd_state_harness.js doctor`
    reports the effective delivery config and environment readiness; run it when
    delivery mode, worktree sync, or PR/CI readiness is in question.
 8. Inspect `git status --short`.
@@ -147,7 +147,7 @@ Before editing code:
 If `agents/config.json` or the user's request sets delivery mode to `pr`, treat
 PR delivery as part of the user-facing workflow.
 The implementation receipt still proves implementation completion, but the
-thread is not done until `deliver` opens or updates the PR and required CI
+thread is not done until `ho-ship` opens or updates the PR and required CI
 passes or is explicitly reported as blocked.
 
 Pause for approval before material structure deviations, unmapped scope,
@@ -192,8 +192,8 @@ acting as if the tracker exists.
 From the target repository root:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js status
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js status
 ```
 
 Bind the harness to the current agent session at initialization. In Codex,
@@ -207,7 +207,7 @@ When delivery mode should be PR-based, pass it explicitly or rely on
 `agents/config.json`:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --delivery pr \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
@@ -228,7 +228,7 @@ The harness assigns a review profile at init:
 Override only when the risk classification is wrong:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js init \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --review-profile trivial|standard|high-risk
 ```
@@ -276,7 +276,7 @@ test modes, and structure locks into durable state. It supports:
 ## 4. Plan Verification Before Implementation
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-verification
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-verification
 ```
 
 The planner binds the PRD verification contract to repo reality.
@@ -297,8 +297,8 @@ rerun `plan-verification`.
 ## 5. Plan Execution And TaskGraph
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-execution
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js ready
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-execution
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js ready
 ```
 
 `plan-execution` maps every PRD-level task to execution nodes, inferred write
@@ -326,12 +326,12 @@ For each ready execution node:
 5. Record evidence:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
   --id N1 \
   --status complete \
   --evidence "<file/test/runtime evidence>"
 
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
   --kind ac \
   --id AC1 \
   --status met \
@@ -341,12 +341,12 @@ node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark \
 For repeated same-status updates, comma-separated ids are allowed:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
   --id N1,N2 \
   --status complete \
   --evidence "<shared evidence>"
 
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js mark \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
   --kind ac \
   --id AC1,AC2 \
   --status met \
@@ -367,7 +367,7 @@ Use the generated verification plan as the concrete proof plan.
 For shell-verifiable checks:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js verify-run \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
   --id V1 \
   -- <exact command>
 ```
@@ -376,7 +376,7 @@ When a PRD or planner produced a concrete command, `verify-run` must run that
 command exactly. If an equivalent command is necessary, use:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js verify-run \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
   --id V1 \
   --deviation "<why equivalent coverage is preserved>" \
   -- <replacement command>
@@ -385,7 +385,7 @@ node ~/.codex/skills/fulfill/scripts/prd_state_harness.js verify-run \
 For browser/API/DB/runtime evidence:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js record-artifact \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js record-artifact \
   --id V3 \
   --kind screenshot \
   --path <path-to-png-or-jpg> \
@@ -419,7 +419,7 @@ JSON, receipts, screenshots at fixed paths), do not edit `state.json` by hand
 and do not write ad-hoc scripts. Run:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js refresh-artifacts [--id V3]
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js refresh-artifacts [--id V3]
 ```
 
 It re-hashes the registered artifacts, records the refresh in the ledger, and
@@ -483,7 +483,7 @@ Keep working if any required AC is not met and no concrete blocker exists.
 Before final adversarial review, generate a strict intent-review prompt:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js requirements-review-prompt
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js requirements-review-prompt
 ```
 
 The main agent writes this review by default. Do not spawn a sidecar for
@@ -525,7 +525,7 @@ agents/implement/<topic-slug>/review/requirements-fidelity-review.md
 Then record:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js requirements-review-record \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js requirements-review-record \
   --status pass \
   --report agents/implement/<topic-slug>/review/requirements-fidelity-review.md \
   --summary "<requirements fidelity verdict>"
@@ -555,7 +555,7 @@ the review stale.
 Generate a reviewer prompt:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js review-prompt
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js review-prompt
 ```
 
 Before this review, stop runtime servers, browser sessions, tunnels, or
@@ -609,7 +609,7 @@ agents/implement/<topic-slug>/review/final-review.md
 Then record:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js review-record \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js review-record \
   --status pass \
   --report agents/implement/<topic-slug>/review/final-review.md \
   --summary "<review verdict>"
@@ -641,7 +641,7 @@ changes after review.
 Only after all gates required by the review profile pass:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
   --status complete \
   --summary "<evidence-backed summary>"
 ```
@@ -662,15 +662,15 @@ complete` in Codex, the run's final task in Claude Code) until:
 
 If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not mark
 the tracked goal complete yet.
-Run `$deliver` after `finalize --status complete` and keep the goal open until
+Run `$ho-ship` after `finalize --status complete` and keep the goal open until
 the PR exists and required CI passes or the delivery handoff is explicitly
 blocked.
-After PR creation, `deliver` cleans the matching active pointer and
+After PR creation, `ho-ship` cleans the matching active pointer and
 session-scoped active files.
 For local-only runs or manual cleanup, use:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js cleanup-active \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js cleanup-active \
   --state agents/implement/<topic-slug>/state.json
 ```
 
@@ -684,11 +684,11 @@ For a blocked or partial handoff, do not write the final report until:
 Use:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
   --status blocked \
   --summary "<evidence-backed blocker summary>"
 
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
   --status partial \
   --summary "<evidence-backed partial handoff summary>"
 ```
@@ -715,7 +715,7 @@ Use the PRD's Implementation Result Report Contract. At minimum report:
 - AC status.
 - verification evidence by test mode.
 - requirements fidelity review verdict.
-- delivery mode and, when `pr`, the `deliver` status, PR URL, branch, and CI
+- delivery mode and, when `pr`, the `ho-ship` status, PR URL, branch, and CI
   verdict.
 - deviations.
 - human review needed.

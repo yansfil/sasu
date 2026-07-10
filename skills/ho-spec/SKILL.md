@@ -1,7 +1,7 @@
 ---
-name: promise
+name: ho-spec
 description: |
-  Project-local PRD writer. Use when the user invokes "$promise" (legacy alias "prd"), asks for a PRD,
+  Project-local PRD writer. Use when the user invokes "$ho-spec", asks for a PRD,
   product requirements document, implementation-ready requirements, or wants to
   turn intake/clarify output into a human-reviewable requirements contract with
   major technical structure changes, PRD-level tasks, a compact verification
@@ -9,7 +9,7 @@ description: |
   implementation result report contract.
 ---
 
-# promise
+# ho-spec
 
 PRDs live under the visible `agents/` namespace (`agents/prd/**`); legacy
 `.hoyeon/prd/**` files stay readable as a fallback.
@@ -38,7 +38,7 @@ agents/clarify/<topic-slug>/clarity-summary.md
 
 If no context path is provided, inspect `agents/intake/` first for the matching
 or most recent topic, then `agents/clarify/`. If no handoff exists and major
-ambiguity remains, ask one blocking question or recommend `$listen`.
+ambiguity remains, ask one blocking question or recommend `$ho-scope`.
 
 ## Output Contract
 
@@ -126,7 +126,7 @@ Result Report Contract when they matter.
   approved it. The PRD-writing agent always writes `pending` and never sets
   `approved` on its own. Set `approved` only after the user explicitly approves,
   and quote or reference that approval when updating it.
-- `fulfill` refuses to initialize against a PRD whose `human_approval` is
+- `ho-build` refuses to initialize against a PRD whose `human_approval` is
   not `approved`, so a PRD that skips human review cannot be executed silently.
 
 To make the human review fast, end the `## 1. Summary` section with a short
@@ -202,7 +202,7 @@ Typical human-only items:
 If none are needed, write `None required` with a short reason.
 
 `Decision Traceability For Fidelity Review` is the handoff surface for the
-strict intent-review subagent that runs at the end of `fulfill`.
+strict intent-review subagent that runs at the end of `ho-build`.
 
 Include compact bullets for:
 
@@ -249,7 +249,7 @@ Task rules:
   or release hygiene.
 - Tasks must not add hidden scope beyond approved requirements.
 - Do not include write scopes, owners, parallel safety, low-level dependencies,
-  or subagent scheduling. `fulfill` derives those.
+  or subagent scheduling. `ho-build` derives those.
 - If implementation later needs an unmapped task or material structure change,
   the agent must ask for approval before continuing.
 
@@ -284,7 +284,7 @@ When the existing repo has weak or missing test infrastructure, include a PRD-le
 
 ### 9. Verification Contract
 
-The PRD defines verification intent and done requirements. `fulfill`
+The PRD defines verification intent and done requirements. `ho-build`
 turns this into concrete commands, browser flows, DB/API probes, artifact
 paths, reruns, deviations, and receipts.
 
@@ -338,7 +338,7 @@ Rules:
 
 - `Required For Done` is `yes` by default.
 - The Test Mode Contract sets the mode-level default. Verification rows should
-  repeat `Required For Done`; if omitted, `fulfill` inherits the mode
+  repeat `Required For Done`; if omitted, `ho-build` inherits the mode
   default.
 - A blocked required check prevents a complete receipt.
 - Optional or human-blockable checks must explicitly say `Required For Done:
@@ -403,16 +403,16 @@ After the audits pass, run the mechanical precheck from the target repository
 root before marking the PRD `ready`:
 
 ```sh
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js plan-verification --prd agents/prd/<topic-slug>/prd.md
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-verification --prd agents/prd/<topic-slug>/prd.md
 ```
 
-This is stateless: it parses the PRD exactly the way `fulfill` will,
+This is stateless: it parses the PRD exactly the way `ho-build` will,
 derives the verification plan against real repo signals, and writes nothing.
 Exit code 2 means the verification contract is not harness-readable (missing
 commands or artifact strategy, uncovered ACs, missing browser startup, unsafe
 external proof). Fix the PRD and rerun until `blockingGaps` is empty; resolve
 or consciously accept warnings. Skipping this gate pushes the same failures
-into `fulfill`, where they cost a re-init and a re-plan instead of a
+into `ho-build`, where they cost a re-init and a re-plan instead of a
 one-second check.
 
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
@@ -420,7 +420,7 @@ Classify remaining items as blocking, deferred, or human taste/approval.
 
 ### 11. Implementation Guardrails
 
-State what `fulfill` must not do without asking:
+State what `ho-build` must not do without asking:
 
 - do not expand scope.
 - do not change major architecture.
@@ -501,7 +501,7 @@ After writing the PRD, report concisely:
 - inline self-check result and Harness Readiness Gate result.
 - source intake or clarify path.
 - status and `human_approval` state, with the Approval checklist items the
-  user needs to review before `fulfill` can run.
+  user needs to review before `ho-build` can run.
 - remaining blocking questions, if any.
 - summary of scope, technical structure, required decisions, verification
   modes, delivery mode when relevant, PRD-level tasks, human verification,

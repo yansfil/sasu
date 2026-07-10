@@ -48,12 +48,12 @@ function defaultHarnessPath() {
     // Keep the argv-based root only.
   }
   for (const root of roots) {
-    for (const dir of ["fulfill", "prd-implement"]) {
+    for (const dir of ["ho-build", "fulfill", "prd-implement"]) {
       const candidate = path.join(root, dir, "scripts", "prd_state_harness.js");
       if (fs.existsSync(candidate)) return candidate;
     }
   }
-  return path.join(roots[0], "fulfill", "scripts", "prd_state_harness.js");
+  return path.join(roots[0], "ho-build", "scripts", "prd_state_harness.js");
 }
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [

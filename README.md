@@ -1,32 +1,37 @@
 # Engineering Harness
 
-**One PRD pipeline, two runtimes.**
+<p align="center"><img src="assets/mascot.svg" width="220" alt="checkshirt-boy mascot"/></p>
+
+**One PRD pipeline, two runtimes, one checkshirt.**
 A personal engineering workflow harness that turns a conversation into a shipped pull request, with the same skills, the same state machine, and the same completion guarantees whether the agent is Codex or Claude Code.
+
+The concept: you are working with one very senior developer in a plaid shirt.
+He scopes before he specs, he specs before he builds, he does not say "done" without evidence, and he never has to be told the same thing twice.
 
 ```text
 conversation
-  └─ listen    interview until the requirements stop being vague
-      └─ promise    write the PRD as a human decision contract
-          └─ fulfill    implement against a verification plan, with receipts
-              └─ deliver    branch, PR body, push, CI watch
+  └─ ho-scope    interview until the requirements stop being vague
+      └─ ho-spec    write the PRD as a human decision contract
+          └─ ho-build    implement against a verification plan, with receipts
+              └─ ho-ship    branch, PR body, push, CI watch
                               └─ merged PR
 
 please = the whole chain in one invocation, stopping only for risky work
+remember = lessons land as enforcement, not notes
 ```
 
-## The Butler Skills
+## The Checkshirt Skills
 
 | Skill | What it owns |
 | --- | --- |
-| `listen` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
-| `promise` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
-| `fulfill` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
-| `deliver` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
-| `pantry` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
+| `ho-scope` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
+| `ho-spec` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
+| `ho-build` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
+| `ho-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
+| `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
 
-Skill and directory names are the butler set everywhere.
 Run artifacts live under the visible `agents/` namespace in the target project (`agents/intake/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`); a legacy `.hoyeon/` tree from older runs stays readable as a fallback, and new runs always write under `agents/`.
 
 ## Dual Runtime, One Source
@@ -41,8 +46,8 @@ node scripts/install-local-skills.mjs
 | | Codex | Claude Code |
 | --- | --- | --- |
 | Install root | `~/.codex/skills/<name>/` | `~/.claude/skills/<name>/` |
-| Invocation | `$listen`, `$promise`, ... | `/listen`, `/promise`, ... |
-| `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$fulfill` becomes `/fulfill`) |
+| Invocation | `$ho-scope`, `$ho-spec`, ... | `/ho-scope`, `/ho-spec`, ... |
+| `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$ho-build` becomes `/ho-build`) |
 | `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
 | Hooks | `Stop` + `SubagentStop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
 
@@ -73,10 +78,10 @@ The harness treats "done" as a provable state, and the enforcement works identic
   A strict requirements fidelity review compares implementation evidence against the user's original intent, then a profile-aware adversarial review audits that proof.
   Any source change after a passing review marks it stale.
 - **Fail-closed delivery.**
-  `deliver` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
+  `ho-ship` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
   Every override needs a `--reason` and lands in the ship log.
 - **Learned invariants gate delivery.**
-  Lessons registered through `rules add` carry trigger globs and an executable check; `deliver` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
+  Lessons registered through `rules add` carry trigger globs and an executable check; `ho-ship` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
   Evidence-free or unverifiable rules are rejected at registration, so the rulebook cannot decay into wishes.
 - **Premature-completion guards.**
   Codex gets a `PreToolUse` guard that blocks `update_goal complete` before the receipt; Claude Code has no goal tool, so the Stop hook carries the guarantee alone.
@@ -85,31 +90,31 @@ The harness treats "done" as a provable state, and the enforcement works identic
 
 ```sh
 node --test tests/*.test.mjs
-node ~/.codex/skills/fulfill/scripts/prd_state_harness.js doctor
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js doctor
 ```
 
 Optional state-schema typecheck (no npm dependency; uses the JSDoc typedefs in `scripts/lib/types.js`):
 
 ```sh
 npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --skipLibCheck \
-  skills/fulfill/scripts/lib/state_data.js skills/fulfill/scripts/lib/types.js
+  skills/ho-build/scripts/lib/state_data.js skills/ho-build/scripts/lib/types.js
 ```
 
 `doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
 After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
-- Claude Code: start a new session and check that `/listen`, `/promise`, `/fulfill`, `/deliver`, `/pantry`, and `/please` appear in the skill list
+- Claude Code: start a new session and check that `/ho-scope`, `/ho-spec`, `/ho-build`, `/ho-ship`, `/ho-setup`, and `/please` appear in the skill list
 
 ## Repository Layout
 
 ```text
 skills/
-  listen/    SKILL.md
-  promise/   SKILL.md
-  fulfill/   SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
-  pantry/    SKILL.md
-  deliver/   SKILL.md, scripts/prd_ship.js
+  ho-scope/  SKILL.md
+  ho-spec/   SKILL.md
+  ho-build/  SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
+  ho-setup/  SKILL.md
+  ho-ship/   SKILL.md, scripts/prd_ship.js
   please/    SKILL.md
   remember/  SKILL.md
 scripts/

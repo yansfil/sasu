@@ -1,8 +1,8 @@
 ---
-name: listen
+name: ho-scope
 description: |
   Project-local pre-PRD requirements intake. Use when the user invokes
-  "$listen" (legacy alias "intake"), asks to clarify, pressure-test, reduce ambiguity, prepare a PRD
+  "$ho-scope", asks to clarify, pressure-test, reduce ambiguity, prepare a PRD
   handoff, or wants requirements questioned across product, scope, UX/design,
   technical, verification, risk, operation, and documented-domain axes before
   writing a PRD.
@@ -11,12 +11,12 @@ description: |
   topics, and fully normalizing the log before prd-handoff.md.
 ---
 
-# listen
+# ho-scope
 
 Intake artifacts live under the visible `agents/` namespace (`agents/intake/**`);
 legacy `.hoyeon/intake/**` files stay readable as a fallback.
 
-Use this skill before `promise` when the request is ambiguous or when the user wants the idea pressure-tested before implementation planning.
+Use this skill before `ho-spec` when the request is ambiguous or when the user wants the idea pressure-tested before implementation planning.
 The job is to reduce ambiguity and produce a PRD handoff artifact.
 Do not implement code, write the PRD itself, create execution plans, or mutate implementation state.
 Match the user's language by default.
@@ -271,7 +271,7 @@ final_auditor_status: "pending | pass | fail | unavailable | skipped"
 
 ## Suggested Next Step
 
-`$promise --context agents/intake/<topic-slug>/prd-handoff.md "<topic>"`
+`$ho-spec --context agents/intake/<topic-slug>/prd-handoff.md "<topic>"`
 ```
 
 ## Loop
@@ -288,7 +288,7 @@ final_auditor_status: "pending | pass | fail | unavailable | skipped"
 9. When the handoff seems good enough, restate the agreed goal in one sentence and get confirmation.
 10. Run final backfill, quality gate, and final auditor closure check or recorded local fallback.
 11. If closure finds a material blocker, ask one final blocking question or classify it as `blocking` or `deferred`.
-12. If closure passes or blockers are explicitly classified, write `prd-handoff.md` and point to `$promise`.
+12. If closure passes or blockers are explicitly classified, write `prd-handoff.md` and point to `$ho-spec`.
 
 ## Closure Matrix
 

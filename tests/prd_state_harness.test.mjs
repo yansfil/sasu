@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const harness = path.join(repoRoot, "skills", "fulfill", "scripts", "prd_state_harness.js");
+const harness = path.join(repoRoot, "skills", "ho-build", "scripts", "prd_state_harness.js");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -949,7 +949,7 @@ test("plan-execution injects matching learned invariants as verification items",
 
 test("deliver ship fails closed on a failing learned invariant and honors --skip-rules --reason", () => {
   const projectRoot = initGitRepo();
-  const shipScript = path.join(repoRoot, "skills", "deliver", "scripts", "prd_ship.js");
+  const shipScript = path.join(repoRoot, "skills", "ho-ship", "scripts", "prd_ship.js");
   const prdPath = writeApprovedPrd(projectRoot, "rules-gate");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--delivery", "pr", "--session-id", "gate-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);

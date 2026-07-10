@@ -1,24 +1,24 @@
 ---
-name: deliver
+name: ho-ship
 description: |
-  Publish a completed `fulfill` run through GitHub PR delivery. Use when
-  the user invokes "$deliver" (legacy alias "prd-ship") or when
+  Publish a completed `ho-build` run through GitHub PR delivery. Use when
+  the user invokes "$ho-ship" or when
   the user asks to ship, open a PR, push a completed PRD implementation, watch
-  CI, use PR delivery mode, or continue after `fulfill` receipt until a
+  CI, use PR delivery mode, or continue after `ho-build` receipt until a
   pull request exists and required checks pass.
 ---
 
-# deliver
+# ho-ship
 
 Artifact paths keep the legacy `prd-ship` naming (`delivery/ship-log.jsonl`, `prd_ship.js`).
 
-Use this skill after `fulfill` has produced a complete receipt and the
+Use this skill after `ho-build` has produced a complete receipt and the
 delivery target is a GitHub pull request.
 
 This skill is a delivery gate, not an implementation gate. Do not weaken or
-replace `fulfill` receipt checks. If the implementation receipt is
+replace `ho-build` receipt checks. If the implementation receipt is
 missing, partial, blocked, stale, or contradicted by current repo state, return
-to `fulfill` first.
+to `ho-build` first.
 
 Match the user's language by default.
 
@@ -85,7 +85,7 @@ execution-plan write scopes.
 ## Required Flow
 
 ```text
-complete fulfill receipt
+complete ho-build receipt
   -> delivery preflight (receipt, mode, freshness, base freshness, staging plan, body status)
   -> rebase onto origin base when preflight reports the branch behind
   -> body: generate the PR body draft
@@ -128,11 +128,11 @@ Use an override only with the user's explicit approval, and quote that approval 
 ## Commands
 
 ```sh
-node ~/.codex/skills/deliver/scripts/prd_ship.js preflight --state agents/implement/<topic-slug>/state.json
-node ~/.codex/skills/deliver/scripts/prd_ship.js body --state agents/implement/<topic-slug>/state.json
-node ~/.codex/skills/deliver/scripts/prd_ship.js ship --state agents/implement/<topic-slug>/state.json --title "<PR title>"
-node ~/.codex/skills/deliver/scripts/prd_ship.js watch-ci --state agents/implement/<topic-slug>/state.json [--timeout <seconds>]
-node ~/.codex/skills/deliver/scripts/prd_ship.js status --state agents/implement/<topic-slug>/state.json
+node ~/.codex/skills/ho-ship/scripts/prd_ship.js preflight --state agents/implement/<topic-slug>/state.json
+node ~/.codex/skills/ho-ship/scripts/prd_ship.js body --state agents/implement/<topic-slug>/state.json
+node ~/.codex/skills/ho-ship/scripts/prd_ship.js ship --state agents/implement/<topic-slug>/state.json --title "<PR title>"
+node ~/.codex/skills/ho-ship/scripts/prd_ship.js watch-ci --state agents/implement/<topic-slug>/state.json [--timeout <seconds>]
+node ~/.codex/skills/ho-ship/scripts/prd_ship.js status --state agents/implement/<topic-slug>/state.json
 ```
 
 `body` writes a draft to `agents/implement/<topic-slug>/delivery/pr-body.md`.
@@ -182,7 +182,7 @@ When checks fail (exit `2`):
 3. Run the closest local verification first.
 4. Source fixes make the recorded reviews stale.
    Rerun the affected verification, requirements fidelity review, final review, and
-   `finalize` through the fulfill harness before shipping again.
+   `finalize` through the ho-build harness before shipping again.
    `ship` re-checks freshness and will refuse a stale re-ship.
 5. Rerun `ship` to commit, push, and refresh the PR body if the fix changed anything the body
    describes.
