@@ -40,7 +40,23 @@ and stop.
 ## Configure
 
 When the user wants to change settings, interview briefly with defaults, write
-`agents/config.json`, and keep `.gitignore` aligned:
+`agents/config.json`, and keep `.gitignore` aligned.
+
+On first setup in a project, also seed the agent-facing structure notes before
+the config interview:
+
+```sh
+node ~/.codex/skills/fulfill/scripts/prd_state_harness.js seed-agents-md
+```
+
+This writes (or updates, marker-based and idempotent) a Harness Namespace
+section in AGENTS.md explaining `agents/prd`, `agents/rules`,
+`agents/implement`, the gitignore policy, and how to consult learned rules,
+and it creates the `CLAUDE.md -> AGENTS.md` symlink.
+If CLAUDE.md already exists as a regular file, the command refuses; show the
+user the content, get confirmation, and rerun with `--adopt-claude-md`.
+
+Then interview:
 
 1. Delivery mode: `local` (default) or `pr`.
    Remind the user that `pr` means fulfill runs end into `deliver`

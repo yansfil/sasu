@@ -5,7 +5,8 @@ const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
+const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, RULES_ROOT_REL, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
+const { readLedger, loadInvariants, loadPending, globLiteralPrefix } = require("../rules");
 const { gitTracked, gitIgnored } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig } = require("../config");
 const { verificationPlanSummary, executionPlanSummary, countState, reviewProfileName, finalReviewRequiredForState } = require("../state_data");
@@ -86,6 +87,8 @@ function cmdDoctor() {
   }
   if (gitOk) doctorCheckGitignorePolicy(projectRoot, add);
   doctorCheckLegacyNamespace(projectRoot, add);
+  doctorCheckAgentsMdConvention(projectRoot, add);
+  doctorCheckRulesLedger(projectRoot, add);
   doctorCheckGithubCli(projectRoot, prMode, add);
   doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add);
   if (prMode) doctorCheckPrDeliveryAssets(projectRoot, delivery, add);
@@ -218,6 +221,86 @@ function doctorCheckGitignorePolicy(projectRoot, add) {
 function doctorCheckLegacyNamespace(projectRoot, add) {
   if (!fs.existsSync(path.join(projectRoot, LEGACY_NAMESPACE_ROOT))) return;
   add("ok", "legacy-namespace", `Legacy ${LEGACY_NAMESPACE_ROOT}/ tree detected; it stays readable as a fallback while new runs write under ${NAMESPACE_ROOT}/. Move committed PRDs to ${PRD_ROOT_REL}/ when convenient.`);
+}
+
+function doctorCheckAgentsMdConvention(projectRoot, add) {
+  const agentsMd = path.join(projectRoot, "AGENTS.md");
+  const claudeMd = path.join(projectRoot, "CLAUDE.md");
+  let claudeStat = null;
+  try {
+    claudeStat = fs.lstatSync(claudeMd);
+  } catch {
+    claudeStat = null;
+  }
+  const agentsExists = fs.existsSync(agentsMd);
+  if (!agentsExists && !claudeStat) return;
+  if (!claudeStat) {
+    add("warn", "agents-md", "AGENTS.md exists but CLAUDE.md does not; run seed-agents-md to add the symlink so both runtimes read one file");
+    return;
+  }
+  if (!claudeStat.isSymbolicLink()) {
+    add("warn", "agents-md", agentsExists
+      ? "CLAUDE.md is a regular file next to AGENTS.md; merge it into AGENTS.md and replace it with a symlink (AGENTS.md is the main file)"
+      : "CLAUDE.md is a regular file and AGENTS.md is missing; run seed-agents-md --adopt-claude-md after confirming with the user");
+    return;
+  }
+  const target = fs.readlinkSync(claudeMd);
+  if (path.basename(target) === "AGENTS.md") {
+    add("ok", "agents-md", "CLAUDE.md is a symlink to AGENTS.md");
+  } else {
+    add("warn", "agents-md", `CLAUDE.md is a symlink to '${target}', not AGENTS.md`);
+  }
+}
+
+// Rot check for the learned-rules ledger: every row must still point at a
+// real landing, and active invariants must still arm on something real.
+function doctorCheckRulesLedger(projectRoot, add) {
+  const rulesRootAbs = path.join(projectRoot, RULES_ROOT_REL);
+  const namespaceDir = path.join(projectRoot, NAMESPACE_ROOT);
+  if (!fs.existsSync(rulesRootAbs)) {
+    if (fs.existsSync(namespaceDir)) {
+      const known = new Set(["prd", "implement", "rules", "intake", "clarify", "config.json"]);
+      const entries = fs.readdirSync(namespaceDir).filter(entry => !entry.startsWith("."));
+      if (entries.length > 0 && entries.every(entry => !known.has(entry))) {
+        add("warn", "agents-namespace", `${NAMESPACE_ROOT}/ exists but holds none of the harness layout (${entries.slice(0, 5).join(", ")}); if it belongs to the application, set namespace.root in ${PROJECT_CONFIG_PATH} to relocate harness artifacts`);
+      }
+    }
+    return;
+  }
+  let ledger;
+  let invariants;
+  try {
+    ledger = readLedger(projectRoot);
+    invariants = loadInvariants(projectRoot);
+  } catch (error) {
+    add("error", "rules", `rules tree is unreadable: ${error.message}`);
+    return;
+  }
+  let rotten = 0;
+  for (const row of ledger) {
+    if (!fs.existsSync(path.join(projectRoot, row.landing))) {
+      rotten += 1;
+      add("warn", "rules", `Ledger row ${row.id} points at a missing landing: ${row.landing}; re-land the lesson or retire the row via rules add`);
+    }
+  }
+  for (const rule of invariants) {
+    if (rule.status !== "active") continue;
+    const arms = rule.trigger.paths.some(glob => {
+      const prefix = globLiteralPrefix(glob);
+      return prefix === "" || fs.existsSync(path.join(projectRoot, prefix));
+    });
+    if (!arms) {
+      rotten += 1;
+      add("warn", "rules", `Invariant ${rule.id} triggers on paths that no longer exist (${rule.trigger.paths.join(", ")}); update or retire it`);
+    }
+  }
+  const pendingCount = loadPending(projectRoot).length;
+  if (pendingCount > 0) {
+    add("warn", "rules", `${pendingCount} lesson(s) in ${RULES_ROOT_REL}/pending/ have not landed as docs or tests yet`);
+  }
+  if (rotten === 0) {
+    add("ok", "rules", `Rules ledger healthy: ${ledger.length} rule(s), ${invariants.filter(rule => rule.status === "active").length} active invariant(s), ${pendingCount} pending`);
+  }
 }
 
 function doctorCheckGithubCli(projectRoot, prMode, add) {

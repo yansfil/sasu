@@ -8,6 +8,7 @@ const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummar
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { taskGraphSummary, buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, rollupTasksFromExecutionPlan, nextItem } = require("../planning");
 const { loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { invariantsForWriteScopes } = require("../rules");
 
 function cmdPlanVerificationCheck(options) {
   const projectRoot = cwd();
@@ -118,6 +119,10 @@ function cmdPlanExecution(options) {
   const { statePath, state } = loadState(options);
 	  state.executionPlan = buildExecutionPlan(state, statePath);
 	  rollupTasksFromExecutionPlan(state);
+	  const injectedRules = injectRuleVerification(state);
+	  if (injectedRules.length && state.verificationPlan) {
+	    state.verificationPlan = buildVerificationPlan(state, statePath);
+	  }
 	  markCompletionReviewsStale(state, "Execution plan was regenerated after review");
 	  state.updatedAt = nowIso();
   persistStateAndArtifacts(statePath, state);
@@ -127,6 +132,7 @@ function cmdPlanExecution(options) {
     status: state.executionPlan.status,
     nodeCount: state.executionPlan.nodes.length,
     gapCount: state.executionPlan.gaps.length,
+    injectedRules: injectedRules.map(item => item.sourceRuleId),
   });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
@@ -135,10 +141,72 @@ function cmdPlanExecution(options) {
     executionPlan: executionPlanSummary(state),
     taskGraph: taskGraphSummary(state),
     ready: readyExecutionPlan(state),
+    injectedRules: injectedRules.map(item => ({ id: item.id, rule: item.sourceRuleId, title: item.title })),
     planPath: toProjectRelative(path.join(path.dirname(statePath), "execution-plan.json"), state.projectRoot || cwd()),
     planMarkdownPath: toProjectRelative(path.join(path.dirname(statePath), "execution-plan.md"), state.projectRoot || cwd()),
     next: nextItem(state),
   }, null, 2) + "\n");
+}
+
+// Best-effort learned-rule injection (R11 of the agents-remember contract):
+// invariants whose triggers prefix-overlap any execution write scope become
+// verification items, so passing them is part of the receipt. The exact,
+// changed-file-based enforcement stays with the deliver gate; this match is
+// conservative and says so in the injected item text.
+function injectRuleVerification(state) {
+  const projectRoot = state.projectRoot || cwd();
+  const scopes = (state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : [])
+    .flatMap(node => Array.isArray(node.writeScope) ? node.writeScope : [])
+    .filter(scope => typeof scope === "string" && !scope.startsWith("TBD:"));
+  let matched;
+  try {
+    matched = invariantsForWriteScopes(projectRoot, scopes);
+  } catch {
+    // An unreadable rules tree must not block planning; doctor reports it.
+    return [];
+  }
+  const injected = [];
+  for (const rule of matched) {
+    if (state.verification.some(item => item.sourceRuleId === rule.id)) continue;
+    const nextIndex = state.verification.filter(item => item.source === "rules_injection").length + 1;
+    const manual = rule.check.type === "manual";
+    const method = rule.check.type === "command"
+      ? rule.check.run
+      : rule.check.type === "grep"
+        ? `rules check --files <changed files> (grep ${rule.check.expect || "present"}: ${rule.check.pattern} in ${rule.check.files})`
+        : `human confirmation: ${rule.check.confirm}`;
+    const item = {
+      id: `RV${nextIndex}`,
+      level: "rule",
+      title: `Learned invariant ${rule.id}`,
+      text: `${rule.summary} (auto-injected: write scope overlaps trigger ${rule.trigger.paths.join(", ")}; best-effort match, exact enforcement at deliver)`,
+      status: "pending",
+      evidence: [],
+      artifacts: [],
+      source: "rules_injection",
+      sourceRuleId: rule.id,
+      testMode: manual ? "human" : "build/static",
+      matrix: {
+        mode: manual ? "human" : "build/static",
+        covers: rule.id,
+        method,
+        artifact: manual ? "none" : "command-log",
+        passCriteria: manual ? rule.check.confirm : "check passes (exit 0 / pattern expectation holds)",
+        environment: "local shell",
+        requiredForDone: !manual,
+        requiredForDoneRaw: manual ? "no" : "yes",
+        canBeBlocked: manual,
+        canBeBlockedRaw: manual ? "yes" : "no",
+        safeProbe: "none (local check)",
+        liveProof: "command log",
+        sideEffect: "none",
+        sensitiveDataPolicy: "no secrets",
+      },
+    };
+    state.verification.push(item);
+    injected.push(item);
+  }
+  return injected;
 }
 
 module.exports = {

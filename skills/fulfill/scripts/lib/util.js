@@ -16,7 +16,27 @@ const SCHEMA = "hoyeon.prd-implement.state.v1";
 // implement/ is runtime state and stays gitignored. The pre-rename `.hoyeon`
 // tree is a read-only fallback so existing projects and in-flight runs keep
 // working; new runs always write under the active namespace.
-const NAMESPACE_ROOT = "agents";
+// Projects whose codebase already owns an `agents/` directory can move the
+// harness namespace with `namespace.root` in the pipeline config. The config
+// file itself stays at a fixed bootstrap location (agents/config.json, legacy
+// .hoyeon/config.json) so the override can be found at all; harness commands
+// read it relative to the working directory, which is always the project root.
+function readNamespaceOverride() {
+  for (const rel of [path.join("agents", "config.json"), path.join(".hoyeon", "config.json")]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), rel), "utf8"));
+      const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
+        ? parsed.namespace.root.trim()
+        : "";
+      if (root && /^[A-Za-z0-9._-]+$/.test(root) && root !== ".hoyeon") return root;
+    } catch {
+      // Missing or invalid config falls back to the default namespace.
+    }
+  }
+  return null;
+}
+
+const NAMESPACE_ROOT = readNamespaceOverride() || "agents";
 const PRD_ROOT_REL = path.join(NAMESPACE_ROOT, "prd");
 const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
@@ -24,7 +44,7 @@ const RULES_ROOT_REL = path.join(NAMESPACE_ROOT, "rules");
 
 const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
-const PROJECT_CONFIG_PATH = path.join(NAMESPACE_ROOT, "config.json");
+const PROJECT_CONFIG_PATH = path.join("agents", "config.json");
 
 const LEGACY_NAMESPACE_ROOT = ".hoyeon";
 const LEGACY_PRD_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "prd");

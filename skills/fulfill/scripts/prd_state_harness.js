@@ -8,6 +8,8 @@ const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdCleanupAc
 const { cmdPlanVerification, cmdPlanExecution } = require("./lib/commands/plan");
 const { cmdMarkNode, cmdAssignNode, cmdMark, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("./lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("./lib/commands/review");
+const { cmdRules } = require("./lib/commands/rules");
+const { cmdSeedAgentsMd } = require("./lib/commands/setup");
 
 // Single source of truth for dispatch and usage. `usageArgs` is what the
 // usage text prints after the command name; `run` receives the raw argv rest.
@@ -71,6 +73,17 @@ const COMMANDS = [
     run: args => cmdFinalize(parseArgs(args)),
   },
   { name: "cleanup-active", usageArgs: ["[--state <path>]"], run: args => cmdCleanupActive(parseArgs(args)) },
+  {
+    name: "rules",
+    usageArgs: [
+      "add --file <invariant-draft.md>",
+      "add --kind fact|regression --id <ID> --summary <text> --evidence <ref> (--landing <path> | --pending)",
+      "check [--files <csv>] [--base <git-ref>] [--all]",
+      "relevant [--paths <csv>] [--query <text>]",
+    ],
+    run: args => cmdRules(args),
+  },
+  { name: "seed-agents-md", usageArgs: ["[--project-root <path>]"], run: args => cmdSeedAgentsMd(parseArgs(args)) },
   { name: "hook", usageArgs: ["stop|subagent-stop|pretool-use"], run: args => cmdHook(args[0] || "stop") },
 ];
 

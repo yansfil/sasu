@@ -43,7 +43,13 @@ test("installer installs both runtimes under butler names with correct substitut
   assert.match(claudeText, /~\/\.claude\/skills\/fulfill\/scripts\/prd_state_harness\.js/);
   assert.match(claudeText, /"\/fulfill"/);
   assert.doesNotMatch(claudeText, /~\/\.codex\/skills\//);
-  assert.doesNotMatch(claudeText, /\$(listen|promise|fulfill|deliver|pantry|please)\b/);
+  assert.doesNotMatch(claudeText, /\$(listen|promise|fulfill|deliver|pantry|please|remember)\b/);
+
+  // remember installs on both runtimes with the substituted harness path.
+  const claudeRemember = fs.readFileSync(path.join(home, ".claude", "skills", "remember", "SKILL.md"), "utf8");
+  assert.match(claudeRemember, /~\/\.claude\/skills\/fulfill\/scripts\/prd_state_harness\.js rules add/);
+  const codexRemember = fs.readFileSync(path.join(home, ".codex", "skills", "remember", "SKILL.md"), "utf8");
+  assert.match(codexRemember, /~\/\.codex\/skills\/fulfill\/scripts\/prd_state_harness\.js rules add/);
 
   // please references its siblings through the Claude install paths.
   const claudePlease = fs.readFileSync(path.join(home, ".claude", "skills", "please", "SKILL.md"), "utf8");

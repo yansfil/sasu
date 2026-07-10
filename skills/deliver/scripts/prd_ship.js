@@ -68,7 +68,7 @@ function usage(exitCode) {
   process.stderr.write(`Usage:
   node prd_ship.js preflight [--state <state.json>]
   node prd_ship.js body [--state <state.json>] [--output <file>] [--force]
-  node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale --reason <why>] [--allow-stale-base --reason <why>]
+  node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
   node prd_ship.js watch-ci [--state <state.json>] [--pr <number-or-url>] [--timeout <seconds>] [--interval <seconds>]
   node prd_ship.js status [--state <state.json>] [--pr <number-or-url>]
 
@@ -841,6 +841,8 @@ function cmdShip(options) {
     overrides.push({ kind: "stale-base", behindBy: base.behindBy, base: base.base, reason: requireReason(options, "allow-stale-base") });
   }
 
+  const rulesGate = runRulesGate(context, options, overrides);
+
   const title = String(options.title || `Ship ${context.state.topicSlug || "PRD implementation"}`);
   const bodyPath = resolveBodyPath(context, options);
   const branch = ensureBranch(context, config);
@@ -858,6 +860,7 @@ function cmdShip(options) {
     pr,
     bodyPath: toRepoRelative(bodyPath, context.repoRoot),
     overrides,
+    rules: rulesGate,
     ci,
     activeCleanup: deliveryChecksPassed
       ? cleanupActive(context)
@@ -873,9 +876,51 @@ function cmdShip(options) {
     prUpdated: Boolean(pr.updated),
     ciVerdict: ci ? ci.verdict : "not-watched",
     overrides,
+    rules: rulesGate,
   });
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   process.exitCode = ciExitCode(ci);
+}
+
+// Learned-invariant gate: changed files are matched against agents/rules
+// triggers and each armed check runs before anything is staged or pushed.
+// Failures are fail-closed; --skip-rules needs a --reason and lands in the
+// ship log like every other override.
+function runRulesGate(context, options, overrides) {
+  const result = run(process.execPath, [harnessPath(), "rules", "check"], {
+    cwd: context.repoRoot,
+    allowFailure: true,
+  });
+  let report;
+  try {
+    report = JSON.parse(result.stdout.trim());
+  } catch {
+    throw new Error(`rules check did not return a readable report:\n${result.stderr || result.stdout}`);
+  }
+  const warnings = [];
+  if (report.pending && report.pending.count > 0) {
+    warnings.push(`agents/rules/pending/ holds ${report.pending.count} unlanded lesson(s): ${report.pending.items.map(item => item.id).join(", ")}. Land them (write the test or docs) or consciously defer.`);
+  }
+  for (const manual of report.manualConfirmations || []) {
+    warnings.push(`Rule ${manual.id} needs human confirmation before delivery: ${manual.detail}`);
+  }
+  if (report.failures && report.failures.length > 0) {
+    if (!options["skip-rules"]) {
+      throw new Error([
+        "Learned invariant checks failed for this change set:",
+        ...report.failures.map(item => `- ${item.id}: ${item.summary}\n  ${item.detail}`),
+        "Fix the violations, or pass --skip-rules --reason \"<why shipping despite a failed invariant is user-approved>\".",
+      ].join("\n"));
+    }
+    overrides.push({ kind: "rules", failures: report.failures.map(item => item.id), reason: requireReason(options, "skip-rules") });
+  }
+  return {
+    ok: report.ok,
+    checked: (report.results || []).length,
+    failures: (report.failures || []).map(item => item.id),
+    pendingCount: report.pending ? report.pending.count : 0,
+    warnings,
+  };
 }
 
 function cmdWatchCi(options) {

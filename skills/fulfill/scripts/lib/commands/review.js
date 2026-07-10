@@ -10,6 +10,7 @@ const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { loadPending } = require("../rules");
 
 function cmdReviewPrompt(options) {
   const { statePath, state } = loadState(options);
@@ -230,7 +231,37 @@ function cmdFinalize(options) {
     status,
     receiptPath: toProjectRelative(path.join(path.dirname(statePath), "receipt.json")),
     reportPath: toProjectRelative(path.join(path.dirname(statePath), "implementation-result.md")),
+    rememberSuggestions: rememberSuggestions(state),
   }, null, 2) + "\n");
+}
+
+// Post-receipt learning nudge (R13 of the agents-remember contract): the
+// deviations recorded during this run are the raw material for `remember`.
+// Recurring types are invariant candidates; one-offs are still worth a fact.
+function rememberSuggestions(state) {
+  const suggestions = [];
+  const byType = new Map();
+  for (const deviation of state.deviations || []) {
+    if (!byType.has(deviation.type)) byType.set(deviation.type, []);
+    byType.get(deviation.type).push(deviation);
+  }
+  for (const [type, items] of byType) {
+    if (items.length >= 2) {
+      suggestions.push(`Deviation type '${type}' recurred ${items.length}x (${items.map(item => item.id).join(", ")}): consider /remember as an invariant with a trigger and check.`);
+    }
+  }
+  if (suggestions.length === 0 && (state.deviations || []).length > 0) {
+    suggestions.push(`${state.deviations.length} deviation(s) recorded this run: skim them for a lesson worth landing via /remember (fact, invariant, or regression test).`);
+  }
+  try {
+    const pending = loadPending(state.projectRoot || cwd());
+    if (pending.length > 0) {
+      suggestions.push(`agents/rules/pending/ still holds ${pending.length} unlanded lesson(s): ${pending.map(item => item.id).join(", ")}.`);
+    }
+  } catch {
+    // Unreadable rules tree is doctor's problem, not finalize's.
+  }
+  return suggestions;
 }
 
 module.exports = {

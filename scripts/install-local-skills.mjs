@@ -29,7 +29,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const SKILL_NAMES = ["listen", "promise", "fulfill", "pantry", "deliver", "please"];
+const SKILL_NAMES = ["listen", "promise", "fulfill", "pantry", "deliver", "please", "remember"];
 
 // Pre-rename install directories that this pipeline used to own.
 const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship"];
@@ -51,7 +51,7 @@ const TARGETS = {
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
   // Invocation tokens: $listen -> /listen.
-  return roots.replace(/\$(listen|promise|fulfill|pantry|deliver|please)\b/g, "/$1");
+  return roots.replace(/\$(listen|promise|fulfill|pantry|deliver|please|remember)\b/g, "/$1");
 }
 
 function ensureDir(dir) {

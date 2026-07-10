@@ -308,7 +308,7 @@ test("trivial review profile can finalize with requirements fidelity review only
   const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
   runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
-  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--", "node", "-e", "void 0; process.exit(0)"], projectRoot);
 
   state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
   const logPath = state.verification[0].artifacts[0].path;
@@ -371,6 +371,10 @@ PASS.
   assert.match(preToolDirective.reason, /trivial review profile/);
   const finalized = runJson(["finalize", "--status", "complete", "--summary", "Trivial run completed."], projectRoot);
   assert.equal(finalized.ok, true);
+  // The receipt nudges remember with the run's recorded deviations.
+  assert.ok(Array.isArray(finalized.rememberSuggestions));
+  assert.ok(finalized.rememberSuggestions.some(item => /deviation/.test(item)),
+    `expected a deviation-based remember suggestion, got: ${JSON.stringify(finalized.rememberSuggestions)}`);
   const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "receipt.json"), "utf8"));
   assert.equal(receipt.status, "complete");
   assert.equal(receipt.finalReview, null);
@@ -886,4 +890,133 @@ test("legacy .hoyeon config.json is honored when no agents/config.json exists", 
   const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "legacy-config", "state.json"), "utf8"));
   assert.equal(state.reviewProfile.profile, "trivial");
   assert.equal(state.reviewProfile.source, "config");
+});
+
+function writeInvariantDraft(projectRoot, { id, trigger, checkRun }) {
+  const draft = path.join(projectRoot, `${id}-draft.md`);
+  write(draft, [
+    "---",
+    `id: ${id}`,
+    "kind: invariant",
+    "status: active",
+    "evidence:",
+    "  - agents/implement/previous-run/state.json#D1",
+    "trigger:",
+    "  paths:",
+    `    - "${trigger}"`,
+    "check:",
+    "  type: command",
+    `  run: ${checkRun}`,
+    "---",
+    "",
+    `Changes under ${trigger} must satisfy ${id}.`,
+  ].join("\n"));
+  runJson(["rules", "add", "--file", path.basename(draft)], projectRoot);
+}
+
+test("plan-execution injects matching learned invariants as verification items", () => {
+  const projectRoot = initGitRepo();
+  writeInvariantDraft(projectRoot, {
+    id: "INV-src-guard",
+    trigger: "src/**",
+    checkRun: "node -e 'process.exit(0)'",
+  });
+  const prdPath = writeApprovedPrd(projectRoot, "rules-injection");
+  // The generic PRD task carries no path hints, so give the PRD a task that
+  // names the guarded path; write-scope inference picks it up.
+  const prd = fs.readFileSync(prdPath, "utf8").replace(
+    "- T1. Run the local command verification. Covers R1, AC1.",
+    "- T1. Update `src/app.js` and run the local command verification. Covers R1, AC1.",
+  );
+  fs.writeFileSync(prdPath, prd);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "injection-session"], projectRoot);
+  const planned = runJson(["plan-execution"], projectRoot);
+  assert.equal(planned.injectedRules.length, 1);
+  assert.equal(planned.injectedRules[0].rule, "INV-src-guard");
+
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-injection", "state.json"), "utf8"));
+  const injected = state.verification.find(item => item.sourceRuleId === "INV-src-guard");
+  assert.ok(injected, "injected verification item exists");
+  assert.equal(injected.source, "rules_injection");
+  assert.match(injected.text, /best-effort match, exact enforcement at deliver/);
+  assert.equal(injected.matrix.requiredForDone, true);
+
+  // Re-planning must not duplicate the injected item.
+  runJson(["plan-execution"], projectRoot);
+  const replanned = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-injection", "state.json"), "utf8"));
+  assert.equal(replanned.verification.filter(item => item.sourceRuleId === "INV-src-guard").length, 1);
+});
+
+test("deliver ship fails closed on a failing learned invariant and honors --skip-rules --reason", () => {
+  const projectRoot = initGitRepo();
+  const shipScript = path.join(repoRoot, "skills", "deliver", "scripts", "prd_ship.js");
+  const prdPath = writeApprovedPrd(projectRoot, "rules-gate");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--delivery", "pr", "--session-id", "gate-session"], projectRoot);
+  runJson(["plan-execution"], projectRoot);
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-gate", "state.json"), "utf8"));
+  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
+  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-gate", "state.json"), "utf8"));
+  const logPath = state.verification[0].artifacts[0].path;
+  const reviewPath = path.join(projectRoot, "agents", "implement", "rules-gate", "review", "requirements-fidelity-review.md");
+  write(reviewPath, `# Requirements Fidelity Review
+
+Status: PASS
+
+## Intent Sources Read
+
+- agents/prd/rules-gate/prd.md
+
+## Decision Trace
+
+- User approved the test scope: represented by R1, AC1, T1, V1 | gap: none
+
+## Findings
+
+- none: no material findings
+
+## Verification Intent Checklist
+
+- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
+
+## Coverage Judgment
+
+- Requirements: covered by V1.
+- Acceptance Criteria: AC1 is met.
+- User-visible behavior: no user-visible behavior.
+- Non-goals and rejected options: none reintroduced.
+- Human verification: none required.
+
+## Verdict
+
+PASS.
+`);
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  runJson(["finalize", "--status", "complete", "--summary", "Gate test run completed."], projectRoot);
+
+  // Arm a failing invariant after the receipt: the guarded file is missing.
+  writeInvariantDraft(projectRoot, {
+    id: "INV-gate-guard",
+    trigger: "src/**",
+    checkRun: "test -f src/must-exist.txt",
+  });
+  write(path.join(projectRoot, "src", "app.js"), "// armed change");
+
+  const blocked = run(process.execPath, [shipScript, "ship", "--no-watch", "--allow-stale", "--reason", "test: freshness is not under test here"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(blocked.status, 0);
+  assert.match(String(blocked.stderr), /Learned invariant checks failed/);
+  assert.match(String(blocked.stderr), /INV-gate-guard/);
+
+  // With the override the gate records instead of blocking; the next failure
+  // (if any) must come from delivery mechanics, not the rules gate.
+  const overridden = run(process.execPath, [shipScript, "ship", "--no-watch", "--allow-stale", "--reason", "test: freshness is not under test here", "--skip-rules", "--reason", "test: user-approved override"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.doesNotMatch(String(overridden.stderr), /Learned invariant checks failed/);
 });
