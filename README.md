@@ -1,4 +1,4 @@
-# Engineering Harness
+# checkshirt
 
 <p align="center"><img src="assets/mascot.svg" width="220" alt="checkshirt-boy mascot"/></p>
 
