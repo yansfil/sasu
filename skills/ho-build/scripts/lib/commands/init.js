@@ -7,7 +7,7 @@ const childProcess = require("child_process");
 const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath, runDirRelFor, legacyRunDirRelFor } = require("../util");
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
-const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState } = require("../state_data");
+const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { taskGraphSummary, verificationContractHash, buildVerificationPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
@@ -15,6 +15,8 @@ const { activePath, normalizeSessionId, writeActiveRecord, persistStateAndArtifa
 
 function cmdInit(options) {
   const inputs = resolveInitInputs(options);
+  const contract = parsePrdContract(inputs.parsed, inputs.projectRoot);
+  assertNonCircularDeliveryContract(inputs.deliveryConfig, contract);
   const worktreePreparation = prepareDeliveryWorktree(
     inputs.projectRoot, inputs.prdAbs, inputs.deliveryConfig, options,
     inputs.approvalOverride, inputs.initialSessionId,
@@ -44,7 +46,6 @@ function cmdInit(options) {
   }
   ensureRunDirs(runDirAbs);
 
-  const contract = parsePrdContract(inputs.parsed, inputs.projectRoot);
   const state = buildInitialState(inputs, contract, worktreePreparation, options, runDirRel);
   if (inputs.approvalRaw !== "approved" && inputs.approvalOverride) {
     recordDeviation(state, "prd_approval_override", "PRD", inputs.approvalOverride, {
@@ -79,6 +80,49 @@ function cmdInit(options) {
     ready: readyExecutionPlan(state),
     next: nextItem(state),
   }, null, 2) + "\n");
+}
+
+const DELIVERY_RECEIPT_PATTERNS = [
+  {
+    label: "PR creation or PR URL",
+    pattern: /\b(?:pull\s+request|pr)\s*(?:url|link|number|created|creation|opened|opening|exists?|published|posted)\b|\b(?:open|create|publish)\s+(?:a\s+)?(?:pull\s+request|pr)\b|(?:pr|pull\s+request|풀\s*리퀘스트)\s*(?:생성|오픈|열기|게시|url|링크)/iu,
+  },
+  {
+    label: "CI or required-check verdict",
+    pattern: /\b(?:ci(?:\s+checks?)?|github\s+actions?|required\s+checks?|status\s+checks?)\s*(?:pass(?:es|ed|ing)?|green|succeeds?|succeeded|success(?:ful)?)\b|(?:ci|github\s+actions?|체크|검사)\s*(?:통과|성공|완료)/iu,
+  },
+  {
+    label: "merge result or merge commit",
+    pattern: /\b(?:merge\s+commit|merged?\s+(?:into|to)\s+(?:main|master)|(?:pr|pull\s+request)\s+(?:is\s+)?merged)\b|(?:pr|pull\s+request|풀\s*리퀘스트|main|master)\s*(?:머지|병합)|(?:머지|병합)\s*(?:커밋|완료)/iu,
+  },
+];
+
+function assertNonCircularDeliveryContract(deliveryConfig, contract) {
+  if (!deliveryConfig || deliveryConfig.mode !== "pr") return;
+  const receiptGates = [
+    ...(contract.tasks || []).map(item => ({ kind: "task", item })),
+    ...(contract.acceptanceCriteria || []).map(item => ({ kind: "acceptance criterion", item })),
+    ...(contract.verification || [])
+      .filter(isVerificationRequiredForDone)
+      .map(item => ({ kind: "required verification", item })),
+  ];
+  const violations = [];
+  for (const gate of receiptGates) {
+    const text = String(gate.item.text || gate.item.title || "");
+    for (const matcher of DELIVERY_RECEIPT_PATTERNS) {
+      if (matcher.pattern.test(text)) {
+        violations.push(`${gate.item.id} (${gate.kind}) requires ${matcher.label}: ${text}`);
+        break;
+      }
+    }
+  }
+  if (!violations.length) return;
+  throw new Error([
+    "PRD has a circular PR-delivery completion contract.",
+    "ho-build must create the complete implementation receipt before ho-ship can open the PR, observe CI, or merge it.",
+    ...violations.map(item => `- ${item}`),
+    "Move these outcomes to a post-receipt Delivery section. They must not be PRD tasks, acceptance criteria, or Required For Done verification items.",
+  ].join("\n"));
 }
 
 // Resolve and validate everything init needs before any side effect:

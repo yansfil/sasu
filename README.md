@@ -13,8 +13,8 @@ conversation
   └─ ho-scope    interview until the requirements stop being vague
       └─ ho-spec    write the PRD as a human decision contract
           └─ ho-build    implement against a verification plan, with receipts
-              └─ ho-ship    branch, PR body, push, CI watch
-                              └─ merged PR
+              └─ ho-ship    branch, PR body, push, CI watch, gated merge
+                              └─ recorded delivery result
 
 please = the whole chain in one invocation, stopping only for risky work
 remember = lessons land as enforcement, not notes
@@ -27,7 +27,7 @@ remember = lessons land as enforcement, not notes
 | `ho-scope` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
 | `ho-spec` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
 | `ho-build` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
-| `ho-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, and a fail-closed guardrail set |
+| `ho-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
@@ -78,7 +78,9 @@ The harness treats "done" as a provable state, and the enforcement works identic
   A strict requirements fidelity review compares implementation evidence against the user's original intent, then a profile-aware adversarial review audits that proof.
   Any source change after a passing review marks it stale.
 - **Fail-closed delivery.**
+  `ho-build` rejects PRDs that circularly require PR, CI, or merge evidence before the implementation receipt.
   `ho-ship` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
+  Its explicit merge command rechecks CI and mergeability and pins the reviewed PR head with `--match-head-commit` before recording the merge commit.
   Every override needs a `--reason` and lands in the ship log.
 - **Learned invariants gate delivery.**
   Lessons registered through `rules add` carry trigger globs and an executable check; `ho-ship` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.

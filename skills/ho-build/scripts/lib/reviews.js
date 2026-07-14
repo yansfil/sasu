@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, normalizeRelPath, escapeRegExp } = require("./util");
-const { worktreeSnapshot, primaryWorktreeRoot } = require("./git");
+const { worktreeSnapshot, snapshotMaterializedInHead, primaryWorktreeRoot } = require("./git");
 const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
@@ -282,7 +282,7 @@ function reviewSnapshotMatchesCurrent(savedSnapshot, currentSnapshot, state) {
   // compatible with snapshots captured before this field existed).
   if (savedSnapshot && currentSnapshot && savedSnapshot.headSha && currentSnapshot.headSha
     && savedSnapshot.headSha !== currentSnapshot.headSha) {
-    return false;
+    return snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state);
   }
   const savedEntries = Array.isArray(savedSnapshot && savedSnapshot.entries) ? savedSnapshot.entries : [];
   const currentEntries = Array.isArray(currentSnapshot && currentSnapshot.entries) ? currentSnapshot.entries : [];

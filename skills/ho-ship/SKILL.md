@@ -4,8 +4,8 @@ description: |
   Publish a completed `ho-build` run through GitHub PR delivery. Use when
   the user invokes "$ho-ship" or when
   the user asks to ship, open a PR, push a completed PRD implementation, watch
-  CI, use PR delivery mode, or continue after `ho-build` receipt until a
-  pull request exists and required checks pass.
+  CI, merge an approved green PR, use PR delivery mode, or continue after
+  `ho-build` receipt through recorded GitHub delivery evidence.
 ---
 
 # ho-ship
@@ -93,6 +93,8 @@ complete ho-build receipt
   -> ship: validate gates, commit, push, create or update PR, watch CI
   -> if CI fails, fix through the implementation workflow, refresh reviews, re-ship
   -> report PR URL and CI state
+  -> when the user explicitly approved merge: merge with the reviewed head pinned
+  -> record PR URL, CI verdict, implementation head, and merge commit
 ```
 
 ## Guardrails Versus Agent Judgment
@@ -113,6 +115,12 @@ Script-enforced guardrails (fail closed):
   wastes a full CI round.
 - staging is restricted to the delivery allowlist; unrelated changes fail the run.
 - the PR body must have no remaining `AGENT-FILL` placeholders and no AI agent attribution.
+- `merge` has no stale-state or stale-base override.
+  It requires verbatim user approval, a complete fresh receipt, fresh reviews,
+  a branch current with `origin/<base>`, an open non-draft mergeable PR, passing
+  CI, and a PR head exactly matching the reviewed local HEAD.
+  The GitHub merge is pinned with `--match-head-commit` so a concurrent push
+  cannot change what gets merged.
 
 Agent-owned judgment:
 
@@ -121,9 +129,11 @@ Agent-owned judgment:
 - deciding when to stop retrying and hand off to the user.
 - deciding whether an override is justified, with the user's explicit approval.
 
-Every guardrail has an explicit override flag that requires `--reason` and is recorded in
+Every supported pre-merge override requires `--reason` and is recorded in
 `delivery/ship-log.jsonl`.
 Use an override only with the user's explicit approval, and quote that approval in the reason.
+The final `merge` gate is intentionally stricter and has no freshness, base, CI,
+or head override.
 
 ## Commands
 
@@ -132,6 +142,7 @@ node ~/.codex/skills/ho-ship/scripts/prd_ship.js preflight --state agents/implem
 node ~/.codex/skills/ho-ship/scripts/prd_ship.js body --state agents/implement/<topic-slug>/state.json
 node ~/.codex/skills/ho-ship/scripts/prd_ship.js ship --state agents/implement/<topic-slug>/state.json --title "<PR title>"
 node ~/.codex/skills/ho-ship/scripts/prd_ship.js watch-ci --state agents/implement/<topic-slug>/state.json [--timeout <seconds>]
+node ~/.codex/skills/ho-ship/scripts/prd_ship.js merge --state agents/implement/<topic-slug>/state.json --approval "<verbatim user approval>" [--method squash|merge|rebase]
 node ~/.codex/skills/ho-ship/scripts/prd_ship.js status --state agents/implement/<topic-slug>/state.json
 ```
 
@@ -147,6 +158,17 @@ silently discarded.
 updates the body of an existing PR, then watches CI with a bounded timeout.
 Exit codes: `0` shipped and CI passed (or no checks), `2` CI failed, `3` CI still pending at the
 timeout (rerun `watch-ci`), `1` a guardrail refused the run.
+
+`merge` is a separate, explicitly approved action.
+Pass the user's merge instruction verbatim through `--approval`.
+The command revalidates implementation freshness after the delivery commit,
+proves the local and remote PR heads are identical, checks CI and GitHub
+mergeability, then writes
+`agents/implement/<topic-slug>/delivery/delivery-result.json` and a `merge`
+event in `delivery/ship-log.jsonl`.
+Use this command instead of raw `gh pr merge` for PRD delivery.
+If it refuses because source or evidence changed, return to `ho-build`; do not
+bypass it with a direct GitHub command.
 
 Use `--no-gpg-sign` only when the local git signing configuration blocks the
 delivery commit in a non-interactive session.
@@ -239,4 +261,5 @@ Report:
 - commit hash or existing pushed commits.
 - CI verdict and checked workflow names.
 - receipt path.
+- merge commit and delivery-result path when merge was approved and completed.
 - any remaining human review or merge blockers.

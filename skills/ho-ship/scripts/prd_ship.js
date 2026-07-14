@@ -72,6 +72,7 @@ function main() {
     if (command === "body") return cmdBody(options);
     if (command === "ship") return cmdShip(options);
     if (command === "watch-ci") return cmdWatchCi(options);
+    if (command === "merge") return cmdMerge(options);
     if (command === "status") return cmdStatus(options);
     usage(1);
   } catch (error) {
@@ -86,6 +87,7 @@ function usage(exitCode) {
   node prd_ship.js body [--state <state.json>] [--output <file>] [--force]
   node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
   node prd_ship.js watch-ci [--state <state.json>] [--pr <number-or-url>] [--timeout <seconds>] [--interval <seconds>]
+  node prd_ship.js merge [--state <state.json>] [--pr <number-or-url>] --approval <verbatim-user-approval> [--method squash|merge|rebase] [--delete-branch]
   node prd_ship.js status [--state <state.json>] [--pr <number-or-url>]
 
 Exit codes: 0 ok, 1 error/refused, 2 CI failed, 3 CI still pending at timeout.
@@ -189,6 +191,10 @@ function findGitRoot(startDir) {
 
 function currentBranch(repoRoot) {
   return run("git", ["branch", "--show-current"], { cwd: repoRoot }).stdout.trim();
+}
+
+function currentHead(repoRoot) {
+  return run("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).stdout.trim();
 }
 
 function branchExists(repoRoot, branch) {
@@ -765,6 +771,10 @@ function shipLogPath(context) {
   return path.join(context.stateDir, "delivery", "ship-log.jsonl");
 }
 
+function deliveryResultPath(context) {
+  return path.join(context.stateDir, "delivery", "delivery-result.json");
+}
+
 // --- commands -----------------------------------------------------------
 
 function cmdPreflight(options) {
@@ -954,6 +964,145 @@ function cmdWatchCi(options) {
   process.exitCode = ciExitCode(ci);
 }
 
+function fetchPr(context, prRef) {
+  const result = run("gh", [
+    "pr", "view", prRef,
+    "--json", "number,url,state,isDraft,mergeStateStatus,mergeable,headRefName,headRefOid,baseRefName,statusCheckRollup,mergedAt,mergeCommit",
+  ], {
+    cwd: context.repoRoot,
+    allowFailure: true,
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not inspect pull request ${prRef}: ${(result.stderr || result.stdout).trim()}`);
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`Pull request inspection did not return JSON: ${result.stdout}`);
+  }
+}
+
+function mergeMethod(options) {
+  const method = String(options.method || "squash").toLowerCase();
+  if (!["squash", "merge", "rebase"].includes(method)) {
+    throw new Error(`Unsupported merge method '${method}'. Expected squash, merge, or rebase.`);
+  }
+  return method;
+}
+
+function cmdMerge(options) {
+  const context = resolveState(options);
+  assertCompleteReceipt(context);
+  const config = deliveryConfig(context, options);
+  const approval = typeof options.approval === "string" ? options.approval.trim() : "";
+  if (!approval) {
+    throw new Error("merge requires --approval \"<verbatim user approval to merge>\"; PR creation or CI success alone is not merge approval");
+  }
+  if (config.mode !== "pr") {
+    throw new Error(`Delivery mode is '${config.mode}', not 'pr'. Merge is not approved for this implementation run.`);
+  }
+
+  const freshness = verifyDelivery(context);
+  if (!freshness.ok) {
+    throw new Error([
+      "Implementation state is not merge-fresh:",
+      ...(freshness.violations || []).map(item => `- ${item}`),
+      "Return to ho-build, rerun affected verification and both reviews, finalize a fresh receipt, then ship again.",
+    ].join("\n"));
+  }
+  const base = baseFreshness(context.repoRoot, config.baseBranch);
+  if (base.fresh !== true) {
+    throw new Error(base.fresh === false
+      ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh ho-build verification/reviews/receipt, and re-ship before merge.`
+      : `Could not prove freshness against origin/${base.base}; merge fails closed until the base comparison succeeds.`);
+  }
+  if (currentBranch(context.repoRoot) !== config.branch) {
+    throw new Error(`Current branch '${currentBranch(context.repoRoot)}' does not match delivery branch '${config.branch}'.`);
+  }
+
+  const prRef = prRefFromOptions(context, options);
+  const pr = fetchPr(context, prRef);
+  const headSha = currentHead(context.repoRoot);
+  if (pr.state !== "OPEN") throw new Error(`Pull request is '${pr.state}', not OPEN: ${pr.url || prRef}`);
+  if (pr.isDraft) throw new Error(`Pull request is still a draft: ${pr.url || prRef}`);
+  if (pr.headRefName !== config.branch || pr.baseRefName !== config.baseBranch) {
+    throw new Error(`Pull request branch mismatch: expected ${config.branch} -> ${config.baseBranch}, got ${pr.headRefName} -> ${pr.baseRefName}`);
+  }
+  if (!pr.headRefOid || pr.headRefOid !== headSha) {
+    throw new Error(`Pull request head ${pr.headRefOid || "unknown"} does not match local reviewed HEAD ${headSha}; fetch and reconcile before merge.`);
+  }
+  if (pr.mergeable !== "MERGEABLE") {
+    throw new Error(`Pull request mergeability is '${pr.mergeable || "unknown"}', not MERGEABLE: ${pr.url || prRef}`);
+  }
+  if (["BEHIND", "BLOCKED", "DIRTY", "DRAFT", "UNKNOWN"].includes(String(pr.mergeStateStatus || "UNKNOWN"))) {
+    throw new Error(`Pull request merge state is '${pr.mergeStateStatus || "UNKNOWN"}'; resolve it before merge.`);
+  }
+
+  const checks = fetchChecks(context, pr.url || prRef);
+  const ciVerdict = checks.noChecks ? "no-checks" : classifyChecks(checks.checks);
+  if (!["pass", "no-checks"].includes(ciVerdict)) {
+    throw new Error(`Required CI is '${ciVerdict}'. Wait for a pass or return to ho-build for source fixes before merge.`);
+  }
+  const rules = runRulesGate(context, {}, []);
+  const method = mergeMethod(options);
+  const mergeArgs = ["pr", "merge", pr.url || prRef, `--${method}`, "--match-head-commit", headSha];
+  if (options["delete-branch"]) mergeArgs.push("--delete-branch");
+  run("gh", mergeArgs, { cwd: context.repoRoot });
+
+  const mergedPr = fetchPr(context, pr.url || prRef);
+  if (mergedPr.state !== "MERGED") {
+    throw new Error(`GitHub did not report the pull request as MERGED after the merge command: ${mergedPr.state || "unknown"}`);
+  }
+  const result = {
+    schema: "hoyeon.prd-delivery-result.v1",
+    status: "merged",
+    recordedAt: new Date().toISOString(),
+    approval,
+    receipt: {
+      path: toRepoRelative(context.receiptPath, context.repoRoot),
+      status: context.receipt.status,
+    },
+    branch: config.branch,
+    baseBranch: config.baseBranch,
+    implementationHead: headSha,
+    pr: {
+      number: mergedPr.number,
+      url: mergedPr.url,
+      mergedAt: mergedPr.mergedAt || null,
+    },
+    ci: {
+      verdict: ciVerdict,
+      checks: checks.checks || [],
+      noChecks: checks.noChecks,
+    },
+    rules,
+    merge: {
+      method,
+      commit: mergedPr.mergeCommit && mergedPr.mergeCommit.oid ? mergedPr.mergeCommit.oid : null,
+      matchedHeadCommit: headSha,
+    },
+  };
+  writeFile(deliveryResultPath(context), JSON.stringify(result, null, 2));
+  appendJsonl(shipLogPath(context), {
+    ts: result.recordedAt,
+    event: "merge",
+    pr: result.pr.url,
+    ciVerdict,
+    method,
+    implementationHead: headSha,
+    mergeCommit: result.merge.commit,
+    approval,
+  });
+  const output = {
+    ok: true,
+    ...result,
+    resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
+    activeCleanup: cleanupActive(context),
+  };
+  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+}
+
 function cmdStatus(options) {
   const context = resolveState(options);
   const config = deliveryConfig(context, options);
@@ -975,6 +1124,7 @@ function cmdStatus(options) {
     currentBranch: currentBranch(context.repoRoot),
     gitStatus: gitStatus(context.repoRoot),
     pr: prJson,
+    deliveryResult: fs.existsSync(deliveryResultPath(context)) ? readJson(deliveryResultPath(context)) : null,
     error: pr.status === 0 ? null : pr.stderr,
   }, null, 2) + "\n");
   if (pr.status !== 0) process.exitCode = 2;

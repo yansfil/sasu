@@ -145,6 +145,23 @@ ${extra}
   return file;
 }
 
+test("PR delivery init rejects receipt gates that require PR, CI, or merge outcomes", () => {
+  const root = initGitRepo();
+  const prdPath = writeApprovedPrd(root, "circular-delivery");
+  const circular = fs.readFileSync(prdPath, "utf8")
+    .replace("- AC1. V1 passes with a command-log artifact.", "- AC1. V1 passes and the CI checks pass.");
+  fs.writeFileSync(prdPath, circular);
+
+  const result = run(process.execPath, [harness, "init", "--prd", prdPath, "--delivery", "pr"], {
+    cwd: root,
+    allowFailure: true,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /circular PR-delivery completion contract/);
+  assert.match(result.stderr, /AC1 .*CI or required-check verdict/);
+  assert.equal(fs.existsSync(path.join(root, "agents", "implement", "circular-delivery", "state.json")), false);
+});
+
 test("an unbound pointer is claimed by the first hook session and isolated from others", () => {
   const root = initGitRepo();
   const prd = writeApprovedPrd(root, "bootstrap");
@@ -648,6 +665,28 @@ test("commit-only source change makes a recorded review stale", () => {
   const fin = runJson(["finalize", "--status", "complete", "--summary", "done"], root, { allowFailure: true });
   assert.equal(fin.ok, false);
   assert(fin.violations.some(v => /stale/i.test(v)), JSON.stringify(fin.violations));
+});
+
+test("delivery freshness accepts the exact reviewed worktree materialized as a commit", () => {
+  const root = initGitRepo();
+  const slug = "reviewed-commit";
+  const { logPath, reviewPath } = driveToFidelity(root, slug, "reviewed-commit-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
+  runJson(["finalize", "--status", "complete", "--summary", "done"], root);
+  run("git", ["add", "-A"], { cwd: root });
+  run("git", ["commit", "-m", "Materialize reviewed result"], { cwd: root });
+
+  const statePath = path.join(root, "agents", "implement", slug, "state.json");
+  const fresh = runJson(["verify-delivery", "--state", statePath], root);
+  assert.equal(fresh.ok, true, JSON.stringify(fresh.violations));
+
+  write(path.join(root, "README.md"), "# Changed after review\n");
+  run("git", ["add", "README.md"], { cwd: root });
+  run("git", ["commit", "-m", "Unreviewed source change"], { cwd: root });
+  const stale = runJson(["verify-delivery", "--state", statePath], root, { allowFailure: true });
+  assert.equal(stale.ok, false);
+  assert(stale.violations.some(item => /stale/i.test(item)), JSON.stringify(stale.violations));
 });
 
 test("fidelity Decision Trace accepts a table trace instead of bullets", () => {

@@ -213,6 +213,15 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 ```
 
+The implementation receipt must not depend on outcomes that only `ho-ship` can
+produce.
+For PR delivery, PR creation or URL, CI verdicts, merge status, and merge commit
+are post-receipt delivery evidence.
+Do not put them in PRD tasks, Acceptance Criteria, or verification marked
+`Required For Done: yes`.
+`init --delivery pr` rejects this circular contract before creating state or a
+worktree.
+
 The harness assigns a review profile at init:
 
 - `trivial`: small low-risk work. Required verification, artifact validation,
@@ -363,6 +372,26 @@ preserve PRD coverage and the final review accepts them.
 ## 7. Verification Loop
 
 Use the generated verification plan as the concrete proof plan.
+
+Use the smallest focused probe while source is changing.
+Reserve broad suites and cost-bearing agent benchmarks for a coherent milestone
+or the frozen final implementation content.
+Before a cost-bearing benchmark:
+
+- required local static, unit, integration, and browser checks must already pass.
+- the user-approved run budget and stop condition must be explicit; never infer
+  permission to exceed them.
+- randomized tasks must use a recorded deterministic seed.
+- record the implementation HEAD and dirty-source snapshot with the benchmark
+  evidence so the fidelity review can prove the run covered the final content.
+
+A fixed-coordinate replay against a randomized task is diagnostic evidence, not
+a passing benchmark result.
+Any source change after the cost-bearing run invalidates it as final-HEAD proof;
+rerun the affected benchmark within the approved budget before completion
+reviews.
+Batch small source fixes and run the full suite once at the frozen final content
+instead of paying for the same broad checks after every edit.
 
 For shell-verifiable checks:
 
@@ -665,6 +694,12 @@ the tracked goal complete yet.
 Run `$ho-ship` after `finalize --status complete` and keep the goal open until
 the PR exists and required CI passes or the delivery handoff is explicitly
 blocked.
+If the user approved merge, let `ho-ship merge` perform the final freshness,
+CI, PR-head, and mergeability checks and record the PR URL, CI verdict, and
+merge commit as post-receipt delivery evidence.
+Do not add those delivery outcomes back into the implementation receipt.
+If CI requires a source fix, return to this workflow and refresh verification,
+reviews, and the receipt before shipping or merging again.
 After PR creation, `ho-ship` cleans the matching active pointer and
 session-scoped active files.
 For local-only runs or manual cleanup, use:

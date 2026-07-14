@@ -1,4 +1,4 @@
 interface:
-  display_name: "Fulfill (PRD Implement)"
+  display_name: "ho-build"
   short_description: "Implement PRDs with goals, graph, and proof"
-  default_prompt: "Use $fulfill to implement the approved PRD with goal tracking, TaskGraph, main-agent fidelity checks, final adversarial review, and artifact-backed proof."
+  default_prompt: "Use $ho-build to implement the approved PRD with goal tracking, TaskGraph, fidelity checks, final review, and artifact-backed proof."

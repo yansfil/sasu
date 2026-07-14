@@ -144,6 +144,52 @@ function worktreeSnapshot(state) {
   };
 }
 
+function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
+  if (!savedSnapshot || !currentSnapshot || !savedSnapshot.headSha || !currentSnapshot.headSha) return false;
+  if (savedSnapshot.headSha === currentSnapshot.headSha) return false;
+  if ((currentSnapshot.entries || []).length !== 0) return false;
+  const projectRoot = state.projectRoot || cwd();
+  const diff = childProcess.spawnSync(
+    "git",
+    ["diff", "--no-renames", "--name-only", "-z", savedSnapshot.headSha, currentSnapshot.headSha, "--"],
+    { cwd: projectRoot, shell: false, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 },
+  );
+  if (diff.status !== 0) return false;
+
+  const excludedPrefixes = [
+    normalizeRelPath(state.runDir || ""),
+    normalizeRelPath(ACTIVE_PATH),
+  ].filter(Boolean);
+  const allChanged = diff.stdout.split("\0").map(normalizeRelPath).filter(Boolean);
+  const sourceChanged = allChanged.filter(rel =>
+    !excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`)));
+  const expected = [];
+  for (const entry of savedSnapshot.entries || []) {
+    if (entry.path) expected.push(normalizeRelPath(entry.path));
+    if (entry.originalPath) expected.push(normalizeRelPath(entry.originalPath));
+  }
+  const actualSet = new Set(sourceChanged);
+  const expectedSet = new Set(expected.filter(Boolean));
+  if (actualSet.size !== expectedSet.size || [...actualSet].some(rel => !expectedSet.has(rel))) return false;
+  if (expectedSet.size === 0 && !allChanged.some(rel =>
+    excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`)))) return false;
+
+  for (const entry of savedSnapshot.entries || []) {
+    const rel = normalizeRelPath(entry.path || "");
+    if (!rel) return false;
+    const abs = path.join(projectRoot, rel);
+    if (entry.sha256) {
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return false;
+      if (sha256File(abs) !== entry.sha256) return false;
+      if ((entry.bytes ?? null) !== fs.statSync(abs).size) return false;
+    } else if (fs.existsSync(abs)) {
+      return false;
+    }
+    if (entry.originalPath && fs.existsSync(path.join(projectRoot, normalizeRelPath(entry.originalPath)))) return false;
+  }
+  return true;
+}
+
 module.exports = {
   runGit,
   currentBranch,
@@ -155,4 +201,5 @@ module.exports = {
   gitIgnored,
   parseGitStatusEntry,
   worktreeSnapshot,
+  snapshotMaterializedInHead,
 };

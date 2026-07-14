@@ -1,4 +1,4 @@
 interface:
-  display_name: "Deliver (PRD Ship)"
-  short_description: "Ship PRD work through PR and CI"
-  default_prompt: "Use $deliver to publish the completed PRD implementation as a pull request and watch CI."
+  display_name: "ho-ship"
+  short_description: "Ship PRD work through PR, CI, and approved merge"
+  default_prompt: "Use $ho-ship to publish a completed PRD implementation, watch CI, and merge only with explicit approval."
