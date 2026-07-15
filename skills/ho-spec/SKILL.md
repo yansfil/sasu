@@ -38,7 +38,7 @@ agents/clarify/<topic-slug>/clarity-summary.md
 
 If no context path is provided, inspect `agents/intake/` first for the matching
 or most recent topic, then `agents/clarify/`. If no handoff exists and major
-ambiguity remains, ask one blocking question or recommend `$ho-scope`.
+ambiguity remains, ask one blocking question or recommend `$ho-interview`.
 
 ## Output Contract
 
@@ -66,6 +66,8 @@ same slug.
 topic: "<topic>"
 status: "draft | ready"
 human_approval: "pending | approved"
+review_profile: "trivial | standard | high-risk"
+review_rationale: "<one-sentence semantic risk rationale>"
 source_intake: "agents/intake/<topic-slug>/prd-handoff.md | current conversation"
 source_clarity: "agents/clarify/<topic-slug>/clarity-summary.md | none"
 created_at: "YYYY-MM-DD"
@@ -136,28 +138,20 @@ decision), each pointing to its section.
 
 ### Delivery Contract
 
-If the user asks for PR automation, CI completion, worktree execution, or a
-ship-to-PR workflow, preserve that as a delivery decision in the PRD.
+If the user asks for PR automation, CI completion, worktree execution, or a ship-to-PR workflow, preserve that as a delivery decision in the PRD.
 Do not treat PR delivery as an implementation detail that can be decided later.
 
-Represent delivery mode in the existing sections instead of adding a new
-top-level section:
+Represent delivery mode in the existing sections instead of adding a new top-level section:
 
 - Add a Summary approval checklist item for `delivery mode: local | pr`.
-- Add a Human Decision when the user must approve PR creation, CI watching,
-  branch naming, or worktree setup.
-- Add Decision Traceability bullets for accepted delivery choices and rejected
-  alternatives.
-- Add a PRD-level release or delivery hygiene task when PR delivery is part of
-  done.
-- Add Verification Contract rows for PR body, pushed branch, PR URL, and CI
-  only when the PRD itself requires delivery proof.
+- Add a Human Decision when the user must approve PR creation, CI watching, branch naming, or worktree setup.
+- Add Decision Traceability bullets for accepted delivery choices and rejected alternatives.
+- Add a PRD-level release-hygiene task only for implementation work that must be complete before the receipt, such as release notes or PR-ready evidence.
+- Keep branch creation, push, PR URL, CI verdict, and merge result out of PRD tasks, acceptance criteria, and required verification because `$ho-ship` records them after the implementation receipt.
 - Add the delivery result to the Implementation Result Report Contract.
 
-When the repository has `agents/config.json`, read it before drafting and
-reflect relevant defaults in the PRD.
-The config is not a substitute for human approval when delivery can create
-branches, commits, pull requests, deployments, external calls, or CI spend.
+When the repository has `agents/config.json`, read it before drafting and reflect relevant defaults in the PRD.
+The config is not a substitute for human approval when delivery can create branches, commits, pull requests, deployments, external calls, or CI spend.
 
 ### 1. Summary
 
@@ -172,6 +166,28 @@ before reading technical or verification details.
 ### 3. Scope And Non-Goals
 
 Define included and excluded behavior. This is a primary human review surface.
+
+#### Product Completeness Contract
+
+Write the PRD for a coherent, production-quality product rather than an intentionally reduced MVP.
+Do not omit behavior merely because this is the first implementation or because a smaller scope is faster.
+Cover the complete primary user journey and every relevant loading, empty, error, permission, partial-success, recovery, responsive, accessibility, performance, security, operation, and support boundary.
+Apply only the quality boundaries relevant to the product instead of adding generic checklist requirements.
+Any deliberate omission must be a visible non-goal or deferred decision with its user consequence, rationale, and revisit condition.
+If the source request truly asks for a prototype or experiment, preserve that explicit decision instead of silently upgrading it into a production launch.
+
+#### Semantic Review Profile
+
+Assign `review_profile` by reading the complete intent, product surface, technical structure, data effects, and delivery plan.
+The agent owns this semantic judgment; the harness validates the declared enum and defaults missing declarations to `standard`.
+Write one concrete sentence in `review_rationale` explaining the dominant reason.
+
+- Use `trivial` only for bounded documentation, copy, tests, or internal maintenance with no changed user-visible behavior, runtime contract, access boundary, persistent data effect, external side effect, or delivery risk.
+- Use `standard` for normal product and engineering changes, including small user-facing UI or UX changes.
+- Use `high-risk` for production-data mutation or migration, auth or access changes, security-sensitive behavior, credentials or PII, payments or billing, irreversible or costly external actions, destructive infrastructure, or production rollout and rollback risk.
+
+Never lower the profile to save time.
+When uncertain between adjacent profiles, choose the higher one and let a reviewer narrow the concern in its findings rather than weakening the gate.
 
 ### 4. Pre-Work And Required Decisions
 
@@ -393,6 +409,8 @@ After drafting and before marking the PRD `ready`, verify inline:
   requirement rather than a proxy condition.
 - Regression bias: every changed behavior has automated regression coverage
   or an explicit reason why another mode is the better proof.
+- Product completeness: the PRD covers the coherent intended journey and relevant quality boundaries, and every omission is an explicit product decision rather than an implicit MVP cut.
+- Review profile: `review_profile` and `review_rationale` reflect a semantic reading of actual effects rather than keyword matching or PRD size.
 
 If a check fails, revise the PRD and re-check. State in the final report that
 the self-check passed; do not write it to a file.
@@ -452,12 +470,12 @@ Require the implementing agent to report:
 2. Read source artifacts and directly relevant project docs.
    Read `agents/config.json` when it exists or when the user asks for PR
    delivery, worktrees, or CI automation.
-3. Draft `prd.md` with every required section and `human_approval: "pending"`.
+3. Draft `prd.md` with every required section, `human_approval: "pending"`, and a semantic review profile with rationale.
 4. Ask only contract-breaking questions; do not rerun intake inside PRD.
 5. Derive PRD-level tasks from requirements and acceptance criteria.
 6. Add the Test Mode Contract and Required Agent Verification matrix.
 7. Run the Inline Self-Check Before Ready (intent, pass intent, regression
-   bias) and fix failures.
+   bias, product completeness, and review profile) and fix failures.
 8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
 9. Mark `status: ready` only when blocking decisions are resolved, the inline
@@ -492,6 +510,9 @@ Before finalizing:
 - PRD-Level Tasks derive from requirements and acceptance criteria.
 - Implementation Guardrails prevent hidden scope and unapproved structure drift.
 - The PRD does not quietly expand beyond the intake handoff.
+- The PRD describes a coherent production-quality product unless the user explicitly chose a prototype or experiment.
+- Scope reductions are explicit non-goals or deferred decisions with user consequence, rationale, and revisit condition.
+- Review profile is semantically assigned, small user-facing changes are not trivial, and sensitive or irreversible work is high-risk.
 
 ## Final Report
 

@@ -9,7 +9,7 @@ const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, RULES_ROOT_REL, N
 const { readLedger, loadInvariants, loadPending, globLiteralPrefix } = require("../rules");
 const { gitTracked, gitIgnored } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig } = require("../config");
-const { verificationPlanSummary, executionPlanSummary, countState, reviewProfileName, finalReviewRequiredForState } = require("../state_data");
+const { verificationPlanSummary, executionPlanSummary, countState, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("../state_data");
 const { taskGraphSummary, refreshExecutionTraceMatrix, readyExecutionPlan, buildTaskGraph, nextItem } = require("../planning");
 const { collectArtifacts } = require("../artifacts");
 const { validateArtifacts, reviewWorktreeSnapshotViolations, prdCopyDriftWarnings, completionReadiness, prdSnapshotViolations } = require("../reviews");
@@ -25,6 +25,7 @@ function cmdStatus(options) {
     statePath: toProjectRelative(statePath),
     status: state.status,
     reviewProfile: state.reviewProfile || { profile: reviewProfileName(state), source: "default" },
+    reviewPolicy: effectiveReviewPolicy(state),
     prdPath: state.prdPath,
     runDir: state.runDir,
     delivery: state.delivery || null,
@@ -65,6 +66,7 @@ function cmdVerifyDelivery(options) {
     statePath: toProjectRelative(statePath),
     status: state.status,
     reviewProfile: state.reviewProfile || { profile: reviewProfileName(state), source: "default" },
+    reviewPolicy: effectiveReviewPolicy(state),
     delivery: state.delivery || null,
     receiptStatus: state.finalReceipt ? state.finalReceipt.status : null,
     violations,
@@ -188,7 +190,7 @@ function doctorCheckDeliveryConfig(projectRoot, projectConfig, slug, add) {
   if (!["auto", "trivial", "standard", "high-risk"].includes(reviewProfileConfig)) {
     add("error", "review-profile", `config review.profile '${reviewProfileConfig}' is invalid; use trivial, standard, high-risk, or auto`);
   } else {
-    add("ok", "review-profile", `Review profile: ${reviewProfileConfig === "auto" ? "auto-classified from the PRD (default)" : `forced to ${reviewProfileConfig} by config review.profile`}`);
+    add("ok", "review-profile", `Review profile: ${reviewProfileConfig === "auto" ? "agent-declared by PRD, with standard fallback (default)" : `${reviewProfileConfig} safety floor from config review.profile`}`);
   }
   return delivery;
 }

@@ -51,6 +51,17 @@ test("parseMarkdownItems keeps explicit ids and auto-numbers the rest", () => {
   assert.equal(items[0].status, "pending");
 });
 
+test("parseMarkdownItems preserves indented continuation lines", () => {
+  const items = parser.parseMarkdownItems(
+    "- R1. The product supports the complete primary journey.\n  This includes recovery from a failed save and covers AC1.\n- R2. The second requirement remains separate.\n",
+    "R",
+    "Requirement",
+  );
+  assert.equal(items.length, 2);
+  assert.match(items[0].text, /recovery from a failed save/);
+  assert.deepEqual(items[0].acceptanceCriteria, ["AC1"]);
+});
+
 test("parseVerification prefers matrix rows over bullets and normalizes matrix fields", () => {
   const section = [
     "### 9.2 Required Agent Verification",

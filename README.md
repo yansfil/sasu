@@ -10,7 +10,7 @@ He scopes before he specs, he specs before he builds, he does not say "done" wit
 
 ```text
 conversation
-  └─ ho-scope    interview until the requirements stop being vague
+  └─ ho-interview    interview until the requirements stop being vague
       └─ ho-spec    write the PRD as a human decision contract
           └─ ho-build    implement against a verification plan, with receipts
               └─ ho-ship    branch, PR body, push, CI watch, gated merge
@@ -24,9 +24,10 @@ remember = lessons land as enforcement, not notes
 
 | Skill | What it owns |
 | --- | --- |
-| `ho-scope` | Pre-PRD interview: axis-driven Q&A, risk escalation, misunderstanding checks, a closure matrix, and a PRD handoff artifact |
-| `ho-spec` | The PRD as a contract: scope, non-goals, decision traceability, a verification contract, and an explicit `human_approval` gate |
-| `ho-build` | Harness-driven implementation: TaskGraph, artifact-backed evidence, fidelity and adversarial reviews, and a strict completion receipt |
+| `ho-interview` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, traceable closure, and a PRD handoff artifact |
+| `ho-scope` | Compatibility alias for `ho-interview` |
+| `ho-spec` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
+| `ho-build` | Agent-planned, harness-checked implementation: TaskGraph, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
 | `ho-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
@@ -46,7 +47,7 @@ node scripts/install-local-skills.mjs
 | | Codex | Claude Code |
 | --- | --- | --- |
 | Install root | `~/.codex/skills/<name>/` | `~/.claude/skills/<name>/` |
-| Invocation | `$ho-scope`, `$ho-spec`, ... | `/ho-scope`, `/ho-spec`, ... |
+| Invocation | `$ho-interview`, `$ho-spec`, ... | `/ho-interview`, `/ho-spec`, ... |
 | `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$ho-build` becomes `/ho-build`) |
 | `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
 | Hooks | `Stop` + `SubagentStop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
@@ -74,8 +75,10 @@ The harness treats "done" as a provable state, and the enforcement works identic
 - **Evidence or it did not happen.**
   Required verification items need registered artifacts of the right kind per mode (command logs, screenshots, API/DB probes).
   Self-authored summaries never count as evidence, and artifact hashes plus git snapshots make stale reviews detectable.
-- **Two-stage review.**
-  A strict requirements fidelity review compares implementation evidence against the user's original intent, then a profile-aware adversarial review audits that proof.
+- **Profile-aware review.**
+  Every run gets a requirements fidelity review, while only high-risk and compatible legacy runs require a second adversarial review.
+  The agent declares semantic risk from full context, and the harness validates the profile instead of classifying natural language with keyword rules.
+  PRD, project policy, and CLI profiles act as safety floors, so a runtime flag cannot silently lower a stronger judgment.
   Any source change after a passing review marks it stale.
 - **Fail-closed delivery.**
   `ho-build` rejects PRDs that circularly require PR, CI, or merge evidence before the implementation receipt.
@@ -106,13 +109,14 @@ npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --ski
 After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
-- Claude Code: start a new session and check that `/ho-scope`, `/ho-spec`, `/ho-build`, `/ho-ship`, `/ho-setup`, and `/please` appear in the skill list
+- Claude Code: start a new session and check that `/ho-interview`, `/ho-spec`, `/ho-build`, `/ho-ship`, `/ho-setup`, and `/please` appear in the skill list
 
 ## Repository Layout
 
 ```text
 skills/
-  ho-scope/  SKILL.md
+  ho-interview/  SKILL.md, scripts/validate_intake.mjs
+  ho-scope/      compatibility alias
   ho-spec/   SKILL.md
   ho-build/  SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
   ho-setup/  SKILL.md

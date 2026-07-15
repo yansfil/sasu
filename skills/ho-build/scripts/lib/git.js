@@ -87,6 +87,25 @@ function parseGitStatusEntry(raw) {
   return { status, path: rest, originalPath };
 }
 
+function parseGitStatusZ(output) {
+  const records = String(output || "").split("\0");
+  const entries = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const raw = records[index];
+    if (!raw) continue;
+    const parsed = parseGitStatusEntry(raw);
+    if (/[RC]/.test(parsed.status)) {
+      const originalPath = records[index + 1] || "";
+      if (originalPath) {
+        parsed.originalPath = originalPath;
+        index += 1;
+      }
+    }
+    entries.push(parsed);
+  }
+  return entries;
+}
+
 function worktreeSnapshot(state) {
   const projectRoot = state.projectRoot || cwd();
   const gitDir = childProcess.spawnSync("git", ["rev-parse", "--git-dir"], {
@@ -113,25 +132,21 @@ function worktreeSnapshot(state) {
     normalizeRelPath(ACTIVE_PATH),
   ].filter(Boolean);
   const entries = [];
-  for (const raw of status.stdout.split("\0")) {
-    if (!raw) continue;
-    const parsed = parseGitStatusEntry(raw);
+  for (const parsed of parseGitStatusZ(status.stdout)) {
     if (!parsed.path) continue;
     const rel = normalizeRelPath(parsed.path);
     if (!rel || excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`))) continue;
     const abs = path.join(projectRoot, rel);
-    let fileHash = null;
-    let fileBytes = null;
-    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-      fileHash = sha256File(abs);
-      fileBytes = fs.statSync(abs).size;
-    }
+    const metadata = snapshotPathMetadata(abs);
     entries.push({
       status: parsed.status,
       path: rel,
       originalPath: parsed.originalPath ? normalizeRelPath(parsed.originalPath) : null,
-      sha256: fileHash,
-      bytes: fileBytes,
+      sha256: metadata.sha256,
+      bytes: metadata.bytes,
+      kind: metadata.kind,
+      executable: metadata.executable,
+      symlinkTarget: metadata.symlinkTarget,
     });
   }
   entries.sort((a, b) => `${a.path}\0${a.status}`.localeCompare(`${b.path}\0${b.status}`));
@@ -147,8 +162,23 @@ function worktreeSnapshot(state) {
 function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
   if (!savedSnapshot || !currentSnapshot || !savedSnapshot.headSha || !currentSnapshot.headSha) return false;
   if (savedSnapshot.headSha === currentSnapshot.headSha) return false;
-  if ((currentSnapshot.entries || []).length !== 0) return false;
   const projectRoot = state.projectRoot || cwd();
+  const savedByPath = new Map((savedSnapshot.entries || [])
+    .map(entry => [normalizeRelPath(entry.path || ""), entry])
+    .filter(([rel]) => Boolean(rel)));
+  const initialByPath = new Map((((state.initialWorktreeSnapshot || {}).entries) || [])
+    .map(entry => [normalizeRelPath(entry.path || ""), entry])
+    .filter(([rel]) => Boolean(rel)));
+  const preservedBaselinePaths = new Set();
+  for (const current of currentSnapshot.entries || []) {
+    const rel = normalizeRelPath(current.path || "");
+    const saved = savedByPath.get(rel);
+    const initial = initialByPath.get(rel);
+    if (!saved || !initial
+      || !snapshotEntriesEqual(saved, current)
+      || !snapshotEntriesEqual(initial, current)) return false;
+    preservedBaselinePaths.add(rel);
+  }
   const diff = childProcess.spawnSync(
     "git",
     ["diff", "--no-renames", "--name-only", "-z", savedSnapshot.headSha, currentSnapshot.headSha, "--"],
@@ -165,6 +195,7 @@ function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
     !excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`)));
   const expected = [];
   for (const entry of savedSnapshot.entries || []) {
+    if (preservedBaselinePaths.has(normalizeRelPath(entry.path || ""))) continue;
     if (entry.path) expected.push(normalizeRelPath(entry.path));
     if (entry.originalPath) expected.push(normalizeRelPath(entry.originalPath));
   }
@@ -177,17 +208,88 @@ function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
   for (const entry of savedSnapshot.entries || []) {
     const rel = normalizeRelPath(entry.path || "");
     if (!rel) return false;
+    if (preservedBaselinePaths.has(rel)) continue;
     const abs = path.join(projectRoot, rel);
-    if (entry.sha256) {
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return false;
-      if (sha256File(abs) !== entry.sha256) return false;
-      if ((entry.bytes ?? null) !== fs.statSync(abs).size) return false;
-    } else if (fs.existsSync(abs)) {
-      return false;
-    }
-    if (entry.originalPath && fs.existsSync(path.join(projectRoot, normalizeRelPath(entry.originalPath)))) return false;
+    if (!snapshotPathMatches(entry, abs)) return false;
+    if (entry.originalPath
+      && snapshotPathMetadata(path.join(projectRoot, normalizeRelPath(entry.originalPath))).kind !== "missing") return false;
   }
   return true;
+}
+
+function snapshotEntriesEqual(left, right) {
+  return String(left && left.status || "") === String(right && right.status || "")
+    && normalizeRelPath(left && left.path || "") === normalizeRelPath(right && right.path || "")
+    && normalizeRelPath(left && left.originalPath || "") === normalizeRelPath(right && right.originalPath || "")
+    && (left && left.sha256 || null) === (right && right.sha256 || null)
+    && ((left && left.bytes) ?? null) === ((right && right.bytes) ?? null)
+    && optionalSnapshotFieldEqual(left, right, "kind")
+    && optionalSnapshotFieldEqual(left, right, "executable")
+    && optionalSnapshotFieldEqual(left, right, "symlinkTarget");
+}
+
+function snapshotPathMetadata(abs) {
+  let stats;
+  try {
+    stats = fs.lstatSync(abs);
+  } catch (error) {
+    return {
+      sha256: null,
+      bytes: null,
+      kind: error && error.code === "ENOENT" ? "missing" : "unreadable",
+      executable: undefined,
+      symlinkTarget: undefined,
+    };
+  }
+  if (stats.isSymbolicLink()) {
+    const symlinkTarget = fs.readlinkSync(abs);
+    try {
+      const targetStats = fs.statSync(abs);
+      return {
+        sha256: targetStats.isFile() ? sha256File(abs) : null,
+        bytes: targetStats.isFile() ? targetStats.size : null,
+        kind: "symlink",
+        executable: undefined,
+        symlinkTarget,
+      };
+    } catch {
+      return { sha256: null, bytes: null, kind: "symlink", executable: undefined, symlinkTarget };
+    }
+  }
+  if (stats.isFile()) {
+    return {
+      sha256: sha256File(abs),
+      bytes: stats.size,
+      kind: "file",
+      executable: Boolean(stats.mode & 0o111),
+      symlinkTarget: undefined,
+    };
+  }
+  return {
+    sha256: null,
+    bytes: null,
+    kind: stats.isDirectory() ? "directory" : "other",
+    executable: undefined,
+    symlinkTarget: undefined,
+  };
+}
+
+function snapshotPathMatches(snapshotEntry, abs) {
+  const current = snapshotPathMetadata(abs);
+  if (snapshotEntry.sha256) {
+    if (current.sha256 !== snapshotEntry.sha256) return false;
+    if ((snapshotEntry.bytes ?? null) !== (current.bytes ?? null)) return false;
+  } else if (snapshotEntry.kind === undefined && current.kind !== "missing") {
+    return false;
+  }
+  return optionalSnapshotFieldEqual(snapshotEntry, current, "kind")
+    && optionalSnapshotFieldEqual(snapshotEntry, current, "executable")
+    && optionalSnapshotFieldEqual(snapshotEntry, current, "symlinkTarget");
+}
+
+function optionalSnapshotFieldEqual(left, right, field) {
+  if (!left || !right || left[field] === undefined || right[field] === undefined) return true;
+  return left[field] === right[field];
 }
 
 module.exports = {
@@ -200,6 +302,9 @@ module.exports = {
   gitTracked,
   gitIgnored,
   parseGitStatusEntry,
+  parseGitStatusZ,
   worktreeSnapshot,
   snapshotMaterializedInHead,
+  snapshotEntriesEqual,
+  snapshotPathMatches,
 };

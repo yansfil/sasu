@@ -5,23 +5,18 @@ description: |
   "$ho-build", asks to execute or implement an approved PRD, or wants
   the agent to turn PRD-level tasks into an execution plan, TaskGraph, concrete
   verification plan, artifact-backed evidence, goal/progress tracking,
-  main-agent-owned fidelity checks, profile-aware review gates, and strict
+  profile-owned fidelity checks, profile-aware review gates, and strict
   completion receipt.
 ---
 
 # ho-build
 
-Artifacts live under the visible `agents/` namespace (`agents/implement/**`,
-`.prd-implement-active.json`); a legacy `.hoyeon/implement/**` tree from older
-runs stays readable as a fallback.
+Artifacts live under the visible `agents/` namespace at `agents/implement/**` and `agents/implement/.prd-implement-active.json`.
+A legacy `.hoyeon/implement/**` tree from older runs remains readable as a fallback.
 
 Use this skill to implement an approved PRD end to end.
-
-This is the execution counterpart to `ho-spec`. It turns a human-reviewed PRD into
-implementation state, execution nodes, verification evidence, profile-aware
-reviews, and a receipt. Completion accounting is strict; execution details can be
-derived flexibly when they preserve the PRD contract.
-
+This is the execution counterpart to `ho-spec`.
+It turns a human-reviewed PRD into implementation state, execution nodes, verification evidence, profile-aware reviews, and a strict receipt.
 Match the user's language by default.
 
 ## Inputs
@@ -34,37 +29,55 @@ agents/prd/<topic-slug>/prd.md
 
 If none is provided, inspect `agents/prd/` for the matching or most recent PRD.
 
-The current PRD structure should include:
+Current PRDs should include:
 
-- `## 4. Pre-Work And Required Decisions`
-- `## 5. Major Technical Structure Changes`
-- `## 7. Acceptance Criteria`
-- `## 8. PRD-Level Tasks`
-- `## 9. Verification Contract`
-- `## 10. Risks And Open Decisions`
-- `## 11. Implementation Guardrails`
-- `## 12. Implementation Result Report Contract`
+- `## 4. Pre-Work And Required Decisions`.
+- `## 5. Major Technical Structure Changes`.
+- `## 7. Acceptance Criteria`.
+- `## 8. PRD-Level Tasks`.
+- `## 9. Verification Contract`.
+- `## 10. Risks And Open Decisions`.
+- `## 11. Implementation Guardrails`.
+- `## 12. Implementation Result Report Contract`.
 
-Current PRDs ship as a single `prd.md`; PRD-side quality is an inline
-self-check plus the Harness Readiness Gate.
-Legacy PRDs may carry side audit files
-(`intent-scope-audit.md`, `verification-contract-audit.md`); read them when
-they exist.
+Current PRDs use one `prd.md`, an inline semantic self-check, and the stateless Harness Readiness Gate.
+Legacy PRDs may have `intent-scope-audit.md` or `verification-contract-audit.md`; read those files when present.
 
-If required pre-work, approval, credentials, migration windows, production data,
-or product decisions are unresolved, stop and ask.
+Stop when required pre-work, human approval, credentials, migration windows, production data, or product decisions remain unresolved.
 
-"Non-trivial" throughout this skill means any of: 3 or more PRD-level tasks,
-DB schema or migration changes, auth/security surfaces, payments or billing,
-external services or credentials, production data, or scope that spans more
-than one working session. Everything else is trivial.
+The agent owns semantic review-profile judgment after reading the complete PRD and relevant repo context.
+Current PRDs declare `review_profile` and `review_rationale`; the harness validates that contract and defaults a missing declaration to `standard` instead of trying to understand natural language with regex.
+Use `trivial` only when no user-visible behavior, runtime contract, persistent data, access boundary, external side effect, or delivery risk changes.
+Use `standard` for normal engineering work and all small user-facing changes, and `high-risk` for sensitive, destructive, irreversible, or production-affecting work.
+Initialization captures the dirty-worktree baseline in `initialWorktreeSnapshot`, and the final result compares it with the receipt snapshot so unrelated existing changes remain auditable.
 
-For execution graph details, read `references/execution-graph.md` when
-implementing a PRD, modifying this skill, or diagnosing TaskGraph behavior.
+## Reference Routing
+
+The entrypoint owns lifecycle ordering, hard stops, primary commands, and completion authority.
+Read each directly linked reference completely when its condition applies.
+References do not require nested reference chasing.
+
+| Reference | Read when |
+| --- | --- |
+| [`references/execution-graph.md`](references/execution-graph.md) | Before `plan-execution`, during node implementation or subagent assignment, when modifying this skill, or when diagnosing TaskGraph, roll-up, and parallel behavior. |
+| [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before `plan-verification`, before running any required `V#`, and whenever runtime evidence is recorded, replaced, refreshed, or rejected. |
+| [`references/reviews-and-finalization.md`](references/reviews-and-finalization.md) | Before the acceptance sweep, requirements fidelity review, final adversarial review, receipt finalization, or blocked and partial handoff. |
+| [`references/worktrees-and-delivery.md`](references/worktrees-and-delivery.md) | When `agents/config.json` exists, delivery is `pr`, worktrees are enabled, an existing run is resumed, session binding needs diagnosis, or a local active pointer must be cleaned. |
+
+## Core Invariants
+
+- Never implement a pending PRD without explicit human approval or a verbatim approval deviation allowed by the calling workflow, such as `$please`.
+- Treat Major Technical Structure Changes as the approved structure lock and pause before material deviation.
+- Do not add unmapped scope, hidden user flows, unapproved services, schemas, external calls, or destructive actions.
+- Only the coordinator mutates harness state, reconciles subagents, applies final edits, and records completion outcomes.
+- Every required verification item must pass with valid artifact-backed evidence from the actual run.
+- Requirements fidelity review precedes final adversarial review when the effective policy requires both, and source or evidence changes make affected reviews stale.
+- `receipt.json` is the only implementation completion proof; Goal state and chat claims merely mirror it.
+- PR creation, CI, and merge are post-receipt delivery outcomes and never required implementation verification.
 
 ## Output Artifacts
 
-Harness-managed state and derived views:
+Harness-managed state and views:
 
 ```text
 agents/implement/<topic-slug>/checklist.md
@@ -84,7 +97,7 @@ agents/implement/.prd-implement-active.json
 agents/implement/.prd-implement-sessions/<encoded-session-id>.json
 ```
 
-Agent-created run notes, review reports, and evidence artifacts:
+Agent-created notes, reviews, and evidence:
 
 ```text
 agents/implement/<topic-slug>/context-notes.md
@@ -102,7 +115,7 @@ agents/implement/<topic-slug>/review/final-review.md
 ```text
 goal tracking opened
   -> PRD Verification Contract
-  -> ho-build Verification Planner
+  -> Verification Planner
   -> Execution Plan
   -> TaskGraph
   -> main-agent coverage check
@@ -110,7 +123,7 @@ goal tracking opened
   -> verify-run / record-artifact
   -> requirements fidelity review
   -> blocked/partial handoff when completion is impossible
-  -> final adversarial review when required by review profile
+  -> final adversarial review when required
   -> runtime cleanup
   -> receipt
   -> PR delivery handoff when delivery mode is pr
@@ -118,221 +131,99 @@ goal tracking opened
 
 ## 1. Confirm Readiness
 
-Before editing code:
+Before editing:
 
-1. Read the PRD and status.
-2. Confirm the PRD is human-approved: frontmatter `human_approval: "approved"`.
-   The implementing agent must never set this value itself. If it is missing or
-   `pending`, stop and ask the user to review and approve the PRD. If the user
-   gives explicit approval in conversation instead of editing the file, update
-   the frontmatter to `approved` quoting that approval in the commit/notes, or
-   pass the verbatim approval to `init --allow-unapproved-prd` so the harness
-   records it as a deviation. `init` fails without one of these.
-3. Confirm blocking pre-work and human decisions are resolved.
-4. Treat Major Technical Structure Changes as the approved structure lock.
-5. For legacy PRDs with side audit files, read them; unresolved audit
-   failures block implementation until the PRD is fixed or the user
-   explicitly accepts the risk.
-6. Read Implementation Guardrails and Risks.
-7. Read `agents/config.json` when it exists.
-   `node ~/.codex/skills/ho-build/scripts/prd_state_harness.js doctor`
-   reports the effective delivery config and environment readiness; run it when
-   delivery mode, worktree sync, or PR/CI readiness is in question.
-8. Inspect `git status --short`.
-9. Read actual files likely to be touched before editing. For large files
-   (roughly 1000+ lines), locate the relevant functions or sections with `rg`
-   first and read only those ranges; reading whole large files repeatedly
-   bloats context, forces compaction, and triggers costly re-reads later.
+1. Read the PRD and confirm `status: ready`.
+2. Confirm `human_approval: "approved"` or obtain the verbatim approval deviation authorized by the calling workflow.
+3. Never set human approval yourself; when the user explicitly approves in conversation, either update frontmatter with that quoted approval in the implementation notes or pass the exact approval to `init --allow-unapproved-prd`.
+4. Confirm blocking pre-work and human decisions are resolved.
+5. Treat Major Technical Structure Changes as the approved structure lock.
+6. Read legacy side audits when they exist and stop on unresolved failures unless the user explicitly accepts the risk.
+7. Read Implementation Guardrails and Risks.
+8. Read `agents/config.json` when it exists.
+9. Run `doctor` when delivery, worktree sync, or PR and CI readiness is uncertain.
+10. Inspect `git status --short` and preserve unrelated changes.
+11. Read the files likely to be touched before editing.
 
-If `agents/config.json` or the user's request sets delivery mode to `pr`, treat
-PR delivery as part of the user-facing workflow.
-The implementation receipt still proves implementation completion, but the
-thread is not done until `ho-ship` opens or updates the PR and required CI
-passes or is explicitly reported as blocked.
+For files around 1000 lines or longer, use `rg` to locate relevant functions or sections and read only those ranges.
+Avoid repeatedly loading whole large files because context loss can force costly re-reads.
 
-Pause for approval before material structure deviations, unmapped scope,
-production data, credentials, destructive DB changes, billing, or irreversible
-deploy actions.
+If delivery is `pr`, the implementation receipt proves implementation completion, but the user-facing workflow remains open until `$ho-ship` creates or updates the PR and required CI passes or delivery is explicitly blocked.
+
+Pause before material structure deviations, unmapped scope, production data, credentials, destructive DB changes, billing, or irreversible deployment actions.
 
 ## 2. Start Goal Tracking
 
-Mirror progress into the runtime's goal/progress surface. The tracker is
-lifecycle and progress control, not an independent completion proof.
-The authoritative implementation proof is `receipt.json` produced by
-`finalize`; tracker completion only mirrors a successful receipt and any
-required PR delivery handoff.
+Use the runtime Goal or task surface as lifecycle and progress control.
+It never replaces the receipt.
 
-With Codex goal tools:
+With Codex Goal tools:
 
 1. Call `get_goal`.
-2. If no active goal exists, call `create_goal` with an objective like:
-   `Implement <prd-path> end to end through PRD receipt`.
-3. If the active goal is the same PRD implementation, continue it.
-4. If the active goal is unrelated, ask before replacing or mixing goals.
-5. `update_plan` may mirror progress, but it is not a substitute for Goal
-   state.
-6. Do not call `update_goal complete` until `finalize --status complete`
-   succeeds and the completion checks in `Finalize` are all true.
-7. For blocked or partial handoff, do not call `update_goal complete`. Call
-   `update_goal blocked` only when the goal tool's blocked-status contract is
-   satisfied; otherwise leave the Goal active and report the blocked/partial
-   receipt state.
+2. Create a Goal for the PRD when none exists.
+3. Continue an active Goal only when it is the same implementation.
+4. Ask before replacing or mixing an unrelated Goal.
+5. Use `update_plan` only as a progress mirror.
+6. Do not call `update_goal complete` before a successful complete receipt and any required PR delivery handoff.
+7. For blocked or partial handoff, follow the Goal tool's own blocked-status contract and never claim completion.
 
-In Claude Code, use the task list (TaskCreate/TaskUpdate) as the progress
-mirror under the same rules: do not mark the run's final task complete before
-the receipt exists and, when delivery mode is `pr`, before the PR delivery
-handoff is complete or explicitly blocked.
+In Claude Code, apply the same rules to TaskCreate and TaskUpdate.
+Do not complete the final task before the receipt exists and any required PR delivery handoff is complete or explicitly blocked.
 
-If no goal or task tracking tools are available in the current surface, record
-that limitation in `context-notes.md` or the final report instead of silently
-acting as if the tracker exists.
+When no Goal or task tools exist, record that limitation in `context-notes.md` or the final report.
 
-## 3. Activate State Harness
+## 3. Initialize State
 
-From the target repository root:
+From the target repository root, initialize and inspect status:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init --prd <prd-path> --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
+node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init --prd <prd-path>
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js status
 ```
 
-Bind the harness to the current agent session at initialization. In Codex,
-prefer `CODEX_SESSION_ID`, then `CODEX_THREAD_ID`. In Claude Code, the literal
-`${CLAUDE_SESSION_ID}` above is substituted with the real session id when the
-skill loads. If no session id is available, run `init --prd <prd-path>` and
-rely on the first Stop/PreToolUse hook payload to bind `activeSessionId`. Do
-not intentionally share one active state across unrelated agent sessions.
+For conversational approval, pass its exact text through `--allow-unapproved-prd`.
+Initialization fails when PRD approval is pending and no allowed deviation is recorded.
 
-When delivery mode should be PR-based, pass it explicitly or rely on
-`agents/config.json`:
+Bind a session ID and handle PR delivery or worktrees according to `references/worktrees-and-delivery.md` when those conditions apply.
 
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
-  --prd <prd-path> \
-  --delivery pr \
-  --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
-```
+The harness extracts PRD-level tasks, acceptance criteria, verification items, test modes, and structure locks into durable state.
+It records the PRD's agent-declared `trivial`, `standard`, or `high-risk` profile, with `standard` as the safe missing-value fallback.
+Read `references/reviews-and-finalization.md` for the exact gate owned by each profile and override only a genuinely wrong semantic judgment.
 
-The implementation receipt must not depend on outcomes that only `ho-ship` can
-produce.
-For PR delivery, PR creation or URL, CI verdicts, merge status, and merge commit
-are post-receipt delivery evidence.
-Do not put them in PRD tasks, Acceptance Criteria, or verification marked
-`Required For Done: yes`.
-`init --delivery pr` rejects this circular contract before creating state or a
-worktree.
+`init` refuses to overwrite existing state without `--force`.
+Use `--force` only when the user explicitly requests a clean restart.
 
-The harness assigns a review profile at init:
+## 4. Plan Before Implementation
 
-- `trivial`: small low-risk work. Required verification, artifact validation,
-  requirements fidelity review, and receipt are required. Mandatory final
-  adversarial review is skipped.
-- `standard`: normal product or code work. Required verification, requirements
-  fidelity review, a thin final gate, and receipt are required.
-- `high-risk`: DB/schema/migrations, auth/security, payments/billing,
-  credentials, production data, external/live providers, deploy/rollback, or
-  similar risk. Full requirements fidelity review and full adversarial review
-  are required.
-
-Override only when the risk classification is wrong:
-
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
-  --prd <prd-path> \
-  --review-profile trivial|standard|high-risk
-```
-
-If `agents/config.json` contains `worktree.enabled: true`, `init` may prepare a
-PR branch worktree, sync configured local files, run configured setup commands,
-and initialize state in that worktree.
-Continue implementation from the emitted worktree path.
-Do not assume `.env`, local certs, local databases, or `node_modules` follow a
-new git worktree unless the config explicitly links, copies, or installs them.
-
-In worktree mode the session working directory usually stays at the main
-checkout, so relative paths are a trap:
-
-- Every file edit or file creation (`apply_patch` and equivalents) must use the
-  absolute worktree path. Never pass a relative path to an editing tool, even
-  when shell commands in the same turn use an explicit worktree workdir.
-- Before writing run reports or reviews, confirm the target directory with the
-  absolute path emitted by the harness prompt or `status`.
-- After `init` prepares a worktree, every subsequent command should run with
-  `workdir` set to the emitted worktree path or should pass an absolute
-  `--state` path.
-- If a file lands in the wrong checkout, move the existing file with `mv` (or
-  `git mv`) to the correct absolute path. Do not delete it and re-author the
-  content; regenerating a long file wastes minutes and risks content drift.
-
-`init` refuses to overwrite an existing `state.json` without `--force`.
-If the worktree already holds implementation state, `init` from the main checkout resumes that
-run instead of resetting it; pass `--force` only when the user wants a clean restart.
-In worktree mode, `init` also writes active pointers and session-scoped active
-files at the main checkout root so statusline and hooks can find the run from
-either checkout.
-The latest legacy pointer is informational; session-scoped files are the
-authority when a hook payload includes a session id.
-Do not run two active PRD implementations from one checkout unless each has a
-distinct session id and all commands use the correct worktree or explicit
-`--state`.
-
-The harness extracts PRD-level tasks, acceptance criteria, verification items,
-test modes, and structure locks into durable state. It supports:
-
-- current PRDs: `PRD-Level Tasks`, `Verification Contract`, `Test Mode Contract`,
-  `Required Agent Verification`.
-
-## 4. Plan Verification Before Implementation
+Plan verification first:
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-verification
 ```
 
-The planner binds the PRD verification contract to repo reality.
+Do not implement while the verification plan has blocking gaps.
+Read `references/verification-and-evidence.md` for planner semantics, command binding, evidence classes, and safe live-proof rules.
 
-- Full matrices with `Method`/`Artifact` use those concrete fields directly.
-- Lean matrices with `Pass Intent` derive commands, tools, targets, and
-  artifact kinds from the Test Mode Contract plus repo signals.
-- It classifies checks as command, automated, browser, server, API, DB, or
-  manual-agent.
-- It creates AC coverage and blocking gaps for missing coverage, missing
-  commands, missing artifact strategy, missing browser startup, or unsafe
-  external proof.
-
-If `verification-plan.md` reports blocking gaps, do not implement. Fix the PRD
-contract, supply missing repo context, or ask for the missing decision; then
-rerun `plan-verification`.
-
-## 5. Plan Execution And TaskGraph
+Then plan execution and inspect ready work:
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-execution
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js ready
 ```
 
-`plan-execution` maps every PRD-level task to execution nodes, inferred write
-scopes, dependencies, risk, parallel safety, owner, evidence expectations, and
-traceability (`T# -> N# -> AC# -> V#`). The PRD stays clean; executor details
-live in implementation artifacts.
+When parallel execution is enabled and a useful split exists, inspect the repo and pass one explicit task-plan JSON file to `plan-execution --task-plan <path>`.
+Do not put file ownership or low-level dependencies in the PRD.
+Without an explicit task plan, nodes remain safely sequential.
 
-Inspect `taskgraph.md` or `status` after planning. The TaskGraph must account
-for verification planning, execution planning, execution nodes, PRD task
-rollups, acceptance criteria, verification items, requirements fidelity review,
-final review, and receipt. `ready` only identifies runnable execution nodes; it
-does not prove final eligibility.
+Perform the main-agent coverage check before editing.
+Inspect intent sources, verification coverage, execution nodes, TaskGraph gates, ambiguity, structure-lock drift, and unmapped scope.
+Record material findings in `context-notes.md` and stop on a material blocker.
+Use `references/execution-graph.md` for node fields, roll-ups, deviations, and parallel guidance.
 
-Work the next ready node. The harness recommends ready and parallel groups, but
-does not spawn subagents. The coordinator assigns and reconciles work.
+## 5. Implement Ready Nodes
 
-## 6. Implementation Loop
-
-For each ready execution node:
-
-1. Re-read relevant files.
-2. Make the smallest change that satisfies mapped requirements and ACs.
-3. Record material decisions in `context-notes.md`.
-4. Run the smallest relevant verification.
-5. Record evidence:
+Work only on ready nodes unless an equivalent order is recorded as a deviation.
+For each node, re-read relevant files, make the smallest mapped change, record material decisions, run a focused check, and attach evidence.
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
@@ -347,53 +238,16 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
   --evidence "<evidence>"
 ```
 
-For repeated same-status updates, comma-separated ids are allowed:
+Task completion rolls up from nodes, mapped acceptance criteria, and verification.
+Do not manually close a task merely because one node is done.
 
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
-  --id N1,N2 \
-  --status complete \
-  --evidence "<shared evidence>"
+Parallelize only when an agent-declared task plan and `ready` both say the work is safe and the split is useful.
+Give subagents bounded, disjoint ownership and keep reviewers read-only.
+The coordinator remains responsible for reconciliation, verification, and every harness state mutation.
 
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
-  --kind ac \
-  --id AC1,AC2 \
-  --status met \
-  --evidence "<shared evidence>"
-```
+## 6. Verify And Register Evidence
 
-Do not manually close PRD tasks just because a node is done. Task completion
-rolls up from execution nodes, mapped ACs, and mapped verification items.
-
-Record deviations when execution order, write scope, task shape, or verifier
-substitution differs from the plan. Deviations are allowed only when they
-preserve PRD coverage and the final review accepts them.
-
-## 7. Verification Loop
-
-Use the generated verification plan as the concrete proof plan.
-
-Use the smallest focused probe while source is changing.
-Reserve broad suites and cost-bearing agent benchmarks for a coherent milestone
-or the frozen final implementation content.
-Before a cost-bearing benchmark:
-
-- required local static, unit, integration, and browser checks must already pass.
-- the user-approved run budget and stop condition must be explicit; never infer
-  permission to exceed them.
-- randomized tasks must use a recorded deterministic seed.
-- record the implementation HEAD and dirty-source snapshot with the benchmark
-  evidence so the fidelity review can prove the run covered the final content.
-
-A fixed-coordinate replay against a randomized task is diagnostic evidence, not
-a passing benchmark result.
-Any source change after the cost-bearing run invalidates it as final-HEAD proof;
-rerun the affected benchmark within the approved budget before completion
-reviews.
-Batch small source fixes and run the full suite once at the frozen final content
-instead of paying for the same broad checks after every edit.
-
-For shell-verifiable checks:
+Run shell verification through the harness:
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
@@ -401,273 +255,58 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
   -- <exact command>
 ```
 
-When a PRD or planner produced a concrete command, `verify-run` must run that
-command exactly. If an equivalent command is necessary, use:
-
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
-  --id V1 \
-  --deviation "<why equivalent coverage is preserved>" \
-  -- <replacement command>
-```
-
-For browser/API/DB/runtime evidence:
+Register browser, API, DB, or runtime evidence immediately after the actual run:
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js record-artifact \
   --id V3 \
   --kind screenshot \
-  --path <path-to-png-or-jpg> \
+  --path <path> \
   --description "<what this proves>"
 ```
 
-Use `chromux` for browser QA by default when available. Register screenshots,
-console/network logs, API logs, DB logs, and server logs. A required
-verification item is not complete without artifact-backed evidence and `pass`
-status.
+Use `chromux` for browser QA when available.
+Required verification is not complete without a passing status and a valid evidence kind.
+Do not use self-authored summaries or harness state files as proof.
 
-Evidence must be captured from the actual run, and the harness enforces
-per-mode artifact kinds for required verification:
+Read `references/verification-and-evidence.md` for exact-command deviations, cost-bearing benchmark controls, artifact placement, registration, hash refresh, and required-verification semantics.
 
-- browser/runtime checks need a `screenshot`, `image`, or `browser` artifact.
-- build/static and automated checks need a `command-log` (use `verify-run`).
-- API checks need `api` or `command-log`; DB checks need `db` or `command-log`.
-- Self-authored markdown summaries never count as evidence, and files inside
-  the run directory can only be registered if they live under `artifacts/`.
-  Harness state files (`state.json`, plans, reviews) are rejected outright.
+## 7. Review And Finalize
 
-Register artifacts immediately after producing them. Do not leave files under
-`artifacts/` unregistered. If an artifact file exists before it is registered,
-run `record-artifact` before using it as evidence for a node, AC, review, or
-final report. Before final review, run `status` and resolve all artifact
-violations by registering valid artifacts or removing only artifacts created by
-the current implementation run.
+Sweep every acceptance criterion before review and keep working while a required criterion is unmet without a concrete blocker.
 
-If a re-run overwrites already-registered artifact files in place (benchmark
-JSON, receipts, screenshots at fixed paths), do not edit `state.json` by hand
-and do not write ad-hoc scripts. Run:
-
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js refresh-artifacts [--id V3]
-```
-
-It re-hashes the registered artifacts, records the refresh in the ledger, and
-marks completion reviews stale so they are re-run before finalize.
-
-Blocked or skipped required verification cannot produce a complete receipt.
-
-## 8. Subagents And Reviews
-
-Parallelize only when safe and useful.
-
-- Run `ready` first.
-- Assign bounded nodes with exact file ownership or read-only scope.
-- Tell workers they are not alone in the codebase and must not revert others'
-  edits.
-- Reviewer/verifier subagents are read-only and must not run `mark`,
-  `requirements-review-record`, `review-record`, `finalize`, or Goal tools.
-- The coordinator applies edits, resolves conflicts, reruns verification, and
-  records final state.
-
-If no subagent facility is available, use safe shell parallelism for reads and
-independent checks.
-
-Review ownership rules:
-
-- The main agent performs the post-`plan-execution` coverage check by default.
-  Check PRD intent sources, verification coverage, execution plan, TaskGraph,
-  ambiguity, structure-lock drift, and unmapped scope. Record material findings
-  in `context-notes.md`, and stop on material blockers.
-- The main agent performs requirements fidelity review by default. Do not spawn
-  a sidecar for this review unless the user explicitly asks for one.
-- The final adversarial review is mandatory for `standard` and `high-risk`
-  profiles when multi-agent tools are available.
-  It is optional for `trivial`.
-- Use a default independent subagent for the final sidecar (in Codex, omit
-  `agent_type`; in Claude Code, use the default general-purpose subagent).
-  Do not choose `hoyeon-*` roles unless the user explicitly asks for that
-  specific role.
-- Give the reviewer a fresh context when the tool supports it (Codex:
-  `fork_context: false`). Pass raw artifact paths and generated review
-  prompts, not the coordinator's conclusions.
-- Sidecars must not edit files, run `mark`, run `requirements-review-record`,
-  run `review-record`, run `finalize`, or update Goal state.
-- If multi-agent tools are unavailable for the final adversarial review, write
-  `Subagent unavailable: <reason>` in the final review report and perform the
-  same review manually. Do not silently skip the final review.
-
-## 9. Acceptance Sweep
-
-Before final review, sweep every AC:
-
-- Status: `Met`, `Not Met`, or `Blocked`.
-- Evidence: command, test, screenshot, DOM result, API response, DB query, or
-  file reference.
-- Related task IDs.
-
-Keep working if any required AC is not met and no concrete blocker exists.
-
-## 10. Requirements Fidelity Review
-
-Before final adversarial review, generate a strict intent-review prompt:
+Generate and complete requirements fidelity first:
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js requirements-review-prompt
-```
-
-The main agent writes this review by default. Do not spawn a sidecar for
-requirements fidelity unless the user explicitly asks for one. This is not a
-code-quality review. It must compare the original user intent, accepted
-decisions, rejected alternatives, PRD scope, acceptance criteria, verification
-evidence, and implementation result. It must be strict and should fail on any
-material semantic drift, missing user-visible behavior, diluted AC, hidden
-scope, unapproved decision reversal, weak evidence for the user's actual goal,
-or overclaimed `Done` status.
-
-The reviewer must check:
-
-- original intake/clarify/current-conversation sources named by PRD
-  frontmatter or PRD sections were read when available.
-- every user decision and accepted initial proposal is represented in PRD
-  scope, non-goals, requirements, ACs, verification, or human verification.
-- rejected options, non-goals, and guardrails stayed rejected.
-- implementation evidence proves the user intent behind each AC, not only a
-  shallow proxy condition.
-- every required `V#` has a Verification Intent Checklist entry mapping Pass
-  Intent to concrete registered artifacts, and each mapped `R#`/`AC#` is
-  actually proven by those artifacts.
-- remaining human judgment is not reported as complete.
-
-The report must include a `Verification Intent Checklist` section. For every
-required `V#`, list the PRD Pass Intent or derived pass criteria, covered
-`R#`/`AC#`, registered artifact paths inspected, a `PASS`/`FAIL` judgment, and
-any gap. A passing review must fail if a required `V#` is missing, has no
-registered artifact path, or the artifact does not actually prove the covered
-requirement or acceptance criterion.
-
-Write:
-
-```text
-agents/implement/<topic-slug>/review/requirements-fidelity-review.md
-```
-
-Then record:
-
-```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js requirements-review-record \
   --status pass \
   --report agents/implement/<topic-slug>/review/requirements-fidelity-review.md \
-  --summary "<requirements fidelity verdict>"
+  --summary "<verdict>"
 ```
 
-If the requirements fidelity review fails, fix findings or mark the
-implementation `Blocked`/`Partially Done` with evidence. Do not proceed to final
-adversarial review or complete receipt until this review passes.
+For `trivial`, the main agent performs a compact fidelity review.
+For policy v2 `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
+For `high-risk` and legacy `standard`, the main agent performs full fidelity before the required independent final review.
+Every fidelity review must compare original intent, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result.
+Harness-owned mechanical gates remain authoritative, so reviewers rerun full suites or hashes only when recorded evidence is inconsistent, missing, or suspicious.
 
-If completion is impossible or the user asks for a blocked/partial handoff, run
-the same requirements fidelity review before writing the handoff. A blocked or
-partial handoff may record `Status: FAIL`, but it must still prove that a
-review compared original user intent, decisions, PRD scope, ACs, verification
-evidence, and implementation result. The handoff must reflect that verdict and
-must not soften it into `Done`.
-
-Any implementation, evidence, verification, plan, artifact, or deviation change
-after a passing requirements fidelity review makes that review stale and it must
-be rerun. The recorded report must contain a standalone `Status: PASS` line for
-`requirements-review-record --status pass`; a mismatched or missing status line
-is rejected. The harness also stores a git worktree snapshot, excluding the
-current implementation artifact directory, so source changes after review make
-the review stale.
-
-## 11. Final Adversarial Review
-
-Generate a reviewer prompt:
+When the review profile requires a final adversarial review, generate its prompt after recording fidelity and use a fresh independent read-only sidecar when multi-agent tools are available.
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js review-prompt
-```
-
-Before this review, stop runtime servers, browser sessions, tunnels, or
-background processes that were started only for verification, unless there is an
-explicit reason to leave them running. Record the shutdown evidence or the
-intentional left-running exception.
-
-Use a fresh independent read-only verifier/reviewer sidecar when multi-agent
-tools are available and the review profile requires final review.
-For `trivial` runs, final adversarial review is optional; the receipt can be
-written after required verification, artifact validation, and requirements
-fidelity review pass.
-For `standard` runs, keep the final review thin: audit freshness, state
-consistency, artifact validity, deviations, and overclaiming; reopen full
-V-by-V proof only when the requirements fidelity review is weak, generic,
-inconsistent, or suspicious.
-For `high-risk` runs, perform the full adversarial review.
-Use a default subagent, not a `hoyeon-*` role, unless the user explicitly asks
-for that role. It must check:
-
-- requirements fidelity review exists, passed, is fresh, and its findings are
-  resolved or reflected in the final verdict.
-- requirements fidelity review is the primary semantic artifact proof.
-  The final reviewer audits that proof and calls out disagreement, omission, or
-  weak reasoning instead of repeating the whole `Verification Intent Checklist`
-  from scratch.
-- PRD stayed clean: no write scopes, owners, parallel safety, low-level
-  dependencies, or ready-node scheduling.
-- execution plan maps every PRD task to nodes.
-- TaskGraph accounts for execution nodes, task rollups, ACs, verification,
-  requirements fidelity review, final review, and receipt.
-- every AC is met with evidence.
-- every required verification item passed with registered artifacts.
-- artifact validity problems that the harness can see are absent, including
-  missing files, empty files, invalid screenshots, unregistered artifacts, hash
-  drift, stale reviews, and wrong evidence kinds.
-- `Artifact Audit` is a thin cross-check: summarize valid evidence classes,
-  spot-check risky or user-critical artifacts, and list weak or missing proof.
-  Do not duplicate every `V#` proof when the requirements fidelity review
-  already did that work and the final reviewer agrees.
-- deviations are recorded and acceptable.
-- implementation follows the PRD structure lock and guardrails.
-- `implementation-result.md` and final user report match state.
-
-Write:
-
-```text
-agents/implement/<topic-slug>/review/final-review.md
-```
-
-Then record:
-
-```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js review-record \
   --status pass \
   --report agents/implement/<topic-slug>/review/final-review.md \
-  --summary "<review verdict>"
+  --summary "<verdict>"
 ```
 
-If review fails, fix findings, rerun relevant verification, and record a new
-passing review.
+Stop verification-only runtime processes before finalization or final review unless an explicit exception is recorded.
+Any source, plan, evidence, artifact, or deviation change after a passing review makes affected reviews stale.
 
-When final review is required, it must be independent in time and content, and
-the harness enforces this:
+Read `references/reviews-and-finalization.md` for required report sections, artifact audits, freshness, profile-specific depth, blocked and partial handoff, and completion checks.
 
-- The reviewer runs only after `requirements-review-record` succeeded. The
-  report file must be written after that record; a report authored earlier is
-  rejected.
-- The report must contain a `Fidelity Review Checked` section citing the
-  recorded fidelity report path and its sha256 (read from `state.json` after
-  recording), plus `Findings`, `Checklist Coverage`, `Artifact Audit`,
-  `Deviation Audit`, and `Verdict` sections, and must reference every required
-  `V#`.
-- The report must contain a standalone `Status: PASS` line for
-  `review-record --status pass`; a mismatched or missing status line is
-  rejected.
-
-The final review also stores a git worktree snapshot and becomes stale if source
-changes after review.
-
-## 12. Finalize
-
-Only after all gates required by the review profile pass:
+After all gates pass, finalize:
 
 ```sh
 node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
@@ -675,83 +314,36 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
   --summary "<evidence-backed summary>"
 ```
 
-Do not report done and do not mark the tracked goal complete (`update_goal
-complete` in Codex, the run's final task in Claude Code) until:
-
-- `receipt.json` exists.
-- `status` reports zero open tracked items.
-- every required verification item is `pass` with artifact-backed evidence.
-- verification and execution plans are ready.
-- TaskGraph has no blocking gate violations.
-- artifact validation reports no violations.
-- requirements fidelity review status is `pass` and fresh.
-- final review status is `pass` and fresh when the review profile requires it.
-- runtime processes started for verification are stopped or explicitly reported
-  as intentionally left running.
-
-If `state.json` or `receipt.json` says `delivery.mode` is `pr`, do not mark
-the tracked goal complete yet.
-Run `$ho-ship` after `finalize --status complete` and keep the goal open until
-the PR exists and required CI passes or the delivery handoff is explicitly
-blocked.
-If the user approved merge, let `ho-ship merge` perform the final freshness,
-CI, PR-head, and mergeability checks and record the PR URL, CI verdict, and
-merge commit as post-receipt delivery evidence.
-Do not add those delivery outcomes back into the implementation receipt.
-If CI requires a source fix, return to this workflow and refresh verification,
-reviews, and the receipt before shipping or merging again.
-After PR creation, `ho-ship` cleans the matching active pointer and
-session-scoped active files.
-For local-only runs or manual cleanup, use:
-
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js cleanup-active \
-  --state agents/implement/<topic-slug>/state.json
-```
-
-For a blocked or partial handoff, do not write the final report until:
-
-- a requirements fidelity review report exists.
-- its status is `PASS` or `FAIL`, matches the recorded status, and is fresh.
-- every blocker or known not-done item cited in the handoff has evidence.
-- the report status is `Blocked` or `Partially Done`, never `Done`.
-
-Use:
-
-```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
-  --status blocked \
-  --summary "<evidence-backed blocker summary>"
-
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
-  --status partial \
-  --summary "<evidence-backed partial handoff summary>"
-```
+Do not report `Done` or complete the tracked Goal until `receipt.json` exists and `status` reports zero open tracked items.
+For local delivery, clean active pointers after the receipt.
+For PR delivery, continue through `$ho-ship` according to `references/worktrees-and-delivery.md` before completing the tracked Goal.
 
 ## Hard Stops
 
 Stop and ask when:
 
 - required pre-work is incomplete.
-- PRD status is not `ready` and the user has not approved execution.
-- work adds unmapped scope or changes approved structure.
-- credentials, billing, production data, destructive DB changes, or irreversible
-  deploy steps are required but not approved.
+- PRD status is not `ready` or approval is absent without an authorized verbatim deviation.
+- work adds unmapped scope or changes the approved structure.
+- credentials, billing, production data, destructive DB changes, or irreversible deploy steps are required but not approved.
 - verification failure requires a product or structure decision.
+- delivery would push or open a PR without configuration-based or conversational consent.
 
 ## Final Report
 
-Use the PRD's Implementation Result Report Contract. At minimum report:
+Use the PRD's Implementation Result Report Contract.
+The generated `implementation-result.md` includes the effective policy matrix, approval and deviations, execution and verification evidence, initial-versus-final worktree scope, delivery boundaries, reviews, receipt, and the coordinator's existing `context-notes.md`.
+At minimum report:
 
 - Status: `Done`, `Partially Done`, or `Blocked`.
 - user-visible changes.
 - major technical changes and structure conformance.
-- completed/deferred/added tasks.
-- AC status.
+- completed, deferred, and added tasks.
+- acceptance-criterion status.
 - verification evidence by test mode.
-- requirements fidelity review verdict.
-- delivery mode and, when `pr`, the `ho-ship` status, PR URL, branch, and CI
-  verdict.
+- automated tests added or updated and the regression risk each protects.
+- requirements fidelity and final-review verdicts.
+- delivery mode and, when `pr`, `$ho-ship` status, PR URL, branch, and CI verdict.
 - deviations.
-- human review needed.
+- remaining human review.
 - not-done items, risks, and follow-ups.

@@ -1,25 +1,43 @@
 # Implementation Result: standard-regression
 
-Status: complete
+Status: Done
 
 PRD: agents/prd/standard-regression/prd.md
 Receipt: agents/implement/standard-regression/receipt.json
 
-## Execution Plan
+## Approval And Deviations
+
+- Approval: approved PRD frontmatter
+- Recorded deviations: none
+
+## Review Policy
+
+- Effective profile: standard
+- Policy version: 2
+- Classification source: explicit
+- Classification reason: set as a safety floor by --review-profile
+- Requirements fidelity owner: independent
+- Requirements fidelity depth: full
+- Final adversarial review required: no
+- Final review node present: no
+- Classification signals: none
+
+## Execution Plan And Changed Modules
 
 - Status: ready
 - Nodes: 1
 - Open nodes: 0
 - Artifact: agents/implement/standard-regression/execution-plan.md
-- N1: complete - Run the local command verification. Covers R1, AC1. (source: T1, risk: low, parallelSafe: no)
+- N1: complete - Run the local command verification. Covers R1, AC1. (source: T1, risk: medium, parallelSafe: no)
 
 ## Task Graph
 
 - Status: complete
-- Nodes: 9
-- Edges: 18
+- Nodes: 8
+- Edges: 13
 - Open nodes: 0
 - Artifact: agents/implement/standard-regression/taskgraph.md
+
 ## Tasks
 
 - T1: complete - Run the local command verification. Covers R1, AC1.
@@ -28,24 +46,36 @@ Receipt: agents/implement/standard-regression/receipt.json
 
 - AC1: met - V1 passes with a command-log artifact.
 
-## Verification Evidence
+## Verification Evidence And Regression Coverage
 
 - V1: pass - General: `node -e "process.exit(0)"`
+  - Latest evidence: Command passed with exit code 0: bash -lc 'node -e '\''process.exit(0)'\'''. Log: agents/implement/standard-regression/artifacts/logs/V1-<TS>.log
+  - Artifacts: agents/implement/standard-regression/artifacts/logs/V1-<TS>.log
 
 ## Artifact Evidence
 
 - verification V1: command-log - agents/implement/standard-regression/artifacts/logs/V1-<TS>.log
 
+## Worktree Scope And Delivery
+
+- Delivery mode: local
+- Branch: prd/standard-regression
+- Local delivery result: ho-build performed no commit, push, PR, CI, release, or deployment action.
+- Initial worktree snapshot: <TS>; 2 entries; status hash 00369b65.
+- Final worktree snapshot: <TS>; 1 entries; status hash 77da28be.
+- Preserved initial dirty entries: 1.
+- Added, changed, or removed after initialization: baseline-only.txt.
+
+## Coordinator Context Notes
+
+### Context Notes
+
+- PRD: agents/prd/standard-regression/prd.md
+
 ## Requirements Fidelity Review
 
 - Status: pass
 - Report: agents/implement/standard-regression/review/requirements-fidelity-review.md
-- Summary: PASS
-
-## Final Adversarial Review
-
-- Status: pass
-- Report: agents/implement/standard-regression/review/final-review.md
 - Summary: PASS
 
 ## Final Receipt
@@ -59,7 +89,17 @@ Receipt: agents/implement/standard-regression/receipt.json
   "reviewProfile": {
     "profile": "standard",
     "source": "explicit",
-    "reason": "set by --review-profile"
+    "reason": "set as a safety floor by --review-profile",
+    "signals": [],
+    "policyVersion": 2
+  },
+  "reviewPolicy": {
+    "profile": "standard",
+    "policyVersion": 2,
+    "fidelityOwner": "independent",
+    "fidelityDepth": "full",
+    "finalReviewRequired": false,
+    "finalReviewNodePresent": false
   },
   "counts": {
     "executionOpen": 0,
@@ -104,10 +144,36 @@ Receipt: agents/implement/standard-regression/receipt.json
     "configPath": null,
     "initializedAt": "<TS>"
   },
+  "initialWorktreeSnapshot": {
+    "capturedAt": "<TS>",
+    "headSha": "<SHA>",
+    "statusHash": "00369b65",
+    "entryCount": 2,
+    "entries": [
+      {
+        "status": "??",
+        "path": "agents/prd/standard-regression/prd.md",
+        "originalPath": null,
+        "sha256": "<SHA>",
+        "bytes": 1729,
+        "kind": "file",
+        "executable": false
+      },
+      {
+        "status": "??",
+        "path": "baseline-only.txt",
+        "originalPath": null,
+        "sha256": "<SHA>",
+        "bytes": 44,
+        "kind": "file",
+        "executable": false
+      }
+    ]
+  },
   "worktreeSnapshot": {
     "capturedAt": "<TS>",
     "headSha": "<SHA>",
-    "statusHash": "22ca735d",
+    "statusHash": "77da28be",
     "entryCount": 1,
     "entries": [
       {
@@ -115,7 +181,9 @@ Receipt: agents/implement/standard-regression/receipt.json
         "path": "agents/prd/standard-regression/prd.md",
         "originalPath": null,
         "sha256": "<SHA>",
-        "bytes": 1729
+        "bytes": 1729,
+        "kind": "file",
+        "executable": false
       }
     ]
   },
@@ -124,13 +192,13 @@ Receipt: agents/implement/standard-regression/receipt.json
     "nodeCount": 1,
     "openNodeCount": 0,
     "blockingGapCount": 0,
-    "warningCount": 1,
+    "warningCount": 0,
     "generatedAt": "<TS>"
   },
   "taskGraph": {
     "status": "complete",
-    "nodeCount": 9,
-    "edgeCount": 18,
+    "nodeCount": 8,
+    "edgeCount": 13,
     "openNodeCount": 0,
     "blockingGapCount": 0,
     "generatedAt": "<TS>"
@@ -145,7 +213,7 @@ Receipt: agents/implement/standard-regression/receipt.json
     "worktreeSnapshot": {
       "capturedAt": "<TS>",
       "headSha": "<SHA>",
-      "statusHash": "22ca735d",
+      "statusHash": "77da28be",
       "entryCount": 1,
       "entries": [
         {
@@ -153,35 +221,15 @@ Receipt: agents/implement/standard-regression/receipt.json
           "path": "agents/prd/standard-regression/prd.md",
           "originalPath": null,
           "sha256": "<SHA>",
-          "bytes": 1729
+          "bytes": 1729,
+          "kind": "file",
+          "executable": false
         }
       ]
     },
     "recordedAt": "<TS>"
   },
-  "finalReview": {
-    "status": "pass",
-    "summary": "PASS",
-    "reportPath": "agents/implement/standard-regression/review/final-review.md",
-    "reportBytes": 600,
-    "reportSha256": "<SHA>",
-    "worktreeSnapshot": {
-      "capturedAt": "<TS>",
-      "headSha": "<SHA>",
-      "statusHash": "22ca735d",
-      "entryCount": 1,
-      "entries": [
-        {
-          "status": "??",
-          "path": "agents/prd/standard-regression/prd.md",
-          "originalPath": null,
-          "sha256": "<SHA>",
-          "bytes": 1729
-        }
-      ]
-    },
-    "recordedAt": "<TS>"
-  },
+  "finalReview": null,
   "evidenceHash": "<SHA>"
 }
 ```

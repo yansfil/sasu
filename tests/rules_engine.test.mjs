@@ -43,6 +43,7 @@ function initGitRepo() {
   git(["init", "-b", "main"]);
   git(["config", "user.email", "test@example.com"]);
   git(["config", "user.name", "Rules Test"]);
+  git(["config", "commit.gpgsign", "false"]);
   write(path.join(dir, "README.md"), "# Test\n");
   git(["add", "README.md"]);
   git(["commit", "-m", "Initial"]);

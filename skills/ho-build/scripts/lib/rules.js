@@ -349,7 +349,14 @@ function tail(text, lines = 6) {
 }
 
 function checkRules(projectRoot, options = {}) {
-  const invariants = loadInvariants(projectRoot);
+  const allInvariants = loadInvariants(projectRoot);
+  const requestedId = String(options.id || "").trim();
+  const invariants = requestedId
+    ? allInvariants.filter(rule => rule.id === requestedId)
+    : allInvariants;
+  if (requestedId && invariants.length === 0) {
+    throw new Error(`Invariant ${requestedId} not found`);
+  }
   const files = options.all ? null : changedFiles(projectRoot, options);
   const matched = options.all
     ? invariants.filter(rule => rule.status === "active").map(rule => ({ rule, matchedFiles: ["(all)"] }))
@@ -366,7 +373,7 @@ function checkRules(projectRoot, options = {}) {
   return {
     ok: results.every(result => result.status !== "fail"),
     changedFileCount: files ? files.length : null,
-    ruleCount: invariants.length,
+    ruleCount: allInvariants.length,
     results,
     manualConfirmations: results.filter(result => result.status === "manual"),
     failures: results.filter(result => result.status === "fail"),

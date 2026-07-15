@@ -5,7 +5,7 @@
 - Generated: <TS>
 - Nodes: 1
 - Blocking gaps: 0
-- Warnings: 1
+- Warnings: 0
 
 ## Ready Guidance
 
@@ -22,7 +22,7 @@
 - Depends on: none
 - Write scope: unknown
 - Parallel safe: no
-- Risk: low
+- Risk: medium
 - Covers: R: R1; AC: AC1; V: V1
 - Evidence:
   - <TS>: Test nodes completed.
@@ -37,4 +37,4 @@
 
 ## Gaps
 
-- warning: missing_write_scope T1 - Write scope could not be inferred; node is not parallel-safe until the coordinator narrows scope
+- None

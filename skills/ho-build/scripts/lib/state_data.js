@@ -139,8 +139,41 @@ function reviewProfileName(state) {
 }
 
 /** @param {State} state */
+function reviewPolicyVersion(state) {
+  const version = Number(state && state.reviewProfile && state.reviewProfile.policyVersion);
+  return Number.isInteger(version) && version >= 2 ? version : 1;
+}
+
+/** @param {State} state */
 function finalReviewRequiredForState(state) {
-  return reviewProfileName(state) !== "trivial";
+  const profile = reviewProfileName(state);
+  if (profile === "high-risk") return true;
+  if (profile === "trivial") return false;
+  return reviewPolicyVersion(state) === 1;
+}
+
+/** @param {State} state */
+function finalReviewNodePresentForState(state) {
+  return reviewPolicyVersion(state) === 1 || finalReviewRequiredForState(state);
+}
+
+/** @param {State} state */
+function independentFidelityRequiredForState(state) {
+  return reviewPolicyVersion(state) >= 2 && reviewProfileName(state) === "standard";
+}
+
+/** @param {State} state */
+function effectiveReviewPolicy(state) {
+  const profile = reviewProfileName(state);
+  const policyVersion = reviewPolicyVersion(state);
+  return {
+    profile,
+    policyVersion,
+    fidelityOwner: independentFidelityRequiredForState(state) ? "independent" : "main-agent",
+    fidelityDepth: profile === "trivial" ? "compact" : "full",
+    finalReviewRequired: finalReviewRequiredForState(state),
+    finalReviewNodePresent: finalReviewNodePresentForState(state),
+  };
 }
 
 /** @param {State} state */
@@ -237,7 +270,11 @@ module.exports = {
   findTrackedItem,
   countState,
   reviewProfileName,
+  reviewPolicyVersion,
   finalReviewRequiredForState,
+  finalReviewNodePresentForState,
+  independentFidelityRequiredForState,
+  effectiveReviewPolicy,
   verificationPlanSummary,
   verificationPlanBlocksImplementation,
   executionPlanSummary,

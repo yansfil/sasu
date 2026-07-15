@@ -2,8 +2,9 @@
 
 // Installs the PRD workflow skills for both runtimes from this repository.
 //
-// Both runtimes install under the checkshirt skill names (ho-scope, ho-spec,
-// ho-build, ho-setup, ho-ship, please, remember):
+// Both runtimes install under the checkshirt skill names (ho-interview,
+// ho-scope compatibility alias, ho-spec, ho-build, ho-setup, ho-ship, please,
+// remember):
 //
 // - Codex   (~/.codex/skills/<name>/):  SKILL.md copied verbatim.
 // - Claude  (~/.claude/skills/<name>/): SKILL.md copied with substitutions
@@ -29,7 +30,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const SKILL_NAMES = ["ho-scope", "ho-spec", "ho-build", "ho-setup", "ho-ship", "please", "remember"];
+const SKILL_NAMES = ["ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-setup", "ho-ship", "please", "remember"];
 
 // Pre-rename install directories that this pipeline used to own.
 const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver"];
@@ -53,8 +54,8 @@ const TARGETS = {
 
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
-  // Invocation tokens: $ho-scope -> /ho-scope.
-  return roots.replace(/\$(ho-scope|ho-spec|ho-build|ho-setup|ho-ship|please|remember)\b/g, "/$1");
+  // Invocation tokens: $ho-interview -> /ho-interview.
+  return roots.replace(/\$(ho-interview|ho-scope|ho-spec|ho-build|ho-setup|ho-ship|please|remember)\b/g, "/$1");
 }
 
 function ensureDir(dir) {

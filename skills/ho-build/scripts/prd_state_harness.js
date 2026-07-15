@@ -31,7 +31,7 @@ const COMMANDS = [
     ],
     run: args => cmdPlanVerification(parseArgs(args)),
   },
-  { name: "plan-execution", usageArgs: ["[--state <path>]"], run: args => cmdPlanExecution(parseArgs(args)) },
+  { name: "plan-execution", usageArgs: ["[--state <path>] [--task-plan <json-path>]"], run: args => cmdPlanExecution(parseArgs(args)) },
   { name: "ready", usageArgs: ["[--state <path>]"], run: args => cmdReady(parseArgs(args)) },
   {
     name: "mark-node",
@@ -78,7 +78,7 @@ const COMMANDS = [
     usageArgs: [
       "add --file <invariant-draft.md>",
       "add --kind fact|regression --id <ID> --summary <text> --evidence <ref> (--landing <path> | --pending)",
-      "check [--files <csv>] [--base <git-ref>] [--all]",
+      "check [--id <ID>] [--files <csv>] [--base <git-ref>] [--all]",
       "relevant [--paths <csv>] [--query <text>]",
     ],
     run: args => cmdRules(args),

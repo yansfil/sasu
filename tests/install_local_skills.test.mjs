@@ -25,11 +25,23 @@ function freshHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "install-skills-home-"));
 }
 
-test("installer installs both runtimes under butler names with correct substitutions", () => {
+test("installer installs canonical skills and the ho-scope compatibility alias with correct substitutions", () => {
   const home = freshHome();
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
+
+  const codexInterview = path.join(home, ".codex", "skills", "ho-interview", "SKILL.md");
+  const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
+  assert.match(codexInterviewText, /^name: ho-interview$/m);
+  assert.match(codexInterviewText, /\$ho-interview/);
+  const codexScopeAlias = fs.readFileSync(path.join(home, ".codex", "skills", "ho-scope", "SKILL.md"), "utf8");
+  assert.match(codexScopeAlias, /^name: ho-scope$/m);
+  assert.match(codexScopeAlias, /\.\.\/ho-interview\/SKILL\.md/);
+
+  const claudeInterview = fs.readFileSync(path.join(home, ".claude", "skills", "ho-interview", "SKILL.md"), "utf8");
+  assert.match(claudeInterview, /\/ho-interview/);
+  assert.doesNotMatch(claudeInterview, /\$ho-interview/);
 
   // Codex: butler directory names, verbatim SKILL.md.
   const codexFulfill = path.join(home, ".codex", "skills", "ho-build", "SKILL.md");
@@ -116,7 +128,7 @@ test("installer is idempotent and preserves foreign hooks and settings", () => {
 
 test("installer refuses to overwrite a foreign skill directory", () => {
   const home = freshHome();
-  const foreign = path.join(home, ".claude", "skills", "ho-scope");
+  const foreign = path.join(home, ".claude", "skills", "ho-interview");
   fs.mkdirSync(foreign, { recursive: true });
   fs.writeFileSync(path.join(foreign, "SKILL.md"), "---\nname: someone-elses-skill\n---\n\n# other\n");
   const result = runInstaller(home, { allowFailure: true });

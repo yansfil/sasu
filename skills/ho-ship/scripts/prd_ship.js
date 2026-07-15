@@ -394,8 +394,10 @@ function summarizeReviews(state) {
   const requirements = state.requirementsFidelityReview || {};
   const final = state.finalReview || {};
   const profile = state.reviewProfile && state.reviewProfile.profile ? state.reviewProfile.profile : "standard";
-  const finalLine = profile === "trivial" && !final.status
-    ? "- Final adversarial review: skipped by trivial review profile"
+  const policyVersion = state.reviewProfile && state.reviewProfile.policyVersion;
+  const finalRequired = profile === "high-risk" || (profile === "standard" && policyVersion !== 2);
+  const finalLine = !final.status && !finalRequired
+    ? `- Final adversarial review: not required by ${profile} review policy`
     : `- Final adversarial review: ${final.status || "unknown"}${final.reportPath ? ` - ${final.reportPath}` : ""}`;
   return [
     `- Requirements fidelity review: ${requirements.status || "unknown"}${requirements.reportPath ? ` - ${requirements.reportPath}` : ""}`,

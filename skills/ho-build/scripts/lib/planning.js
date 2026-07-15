@@ -2,11 +2,18 @@
 
 /** @typedef {import("./types").State} State */
 
+const path = require("path");
 
 const { nowIso, cwd, toProjectRelative, sha256Text, uniqueMatches } = require("./util");
-const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState } = require("./state_data");
+const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState, finalReviewNodePresentForState, independentFidelityRequiredForState } = require("./state_data");
 const { inferVerificationMode } = require("./prd_parser");
 const { repoSignals, classifyVerification, commandFromText, commandForMode, coverageFromText, artifactsForVerification, passCriteriaFromText, toolForVerification, targetForVerification, plannedCheckStatus, plannerNotes, hasAppStartupSignal } = require("./inference");
+
+function commandFromMatrixMethod(method) {
+  const value = String(method || "").trim();
+  const codeSpan = value.match(/^`([^`]+)`$/);
+  return codeSpan ? codeSpan[1].trim() : value;
+}
 
 /** @param {State} state */
 function taskGraphSummary(state) {
@@ -45,19 +52,22 @@ function buildVerificationPlan(state, statePath) {
   const projectRoot = state.projectRoot || cwd();
   const signals = repoSignals(projectRoot);
   const checks = state.verification.map((verification, index) => {
-	    const mode = inferVerificationMode(verification, state.testModeContract || []);
-	    const category = classifyVerification(verification, mode);
-	    const explicitCommand = verification.matrix && !verification.matrix.method
-	      ? null
-	      : commandFromText(verification.text);
-	    const command = category === "command" || category === "automated"
-	      ? explicitCommand || commandForMode(mode, category, signals)
-	      : null;
-	    const covers = coverageFromText(verification.text);
-	    const artifacts = artifactsForVerification(verification, category, mode);
-	    const passCriteria = verification.matrix && verification.matrix.passCriteria
-	      ? verification.matrix.passCriteria
-	      : passCriteriaFromText(verification.text, category);
+    const mode = inferVerificationMode(verification, state.testModeContract || []);
+    const category = classifyVerification(verification, mode);
+    const explicitCommand = verification.matrix && verification.matrix.method
+      ? commandFromMatrixMethod(verification.matrix.method)
+      : commandFromText(verification.text);
+    const command = category === "command" || category === "automated"
+      ? explicitCommand || commandForMode(mode, category, signals)
+      : null;
+    const covers = coverageFromText([
+      verification.matrix && verification.matrix.covers,
+      verification.text,
+    ].filter(Boolean).join(" "));
+    const artifacts = artifactsForVerification(verification, category, mode);
+    const passCriteria = verification.matrix && verification.matrix.passCriteria
+      ? verification.matrix.passCriteria
+      : passCriteriaFromText(verification.text, category);
     return {
       id: `VP${index + 1}`,
       verificationId: verification.id,
@@ -117,13 +127,14 @@ function buildVerificationPlan(state, statePath) {
  * @param {string} statePath
  * @returns {import("./types").ExecutionPlan}
  */
-function buildExecutionPlan(state, statePath) {
+function buildExecutionPlan(state, statePath, taskPlan = null) {
   const previous = state.executionPlan && Array.isArray(state.executionPlan.nodes)
     ? new Map(state.executionPlan.nodes.map(node => [node.id, node]))
     : new Map();
   const gaps = [];
   const nodes = [];
   const taskToNodeId = new Map();
+  const taskPlanProvided = taskPlan !== null;
   for (const [index, task] of (state.tasks || []).entries()) {
     taskToNodeId.set(task.id, `N${index + 1}`);
   }
@@ -131,18 +142,22 @@ function buildExecutionPlan(state, statePath) {
   for (const [index, task] of (state.tasks || []).entries()) {
     const id = `N${index + 1}`;
     const prior = previous.get(id) || {};
-    const writeScope = inferWriteScope(task, state);
-    const risk = inferRisk(task, state);
-    const dependsOn = inferDependsOn(task, state, taskToNodeId, index);
+    const declared = taskPlanProvided && Object.prototype.hasOwnProperty.call(taskPlan, task.id)
+      ? normalizeTaskPlanEntry(task.id, taskPlan[task.id], state, taskToNodeId)
+      : null;
+    const writeScope = declared
+      ? declared.writeScope
+      : taskPlanProvided
+        ? []
+        : normalizeWriteScopes(prior.writeScope || [], state.projectRoot);
+    const risk = declared ? declared.risk : taskPlanProvided ? "medium" : prior.risk || "medium";
+    const dependsOn = declared
+      ? declared.dependsOn
+      : taskPlanProvided
+        ? []
+        : Array.isArray(prior.dependsOn) ? prior.dependsOn : [];
+    const parallelSafe = declared ? declared.parallelSafe : taskPlanProvided ? false : prior.parallelSafe === true;
     const covers = executionCoverageForTask(state, task);
-    if (writeScope.length === 0) {
-      gaps.push({
-        severity: "warning",
-        code: "missing_write_scope",
-        item: task.id,
-        message: "Write scope could not be inferred; node is not parallel-safe until the coordinator narrows scope",
-      });
-    }
     if ((task.requirements || []).length === 0) {
       gaps.push({
         severity: "warning",
@@ -167,12 +182,24 @@ function buildExecutionPlan(state, statePath) {
       dependsOn,
       writeScope,
       covers,
-      parallelSafe: risk !== "high" && writeScope.length > 0,
+      parallelSafe,
       risk,
       owner: prior.owner || null,
       status: prior.status || "pending",
       evidence: Array.isArray(prior.evidence) ? prior.evidence : [],
       artifacts: Array.isArray(prior.artifacts) ? prior.artifacts : [],
+    });
+  }
+
+  const unscopedParallelTasks = nodes
+    .filter(node => state.execution && state.execution.parallel && node.writeScope.length === 0)
+    .map(node => node.sourceTask);
+  if (unscopedParallelTasks.length) {
+    gaps.push({
+      severity: "warning",
+      code: "missing_write_scope",
+      item: unscopedParallelTasks.join(","),
+      message: `Parallel execution is enabled, but ${unscopedParallelTasks.join(", ")} have no agent-declared write scope and remain sequential`,
     });
   }
 
@@ -185,30 +212,38 @@ function buildExecutionPlan(state, statePath) {
     });
   }
 
-	  const rollups = { tasks: {} };
-	  for (const task of state.tasks || []) {
-	    const node = nodes.find(candidate => candidate.sourceTask === task.id);
-	    rollups.tasks[task.id] = {
-	      nodes: node ? [node.id] : [],
-	      acceptanceCriteria: node ? node.covers.acceptanceCriteria : task.acceptanceCriteria || [],
-	      verification: node ? node.covers.verification : [],
-	    };
-	  }
-	  addExecutionGraphQualityGaps(nodes, gaps);
-	  const traceMatrix = buildTraceMatrix(state, nodes, rollups);
+  const rollups = { tasks: {} };
+  for (const task of state.tasks || []) {
+    const node = nodes.find(candidate => candidate.sourceTask === task.id);
+    rollups.tasks[task.id] = {
+      nodes: node ? [node.id] : [],
+      acceptanceCriteria: node ? node.covers.acceptanceCriteria : task.acceptanceCriteria || [],
+      verification: node ? node.covers.verification : [],
+    };
+  }
+  const dependencyCycle = findDependencyCycle(nodes);
+  if (dependencyCycle.length) {
+    gaps.push({
+      severity: "blocking",
+      code: "execution_dependency_cycle",
+      item: "execution-plan",
+      message: `Execution task plan contains a dependency cycle: ${dependencyCycle.join(" -> ")}`,
+    });
+  }
+  const traceMatrix = buildTraceMatrix(state, nodes, rollups);
 
-	  return {
+  return {
     schema: "hoyeon.prd-implement.execution-plan.v1",
     status: gaps.some(gap => gap.severity === "blocking") ? "needs_review" : "ready",
     generatedAt: nowIso(),
     prdPath: state.prdPath,
     statePath: toProjectRelative(statePath, state.projectRoot || cwd()),
-	    nodes,
-	    rollups,
-	    traceMatrix,
-	    gaps,
-	  };
-	}
+    nodes,
+    rollups,
+    traceMatrix,
+    gaps,
+  };
+}
 
 function buildTraceMatrix(state, nodes, rollups) {
   const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
@@ -240,41 +275,6 @@ function refreshExecutionTraceMatrix(state) {
   state.executionPlan.traceMatrix = buildTraceMatrix(state, state.executionPlan.nodes, state.executionPlan.rollups);
 }
 
-function addExecutionGraphQualityGaps(nodes, gaps) {
-  if (nodes.length >= 5 && nodes.every(node => !node.dependsOn || node.dependsOn.length === 0)) {
-    gaps.push({
-      severity: "warning",
-      code: "weak_graph_no_dependencies",
-      item: "execution-plan",
-      message: "Execution plan has five or more nodes and no dependencies; confirm this is genuinely parallelizable or record a deviation",
-    });
-  }
-  const scopeCounts = new Map();
-  for (const node of nodes) {
-    const key = (node.writeScope || []).join("\n") || "unknown";
-    scopeCounts.set(key, (scopeCounts.get(key) || 0) + 1);
-  }
-  for (const [scope, count] of scopeCounts.entries()) {
-    if (nodes.length >= 4 && count >= Math.ceil(nodes.length * 0.75)) {
-      gaps.push({
-        severity: "warning",
-        code: "weak_graph_repeated_write_scope",
-        item: "execution-plan",
-        message: `Most execution nodes share the same write scope (${scope === "unknown" ? "unknown" : scope}); narrow scopes before relying on parallel guidance`,
-      });
-      break;
-    }
-  }
-  if (nodes.length >= 4 && nodes.every(node => node.risk === "high" && node.parallelSafe === false)) {
-    gaps.push({
-      severity: "warning",
-      code: "weak_graph_all_high_risk",
-      item: "execution-plan",
-      message: "All execution nodes are high risk and not parallel-safe; treat ready guidance as sequential only",
-    });
-  }
-}
-
 function executionCoverageForTask(state, task) {
   const requirements = Array.from(new Set(task.requirements || []));
   const acceptanceCriteria = Array.from(new Set([
@@ -300,79 +300,96 @@ function executionCoverageForTask(state, task) {
   };
 }
 
-function inferWriteScope(task, state) {
-  const taskHints = extractPathHints(task.text || task.title || "");
-  if (taskHints.length) return taskHints;
-  const structureHints = extractPathHints([
-    state.technicalStructure || "",
-    state.implementationNotes || "",
-  ].join("\n"));
-  return structureHints;
+function normalizeTaskPlanEntry(taskId, entry, state, taskToNodeId) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error(`Task plan ${taskId} must be an object`);
+  }
+  const risk = String(entry.risk || "medium").trim().toLowerCase();
+  if (!["low", "medium", "high"].includes(risk)) {
+    throw new Error(`Task plan ${taskId}.risk must be low, medium, or high`);
+  }
+  const writeScope = normalizeWriteScopes(entry.writeScope || [], state.projectRoot);
+  const parallelSafe = entry.parallelSafe === true;
+  if (parallelSafe && writeScope.length === 0) {
+    throw new Error(`Task plan ${taskId} cannot be parallelSafe without a writeScope`);
+  }
+  if (parallelSafe && risk === "high") {
+    throw new Error(`Task plan ${taskId} cannot be parallelSafe with high risk`);
+  }
+  if (entry.dependsOn !== undefined && !Array.isArray(entry.dependsOn)) {
+    throw new Error(`Task plan ${taskId}.dependsOn must be an array`);
+  }
+  const dependsOn = [];
+  for (const raw of entry.dependsOn || []) {
+    const dependency = String(raw || "").trim().toUpperCase();
+    const nodeId = taskToNodeId.get(dependency) || (/^N\d+$/.test(dependency) ? dependency : null);
+    if (!nodeId || !Array.from(taskToNodeId.values()).includes(nodeId)) {
+      throw new Error(`Task plan ${taskId} has unknown dependency '${raw}'`);
+    }
+    if (nodeId === taskToNodeId.get(taskId)) {
+      throw new Error(`Task plan ${taskId} cannot depend on itself`);
+    }
+    if (!dependsOn.includes(nodeId)) dependsOn.push(nodeId);
+  }
+  return { writeScope, parallelSafe, risk, dependsOn };
 }
 
-function extractPathHints(text) {
-  const hints = [];
-  const add = value => {
-    const normalized = normalizePathHint(value);
-    if (!normalized || !isPotentialPathHint(normalized)) return;
-    if (!hints.includes(normalized)) hints.push(normalized);
+function normalizeWriteScopes(scopes, projectRoot) {
+  if (!Array.isArray(scopes)) throw new Error("writeScope must be an array of repository-relative paths");
+  const root = path.resolve(projectRoot || cwd());
+  const normalized = [];
+  for (const raw of scopes) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    if (path.isAbsolute(value)) {
+      throw new Error(`writeScope '${value}' must be repository-relative`);
+    }
+    if (/[*?[\]]/.test(value)) {
+      throw new Error(`writeScope '${value}' must name a concrete file or directory, not a glob`);
+    }
+    const absolute = path.resolve(root, value);
+    const relative = path.relative(root, absolute);
+    if (!relative || relative === ".") {
+      if (!normalized.includes(".")) normalized.push(".");
+      continue;
+    }
+    if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+      throw new Error(`writeScope '${value}' escapes the project root`);
+    }
+    const repoRelative = relative.split(path.sep).join("/");
+    if (!normalized.includes(repoRelative)) normalized.push(repoRelative);
+  }
+  return normalized;
+}
+
+function findDependencyCycle(nodes) {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const visiting = new Set();
+  const visited = new Set();
+  const stack = [];
+  const visit = id => {
+    if (visiting.has(id)) {
+      const start = stack.indexOf(id);
+      return [...stack.slice(start), id];
+    }
+    if (visited.has(id)) return [];
+    visiting.add(id);
+    stack.push(id);
+    const node = byId.get(id);
+    for (const dependency of node && node.dependsOn || []) {
+      const cycle = visit(dependency);
+      if (cycle.length) return cycle;
+    }
+    stack.pop();
+    visiting.delete(id);
+    visited.add(id);
+    return [];
   };
-  for (const match of String(text || "").matchAll(/`([^`]+)`/g)) add(match[1]);
-  for (const match of String(text || "").matchAll(/(?:^|\s)((?:\.{1,2}\/|\/)?[A-Za-z0-9_.@가-힣-]+(?:\/[A-Za-z0-9_.@가-힣-]+)*\.[A-Za-z0-9]{1,8})/g)) {
-    add(match[1]);
+  for (const node of nodes) {
+    const cycle = visit(node.id);
+    if (cycle.length) return cycle;
   }
-  for (const match of String(text || "").matchAll(/(?:^|\s)(\/[A-Za-z0-9_.@가-힣-]+(?:\/[A-Za-z0-9_.@가-힣-]+)+)/g)) {
-    add(match[1]);
-  }
-  return hints.slice(0, 12);
-}
-
-function normalizePathHint(value) {
-  return String(value || "")
-    .trim()
-    .replace(/^['"]|['"]$/g, "")
-    .replace(/[),.;:]+$/g, "");
-}
-
-function isPotentialPathHint(value) {
-  const text = String(value || "").trim();
-  if (!text || /^https?:\/\//i.test(text)) return false;
-  if (/^(?:pnpm|npm|yarn|bun|pytest|python|node|go|cargo|make|docker|docker-compose)\b/i.test(text)) return false;
-  if (/^(?:R|AC|T|V)\d+$/i.test(text)) return false;
-  return text.includes("/") || /\.[A-Za-z0-9]{1,8}$/.test(text);
-}
-
-function inferRisk(task, state) {
-  const text = `${task.text || ""}\n${state.technicalStructure || ""}`
-    .split(/\r?\n/)
-    .filter(line => {
-      const lower = line.toLowerCase();
-      const sensitive = /(auth|rls|migration|migrate|database|postgres|supabase|sql|schema|security|credential|secret|config|env|production|prod data|billing|permission|권한|마이그레이션|보안)/.test(lower);
-      const negated = /\b(no|none|without|not|does not|is not|없음|아님|불필요)\b/.test(lower);
-      return !(sensitive && negated);
-    })
-    .join("\n")
-    .toLowerCase();
-  if (/(auth|rls|migration|migrate|database|postgres|supabase|sql|schema|security|credential|secret|config|env|production|prod data|billing|permission|권한|마이그레이션|보안)/.test(text)) {
-    return "high";
-  }
-  if (/(api|server|service|integration|browser|runtime|route|endpoint|db|data|external|서버|브라우저|라우트)/.test(text)) {
-    return "medium";
-  }
-  return "low";
-}
-
-function inferDependsOn(task, state, taskToNodeId, index) {
-  const dependencies = [];
-  for (const taskId of uniqueMatches(task.text || "", /\bT\d+\b/gi)) {
-    if (taskId === task.id) continue;
-    const nodeId = taskToNodeId.get(taskId);
-    if (nodeId && !dependencies.includes(nodeId)) dependencies.push(nodeId);
-  }
-  if (dependencies.length === 0 && index > 0 && /\b(after|following|depends on|blocked by|이후|다음|뒤에|완료 후)\b/i.test(task.text || "")) {
-    dependencies.push(`N${index}`);
-  }
-  return dependencies;
+  return [];
 }
 
 function readyExecutionPlan(state) {
@@ -436,12 +453,22 @@ function buildParallelGroups(readyNodes) {
 function writeScopesOverlap(left = [], right = []) {
   for (const a of left) {
     for (const b of right) {
-      if (a === b) return true;
-      if (a.startsWith("TBD:") || b.startsWith("TBD:")) return true;
-      if (a.startsWith(`${b}/`) || b.startsWith(`${a}/`)) return true;
+      const normalizedA = scopeComparisonKey(a);
+      const normalizedB = scopeComparisonKey(b);
+      if (!normalizedA || !normalizedB) return true;
+      if (normalizedA === "." || normalizedB === ".") return true;
+      if (normalizedA === normalizedB) return true;
+      if (normalizedA.startsWith(`${normalizedB}/`) || normalizedB.startsWith(`${normalizedA}/`)) return true;
     }
   }
   return false;
+}
+
+function scopeComparisonKey(value) {
+  const text = String(value || "").trim().replace(/\\/g, "/");
+  if (!text || text.startsWith("TBD:")) return null;
+  const normalized = path.posix.normalize(`/${text}`).replace(/^\/+/, "") || ".";
+  return process.platform === "darwin" ? normalized.toLowerCase() : normalized;
 }
 
 function rollupTasksFromExecutionPlan(state, options = {}) {
@@ -463,28 +490,28 @@ function rollupTasksFromExecutionPlan(state, options = {}) {
       }
       continue;
     }
-	    const allNodesComplete = nodes.length > 0 && nodes.every(node => node.status === "complete");
-	    const mappedAcs = (rollup.acceptanceCriteria || []).map(id => acById.get(id)).filter(Boolean);
-	    const mappedVerification = (rollup.verification || []).map(id => verificationById.get(id)).filter(Boolean);
-	    const acsMet = mappedAcs.every(ac => ac.status === "met");
-	    const verificationClosed = mappedVerification.every(item => verificationIsClosedForAccounting(item));
-	    if (allNodesComplete && acsMet && verificationClosed) {
-	      task.status = "complete";
-	      if (recordEvidence && !task.evidence.some(entry => /Execution roll-up/.test(entry.text))) {
-	        task.evidence.push({
-	          ts: nowIso(),
-	          text: `Execution roll-up: ${nodes.map(node => node.id).join(", ")} complete; ACs ${mappedAcs.map(ac => ac.id).join(", ") || "none"} met; required Verification ${mappedVerification.filter(item => isVerificationRequiredForDone(item)).map(item => item.id).join(", ") || "none"} passed.`,
-	        });
-	      }
-	    } else if (task.status === "complete") {
-	      task.status = "in_progress";
-	      if (recordEvidence) task.evidence.push({
-	        ts: nowIso(),
-	        text: "Execution roll-up reopened: mapped ACs must be met and all required Verification items must pass before task completion.",
-	      });
-	    } else if (nodes.some(node => ["in_progress", "complete"].includes(node.status)) && task.status === "pending") {
-	      task.status = "in_progress";
-	    }
+    const allNodesComplete = nodes.length > 0 && nodes.every(node => node.status === "complete");
+    const mappedAcs = (rollup.acceptanceCriteria || []).map(id => acById.get(id)).filter(Boolean);
+    const mappedVerification = (rollup.verification || []).map(id => verificationById.get(id)).filter(Boolean);
+    const acsMet = mappedAcs.every(ac => ac.status === "met");
+    const verificationClosed = mappedVerification.every(item => verificationIsClosedForAccounting(item));
+    if (allNodesComplete && acsMet && verificationClosed) {
+      task.status = "complete";
+      if (recordEvidence && !task.evidence.some(entry => /Execution roll-up/.test(entry.text))) {
+        task.evidence.push({
+          ts: nowIso(),
+          text: `Execution roll-up: ${nodes.map(node => node.id).join(", ")} complete; ACs ${mappedAcs.map(ac => ac.id).join(", ") || "none"} met; required Verification ${mappedVerification.filter(item => isVerificationRequiredForDone(item)).map(item => item.id).join(", ") || "none"} passed.`,
+        });
+      }
+    } else if (task.status === "complete") {
+      task.status = "in_progress";
+      if (recordEvidence) task.evidence.push({
+        ts: nowIso(),
+        text: "Execution roll-up reopened: mapped ACs must be met and all required Verification items must pass before task completion.",
+      });
+    } else if (nodes.some(node => ["in_progress", "complete"].includes(node.status)) && task.status === "pending") {
+      task.status = "in_progress";
+    }
   }
 }
 
@@ -678,16 +705,19 @@ function addReviewAndReceiptNodes(graph, state, reviewedItems) {
     artifactCount: state.requirementsFidelityReview && state.requirementsFidelityReview.reportPath ? 1 : 0,
   });
   const finalReviewRequired = finalReviewRequiredForState(state);
-  graph.addNode({
-    id: "REVIEW",
-    kind: "final_review",
-    title: "Adversarial final review",
-    status: state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped",
-    closed: finalReviewRequired ? Boolean(state.finalReview && state.finalReview.status === "pass") : true,
-    requiredForDone: finalReviewRequired,
-    evidenceCount: state.finalReview ? 1 : 0,
-    artifactCount: state.finalReview && state.finalReview.reportPath ? 1 : 0,
-  });
+  const finalReviewPresent = finalReviewNodePresentForState(state);
+  if (finalReviewPresent) {
+    graph.addNode({
+      id: "REVIEW",
+      kind: "final_review",
+      title: "Adversarial final review",
+      status: state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped",
+      closed: finalReviewRequired ? Boolean(state.finalReview && state.finalReview.status === "pass") : true,
+      requiredForDone: finalReviewRequired,
+      evidenceCount: state.finalReview ? 1 : 0,
+      artifactCount: state.finalReview && state.finalReview.reportPath ? 1 : 0,
+    });
+  }
   graph.addNode({
     id: "FINALIZE",
     kind: "receipt",
@@ -700,14 +730,17 @@ function addReviewAndReceiptNodes(graph, state, reviewedItems) {
 
   for (const item of reviewedItems) {
     graph.addEdge(item.id, "REQ_FIDELITY_REVIEW", "requirements_review_input", "requirements reviewer must audit this item against original user intent and PRD decisions");
-    graph.addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
+    if (finalReviewPresent) graph.addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
   }
-  graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", finalReviewRequired
-    ? "final reviewer must audit the requirements fidelity verdict"
-    : "trivial profile skips mandatory final review after requirements fidelity passes");
-  graph.addEdge("REVIEW", "FINALIZE", "gates", finalReviewRequired
-    ? "receipt can be written only after passing final review"
-    : "receipt can be written after requirements fidelity review and mechanical gates pass");
+  if (finalReviewRequired) {
+    graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", "final reviewer must audit the requirements fidelity verdict");
+    graph.addEdge("REVIEW", "FINALIZE", "gates", "receipt can be written only after passing final review");
+  } else if (finalReviewPresent) {
+    graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", "legacy trivial policy skips mandatory final review after requirements fidelity passes");
+    graph.addEdge("REVIEW", "FINALIZE", "gates", "legacy receipt can be written after requirements fidelity review and mechanical gates pass");
+  } else {
+    graph.addEdge("REQ_FIDELITY_REVIEW", "FINALIZE", "gates", "receipt can be written after requirements fidelity review and mechanical gates pass");
+  }
 }
 
 function plannedCommandForVerification(state, verificationId) {
@@ -716,7 +749,11 @@ function plannedCommandForVerification(state, verificationId) {
   if (check && check.command) return check.command;
   const item = (state.verification || [])
     .find(candidate => String(candidate.id).toUpperCase() === String(verificationId).toUpperCase());
-  return item ? commandFromText(item.text || "") : null;
+  return item
+    ? item.matrix && item.matrix.method
+      ? commandFromMatrixMethod(item.matrix.method)
+      : commandFromText(item.text || "")
+    : null;
 }
 
 function buildCoverageMatrix(state, checks) {
@@ -813,7 +850,7 @@ function buildVerificationGaps(state, checks, coverage, signals) {
       });
     }
   }
-	  for (const check of checks) {
+  for (const check of checks) {
     if (check.status === "needs_command") {
       gaps.push({
         severity: "blocking",
@@ -830,35 +867,35 @@ function buildVerificationGaps(state, checks, coverage, signals) {
         message: `${check.id}/${check.verificationId} has no R/AC/T coverage mapping`,
       });
     }
-	    if (check.status === "needs_artifact") {
-	      gaps.push({
-	        severity: "blocking",
-	        code: "artifact-missing",
-	        item: check.id,
-	        message: `${check.id}/${check.verificationId} has no explicit artifact requirement`,
-	      });
-	    }
-	    const contractValues = check.contract ? Object.values(check.contract).filter(value => typeof value === "string").join(" ") : "";
-	    const contractText = `${check.level || ""} ${contractValues} ${check.passCriteria || ""} ${check.target || ""}`.toLowerCase();
-	    if ((check.category === "api" || /external|live|credential|secret|pii|phone|production/.test(contractText)) && check.contract) {
-	      if (!check.contract.safeProbe) {
-	        gaps.push({
-	          severity: "warning",
-	          code: "external-safe-probe-missing",
-	          item: check.id,
-	          message: `${check.id}/${check.verificationId} touches API/external/live behavior but has no Safe Probe column`,
-	        });
-	      }
-	      if (!check.contract.sensitiveDataPolicy) {
-	        gaps.push({
-	          severity: "warning",
-	          code: "sensitive-data-policy-missing",
-	          item: check.id,
-	          message: `${check.id}/${check.verificationId} touches API/external/live behavior but has no Sensitive Data Policy column`,
-	        });
-	      }
-	    }
-	  }
+    if (check.status === "needs_artifact") {
+      gaps.push({
+        severity: "blocking",
+        code: "artifact-missing",
+        item: check.id,
+        message: `${check.id}/${check.verificationId} has no explicit artifact requirement`,
+      });
+    }
+    const contractValues = check.contract ? Object.values(check.contract).filter(value => typeof value === "string").join(" ") : "";
+    const contractText = `${check.level || ""} ${contractValues} ${check.passCriteria || ""} ${check.target || ""}`.toLowerCase();
+    if ((check.category === "api" || /external|live|credential|secret|pii|phone|production/.test(contractText)) && check.contract) {
+      if (!check.contract.safeProbe) {
+        gaps.push({
+          severity: "warning",
+          code: "external-safe-probe-missing",
+          item: check.id,
+          message: `${check.id}/${check.verificationId} touches API/external/live behavior but has no Safe Probe column`,
+        });
+      }
+      if (!check.contract.sensitiveDataPolicy) {
+        gaps.push({
+          severity: "warning",
+          code: "sensitive-data-policy-missing",
+          item: check.id,
+          message: `${check.id}/${check.verificationId} touches API/external/live behavior but has no Sensitive Data Policy column`,
+        });
+      }
+    }
+  }
   if (checks.some(check => check.category === "browser") && !hasAppStartupSignal(signals)) {
     gaps.push({
       severity: "warning",
@@ -902,40 +939,43 @@ function nextItem(state) {
     };
   }
   const ready = readyExecutionPlan(state);
-	  if (ready.readySequential.length) {
-	    const nodeId = ready.readySequential[0];
-	    const node = state.executionPlan.nodes.find(item => item.id === nodeId);
-	    return { kind: "execution_node", item: node };
-	  }
-	  const ac = state.acceptanceCriteria.find(item => !["met", "not_met", "blocked"].includes(item.status));
-	  if (ac) return { kind: "ac", item: ac };
-	  const verification = state.verification.find(item => !verificationIsClosedForAccounting(item));
-	  if (verification) return { kind: "verification", item: verification };
-	  const task = state.tasks.find(item => !["complete", "deferred", "blocked"].includes(item.status));
-	  if (task) return { kind: "task_rollup", item: task };
-	  if (!state.requirementsFidelityReview || state.requirementsFidelityReview.status !== "pass") {
-	    return {
-	      kind: "requirements_fidelity_review",
-	      item: {
-	        id: "REQ_FIDELITY_REVIEW",
-	        title: "Run read-only requirements fidelity review before final adversarial review",
-	        status: state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending",
-	      },
-	    };
-	  }
-	  if (!finalReviewRequiredForState(state)) return null;
-	  if (!state.finalReview || state.finalReview.status !== "pass") {
-	    return {
-	      kind: "final_review",
-	      item: {
-	        id: "REVIEW",
-	        title: "Run final adversarial review before finalizing receipt",
-	        status: state.finalReview ? state.finalReview.status : "pending",
-	      },
-	    };
-	  }
-	  return null;
-	}
+  if (ready.readySequential.length) {
+    const nodeId = ready.readySequential[0];
+    const node = state.executionPlan.nodes.find(item => item.id === nodeId);
+    return { kind: "execution_node", item: node };
+  }
+  const ac = state.acceptanceCriteria.find(item => !["met", "not_met", "blocked"].includes(item.status));
+  if (ac) return { kind: "ac", item: ac };
+  const verification = state.verification.find(item => !verificationIsClosedForAccounting(item));
+  if (verification) return { kind: "verification", item: verification };
+  const task = state.tasks.find(item => !["complete", "deferred", "blocked"].includes(item.status));
+  if (task) return { kind: "task_rollup", item: task };
+  if (!state.requirementsFidelityReview || state.requirementsFidelityReview.status !== "pass") {
+    const independent = independentFidelityRequiredForState(state);
+    return {
+      kind: "requirements_fidelity_review",
+      item: {
+        id: "REQ_FIDELITY_REVIEW",
+        title: independent
+          ? "Run fresh independent combined fidelity review before finalizing receipt"
+          : `Run requirements fidelity review before ${finalReviewRequiredForState(state) ? "final adversarial review" : "finalizing receipt"}`,
+        status: state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending",
+      },
+    };
+  }
+  if (!finalReviewRequiredForState(state)) return null;
+  if (!state.finalReview || state.finalReview.status !== "pass") {
+    return {
+      kind: "final_review",
+      item: {
+        id: "REVIEW",
+        title: "Run final adversarial review before finalizing receipt",
+        status: state.finalReview ? state.finalReview.status : "pending",
+      },
+    };
+  }
+  return null;
+}
 
 // Compact view of the next required item for per-mutation command output. The
 // full execution-node object (writeScope, covers, evidence history) is large and
@@ -953,14 +993,9 @@ module.exports = {
   buildExecutionPlan,
   buildTraceMatrix,
   refreshExecutionTraceMatrix,
-  addExecutionGraphQualityGaps,
   executionCoverageForTask,
-  inferWriteScope,
-  extractPathHints,
-  normalizePathHint,
-  isPotentialPathHint,
-  inferRisk,
-  inferDependsOn,
+  normalizeWriteScopes,
+  findDependencyCycle,
   readyExecutionPlan,
   buildParallelGroups,
   writeScopesOverlap,

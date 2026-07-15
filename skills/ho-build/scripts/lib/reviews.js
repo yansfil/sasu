@@ -4,13 +4,15 @@ const fs = require("fs");
 const path = require("path");
 
 const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, normalizeRelPath, escapeRegExp } = require("./util");
-const { worktreeSnapshot, snapshotMaterializedInHead, primaryWorktreeRoot } = require("./git");
-const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
+const { worktreeSnapshot, snapshotMaterializedInHead, snapshotEntriesEqual, snapshotPathMatches, primaryWorktreeRoot } = require("./git");
+const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState, finalReviewNodePresentForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
 const { collectArtifacts, inspectArtifact, verificationEvidenceKindViolations, unregisteredArtifactViolations } = require("./artifacts");
 
-function validateArtifacts(statePath, state) {
+function validateArtifacts(statePath, state, options = {}) {
+  const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
+  const includeFinalReview = options.includeFinalReview !== false;
   const violations = [];
   for (const entry of collectArtifacts(state)) {
     const artifact = entry.artifact || {};
@@ -29,7 +31,7 @@ function validateArtifacts(statePath, state) {
     }
   }
   const requirementsReview = state.requirementsFidelityReview;
-  if (requirementsReview && requirementsReview.reportPath) {
+  if (includeRequirementsFidelityReview && requirementsReview && requirementsReview.reportPath) {
     try {
       const abs = resolveProjectPath(requirementsReview.reportPath, state.projectRoot || cwd());
       inspectArtifact(abs, "log");
@@ -41,7 +43,7 @@ function validateArtifacts(statePath, state) {
     }
   }
   const finalReview = state.finalReview;
-	  if (finalReview && finalReview.reportPath) {
+	  if (includeFinalReview && finalReview && finalReview.reportPath) {
     try {
       const abs = resolveProjectPath(finalReview.reportPath, state.projectRoot || cwd());
       inspectArtifact(abs, "log");
@@ -54,9 +56,12 @@ function validateArtifacts(statePath, state) {
 	  }
 	  violations.push(...unregisteredArtifactViolations(statePath, state));
 	  violations.push(...verificationEvidenceKindViolations(state));
-	  violations.push(...requirementsFidelityReviewFreshnessViolations(state));
-	  violations.push(...finalReviewFreshnessViolations(state));
-	  violations.push(...reviewWorktreeSnapshotViolations(state));
+	  if (includeRequirementsFidelityReview) violations.push(...requirementsFidelityReviewFreshnessViolations(state));
+	  if (includeFinalReview) violations.push(...finalReviewFreshnessViolations(state));
+	  violations.push(...reviewWorktreeSnapshotViolations(state, {
+	    includeRequirementsFidelityReview,
+	    includeFinalReview,
+	  }));
 	  return violations;
 	}
 
@@ -256,7 +261,9 @@ function requirementsFidelityReviewFreshnessViolations(state) {
   return [];
 }
 
-function reviewWorktreeSnapshotViolations(state) {
+function reviewWorktreeSnapshotViolations(state, options = {}) {
+  const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
+  const includeFinalReview = options.includeFinalReview !== false;
   const violations = [];
   const current = worktreeSnapshot(state);
   if (!current) return violations;
@@ -269,8 +276,8 @@ function reviewWorktreeSnapshotViolations(state) {
       violations.push(`${label} is stale: worktree source snapshot changed after review`);
     }
   };
-  check(state.requirementsFidelityReview, "Requirements fidelity review");
-  check(state.finalReview, "Final review");
+  if (includeRequirementsFidelityReview) check(state.requirementsFidelityReview, "Requirements fidelity review");
+  if (includeFinalReview) check(state.finalReview, "Final review");
   return violations;
 }
 
@@ -293,27 +300,17 @@ function reviewSnapshotMatchesCurrent(savedSnapshot, currentSnapshot, state) {
     const rel = normalizeRelPath(saved.path);
     const current = currentByPath.get(rel);
     if (current) {
-      if ((saved.sha256 || null) !== (current.sha256 || null)) return false;
-      if ((saved.bytes ?? null) !== (current.bytes ?? null)) return false;
+      if (!snapshotEntriesEqual(saved, current)) return false;
       continue;
     }
-    if (saved.sha256) {
-      const abs = path.join(projectRoot, rel);
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return false;
-      if (sha256File(abs) !== saved.sha256) return false;
-      if ((saved.bytes ?? null) !== fs.statSync(abs).size) return false;
-    } else {
-      const abs = path.join(projectRoot, rel);
-      if (fs.existsSync(abs)) return false;
-    }
+    if (!snapshotPathMatches(saved, path.join(projectRoot, rel))) return false;
   }
 
   for (const current of currentEntries) {
     const rel = normalizeRelPath(current.path);
     const saved = savedByPath.get(rel);
     if (!saved) return false;
-    if ((saved.sha256 || null) !== (current.sha256 || null)) return false;
-    if ((saved.bytes ?? null) !== (current.bytes ?? null)) return false;
+    if (!snapshotEntriesEqual(saved, current)) return false;
   }
 
   return true;
@@ -378,7 +375,10 @@ function completionViolations(statePath, state, options = {}) {
 	      violations.push(`Verification ${verification.id} has no artifact-backed evidence`);
 	    }
   }
-  violations.push(...validateArtifacts(statePath, state));
+  violations.push(...validateArtifacts(statePath, state, {
+    includeRequirementsFidelityReview,
+    includeFinalReview,
+  }));
   if (includeRequirementsFidelityReview) {
     if (!state.requirementsFidelityReview || state.requirementsFidelityReview.status !== "pass") {
       violations.push("Requirements fidelity review has not passed");
@@ -415,10 +415,15 @@ function prdSnapshotViolations(statePath, state) {
   const acIds = (state.acceptanceCriteria || []).map(item => item.id).join(",");
   const snapshotAcIds = (snapshot.acceptanceCriteriaIds || []).join(",");
   if (snapshotAcIds && acIds !== snapshotAcIds) violations.push("State acceptance IDs differ from PRD snapshot acceptance IDs");
-  const verificationIds = (state.verification || []).map(item => item.id).join(",");
+  const prdVerification = (state.verification || [])
+    .filter(item => item.source !== "rules_injection" && !item.sourceRuleId);
+  const verificationIds = prdVerification.map(item => item.id).join(",");
   const snapshotVerificationIds = (snapshot.verificationIds || []).join(",");
   if (snapshotVerificationIds && verificationIds !== snapshotVerificationIds) violations.push("State verification IDs differ from PRD snapshot verification IDs");
-  if (snapshot.verificationContractHash && snapshot.verificationContractHash !== verificationContractHash(state)) {
+  if (snapshot.verificationContractHash && snapshot.verificationContractHash !== verificationContractHash({
+    ...state,
+    verification: prdVerification,
+  })) {
     violations.push("State verification contract hash differs from PRD snapshot");
   }
   return violations;
@@ -443,7 +448,8 @@ function taskGraphViolations(state) {
     if (!nodeIds.has(verification.id)) violations.push(`Task graph is missing verification node ${verification.id}`);
   }
   if (!nodeIds.has("REQ_FIDELITY_REVIEW")) violations.push("Task graph is missing REQ_FIDELITY_REVIEW node");
-  if (!nodeIds.has("REVIEW")) violations.push("Task graph is missing REVIEW node");
+  if (finalReviewNodePresentForState(state) && !nodeIds.has("REVIEW")) violations.push("Task graph is missing the REVIEW node required by the effective or legacy review policy");
+  if (!finalReviewNodePresentForState(state) && nodeIds.has("REVIEW")) violations.push("Task graph contains REVIEW node that is not part of the effective review policy");
   if (!nodeIds.has("FINALIZE")) violations.push("Task graph is missing FINALIZE node");
   return violations;
 }

@@ -35,6 +35,7 @@ function initMergeFixture() {
   run("git", ["init", "-b", "main"], { cwd: root });
   run("git", ["config", "user.email", "test@example.com"], { cwd: root });
   run("git", ["config", "user.name", "Harness Test"], { cwd: root });
+  run("git", ["config", "commit.gpgsign", "false"], { cwd: root });
   write(path.join(root, "README.md"), "# Test\n");
   run("git", ["add", "README.md"], { cwd: root });
   run("git", ["commit", "-m", "Initial"], { cwd: root });

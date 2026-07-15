@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
+const { SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath, runDirRelFor, formatCommandArgs } = require("../util");
 const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummary } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { taskGraphSummary, buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, rollupTasksFromExecutionPlan, nextItem } = require("../planning");
@@ -85,13 +85,13 @@ function cmdPlanVerificationCheck(options) {
 function cmdPlanVerification(options) {
   if (options.prd) return cmdPlanVerificationCheck(options);
   const { statePath, state } = loadState(options);
-	  state.verificationPlan = buildVerificationPlan(state, statePath);
-	  if (state.executionPlan) {
-	    state.executionPlan = buildExecutionPlan(state, statePath);
-	    rollupTasksFromExecutionPlan(state);
-	  }
-	  markCompletionReviewsStale(state, "Verification plan was regenerated after review");
-	  state.updatedAt = nowIso();
+  state.verificationPlan = buildVerificationPlan(state, statePath);
+  if (state.executionPlan) {
+    state.executionPlan = buildExecutionPlan(state, statePath);
+    rollupTasksFromExecutionPlan(state);
+  }
+  markCompletionReviewsStale(state, "Verification plan was regenerated after review");
+  state.updatedAt = nowIso();
   persistStateAndArtifacts(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
@@ -117,14 +117,17 @@ function cmdPlanVerification(options) {
 
 function cmdPlanExecution(options) {
   const { statePath, state } = loadState(options);
-	  state.executionPlan = buildExecutionPlan(state, statePath);
-	  rollupTasksFromExecutionPlan(state);
-	  const injectedRules = injectRuleVerification(state);
-	  if (injectedRules.length && state.verificationPlan) {
-	    state.verificationPlan = buildVerificationPlan(state, statePath);
-	  }
-	  markCompletionReviewsStale(state, "Execution plan was regenerated after review");
-	  state.updatedAt = nowIso();
+  const taskPlanInput = readTaskPlanInput(options, state);
+  state.executionPlan = buildExecutionPlan(state, statePath, taskPlanInput ? taskPlanInput.tasks : null);
+  rollupTasksFromExecutionPlan(state);
+  const injectedRules = injectRuleVerification(state);
+  if (injectedRules.length && state.verificationPlan) {
+    state.verificationPlan = buildVerificationPlan(state, statePath);
+    state.executionPlan = buildExecutionPlan(state, statePath, taskPlanInput ? taskPlanInput.tasks : null);
+    rollupTasksFromExecutionPlan(state);
+  }
+  markCompletionReviewsStale(state, "Execution plan was regenerated after review");
+  state.updatedAt = nowIso();
   persistStateAndArtifacts(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
@@ -132,6 +135,7 @@ function cmdPlanExecution(options) {
     status: state.executionPlan.status,
     nodeCount: state.executionPlan.nodes.length,
     gapCount: state.executionPlan.gaps.length,
+    taskPlanSource: taskPlanInput ? taskPlanInput.path : null,
     injectedRules: injectedRules.map(item => item.sourceRuleId),
   });
   syncActive(statePath, state);
@@ -141,11 +145,38 @@ function cmdPlanExecution(options) {
     executionPlan: executionPlanSummary(state),
     taskGraph: taskGraphSummary(state),
     ready: readyExecutionPlan(state),
+    taskPlanSource: taskPlanInput ? taskPlanInput.path : null,
     injectedRules: injectedRules.map(item => ({ id: item.id, rule: item.sourceRuleId, title: item.title })),
     planPath: toProjectRelative(path.join(path.dirname(statePath), "execution-plan.json"), state.projectRoot || cwd()),
     planMarkdownPath: toProjectRelative(path.join(path.dirname(statePath), "execution-plan.md"), state.projectRoot || cwd()),
     next: nextItem(state),
   }, null, 2) + "\n");
+}
+
+function readTaskPlanInput(options, state) {
+  const inputPath = options["task-plan"];
+  if (!inputPath) return null;
+  const projectRoot = state.projectRoot || cwd();
+  const absolute = resolveProjectPath(String(inputPath), projectRoot);
+  if (!fs.existsSync(absolute)) throw new Error(`Task plan not found: ${absolute}`);
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(absolute, "utf8"));
+  } catch (error) {
+    throw new Error(`Task plan must contain valid JSON: ${error.message}`);
+  }
+  const tasks = parsed && parsed.tasks && typeof parsed.tasks === "object" && !Array.isArray(parsed.tasks)
+    ? parsed.tasks
+    : parsed;
+  if (!tasks || typeof tasks !== "object" || Array.isArray(tasks)) {
+    throw new Error("Task plan must be an object keyed by PRD task ID, or an object with a tasks map");
+  }
+  const known = new Set((state.tasks || []).map(task => String(task.id).toUpperCase()));
+  for (const id of Object.keys(tasks)) {
+    if (!known.has(String(id).toUpperCase())) throw new Error(`Task plan contains unknown PRD task '${id}'`);
+  }
+  const normalized = Object.fromEntries(Object.entries(tasks).map(([id, entry]) => [String(id).toUpperCase(), entry]));
+  return { tasks: normalized, path: toProjectRelative(absolute, projectRoot) };
 }
 
 // Best-effort learned-rule injection (R11 of the agents-remember contract):
@@ -155,7 +186,8 @@ function cmdPlanExecution(options) {
 // conservative and says so in the injected item text.
 function injectRuleVerification(state) {
   const projectRoot = state.projectRoot || cwd();
-  const scopes = (state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : [])
+  const executionNodes = state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : [];
+  const scopes = executionNodes
     .flatMap(node => Array.isArray(node.writeScope) ? node.writeScope : [])
     .filter(scope => typeof scope === "string" && !scope.startsWith("TBD:"));
   let matched;
@@ -168,18 +200,37 @@ function injectRuleVerification(state) {
   const injected = [];
   for (const rule of matched) {
     if (state.verification.some(item => item.sourceRuleId === rule.id)) continue;
+    const coveredTasks = executionNodes
+      .filter(node => {
+        try {
+          return invariantsForWriteScopes(projectRoot, node.writeScope || [])
+            .some(candidate => candidate.id === rule.id);
+        } catch {
+          return false;
+        }
+      })
+      .map(node => node.sourceTask)
+      .filter(Boolean);
     const nextIndex = state.verification.filter(item => item.source === "rules_injection").length + 1;
     const manual = rule.check.type === "manual";
     const method = rule.check.type === "command"
       ? rule.check.run
       : rule.check.type === "grep"
-        ? `rules check --files <changed files> (grep ${rule.check.expect || "present"}: ${rule.check.pattern} in ${rule.check.files})`
+        ? formatCommandArgs([
+          process.execPath,
+          SELF_PATH,
+          "rules",
+          "check",
+          "--id",
+          rule.id,
+          "--all",
+        ])
         : `human confirmation: ${rule.check.confirm}`;
     const item = {
       id: `RV${nextIndex}`,
       level: "rule",
       title: `Learned invariant ${rule.id}`,
-      text: `${rule.summary} (auto-injected: write scope overlaps trigger ${rule.trigger.paths.join(", ")}; best-effort match, exact enforcement at deliver)`,
+      text: `${rule.summary} (auto-injected: write scope overlaps trigger ${rule.trigger.paths.join(", ")}; full targeted check required, changed files rechecked at deliver)`,
       status: "pending",
       evidence: [],
       artifacts: [],
@@ -188,7 +239,7 @@ function injectRuleVerification(state) {
       testMode: manual ? "human" : "build/static",
       matrix: {
         mode: manual ? "human" : "build/static",
-        covers: rule.id,
+        covers: coveredTasks.length ? coveredTasks.join(", ") : rule.id,
         method,
         artifact: manual ? "none" : "command-log",
         passCriteria: manual ? rule.check.confirm : "check passes (exit 0 / pattern expectation holds)",
@@ -213,4 +264,5 @@ module.exports = {
   cmdPlanVerificationCheck,
   cmdPlanVerification,
   cmdPlanExecution,
+  readTaskPlanInput,
 };

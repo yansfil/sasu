@@ -4,7 +4,7 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, appendJsonl, simpleHash } = require("../util");
 const { worktreeSnapshot } = require("../git");
-const { isVerificationRequiredForDone, executionPlanSummary, countState, reviewProfileName } = require("../state_data");
+const { isVerificationRequiredForDone, executionPlanSummary, countState, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { taskGraphSummary, readyExecutionPlan, rollupTasksFromExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations } = require("../reviews");
@@ -194,8 +194,10 @@ function cmdFinalize(options) {
     summary,
     verifiedAt: nowIso(),
     reviewProfile: state.reviewProfile || { profile: reviewProfileName(state), source: "default" },
+    reviewPolicy: effectiveReviewPolicy(state),
     counts,
     delivery: state.delivery || null,
+    initialWorktreeSnapshot: state.initialWorktreeSnapshot || null,
     worktreeSnapshot: worktreeSnapshot(state),
     executionPlan: executionPlanSummary(state),
     taskGraph: null,

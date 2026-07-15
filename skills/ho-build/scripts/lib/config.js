@@ -83,38 +83,65 @@ function normalizeExecutionConfig(projectConfig, options) {
   return { schema: "hoyeon.execution.v1", parallel };
 }
 
+const REVIEW_POLICY_VERSION = 2;
+
+function reviewProfileResult(profile, source, reason, signals = []) {
+  return {
+    profile,
+    source,
+    reason,
+    signals,
+    policyVersion: REVIEW_POLICY_VERSION,
+  };
+}
+
 function classifyReviewProfile(input, explicitProfile, configProfile) {
-  const explicit = String(explicitProfile || "").trim();
+  const candidates = [];
+  const rank = { trivial: 0, standard: 1, "high-risk": 2 };
+  const explicit = String(explicitProfile || "").trim().toLowerCase();
   if (explicit) {
     if (!["trivial", "standard", "high-risk"].includes(explicit)) {
       throw new Error("--review-profile must be trivial, standard, or high-risk");
     }
-    return { profile: explicit, source: "explicit", reason: "set by --review-profile" };
+    candidates.push(reviewProfileResult(explicit, "explicit", "set as a safety floor by --review-profile"));
   }
   const configured = String(configProfile || "").trim().toLowerCase();
   if (configured && configured !== "auto") {
     if (!["trivial", "standard", "high-risk"].includes(configured)) {
       throw new Error("config review.profile must be trivial, standard, high-risk, or auto");
     }
-    return { profile: configured, source: "config", reason: `set by ${PROJECT_CONFIG_PATH} review.profile` };
+    candidates.push(reviewProfileResult(configured, "config", `set as a safety floor by ${PROJECT_CONFIG_PATH} review.profile`));
   }
-  const tasks = input.tasks || [];
-  const acceptanceCriteria = input.acceptanceCriteria || [];
-  const verification = input.verification || [];
-  const haystack = [
-    input.technicalStructure,
-    input.implementationNotes,
-    ...tasks.map(item => item.text || item.title || ""),
-    ...acceptanceCriteria.map(item => item.text || item.title || ""),
-    ...verification.map(item => item.text || item.passIntent || item.title || ""),
-  ].join("\n").toLowerCase();
-  if (/\b(db|database|migration|schema|auth|security|payment|billing|credential|secret|production|external|live api|provider|pii|token|deploy|rollback)\b/.test(haystack)) {
-    return { profile: "high-risk", source: "auto", reason: "risk keywords found in PRD structure, tasks, ACs, or verification" };
+  const declared = String(input && input.reviewProfile || "").trim().toLowerCase();
+  if (declared) {
+    if (!["trivial", "standard", "high-risk"].includes(declared)) {
+      throw new Error("PRD frontmatter review_profile must be trivial, standard, or high-risk");
+    }
+    const rationale = String(input && input.reviewRationale || "").trim();
+    if (!rationale) {
+      throw new Error("PRD frontmatter review_rationale is required when review_profile is declared");
+    }
+    candidates.push(reviewProfileResult(declared, "prd", rationale, [`PRD semantic assessment: ${rationale}`]));
   }
-  if (tasks.length <= 2 && acceptanceCriteria.length <= 5 && verification.length <= 3) {
-    return { profile: "trivial", source: "auto", reason: "small PRD surface with at most 2 tasks, 5 ACs, and 3 verification items" };
+  if (candidates.length) {
+    const sourcePriority = { explicit: 2, config: 1, prd: 0 };
+    candidates.sort((left, right) => rank[right.profile] - rank[left.profile]
+      || sourcePriority[right.source] - sourcePriority[left.source]);
+    const selected = candidates[0];
+    if (candidates.length > 1) {
+      selected.reason = `${selected.reason}; effective profile is the strongest declared safety floor`;
+      selected.signals = Array.from(new Set([
+        ...candidates.flatMap(candidate => candidate.signals || []),
+        `Review profile floors: ${candidates.map(candidate => `${candidate.source}=${candidate.profile}`).join(", ")}`,
+      ]));
+    }
+    return selected;
   }
-  return { profile: "standard", source: "auto", reason: "default profile for non-trivial work without high-risk signals" };
+  return reviewProfileResult(
+    "standard",
+    "default",
+    "no semantic review profile was declared; standard is the safe fallback",
+  );
 }
 
 module.exports = {

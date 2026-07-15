@@ -3,10 +3,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const harness = path.join(repoRoot, "skills", "ho-build", "scripts", "prd_state_harness.js");
+const requireModule = createRequire(import.meta.url);
+const { classifyReviewProfile } = requireModule(path.join(repoRoot, "skills", "ho-build", "scripts", "lib", "config.js"));
+const { parseGitStatusZ } = requireModule(path.join(repoRoot, "skills", "ho-build", "scripts", "lib", "git.js"));
+const { normalizeWriteScopes, findDependencyCycle, writeScopesOverlap } = requireModule(path.join(repoRoot, "skills", "ho-build", "scripts", "lib", "planning.js"));
+
+test("parseGitStatusZ preserves rename source records", () => {
+  assert.deepEqual(
+    parseGitStatusZ("R  new-name.txt\0old-name.txt\0 M normal.txt\0"),
+    [
+      { status: "R ", path: "new-name.txt", originalPath: "old-name.txt" },
+      { status: " M", path: "normal.txt", originalPath: null },
+    ],
+  );
+});
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -45,6 +60,7 @@ function initGitRepo() {
   run("git", ["init", "-b", "main"], { cwd: dir });
   run("git", ["config", "user.email", "test@example.com"], { cwd: dir });
   run("git", ["config", "user.name", "Harness Test"], { cwd: dir });
+  run("git", ["config", "commit.gpgsign", "false"], { cwd: dir });
   write(path.join(dir, "README.md"), "# Test Repo\n");
   run("git", ["add", "README.md"], { cwd: dir });
   run("git", ["commit", "-m", "Initial"], { cwd: dir });
@@ -145,6 +161,65 @@ ${extra}
   return file;
 }
 
+test("review profile uses agent-declared semantics with a standard fallback", () => {
+  const declared = classifyReviewProfile({
+    reviewProfile: "high-risk",
+    reviewRationale: "This change migrates production data and needs the stronger review path.",
+  });
+  assert.equal(declared.profile, "high-risk");
+  assert.equal(declared.source, "prd");
+  assert.equal(declared.policyVersion, 2);
+  assert.deepEqual(declared.signals, [
+    "PRD semantic assessment: This change migrates production data and needs the stronger review path.",
+  ]);
+
+  const fallback = classifyReviewProfile({
+    tasks: [{ id: "T1", text: "Delete production records and rotate credentials." }],
+  });
+  assert.equal(fallback.profile, "standard");
+  assert.equal(fallback.source, "default");
+  assert.deepEqual(fallback.signals, []);
+  assert.match(fallback.reason, /no semantic review profile was declared/);
+
+  const configured = classifyReviewProfile(
+    {
+      reviewProfile: "trivial",
+      reviewRationale: "Documentation-only change with no behavior impact.",
+    },
+    null,
+    "high-risk",
+  );
+  assert.equal(configured.profile, "high-risk");
+  assert.equal(configured.source, "config");
+
+  const cannotLowerConfig = classifyReviewProfile({}, "trivial", "high-risk");
+  assert.equal(cannotLowerConfig.profile, "high-risk");
+  assert.equal(cannotLowerConfig.source, "config");
+
+  const cannotLowerPrd = classifyReviewProfile({
+    reviewProfile: "high-risk",
+    reviewRationale: "The approved work changes a production authorization boundary.",
+  }, "trivial", "standard");
+  assert.equal(cannotLowerPrd.profile, "high-risk");
+  assert.equal(cannotLowerPrd.source, "prd");
+
+  const explicitRaise = classifyReviewProfile({}, "high-risk", "trivial");
+  assert.equal(explicitRaise.profile, "high-risk");
+  assert.equal(explicitRaise.source, "explicit");
+
+  assert.throws(
+    () => classifyReviewProfile({ reviewProfile: "high-risk" }),
+    /review_rationale/,
+  );
+  assert.throws(
+    () => classifyReviewProfile({
+      reviewProfile: "urgent",
+      reviewRationale: "The author requested an unsupported profile.",
+    }),
+    /review_profile must be trivial, standard, or high-risk/,
+  );
+});
+
 test("PR delivery init rejects receipt gates that require PR, CI, or merge outcomes", () => {
   const root = initGitRepo();
   const prdPath = writeApprovedPrd(root, "circular-delivery");
@@ -219,6 +294,42 @@ test("worktree init overwrites the main active pointer bound to the session", ()
   const cleanup = runJson(["cleanup-active", "--state", active.statePath], projectRoot);
   assert.equal(cleanup.ok, true);
   assert.equal(fs.existsSync(path.join(projectRoot, "agents", "implement", ".prd-implement-active.json")), false);
+});
+
+test("worktree init uses the configured base branch and warns about dirty source changes", () => {
+  const projectRoot = initGitRepo();
+  const mainSha = run("git", ["rev-parse", "main"], { cwd: projectRoot }).stdout.trim();
+  run("git", ["switch", "-c", "source-feature"], { cwd: projectRoot });
+  write(path.join(projectRoot, "feature-only.txt"), "feature branch content\n");
+  run("git", ["add", "feature-only.txt"], { cwd: projectRoot });
+  run("git", ["commit", "-m", "Feature-only commit"], { cwd: projectRoot });
+
+  const worktreeRoot = path.join(projectRoot, "..", `${path.basename(projectRoot)}.base-worktrees`);
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({
+    delivery: { mode: "pr", branchPrefix: "prd/", baseBranch: "main" },
+    worktree: { enabled: true, root: worktreeRoot },
+  }, null, 2));
+  const prdPath = writeApprovedPrd(projectRoot, "base-branch-test");
+  write(path.join(projectRoot, "README.md"), "# Dirty source checkout\n");
+
+  const result = runJson([
+    "init",
+    "--prd",
+    prdPath,
+    "--delivery",
+    "pr",
+    "--review-profile",
+    "standard",
+  ], projectRoot);
+  const targetRoot = result.worktreePrepared.path;
+  assert.equal(result.worktreePrepared.baseRef, "main");
+  assert.equal(result.worktreePrepared.baseSha, mainSha);
+  assert(result.warnings.some(message => /uncommitted changes/.test(message)));
+  assert.equal(run("git", ["rev-parse", "HEAD"], { cwd: targetRoot }).stdout.trim(), mainSha);
+  assert.equal(fs.existsSync(path.join(targetRoot, "feature-only.txt")), false);
+  assert.equal(fs.readFileSync(path.join(targetRoot, "README.md"), "utf8"), "# Test Repo\n");
+
+  run("git", ["worktree", "remove", "--force", targetRoot], { cwd: projectRoot });
 });
 
 test("doctor recognizes PRD-trackable and implement-ignored gitignore policy", () => {
@@ -365,13 +476,18 @@ PASS.
   runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
   const status = runJson(["status"], projectRoot);
   assert.equal(status.reviewProfile.profile, "trivial");
+  assert.equal(status.reviewProfile.policyVersion, 2);
+  assert.equal(status.reviewPolicy.finalReviewRequired, false);
   assert.equal(status.next, null);
+  const reviewedState = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
+  assert.equal(reviewedState.taskGraph.nodes.some(node => node.id === "REVIEW"), false);
+  assert(reviewedState.taskGraph.edges.some(edge => edge.from === "REQ_FIDELITY_REVIEW" && edge.to === "FINALIZE"));
   const stopHook = run(process.execPath, [harness, "hook", "stop"], {
     cwd: projectRoot,
     input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "trivial-session" }),
   });
   const stopDirective = JSON.parse(stopHook.stdout);
-  assert.match(stopDirective.reason, /trivial profile gates passed; write receipt/);
+  assert.match(stopDirective.reason, /effective review-policy gates passed; write receipt/);
   assert.doesNotMatch(stopDirective.reason, /prd_state_harness\.js review-record/);
   const preToolHook = run(process.execPath, [harness, "hook", "pretool-use"], {
     cwd: projectRoot,
@@ -385,7 +501,7 @@ PASS.
   });
   const preToolDirective = JSON.parse(preToolHook.stdout);
   assert.doesNotMatch(preToolDirective.reason, /record a passing final review/);
-  assert.match(preToolDirective.reason, /trivial review profile/);
+  assert.match(preToolDirective.reason, /effective review policy/);
   const finalized = runJson(["finalize", "--status", "complete", "--summary", "Trivial run completed."], projectRoot);
   assert.equal(finalized.ok, true);
   // The receipt nudges remember with the run's recorded deviations.
@@ -463,6 +579,53 @@ test("fidelity review accepts code-span generics/tags but rejects leftover templ
   });
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /leftover <template> placeholders/);
+});
+
+test("a fresh fidelity review can replace stale fidelity and final reviews after remediation", () => {
+  const projectRoot = initGitRepo();
+  const slug = "fidelity-remediation";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "fidelity-remediation-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Initial PASS"], projectRoot);
+
+  const finalPath = path.join(projectRoot, "agents", "implement", slug, "review", "final-review.md");
+  write(finalPath, `# Final Adversarial Review
+
+Status: FAIL
+
+## Fidelity Review Checked
+
+- The initial fidelity review was checked and remediation is required.
+
+## Findings
+
+- high: a tracked source file must be remediated.
+
+## Checklist Coverage
+
+- Tasks: the recorded task coverage was inspected.
+
+## Artifact Audit
+
+- Harness-visible validity: the command log was inspected.
+
+## Deviation Audit
+
+- Recorded deviations: none.
+
+## Verdict
+
+FAIL.
+`);
+  runJson(["review-record", "--status", "fail", "--report", finalPath, "--summary", "FAIL - remediation required"], projectRoot);
+
+  write(path.join(projectRoot, "README.md"), "# Remediated source\n");
+  write(reviewPath, fidelityReviewBody(logPath, "\n- The tracked source remediation now matches the approved intent."));
+  const recorded = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Remediated PASS"], projectRoot);
+
+  assert.equal(recorded.ok, true);
+  assert.equal(recorded.finalReview, null);
+  assert.equal(recorded.requirementsFidelityReview.status, "pass");
 });
 
 test("browser verification without a dev script is a warning, not a blocking gap", () => {
@@ -623,19 +786,64 @@ test("parallel ready groups are config-gated and off by default", () => {
   const rootB = initGitRepo();
   write(path.join(rootB, "agents", "config.json"), JSON.stringify({ execution: { parallel: true } }, null, 2));
   const prdB = writeApprovedPrd(rootB, "par-on");
+  write(prdB, fs.readFileSync(prdB, "utf8").replace(
+    "- T1. Run the local command verification. Covers R1, AC1.",
+    "- T1. Implement the first independent slice. Covers R1, AC1.\n- T2. Implement the second independent slice. Covers R1, AC1.",
+  ));
+  const taskPlanPath = path.join(rootB, "task-plan.json");
+  write(taskPlanPath, JSON.stringify({ tasks: {
+    T1: { writeScope: ["src/first"], risk: "low", dependsOn: [], parallelSafe: true },
+    T2: { writeScope: ["src/second"], risk: "medium", dependsOn: [], parallelSafe: true },
+  } }, null, 2));
   runJson(["init", "--prd", prdB, "--review-profile", "trivial", "--session-id", "par-s"], rootB);
-  runJson(["plan-execution"], rootB);
+  runJson(["plan-execution", "--task-plan", taskPlanPath], rootB);
   const readyB = runJson(["ready"], rootB);
   assert.equal(readyB.ready.parallelEnabled, true);
+  assert.deepEqual(readyB.ready.readyParallelGroups, [["N1", "N2"]]);
   const stopB = run(process.execPath, [harness, "hook", "stop"], {
     cwd: rootB,
     input: JSON.stringify({ hook_event_name: "Stop", cwd: rootB, session_id: "par-s" }),
   });
   assert.match(JSON.parse(stopB.stdout).reason, /- Ready parallel groups:/);
+
+  write(taskPlanPath, JSON.stringify({ tasks: {
+    T1: { writeScope: ["src/first"], risk: "low", dependsOn: [], parallelSafe: true },
+  } }, null, 2));
+  runJson(["plan-execution", "--task-plan", taskPlanPath], rootB);
+  const partialState = JSON.parse(fs.readFileSync(path.join(rootB, "agents", "implement", "par-on", "state.json"), "utf8"));
+  const omitted = partialState.executionPlan.nodes.find(node => node.sourceTask === "T2");
+  assert.deepEqual(omitted.writeScope, []);
+  assert.equal(omitted.risk, "medium");
+  assert.equal(omitted.parallelSafe, false);
+
+  write(taskPlanPath, JSON.stringify({ tasks: {
+    T1: { writeScope: ["src/first"], risk: "low", dependsOn: "T2", parallelSafe: true },
+    T2: { writeScope: ["src/second"], risk: "low", dependsOn: [], parallelSafe: true },
+  } }, null, 2));
+  const malformed = run(process.execPath, [harness, "plan-execution", "--task-plan", taskPlanPath], {
+    cwd: rootB,
+    allowFailure: true,
+  });
+  assert.notEqual(malformed.status, 0);
+  assert.match(malformed.stderr, /T1\.dependsOn must be an array/);
 });
 
-test("review profile is config-driven with CLI override precedence", () => {
-  // config review.profile forces the profile the PRD would not auto-classify to.
+test("task-plan paths are canonicalized before parallel overlap checks", () => {
+  const root = initGitRepo();
+  assert.deepEqual(normalizeWriteScopes(["./src/a", "src/../src/a"], root), ["src/a"]);
+  assert.equal(writeScopesOverlap(["./src/a"], ["src/a/file.js"]), true);
+  assert.equal(writeScopesOverlap(["src/a"], ["src/b"]), false);
+  assert.throws(() => normalizeWriteScopes(["../outside"], root), /escapes the project root/);
+  assert.throws(() => normalizeWriteScopes([path.join(root, "src/a")], root), /must be repository-relative/);
+  assert.throws(() => normalizeWriteScopes(["src/**"], root), /not a glob/);
+  assert.deepEqual(findDependencyCycle([
+    { id: "N1", dependsOn: ["N2"] },
+    { id: "N2", dependsOn: ["N1"] },
+  ]), ["N1", "N2", "N1"]);
+});
+
+test("review profile sources act as safety floors and cannot lower stronger risk", () => {
+  // A fixed config profile raises the semantic profile declared by the PRD.
   const root = initGitRepo();
   write(path.join(root, "agents", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
   const prd = writeApprovedPrd(root, "review-config");
@@ -643,15 +851,161 @@ test("review profile is config-driven with CLI override precedence", () => {
   const status = runJson(["status"], root);
   assert.equal(status.reviewProfile.profile, "high-risk");
   assert.equal(status.reviewProfile.source, "config");
+  assert.equal(status.reviewProfile.policyVersion, 2);
 
-  // A per-run --review-profile still overrides config.
+  // A per-run profile cannot lower the configured safety floor.
   const root2 = initGitRepo();
   write(path.join(root2, "agents", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }, null, 2));
   const prd2 = writeApprovedPrd(root2, "review-cli");
   runJson(["init", "--prd", prd2, "--review-profile", "trivial", "--session-id", "rc2"], root2);
   const status2 = runJson(["status"], root2);
-  assert.equal(status2.reviewProfile.profile, "trivial");
-  assert.equal(status2.reviewProfile.source, "explicit");
+  assert.equal(status2.reviewProfile.profile, "high-risk");
+  assert.equal(status2.reviewProfile.source, "config");
+  assert.equal(status2.reviewProfile.policyVersion, 2);
+});
+
+test("policy v2 high-risk graph retains the independent final review gate", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "high-risk-graph");
+  write(prd, fs.readFileSync(prd, "utf8").replace(
+    'updated_at: "2026-07-06"',
+    'updated_at: "2026-07-06"\nreview_profile: "high-risk"\nreview_rationale: "The approved change includes a production data migration."',
+  ));
+  runJson(["init", "--prd", prd, "--session-id", "high-risk-session"], root);
+  runJson(["plan-execution"], root);
+  const status = runJson(["status"], root);
+  assert.equal(status.reviewProfile.profile, "high-risk");
+  assert.equal(status.reviewProfile.source, "prd");
+  assert.equal(status.reviewProfile.policyVersion, 2);
+  assert(status.reviewProfile.signals.some(signal => /production data migration/.test(signal)));
+  assert.equal(status.reviewPolicy.finalReviewRequired, true);
+  const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "high-risk-graph", "state.json"), "utf8"));
+  assert(state.taskGraph.nodes.some(node => node.id === "REVIEW"));
+  assert(state.taskGraph.edges.some(edge => edge.from === "REQ_FIDELITY_REVIEW" && edge.to === "REVIEW"));
+  assert(state.taskGraph.edges.some(edge => edge.from === "REVIEW" && edge.to === "FINALIZE"));
+});
+
+test("policy v2 standard fidelity prompt owns conditional UI and UX judgment", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "standard-ux-prompt");
+  let text = fs.readFileSync(prd, "utf8");
+  text = text.replace("| build/static | yes | local command proof | none |", "| browser | yes | primary UI and UX flow, loading and error states | none |");
+  text = text.replace("| V1 | build/static |", "| V1 | browser |");
+  write(prd, text);
+  runJson(["init", "--prd", prd, "--review-profile", "standard", "--session-id", "ux-session"], root);
+  const prompt = run(process.execPath, [harness, "requirements-review-prompt"], { cwd: root }).stdout;
+  for (const anchor of [
+    "single fresh independent read-only semantic reviewer",
+    "UI and UX evidence is applicable",
+    "loading, empty, and error states",
+    "responsive behavior and accessibility",
+    "copy and visual hierarchy",
+    "remaining human taste judgment",
+  ]) {
+    assert.match(prompt, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("legacy standard state without policyVersion keeps and can satisfy the v1 final-review gate", () => {
+  const root = initGitRepo();
+  const slug = "legacy-standard-policy";
+  const prd = writeApprovedPrd(root, slug);
+  runJson(["init", "--prd", prd, "--review-profile", "standard", "--session-id", "legacy-standard-session"], root);
+  const statePath = path.join(root, "agents", "implement", slug, "state.json");
+  let state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  delete state.reviewProfile.policyVersion;
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+
+  runJson(["plan-execution"], root);
+  state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert(state.taskGraph.nodes.some(node => node.id === "REVIEW"));
+  const initialStatus = runJson(["status"], root);
+  assert.equal(initialStatus.reviewPolicy.policyVersion, 1);
+  assert.equal(initialStatus.reviewPolicy.finalReviewRequired, true);
+
+  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
+  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Legacy nodes completed."], root);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], root);
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], root);
+  state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const logPath = state.verification[0].artifacts[0].path;
+  const fidelityPath = path.join(root, "agents", "implement", slug, "review", "requirements-fidelity-review.md");
+  write(fidelityPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", fidelityPath, "--summary", "PASS"], root);
+
+  const rejected = runJson(["finalize", "--status", "complete", "--summary", "must still be gated"], root, { allowFailure: true });
+  assert.equal(rejected.ok, false);
+  assert(rejected.violations.some(violation => /Final (?:adversarial )?review .*pass/i.test(violation)), JSON.stringify(rejected.violations));
+
+  state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const fidelity = state.requirementsFidelityReview;
+  const finalPath = path.join(root, "agents", "implement", slug, "review", "final-review.md");
+  write(finalPath, `# Final Adversarial Review
+
+Status: PASS
+
+## Fidelity Review Checked
+
+- Report: ${fidelity.reportPath}
+- Sha256: ${fidelity.reportSha256}
+- Status: ${fidelity.status}
+- Recorded at: ${fidelity.recordedAt}
+- Findings resolved or reflected: no findings remained.
+
+## Findings
+
+- none: the legacy standard contract is complete.
+
+## Checklist Coverage
+
+- Tasks: T1 complete.
+- Acceptance Criteria: AC1 met.
+- Verification: V1 passed with its registered command log.
+- Execution Plan: all nodes complete.
+- Task Graph: the required REVIEW gate is present.
+
+## Artifact Audit
+
+- Harness-visible validity: no violations.
+- Spot-checks performed: V1 command log checked through fidelity review.
+- Missing or weak artifacts: none.
+
+## Deviation Audit
+
+- Recorded deviations: none.
+- Accepted deviations: none.
+- Rejected deviations: none.
+
+## Verdict
+
+PASS.
+`);
+  runJson(["review-record", "--status", "pass", "--report", finalPath, "--summary", "PASS"], root);
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Legacy standard path completed."], root);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.reviewProfile.policyVersion, undefined);
+  assert.equal(receipt.finalReview.status, "pass");
+});
+
+test("legacy trivial state retains its skipped REVIEW node without requiring a final verdict", () => {
+  const root = initGitRepo();
+  const slug = "legacy-trivial-policy";
+  const prd = writeApprovedPrd(root, slug);
+  runJson(["init", "--prd", prd, "--review-profile", "trivial", "--session-id", "legacy-trivial-session"], root);
+  const statePath = path.join(root, "agents", "implement", slug, "state.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  delete state.reviewProfile.policyVersion;
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  runJson(["plan-execution"], root);
+  const status = runJson(["status"], root);
+  assert.equal(status.reviewPolicy.policyVersion, 1);
+  assert.equal(status.reviewPolicy.finalReviewRequired, false);
+  assert.equal(status.reviewPolicy.finalReviewNodePresent, true);
+  const planned = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const reviewNode = planned.taskGraph.nodes.find(node => node.id === "REVIEW");
+  assert.equal(reviewNode.status, "skipped");
+  assert.equal(reviewNode.requiredForDone, false);
 });
 
 test("commit-only source change makes a recorded review stale", () => {
@@ -684,6 +1038,42 @@ test("delivery freshness accepts the exact reviewed worktree materialized as a c
   write(path.join(root, "README.md"), "# Changed after review\n");
   run("git", ["add", "README.md"], { cwd: root });
   run("git", ["commit", "-m", "Unreviewed source change"], { cwd: root });
+  const stale = runJson(["verify-delivery", "--state", statePath], root, { allowFailure: true });
+  assert.equal(stale.ok, false);
+  assert(stale.violations.some(item => /stale/i.test(item)), JSON.stringify(stale.violations));
+});
+
+test("delivery freshness permits only unchanged initial dirty entries after reviewed work is committed", () => {
+  const root = initGitRepo();
+  write(path.join(root, "notes.txt"), "baseline\n");
+  run("git", ["add", "notes.txt"], { cwd: root });
+  run("git", ["commit", "-m", "Add notes"], { cwd: root });
+  write(path.join(root, "notes.txt"), "pre-existing user edit\n");
+
+  const slug = "reviewed-commit-dirty-baseline";
+  const { logPath, reviewPath } = driveToFidelity(root, slug, "reviewed-commit-dirty-session");
+  write(path.join(root, "src", "app.js"), "export const ready = true;\n");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
+  runJson(["finalize", "--status", "complete", "--summary", "done"], root);
+  run("git", ["add", "src/app.js"], { cwd: root });
+  run("git", ["commit", "-m", "Materialize reviewed source only"], { cwd: root });
+
+  const statePath = path.join(root, "agents", "implement", slug, "state.json");
+  const fresh = runJson(["verify-delivery", "--state", statePath], root);
+  assert.equal(fresh.ok, true, JSON.stringify(fresh.violations));
+
+  if (process.platform !== "win32") {
+    fs.chmodSync(path.join(root, "notes.txt"), 0o755);
+    const staleMode = runJson(["verify-delivery", "--state", statePath], root, { allowFailure: true });
+    assert.equal(staleMode.ok, false);
+    assert(staleMode.violations.some(item => /stale/i.test(item)), JSON.stringify(staleMode.violations));
+    fs.chmodSync(path.join(root, "notes.txt"), 0o644);
+    const freshAgain = runJson(["verify-delivery", "--state", statePath], root);
+    assert.equal(freshAgain.ok, true, JSON.stringify(freshAgain.violations));
+  }
+
+  write(path.join(root, "notes.txt"), "changed again after review\n");
   const stale = runJson(["verify-delivery", "--state", statePath], root, { allowFailure: true });
   assert.equal(stale.ok, false);
   assert(stale.violations.some(item => /stale/i.test(item)), JSON.stringify(stale.violations));
@@ -953,6 +1343,30 @@ function writeInvariantDraft(projectRoot, { id, trigger, checkRun }) {
   runJson(["rules", "add", "--file", path.basename(draft)], projectRoot);
 }
 
+function writeGrepInvariantDraft(projectRoot, { id, trigger, pattern, files, expect = "present" }) {
+  const draft = path.join(projectRoot, `${id}-draft.md`);
+  write(draft, [
+    "---",
+    `id: ${id}`,
+    "kind: invariant",
+    "status: active",
+    "evidence:",
+    "  - agents/implement/previous-run/state.json#D1",
+    "trigger:",
+    "  paths:",
+    `    - "${trigger}"`,
+    "check:",
+    "  type: grep",
+    `  pattern: ${pattern}`,
+    `  files: ${files}`,
+    `  expect: ${expect}`,
+    "---",
+    "",
+    `Files under ${trigger} must satisfy the ${id} grep rule.`,
+  ].join("\n"));
+  runJson(["rules", "add", "--file", path.basename(draft)], projectRoot);
+}
+
 test("plan-execution injects matching learned invariants as verification items", () => {
   const projectRoot = initGitRepo();
   writeInvariantDraft(projectRoot, {
@@ -961,15 +1375,12 @@ test("plan-execution injects matching learned invariants as verification items",
     checkRun: "node -e 'process.exit(0)'",
   });
   const prdPath = writeApprovedPrd(projectRoot, "rules-injection");
-  // The generic PRD task carries no path hints, so give the PRD a task that
-  // names the guarded path; write-scope inference picks it up.
-  const prd = fs.readFileSync(prdPath, "utf8").replace(
-    "- T1. Run the local command verification. Covers R1, AC1.",
-    "- T1. Update `src/app.js` and run the local command verification. Covers R1, AC1.",
-  );
-  fs.writeFileSync(prdPath, prd);
+  const taskPlanPath = path.join(projectRoot, "task-plan.json");
+  write(taskPlanPath, JSON.stringify({ tasks: {
+    T1: { writeScope: ["src"], risk: "low", dependsOn: [], parallelSafe: false },
+  } }, null, 2));
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "injection-session"], projectRoot);
-  const planned = runJson(["plan-execution"], projectRoot);
+  const planned = runJson(["plan-execution", "--task-plan", taskPlanPath], projectRoot);
   assert.equal(planned.injectedRules.length, 1);
   assert.equal(planned.injectedRules[0].rule, "INV-src-guard");
 
@@ -977,13 +1388,119 @@ test("plan-execution injects matching learned invariants as verification items",
   const injected = state.verification.find(item => item.sourceRuleId === "INV-src-guard");
   assert.ok(injected, "injected verification item exists");
   assert.equal(injected.source, "rules_injection");
-  assert.match(injected.text, /best-effort match, exact enforcement at deliver/);
+  assert.match(injected.text, /full targeted check required, changed files rechecked at deliver/);
   assert.equal(injected.matrix.requiredForDone, true);
+  const injectedCheck = state.verificationPlan.checks.find(item => item.verificationId === injected.id);
+  assert.equal(injectedCheck.command, "node -e 'process.exit(0)'");
+  assert.deepEqual(injectedCheck.covers.tasks, ["T1"]);
+  assert.equal(injectedCheck.status, "planned");
+  assert.equal(state.verificationPlan.status, "ready");
+  assert(state.executionPlan.nodes[0].covers.verification.includes(injected.id));
 
   // Re-planning must not duplicate the injected item.
   runJson(["plan-execution"], projectRoot);
-  const replanned = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-injection", "state.json"), "utf8"));
+  let replanned = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-injection", "state.json"), "utf8"));
   assert.equal(replanned.verification.filter(item => item.sourceRuleId === "INV-src-guard").length, 1);
+
+  const nodeIds = replanned.executionPlan.nodes.map(node => node.id).join(",");
+  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Implementation node completed."], projectRoot);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
+  runJson(["verify-run", "--id", injected.id, "--", "node", "-e", "process.exit(0)"], projectRoot);
+  replanned = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-injection", "state.json"), "utf8"));
+  const v1Log = replanned.verification.find(item => item.id === "V1").artifacts[0].path;
+  const ruleLog = replanned.verification.find(item => item.id === injected.id).artifacts[0].path;
+  const reviewPath = path.join(projectRoot, "agents", "implement", "rules-injection", "review", "requirements-fidelity-review.md");
+  const reviewBody = fidelityReviewBody(v1Log).replace(
+    "- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: " + v1Log + "; Judgment: PASS; Gap: none",
+    "- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: " + v1Log + "; Judgment: PASS; Gap: none\n" +
+      "- " + injected.id + ": Pass Intent: learned invariant exits zero; Covers: T1; Artifacts checked: " + ruleLog + "; Judgment: PASS; Gap: none",
+  );
+  write(reviewPath, reviewBody);
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Injected invariant run completed."], projectRoot);
+  assert.equal(finalized.ok, true);
+});
+
+test("plan-execution gives grep invariants an executable targeted verification command", () => {
+  const projectRoot = initGitRepo();
+  write(path.join(projectRoot, "src", "app.js"), "export const allowed = true;\n");
+  writeGrepInvariantDraft(projectRoot, {
+    id: "INV-grep-guard",
+    trigger: "src/**",
+    pattern: "FORBIDDEN",
+    files: "src/**",
+    expect: "absent",
+  });
+  const prdPath = writeApprovedPrd(projectRoot, "grep-rules-injection");
+  const taskPlanPath = path.join(projectRoot, "task-plan.json");
+  write(taskPlanPath, JSON.stringify({ tasks: {
+    T1: { writeScope: ["src"], risk: "low", dependsOn: [], parallelSafe: false },
+  } }, null, 2));
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "grep-injection-session"], projectRoot);
+  runJson(["plan-execution", "--task-plan", taskPlanPath], projectRoot);
+
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "grep-rules-injection", "state.json"), "utf8"));
+  const injected = state.verification.find(item => item.sourceRuleId === "INV-grep-guard");
+  const check = state.verificationPlan.checks.find(item => item.verificationId === injected.id);
+  assert.equal(check.status, "planned");
+  assert.doesNotMatch(check.command, /<changed files>/);
+  assert.match(check.command, /rules check --id INV-grep-guard --all/);
+
+  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
+  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Implementation node completed."], projectRoot);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
+  runJson([
+    "verify-run", "--id", injected.id, "--",
+    process.execPath, harness, "rules", "check", "--id", "INV-grep-guard", "--all",
+  ], projectRoot);
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "grep-rules-injection", "state.json"), "utf8"));
+  const v1Log = state.verification.find(item => item.id === "V1").artifacts[0].path;
+  const ruleLog = state.verification.find(item => item.id === injected.id).artifacts[0].path;
+  const reviewPath = path.join(projectRoot, "agents", "implement", "grep-rules-injection", "review", "requirements-fidelity-review.md");
+  write(reviewPath, fidelityReviewBody(v1Log).replace(
+    "- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: " + v1Log + "; Judgment: PASS; Gap: none",
+    "- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: " + v1Log + "; Judgment: PASS; Gap: none\n" +
+      "- " + injected.id + ": Pass Intent: targeted grep invariant passes; Covers: T1; Artifacts checked: " + ruleLog + "; Judgment: PASS; Gap: none",
+  ));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Injected grep invariant run completed."], projectRoot);
+  assert.equal(finalized.ok, true);
+});
+
+test("targeted grep invariant fails closed when a parent write scope arms it", () => {
+  const projectRoot = initGitRepo();
+  write(path.join(projectRoot, "src", "protected", "app.js"), "export const marker = 'FORBIDDEN';\n");
+  writeGrepInvariantDraft(projectRoot, {
+    id: "INV-parent-scope-guard",
+    trigger: "src/protected/**",
+    pattern: "FORBIDDEN",
+    files: "src/protected/**",
+    expect: "absent",
+  });
+  const prdPath = writeApprovedPrd(projectRoot, "parent-scope-grep-injection");
+  const taskPlanPath = path.join(projectRoot, "task-plan.json");
+  write(taskPlanPath, JSON.stringify({ tasks: {
+    T1: { writeScope: ["src"], risk: "low", dependsOn: [], parallelSafe: false },
+  } }, null, 2));
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "parent-scope-session"], projectRoot);
+  runJson(["plan-execution", "--task-plan", taskPlanPath], projectRoot);
+
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "parent-scope-grep-injection", "state.json"), "utf8"));
+  const injected = state.verification.find(item => item.sourceRuleId === "INV-parent-scope-guard");
+  const check = state.verificationPlan.checks.find(item => item.verificationId === injected.id);
+  assert.match(check.command, /rules check --id INV-parent-scope-guard --all/);
+
+  const result = run(process.execPath, [
+    harness, "rules", "check", "--id", "INV-parent-scope-guard", "--all",
+  ], { cwd: projectRoot, allowFailure: true });
+  assert.equal(result.status, 1);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, false);
+  assert.equal(report.results.length, 1);
+  assert.equal(report.results[0].status, "fail");
+  assert.deepEqual(report.results[0].matchedFiles, ["(all)"]);
 });
 
 test("deliver ship fails closed on a failing learned invariant and honors --skip-rules --reason", () => {

@@ -5,7 +5,7 @@ const path = require("path");
 const childProcess = require("child_process");
 
 const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath, runDirRelFor, legacyRunDirRelFor } = require("../util");
-const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots } = require("../git");
+const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
@@ -47,6 +47,7 @@ function cmdInit(options) {
   ensureRunDirs(runDirAbs);
 
   const state = buildInitialState(inputs, contract, worktreePreparation, options, runDirRel);
+  state.initialWorktreeSnapshot = worktreeSnapshot(state);
   if (inputs.approvalRaw !== "approved" && inputs.approvalOverride) {
     recordDeviation(state, "prd_approval_override", "PRD", inputs.approvalOverride, {
       frontmatterValue: inputs.approvalRaw || "missing",
@@ -66,6 +67,14 @@ function cmdInit(options) {
     verificationCount: contract.verification.length,
     verificationPlanStatus: state.verificationPlan.status,
     verificationPlanGapCount: state.verificationPlan.gaps.length,
+    initialWorktreeSnapshot: state.initialWorktreeSnapshot
+      ? {
+          capturedAt: state.initialWorktreeSnapshot.capturedAt,
+          headSha: state.initialWorktreeSnapshot.headSha,
+          statusHash: state.initialWorktreeSnapshot.statusHash,
+          entryCount: state.initialWorktreeSnapshot.entryCount,
+        }
+      : null,
   });
 
   process.stdout.write(JSON.stringify({
@@ -193,6 +202,7 @@ function writeWorktreePointer(inputs, worktreePreparation) {
     ok: true,
     delivery: inputs.deliveryConfig,
     worktreePrepared: worktreePreparation,
+    warnings: worktreePreparation.warnings || [],
     mainRootPointerWritten: true,
     message: worktreePreparation.resumed
       ? `PR delivery worktree already has implementation state. Continue the existing run from ${worktreePreparation.path} (use init --force there to reset it).`
@@ -257,11 +267,8 @@ function buildInitialState(inputs, contract, worktreePreparation, options, runDi
   const { projectRoot, prdAbs, prdText, parsed, approvalRaw, approvalOverride } = inputs;
   const { tasks, acceptanceCriteria, requirements, verification, testModeContract, intentTrace } = contract;
   const reviewProfile = classifyReviewProfile({
-    tasks,
-    acceptanceCriteria,
-    verification,
-    technicalStructure: contract.technicalStructure,
-    implementationNotes: contract.implementationNotes,
+    reviewProfile: parsed.frontmatter.review_profile,
+    reviewRationale: parsed.frontmatter.review_rationale,
   }, options["review-profile"], inputs.projectConfig.review ? inputs.projectConfig.review.profile : null);
   const linkedWorktree = isLinkedWorktree(projectRoot);
   return {
@@ -329,17 +336,28 @@ function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, a
   if (deliveryConfig.mode !== "pr" || !deliveryConfig.worktree.enabled || options["skip-worktree"]) return null;
   const targetRoot = deliveryConfig.worktree.path;
   if (canonicalPath(projectRoot) === canonicalPath(targetRoot)) {
-    return { active: true, path: targetRoot, branch: deliveryConfig.branch, created: false, setup: [] };
+    return { active: true, path: targetRoot, branch: deliveryConfig.branch, created: false, setup: [], warnings: [] };
   }
 
   const setupResults = [];
+  const warnings = [];
+  const sourceStatus = runGit(projectRoot, ["status", "--porcelain=v1"]).stdout.trim();
+  if (sourceStatus) {
+    warnings.push("Source checkout has uncommitted changes. Git worktrees do not copy them; commit, stash, or deliberately reapply the required changes in the delivery worktree.");
+  }
+  let baseSha;
+  try {
+    baseSha = runGit(projectRoot, ["rev-parse", "--verify", `${deliveryConfig.baseBranch}^{commit}`]).stdout.trim();
+  } catch {
+    throw new Error(`Configured delivery.baseBranch '${deliveryConfig.baseBranch}' does not resolve to a local commit`);
+  }
   let created = false;
   if (!fs.existsSync(targetRoot)) {
     ensureDir(path.dirname(targetRoot));
     if (branchExists(projectRoot, deliveryConfig.branch)) {
       runGit(projectRoot, ["worktree", "add", targetRoot, deliveryConfig.branch]);
     } else {
-      runGit(projectRoot, ["worktree", "add", "-b", deliveryConfig.branch, targetRoot, "HEAD"]);
+      runGit(projectRoot, ["worktree", "add", "-b", deliveryConfig.branch, targetRoot, deliveryConfig.baseBranch]);
     }
     created = true;
   } else {
@@ -378,6 +396,9 @@ function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, a
       path: targetRoot,
       branch: deliveryConfig.branch,
       created,
+      baseRef: deliveryConfig.baseBranch,
+      baseSha,
+      warnings,
       sync: syncResults,
       setup: setupResults,
       child: { skipped: true, reason: "state-exists", statePath: worktreeStatePath },
@@ -388,6 +409,7 @@ function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, a
   const childArgs = [SELF_PATH, "init", "--prd", prdRel, "--delivery", deliveryConfig.mode, "--branch", deliveryConfig.branch, "--skip-worktree"];
   if (initialSessionId) childArgs.push("--session-id", initialSessionId);
   if (approvalOverride) childArgs.push("--allow-unapproved-prd", approvalOverride);
+  if (options["review-profile"]) childArgs.push("--review-profile", String(options["review-profile"]));
   if (options.force) childArgs.push("--force");
   const child = childProcess.spawnSync(process.execPath, childArgs, {
     cwd: targetRoot,
@@ -415,6 +437,9 @@ function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, a
     path: targetRoot,
     branch: deliveryConfig.branch,
     created,
+    baseRef: deliveryConfig.baseBranch,
+    baseSha,
+    warnings,
     sync: syncResults,
     setup: setupResults,
     child: childResult,

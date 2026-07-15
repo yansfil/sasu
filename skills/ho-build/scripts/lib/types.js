@@ -152,7 +152,9 @@
  * @typedef {Object} ReviewProfile
  * @property {"trivial"|"standard"|"high-risk"} profile
  * @property {string} source
+ * @property {string} [reason]
  * @property {string[]} [signals]
+ * @property {number} [policyVersion]
  */
 
 /**
@@ -169,6 +171,7 @@
  * @property {string} runDir project-relative run directory
  * @property {Object} delivery normalized delivery config + worktree preparation
  * @property {ReviewProfile} reviewProfile
+ * @property {Object|null} [initialWorktreeSnapshot] git worktree baseline captured at init
  * @property {Object} execution normalized execution config
  * @property {Object} intentTrace decision trace snapshot captured at init
  * @property {string} technicalStructure

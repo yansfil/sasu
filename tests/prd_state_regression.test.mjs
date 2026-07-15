@@ -1,8 +1,8 @@
 // Refactor safety net for prd_state_harness.js.
 //
-// Drives the standard review profile through the full happy path
-// (init -> plan -> mark -> verify-run -> fidelity review -> final review ->
-// finalize) and pins the rendered markdown artifacts against normalized
+// Drives the policy v2 standard review profile through the full happy path
+// (init -> plan -> mark -> verify-run -> independent combined fidelity review
+// -> finalize) and pins the rendered markdown artifacts against normalized
 // golden files so module extraction cannot silently change CLI output.
 //
 // Regenerate goldens after an intentional rendering change:
@@ -61,6 +61,7 @@ function initGitRepo() {
   run("git", ["init", "-b", "main"], { cwd: dir });
   run("git", ["config", "user.email", "test@example.com"], { cwd: dir });
   run("git", ["config", "user.name", "Harness Test"], { cwd: dir });
+  run("git", ["config", "commit.gpgsign", "false"], { cwd: dir });
   write(path.join(dir, "README.md"), "# Test Repo\n");
   run("git", ["add", "README.md"], { cwd: dir });
   run("git", ["commit", "-m", "Initial"], { cwd: dir });
@@ -195,37 +196,6 @@ PASS.
 `;
 }
 
-function finalReviewBody(fidelitySha) {
-  return `# Final Review
-
-Status: PASS
-
-## Fidelity Review Checked
-
-- Recorded requirements fidelity review report sha256 prefix ${fidelitySha} matches state.json; verdict PASS stands on re-read.
-
-## Findings
-
-- none: implementation matches the recorded plan and verification evidence.
-
-## Checklist Coverage
-
-- T1 complete, AC1 met, V1 passed with a command-log artifact; no open checklist items remain.
-
-## Artifact Audit
-
-- V1 command log exists on disk and its recorded sha matches the file content.
-
-## Deviation Audit
-
-- No deviations recorded in the ledger; scope stayed within R1/AC1.
-
-## Verdict
-
-PASS.
-`;
-}
-
 // Normalize machine- and run-specific content so goldens stay stable across
 // tmpdirs, machines, and wall clocks.
 function normalizeArtifact(text, projectRoot) {
@@ -263,19 +233,25 @@ function assertGolden(name, actual) {
   assert.equal(actual, expected, `Rendered artifact ${name} drifted from golden; if intentional, regenerate with UPDATE_GOLDEN=1`);
 }
 
-test("standard profile full happy path finalizes and rendered artifacts match goldens", () => {
+test("policy v2 standard profile finalizes after one combined fidelity review and matches goldens", () => {
   const projectRoot = initGitRepo();
   const slug = "standard-regression";
   const prdPath = writeApprovedPrd(projectRoot, slug);
   const runDir = path.join(projectRoot, "agents", "implement", slug);
   const statePathAbs = path.join(runDir, "state.json");
   const readState = () => JSON.parse(fs.readFileSync(statePathAbs, "utf8"));
+  const removedBaselinePath = path.join(projectRoot, "baseline-only.txt");
+  write(removedBaselinePath, "Present only in the initial dirty snapshot.");
 
   const initResult = runJson(
     ["init", "--prd", prdPath, "--review-profile", "standard", "--session-id", "regression-session"],
     projectRoot,
   );
   assert.equal(initResult.ok, true);
+  let state = readState();
+  assert(state.initialWorktreeSnapshot);
+  assert.equal(typeof state.initialWorktreeSnapshot.statusHash, "string");
+  assert(Array.isArray(state.initialWorktreeSnapshot.entries));
 
   runJson(["plan-execution"], projectRoot);
   const ready = runJson(["ready"], projectRoot);
@@ -286,14 +262,15 @@ test("standard profile full happy path finalizes and rendered artifacts match go
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
 
-  let state = readState();
+  state = readState();
   assert.equal(state.verification[0].status, "pass");
   const logPath = state.verification[0].artifacts[0].path;
+  fs.rmSync(removedBaselinePath);
 
   // The prompts are agent-facing contracts; pin their key anchors before the
   // renderers move to their own module.
   const fidelityPrompt = run(process.execPath, [harness, "requirements-review-prompt"], { cwd: projectRoot }).stdout;
-  for (const anchor of ["Decision Trace", "Verification Intent Checklist", "Coverage Judgment", "requirements fidelity reviewer"]) {
+  for (const anchor of ["Decision Trace", "Verification Intent Checklist", "Coverage Judgment", "fresh independent read-only semantic reviewer", "Do not rerun the complete test suite"]) {
     assert.ok(fidelityPrompt.includes(anchor), `requirements-review-prompt lost anchor: ${anchor}`);
   }
 
@@ -306,24 +283,16 @@ test("standard profile full happy path finalizes and rendered artifacts match go
   );
   assert.equal(fidelityRecord.ok, true);
 
-  const finalPrompt = run(process.execPath, [harness, "review-prompt"], { cwd: projectRoot }).stdout;
-  for (const anchor of ["Fidelity Review Checked", "Artifact Audit", "Deviation Audit", "adversarial final reviewer"]) {
-    assert.ok(finalPrompt.includes(anchor), `review-prompt lost anchor: ${anchor}`);
-  }
-
   state = readState();
-  const fidelitySha = String(state.requirementsFidelityReview.reportSha256).slice(0, 12);
-  const finalReportPath = path.join(runDir, "review", "final-review.md");
-  write(finalReportPath, finalReviewBody(fidelitySha));
-  const finalRecord = runJson(
-    ["review-record", "--status", "pass", "--report", finalReportPath, "--summary", "PASS"],
-    projectRoot,
-  );
-  assert.equal(finalRecord.ok, true);
-  assert.equal(finalRecord.next, null);
+  assert.equal(state.reviewProfile.policyVersion, 2);
+  assert.equal(state.finalReview, null);
+  assert.equal(state.taskGraph.nodes.some(node => node.id === "REVIEW"), false);
+  assert(state.taskGraph.edges.some(edge => edge.from === "REQ_FIDELITY_REVIEW" && edge.to === "FINALIZE"));
 
   const status = runJson(["status"], projectRoot);
   assert.equal(status.reviewProfile.profile, "standard");
+  assert.equal(status.reviewPolicy.fidelityOwner, "independent");
+  assert.equal(status.reviewPolicy.finalReviewRequired, false);
   assert.equal(status.next, null);
   assert.equal(status.counts.verificationOpen, 0);
   assert.equal(status.counts.requiredVerificationNotPassed, 0);
@@ -334,8 +303,27 @@ test("standard profile full happy path finalizes and rendered artifacts match go
   const receipt = JSON.parse(fs.readFileSync(path.join(runDir, "receipt.json"), "utf8"));
   assert.equal(receipt.status, "complete");
   assert.equal(receipt.reviewProfile.profile, "standard");
-  assert.equal(receipt.finalReview.status, "pass");
+  assert.equal(receipt.reviewProfile.policyVersion, 2);
+  assert.equal(receipt.reviewPolicy.fidelityOwner, "independent");
+  assert.equal(receipt.reviewPolicy.finalReviewRequired, false);
+  assert(receipt.initialWorktreeSnapshot);
+  assert.equal(receipt.initialWorktreeSnapshot.statusHash, state.initialWorktreeSnapshot.statusHash);
+  assert.equal(receipt.finalReview, null);
   assert.equal(receipt.requirementsFidelityReview.status, "pass");
+
+  const implementationResult = fs.readFileSync(path.join(runDir, "implementation-result.md"), "utf8");
+  for (const anchor of [
+    "Status: Done",
+    "## Approval And Deviations",
+    "## Review Policy",
+    "## Worktree Scope And Delivery",
+    "Initial worktree snapshot:",
+    "Added, changed, or removed after initialization:",
+    "## Coordinator Context Notes",
+  ]) {
+    assert(implementationResult.includes(anchor), `implementation-result lost contract anchor: ${anchor}`);
+  }
+  assert.match(implementationResult, /Added, changed, or removed after initialization: baseline-only\.txt\./);
 
   for (const name of [
     "checklist.md",

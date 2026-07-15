@@ -4,9 +4,10 @@ const fs = require("fs");
 const path = require("path");
 
 const { writeJson, writeMarkdown, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT } = require("./util");
-const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState } = require("./state_data");
+const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState, finalReviewNodePresentForState, effectiveReviewPolicy } = require("./state_data");
 const { taskGraphSummary, readyExecutionPlan, buildTaskGraph } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
+const { snapshotEntriesEqual } = require("./git");
 
 function checkbox(done) {
   return done ? "[x]" : "[ ]";
@@ -126,6 +127,12 @@ function renderTaskGraph(state, graph = state.taskGraph || buildTaskGraph(state)
 
 function renderChecklist(state) {
   const lines = [`# PRD Implementation Checklist: ${state.topicSlug}`, "", `Source PRD: ${state.prdPath}`, ""];
+  const reviewPolicy = effectiveReviewPolicy(state);
+  lines.push("## Review Policy", "");
+  lines.push(`- Profile: ${reviewPolicy.profile}`);
+  lines.push(`- Policy version: ${reviewPolicy.policyVersion}`);
+  lines.push(`- Requirements fidelity owner: ${reviewPolicy.fidelityOwner}`);
+  lines.push(`- Final adversarial review required: ${reviewPolicy.finalReviewRequired ? "yes" : "no"}`, "");
   lines.push("## Execution Nodes", "");
   if (state.executionPlan && state.executionPlan.nodes && state.executionPlan.nodes.length) {
     for (const node of state.executionPlan.nodes) {
@@ -176,13 +183,15 @@ function renderChecklist(state) {
     lines.push(`  - Report: ${state.requirementsFidelityReview.reportPath}`);
     lines.push(`  - Summary: ${state.requirementsFidelityReview.summary}`);
   }
-  lines.push("", "## Final Adversarial Review", "");
   const finalReviewRequired = finalReviewRequiredForState(state);
-  lines.push(`- ${checkbox(!finalReviewRequired || Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review${finalReviewRequired ? "" : " (skipped for trivial profile)"}`);
-  lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped"}`);
-  if (state.finalReview) {
-    lines.push(`  - Report: ${state.finalReview.reportPath}`);
-    lines.push(`  - Summary: ${state.finalReview.summary}`);
+  if (finalReviewNodePresentForState(state)) {
+    lines.push("", "## Final Adversarial Review", "");
+    lines.push(`- ${checkbox(!finalReviewRequired || Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review${finalReviewRequired ? "" : " (not required by legacy trivial policy)"}`);
+    lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped"}`);
+    if (state.finalReview) {
+      lines.push(`  - Report: ${state.finalReview.reportPath}`);
+      lines.push(`  - Summary: ${state.finalReview.summary}`);
+    }
   }
   return lines.join("\n");
 }
@@ -295,9 +304,43 @@ function renderVerification(state) {
 }
 
 function writeImplementationReport(statePath, state) {
-  const lines = [`# Implementation Result: ${state.topicSlug}`, "", `Status: ${state.status}`, "", `PRD: ${state.prdPath}`, `Receipt: ${state.runDir}/receipt.json`, ""];
+  const statusLabel = state.status === "complete"
+    ? "Done"
+    : state.status === "partial"
+      ? "Partially Done"
+      : state.status === "blocked"
+        ? "Blocked"
+        : state.status;
+  const policy = effectiveReviewPolicy(state);
+  const profile = state.reviewProfile || { profile: reviewProfileName(state), source: "default", reason: "legacy default", signals: [] };
+  const lines = [`# Implementation Result: ${state.topicSlug}`, "", `Status: ${statusLabel}`, "", `PRD: ${state.prdPath}`, `Receipt: ${state.runDir}/receipt.json`, ""];
+
+  lines.push("## Approval And Deviations", "");
+  const approvalDeviation = (state.deviations || []).find(item => item.type === "prd_approval_override");
+  lines.push(`- Approval: ${approvalDeviation ? `verbatim conversational override \`${approvalDeviation.summary}\`` : "approved PRD frontmatter"}`);
+  if ((state.deviations || []).length) {
+    for (const deviation of state.deviations) lines.push(`- ${deviation.id}: ${deviation.type} - ${deviation.summary}`);
+  } else {
+    lines.push("- Recorded deviations: none");
+  }
+
+  lines.push("", "## Review Policy", "");
+  lines.push(`- Effective profile: ${policy.profile}`);
+  lines.push(`- Policy version: ${policy.policyVersion}`);
+  lines.push(`- Classification source: ${profile.source || "default"}`);
+  lines.push(`- Classification reason: ${profile.reason || "none recorded"}`);
+  lines.push(`- Requirements fidelity owner: ${policy.fidelityOwner}`);
+  lines.push(`- Requirements fidelity depth: ${policy.fidelityDepth}`);
+  lines.push(`- Final adversarial review required: ${policy.finalReviewRequired ? "yes" : "no"}`);
+  lines.push(`- Final review node present: ${policy.finalReviewNodePresent ? "yes" : "no"}`);
+  if (Array.isArray(profile.signals) && profile.signals.length) {
+    lines.push("- Classification signals:");
+    for (const signal of profile.signals) lines.push(`  - ${signal}`);
+  } else {
+    lines.push("- Classification signals: none");
+  }
   const executionPlan = executionPlanSummary(state);
-  lines.push("## Execution Plan", "");
+  lines.push("", "## Execution Plan And Changed Modules", "");
   lines.push(`- Status: ${executionPlan.status}`);
   lines.push(`- Nodes: ${executionPlan.nodeCount}`);
   lines.push(`- Open nodes: ${executionPlan.openNodeCount}`);
@@ -305,6 +348,7 @@ function writeImplementationReport(statePath, state) {
   if (state.executionPlan && state.executionPlan.nodes) {
     for (const node of state.executionPlan.nodes) {
       lines.push(`- ${node.id}: ${node.status} - ${node.title} (source: ${node.sourceTask}, risk: ${node.risk}, parallelSafe: ${node.parallelSafe ? "yes" : "no"})`);
+      if (Array.isArray(node.writeScope) && node.writeScope.length) lines.push(`  - Write scope: ${node.writeScope.join(", ")}`);
     }
   }
   lines.push("");
@@ -315,16 +359,65 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Edges: ${graph.edgeCount}`);
   lines.push(`- Open nodes: ${graph.openNodeCount}`);
   lines.push(`- Artifact: ${state.runDir}/taskgraph.md`);
-  lines.push("## Tasks", "");
+  lines.push("", "## Tasks", "");
   for (const task of state.tasks) lines.push(`- ${task.id}: ${task.status} - ${task.title}`);
   lines.push("", "## Acceptance Criteria", "");
   for (const ac of state.acceptanceCriteria) lines.push(`- ${ac.id}: ${ac.status} - ${ac.title}`);
-  lines.push("", "## Verification Evidence", "");
-  for (const item of state.verification) lines.push(`- ${item.id}: ${item.status} - ${item.level}: ${item.title}`);
+  lines.push("", "## Verification Evidence And Regression Coverage", "");
+  for (const item of state.verification) {
+    lines.push(`- ${item.id}: ${item.status} - ${item.level}: ${item.title}`);
+    if (item.evidence && item.evidence.length) lines.push(`  - Latest evidence: ${item.evidence[item.evidence.length - 1].text}`);
+    if (item.artifacts && item.artifacts.length) lines.push(`  - Artifacts: ${item.artifacts.map(artifact => artifact.path).join(", ")}`);
+  }
   lines.push("", "## Artifact Evidence", "");
   for (const entry of collectArtifacts(state)) {
     lines.push(`- ${entry.ownerKind} ${entry.ownerId}: ${entry.artifact.kind} - ${entry.artifact.path}`);
   }
+
+  const initialSnapshot = state.initialWorktreeSnapshot || null;
+  const finalSnapshot = state.finalReceipt && state.finalReceipt.worktreeSnapshot ? state.finalReceipt.worktreeSnapshot : null;
+  lines.push("", "## Worktree Scope And Delivery", "");
+  const deliveryMode = state.delivery && state.delivery.mode ? state.delivery.mode : "local";
+  lines.push(`- Delivery mode: ${deliveryMode}`);
+  lines.push(`- Branch: ${state.delivery && state.delivery.branch ? state.delivery.branch : "none"}`);
+  lines.push(deliveryMode === "local"
+    ? "- Local delivery result: ho-build performed no commit, push, PR, CI, release, or deployment action."
+    : "- PR delivery result: commit, push, PR, and CI remain post-receipt ho-ship outcomes and require separate delivery evidence.");
+  if (initialSnapshot) {
+    lines.push(`- Initial worktree snapshot: ${initialSnapshot.capturedAt}; ${initialSnapshot.entryCount} entries; status hash ${initialSnapshot.statusHash}.`);
+  } else {
+    lines.push("- Initial worktree snapshot: unavailable for this legacy run; see Coordinator Context Notes for recorded baseline provenance.");
+  }
+  if (finalSnapshot) lines.push(`- Final worktree snapshot: ${finalSnapshot.capturedAt}; ${finalSnapshot.entryCount} entries; status hash ${finalSnapshot.statusHash}.`);
+  if (initialSnapshot && finalSnapshot) {
+    const initialByPath = new Map((initialSnapshot.entries || []).map(entry => [entry.path, entry]));
+    const finalByPath = new Map((finalSnapshot.entries || []).map(entry => [entry.path, entry]));
+    const changedAfterInit = (finalSnapshot.entries || []).filter(entry => {
+      const before = initialByPath.get(entry.path);
+      return !before || !snapshotEntriesEqual(before, entry);
+    });
+    const removedAfterInit = (initialSnapshot.entries || []).filter(entry => !finalByPath.has(entry.path));
+    const preservedBaseline = (initialSnapshot.entries || []).filter(entry => {
+      const after = finalByPath.get(entry.path);
+      return after && snapshotEntriesEqual(entry, after);
+    });
+    lines.push(`- Preserved initial dirty entries: ${preservedBaseline.length}.`);
+    const changedPaths = [...new Set([...changedAfterInit, ...removedAfterInit].map(entry => entry.path))];
+    lines.push(`- Added, changed, or removed after initialization: ${changedPaths.length ? changedPaths.join(", ") : "none"}.`);
+  }
+
+  const contextNotesPath = path.join(path.dirname(statePath), "context-notes.md");
+  lines.push("", "## Coordinator Context Notes", "");
+  if (fs.existsSync(contextNotesPath)) {
+    const contextNotes = fs.readFileSync(contextNotesPath, "utf8").trim();
+    for (const line of contextNotes.split(/\r?\n/)) {
+      const heading = line.match(/^(#{1,6})\s+(.+)$/);
+      lines.push(heading ? `${"#".repeat(Math.min(6, heading[1].length + 2))} ${heading[2]}` : line);
+    }
+  } else {
+    lines.push("No coordinator context notes were recorded.");
+  }
+
   lines.push("", "## Requirements Fidelity Review", "");
   if (state.requirementsFidelityReview) {
     lines.push(`- Status: ${state.requirementsFidelityReview.status}`);
@@ -333,13 +426,15 @@ function writeImplementationReport(statePath, state) {
   } else {
     lines.push("- Status: pending");
   }
-  lines.push("", "## Final Adversarial Review", "");
-  if (state.finalReview) {
-    lines.push(`- Status: ${state.finalReview.status}`);
-    lines.push(`- Report: ${state.finalReview.reportPath}`);
-    lines.push(`- Summary: ${state.finalReview.summary}`);
-  } else {
-    lines.push("- Status: pending");
+  if (finalReviewNodePresentForState(state)) {
+    lines.push("", "## Final Adversarial Review", "");
+    if (state.finalReview) {
+      lines.push(`- Status: ${state.finalReview.status}`);
+      lines.push(`- Report: ${state.finalReview.reportPath}`);
+      lines.push(`- Summary: ${state.finalReview.summary}`);
+    } else {
+      lines.push(`- Status: ${finalReviewRequiredForState(state) ? "pending" : "skipped"}`);
+    }
   }
   lines.push("", "## Final Receipt", "", "```json", JSON.stringify(state.finalReceipt, null, 2), "```", "");
   writeMarkdown(path.join(path.dirname(statePath), "implementation-result.md"), lines.join("\n"));
@@ -348,15 +443,32 @@ function writeImplementationReport(statePath, state) {
 function renderRequirementsReviewPrompt(context) {
   const { state, statePath, reportPath } = context;
   const intentTrace = state.intentTrace || {};
+  const policy = effectiveReviewPolicy(state);
+  const ownershipGuidance = policy.fidelityOwner === "independent"
+    ? "Review policy: standard v2. You are the single fresh independent read-only semantic reviewer for this run. Base the verdict on the raw PRD, state, diff, ledger, and registered artifacts, not on a coordinator-provided conclusion. The coordinator alone records your report in harness state."
+    : policy.profile === "trivial"
+      ? "Review policy: trivial v2. This is a compact main-agent fidelity check. Cover the complete contract, but keep the report proportional to the small change surface."
+      : policy.profile === "high-risk"
+        ? "Review policy: high-risk. This is the main-agent full requirements fidelity stage. Reopen sensitive data, auth, security, billing, live-service, migration, deployment, and rollback proof before the independent final review."
+        : "Review policy: legacy standard. This is the main-agent full requirements fidelity stage that precedes the legacy independent final review.";
+  const uxApplicable = hasUserVisibleReviewSurface(state);
+  const uxGuidance = uxApplicable
+    ? "UI and UX evidence is applicable. Judge the registered evidence for primary user flows and relevant loading, empty, and error states. Judge responsive behavior and accessibility when contracted, copy and visual hierarchy where applicable, and clearly separate evidence-backed findings from remaining human taste judgment. This is an overlay within fidelity review, not a separate gate."
+    : "No explicit UI or UX surface was detected in the verification contract. Do not invent a separate UX gate, but assess user-visible quality if the diff or registered artifacts reveal such a surface.";
   const decisionLines = (intentTrace.decisions || [])
     .slice(0, 40)
     .map(item => `  - ${item.source} ${item.id} [${item.stance || "unspecified"}]: ${item.text}`)
     .join("\n") || "  - No structured decision trace items were captured; treat missing traceability as a finding unless the PRD explicitly says none were needed.";
   return `You are the requirements fidelity reviewer for a PRD implementation.
 
+${ownershipGuidance}
+
+${uxGuidance}
+
 Your job is to verify that the implementation still satisfies the user's original intent, accepted decisions, rejected alternatives, and PRD contract. Be strict. Find semantic drift, missing user-visible behavior, diluted acceptance criteria, hidden scope, and "technically complete but not what the user asked for" failures.
 
 Do not implement fixes. Do not mark anything complete. Review only.
+Harness-owned mechanical gates already enforce tracked completion, required verification status, artifact registration, hash integrity, freshness, and receipt eligibility. Do not rerun the complete test suite or recompute every hash unless the recorded evidence is inconsistent, missing, or suspicious.
 
 Source of truth:
 - PRD: \`${state.prdPath}\`
@@ -433,14 +545,25 @@ PASS only if the user's original intent, accepted decisions, rejected alternativ
 `;
 }
 
+function hasUserVisibleReviewSurface(state) {
+  const text = [
+    ...(state.testModeContract || []).map(item => `${item.mode || ""} ${item.covers || ""} ${item.humanDecision || ""}`),
+    ...(state.verification || []).map(item => `${item.text || ""} ${item.title || ""} ${item.matrix ? `${item.matrix.mode || ""} ${item.matrix.covers || ""} ${item.matrix.liveProof || ""}` : ""}`),
+  ].join("\n");
+  return /\b(browser|ui|ux|user-visible|responsive|accessibility|visual|mobile|desktop)\b|사용자 화면|접근성|반응형/iu.test(text);
+}
+
 function renderReviewPrompt(context) {
   const { state, statePath, reportPath } = context;
   const fidelity = state.requirementsFidelityReview || {};
   const profile = reviewProfileName(state);
+  const policy = effectiveReviewPolicy(state);
   const profileGuidance = profile === "high-risk"
     ? "Review profile: high-risk. Run the full adversarial review and reopen any risky semantic, security, data, migration, external-service, or delivery proof."
     : profile === "standard"
-      ? "Review profile: standard. Keep this as a thin final gate: audit freshness, state consistency, artifact validity, deviations, and overclaiming; reopen full V-by-V proof only when the fidelity review is weak, generic, inconsistent, or suspicious."
+      ? policy.finalReviewRequired
+        ? "Review profile: legacy standard. Keep this as a thin required final gate: audit freshness, state consistency, artifact validity, deviations, and overclaiming; reopen full V-by-V proof only when the fidelity review is weak, generic, inconsistent, or suspicious."
+        : "Review profile: standard v2. Final adversarial review is not required for receipt. If a human explicitly requests this optional review, audit freshness, state consistency, artifact validity, deviations, and overclaiming without repeating the independent combined fidelity review."
       : "Review profile: trivial. Final adversarial review is optional for receipt; if requested, keep it to a short freshness, artifact, and overclaim check.";
   const fidelityLine = fidelity.reportSha256
     ? `Recorded fidelity review: status ${fidelity.status}, report \`${fidelity.reportPath}\`, sha256 \`${fidelity.reportSha256}\`, recorded at ${fidelity.recordedAt}.`

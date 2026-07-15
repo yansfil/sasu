@@ -148,6 +148,7 @@ function addLedgerOnlyRule(projectRoot, kind, options) {
 function cmdRulesCheck(options) {
   const projectRoot = cwd();
   const report = checkRules(projectRoot, {
+    id: options.id,
     files: options.files,
     base: options.base,
     all: options.all === true,

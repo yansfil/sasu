@@ -3,8 +3,8 @@
 - PRD: agents/prd/standard-regression/prd.md
 - Status: complete
 - Generated: <TS>
-- Nodes: 9
-- Edges: 18
+- Nodes: 8
+- Edges: 13
 - Open nodes: 0
 - Verification blocking gaps: 0
 
@@ -23,7 +23,7 @@
   - Artifacts: 0
 - [x] N1 (execution_node) - complete: Run the local command verification. Covers R1, AC1.
   - Source Task: T1
-  - Risk: low
+  - Risk: medium
   - Parallel Safe: no
   - Covers: R: R1; AC: AC1; V: V1
   - Evidence: 1
@@ -38,10 +38,6 @@
   - Evidence: 2
   - Artifacts: 1
 - [x] REQ_FIDELITY_REVIEW (requirements_fidelity_review) - pass: Requirements fidelity review
-  - Evidence: 1
-  - Artifacts: 1
-- [x] REVIEW (final_review) - pass: Adversarial final review
-  - Required For Done: yes
   - Evidence: 1
   - Artifacts: 1
 - [x] FINALIZE (receipt) - complete: Final receipt
@@ -59,12 +55,7 @@
 - T1 -> V1 (verified_by): verification covers this task
 - AC1 -> V1 (verified_by): verification covers this acceptance criterion
 - T1 -> REQ_FIDELITY_REVIEW (requirements_review_input): requirements reviewer must audit this item against original user intent and PRD decisions
-- T1 -> REVIEW (review_input): final reviewer must audit this item and its evidence
 - N1 -> REQ_FIDELITY_REVIEW (requirements_review_input): requirements reviewer must audit this item against original user intent and PRD decisions
-- N1 -> REVIEW (review_input): final reviewer must audit this item and its evidence
 - AC1 -> REQ_FIDELITY_REVIEW (requirements_review_input): requirements reviewer must audit this item against original user intent and PRD decisions
-- AC1 -> REVIEW (review_input): final reviewer must audit this item and its evidence
 - V1 -> REQ_FIDELITY_REVIEW (requirements_review_input): requirements reviewer must audit this item against original user intent and PRD decisions
-- V1 -> REVIEW (review_input): final reviewer must audit this item and its evidence
-- REQ_FIDELITY_REVIEW -> REVIEW (review_input): final reviewer must audit the requirements fidelity verdict
-- REVIEW -> FINALIZE (gates): receipt can be written only after passing final review
+- REQ_FIDELITY_REVIEW -> FINALIZE (gates): receipt can be written after requirements fidelity review and mechanical gates pass

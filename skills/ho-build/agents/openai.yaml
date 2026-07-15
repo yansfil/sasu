@@ -1,4 +1,4 @@
 interface:
   display_name: "ho-build"
-  short_description: "Implement PRDs with goals, graph, and proof"
-  default_prompt: "Use $ho-build to implement the approved PRD with goal tracking, TaskGraph, fidelity checks, final review, and artifact-backed proof."
+  short_description: "Implement PRDs with graph, evidence, and receipts"
+  default_prompt: "Use $ho-build to implement the approved PRD with goal tracking, an explicit execution plan when useful, profile-aware fidelity review, artifact-backed proof, and a strict receipt."

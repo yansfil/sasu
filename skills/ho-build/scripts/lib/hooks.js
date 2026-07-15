@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson } = require("./util");
-const { verificationPlanSummary, executionPlanSummary, countState, finalReviewRequiredForState } = require("./state_data");
+const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
 const { taskGraphSummary, readyExecutionPlan, nextItem } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
 const { completionViolations } = require("./reviews");
@@ -199,10 +199,11 @@ function runPreToolUseHook(payload) {
   const counts = countState(state);
   const violations = completionViolations(statePath, state, { includeFinalReview: true });
   if (state.finalReceipt && counts.totalOpen === 0 && violations.length === 0) return "";
-  const finalReviewRequired = finalReviewRequiredForState(state);
+  const reviewPolicy = effectiveReviewPolicy(state);
+  const finalReviewRequired = reviewPolicy.finalReviewRequired;
   const finalReviewRequirement = finalReviewRequired
     ? "record a passing final review"
-    : "confirm the trivial review profile does not require final adversarial review";
+    : "confirm the effective review policy does not require final adversarial review";
   return JSON.stringify({
     decision: "block",
     reason: `<prd-implement-goal-guard>
@@ -215,7 +216,7 @@ State: \`${toProjectRelative(statePath, hookCwd)}\`
 	Verification plan: ${verificationPlanSummary(state).status} (${verificationPlanSummary(state).blockingGapCount} blocking gaps)
 	Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openNodeCount} open nodes, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
 	Requirements fidelity review: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}
-	Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped by trivial profile"}
+	Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "not required by policy"}
 	Receipt: ${state.finalReceipt ? "present" : "missing"}
 
 	Run \`${harnessCommand()} status\`, close all execution nodes and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the goal complete.
@@ -235,8 +236,9 @@ function renderContinuationDirective(context) {
   const { state, counts, next } = context;
   const HARNESS = harnessCommand();
   const requirementsReviewStatus = state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending";
-  const finalReviewRequired = finalReviewRequiredForState(state);
-  const finalReviewStatus = state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped by trivial profile";
+  const reviewPolicy = effectiveReviewPolicy(state);
+  const finalReviewRequired = reviewPolicy.finalReviewRequired;
+  const finalReviewStatus = state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "not required by policy";
   const verificationPlan = verificationPlanSummary(state);
   const executionPlan = executionPlanSummary(state);
   const ready = readyExecutionPlan(state);
@@ -250,7 +252,7 @@ function renderContinuationDirective(context) {
       ? "FINAL REVIEW: tracked items are closed; run adversarial review before finalizing"
       : finalReviewRequired
         ? "FINALIZE: final review passed; write receipt"
-        : "FINALIZE: trivial profile gates passed; write receipt";
+        : "FINALIZE: effective review-policy gates passed; write receipt";
   const finalGateBlock = finalGateViolations.length
     ? `\n# Final gate gaps\n\n${finalGateViolations.map(item => `- ${item}`).join("\n")}\n`
     : "";
@@ -281,10 +283,13 @@ Drive the Next required item above to done, then record it with the matching har
 10. Let task status roll up from execution nodes, ACs, and verification. Use \`mark --kind task\` only for an explicit blocked/deferred/manual correction with evidence.
 11. Do not mark the tracked goal or report the run complete until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`${HARNESS} status\` reports no open items or final gate violations.
     If delivery mode is \`pr\`, the receipt alone is not completion. Run the deliver skill and wait for PR creation plus required CI pass or an explicit delivery blocker.
-12. When no open items remain, run the final AC + Verification sweep, then run the strict requirements fidelity review:
+12. When no open items remain, run the final AC + Verification sweep, then run the requirements fidelity review required by profile ${reviewPolicy.profile} policy v${reviewPolicy.policyVersion}:
    - \`${HARNESS} requirements-review-prompt\`
-   - The main agent writes this review by default. Do not spawn a requirements fidelity sidecar unless the user explicitly asks for one. It must compare original user intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result.
+   - ${reviewPolicy.fidelityOwner === "independent"
+    ? "Spawn one fresh independent read-only reviewer sidecar with the raw generated prompt when multi-agent tools are available. Do not include the intended verdict. The sidecar writes only the report and must not mutate harness state. If sidecars are unavailable, perform a fresh manual pass and state that fallback in the report."
+    : "The main agent writes this review. It must compare original user intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result."}
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\`.
+   - The coordinator records the report. Reviewer sidecars never run harness mutation commands.
    - \`${HARNESS} requirements-review-record --status pass|fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity verdict>"\`
 13. Before finalization${finalReviewRequired ? " or final adversarial review" : ""}, stop runtime servers, browser sessions, tunnels, or background processes started only for verification, unless explicitly left running and reported.
 ${finalReviewRequired ? `14. Only after \`requirements-review-record --status pass\`, run:
@@ -293,7 +298,7 @@ ${finalReviewRequired ? `14. Only after \`requirements-review-record --status pa
    - Write \`${state.runDir}/review/final-review.md\`.
    - \`${HARNESS} review-record --status pass|fail --report ${state.runDir}/review/final-review.md --summary "<review verdict>"\`
 15. Only after \`review-record --status pass\`, finalize:
-` : `14. This run uses the trivial review profile; final adversarial review is optional. After \`requirements-review-record --status pass\`, finalize:
+` : `14. This run's effective review policy does not require final adversarial review. After \`requirements-review-record --status pass\`, finalize:
 `}
    - \`${HARNESS} finalize --status complete --summary "<short evidence-backed summary>"\`
    - If delivery mode is \`pr\`, immediately hand off to the deliver skill with \`${context.statePath}\`.

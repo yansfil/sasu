@@ -2,13 +2,20 @@
 
 Source PRD: agents/prd/standard-regression/prd.md
 
+## Review Policy
+
+- Profile: standard
+- Policy version: 2
+- Requirements fidelity owner: independent
+- Final adversarial review required: no
+
 ## Execution Nodes
 
 - [x] N1. Run the local command verification. Covers R1, AC1.
   - Status: complete
   - Source Task: T1
   - Parallel Safe: no
-  - Risk: low
+  - Risk: medium
   - Covers: R: R1; AC: AC1; V: V1
   - Evidence:
     - <TS>: Test nodes completed.
@@ -45,11 +52,4 @@ Source PRD: agents/prd/standard-regression/prd.md
 - [x] REQ_FIDELITY_REVIEW. Requirements fidelity review
   - Status: pass
   - Report: agents/implement/standard-regression/review/requirements-fidelity-review.md
-  - Summary: PASS
-
-## Final Adversarial Review
-
-- [x] REVIEW. Final adversarial review
-  - Status: pass
-  - Report: agents/implement/standard-regression/review/final-review.md
   - Summary: PASS

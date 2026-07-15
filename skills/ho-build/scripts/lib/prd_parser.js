@@ -86,11 +86,27 @@ function extractFirstNestedSection(markdown, headings) {
 function parseMarkdownItems(section, prefix, fallbackLabel) {
   const items = [];
   let counter = 1;
+  let current = null;
+  const finishCurrent = () => {
+    if (!current) return;
+    current.text = current.text.replace(/\s+/g, " ").trim();
+    current.title = firstSentence(current.text);
+    current.requirements = uniqueMatches(current.text, /\bR\d+\b/gi);
+    current.acceptanceCriteria = uniqueMatches(current.text, /\bAC\d+\b/gi);
+    items.push(current);
+    current = null;
+  };
   for (const rawLine of section.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("```") || /^#+\s+/.test(line)) continue;
     const match = line.match(/^(?:[-*]\s*(?:\[[ xX]\]\s*)?|(?:\d+[.)])\s+)(.+)$/);
-    if (!match) continue;
+    if (!match) {
+      if (current && /^\s{2,}\S/.test(rawLine) && !line.startsWith("|")) {
+        current.text += ` ${line}`;
+      }
+      continue;
+    }
+    finishCurrent();
     let text = match[1].replace(/^\*\*|\*\*$/g, "").trim();
     if (!text) continue;
     const explicit = text.match(new RegExp(`^(${prefix}\\d+|${prefix}-\\d+|${fallbackLabel}\\s*\\d+)\\b[.)?:\\s-]*`, "i"));
@@ -102,17 +118,15 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
       id = `${prefix}${counter}`;
     }
     counter += 1;
-    items.push({
+    current = {
       id,
-      title: firstSentence(text),
       text,
-      requirements: uniqueMatches(text, /\bR\d+\b/gi),
-      acceptanceCriteria: uniqueMatches(text, /\bAC\d+\b/gi),
       status: "pending",
       evidence: [],
       artifacts: [],
-    });
+    };
   }
+  finishCurrent();
   return items;
 }
 
@@ -128,7 +142,9 @@ function buildIntentTrace(parsed, projectRoot) {
   for (const source of sourceFiles) {
     const sourceText = fs.readFileSync(source.abs, "utf8");
     const sourceSection = extractFirstSection(sourceText, [
+      "Decision Trace And Requirement Mapping",
       "Decision Traceability Seeds",
+      "Decision Summary",
       "Axis Decisions",
       "Human Decisions Needed Before PRD Approval",
       "Human Decisions Before PRD Approval",
