@@ -1,0 +1,4 @@
+interface:
+  display_name: "interview-me"
+  short_description: "Interview an idea into traceable product decisions"
+  default_prompt: "Use $interview-me to clarify this idea into a decision-complete PRD handoff with strong UX coverage."

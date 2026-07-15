@@ -10,10 +10,10 @@ He scopes before he specs, he specs before he builds, he does not say "done" wit
 
 ```text
 conversation
-  └─ ho-interview    interview until the requirements stop being vague
-      └─ ho-spec    write the PRD as a human decision contract
-          └─ ho-build    implement against a verification plan, with receipts
-              └─ ho-ship    branch, PR body, push, CI watch, gated merge
+  └─ interview-me    interview until the requirements stop being vague
+      └─ gen-prd    write the PRD as a human decision contract
+          └─ implement    implement against a verification plan, with receipts
+              └─ ship    branch, PR body, push, CI watch, gated merge
                               └─ recorded delivery result
 
 please = the whole chain in one invocation, stopping only for risky work
@@ -24,14 +24,14 @@ remember = lessons land as enforcement, not notes
 
 | Skill | What it owns |
 | --- | --- |
-| `ho-interview` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, traceable closure, and a PRD handoff artifact |
-| `ho-scope` | Compatibility alias for `ho-interview` |
-| `ho-spec` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
-| `ho-build` | Agent-planned, harness-checked implementation: TaskGraph, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
-| `ho-ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
+| `interview-me` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, traceable closure, and a PRD handoff artifact |
+| `gen-prd` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
+| `implement` | Agent-planned, harness-checked implementation: TaskGraph, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
+| `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
+| `ho-interview`, `ho-scope`, `ho-spec`, `ho-build`, `ho-ship` | Explicit compatibility aliases for existing prompts and automation |
 
 Run artifacts live under the visible `agents/` namespace in the target project (`agents/intake/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`); a legacy `.hoyeon/` tree from older runs stays readable as a fallback, and new runs always write under `agents/`.
 
@@ -47,8 +47,8 @@ node scripts/install-local-skills.mjs
 | | Codex | Claude Code |
 | --- | --- | --- |
 | Install root | `~/.codex/skills/<name>/` | `~/.claude/skills/<name>/` |
-| Invocation | `$ho-interview`, `$ho-spec`, ... | `/ho-interview`, `/ho-spec`, ... |
-| `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$ho-build` becomes `/ho-build`) |
+| Invocation | `$interview-me`, `$gen-prd`, ... | `/interview-me`, `/gen-prd`, ... |
+| `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$implement` becomes `/implement`) |
 | `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
 | Hooks | `Stop` + `SubagentStop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
 
@@ -81,12 +81,12 @@ The harness treats "done" as a provable state, and the enforcement works identic
   PRD, project policy, and CLI profiles act as safety floors, so a runtime flag cannot silently lower a stronger judgment.
   Any source change after a passing review marks it stale.
 - **Fail-closed delivery.**
-  `ho-build` rejects PRDs that circularly require PR, CI, or merge evidence before the implementation receipt.
-  `ho-ship` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
+  `implement` rejects PRDs that circularly require PR, CI, or merge evidence before the implementation receipt.
+  `ship` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
   Its explicit merge command rechecks CI and mergeability and pins the reviewed PR head with `--match-head-commit` before recording the merge commit.
   Every override needs a `--reason` and lands in the ship log.
 - **Learned invariants gate delivery.**
-  Lessons registered through `rules add` carry trigger globs and an executable check; `ho-ship` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
+  Lessons registered through `rules add` carry trigger globs and an executable check; `ship` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
   Evidence-free or unverifiable rules are rejected at registration, so the rulebook cannot decay into wishes.
 - **Premature-completion guards.**
   Codex gets a `PreToolUse` guard that blocks `update_goal complete` before the receipt; Claude Code has no goal tool, so the Stop hook carries the guarantee alone.
@@ -95,32 +95,32 @@ The harness treats "done" as a provable state, and the enforcement works identic
 
 ```sh
 node --test tests/*.test.mjs
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js doctor
+node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 ```
 
 Optional state-schema typecheck (no npm dependency; uses the JSDoc typedefs in `scripts/lib/types.js`):
 
 ```sh
 npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --skipLibCheck \
-  skills/ho-build/scripts/lib/state_data.js skills/ho-build/scripts/lib/types.js
+  skills/implement/scripts/lib/state_data.js skills/implement/scripts/lib/types.js
 ```
 
 `doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
 After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
-- Claude Code: start a new session and check that `/ho-interview`, `/ho-spec`, `/ho-build`, `/ho-ship`, `/ho-setup`, and `/please` appear in the skill list
+- Claude Code: start a new session and check that `/interview-me`, `/gen-prd`, `/implement`, `/ship`, `/ho-setup`, and `/please` appear in the skill list
 
 ## Repository Layout
 
 ```text
 skills/
-  ho-interview/  SKILL.md, scripts/validate_intake.mjs
-  ho-scope/      compatibility alias
-  ho-spec/   SKILL.md
-  ho-build/  SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
+  interview-me/  SKILL.md, scripts/validate_intake.mjs
+  gen-prd/   SKILL.md
+  implement/  SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
+  ship/   SKILL.md, scripts/prd_ship.js
+  ho-interview/, ho-scope/, ho-spec/, ho-build/, ho-ship/  compatibility aliases
   ho-setup/  SKILL.md
-  ho-ship/   SKILL.md, scripts/prd_ship.js
   please/    SKILL.md
   remember/  SKILL.md
 scripts/

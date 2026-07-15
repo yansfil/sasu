@@ -21,7 +21,7 @@ Configuration may set delivery mode, branch naming, CI behavior, worktree prepar
 Run doctor when delivery, worktree sync, or PR and CI readiness is in question:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js doctor
+node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 ```
 
 `doctor` reports the effective delivery configuration and environment readiness.
@@ -34,7 +34,7 @@ In Codex, prefer `CODEX_SESSION_ID`, then `CODEX_THREAD_ID`.
 In Claude Code, use the real `CLAUDE_SESSION_ID` substituted when the skill loads.
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 ```
@@ -43,14 +43,14 @@ If no session ID is available, initialize without `--session-id` and let the fir
 Do not intentionally share one active state across unrelated agent sessions.
 
 The `$please` path passes the exact user invocation through `--allow-unapproved-prd` as its approval deviation.
-Normal `$ho-build` execution still requires approved PRD frontmatter or an explicit verbatim approval deviation.
+Normal `$implement` execution still requires approved PRD frontmatter or an explicit verbatim approval deviation.
 
 ## PR Delivery Initialization
 
 When delivery mode is PR-based, pass it explicitly or rely on `agents/config.json`.
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --delivery pr \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
@@ -61,13 +61,13 @@ PR delivery creates external repository state and is not inferred from a generic
 
 ## Receipt And Delivery Separation
 
-The implementation receipt must not depend on outcomes that only `$ho-ship` can produce.
+The implementation receipt must not depend on outcomes that only `$ship` can produce.
 PR creation, PR URL, CI verdicts, merge status, and merge commit are post-receipt delivery evidence.
 Do not put those outcomes in PRD tasks, acceptance criteria, or verification marked `Required For Done: yes`.
 `init --delivery pr` rejects this circular contract before creating state or a worktree.
 
 The receipt proves implementation completion.
-When delivery mode is `pr`, the user-facing thread and tracked Goal remain open until `$ho-ship` opens or updates the PR and required CI passes or delivery is explicitly reported as blocked.
+When delivery mode is `pr`, the user-facing thread and tracked Goal remain open until `$ship` opens or updates the PR and required CI passes or delivery is explicitly reported as blocked.
 
 ## Worktree Preparation
 
@@ -110,19 +110,19 @@ When diagnosing a mismatch, inspect `status`, the emitted `statePath`, `activeSe
 ## Post-Receipt PR Handoff
 
 After `finalize --status complete`, inspect `state.json` or `receipt.json` delivery mode.
-When it is `pr`, run `$ho-ship` and keep the tracked Goal open.
+When it is `pr`, run `$ship` and keep the tracked Goal open.
 
-If the user approved merge, let `$ho-ship merge` perform final freshness, CI, PR-head, and mergeability checks.
+If the user approved merge, let `$ship merge` perform final freshness, CI, PR-head, and mergeability checks.
 Record the PR URL, CI verdict, and merge commit as post-receipt delivery evidence rather than writing them back into the implementation receipt.
 
-If CI requires a source fix, return to the `ho-build` workflow.
+If CI requires a source fix, return to the `implement` workflow.
 Refresh affected verification, requirements fidelity review, final review, and the receipt before shipping or merging again.
-After PR creation, `$ho-ship` cleans the matching active pointer and session-scoped active files.
+After PR creation, `$ship` cleans the matching active pointer and session-scoped active files.
 
 For local-only runs or manual cleanup, use:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js cleanup-active \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js cleanup-active \
   --state agents/implement/<topic-slug>/state.json
 ```
 

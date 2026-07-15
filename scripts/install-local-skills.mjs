@@ -2,9 +2,8 @@
 
 // Installs the PRD workflow skills for both runtimes from this repository.
 //
-// Both runtimes install under the checkshirt skill names (ho-interview,
-// ho-scope compatibility alias, ho-spec, ho-build, ho-setup, ho-ship, please,
-// remember):
+// Both runtimes install the canonical pipeline names plus thin compatibility
+// aliases for the former ho-* invocations.
 //
 // - Codex   (~/.codex/skills/<name>/):  SKILL.md copied verbatim.
 // - Claude  (~/.claude/skills/<name>/): SKILL.md copied with substitutions
@@ -30,7 +29,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const SKILL_NAMES = ["ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-setup", "ho-ship", "please", "remember"];
+const CANONICAL_SKILL_NAMES = ["interview-me", "gen-prd", "implement", "ship", "ho-setup", "please", "remember"];
+const COMPATIBILITY_SKILL_NAMES = ["ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-ship"];
+const SKILL_NAMES = [...CANONICAL_SKILL_NAMES, ...COMPATIBILITY_SKILL_NAMES];
 
 // Pre-rename install directories that this pipeline used to own.
 const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver"];
@@ -54,8 +55,8 @@ const TARGETS = {
 
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
-  // Invocation tokens: $ho-interview -> /ho-interview.
-  return roots.replace(/\$(ho-interview|ho-scope|ho-spec|ho-build|ho-setup|ho-ship|please|remember)\b/g, "/$1");
+  // Invocation tokens: $interview-me -> /interview-me.
+  return roots.replace(/\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember|ho-interview|ho-scope|ho-spec|ho-build|ho-ship)\b/g, "/$1");
 }
 
 function ensureDir(dir) {
@@ -113,7 +114,8 @@ function installSkill(targetKey, name) {
     const source = path.join(sourceDir, entry.name);
     const linkTarget = path.join(targetDir, entry.name);
     removePath(linkTarget);
-    fs.symlinkSync(source, linkTarget, entry.isDirectory() ? "dir" : "file");
+    const linkType = fs.statSync(source).isDirectory() ? "dir" : "file";
+    fs.symlinkSync(source, linkTarget, linkType);
   }
   return { skill: name, sourceDir, targetDir };
 }
@@ -144,7 +146,7 @@ function hookNodeBinary() {
 }
 
 function harnessHookCommand(targetKey) {
-  const script = path.join(TARGETS[targetKey].root, "ho-build", "scripts", "prd_state_harness.js");
+  const script = path.join(TARGETS[targetKey].root, "implement", "scripts", "prd_state_harness.js");
   return kind => `"${hookNodeBinary()}" "${script}" hook ${kind}`;
 }
 

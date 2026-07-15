@@ -41,7 +41,7 @@ A missing declaration safely falls back to `standard` only when no other floor i
 Supply an explicit profile when the run needs a stronger floor than the PRD or project policy.
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
   --prd <prd-path> \
   --review-profile trivial|standard|high-risk
 ```
@@ -84,7 +84,7 @@ Keep working when a required acceptance criterion is not met and no concrete blo
 Generate the strict intent-review prompt:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js requirements-review-prompt
+node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-prompt
 ```
 
 This review compares original user intent, accepted decisions, rejected alternatives, PRD scope, acceptance criteria, verification evidence, and implementation result.
@@ -120,7 +120,7 @@ A passing review must fail when a required `V#` is missing, lacks a registered a
 Record a passing report with:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js requirements-review-record \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-record \
   --status pass \
   --report agents/implement/<topic-slug>/review/requirements-fidelity-review.md \
   --summary "<requirements fidelity verdict>"
@@ -144,7 +144,7 @@ The handoff must reflect the verdict and must not soften it into `Done`.
 Generate the reviewer prompt only after requirements fidelity has been recorded and the effective policy requires final review, or when a human explicitly requests an optional review:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js review-prompt
+node ~/.codex/skills/implement/scripts/prd_state_harness.js review-prompt
 ```
 
 Before this review, stop verification-only runtime servers, browser sessions, tunnels, and background processes unless there is an explicit reason to leave one running.
@@ -182,7 +182,7 @@ agents/implement/<topic-slug>/review/final-review.md
 Record a passing final review with:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js review-record \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js review-record \
   --status pass \
   --report agents/implement/<topic-slug>/review/final-review.md \
   --summary "<review verdict>"
@@ -211,7 +211,7 @@ The harness stores a git worktree snapshot and makes the review stale when sourc
 Only after every gate required by the assigned review profile passes, run:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
   --status complete \
   --summary "<evidence-backed summary>"
 ```
@@ -247,11 +247,11 @@ Do not write a blocked or partial handoff until:
 Use:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
   --status blocked \
   --summary "<evidence-backed blocker summary>"
 
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js finalize \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
   --status partial \
   --summary "<evidence-backed partial handoff summary>"
 ```

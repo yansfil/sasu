@@ -60,7 +60,7 @@ Receipt: agents/implement/standard-regression/receipt.json
 
 - Delivery mode: local
 - Branch: prd/standard-regression
-- Local delivery result: ho-build performed no commit, push, PR, CI, release, or deployment action.
+- Local delivery result: implement performed no commit, push, PR, CI, release, or deployment action.
 - Initial worktree snapshot: <TS>; 2 entries; status hash 00369b65.
 - Final worktree snapshot: <TS>; 1 entries; status hash 77da28be.
 - Preserved initial dirty entries: 1.

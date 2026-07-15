@@ -48,12 +48,12 @@ function defaultHarnessPath() {
     // Keep the argv-based root only.
   }
   for (const root of roots) {
-    for (const dir of ["ho-build", "fulfill", "prd-implement"]) {
+    for (const dir of ["implement", "ho-build", "fulfill", "prd-implement"]) {
       const candidate = path.join(root, dir, "scripts", "prd_state_harness.js");
       if (fs.existsSync(candidate)) return candidate;
     }
   }
-  return path.join(roots[0], "ho-build", "scripts", "prd_state_harness.js");
+  return path.join(roots[0], "implement", "scripts", "prd_state_harness.js");
 }
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
@@ -1010,13 +1010,13 @@ function cmdMerge(options) {
     throw new Error([
       "Implementation state is not merge-fresh:",
       ...(freshness.violations || []).map(item => `- ${item}`),
-      "Return to ho-build, rerun affected verification and both reviews, finalize a fresh receipt, then ship again.",
+      "Return to implement, rerun affected verification and both reviews, finalize a fresh receipt, then ship again.",
     ].join("\n"));
   }
   const base = baseFreshness(context.repoRoot, config.baseBranch);
   if (base.fresh !== true) {
     throw new Error(base.fresh === false
-      ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh ho-build verification/reviews/receipt, and re-ship before merge.`
+      ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh implement verification/reviews/receipt, and re-ship before merge.`
       : `Could not prove freshness against origin/${base.base}; merge fails closed until the base comparison succeeds.`);
   }
   if (currentBranch(context.repoRoot) !== config.branch) {
@@ -1044,7 +1044,7 @@ function cmdMerge(options) {
   const checks = fetchChecks(context, pr.url || prRef);
   const ciVerdict = checks.noChecks ? "no-checks" : classifyChecks(checks.checks);
   if (!["pass", "no-checks"].includes(ciVerdict)) {
-    throw new Error(`Required CI is '${ciVerdict}'. Wait for a pass or return to ho-build for source fixes before merge.`);
+    throw new Error(`Required CI is '${ciVerdict}'. Wait for a pass or return to implement for source fixes before merge.`);
   }
   const rules = runRulesGate(context, {}, []);
   const method = mergeMethod(options);

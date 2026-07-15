@@ -3,7 +3,7 @@ name: please
 description: |
   All-in-one PRD pipeline runner. Use when the user invokes "$please", asks to
   take the current conversation and carry it through to a finished
-  implementation in one shot, wants the ho-spec then ho-build then ho-ship chain
+  implementation in one shot, wants the gen-prd then implement then ship chain
   run automatically without approval round-trips, or says things like "그냥
   끝까지 해줘", "대화한 대로 구현까지 해줘", "one shot implement this".
 ---
@@ -13,9 +13,9 @@ description: |
 Use this skill to run the full PRD pipeline from the current conversation to a finished implementation in a single invocation, with no human approval round-trips except for risky work.
 
 This skill is an orchestrator, not a new pipeline.
-It chains the existing `ho-spec`, `ho-build`, and `ho-ship` skills and their harnesses exactly as written.
+It chains the existing `gen-prd`, `implement`, and `ship` skills and their harnesses exactly as written.
 Where this document is silent, the chained skill's own rules apply unchanged.
-Read `~/.codex/skills/ho-spec/SKILL.md`, `~/.codex/skills/ho-build/SKILL.md`, and (when delivery mode is `pr`) `~/.codex/skills/ho-ship/SKILL.md` before executing their stages.
+Read `~/.codex/skills/gen-prd/SKILL.md`, `~/.codex/skills/implement/SKILL.md`, and (when delivery mode is `pr`) `~/.codex/skills/ship/SKILL.md` before executing their stages.
 
 Match the user's language by default.
 
@@ -38,11 +38,11 @@ An argument after `$please` is a topic brief or emphasis, not a replacement for 
 Before starting, capture verbatim the user message that invoked `$please` (including any argument).
 This exact text is passed to `init --allow-unapproved-prd` later; losing it forces a stop to re-ask.
 
-If `agents/intake/<topic-slug>/prd-handoff.md` happens to exist for the same topic, use it as an additional source per the `ho-spec` skill's normal input rules.
+If `agents/intake/<topic-slug>/prd-handoff.md` happens to exist for the same topic, use it as an additional source per the `gen-prd` skill's normal input rules.
 
 ## Ambiguity Policy
 
-Follow the `ho-spec` skill's rule: ask only contract-breaking questions.
+Follow the `gen-prd` skill's rule: ask only contract-breaking questions.
 A question is contract-breaking when a wrong guess would change scope, data shape, external-service choice, delivery mode, or destroy work.
 Everything else becomes an explicit assumption recorded in the PRD's `Decision Traceability For Fidelity Review` section, so the fidelity review can audit it later.
 Do not run an interactive interview; the conversation already happened.
@@ -52,14 +52,14 @@ Do not silently reduce the product to an MVP because the pipeline is automated.
 
 ## Stage 1: PRD
 
-Write the PRD by following the `ho-spec` skill in full:
+Write the PRD by following the `gen-prd` skill in full:
 
 - Output to `agents/prd/<topic-slug>/prd.md` with every required section.
 - `source_intake: "current conversation"` unless a real intake file exists.
 - Preserve conversation decisions in Decision Traceability: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above.
 - Preserve a coherent production-quality product boundary, with every deliberate omission recorded as a non-goal or deferred decision with consequence, rationale, and revisit condition.
 - Assign `review_profile` semantically from the complete product and engineering effects and write a concrete `review_rationale`; use `standard` for small user-facing work and `high-risk` for sensitive or irreversible effects.
-- Run the Inline Self-Check Before Ready and the Harness Readiness Gate (`plan-verification --prd`) exactly as the `ho-spec` skill requires.
+- Run the Inline Self-Check Before Ready and the Harness Readiness Gate (`plan-verification --prd`) exactly as the `gen-prd` skill requires.
 - Mark `status: ready` only when those gates pass.
 - Leave `human_approval: "pending"`.
   Never write `approved`; the user did not review the document, and the deviation record in Stage 2 is the honest representation of what happened.
@@ -70,10 +70,10 @@ Continue immediately; the user can interrupt.
 
 ## Stage 2: Implement
 
-Run the `ho-build` skill in full, with one difference at init:
+Run the `implement` skill in full, with one difference at init:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js init \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
   --prd agents/prd/<topic-slug>/prd.md \
   --allow-unapproved-prd "<verbatim $please invocation message>" \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
@@ -96,8 +96,8 @@ Rules:
 
 After `finalize --status complete`:
 
-- If the effective delivery mode is `pr`, run the `ho-ship` skill in full: preflight, body, ship, CI watch, and its failure loop.
-- If delivery mode is `local`, run `cleanup-active` per the `ho-build` skill and stop after the receipt.
+- If the effective delivery mode is `pr`, run the `ship` skill in full: preflight, body, ship, CI watch, and its failure loop.
+- If delivery mode is `local`, run `cleanup-active` per the `implement` skill and stop after the receipt.
 
 Do not commit or push anything in local mode unless the conversation agreed to it.
 
@@ -107,11 +107,11 @@ Never stop for stage transitions or document approval.
 Stop and ask only when:
 
 - a contract-breaking ambiguity has no defensible assumption.
-- any `ho-build` or `ho-ship` hard stop fires: DB migrations against real data, auth/security surfaces needing decisions, payments or billing, production data, credentials, destructive or irreversible actions, external spend, unmapped scope, or structure-lock deviations.
+- any `implement` or `ship` hard stop fires: DB migrations against real data, auth/security surfaces needing decisions, payments or billing, production data, credentials, destructive or irreversible actions, external spend, unmapped scope, or structure-lock deviations.
 - a required verification fails in a way that needs a product decision.
 - delivery would push or open a PR without config-based or conversational consent.
 
-When blocked, follow the `ho-build` blocked/partial handoff rules; do not soften status to `Done`.
+When blocked, follow the `implement` blocked/partial handoff rules; do not soften status to `Done`.
 
 ## Artifacts
 
@@ -126,6 +126,6 @@ One combined report covering the whole run:
 - Status: `Done`, `Partially Done`, or `Blocked`.
 - PRD path and the approval-deviation note (invocation recorded via `--allow-unapproved-prd`).
 - The assumptions made under the Ambiguity Policy, so the user can veto any of them after the fact.
-- Everything the `ho-build` Implementation Result Report Contract requires: user-visible changes, structure conformance, AC status, verification evidence by mode, review verdicts, deviations, remaining human review.
-- When shipped: PR URL, branch, CI verdict per the `ho-ship` final report.
+- Everything the `implement` Implementation Result Report Contract requires: user-visible changes, structure conformance, AC status, verification evidence by mode, review verdicts, deviations, remaining human review.
+- When shipped: PR URL, branch, CI verdict per the `ship` final report.
 - When config was absent: a one-line `$ho-setup` suggestion.

@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const validator = path.join(repoRoot, "skills", "ho-interview", "scripts", "validate_intake.mjs");
+const validator = path.join(repoRoot, "skills", "interview-me", "scripts", "validate_intake.mjs");
 
 function fixtureQaLog({ withUxCard = true, withLinkedDecisions = true } = {}) {
   return [
@@ -65,7 +65,7 @@ function fixtureHandoff({ traceDecision = "D-01", withUxSeeds = true } = {}) {
 }
 
 function runValidator(qaLog, handoff) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ho-interview-validator-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "interview-me-validator-"));
   const qaPath = path.join(dir, "qa-log.md");
   fs.writeFileSync(qaPath, qaLog);
   const args = [validator, qaPath];

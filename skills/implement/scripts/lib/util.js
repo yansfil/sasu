@@ -117,7 +117,7 @@ function siblingSkillScript(candidateDirs, scriptName) {
 }
 
 function shipScriptPath() {
-  return siblingSkillScript(["ho-ship", "deliver", "prd-ship"], "prd_ship.js");
+  return siblingSkillScript(["ship", "ho-ship", "deliver", "prd-ship"], "prd_ship.js");
 }
 
 function parseIdList(value, normalize = item => item) {

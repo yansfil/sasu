@@ -1,0 +1,4 @@
+interface:
+  display_name: "ho-scope legacy alias"
+  short_description: "Compatibility alias for interview-me"
+  default_prompt: "Use $ho-scope only for compatibility with an existing interview workflow."

@@ -23,7 +23,7 @@ Every lesson gets classified twice, then landed:
 | Kind | What it is | Landing | Enforced by |
 | --- | --- | --- | --- |
 | fact | something agents must know (build quirks, gotchas, commands) | body in `docs/**`, one index line in AGENTS.md | auto-loaded context |
-| invariant | "when X changes, Y must hold" | `agents/rules/invariants/<ID>.md` via `rules add` | `ho-ship` pre-push gate + ho-build plan injection |
+| invariant | "when X changes, Y must hold" | `agents/rules/invariants/<ID>.md` via `rules add` | `ship` pre-push gate + implement plan injection |
 | regression | "a test would have caught this" | a real test in the project's own suite | the project's CI / verification plan |
 
 | Route | Where it goes |
@@ -44,7 +44,7 @@ Every lesson gets classified twice, then landed:
 2. Check for duplicates before landing anything:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js rules relevant --query "<keywords>"
+node ~/.codex/skills/implement/scripts/prd_state_harness.js rules relevant --query "<keywords>"
 ```
 
 Also skim `agents/rules/INDEX.md`. If an existing rule covers it, update that rule instead of adding a twin (the CLI rejects exact duplicates anyway).
@@ -52,7 +52,7 @@ Also skim `agents/rules/INDEX.md`. If an existing rule covers it, update that ru
 3. Make sure the structure exists (first use in a project):
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js seed-agents-md
+node ~/.codex/skills/implement/scripts/prd_state_harness.js seed-agents-md
 ```
 
 If CLAUDE.md exists as a regular file, the command refuses: show the user its content, get confirmation, then rerun with `--adopt-claude-md` (content becomes AGENTS.md verbatim; CLAUDE.md becomes a symlink).
@@ -80,7 +80,7 @@ One paragraph: what must hold and why (cite the incident).
 ```
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js rules add --file <draft.md>
+node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --file <draft.md>
 ```
 
 `check.type` is `command`, `grep` (pattern + files + present/absent), or `manual` (requires an exact `confirm` sentence; surfaces as a delivery warning, never a silent skip).
@@ -89,16 +89,16 @@ The CLI rejects rules without evidence, without a trigger, or without a workable
 **fact** - write the body where the project's docs already live (follow existing structure; default `docs/`), add one line to AGENTS.md outside the seeded marker block (keep the index lean, roughly 30 lines; details belong in docs), then register the landing:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js rules add --kind fact --id FACT-<name> --summary "<one line>" --evidence "<run or incident ref>" --landing docs/<page>.md
+node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --kind fact --id FACT-<name> --summary "<one line>" --evidence "<run or incident ref>" --landing docs/<page>.md
 ```
 
 **regression** - write the test now, in the project's own test suite, and register it with `--kind regression --landing <test file>`. Only when writing it now is genuinely impossible, park it:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js rules add --kind regression --id REG-<name> --summary "<one line>" --evidence "<ref>" --pending
+node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --kind regression --id REG-<name> --summary "<one line>" --evidence "<ref>" --pending
 ```
 
-Pending lessons are visible debt: `ho-ship` warns on every ship and `doctor` reports them until they land.
+Pending lessons are visible debt: `ship` warns on every ship and `doctor` reports them until they land.
 
 5. For `user` route: propose the exact line(s) for the shared reference file and ask before writing.
    For `harness` route: prepare the diff against the engineering-harness repo and present it; apply only on confirmation.
@@ -107,8 +107,8 @@ Pending lessons are visible debt: `ho-ship` warns on every ship and `doctor` rep
 
 You do not need to re-teach landed lessons; the harness carries them:
 
-- `ho-ship` matches every changed file against invariant triggers and fails closed on a failing check (`--skip-rules --reason` is the only way past, and it lands in the ship log).
-- `ho-build plan-execution` injects invariants whose triggers overlap the run's write scopes as verification items, so the receipt depends on them.
+- `ship` matches every changed file against invariant triggers and fails closed on a failing check (`--skip-rules --reason` is the only way past, and it lands in the ship log).
+- `implement plan-execution` injects invariants whose triggers overlap the run's write scopes as verification items, so the receipt depends on them.
 - `ho-setup doctor` rot-checks the ledger: missing landings, dead triggers, and pending debt.
 
 ## Hard Stops

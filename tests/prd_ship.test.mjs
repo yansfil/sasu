@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const shipScript = path.join(repoRoot, "skills", "ho-ship", "scripts", "prd_ship.js");
+const shipScript = path.join(repoRoot, "skills", "ship", "scripts", "prd_ship.js");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {

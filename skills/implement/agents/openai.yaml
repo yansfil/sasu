@@ -1,0 +1,4 @@
+interface:
+  display_name: "implement"
+  short_description: "Implement PRDs with graph, evidence, and receipts"
+  default_prompt: "Use $implement to execute the approved PRD with a validated task graph, artifact-backed proof, profile-aware review, and a strict receipt."

@@ -7,11 +7,11 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const harness = path.join(repoRoot, "skills", "ho-build", "scripts", "prd_state_harness.js");
+const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
 const requireModule = createRequire(import.meta.url);
-const { classifyReviewProfile } = requireModule(path.join(repoRoot, "skills", "ho-build", "scripts", "lib", "config.js"));
-const { parseGitStatusZ } = requireModule(path.join(repoRoot, "skills", "ho-build", "scripts", "lib", "git.js"));
-const { normalizeWriteScopes, findDependencyCycle, writeScopesOverlap } = requireModule(path.join(repoRoot, "skills", "ho-build", "scripts", "lib", "planning.js"));
+const { classifyReviewProfile } = requireModule(path.join(repoRoot, "skills", "implement", "scripts", "lib", "config.js"));
+const { parseGitStatusZ } = requireModule(path.join(repoRoot, "skills", "implement", "scripts", "lib", "git.js"));
+const { normalizeWriteScopes, findDependencyCycle, writeScopesOverlap } = requireModule(path.join(repoRoot, "skills", "implement", "scripts", "lib", "planning.js"));
 
 test("parseGitStatusZ preserves rename source records", () => {
   assert.deepEqual(
@@ -1505,7 +1505,7 @@ test("targeted grep invariant fails closed when a parent write scope arms it", (
 
 test("deliver ship fails closed on a failing learned invariant and honors --skip-rules --reason", () => {
   const projectRoot = initGitRepo();
-  const shipScript = path.join(repoRoot, "skills", "ho-ship", "scripts", "prd_ship.js");
+  const shipScript = path.join(repoRoot, "skills", "ship", "scripts", "prd_ship.js");
   const prdPath = writeApprovedPrd(projectRoot, "rules-gate");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--delivery", "pr", "--session-id", "gate-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);

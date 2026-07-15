@@ -18,7 +18,7 @@ Read this reference before `plan-verification`, before running any required `V#`
 Run the planner before implementation:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-verification
+node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification
 ```
 
 The planner binds the PRD Verification Contract to repository reality.
@@ -63,7 +63,7 @@ Batch small source fixes and run the broad suite once against frozen final conte
 For shell-verifiable checks, use:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
   --id V1 \
   -- <exact command>
 ```
@@ -71,7 +71,7 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
 For an equivalent replacement command, use:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js verify-run \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
   --id V1 \
   --deviation "<why equivalent coverage is preserved>" \
   -- <replacement command>
@@ -85,7 +85,7 @@ Do not run a required command outside the harness and later substitute a prose r
 For browser, API, DB, or other runtime evidence, create the artifact from the real run and register it immediately.
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js record-artifact \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js record-artifact \
   --id V3 \
   --kind screenshot \
   --path <path-to-png-or-jpg> \
@@ -124,7 +124,7 @@ If a rerun overwrites an already registered file at the same path, do not edit `
 Run:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js refresh-artifacts [--id V3]
+node ~/.codex/skills/implement/scripts/prd_state_harness.js refresh-artifacts [--id V3]
 ```
 
 `refresh-artifacts` re-hashes registered files, records the refresh in the ledger, and marks completion reviews stale.

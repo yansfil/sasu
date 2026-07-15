@@ -30,8 +30,8 @@ Do not add executor-only fields to the PRD.
 Run:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-execution
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js ready
+node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-execution
+node ~/.codex/skills/implement/scripts/prd_state_harness.js ready
 ```
 
 `plan-execution` maps every PRD-level task to execution nodes, evidence expectations, and traceability from `T#` through `N#` to `AC#` and `V#`.
@@ -62,7 +62,7 @@ When `execution.parallel` is enabled and parallel work is useful, inspect the re
 Then run:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js plan-execution \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-execution \
   --task-plan <task-plan.json>
 ```
 
@@ -97,7 +97,7 @@ Each execution node has:
 Mark execution work with:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js mark-node \
   --id N1 \
   --status complete \
   --evidence "<command/test/file/screenshot evidence>"
@@ -106,7 +106,7 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
 Assign ownership with:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js assign-node \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js assign-node \
   --id N1 \
   --owner subagent:<id>
 ```
@@ -124,12 +124,12 @@ For each ready execution node:
 5. Record node and acceptance evidence through the harness.
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js mark-node \
   --id N1 \
   --status complete \
   --evidence "<file/test/runtime evidence>"
 
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js mark \
   --kind ac \
   --id AC1 \
   --status met \
@@ -139,12 +139,12 @@ node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
 Repeated same-status updates may use comma-separated IDs.
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark-node \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js mark-node \
   --id N1,N2 \
   --status complete \
   --evidence "<shared evidence>"
 
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js mark \
+node ~/.codex/skills/implement/scripts/prd_state_harness.js mark \
   --kind ac \
   --id AC1,AC2 \
   --status met \

@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const skillDir = path.join(repoRoot, "skills", "ho-build");
+const skillDir = path.join(repoRoot, "skills", "implement");
 const skillPath = path.join(skillDir, "SKILL.md");
 const referencesDir = path.join(skillDir, "references");
 
@@ -19,7 +19,7 @@ function physicalLineCount(text) {
   return text.endsWith("\n") ? text.split("\n").length - 1 : text.split("\n").length;
 }
 
-test("ho-build keeps a compact entrypoint with explicit conditional reference routing", () => {
+test("implement keeps a compact entrypoint with explicit conditional reference routing", () => {
   const skill = fs.readFileSync(skillPath, "utf8");
   assert.ok(physicalLineCount(skill) < 500, "SKILL.md must stay below the progressive-disclosure line budget");
   assert.match(skill, /^## Reference Routing$/m);
@@ -36,7 +36,7 @@ test("ho-build keeps a compact entrypoint with explicit conditional reference ro
   }
 });
 
-test("ho-build references stay direct, bounded, and navigable", () => {
+test("implement references stay direct, bounded, and navigable", () => {
   const sourceReferences = fs.readdirSync(referencesDir)
     .filter(name => name.endsWith(".md"))
     .sort();
@@ -56,7 +56,7 @@ test("ho-build references stay direct, bounded, and navigable", () => {
   }
 });
 
-test("ho-build entrypoint retains lifecycle, safety, and completion authority", () => {
+test("implement entrypoint retains lifecycle, safety, and completion authority", () => {
   const skill = fs.readFileSync(skillPath, "utf8");
   const requiredContracts = [
     /Never implement a pending PRD without explicit human approval or a verbatim approval deviation/,

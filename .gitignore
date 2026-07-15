@@ -1,4 +1,4 @@
 # PRD pipeline runtime state
-.hoyeon/
-.hoyeom/
-agents/
+/.hoyeon/
+/.hoyeom/
+/agents/implement/

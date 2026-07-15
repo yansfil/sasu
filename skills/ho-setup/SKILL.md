@@ -3,15 +3,15 @@ name: ho-setup
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
   "$ho-setup", asks to enable or change PR delivery mode, configure
-  worktree/secrets sync for ho-build, configure the agents/ namespace
+  worktree/secrets sync for implement, configure the agents/ namespace
   gitignore policy, inspect the current PRD pipeline settings, or diagnose why
-  ho-build/ho-ship delivery is not working.
+  implement/ship delivery is not working.
 ---
 
 # ho-setup
 
 Use this skill to inspect or configure how the PRD pipeline
-(`ho-build` and `ho-ship`) behaves in the current repository.
+(`implement` and `ship`) behaves in the current repository.
 
 This skill owns project setup files only:
 
@@ -26,12 +26,12 @@ Match the user's language by default.
 Always start with the doctor:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js doctor
+node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 ```
 
 It reports the effective delivery config (config file plus defaults), unknown or
 misspelled config keys, git/origin/gh readiness, worktree sync source problems,
-PR template resolution, ho-ship availability, hook registration, and any
+PR template resolution, ship availability, hook registration, and any
 active run with its ship-pending state.
 
 If the user only asked "what is the current setting", report the doctor output
@@ -46,7 +46,7 @@ On first setup in a project, also seed the agent-facing structure notes before
 the config interview:
 
 ```sh
-node ~/.codex/skills/ho-build/scripts/prd_state_harness.js seed-agents-md
+node ~/.codex/skills/implement/scripts/prd_state_harness.js seed-agents-md
 ```
 
 This writes (or updates, marker-based and idempotent) a Harness Namespace
@@ -59,11 +59,11 @@ user the content, get confirmation, and rerun with `--adopt-claude-md`.
 Then interview:
 
 1. Delivery mode: `local` (default) or `pr`.
-   Remind the user that `pr` means ho-build runs end into `ho-ship`
+   Remind the user that `pr` means implement runs end into `ship`
    (branch, PR, CI) automatically after the receipt, and that per-PRD approval
    still happens in the PRD Summary checklist.
 2. When mode is `pr`: base branch (default `main`) and branch prefix
-   (default `ho-spec`).
+   (default `gen-prd`).
 3. Worktree isolation: `worktree.enabled` (default false).
    When enabled, ask which gitignored local files the app needs:
    - `link`: read-only shared files (`.env`, certs).

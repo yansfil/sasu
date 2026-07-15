@@ -18,7 +18,7 @@ import test from "node:test";
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 // The fulfill skill directory is mid-rename from its legacy prd-implement
 // name; resolve whichever layout the checkout currently has.
-const harness = ["ho-build", "fulfill", "prd-implement"]
+const harness = ["implement", "ho-build", "fulfill", "prd-implement"]
   .map(dir => path.join(repoRoot, "skills", dir, "scripts", "prd_state_harness.js"))
   .find(candidate => fs.existsSync(candidate));
 const goldenDir = path.join(repoRoot, "tests", "golden", "prd-state-standard-flow");

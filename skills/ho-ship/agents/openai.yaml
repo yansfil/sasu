@@ -1,4 +1,4 @@
 interface:
-  display_name: "ho-ship"
-  short_description: "Ship PRD work through PR, CI, and approved merge"
-  default_prompt: "Use $ho-ship to publish a completed PRD implementation, watch CI, and merge only with explicit approval."
+  display_name: "ho-ship legacy alias"
+  short_description: "Compatibility alias for ship"
+  default_prompt: "Use $ho-ship only for compatibility with an existing PR delivery workflow."

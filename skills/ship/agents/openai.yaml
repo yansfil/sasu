@@ -1,0 +1,4 @@
+interface:
+  display_name: "ship"
+  short_description: "Ship PRD work through PR, CI, and approved merge"
+  default_prompt: "Use $ship to publish a completed implement receipt, watch CI, and merge only with explicit approval."

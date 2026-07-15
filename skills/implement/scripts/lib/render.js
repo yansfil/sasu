@@ -381,8 +381,8 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Delivery mode: ${deliveryMode}`);
   lines.push(`- Branch: ${state.delivery && state.delivery.branch ? state.delivery.branch : "none"}`);
   lines.push(deliveryMode === "local"
-    ? "- Local delivery result: ho-build performed no commit, push, PR, CI, release, or deployment action."
-    : "- PR delivery result: commit, push, PR, and CI remain post-receipt ho-ship outcomes and require separate delivery evidence.");
+    ? "- Local delivery result: implement performed no commit, push, PR, CI, release, or deployment action."
+    : "- PR delivery result: commit, push, PR, and CI remain post-receipt ship outcomes and require separate delivery evidence.");
   if (initialSnapshot) {
     lines.push(`- Initial worktree snapshot: ${initialSnapshot.capturedAt}; ${initialSnapshot.entryCount} entries; status hash ${initialSnapshot.statusHash}.`);
   } else {

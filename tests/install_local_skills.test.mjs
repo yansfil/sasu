@@ -25,54 +25,78 @@ function freshHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "install-skills-home-"));
 }
 
-test("installer installs canonical skills and the ho-scope compatibility alias with correct substitutions", () => {
+test("installer installs canonical skills and all compatibility aliases with correct substitutions", () => {
   const home = freshHome();
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
+  assert.equal(report.installed.codex.length, 12);
+  assert.equal(report.installed.claude.length, 12);
 
-  const codexInterview = path.join(home, ".codex", "skills", "ho-interview", "SKILL.md");
+  const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
-  assert.match(codexInterviewText, /^name: ho-interview$/m);
-  assert.match(codexInterviewText, /\$ho-interview/);
-  const codexScopeAlias = fs.readFileSync(path.join(home, ".codex", "skills", "ho-scope", "SKILL.md"), "utf8");
-  assert.match(codexScopeAlias, /^name: ho-scope$/m);
-  assert.match(codexScopeAlias, /\.\.\/ho-interview\/SKILL\.md/);
+  assert.match(codexInterviewText, /^name: interview-me$/m);
+  assert.match(codexInterviewText, /\$interview-me/);
+  const aliases = new Map([
+    ["ho-interview", "interview-me"],
+    ["ho-scope", "interview-me"],
+    ["ho-spec", "gen-prd"],
+    ["ho-build", "implement"],
+    ["ho-ship", "ship"],
+  ]);
+  for (const [alias, canonical] of aliases) {
+    const codexAlias = fs.readFileSync(path.join(home, ".codex", "skills", alias, "SKILL.md"), "utf8");
+    assert.match(codexAlias, new RegExp(`^name: ${alias}$`, "m"));
+    assert.match(codexAlias, new RegExp(`\\.\\.\\/${canonical}\\/SKILL\\.md`));
+    const claudeAlias = fs.readFileSync(path.join(home, ".claude", "skills", alias, "SKILL.md"), "utf8");
+    assert.match(claudeAlias, new RegExp(`/${alias}`));
+    assert.doesNotMatch(claudeAlias, new RegExp(`\\$${alias}\\b`));
+    const aliasMetadata = fs.readFileSync(path.join(home, ".codex", "skills", alias, "agents", "openai.yaml"), "utf8");
+    assert.match(aliasMetadata, /legacy alias/);
+    assert.equal(fs.existsSync(path.join(home, ".claude", "skills", alias, "agents")), false);
+  }
 
-  const claudeInterview = fs.readFileSync(path.join(home, ".claude", "skills", "ho-interview", "SKILL.md"), "utf8");
-  assert.match(claudeInterview, /\/ho-interview/);
-  assert.doesNotMatch(claudeInterview, /\$ho-interview/);
+  const claudeInterview = fs.readFileSync(path.join(home, ".claude", "skills", "interview-me", "SKILL.md"), "utf8");
+  assert.match(claudeInterview, /\/interview-me/);
+  assert.doesNotMatch(claudeInterview, /\$interview-me/);
 
-  // Codex: butler directory names, verbatim SKILL.md.
-  const codexFulfill = path.join(home, ".codex", "skills", "ho-build", "SKILL.md");
+  // Codex: canonical directory names, verbatim SKILL.md.
+  const codexFulfill = path.join(home, ".codex", "skills", "implement", "SKILL.md");
   const codexText = fs.readFileSync(codexFulfill, "utf8");
-  assert.match(codexText, /~\/\.codex\/skills\/ho-build\/scripts\/prd_state_harness\.js/);
-  assert.match(codexText, /"\$ho-build"/);
+  assert.match(codexText, /~\/\.codex\/skills\/implement\/scripts\/prd_state_harness\.js/);
+  assert.match(codexText, /"\$implement"/);
 
-  // Claude: butler directory names, substituted SKILL.md.
-  const claudeFulfill = path.join(home, ".claude", "skills", "ho-build", "SKILL.md");
+  // Claude: canonical directory names, substituted SKILL.md.
+  const claudeFulfill = path.join(home, ".claude", "skills", "implement", "SKILL.md");
   const claudeText = fs.readFileSync(claudeFulfill, "utf8");
-  assert.match(claudeText, /~\/\.claude\/skills\/ho-build\/scripts\/prd_state_harness\.js/);
-  assert.match(claudeText, /"\/ho-build"/);
+  assert.match(claudeText, /~\/\.claude\/skills\/implement\/scripts\/prd_state_harness\.js/);
+  assert.match(claudeText, /"\/implement"/);
   assert.doesNotMatch(claudeText, /~\/\.codex\/skills\//);
-  assert.doesNotMatch(claudeText, /\$(listen|promise|fulfill|deliver|pantry|please|remember)\b/);
+  assert.doesNotMatch(
+    claudeText,
+    /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember|ho-interview|ho-scope|ho-spec|ho-build|ho-ship)\b/,
+  );
 
   // remember installs on both runtimes with the substituted harness path.
   const claudeRemember = fs.readFileSync(path.join(home, ".claude", "skills", "remember", "SKILL.md"), "utf8");
-  assert.match(claudeRemember, /~\/\.claude\/skills\/ho-build\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(claudeRemember, /~\/\.claude\/skills\/implement\/scripts\/prd_state_harness\.js rules add/);
   const codexRemember = fs.readFileSync(path.join(home, ".codex", "skills", "remember", "SKILL.md"), "utf8");
-  assert.match(codexRemember, /~\/\.codex\/skills\/ho-build\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(codexRemember, /~\/\.codex\/skills\/implement\/scripts\/prd_state_harness\.js rules add/);
 
   // please references its siblings through the Claude install paths.
   const claudePlease = fs.readFileSync(path.join(home, ".claude", "skills", "please", "SKILL.md"), "utf8");
-  assert.match(claudePlease, /~\/\.claude\/skills\/ho-spec\/SKILL\.md/);
+  assert.match(claudePlease, /~\/\.claude\/skills\/gen-prd\/SKILL\.md/);
 
   // Auxiliary entries are symlinks into the repo; Codex-only entries are skipped for Claude.
-  const claudeScripts = path.join(home, ".claude", "skills", "ho-build", "scripts");
+  const claudeScripts = path.join(home, ".claude", "skills", "implement", "scripts");
   assert.ok(fs.lstatSync(claudeScripts).isSymbolicLink());
-  assert.equal(fs.realpathSync(claudeScripts), fs.realpathSync(path.join(repoRoot, "skills", "ho-build", "scripts")));
-  assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "ho-build", "agents")));
-  assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "ho-build", "agents")), false);
+  assert.equal(fs.realpathSync(claudeScripts), fs.realpathSync(path.join(repoRoot, "skills", "implement", "scripts")));
+  assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "implement", "agents")));
+  assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "implement", "agents")), false);
+  const legacyBuildScripts = path.join(home, ".codex", "skills", "ho-build", "scripts");
+  const legacyShipScripts = path.join(home, ".codex", "skills", "ho-ship", "scripts");
+  assert.equal(fs.realpathSync(legacyBuildScripts), fs.realpathSync(path.join(repoRoot, "skills", "implement", "scripts")));
+  assert.equal(fs.realpathSync(legacyShipScripts), fs.realpathSync(path.join(repoRoot, "skills", "ship", "scripts")));
 
   // Hooks: Codex gets Stop + SubagentStop + PreToolUse, Claude gets Stop only.
   const codexHooks = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
@@ -82,7 +106,7 @@ test("installer installs canonical skills and the ho-scope compatibility alias w
   const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.ok(claudeSettings.hooks.Stop.some(matcher => matcher.hooks.some(hook => hook.command.includes("prd_state_harness.js"))));
   assert.equal(claudeSettings.hooks.PreToolUse, undefined);
-  assert.match(claudeSettings.hooks.Stop[0].hooks[0].command, /\.claude\/skills\/ho-build\/scripts\/prd_state_harness\.js/);
+  assert.match(claudeSettings.hooks.Stop[0].hooks[0].command, /\.claude\/skills\/implement\/scripts\/prd_state_harness\.js/);
 });
 
 test("installer removes owned legacy directories and keeps foreign ones", () => {
@@ -128,7 +152,7 @@ test("installer is idempotent and preserves foreign hooks and settings", () => {
 
 test("installer refuses to overwrite a foreign skill directory", () => {
   const home = freshHome();
-  const foreign = path.join(home, ".claude", "skills", "ho-interview");
+  const foreign = path.join(home, ".claude", "skills", "interview-me");
   fs.mkdirSync(foreign, { recursive: true });
   fs.writeFileSync(path.join(foreign, "SKILL.md"), "---\nname: someone-elses-skill\n---\n\n# other\n");
   const result = runInstaller(home, { allowFailure: true });

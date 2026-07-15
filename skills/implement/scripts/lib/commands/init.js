@@ -128,7 +128,7 @@ function assertNonCircularDeliveryContract(deliveryConfig, contract) {
   if (!violations.length) return;
   throw new Error([
     "PRD has a circular PR-delivery completion contract.",
-    "ho-build must create the complete implementation receipt before ho-ship can open the PR, observe CI, or merge it.",
+    "implement must create the complete implementation receipt before ship can open the PR, observe CI, or merge it.",
     ...violations.map(item => `- ${item}`),
     "Move these outcomes to a post-receipt Delivery section. They must not be PRD tasks, acceptance criteria, or Required For Done verification items.",
   ].join("\n"));
