@@ -80,8 +80,12 @@ test("installer installs canonical skills and all compatibility aliases with cor
   // remember installs on both runtimes with the substituted harness path.
   const claudeRemember = fs.readFileSync(path.join(home, ".claude", "skills", "remember", "SKILL.md"), "utf8");
   assert.match(claudeRemember, /~\/\.claude\/skills\/implement\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(claudeRemember, /## Mandatory Confirmation Gate/);
+  assert.match(claudeRemember, /not as permission to write/);
   const codexRemember = fs.readFileSync(path.join(home, ".codex", "skills", "remember", "SKILL.md"), "utf8");
   assert.match(codexRemember, /~\/\.codex\/skills\/implement\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(codexRemember, /## Mandatory Confirmation Gate/);
+  assert.match(codexRemember, /not as permission to write/);
 
   // please references its siblings through the Claude install paths.
   const claudePlease = fs.readFileSync(path.join(home, ".claude", "skills", "please", "SKILL.md"), "utf8");

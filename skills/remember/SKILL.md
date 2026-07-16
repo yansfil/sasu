@@ -38,6 +38,18 @@ Every lesson gets classified twice, then landed:
 - `rememberSuggestions` from a `finalize` receipt, and the `deviations` array in the latest run's `state.json`.
 - A just-finished incident: name the cause before it evaporates.
 
+## Mandatory Confirmation Gate
+
+Before any mutation:
+
+1. Inspect existing rules and target files read-only.
+2. Present the lesson, kind, route, exact target paths, proposed content or diff, and expected checks or side effects.
+3. Ask the user to approve those exact changes.
+
+Treat invoking `$remember`, saying "remember this", or describing the lesson as a request to prepare the proposal, not as permission to write.
+Only explicit confirmation given after the preview authorizes mutation.
+If the target paths or proposed content change, preview again and re-confirm.
+
 ## Procedure
 
 1. State the lesson in one sentence and classify it (kind + route). If it cannot be stated as a checkable condition or a fact, it is not a lesson yet; sharpen it with the user.
@@ -49,7 +61,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js rules relevant --que
 
 Also skim `agents/rules/INDEX.md`. If an existing rule covers it, update that rule instead of adding a twin (the CLI rejects exact duplicates anyway).
 
-3. Make sure the structure exists (first use in a project):
+3. Present the mandatory confirmation preview and stop.
+   Do not create a draft, edit a landing, run `seed-agents-md`, register a rule, or create pending debt before the user explicitly approves the shown changes.
+4. After confirmation, make sure the structure exists (first use in a project):
 
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js seed-agents-md
@@ -57,7 +71,7 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js seed-agents-md
 
 If CLAUDE.md exists as a regular file, the command refuses: show the user its content, get confirmation, then rerun with `--adopt-claude-md` (content becomes AGENTS.md verbatim; CLAUDE.md becomes a symlink).
 
-4. Land by kind:
+5. Land by kind:
 
 **invariant** - write a draft file and register it through the CLI (never hand-edit `INDEX.md` or the invariants directory):
 
@@ -100,8 +114,10 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --kind reg
 
 Pending lessons are visible debt: `ship` warns on every ship and `doctor` reports them until they land.
 
-5. For `user` route: propose the exact line(s) for the shared reference file and ask before writing.
-   For `harness` route: prepare the diff against the engineering-harness repo and present it; apply only on confirmation.
+6. Respect the approved route and scope.
+   For the `user` route, the approval preview must include the exact line(s) for the shared reference file.
+   For the `harness` route, the approval preview must include the exact diff against the engineering-harness repo.
+   Approval for one route or scope never authorizes another.
 
 ## What Happens After Landing
 
@@ -113,6 +129,9 @@ You do not need to re-teach landed lessons; the harness carries them:
 
 ## Hard Stops
 
+- Never create, edit, register, or apply anything before explicit confirmation given after the proposed changes are shown.
+- Never treat `$remember` invocation or the user's lesson description itself as approval.
+- If the actual landing differs from the approved preview, stop and re-confirm.
 - Never write to the user's home-directory files without explicit confirmation in this conversation.
 - Never apply harness-repo changes without showing the diff and getting confirmation.
 - Never register an invariant whose check you did not actually run once yourself.
