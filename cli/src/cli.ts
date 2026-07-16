@@ -80,7 +80,7 @@ function findProjectRoot(): string {
 
 function printStatusView(view: GateStatusView): void {
   const head = `[gate:${view.gate}] ${view.effective}${view.overridden ? " (overridden by user)" : ""}`;
-  const meta = `attempts ${view.attempts}/${view.budget}${view.budgetExhausted ? " - RETRY BUDGET EXHAUSTED: stop and ask the user" : ""}`;
+  const meta = `attempts ${view.attempts}/${view.budget}${view.budgetExhausted ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (a user-instructed re-run may continue)" : ""}`;
   process.stdout.write(`${head} | ${meta}\n`);
   for (const finding of view.findings) {
     const human = finding.requiresHuman ? " [needs human decision]" : "";
@@ -102,6 +102,11 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
         process.stdout.write(
           `note: verify commands were auto-detected; pin them in agents/config.json under verify.commands: ${JSON.stringify(result.mechanical.configSuggestion)}\n`,
         );
+      }
+    }
+    if (result.criteria) {
+      for (const criterion of result.criteria) {
+        process.stdout.write(`[semantic] ${criterion.id} ${criterion.verdict} - ${criterion.reason}\n`);
       }
     }
     if (result.error) {

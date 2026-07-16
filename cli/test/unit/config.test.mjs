@@ -19,7 +19,7 @@ test("tier-config default mapping: gates use haiku-class frugal and sonnet-class
   assert.equal(tierModelFor(config, "claude", "frugal"), "claude-haiku-4-5");
   assert.equal(tierModelFor(config, "claude", "standard"), "claude-sonnet-5");
   assert.equal(tierModelFor(config, "claude", "frontier"), "claude-opus-4-8");
-  assert.equal(config.judge.retryBudget, 2);
+  assert.equal(config.judge.retryBudget, 3);
   assert.equal(config.judge.backend, "auto");
 });
 

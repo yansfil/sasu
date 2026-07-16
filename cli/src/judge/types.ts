@@ -26,6 +26,11 @@ export interface JudgeCallRecord {
   tier: Tier;
   purpose: string;
   durationMs: number;
+  /**
+   * Parse-retry attempts WITHIN this single judge invocation (1 = clean first
+   * reply, 2 = one schema-rejected reply was retried). Not the gate's
+   * fix-and-regate attempts counter in gates.json - that counts whole runs.
+   */
   attempts: number;
   outcome: "ok" | JudgeErrorCode;
 }

@@ -40,7 +40,12 @@ const DEFAULT_JUDGE: JudgeConfig = {
     // config-only because model catalogs vary by plan.
     codex: { frugal: null, standard: null, frontier: null },
   },
-  retryBudget: 2,
+  // E2E calibration (2026-07-16) showed judges discover gaps progressively
+  // across rounds, so 2 attempts starved good-faith fix loops; 3 is the
+  // observed floor for reaching PASS on an honestly revised document. The
+  // budget is advisory for autonomous loops - the CLI never locks a
+  // user-instructed re-run.
+  retryBudget: 3,
   timeoutMs: 180_000,
 };
 

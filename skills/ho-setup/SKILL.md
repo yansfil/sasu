@@ -87,7 +87,8 @@ Then interview:
      (semantic verify), frontier=`claude-opus-4-8`; codex uses the user's own
      CLI default model unless configured.
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
-     (default 2).
+     (default 3; advisory for autonomous loops - a user-instructed re-run is
+     never locked).
    - `verify.commands`: mechanical verify commands (`test`, `lint`,
      `typecheck`, `build`). Declared commands win; otherwise checkshirt
      detects from manifests and suggests pinning here.
@@ -123,7 +124,7 @@ Reference shape:
   },
   "judge": {
     "backend": "auto",
-    "retryBudget": 2,
+    "retryBudget": 3,
     "tierModels": {
       "claude": { "frugal": "claude-haiku-4-5", "standard": "claude-sonnet-5", "frontier": "claude-opus-4-8" }
     }

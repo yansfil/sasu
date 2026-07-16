@@ -221,8 +221,8 @@ test("fail-closed: two invalid judge replies surface as a blocked ERROR run, not
   assert.equal(state.judgeCalls[0].outcome, "judge-invalid-output");
 });
 
-test("retry budget: repeated BLOCKs exhaust the budget and tell the agent to stop", () => {
-  const dir = makeProject();
+test("retry budget: repeated BLOCKs exhaust the configured budget and tell the agent to stop", () => {
+  const dir = makeProject({ config: { judge: { retryBudget: 2 } } });
   const block = () =>
     runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
       stub: stubFile(dir, BLOCK_RESPONSE),
@@ -231,6 +231,28 @@ test("retry budget: repeated BLOCKs exhaust the budget and tell the agent to sto
   const second = block();
   assert.equal(second.status, 1);
   assert.match(second.stdout, /RETRY BUDGET EXHAUSTED/);
+  assert.match(second.stdout, /user-instructed re-run may continue/, "exhaustion must read as advisory, not a lock");
+  // Advisory semantics: a further (user-instructed) run is still executable.
+  const third = block();
+  assert.equal(third.status, 1, "third run executes instead of being locked out");
+});
+
+test("verify PASS prints a per-criterion semantic summary", () => {
+  const dir = makeProject({
+    config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
+  });
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+    stub: stubFile(dir, {
+      verdict: "PASS",
+      criteria: [
+        { id: "AC1", verdict: "PASS", reason: "render() added" },
+        { id: "AC2", verdict: "PASS", reason: "persist() added" },
+      ],
+    }),
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /\[semantic\] AC1 PASS - render\(\) added/);
+  assert.match(result.stdout, /\[semantic\] AC2 PASS - persist\(\) added/);
 });
 
 test("gate status reports all three gates and the judge call count", () => {

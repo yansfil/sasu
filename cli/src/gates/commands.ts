@@ -18,6 +18,7 @@ export interface GateCommandResult {
   ok: boolean;
   status: GateStatusView;
   mechanical?: MechanicalResult;
+  criteria?: { id: string; verdict: "PASS" | "FAIL"; reason: string }[];
   error?: { code: string; message: string; recovery: string };
 }
 
@@ -183,7 +184,7 @@ export function runVerifyGate(
       records,
     );
     const status = gateStatus(state, "verify", config.judge.retryBudget);
-    return { ok: status.effective === "PASS", status, mechanical };
+    return { ok: status.effective === "PASS", status, mechanical, criteria: outcome.value.criteria };
   } catch (error) {
     return recordJudgeFailure(store, state, "verify", config, error, records, topic);
   }

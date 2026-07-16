@@ -24,8 +24,13 @@ const GAP_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fenc
 }
 Rules:
 - BLOCK only for material gaps (P0/P1) that would change scope, behavior, acceptance, risk, or verification.
+- List EVERY material gap you can find in THIS single pass. Do not hold findings back for a later
+  round: a re-run on the fixed document should find nothing new unless the document changed.
 - PASS may carry P2 notes only.
-- requiresHuman is true only when closing the gap needs a product decision or taste judgment that an agent must not invent.
+- requiresHuman is true ONLY for product decisions or taste judgments an agent must not invent.
+  Anything resolvable by reading the codebase or by a reasonable engineering default (function
+  signatures, return types, symmetric error handling) is NOT requiresHuman - report it as a
+  normal finding the implementing agent can close, or omit it if immaterial.
 - Never output a numeric score of any kind.`;
 
 export function gapAuditPrompt(qaLogContent: string): string {
