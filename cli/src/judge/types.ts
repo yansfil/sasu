@@ -41,6 +41,8 @@ export interface Finding {
   missing: string;
   recommendation: string;
   requiresHuman: boolean;
+  /** Present on re-run judgments only (delta contract): where this finding came from. */
+  origin?: "prior-unresolved" | "new";
 }
 
 export interface GapVerdict {
@@ -67,7 +69,7 @@ function asString(v: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
 
-export function validateGapVerdict(value: unknown): GapVerdict | string {
+export function validateGapVerdict(value: unknown, options: { requireOrigin?: boolean } = {}): GapVerdict | string {
   if (!isRecord(value)) return "output is not a JSON object";
   const verdict = asString(value["verdict"]);
   if (verdict !== "PASS" && verdict !== "BLOCK") return `verdict must be PASS or BLOCK, got: ${String(value["verdict"])}`;
@@ -80,12 +82,17 @@ export function validateGapVerdict(value: unknown): GapVerdict | string {
     const area = asString(f["area"]);
     const missing = asString(f["missing"]);
     if (area === null || missing === null || missing.trim() === "") return `findings[${i}] needs area and missing strings`;
+    const origin = asString(f["origin"]);
+    if (options.requireOrigin && origin !== "prior-unresolved" && origin !== "new") {
+      return `findings[${i}].origin must be "prior-unresolved" or "new" on a re-run judgment`;
+    }
     findings.push({
       area,
       severity,
       missing,
       recommendation: asString(f["recommendation"]) ?? "",
       requiresHuman: f["requiresHuman"] === true,
+      ...(origin === "prior-unresolved" || origin === "new" ? { origin } : {}),
     });
   }
   if (verdict === "BLOCK" && findings.length === 0) return "BLOCK verdict requires at least one finding";

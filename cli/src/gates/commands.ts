@@ -8,6 +8,7 @@ import {
   validateGapVerdict,
   validateSemanticVerdict,
   type Finding,
+  type GapVerdict,
   type JudgeCallRecord,
 } from "../judge/types";
 import { runMechanical, type MechanicalResult } from "../mechanical";
@@ -34,29 +35,84 @@ function overrideRecovery(topic: string, gate: GateId): string {
   return `To proceed anyway, the USER (never the agent) may run: checkshirt gate override --slug ${topic} --gate ${gate} --reason "<why>"`;
 }
 
+/**
+ * Prior-round findings for the delta re-judgment contract: only carried when
+ * the last run actually blocked, so a fresh document is judged fresh.
+ */
+function priorFindingsFor(state: ReturnType<GateStore["load"]>, gate: GateId) {
+  const record = state.gates[gate];
+  if (!record || record.verdict === null || record.verdict === "PASS") return [];
+  return record.findings.map((f) => ({ severity: f.severity, area: f.area, missing: f.missing }));
+}
+
+/**
+ * Mechanical convergence rule for re-runs (anti progressive-discovery): only
+ * an unresolved prior finding or a NEW P0 may block. Any other new finding is
+ * demoted to a non-blocking P2 advisory - recorded, never gate-holding. This
+ * moves the convergence guarantee from prompt hope to CLI enforcement.
+ */
+export function applyRerunConvergence(judged: GapVerdict): {
+  verdict: "PASS" | "BLOCK";
+  findings: Finding[];
+  demotedCount: number;
+} {
+  const findings: Finding[] = [];
+  let blocking = 0;
+  let demotedCount = 0;
+  for (const finding of judged.findings) {
+    const canBlock = finding.origin === "prior-unresolved" || (finding.origin === "new" && finding.severity === "P0");
+    if (canBlock && finding.severity !== "P2") {
+      blocking += 1;
+      findings.push(finding);
+    } else if (finding.severity === "P2") {
+      findings.push(finding);
+    } else {
+      demotedCount += 1;
+      findings.push({
+        ...finding,
+        severity: "P2",
+        requiresHuman: false,
+        recommendation: `[auto-demoted: new non-P0 finding on a re-run cannot block] ${finding.recommendation}`,
+      });
+    }
+  }
+  return { verdict: blocking > 0 ? "BLOCK" : "PASS", findings, demotedCount };
+}
+
 function runGapListGate(
   projectRoot: string,
   config: CheckshirtConfig,
   topic: string,
   gate: Extract<GateId, "gap-audit" | "spec">,
-  prompt: string,
+  buildPrompt: (priorFindings: { severity: string; area: string; missing: string }[]) => string,
   purpose: string,
 ): GateCommandResult {
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
   const records: JudgeCallRecord[] = [];
   try {
-    const outcome = runJudge(config, purpose, "frugal", prompt, validateGapVerdict);
+    const priorFindings = priorFindingsFor(state, gate);
+    const isRerun = priorFindings.length > 0;
+    const outcome = runJudge(config, purpose, "frugal", buildPrompt(priorFindings), (value) =>
+      validateGapVerdict(value, { requireOrigin: isRerun }),
+    );
     records.push(outcome.record);
+    const converged = isRerun ? applyRerunConvergence(outcome.value) : { ...outcome.value, demotedCount: 0 };
     state = recordGateResult(
       store,
       state,
       gate,
       {
         kind: "verdict",
-        verdict: outcome.value.verdict,
-        findings: outcome.value.findings,
-        artifactPayload: { verdict: outcome.value.verdict, findings: outcome.value.findings, judge: outcome.record },
+        verdict: converged.verdict,
+        findings: converged.findings,
+        artifactPayload: {
+          verdict: converged.verdict,
+          judgedVerdict: outcome.value.verdict,
+          demotedCount: converged.demotedCount,
+          findings: converged.findings,
+          judge: outcome.record,
+        },
       },
       records,
     );
@@ -74,7 +130,7 @@ export function runGapAudit(
   qaLogPath: string,
 ): GateCommandResult {
   const qaLog = readTextFile(projectRoot, qaLogPath, "qa-log");
-  return runGapListGate(projectRoot, config, topic, "gap-audit", gapAuditPrompt(qaLog), "gate:gap-audit");
+  return runGapListGate(projectRoot, config, topic, "gap-audit", (prior) => gapAuditPrompt(qaLog, prior), "gate:gap-audit");
 }
 
 export function runSpecGate(
@@ -86,7 +142,7 @@ export function runSpecGate(
 ): GateCommandResult {
   const prd = readTextFile(projectRoot, prdPath, "prd");
   const qaLog = readTextFile(projectRoot, qaLogPath, "qa-log");
-  return runGapListGate(projectRoot, config, topic, "spec", specGatePrompt(prd, qaLog), "gate:spec");
+  return runGapListGate(projectRoot, config, topic, "spec", (prior) => specGatePrompt(prd, qaLog, prior), "gate:spec");
 }
 
 export interface VerifyOptions {

@@ -26,6 +26,10 @@ Rules:
 - BLOCK only for material gaps (P0/P1) that would change scope, behavior, acceptance, risk, or verification.
 - List EVERY material gap you can find in THIS single pass. Do not hold findings back for a later
   round: a re-run on the fixed document should find nothing new unless the document changed.
+- Depth bar: internal API details that a competent implementer resolves by following the codebase's
+  existing conventions - parameter type guards, null/undefined contracts, return-shape mechanics,
+  which case variant gets stored - are at most P2 notes, NEVER blockers. Block only on decisions
+  that change user-visible behavior, data shape, scope, or risk in a way the USER would care about.
 - PASS may carry P2 notes only.
 - requiresHuman is true ONLY for product decisions or taste judgments an agent must not invent.
   Anything resolvable by reading the codebase or by a reasonable engineering default (function
@@ -33,7 +37,39 @@ Rules:
   normal finding the implementing agent can close, or omit it if immaterial.
 - Never output a numeric score of any kind.`;
 
-export function gapAuditPrompt(qaLogContent: string): string {
+export interface PriorFinding {
+  severity: string;
+  area: string;
+  missing: string;
+}
+
+/**
+ * Delta re-judgment context (anti progressive-discovery): re-runs carry the
+ * previous round's findings so the judge converges instead of opening ever
+ * deeper lines of questioning on an honestly revised document.
+ */
+function rerunContext(priorFindings: PriorFinding[]): string {
+  if (priorFindings.length === 0) return "";
+  const lines = priorFindings.map((f) => `- [${f.severity}/${f.area}] ${f.missing}`).join("\n");
+  return `
+RE-RUN CONTEXT: this document was judged before and the findings below were reported; the author
+has since revised it. Judge the revision as follows:
+1. For each prior finding, check whether the revision resolves it. Resolved findings must NOT be
+   reported again.
+2. Report a prior finding again ONLY if it remains genuinely unaddressed.
+3. Do NOT open new, deeper lines of questioning about aspects that were previously acceptable.
+   A NEW finding is allowed only when it was introduced by the revision itself, or it is a
+   missed P0 without which the document is unimplementable - treat that as exceptional.
+4. On this re-run every finding MUST carry an extra field "origin": "prior-unresolved" (a prior
+   finding that is still unaddressed) or "new". The harness enforces convergence mechanically:
+   new findings below P0 cannot block, so label honestly.
+
+PRIOR FINDINGS:
+${lines}
+`;
+}
+
+export function gapAuditPrompt(qaLogContent: string, priorFindings: PriorFinding[] = []): string {
   return `You are an independent interview-closure judge for an engineering requirements interview.
 You have no prior context about this project beyond the interview log below.
 Your only job: list the material gaps that would block writing a faithful PRD from this log.
@@ -44,15 +80,21 @@ Resolved decisions, explicitly deferred items with revisit triggers, and explici
 Do not invent nice-to-have process gaps. An empty findings list with verdict PASS is the correct
 answer for a complete log.
 
-${GAP_JSON_CONTRACT}
+Be exhaustive NOW, not later. Before answering, sweep every operation, entity, and behavior the log
+already mentions and list, in this same reply, every unspecified error and edge-case decision for
+each of them (invalid input, missing/unknown id, empty or conflicting state, ordering ties). If an
+edge case of an operation named in the log is worth blocking on, it must appear in THIS pass -
+surfacing it only on a later re-run of the fixed log is a contract violation.
 
+${GAP_JSON_CONTRACT}
+${rerunContext(priorFindings)}
 INTERVIEW LOG (qa-log.md):
 ---
 ${clampDocument(qaLogContent)}
 ---`;
 }
 
-export function specGatePrompt(prdContent: string, qaLogContent: string): string {
+export function specGatePrompt(prdContent: string, qaLogContent: string, priorFindings: PriorFinding[] = []): string {
   return `You are an independent PRD spec-gate judge (fidelity + self-containment).
 You have no prior context beyond the two documents below.
 
@@ -69,7 +111,7 @@ Report only material violations as findings; area should be one of: fidelity, te
 An empty findings list with verdict PASS is the correct answer for a faithful, self-contained PRD.
 
 ${GAP_JSON_CONTRACT}
-
+${rerunContext(priorFindings)}
 PRD (prd.md):
 ---
 ${clampDocument(prdContent)}
