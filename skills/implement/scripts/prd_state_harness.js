@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 "use strict";
 
-const { SELF_PATH, displayPath, parseArgs } = require("./lib/util");
-const { cmdHook } = require("./lib/hooks");
-const { cmdInit } = require("./lib/commands/init");
-const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdCleanupActive } = require("./lib/commands/inspect");
-const { cmdPlanVerification, cmdPlanExecution } = require("./lib/commands/plan");
-const { cmdMarkNode, cmdAssignNode, cmdMark, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("./lib/commands/mark");
-const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("./lib/commands/review");
-const { cmdRules } = require("./lib/commands/rules");
-const { cmdSeedAgentsMd } = require("./lib/commands/setup");
+const { SELF_PATH, displayPath, parseArgs } = require("../../../cli/lib/util");
+const { cmdHook } = require("../../../cli/lib/hooks");
+const { cmdInit } = require("../../../cli/lib/commands/init");
+const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
+const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
+const { cmdMarkNode, cmdAssignNode, cmdMark, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
+const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
+const { cmdRules } = require("../../../cli/lib/commands/rules");
+const { cmdSeedAgentsMd } = require("../../../cli/lib/commands/setup");
 
 // Single source of truth for dispatch and usage. `usageArgs` is what the
 // usage text prints after the command name; `run` receives the raw argv rest.

@@ -95,6 +95,7 @@ function cmdDoctor() {
   doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add);
   if (prMode) doctorCheckPrDeliveryAssets(projectRoot, delivery, add);
   doctorCheckHookRegistration(add);
+  doctorCheckCheckshirtCli(projectRoot, add);
   const activeRun = doctorCollectActiveRun(projectRoot, add);
 
   const errors = checks.filter(item => item.level === "error").length;
@@ -215,6 +216,12 @@ function doctorCheckGitignorePolicy(projectRoot, add) {
   } else {
     add("warn", "gitignore", `${implementGlob} is not ignored; implementation state and evidence should stay out of normal commits`);
   }
+  const gatesProbe = path.join("agents", "gates", "__doctor-probe__", "gates.json");
+  if (gitIgnored(projectRoot, gatesProbe)) {
+    add("ok", "gitignore", "agents/gates/** is ignored");
+  } else {
+    add("warn", "gitignore", "agents/gates/** is not ignored; checkshirt gate state and judge artifacts should stay out of normal commits");
+  }
 }
 
 // Informational only: a legacy tree is a supported read-only fallback, not a
@@ -314,6 +321,38 @@ function doctorCheckGithubCli(projectRoot, prMode, add) {
   const ghAuth = childProcess.spawnSync("gh", ["auth", "status"], { cwd: projectRoot, shell: false, encoding: "utf8" });
   if (ghAuth.status === 0) add("ok", "gh", "gh installed and authenticated");
   else add(prMode ? "error" : "warn", "gh", "gh is installed but not authenticated (gh auth login)");
+}
+
+// Checkshirt gate CLI readiness (PRD mini-cli-llm-boundary R10): binary +
+// contract version, judge backends, and verify-command configuration. All
+// findings are warnings because gates degrade to recorded fallbacks.
+function doctorCheckCheckshirtCli(projectRoot, add) {
+  const version = childProcess.spawnSync("checkshirt", ["--contract-version"], { shell: false, encoding: "utf8" });
+  if (version.status !== 0) {
+    add("warn", "checkshirt", "checkshirt CLI is not on PATH; judge gates (gap-audit/spec/verify) will fall back (run scripts/install-local-skills.mjs in the harness repo)");
+    return;
+  }
+  add("ok", "checkshirt", `checkshirt contract version ${String(version.stdout || "").trim()}`);
+  const claude = childProcess.spawnSync("claude", ["--version"], { shell: false, encoding: "utf8" });
+  const codex = childProcess.spawnSync("codex", ["--version"], { shell: false, encoding: "utf8" });
+  if (claude.status !== 0 && codex.status !== 0) {
+    add("warn", "checkshirt-judge", "no judge backend found (neither claude nor codex on PATH); gates fail closed until one is installed and logged in");
+  } else {
+    const backends = [claude.status === 0 ? "claude" : null, codex.status === 0 ? "codex" : null].filter(Boolean).join(", ");
+    add("ok", "checkshirt-judge", `judge backends available: ${backends}`);
+  }
+  let verifyCommands = null;
+  try {
+    const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "config.json"), "utf8"));
+    verifyCommands = projectConfig && projectConfig.verify && projectConfig.verify.commands ? projectConfig.verify.commands : null;
+  } catch {
+    verifyCommands = null;
+  }
+  if (verifyCommands && Object.keys(verifyCommands).length > 0) {
+    add("ok", "checkshirt-verify", `verify commands declared in agents/config.json: ${Object.keys(verifyCommands).join(", ")}`);
+  } else {
+    add("warn", "checkshirt-verify", "no verify.commands in agents/config.json; checkshirt verify will detect from manifests and suggest pinning");
+  }
 }
 
 function doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add) {

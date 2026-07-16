@@ -272,6 +272,38 @@ Do not use self-authored summaries or harness state files as proof.
 
 Read `references/verification-and-evidence.md` for exact-command deviations, cost-bearing benchmark controls, artifact placement, registration, hash refresh, and required-verification semantics.
 
+### Verify Gate (checkshirt)
+
+Per completed task, run only the project's mechanical checks (tests/lint;
+$0, no judge). Then, after every code-changing task is complete and before
+the acceptance sweep, submit the full run diff to the checkshirt verify gate
+once:
+
+```sh
+checkshirt verify --slug <topic-slug> --prd <prd-path> --base <baseline-ref>
+```
+
+The gate judges the diff against the PRD's complete acceptance criteria, so
+do not call it mid-run while later tasks are still unimplemented: missing ACs
+would fail legitimately and burn the retry budget. The gate runs the
+mechanical checks first (config-declared commands win; manifest detection is
+the fallback) and sends the diff plus the acceptance criteria to an
+independent judge only after mechanical passes.
+
+- Exit 1 with a mechanical failure: fix the failing check; the judge was not
+  consulted and no tokens were spent.
+- Exit 1 with per-criterion semantic failures: address each cited criterion
+  and re-run. When the printed retry budget is exhausted, stop and hand the
+  findings to the user.
+- Fail-closed judge errors report their cause and recovery; the gate stays
+  blocked until it passes or the user overrides.
+- Never run `checkshirt gate override` yourself: overrides are user-only, and
+  the recorded deviation must carry the user's own reason.
+- Record the gate's PASS (or the user's override) as node/AC evidence; the
+  gate state lives under `agents/gates/<topic-slug>/`.
+- If the `checkshirt` binary is unavailable, record that limitation in
+  `context-notes.md` and continue with the PRD verification contract alone.
+
 ## 7. Review And Finalize
 
 Sweep every acceptance criterion before review and keep working while a required criterion is unmet without a concrete blocker.

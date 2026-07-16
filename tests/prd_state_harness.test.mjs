@@ -9,9 +9,9 @@ import test from "node:test";
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
 const requireModule = createRequire(import.meta.url);
-const { classifyReviewProfile } = requireModule(path.join(repoRoot, "skills", "implement", "scripts", "lib", "config.js"));
-const { parseGitStatusZ } = requireModule(path.join(repoRoot, "skills", "implement", "scripts", "lib", "git.js"));
-const { normalizeWriteScopes, findDependencyCycle, writeScopesOverlap } = requireModule(path.join(repoRoot, "skills", "implement", "scripts", "lib", "planning.js"));
+const { classifyReviewProfile } = requireModule(path.join(repoRoot, "cli", "lib", "config.js"));
+const { parseGitStatusZ } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
+const { normalizeWriteScopes, findDependencyCycle, writeScopesOverlap } = requireModule(path.join(repoRoot, "cli", "lib", "planning.js"));
 
 test("parseGitStatusZ preserves rename source records", () => {
   assert.deepEqual(

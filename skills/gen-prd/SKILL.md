@@ -452,6 +452,32 @@ one-second check.
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
 
+### Spec Gate (checkshirt)
+
+After the Harness Readiness Gate passes and before marking the PRD `ready`,
+run the independent spec gate when the PRD has an intake qa-log source:
+
+```sh
+checkshirt gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log agents/intake/<topic-slug>/qa-log.md
+```
+
+An independent judge checks fidelity (every material Decision Register entry
+represented without distortion), testability (acceptance criteria observable,
+no vague qualifiers), and verification completeness.
+
+- The gate is a hard block: exit 1 means the PRD is not `ready`. Fix the PRD
+  per finding and re-run.
+- A finding marked `needs human decision` goes to the user; do not resolve it
+  by editing the PRD toward your own guess.
+- When the retry budget is exhausted, stop revising and hand the findings to
+  the user.
+- If the judge backend is unavailable, the gate fails closed; report the cause
+  and recovery, and treat the PRD as not `ready` until the user decides.
+- Never run `checkshirt gate override` yourself; it is user-only, and the
+  recorded deviation must carry the user's own reason.
+- When no intake qa-log exists (conversation-only PRD), record that the spec
+  gate was skipped for lack of a source document.
+
 ### 11. Implementation Guardrails
 
 State what `implement` must not do without asking:
@@ -495,10 +521,12 @@ Require the implementing agent to report:
    bias, product completeness, and review profile) and fix failures.
 9. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
-10. Mark `status: ready` only when blocking decisions are resolved, the semantic losslessness sweep and inline
-   self-check pass, and the Harness Readiness Gate reports zero blocking
-   gaps.
-11. Ask the user to review the PRD using the Approval checklist. Set
+10. Run the checkshirt Spec Gate and fix findings until it passes or a
+   human-decision finding stops the loop.
+11. Mark `status: ready` only when blocking decisions are resolved, the semantic losslessness sweep and inline
+   self-check pass, the Harness Readiness Gate reports zero blocking
+   gaps, and the Spec Gate passes (or its skip/fallback is recorded).
+12. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.
 

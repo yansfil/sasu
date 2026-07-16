@@ -31,8 +31,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 
 It reports the effective delivery config (config file plus defaults), unknown or
 misspelled config keys, git/origin/gh readiness, worktree sync source problems,
-PR template resolution, ship availability, hook registration, and any
-active run with its ship-pending state.
+PR template resolution, ship availability, hook registration, checkshirt gate
+CLI readiness (binary contract version, judge backends, verify commands), and
+any active run with its ship-pending state.
 
 If the user only asked "what is the current setting", report the doctor output
 and stop.
@@ -75,13 +76,28 @@ Then interview:
 5. `agents/` tracking policy:
    - Everything under `agents/` is committed and reviewable by default:
      `agents/prd/**`, `agents/rules/**`, `agents/config.json`.
-   - Only runtime state is ignored: `agents/implement/**`.
+   - Only runtime state is ignored: `agents/implement/**` and `agents/gates/**`.
+6. Checkshirt judge gates (optional; defaults work without config):
+   - `judge.backend`: `auto` (default; prefers claude, falls back to codex),
+     `claude`, or `codex`. Judging with a different vendor than the
+     implementing runtime is recommended for reviewer independence but not
+     enforced in v1.
+   - `judge.tierModels`: per-backend model per tier. Defaults:
+     claude frugal=`claude-haiku-4-5` (gap-audit/spec), standard=`claude-sonnet-5`
+     (semantic verify), frontier=`claude-opus-4-8`; codex uses the user's own
+     CLI default model unless configured.
+   - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
+     (default 2).
+   - `verify.commands`: mechanical verify commands (`test`, `lint`,
+     `typecheck`, `build`). Declared commands win; otherwise checkshirt
+     detects from manifests and suggests pinning here.
 
 Recommended `.gitignore` block (one line):
 
 ```gitignore
 # PRD pipeline runtime state
 agents/implement/
+agents/gates/
 ```
 
 Projects that still have a legacy `.hoyeon` tree keep their old ignore rules
@@ -104,6 +120,16 @@ Reference shape:
     "link": [".env"],
     "copy": [],
     "setup": ["pnpm install"]
+  },
+  "judge": {
+    "backend": "auto",
+    "retryBudget": 2,
+    "tierModels": {
+      "claude": { "frugal": "claude-haiku-4-5", "standard": "claude-sonnet-5", "frontier": "claude-opus-4-8" }
+    }
+  },
+  "verify": {
+    "commands": { "test": "pnpm test", "lint": "pnpm lint" }
   }
 }
 ```

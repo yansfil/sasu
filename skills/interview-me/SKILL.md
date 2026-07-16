@@ -311,7 +311,7 @@ normalization_checkpoint_every: 10
 8. Checkpoint every 10 answers or earlier for high-risk work.
 9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
 10. Run full normalization and the intake validator.
-11. Run final auditor closure or recorded local fallback.
+11. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
 12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
 13. Mark qa-log.md `status: complete` only when the validator and closure are ready, then suggest `$gen-prd --context agents/intake/<topic-slug>/qa-log.md "<topic>"`.
 
@@ -323,6 +323,24 @@ node ~/.codex/skills/interview-me/scripts/validate_intake.mjs \
 ~~~
 
 The validator is a mechanical gap check, not a substitute for product judgment.
+
+## Gap-Audit Gate (checkshirt)
+
+Independent closure judgment is owned by the checkshirt CLI.
+Run it after the validator, before marking the qa-log complete:
+
+~~~sh
+checkshirt gate gap-audit --slug <topic-slug> --qa-log agents/intake/<topic-slug>/qa-log.md
+~~~
+
+- The gate is a hard block: exit 1 means closure is blocked and the findings list the material gaps.
+- Findings are next-question candidates: resolve each finding with the user or in the register, then re-run the gate.
+- A finding marked `needs human decision` must go to the user; never invent the answer.
+- When the output says the retry budget is exhausted, stop and hand the findings to the user instead of re-running.
+- If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use the final-auditor subagent or a recorded local fallback as the closure audit.
+- Never run `checkshirt gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
+- Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.
+- The gate returns a findings list, never a numeric score; the numeric-gate ban in the Core Contract stands.
 
 ## Final Quality Gate
 

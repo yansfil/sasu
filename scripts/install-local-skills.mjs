@@ -24,6 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skillsRoot = path.join(repoRoot, "skills");
@@ -179,7 +180,38 @@ function ensureHooks(file, entriesByEvent) {
   return { file, changed };
 }
 
+// Build the checkshirt CLI and expose its binary. The shim execs the built
+// entry in this repository, so `checkshirt` always matches the installed
+// skills (same-repo versioning is the skew defense from PRD D-06).
+function installCliBinary() {
+  const cliDir = path.join(repoRoot, "cli");
+  if (!fs.existsSync(path.join(cliDir, "package.json"))) {
+    return { ok: false, error: "cli/package.json missing" };
+  }
+  const steps = [];
+  if (!fs.existsSync(path.join(cliDir, "node_modules"))) {
+    steps.push(["pnpm", ["install", "--silent"]]);
+  }
+  steps.push(["pnpm", ["run", "build"]]);
+  for (const [command, args] of steps) {
+    const result = spawnSync(command, args, { cwd: cliDir, encoding: "utf8" });
+    if (result.status !== 0) {
+      return { ok: false, error: `${command} ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim().slice(0, 500)}` };
+    }
+  }
+  const binDir = process.env.PNPM_HOME
+    || (process.platform === "darwin" ? path.join(home, "Library", "pnpm") : path.join(home, ".local", "bin"));
+  ensureDir(binDir);
+  const shimPath = path.join(binDir, "checkshirt");
+  const entry = path.join(cliDir, "dist", "cli.js");
+  fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
+  const version = spawnSync("node", [entry, "--contract-version"], { encoding: "utf8" });
+  return { ok: version.status === 0, shimPath, contractVersion: (version.stdout || "").trim() };
+}
+
 for (const key of Object.keys(TARGETS)) ensureDir(TARGETS[key].root);
+
+const cliBinary = installCliBinary();
 
 const installed = {
   codex: SKILL_NAMES.map(name => installSkill("codex", name)),
@@ -207,8 +239,9 @@ const hooks = {
 };
 
 process.stdout.write(JSON.stringify({
-  ok: true,
+  ok: cliBinary.ok,
   repoRoot,
+  cliBinary,
   installed,
   removedLegacy,
   hooks,

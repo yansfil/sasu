@@ -65,6 +65,26 @@ The mechanics that make one source possible:
 - **Idempotent hook registration.**
   The installer merges harness hooks into existing hook files without touching unrelated entries, and refuses to overwrite a foreign skill directory.
 
+## The Checkshirt CLI
+
+`cli/` builds the `checkshirt` binary: the single CLI that owns the pipeline's deterministic logic and its LLM judgment gates.
+Skills stay thin orchestration prompts; the CLI owns state, gates, verification, and receipts.
+The installer builds it and writes a shim onto the pnpm bin path, so the binary always matches the installed skills (same-repo versioning, no skew).
+
+```text
+checkshirt gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
+checkshirt gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
+checkshirt verify           mechanical checks ($0) first, then an independent diff-vs-AC judge
+checkshirt gate status      gate verdicts, attempts, judge usage for a topic
+checkshirt gate override    user-only escape hatch; records a deviation with the user's reason
+checkshirt doctor           judge backends, verify commands, contract version
+```
+
+Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with tools disabled, schema validation, one retry, and fail-closed errors.
+Gates are hard blocks: an agent can fix findings and re-gate within a retry budget, but only the user can override, and every judgment and override lands in `agents/gates/<topic>/` for the receipt.
+The CLI never executes implementation work: coding stays in the host agent session.
+`cli/lib` also hosts the absorbed implement state library (`prd_state_harness.js` in the skill directory is a thin entrypoint into it).
+
 ## Completion Is Enforced, Not Promised
 
 The harness treats "done" as a provable state, and the enforcement works identically in both runtimes:

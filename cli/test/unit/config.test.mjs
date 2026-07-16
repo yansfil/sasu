@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { loadConfig, tierModelFor } from "../../dist/config.js";
+
+function tempProject(configJson) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-config-"));
+  if (configJson !== undefined) {
+    fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify(configJson));
+  }
+  return dir;
+}
+
+test("tier-config default mapping: gates use haiku-class frugal and sonnet-class standard", () => {
+  const config = loadConfig(tempProject());
+  assert.equal(tierModelFor(config, "claude", "frugal"), "claude-haiku-4-5");
+  assert.equal(tierModelFor(config, "claude", "standard"), "claude-sonnet-5");
+  assert.equal(tierModelFor(config, "claude", "frontier"), "claude-opus-4-8");
+  assert.equal(config.judge.retryBudget, 2);
+  assert.equal(config.judge.backend, "auto");
+});
+
+test("tier-config override: agents/config.json overrides tier models and retry budget", () => {
+  const config = loadConfig(
+    tempProject({
+      judge: {
+        backend: "codex",
+        retryBudget: 5,
+        tierModels: { claude: { standard: "claude-opus-4-8" }, codex: { standard: "gpt-5.2" } },
+      },
+    }),
+  );
+  assert.equal(config.judge.backend, "codex");
+  assert.equal(config.judge.retryBudget, 5);
+  assert.equal(tierModelFor(config, "claude", "standard"), "claude-opus-4-8");
+  assert.equal(tierModelFor(config, "claude", "frugal"), "claude-haiku-4-5");
+  assert.equal(tierModelFor(config, "codex", "standard"), "gpt-5.2");
+});
+
+test("tier-config rejects a negative retry budget", () => {
+  assert.throws(() => loadConfig(tempProject({ judge: { retryBudget: -1 } })), /retryBudget/);
+});
+
+test("loadConfig rejects invalid JSON with a clear error", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-config-"));
+  fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "agents", "config.json"), "{broken");
+  assert.throws(() => loadConfig(dir), /not valid JSON/);
+});
