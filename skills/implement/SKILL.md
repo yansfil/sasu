@@ -71,6 +71,7 @@ References do not require nested reference chasing.
 - Do not add unmapped scope, hidden user flows, unapproved services, schemas, external calls, or destructive actions.
 - Only the coordinator mutates harness state, reconciles subagents, applies final edits, and records completion outcomes.
 - Every required verification item must pass with valid artifact-backed evidence from the actual run.
+- Requirements fidelity reads the complete canonical intake qa-log when the PRD references one and compares qa-log intent through the PRD to the implementation result.
 - Requirements fidelity review precedes final adversarial review when the effective policy requires both, and source or evidence changes make affected reviews stale.
 - `receipt.json` is the only implementation completion proof; Goal state and chat claims merely mirror it.
 - PR creation, CI, and merge are post-receipt delivery outcomes and never required implementation verification.
@@ -288,7 +289,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-
 For `trivial`, the main agent performs a compact fidelity review.
 For policy v2 `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
 For `high-risk` and legacy `standard`, the main agent performs full fidelity before the required independent final review.
-Every fidelity review must compare original intent, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result.
+Every fidelity review must compare the complete original qa-log or conversation source, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result.
+Do not use a handoff summary or the harness's parsed intent sample as a substitute for reading the canonical source.
+Fail when a material answer, accepted recommendation, objection, constraint, rejected option, non-goal, or assumption is lost or changes provenance across `qa-log -> PRD -> implementation`.
 Harness-owned mechanical gates remain authoritative, so reviewers rerun full suites or hashes only when recorded evidence is inconsistent, missing, or suspicious.
 
 When the review profile requires a final adversarial review, generate its prompt after recording fidelity and use a fresh independent read-only sidecar when multi-agent tools are available.

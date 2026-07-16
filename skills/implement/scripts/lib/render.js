@@ -483,13 +483,14 @@ Source of truth:
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
 - Git diff/worktree: inspect current repository state
 - Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` files (or their legacy \`${LEGACY_NAMESPACE_ROOT}/\` equivalents) that exist.
-- Intent trace snapshot: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources).
+- When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A and Decision Packets, UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.
+- Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources). This count is not semantic coverage proof.
 ${decisionLines}
 
 Required checks:
-1. Every explicit user decision from intake/clarify/current conversation is represented in PRD Scope, Non-Goals, Requirements, ACs, Verification, or Human Verification.
-2. Every accepted initial proposal is either implemented and evidenced or explicitly deferred/non-goal with user approval.
-3. Every rejected option, non-goal, and guardrail stayed rejected; implementation did not reintroduce it indirectly.
+1. Every material answer, explicit user decision, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption from intake/clarify/current conversation has the same meaning and provenance in the PRD and implementation, or an explicit approved disposition.
+2. Silence, lack of objection, a topic change, or continued participation was not treated as user approval. An unambiguous affirmative response to an explicit recommendation remains an accepted recommendation rather than an agent default.
+3. Every accepted initial proposal is implemented and evidenced or explicitly deferred/non-goal with user approval, and every rejected option, non-goal, and guardrail stayed rejected.
 4. PRD Requirements and ACs did not dilute the user's intended outcome into easier proxy checks.
 5. User-visible flows, copy, data behavior, runtime behavior, and external/live proof expectations match the user's goal, not only the executor's tasks.
 6. Each AC has evidence that proves the user intent behind the AC, not just a superficial DOM/file/test condition.
@@ -541,7 +542,7 @@ Include every required Verification item. A passing review must fail if a requir
 
 ## Verdict
 
-PASS only if the user's original intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result all align. FAIL on any material semantic drift, missing decision, diluted AC, hidden scope, or overclaimed result.
+PASS only if the complete canonical source, accepted decisions, rejected alternatives, assumptions, PRD scope, ACs, verification evidence, and implementation result all align. FAIL on any material semantic loss, changed provenance, invented consent, diluted AC, hidden scope, or overclaimed result.
 `;
 }
 

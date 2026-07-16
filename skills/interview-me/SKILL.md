@@ -4,12 +4,12 @@ description: |
   Project-local pre-PRD requirements interview.
   Use when the user invokes "$interview-me", asks to interview an idea,
   clarify or pressure-test requirements, reduce ambiguity, prepare a PRD
-  handoff, or wants UX, behavior, scope, technical, verification, risk,
+  source, or wants UX, behavior, scope, technical, verification, risk,
   operation, and documented-domain decisions captured before writing a PRD.
   The "$ho-interview" and "$ho-scope" compatibility aliases follow this same workflow.
   Run low-latency main-agent-led Q&A with raw capture, decision tracking,
   targeted UX scenario coverage, periodic checkpoint backfill, and a final
-  PRD handoff.
+  PRD-ready qa-log.
 ---
 
 # interview-me
@@ -24,7 +24,7 @@ Match the user's language by default.
 
 - Keep the interview fast.
 - Ask only questions that change scope, behavior, acceptance, risk, implementation safety, or verification.
-- Keep the two existing artifacts only: qa-log.md and prd-handoff.md.
+- Keep one canonical artifact only: qa-log.md.
 - Own ordinary Q&A in the main agent.
 - Do not spawn, retain, resume, or update subagents during ordinary questions.
 - Use one fresh independent auditor only for non-trivial final closure when subagent tools are available and the user has not opted out.
@@ -51,7 +51,7 @@ Do not make the user wait for prose polishing.
 Normalize outstanding answers every 10 answered questions.
 Normalize after every 2 to 3 answers for high-risk work.
 High-risk work includes production data, migrations, PII, credentials, external APIs, payments, cost, legal or compliance, irreversible side effects, and user-facing launch gates.
-Run a mandatory full normalization before writing prd-handoff.md.
+Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
 
 ## Preflight And Routing
 
@@ -96,13 +96,17 @@ Use these fields for every entry:
 
 Use Kind values fact, decision, or assumption.
 Use Source / owner to distinguish user decisions, code or docs facts, provider evidence, and agent defaults.
-Use P0 for a decision that can invalidate the handoff or primary experience.
+Use P0 for a decision that can invalidate the PRD source or primary experience.
 Use P1 for a material decision that changes implementation or verification.
 Use P2 for a bounded detail that can safely remain deferred.
 Use Status only for lifecycle state; an adopted assumption is Kind `assumption` with Status `resolved`, not a separate status.
 
 Only silently adopt a default when it is reversible, does not change user-visible behavior, scope, public or provider contract, data shape, auth, security, cost, or launch criteria, and has an explicit verification path.
 Record every adopted default as Kind assumption with its source and revisit trigger.
+Treat a short affirmative answer such as `yes`, `응`, or `그렇게 하자` as acceptance only when it unambiguously refers to the immediately preceding explicit recommendation.
+Record that source as a user-accepted recommendation in the relevant Q# rather than as an agent default.
+Silence, lack of objection, a topic change, or continuing the interview is not user consent.
+When the referent is ambiguous and the decision is material, ask one confirmation question; otherwise use only the silent-default rule above.
 
 ## UX And Behavior Pack
 
@@ -185,6 +189,7 @@ Use browser or runtime, API, DB, external, and human proof only where they prove
 - Preserve free-text reasoning, constraints, non-goals, and objections.
 - For a material free-text answer, normalize a Decision Packet before relying on it.
 - Confirm the packet only when interpretation could lose intent or alter scope.
+- Link every material Raw Q&A entry to at least one Decision Register ID; use `decision_ids: none` only when the entry has no PRD effect and explain why in `immediate_notes`.
 - Do not repeat a resolved question unless new evidence reopened its node.
 - Treat I do not know as valid and classify the node as deferred or blocking.
 - If one branch dominates, revisit the highest-impact unresolved node in another selected pack.
@@ -209,13 +214,12 @@ Do not turn the sweep into a second user interview.
 
 Use this qa-log.md structure.
 Keep raw capture light during the interview.
-Complete every normalized field before handoff.
+Complete every normalized field before marking the file PRD-ready.
 
 ~~~markdown
 ---
 topic: "<topic>"
 status: "active | paused | complete"
-target_handoff: "prd"
 where: "greenfield | brownfield | docs-only | unknown"
 selected_packs: "ux, compatibility, data, provider, risk, operation, verification, documented-domain"
 created_at: "YYYY-MM-DD"
@@ -292,51 +296,7 @@ normalization_checkpoint_every: 10
 - UX or behavior gap:
 - highest-risk blocker:
 - final-blocking-question:
-- handoff impact:
-~~~
-
-Use this prd-handoff.md structure.
-
-~~~markdown
-# PRD Handoff: <topic>
-
-> Date: YYYY-MM-DD
-> Source: agents/intake/<topic-slug>/qa-log.md
-> Interview skill: interview-me
-
-## Clear Outcome
-
-## Product Completeness Boundary
-
-## Decision Trace And Requirement Mapping
-
-| Decision | User intent or evidence | Represented by | Remaining gap |
-| --- | --- | --- | --- |
-| D-01 |  | R#, AC#, T#, V#, non-goal, human review, risk, or guardrail | none / deferred / blocking |
-
-## UX Behavior And State Seeds
-
-## Domain Terms And Documented Decisions
-
-## Requirement Seeds
-
-## Non-Goals And Rejected Options
-
-## Pre-Work And Human Decisions
-
-## Major Technical Structure Signals
-
-## Test And Verification Seeds
-
-## Risks, Side Effects, And Sensitive Data
-
-## Human Review Needed
-
-## Open Questions
-
-## Suggested Next Step
-
-$gen-prd --context agents/intake/<topic-slug>/prd-handoff.md "<topic>"
+- PRD impact:
 ~~~
 
 ## Loop And Closure
@@ -349,27 +309,26 @@ $gen-prd --context agents/intake/<topic-slug>/prd-handoff.md "<topic>"
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope.
 7. Run the materiality sweep at its trigger.
 8. Checkpoint every 10 answers or earlier for high-risk work.
-9. Before handoff, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
+9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
 10. Run full normalization and the intake validator.
 11. Run final auditor closure or recorded local fallback.
-12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in the handoff.
-13. Write prd-handoff.md only when the validator and closure are ready.
+12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
+13. Mark qa-log.md `status: complete` only when the validator and closure are ready, then suggest `$gen-prd --context agents/intake/<topic-slug>/qa-log.md "<topic>"`.
 
-Run the validator from the installed skill path before final handoff:
+Run the validator from the installed skill path before final closure:
 
 ~~~sh
 node ~/.codex/skills/interview-me/scripts/validate_intake.mjs \
-  agents/intake/<topic-slug>/qa-log.md \
-  --handoff agents/intake/<topic-slug>/prd-handoff.md
+  agents/intake/<topic-slug>/qa-log.md
 ~~~
 
 The validator is a mechanical gap check, not a substitute for product judgment.
 
 ## Final Quality Gate
 
-Before writing prd-handoff.md, verify:
+Before marking qa-log.md complete, verify:
 
-- Every raw entry needed for handoff is normalized.
+- Every material raw entry needed by the PRD is normalized and linked to a Decision Register entry.
 - Every P0 and P1 Decision Register entry is resolved, explicitly deferred, blocking, or rejected.
 - Every fact, decision, and assumption has an owner and source or evidence.
 - Every selected UX flow has a Scenario Card with a primary path, meaningful state or failure, recovery, and proof.

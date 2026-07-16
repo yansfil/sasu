@@ -24,10 +24,10 @@ Match the user's language by default.
 
 ## Default Inputs
 
-Prefer an explicit context path. The default pre-PRD handoff is:
+Prefer an explicit context path. The canonical interview source is:
 
 ```text
-agents/intake/<topic-slug>/prd-handoff.md
+agents/intake/<topic-slug>/qa-log.md
 ```
 
 Legacy clarify summaries are still accepted:
@@ -37,8 +37,13 @@ agents/clarify/<topic-slug>/clarity-summary.md
 ```
 
 If no context path is provided, inspect `agents/intake/` first for the matching
-or most recent topic, then `agents/clarify/`. If no handoff exists and major
-ambiguity remains, ask one blocking question or recommend `$interview-me`.
+or most recent qa-log, then `agents/clarify/`. If no complete intake source
+exists and major ambiguity remains, ask one blocking question or recommend
+`$interview-me`.
+
+When qa-log.md is the source, read the complete file.
+Treat its Current Understanding as a navigation aid, not a substitute for the Decision Register, material Raw Q&A, Decision Packets, UX Scenario Cards, objections, evidence, and audit findings.
+The qa-log is the canonical interview source even when a shorter summary exists elsewhere.
 
 ## Output Contract
 
@@ -68,7 +73,7 @@ status: "draft | ready"
 human_approval: "pending | approved"
 review_profile: "trivial | standard | high-risk"
 review_rationale: "<one-sentence semantic risk rationale>"
-source_intake: "agents/intake/<topic-slug>/prd-handoff.md | current conversation"
+source_intake: "agents/intake/<topic-slug>/qa-log.md | current conversation"
 source_clarity: "agents/clarify/<topic-slug>/clarity-summary.md | none"
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
@@ -197,7 +202,7 @@ Separate actions from approvals.
 itself: account ownership, purchases, credential issuance, permission grants,
 physical actions, or provider-side steps that require the user's identity.
 If the agent can do it (creating files, seed data, config, research, scaffolding,
-free-tier signup the user already approved), it is a PRD task or just gets done —
+free-tier signup the user already approved), it is a PRD task or just gets done;
 never pre-work. Every pre-work item must say why it is human-only.
 
 Typical human-only items:
@@ -217,17 +222,23 @@ Typical human-only items:
 
 If none are needed, write `None required` with a short reason.
 
-`Decision Traceability For Fidelity Review` is the handoff surface for the
+`Decision Traceability For Fidelity Review` is the review surface for the
 strict intent-review subagent that runs at the end of `implement`.
 
 Include compact bullets for:
 
+- every material Decision Register entry from qa-log.md, with its D# when available and a visible PRD disposition.
 - user decisions that materially shape scope, UX, data, architecture,
   verification, delivery, live proof, or non-goals.
 - initial proposals or options the user accepted.
 - proposals, options, or behaviors the user rejected or explicitly deferred.
+- agent-owned assumptions, which must remain labeled as assumptions rather than being upgraded into user decisions.
 - where each decision is represented: `R#`, `AC#`, `T#`, `V#`, non-goal,
-  human verification, risk, or guardrail.
+  human verification, risk, guardrail, deferred decision, or context-only fact.
+
+Treat a short affirmative response as acceptance of a recommendation only when its referent is unambiguous in the source conversation or qa-log.
+Silence, lack of objection, a topic change, or continued participation is not approval.
+If that distinction would materially change scope or behavior, ask one contract-breaking question instead of inventing consent.
 
 If the PRD is based only on the current conversation and no separate intake file
 exists, preserve the essential user decision text here rather than relying on
@@ -412,8 +423,13 @@ After drafting and before marking the PRD `ready`, verify inline:
 - Product completeness: the PRD covers the coherent intended journey and relevant quality boundaries, and every omission is an explicit product decision rather than an implicit MVP cut.
 - Review profile: `review_profile` and `review_rationale` reflect a semantic reading of actual effects rather than keyword matching or PRD size.
 
-If a check fails, revise the PRD and re-check. State in the final report that
-the self-check passed; do not write it to a file.
+Before this self-check, perform a semantic losslessness sweep from the complete source into the PRD.
+Account for every material answer, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption in a requirement, acceptance criterion, task, verification item, human verification item, risk, guardrail, deferred decision, or explicit context-only disposition.
+Preserve meaning and provenance without copying every source sentence verbatim.
+Do not create a sweep report or any additional artifact.
+
+If a check fails, revise the PRD and re-check.
+State in the final report that the semantic losslessness sweep and self-check passed; do not write either check to a file.
 
 ### Harness Readiness Gate
 
@@ -466,7 +482,7 @@ Require the implementing agent to report:
 
 ## Workflow
 
-1. Locate the intake handoff or infer the topic from the request.
+1. Locate the intake qa-log or infer the topic from the request.
 2. Read source artifacts and directly relevant project docs.
    Read `agents/config.json` when it exists or when the user asks for PR
    delivery, worktrees, or CI automation.
@@ -474,14 +490,15 @@ Require the implementing agent to report:
 4. Ask only contract-breaking questions; do not rerun intake inside PRD.
 5. Derive PRD-level tasks from requirements and acceptance criteria.
 6. Add the Test Mode Contract and Required Agent Verification matrix.
-7. Run the Inline Self-Check Before Ready (intent, pass intent, regression
+7. Run the semantic losslessness sweep from the complete source into the PRD and fix omissions or invented consent.
+8. Run the Inline Self-Check Before Ready (intent, pass intent, regression
    bias, product completeness, and review profile) and fix failures.
-8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
+9. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
-9. Mark `status: ready` only when blocking decisions are resolved, the inline
-   self-check passes, and the Harness Readiness Gate reports zero blocking
+10. Mark `status: ready` only when blocking decisions are resolved, the semantic losslessness sweep and inline
+   self-check pass, and the Harness Readiness Gate reports zero blocking
    gaps.
-10. Ask the user to review the PRD using the Approval checklist. Set
+11. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.
 
@@ -497,6 +514,7 @@ Before finalizing:
 - Changed behavior has automated regression coverage or a clear justified alternative verification mode.
 - Required Agent Verification maps to `R#`, `AC#`, or `T#` IDs.
 - Required-for-done and blockable semantics are explicit.
+- The semantic losslessness sweep accounted for every material qa-log or conversation decision without treating silence as consent.
 - The Inline Self-Check Before Ready passed.
 - Harness Readiness Gate (`plan-verification --prd`) reports zero blocking gaps.
 - Every required `V#` has observable Pass Intent and artifact expectations.
@@ -509,7 +527,7 @@ Before finalizing:
 - Major Technical Structure Changes is reviewable and avoids executor detail.
 - PRD-Level Tasks derive from requirements and acceptance criteria.
 - Implementation Guardrails prevent hidden scope and unapproved structure drift.
-- The PRD does not quietly expand beyond the intake handoff.
+- The PRD does not omit or quietly expand beyond the intake source.
 - The PRD describes a coherent production-quality product unless the user explicitly chose a prototype or experiment.
 - Scope reductions are explicit non-goals or deferred decisions with user consequence, rationale, and revisit condition.
 - Review profile is semantically assigned, small user-facing changes are not trivial, and sensitive or irreversible work is high-risk.
@@ -519,7 +537,7 @@ Before finalizing:
 After writing the PRD, report concisely:
 
 - PRD path.
-- inline self-check result and Harness Readiness Gate result.
+- semantic losslessness sweep, inline self-check, and Harness Readiness Gate results.
 - source intake or clarify path.
 - status and `human_approval` state, with the Approval checklist items the
   user needs to review before `implement` can run.

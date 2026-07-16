@@ -77,7 +77,8 @@ Policy v2 `high-risk` and legacy v1 states retain their existing `REQ_FIDELITY_R
 `ready` identifies runnable execution nodes and never proves final eligibility.
 
 The main agent owns the post-planning coverage check.
-Compare the original intent sources, PRD decisions, verification coverage, execution plan, TaskGraph, structure lock, ambiguity, and unmapped scope.
+When the PRD references an intake qa-log, read it completely and compare its material intent with PRD decisions, verification coverage, execution plan, TaskGraph, structure lock, ambiguity, and unmapped scope.
+Treat summaries and parsed intent samples as navigation aids rather than substitutes for the canonical qa-log.
 Record material findings in `context-notes.md` and stop on material blockers.
 
 ## Execution Node Rules

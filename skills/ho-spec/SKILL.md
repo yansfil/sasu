@@ -10,4 +10,4 @@ description: |
 
 Before taking any PRD-writing action, read the sibling skill at ../gen-prd/SKILL.md completely.
 Follow that canonical workflow exactly.
-Refer to the workflow as gen-prd in new artifacts and handoffs.
+Refer to the workflow as gen-prd in new artifacts and reports.

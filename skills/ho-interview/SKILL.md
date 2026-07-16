@@ -10,4 +10,4 @@ description: |
 
 Before taking any intake action, read the sibling skill at ../interview-me/SKILL.md completely.
 Follow that canonical workflow exactly.
-Refer to the workflow as interview-me in new artifacts and handoffs.
+Refer to the workflow as interview-me in new artifacts and reports.

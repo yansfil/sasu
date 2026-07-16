@@ -287,7 +287,7 @@ Drive the Next required item above to done, then record it with the matching har
    - \`${HARNESS} requirements-review-prompt\`
    - ${reviewPolicy.fidelityOwner === "independent"
     ? "Spawn one fresh independent read-only reviewer sidecar with the raw generated prompt when multi-agent tools are available. Do not include the intended verdict. The sidecar writes only the report and must not mutate harness state. If sidecars are unavailable, perform a fresh manual pass and state that fallback in the report."
-    : "The main agent writes this review. It must compare original user intent, accepted decisions, rejected alternatives, PRD scope, ACs, verification evidence, and implementation result."}
+    : "The main agent writes this review. It must read the complete canonical qa-log or conversation source and compare material answers, accepted decisions, rejected alternatives, assumptions, PRD scope, ACs, verification evidence, and implementation result."}
    - Write \`${state.runDir}/review/requirements-fidelity-review.md\`.
    - The coordinator records the report. Reviewer sidecars never run harness mutation commands.
    - \`${HARNESS} requirements-review-record --status pass|fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity verdict>"\`

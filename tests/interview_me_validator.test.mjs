@@ -8,6 +8,18 @@ import test from "node:test";
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const validator = path.join(repoRoot, "skills", "interview-me", "scripts", "validate_intake.mjs");
 
+test("canonical workflow uses qa-log as the only intake artifact", () => {
+  const files = [
+    path.join(repoRoot, "skills", "interview-me", "SKILL.md"),
+    path.join(repoRoot, "skills", "gen-prd", "SKILL.md"),
+    path.join(repoRoot, "skills", "please", "SKILL.md"),
+  ];
+  const combined = files.map(file => fs.readFileSync(file, "utf8")).join("\n");
+  assert.doesNotMatch(combined, /prd-handoff\.md/);
+  assert.match(combined, /one canonical artifact only: qa-log\.md/);
+  assert.match(combined, /semantic losslessness sweep/);
+});
+
 function fixtureQaLog({ withUxCard = true, withLinkedDecisions = true } = {}) {
   return [
     "---",
@@ -48,39 +60,17 @@ function fixtureQaLog({ withUxCard = true, withLinkedDecisions = true } = {}) {
   ].join("\n");
 }
 
-function fixtureHandoff({ traceDecision = "D-01", withUxSeeds = true } = {}) {
-  return [
-    "# PRD Handoff: Settings retry",
-    "",
-    "## Decision Trace And Requirement Mapping",
-    "",
-    "| Decision | User intent or evidence | Represented by | Remaining gap |",
-    "| --- | --- | --- | --- |",
-    "| " + traceDecision + " | Retry preserves input | R1, AC1, V1 | none |",
-    "",
-    "## UX Behavior And State Seeds",
-    "",
-    ...(withUxSeeds ? ["- UX-01 preserves input on save failure."] : []),
-  ].join("\n");
-}
-
-function runValidator(qaLog, handoff) {
+function runValidator(qaLog) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "interview-me-validator-"));
   const qaPath = path.join(dir, "qa-log.md");
   fs.writeFileSync(qaPath, qaLog);
-  const args = [validator, qaPath];
-  if (handoff !== undefined) {
-    const handoffPath = path.join(dir, "prd-handoff.md");
-    fs.writeFileSync(handoffPath, handoff);
-    args.push("--handoff", handoffPath);
-  }
-  const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [validator, qaPath], { encoding: "utf8" });
   fs.rmSync(dir, { recursive: true, force: true });
   return result;
 }
 
 test("intake validator accepts traceable UX coverage", () => {
-  const result = runValidator(fixtureQaLog(), fixtureHandoff());
+  const result = runValidator(fixtureQaLog());
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Intake validation passed/);
 });
@@ -89,22 +79,6 @@ test("intake validator rejects selected UX without a scenario card", () => {
   const result = runValidator(fixtureQaLog({ withUxCard: false }));
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /no UX Scenario Card/);
-});
-
-test("intake validator rejects a handoff that loses a material decision trace", () => {
-  const result = runValidator(fixtureQaLog(), fixtureHandoff({ traceDecision: "D-99" }));
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /does not trace material decision D-01/);
-});
-
-test("intake validator scopes decision matching to the trace table", () => {
-  const handoff = fixtureHandoff({ traceDecision: "D-99" }).replace(
-    "- UX-01 preserves input on save failure.",
-    "- UX-01 preserves input on save failure and mentions D-01.",
-  );
-  const result = runValidator(fixtureQaLog(), handoff);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /does not trace material decision D-01/);
 });
 
 test("intake validator requires scenario cards to link decisions", () => {
@@ -135,15 +109,20 @@ test("intake validator accepts a reversible agent-owned assumption", () => {
     "| D-01 | decision | UX/design | Failed save exposes retry and preserves input | P0 | user: confirmed 2026-07-14 | resolved | changes retry behavior -> R1, AC1, V1 |",
     "| D-01 | assumption | UX/design | Retry uses the existing default delay | P1 | agent default from existing repo behavior | resolved | R1, AC1, V1; revisit if retry policy changes |",
   );
-  const result = runValidator(qa, fixtureHandoff());
+  const result = runValidator(qa);
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("intake validator blocks handoff while raw notes still need normalization", () => {
+test("intake validator blocks closure while raw notes still need normalization", () => {
   const qa = fixtureQaLog().replace("- needs_normalization: false", "- needs_normalization: true");
-  const inProgress = runValidator(qa);
-  assert.equal(inProgress.status, 0, inProgress.stderr);
-  const handoff = runValidator(qa, fixtureHandoff());
-  assert.notEqual(handoff.status, 0);
-  assert.match(handoff.stderr, /needs_normalization is true/);
+  const result = runValidator(qa);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /needs_normalization is true/);
+});
+
+test("intake validator rejects an open material decision", () => {
+  const qa = fixtureQaLog().replace("| resolved | changes retry behavior", "| open | changes retry behavior");
+  const result = runValidator(qa);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /leaves material P0 node D-01 open/);
 });

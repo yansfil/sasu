@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const usage = "Usage: node validate_intake.mjs <qa-log.md> [--handoff <prd-handoff.md>]";
+const usage = "Usage: node validate_intake.mjs <qa-log.md>";
 const requiredColumns = [
   "ID",
   "Kind",
@@ -90,25 +90,23 @@ function hasField(card, field) {
 }
 
 function parseArguments(argv) {
-  const [qaLog, flag, handoff, ...extra] = argv;
-  if (!qaLog || (flag && flag !== "--handoff") || (flag === "--handoff" && !handoff) || extra.length) {
+  const [qaLog, ...extra] = argv;
+  if (!qaLog || extra.length) {
     fail(usage);
     return {};
   }
-  return { qaLog, handoff };
+  return { qaLog };
 }
 
-const { qaLog, handoff } = parseArguments(process.argv.slice(2));
+const { qaLog } = parseArguments(process.argv.slice(2));
 if (!qaLog) process.exit();
 
 const qaPath = path.resolve(qaLog);
 const qa = readFile(qaPath);
 if (!qa) process.exit();
-if (handoff) {
-  const rawQa = section(qa, "Raw Q&A") || qa;
-  if (/^\s*(?:-\s*)?needs_normalization:\s*(?:true|yes|1)\s*$/im.test(rawQa)) {
-    fail("Handoff cannot be written while needs_normalization is true.");
-  }
+const rawQa = section(qa, "Raw Q&A") || qa;
+if (/^\s*(?:-\s*)?needs_normalization:\s*(?:true|yes|1)\s*$/im.test(rawQa)) {
+  fail("qa-log cannot be marked complete while needs_normalization is true.");
 }
 
 const registerSection = section(qa, "Decision Register") || section(qa, "Decision Frontier");
@@ -176,44 +174,6 @@ if (uxSelected) {
   }
 }
 
-if (handoff) {
-  const handoffPath = path.resolve(handoff);
-  const handoffText = readFile(handoffPath);
-  const trace = section(handoffText, "Decision Trace And Requirement Mapping");
-  if (!trace) fail("Handoff is missing 'Decision Trace And Requirement Mapping'.");
-  const traceTable = tableRows(trace);
-  const decisionColumn = traceTable.headers.indexOf("Decision");
-  const representedColumn = traceTable.headers.indexOf("Represented by");
-  if (decisionColumn < 0 || representedColumn < 0) {
-    fail("Decision Trace And Requirement Mapping must include Decision and Represented by columns.");
-  }
-  const uxSeeds = section(handoffText, "UX Behavior And State Seeds");
-  if (uxSelected && !uxSeeds) {
-    fail("UX is selected but handoff is missing 'UX Behavior And State Seeds'.");
-  }
-  for (const card of cardMatches) {
-    const scenarioId = (card.match(/^### (UX-\d+):/m) || [])[1];
-    if (scenarioId && !uxSeeds.includes(scenarioId)) {
-      fail("Handoff does not preserve UX scenario " + scenarioId + ".");
-    }
-  }
-  for (const node of nodes.filter(node => node.Priority !== "P2" && node.Status !== "rejected")) {
-    const row = traceTable.rows.find(candidate => {
-      const decisions = candidate[decisionColumn] || "";
-      return new RegExp("(?:^|[^A-Za-z0-9-])" + escapeRegex(node.ID) + "(?:$|[^A-Za-z0-9-])").test(decisions);
-    });
-    if (!row) {
-      fail("Handoff does not trace material decision " + node.ID + ".");
-      continue;
-    }
-    const represented = row[representedColumn] || "";
-    if (!/(?:\b(?:R|AC|T|V)\d+\b|non-goal|human review|risk|guardrail|deferred|blocking|비목표|인간 검토|위험|가드레일|보류|차단)/i.test(represented)) {
-      fail("Handoff trace for " + node.ID + " lacks a concrete PRD mapping or explicit deferred/blocking destination.");
-    }
-  }
-}
-
 if (!process.exitCode) {
-  const mode = handoff ? "qa-log and handoff" : "qa-log";
-  process.stdout.write("Intake validation passed for " + mode + ": " + qaPath + "\n");
+  process.stdout.write("Intake validation passed for qa-log: " + qaPath + "\n");
 }

@@ -24,7 +24,7 @@ remember = lessons land as enforcement, not notes
 
 | Skill | What it owns |
 | --- | --- |
-| `interview-me` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, traceable closure, and a PRD handoff artifact |
+| `interview-me` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, and one normalized PRD-ready `qa-log.md` |
 | `gen-prd` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
 | `implement` | Agent-planned, harness-checked implementation: TaskGraph, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
 | `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
