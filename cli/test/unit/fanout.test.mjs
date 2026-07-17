@@ -93,6 +93,6 @@ test("lane prompts: spec lane prompt narrows to a single axis", () => {
 
 test("lane prompts: fan-out rerun with no routed priors still demands origin labels", () => {
   const prompt = gapAuditPrompt("qa log body", [], { lane: GAP_AUDIT_LANES[0], laneCount: 4, rerun: true });
-  assert.match(prompt, /No prior finding was\nassigned to your lane/);
+  assert.match(prompt, /No unresolved prior finding carries over/);
   assert.match(prompt, /"origin": "new"/);
 });

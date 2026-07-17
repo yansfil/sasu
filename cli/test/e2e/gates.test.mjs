@@ -362,6 +362,67 @@ test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of bl
   assert.equal(state.gates["gap-audit"].findings[0].severity, "P2");
 });
 
+test("fan-out rerun: a post-PASS STALE re-run cannot re-block on a new non-P0 finding", () => {
+  // E2E rehearsal regression (2026-07-17): after a PASS, appending a harmless
+  // Q&A and re-running produced fresh P1 blockers. Post-PASS re-runs are
+  // reruns under the convergence rule: only a new P0 may re-block.
+  const dir = makeProject();
+  const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, { byPurpose: { default: { verdict: "PASS", findings: [] } } }),
+  });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+
+  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q9: harmless extra answer\n- answer: yes\n");
+  const rerun = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, {
+      byPurpose: {
+        "lane:data-tech": {
+          verdict: "BLOCK",
+          findings: [
+            {
+              area: "data",
+              severity: "P1",
+              missing: "a freshly invented concern about the unchanged parts",
+              recommendation: "decide it",
+              requiresHuman: false,
+              origin: "new",
+            },
+          ],
+        },
+        default: { verdict: "PASS", findings: [] },
+      },
+    }),
+  });
+  assert.equal(rerun.status, 0, "a new non-P0 finding after a PASS must not re-block: " + rerun.stdout);
+  assert.match(rerun.stdout, /auto-demoted/);
+  const state = gatesState(dir, "fixture");
+  assert.equal(state.gates["gap-audit"].verdict, "PASS");
+
+  // A new P0 still re-blocks: PASS is not immunity against real misses.
+  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q10: another edit\n- answer: sure\n");
+  const p0 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, {
+      byPurpose: {
+        "lane:ux-behavior": {
+          verdict: "BLOCK",
+          findings: [
+            {
+              area: "ux",
+              severity: "P0",
+              missing: "the revision introduced an undecided destructive flow",
+              recommendation: "ask the user",
+              requiresHuman: true,
+              origin: "new",
+            },
+          ],
+        },
+        default: { verdict: "PASS", findings: [] },
+      },
+    }),
+  });
+  assert.equal(p0.status, 1, "a new P0 must still block after a PASS");
+});
+
 test("freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gate status", () => {
   const dir = makeProject();
   const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {

@@ -138,14 +138,15 @@ enumerate micro-variants of one gap (report the one underlying decision), and ke
 function rerunContext(priorFindings: PriorFinding[], rerun = priorFindings.length > 0): string {
   if (!rerun) return "";
   if (priorFindings.length === 0) {
-    // A fan-out re-run where no prior finding routed to this lane: origin
-    // labeling is still mandatory so mechanical convergence can apply.
+    // A re-run with no carried-over findings: either a fan-out lane that had
+    // none routed to it, or a post-PASS STALE re-run. Origin labeling is
+    // still mandatory so mechanical convergence can apply.
     return `
-RE-RUN CONTEXT: this document was judged before and has since been revised. No prior finding was
-assigned to your lane, so every finding you report MUST carry an extra field "origin": "new".
-Do NOT open new, deeper lines of questioning about aspects that were previously acceptable: the
-harness enforces convergence mechanically - new findings below P0 cannot block, so report a new
-finding only when the revision introduced it or it is a missed P0.
+RE-RUN CONTEXT: this document was judged before (and may have passed) and has since been revised.
+No unresolved prior finding carries over, so every finding you report MUST carry an extra field
+"origin": "new". Do NOT open new, deeper lines of questioning about aspects that were previously
+acceptable: the harness enforces convergence mechanically - new findings below P0 cannot block, so
+report a new finding only when the revision introduced it or it is a missed P0.
 `;
   }
   const lines = priorFindings.map((f) => `- [${f.severity}/${f.area}] ${f.missing}`).join("\n");

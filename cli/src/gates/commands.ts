@@ -193,11 +193,15 @@ async function runGapListGate(
   const records: JudgeCallRecord[] = [];
   try {
     const priorFindings = priorFindingsFor(state, gate);
-    const isRerun = priorFindings.length > 0;
+    // Convergence applies to EVERY re-run, including one after a PASS went
+    // STALE: the E2E rehearsal (2026-07-17) showed a harmless post-PASS
+    // append producing fresh P1 blockers on re-judgment. Once a document has
+    // passed, only an unresolved prior finding or a new P0 may re-block it.
+    const isRerun = state.gates[gate] !== undefined && state.gates[gate].verdict !== null;
 
     if (!config.judge.fanout) {
       // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).
-      const outcome = await runJudge(config, purpose, "frugal", buildPrompt(priorFindings, {}), (value) =>
+      const outcome = await runJudge(config, purpose, "frugal", buildPrompt(priorFindings, { rerun: isRerun }), (value) =>
         validateGapVerdict(value, { requireOrigin: isRerun }),
       );
       records.push(outcome.record);
