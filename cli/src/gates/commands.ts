@@ -12,6 +12,7 @@ import {
   type JudgeCallRecord,
 } from "../judge/types";
 import { runMechanical, type MechanicalResult } from "../mechanical";
+import { runPrelint, type PrelintResult } from "./prelint";
 import {
   GAP_AUDIT_LANES,
   SPEC_LANES,
@@ -35,9 +36,27 @@ import {
 export interface GateCommandResult {
   ok: boolean;
   status: GateStatusView;
+  /** Deterministic pre-judge lint result; separate from judge findings by design (D-10). */
+  prelint?: PrelintResult;
   mechanical?: MechanicalResult;
   criteria?: { id: string; verdict: "PASS" | "FAIL"; reason: string }[];
   error?: { code: string; message: string; recovery: string };
+}
+
+/**
+ * A prelint failure blocks without touching gate state: no judge call, no
+ * attempt consumed, no verdict recorded (D-02). The status view reflects
+ * whatever the gate's last judged state was.
+ */
+function prelintBlock(
+  projectRoot: string,
+  config: CheckshirtConfig,
+  topic: string,
+  gate: GateId,
+  prelint: PrelintResult,
+): GateCommandResult {
+  const store = new GateStore(projectRoot, topic);
+  return { ok: false, status: gateStatus(store.load(), gate, config.judge.retryBudget, projectRoot), prelint };
 }
 
 function readTextFile(projectRoot: string, filePath: string, label: string): string {
@@ -313,14 +332,16 @@ async function runGapListGate(
   }
 }
 
-export function runGapAudit(
+export async function runGapAudit(
   projectRoot: string,
   config: CheckshirtConfig,
   topic: string,
   qaLogPath: string,
 ): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
-  return runGapListGate(
+  const prelint = runPrelint("qa-log", qaLog.content);
+  if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "gap-audit", prelint);
+  const result = await runGapListGate(
     projectRoot,
     config,
     topic,
@@ -329,9 +350,10 @@ export function runGapAudit(
     "gate:gap-audit",
     [qaLog.input],
   );
+  return { ...result, prelint };
 }
 
-export function runSpecGate(
+export async function runSpecGate(
   projectRoot: string,
   config: CheckshirtConfig,
   topic: string,
@@ -340,7 +362,9 @@ export function runSpecGate(
 ): Promise<GateCommandResult> {
   const prd = readInputFile(projectRoot, prdPath, "prd");
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
-  return runGapListGate(
+  const prelint = runPrelint("prd", prd.content);
+  if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "spec", prelint);
+  const result = await runGapListGate(
     projectRoot,
     config,
     topic,
@@ -349,6 +373,7 @@ export function runSpecGate(
     "gate:spec",
     [prd.input, qaLog.input],
   );
+  return { ...result, prelint };
 }
 
 export interface VerifyOptions {
@@ -373,6 +398,16 @@ export async function runVerifyGate(
   // not a freshness input: it changes with every fix loop by design.
   const prdFile = options.prdPath !== undefined ? readInputFile(projectRoot, options.prdPath, "prd") : null;
   const inputs = prdFile ? [prdFile.input] : [];
+
+  // Stage 0: PRD prelint ($0, D-06). The judge reads this PRD's acceptance
+  // criteria, so a structurally broken PRD blocks before the mechanical
+  // commands even run - there is no point testing code against a broken
+  // contract, and the fix loop must stay free.
+  let prelint: PrelintResult | undefined;
+  if (prdFile) {
+    prelint = runPrelint("prd", prdFile.content);
+    if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "verify", prelint);
+  }
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
   let mechanical: MechanicalResult | undefined;
@@ -400,7 +435,7 @@ export async function runVerifyGate(
         },
         records,
       );
-      return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), mechanical };
+      return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), prelint, mechanical };
     }
   }
 
@@ -457,9 +492,9 @@ export async function runVerifyGate(
       records,
     );
     const status = gateStatus(state, "verify", config.judge.retryBudget, projectRoot);
-    return { ok: status.effective === "PASS", status, mechanical, criteria: outcome.value.criteria };
+    return { ok: status.effective === "PASS", status, prelint, mechanical, criteria: outcome.value.criteria };
   } catch (error) {
-    return recordJudgeFailure(store, state, "verify", config, error, records, topic);
+    return { ...recordJudgeFailure(store, state, "verify", config, error, records, topic), prelint };
   }
 }
 

@@ -310,31 +310,31 @@ normalization_checkpoint_every: 10
 7. Run the materiality sweep at its trigger.
 8. Checkpoint every 10 answers or earlier for high-risk work.
 9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
-10. Run full normalization and the intake validator.
+10. Run full normalization.
 11. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
 12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
-13. Mark qa-log.md `status: complete` only when the validator and closure are ready, then suggest `$gen-prd --context agents/intake/<topic-slug>/qa-log.md "<topic>"`.
-
-Run the validator from the installed skill path before final closure:
-
-~~~sh
-node ~/.codex/skills/interview-me/scripts/validate_intake.mjs \
-  agents/intake/<topic-slug>/qa-log.md
-~~~
-
-The validator is a mechanical gap check, not a substitute for product judgment.
+13. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/intake/<topic-slug>/qa-log.md "<topic>"`.
 
 ## Gap-Audit Gate (checkshirt)
 
 Independent closure judgment is owned by the checkshirt CLI.
-Run it after the validator, before marking the qa-log complete:
+Run it after full normalization, before marking the qa-log complete:
 
 ~~~sh
 checkshirt gate gap-audit --slug <topic-slug> --qa-log agents/intake/<topic-slug>/qa-log.md
 ~~~
 
+The gate owns the mechanical document lint: it runs a deterministic prelint
+(required sections, Decision Register integrity, dangling `decision_ids`,
+frontmatter enums, open P0/P1 nodes) before the judge, so no separate
+validator step is needed.
+A `[prelint]` failure is a $0 structural defect with a rule ID and line
+number: fix the document and re-run freely - prelint failures never call the
+judge and never consume the retry budget.
+
 - The gate is a hard block: exit 1 means closure is blocked and the findings list the material gaps.
 - Findings are next-question candidates: resolve each finding with the user or in the register, then re-run the gate.
+- Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
 - When the output says the retry budget is exhausted, stop and hand the findings to the user instead of re-running.
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use the final-auditor subagent or a recorded local fallback as the closure audit.

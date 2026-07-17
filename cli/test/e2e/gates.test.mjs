@@ -6,20 +6,19 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
+const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
 
-const PRD_FIXTURE = `# PRD: fixture
-
-## 7. Acceptance Criteria
-
-- AC1. the widget renders
-- AC2. the widget persists its state
-`;
+// Prelint-clean documents: the deterministic lint runs before every judge
+// call, so gate fixtures must be structurally healthy for the judge path to
+// be exercised at all.
+const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "utf8");
+const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8");
 
 function makeProject({ config } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-e2e-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   if (config) fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify(config));
-  fs.writeFileSync(path.join(dir, "qa-log.md"), "# Interview Log: fixture\n\n(Q&A here)\n");
+  fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE);
   fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE);
   fs.writeFileSync(path.join(dir, "changes.diff"), "diff --git a/widget.js b/widget.js\n+render()\n+persist()\n");
   return dir;
@@ -457,4 +456,137 @@ test("gate status reports all three gates and the judge call count", () => {
   assert.match(status.stdout, /gate:gap-audit\] PASS/);
   assert.match(status.stdout, /gate:spec\] NOT_RUN/);
   assert.match(status.stdout, /judge calls recorded: 4/, "fan-out records one judge call per lane");
+});
+
+test("prelint: a structural qa-log defect blocks at $0 - no judge call, no attempt, no state", () => {
+  const dir = makeProject();
+  fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE.replace("## Audit History", "## Audit Trail"));
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, "poison: the judge must never be consulted"),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\[prelint\] qa-section-missing/);
+  assert.match(result.stdout, /no attempt consumed/);
+  assert.equal(
+    fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")),
+    false,
+    "a prelint block must not create or mutate gate state",
+  );
+
+  // Fixing the document reaches the judge normally.
+  fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE);
+  const fixed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(fixed.status, 0, fixed.stdout + fixed.stderr);
+  assert.match(fixed.stdout, /\[prelint\] ok/);
+});
+
+test("prelint: a blocked judge attempt count survives a later prelint failure untouched", () => {
+  const dir = makeProject();
+  const blocked = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, BLOCK_RESPONSE),
+  });
+  assert.equal(blocked.status, 1);
+  const before = gatesState(dir, "fixture");
+  assert.equal(before.gates["gap-audit"].attempts, 1);
+
+  fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE.replace('status: "active"', 'status: "wip"'));
+  const prelinted = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, "poison"),
+  });
+  assert.equal(prelinted.status, 1);
+  assert.match(prelinted.stdout, /\[prelint\] qa-frontmatter-enum/);
+  const after = gatesState(dir, "fixture");
+  assert.equal(after.gates["gap-audit"].attempts, 1, "prelint failures must not consume the retry budget");
+  assert.equal(after.judgeCalls.length, before.judgeCalls.length, "prelint failures must not call the judge");
+});
+
+test("prelint: verify blocks on a broken PRD before the mechanical commands run (D-06 order)", () => {
+  const dir = makeProject({
+    config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mechanical-ran.marker','x')\"" } } },
+  });
+  fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE.replace("Covers R1, AC1, AC2.", "Covers R9, AC1, AC2."));
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+    stub: stubFile(dir, "poison"),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\[prelint\] prd-dangling-ref/);
+  assert.equal(fs.existsSync(path.join(dir, "mechanical-ran.marker")), false, "mechanical checks must not run after a prelint failure");
+  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), false);
+});
+
+test("prelint: spec gate lints the PRD at its entrance", () => {
+  const dir = makeProject();
+  fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE.replace('human_approval: "approved"', 'human_approval: "maybe"'));
+  const result = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, "poison"),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /\[prelint\] prd-frontmatter-enum/);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), false);
+});
+
+test("prelint: an unreadable document path fails closed with a cause and no judge call (AC7)", () => {
+  const dir = makeProject();
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "no-such-file.md"], {
+    stub: stubFile(dir, "poison"),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /qa-log not found/);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), false);
+});
+
+test("json contract: gate results carry contractVersion and a prelint key separate from judge findings", () => {
+  const dir = makeProject();
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.match(parsed.contractVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.prelint.ok, true);
+  assert.deepEqual(parsed.prelint.findings, []);
+  assert.deepEqual(parsed.status.findings, [], "prelint findings must never leak into judge findings");
+
+  const blocked = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "broken.md", "--json"], {
+    stub: stubFile(dir, "poison"),
+  });
+  fs.writeFileSync(path.join(dir, "broken.md"), QA_FIXTURE.replace("## Raw Q&A", "## Raw Answers"));
+  const blocked2 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "broken.md", "--json"], {
+    stub: stubFile(dir, "poison"),
+  });
+  const parsedBlock = JSON.parse(blocked2.stdout);
+  assert.equal(blocked2.status, 1);
+  assert.equal(parsedBlock.prelint.ok, false);
+  assert.equal(parsedBlock.prelint.findings[0].rule, "qa-section-missing");
+  assert.equal(blocked.status, 1, "missing file still exits 1");
+});
+
+test("json contract: doctor, status, and override all emit contractVersion-tagged JSON", () => {
+  const dir = makeProject();
+  const doctor = runCli(dir, ["doctor", "--json"], {});
+  const doctorParsed = JSON.parse(doctor.stdout);
+  assert.match(doctorParsed.contractVersion, /^\d+\.\d+\.\d+$/);
+  assert.ok(Array.isArray(doctorParsed.sections));
+
+  runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, BLOCK_RESPONSE),
+  });
+  const status = runCli(dir, ["gate", "status", "--slug", "fixture", "--json"], {});
+  const statusParsed = JSON.parse(status.stdout);
+  assert.match(statusParsed.contractVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(statusParsed["gap-audit"].effective, "BLOCKED");
+
+  const override = runCli(
+    dir,
+    ["gate", "override", "--slug", "fixture", "--gate", "gap-audit", "--reason", "user accepts the gap", "--json"],
+    {},
+  );
+  assert.equal(override.status, 0);
+  const overrideParsed = JSON.parse(override.stdout);
+  assert.match(overrideParsed.contractVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(overrideParsed.overridden, true);
+  assert.equal(overrideParsed.status.effective, "PASS");
 });

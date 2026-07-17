@@ -285,13 +285,20 @@ checkshirt verify --slug <topic-slug> --prd <prd-path> --base <baseline-ref>
 
 The gate judges the diff against the PRD's complete acceptance criteria, so
 do not call it mid-run while later tasks are still unimplemented: missing ACs
-would fail legitimately and burn the retry budget. The gate runs the
-mechanical checks first (config-declared commands win; manifest detection is
-the fallback) and sends the diff plus the acceptance criteria to an
-independent judge only after mechanical passes.
+would fail legitimately and burn the retry budget. The gate first runs a
+deterministic PRD prelint (structure, dangling Covers references, uncovered
+ACs, mode conformance), then the mechanical checks (config-declared commands
+win; manifest detection is the fallback), and sends the diff plus the
+acceptance criteria to an independent judge only after both pass.
 
+- Exit 1 with a `[prelint]` failure: the PRD itself is structurally broken;
+  fix the cited rule/line and re-run - no judge call, no mechanical run, no
+  retry-budget attempt was spent.
 - Exit 1 with a mechanical failure: fix the failing check; the judge was not
   consulted and no tokens were spent.
+- Prefer `--json` when consuming gate results programmatically: it returns a
+  structured object (top-level `contractVersion`, a `prelint` key separate
+  from judge findings, per-criterion verdicts) instead of scraping text.
 - Exit 1 with per-criterion semantic failures: address each cited criterion
   and re-run. When the printed retry budget is exhausted, stop and hand the
   findings to the user.

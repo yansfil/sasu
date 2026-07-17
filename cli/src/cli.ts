@@ -18,12 +18,19 @@ const USAGE = `checkshirt - harness CLI: judge gates, verification, doctor
 
 Usage:
   checkshirt --contract-version
-  checkshirt gate gap-audit --slug <topic> --qa-log <path>
-  checkshirt gate spec      --slug <topic> --prd <path> --qa-log <path>
-  checkshirt gate status    --slug <topic>
-  checkshirt gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>"
-  checkshirt verify         --slug <topic> --prd <path> [--base <git-ref>] [--diff-file <path>] [--skip-mechanical]
-  checkshirt doctor
+  checkshirt gate gap-audit --slug <topic> --qa-log <path> [--json]
+  checkshirt gate spec      --slug <topic> --prd <path> --qa-log <path> [--json]
+  checkshirt gate status    --slug <topic> [--json]
+  checkshirt gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
+  checkshirt verify         --slug <topic> --prd <path> [--base <git-ref>] [--diff-file <path>] [--skip-mechanical] [--json]
+  checkshirt doctor [--json]
+
+--json prints a structured result on every command: a top-level contractVersion,
+and (on gate/verify) a 'prelint' key separate from judge findings. Exit codes are
+identical in both modes (0 pass, 1 block/fail, 2 usage error).
+
+Gates run a deterministic document prelint before the judge: a structural defect
+blocks at $0 with [prelint] findings - no judge call, no retry-budget attempt.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
 Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
@@ -92,10 +99,26 @@ function printStatusView(view: GateStatusView): void {
   }
 }
 
+function printPrelint(prelint: NonNullable<GateCommandResult["prelint"]>): void {
+  if (prelint.ok) {
+    process.stdout.write(`[prelint] ok\n`);
+    return;
+  }
+  process.stdout.write(
+    `[prelint] FAIL (${prelint.doc}) - deterministic lint blocked the gate before the judge (no tokens spent, no attempt consumed; fix and re-run freely)\n`,
+  );
+  for (const finding of prelint.findings) {
+    const where = finding.line !== null ? ` line ${finding.line}` : "";
+    process.stdout.write(`[prelint] ${finding.rule}${where}: ${finding.missing}\n`);
+    process.stdout.write(`  fix: ${finding.recommendation}\n`);
+  }
+}
+
 function emitGateResult(result: GateCommandResult, asJson: boolean): never {
   if (asJson) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
   } else {
+    if (result.prelint) printPrelint(result.prelint);
     if (result.mechanical) {
       for (const run of result.mechanical.runs) {
         process.stdout.write(`[mechanical:${run.kind}] ${run.ok ? "ok" : `FAIL (exit ${run.exitCode})`} ${run.command}\n`);
@@ -138,9 +161,13 @@ async function main(): Promise<void> {
 
   if (command === "doctor") {
     const report = runDoctor(projectRoot);
-    for (const section of report.sections) {
-      process.stdout.write(`## ${section.section} ${section.ok ? "ok" : "ATTENTION"}\n`);
-      for (const line of section.lines) process.stdout.write(`  ${line}\n`);
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...report }, null, 2)}\n`);
+    } else {
+      for (const section of report.sections) {
+        process.stdout.write(`## ${section.section} ${section.ok ? "ok" : "ATTENTION"}\n`);
+        for (const line of section.lines) process.stdout.write(`  ${line}\n`);
+      }
     }
     process.exit(report.ok ? 0 : 1);
   }
@@ -176,7 +203,7 @@ async function main(): Promise<void> {
     if (subcommand === "status") {
       const status = readGateStatus(projectRoot, config, requireFlag(args, "slug"));
       if (asJson) {
-        process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...status }, null, 2)}\n`);
       } else {
         printStatusView(status["gap-audit"]);
         printStatusView(status.spec);
@@ -191,8 +218,14 @@ async function main(): Promise<void> {
         fail("--gate must be one of: gap-audit, spec, verify");
       }
       const view = runOverride(projectRoot, requireFlag(args, "slug"), gate as GateId, requireFlag(args, "reason"));
-      process.stdout.write(`override recorded as a deviation. gate ${gate} is now passable.\n`);
-      printStatusView(view);
+      if (asJson) {
+        process.stdout.write(
+          `${JSON.stringify({ contractVersion: contractVersion(), overridden: true, gate, status: view }, null, 2)}\n`,
+        );
+      } else {
+        process.stdout.write(`override recorded as a deviation. gate ${gate} is now passable.\n`);
+        printStatusView(view);
+      }
       process.exit(0);
     }
     fail(`unknown gate subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);

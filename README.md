@@ -74,11 +74,18 @@ The installer builds it and writes a shim onto the pnpm bin path, so the binary 
 ```text
 checkshirt gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
 checkshirt gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
-checkshirt verify           mechanical checks ($0) first, then an independent diff-vs-AC judge
+checkshirt verify           PRD prelint + mechanical checks ($0) first, then an independent diff-vs-AC judge
 checkshirt gate status      gate verdicts, attempts, freshness, judge usage for a topic
 checkshirt gate override    user-only escape hatch; records a deviation with the user's reason
 checkshirt doctor           judge backends, verify commands, contract version
 ```
+
+Every command accepts `--json` for structured output: a top-level `contractVersion` (schema-change detection for programmatic consumers), the gate verdict/attempt state, and on gate/verify a `prelint` key kept separate from judge findings.
+Exit codes are identical in both modes (0 pass, 1 block/fail, 2 usage error).
+
+Before any judge call, gates run a deterministic document prelint at $0: the qa-log (required sections, Decision Register integrity, dangling `decision_ids`, frontmatter enums, open P0/P1 nodes) at the gap-audit entrance, and the PRD (required sections 1-12, frontmatter enums, dangling Covers references, uncovered ACs, 9.2/9.1 mode conformance) at the spec and verify entrances.
+A prelint failure hard-blocks with rule IDs and line numbers but never calls the judge and never consumes a retry-budget attempt, so structural defects are fixed for free and judge findings stay purely semantic.
+The rule set targets zero false positives; ID numbering gaps (R1, R2, R4) are deliberately not checked.
 
 Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with tools disabled, schema validation, one retry, and fail-closed errors.
 The gap-list gates fan out into lane-parallel narrow judges (gap-audit: 4 document-area lanes; spec: 3 review-axis lanes) whose findings the CLI merges mechanically - union, normalized dedupe, any blocking finding blocks - so the wall-clock cost is one narrow judge, not one exhaustive sweep; set `judge.fanout: false` to restore the single-judge path.
