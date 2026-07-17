@@ -142,7 +142,7 @@ None beyond scope approval. 다섯 개 material 결정(실패 의미론, 규칙 
 | V3 | automated behavior | R1, R4, AC1, AC2, AC4, AC7 | `npm run test:e2e` (cli/, stub 백엔드로 prelint 실패 시 판사 미호출·예산 미소모·하드블록·verify 순서를 단언 - 실패 의미론 회귀 방지) | command-log | exit 0, prelint 파이프라인 e2e 전부 pass | local shell | yes | no | none | command log | none | no secrets |
 | V4 | automated behavior | R5, R6, AC5, AC6 | `npm run test:e2e` (cli/, 전 명령 --json 유효성 + contractVersion + 분리된 prelint 키 단언 - 스킬 소비 계약 회귀 방지) | command-log | exit 0, JSON 계약 테스트 전부 pass | local shell | yes | no | none | command log | none | no secrets |
 | V5 | automated behavior | AC9 | `npm test && npm run test:e2e` (cli/) 및 저장소 루트 `npm test` - 기존 스위트 전체 green으로 정상 문서의 기존 판사 경로 불변 보증 | command-log | 전 스위트 exit 0 | local shell | yes | no | none | command log | none | no secrets |
-| V6 | runtime CLI smoke | AC1, AC2, AC4 | 설치된 `checkshirt` 바이너리로 결함 픽스처 문서 실행 → exit 1 + `[prelint]` finding + judge call 0 확인, 수정 문서로 재실행 → 판사 진행 확인 (stub 또는 라이브 백엔드) | command-log | 차단/진행이 기대와 일치 | local shell | yes | no | none | command log | 게이트 상태 파일이 스크래치 프로젝트에 생성됨 | no secrets |
+| V6 | runtime CLI smoke | AC1, AC2, AC4 | `bash -c "checkshirt gate gap-audit --slug <smoke> --qa-log <defective-doc>"` 실행 → exit 1 + `[prelint]` finding + judge call 0 확인, 수정 문서로 재실행 → 판사 진행 확인, dangling PRD로 verify → 기계 검사 전 차단 확인 (설치 바이너리, stub 또는 라이브 백엔드) | command-log | 차단/진행이 기대와 일치 | local shell | yes | no | none | command log | 게이트 상태 파일이 스크래치 프로젝트에 생성됨 | no secrets |
 | V7 | build/static | R7, AC8 | `grep`으로 interview-me 스킬 문서에 validate_intake.mjs 실행 단계 부재와 interview-me/implement 문서의 --json 안내 존재를 검사 | command-log | 부재/존재 검사 통과 | local shell | yes | no | none | command log | none | no secrets |
 
 ### 9.3 Human Verification
