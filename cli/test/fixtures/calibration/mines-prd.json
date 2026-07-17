@@ -1,0 +1,20 @@
+{
+  "description": "spec 캘리브레이션 지뢰: prd-mined.md에 심은 fidelity/testability/verification 위반 3개. 판사 finding 텍스트에 키워드 중 하나라도 포함되면 해당 지뢰 탐지로 계산한다.",
+  "mines": [
+    {
+      "id": "S1-rejected-automerge",
+      "planted": "qa-log D-12에서 사용자가 명시 기각한 자동 병합이 R6/AC6/T4에 요구사항으로 침투 (fidelity 레인)",
+      "keywords": ["자동 병합", "auto-merge", "automerge", "automatic merge", "병합", "merge", "D-12", "수동"]
+    },
+    {
+      "id": "S2-vague-ac",
+      "planted": "AC3 '적절히 빠르게 완료되어 불편을 느끼지 않는다' - 관찰 불가능한 모호 qualifier. 교차축 지뢰: testability 위반(관찰 불가 수용 기준)이자 verification-completeness 위반(관찰 불가한 AC는 어떤 검증 항목의 pass intent로도 성립할 수 없어 V3의 AC3 커버가 공허해짐)",
+      "keywords": ["적절히", "빠르게", "AC3", "vague", "모호", "관찰", "testable", "측정"]
+    },
+    {
+      "id": "S3-uncovered-tags",
+      "planted": "R8(태그 동기화)이 어떤 AC/V에도 매핑되지 않음 (verification-completeness 레인)",
+      "keywords": ["태그", "tag", "R8"]
+    }
+  ]
+}

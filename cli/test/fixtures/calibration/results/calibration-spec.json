@@ -1,0 +1,137 @@
+{
+  "gate": "spec",
+  "doc": "cli/test/fixtures/calibration/prd-mined.md",
+  "docChars": 6136,
+  "at": "2026-07-17T03:53:50.215Z",
+  "model": "claude-sonnet-5",
+  "single": {
+    "ms": 85769,
+    "verdict": "BLOCK",
+    "findingCount": 6,
+    "minesDetected": 3,
+    "mines": [
+      {
+        "id": "S1-rejected-automerge",
+        "detected": true
+      },
+      {
+        "id": "S2-vague-ac",
+        "detected": true
+      },
+      {
+        "id": "S3-uncovered-tags",
+        "detected": true
+      }
+    ],
+    "findings": [
+      {
+        "area": "fidelity",
+        "severity": "P0",
+        "missing": "R6, AC6, T4, and V1 describe an automatic conflict merge ('시스템이 두 버전을 자동 병합') and 'data-loss-free convergence', but the interview log records the user explicitly rejecting auto-merge (D-12: '자동으로 합치면 회의록이 망가져, 절대 하지 마') and choosing manual resolution via a conflict badge with side-by-side comparison (UX-02); the PRD inverts a P0 decision and drops the badge/manual-resolution UX entirely.",
+        "recommendation": "Rewrite R6/AC6/T4/V1 to require conflict detection with a visible 'conflict' badge, side-by-side version comparison, user-driven manual resolution, and exclusion of the note from sync until resolved (per UX-02), and remove all auto-merge language.",
+        "requiresHuman": false
+      },
+      {
+        "area": "fidelity",
+        "severity": "P1",
+        "missing": "D-19's rejection of email/Slack failure notifications (with revisit condition '관리자 다수 요청') is not recorded in the PRD's Non-Goals list, and the underlying positive decision (failure surfaced via header banner) has no corresponding requirement or AC anywhere in the PRD.",
+        "recommendation": "Add 'email/슬랙 실패 알림 (non-goal, revisit: 관리자 다수 요청 시)' to Section 3 Non-Goals, and add a requirement/AC describing the header banner behavior on repeated sync failure.",
+        "requiresHuman": false
+      },
+      {
+        "area": "fidelity",
+        "severity": "P2",
+        "missing": "D-18's revisit condition ('보안 요건 강화 시') for the permission-boundary decision is dropped; R13 and Section 10 (Risks/Open Decisions) carry the decision but not its revisit trigger.",
+        "recommendation": "Add the revisit condition to Section 10 Risks and Open Decisions or as a note under R13.",
+        "requiresHuman": false
+      },
+      {
+        "area": "testability",
+        "severity": "P1",
+        "missing": "AC3 ('동기화가 적절히 빠르게 완료되어 사용자가 불편을 느끼지 않는다') uses vague, non-observable qualifiers ('적절히', '빠르게') as acceptance language and does not test any decision distinct from AC2, which already covers the relative-time update mapped to D-10.",
+        "recommendation": "Remove AC3 or replace it with a concrete, measurable threshold (e.g., a specific latency bound) if one was actually decided; otherwise drop it as redundant with AC2.",
+        "requiresHuman": false
+      },
+      {
+        "area": "verification",
+        "severity": "P1",
+        "missing": "R8 (tag name matching + auto-creation) has no acceptance criterion, no PRD-level task, and no coverage in any V1-V6 verification item.",
+        "recommendation": "Add an acceptance criterion for tag matching/auto-creation and include it in an existing or new task and verification item (e.g., extend V1's fake-provider suite).",
+        "requiresHuman": false
+      },
+      {
+        "area": "verification",
+        "severity": "P2",
+        "missing": "UX-01's documented failure/recovery scenario (API key missing/expired → admin banner → link to key management) has no matching requirement, AC, or verification item.",
+        "recommendation": "Add a requirement/AC for the missing/expired-key banner and recovery link, and cover it in V3's browser/runtime verification.",
+        "requiresHuman": false
+      }
+    ]
+  },
+  "fanout": {
+    "ms": 18762,
+    "verdict": "BLOCK",
+    "findingCount": 4,
+    "dedupedCount": 0,
+    "laneFindingCounts": {
+      "fidelity": 1,
+      "testability": 2,
+      "verification-completeness": 1
+    },
+    "minesDetected": 3,
+    "mines": [
+      {
+        "id": "S1-rejected-automerge",
+        "detected": true
+      },
+      {
+        "id": "S2-vague-ac",
+        "detected": true
+      },
+      {
+        "id": "S3-uncovered-tags",
+        "detected": true
+      }
+    ],
+    "nearDuplicates": {
+      "pairs": 6,
+      "nearDuplicatePairs": 0
+    },
+    "findings": [
+      {
+        "area": "fidelity",
+        "severity": "P0",
+        "missing": "D-12 explicitly rejects auto-merge ('자동으로 합치면 회의록이 망가져, 절대 하지 마') and mandates manual conflict resolution via side-by-side comparison and a conflict badge, but PRD R6/AC6 instead specify the system 'auto-merges the two versions into the latest state' — the exact option the user rejected.",
+        "recommendation": "Replace R6/AC6 with the manual-resolution flow from UX-02: conflict badge, side-by-side versions, user-driven resolution, badge cleared and note re-synced only after resolution.",
+        "requiresHuman": false
+      },
+      {
+        "area": "testability",
+        "severity": "P1",
+        "missing": "AC3 uses vague qualifiers ('적절히 빠르게', '불편을 느끼지 않는다') with no measurable threshold, making it untestable.",
+        "recommendation": "Replace AC3 with a concrete, observable time bound (e.g. background sync completes within N seconds of trigger under fake provider) or remove it as a duplicate of AC1/AC2.",
+        "requiresHuman": true
+      },
+      {
+        "area": "testability",
+        "severity": "P2",
+        "missing": "AC1's 'next sync cycle' is testable but leaves the exact timing assertion (immediately after manual trigger vs within the 5-minute window) implicit for automated test authors.",
+        "recommendation": "State explicitly that AC1 is verified against manual trigger completion, not the 5-minute background window, to avoid flaky timing-based tests.",
+        "requiresHuman": false
+      },
+      {
+        "area": "verification",
+        "severity": "P1",
+        "missing": "R8 (tag name matching + auto-creation on the other side) has no corresponding AC and is not covered by any V row (V1-V6) or human-verification/non-goal line — it is a required behavior with no verification disposition.",
+        "recommendation": "Add an AC for tag matching/auto-creation and include R8 in an existing or new V row's Covers column with an observable pass intent (e.g., fake-provider test asserting tag auto-creation by name match).",
+        "requiresHuman": false
+      }
+    ]
+  },
+  "passBar": {
+    "detectionParity": true,
+    "timeHalved": true,
+    "speedRatio": 0.219,
+    "pass": true
+  }
+}

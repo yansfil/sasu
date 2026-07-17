@@ -121,7 +121,7 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
   process.exit(result.ok ? 0 : 1);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const [command, subcommand] = args.positional;
   const asJson = args.flags.get("json") === true;
@@ -148,7 +148,7 @@ function main(): void {
   if (command === "verify") {
     const config = loadConfig(projectRoot);
     const topic = requireFlag(args, "slug");
-    const result = runVerifyGate(projectRoot, config, topic, {
+    const result = await runVerifyGate(projectRoot, config, topic, {
       prdPath: typeof args.flags.get("prd") === "string" ? (args.flags.get("prd") as string) : undefined,
       diffFile: typeof args.flags.get("diff-file") === "string" ? (args.flags.get("diff-file") as string) : undefined,
       baseRef: typeof args.flags.get("base") === "string" ? (args.flags.get("base") as string) : undefined,
@@ -160,11 +160,11 @@ function main(): void {
   if (command === "gate") {
     const config = loadConfig(projectRoot);
     if (subcommand === "gap-audit") {
-      const result = runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"));
+      const result = await runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"));
       emitGateResult(result, asJson);
     }
     if (subcommand === "spec") {
-      const result = runSpecGate(
+      const result = await runSpecGate(
         projectRoot,
         config,
         requireFlag(args, "slug"),
@@ -201,4 +201,8 @@ function main(): void {
   fail(`unknown command: ${command}\n\n${USAGE}`);
 }
 
-main();
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`checkshirt: ${message}\n`);
+  process.exit(1);
+});

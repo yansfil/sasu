@@ -91,9 +91,19 @@ Then interview:
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
      (default 3; advisory for autonomous loops - a user-instructed re-run is
      never locked).
+   - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
+     lanes) and spec (3 review-axis lanes), merged mechanically by the CLI
+     (default `true`; set `false` to restore the single exhaustive judge).
+   - Codex judge limitation: codex CLI cannot disable its shell, so codex
+     judges get best-effort isolation only (empty ephemeral work root,
+     `--ignore-user-config`, no-tools instruction); the claude backend gives
+     the strongest reviewer isolation (all tools removed).
    - `verify.commands`: mechanical verify commands (`test`, `lint`,
      `typecheck`, `build`). Declared commands win; otherwise checkshirt
      detects from manifests and suggests pinning here.
+   - `verify.commandTimeoutMs`: per-command timeout for mechanical verify
+     runs (default 600000 = 10 minutes); a hung suite fails closed at the
+     timeout instead of hanging the gate.
 
 Recommended `.gitignore` block (one line):
 
@@ -127,12 +137,14 @@ Reference shape:
   "judge": {
     "backend": "auto",
     "retryBudget": 3,
+    "fanout": true,
     "tierModels": {
       "claude": { "frugal": "claude-sonnet-5", "standard": "claude-sonnet-5", "frontier": "claude-opus-4-8" }
     }
   },
   "verify": {
-    "commands": { "test": "pnpm test", "lint": "pnpm lint" }
+    "commands": { "test": "pnpm test", "lint": "pnpm lint" },
+    "commandTimeoutMs": 600000
   }
 }
 ```

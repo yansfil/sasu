@@ -208,17 +208,19 @@ test("fail-closed: a missing judge binary keeps the gate blocked with cause and 
   assert.equal(state.gates["gap-audit"].verdict, "ERROR");
 });
 
-test("fail-closed: two invalid judge replies surface as a blocked ERROR run, not a pass", () => {
+test("fail-closed: invalid judge replies surface as a blocked ERROR run naming the lanes, not a pass", () => {
   const dir = makeProject();
   const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
-    stub: stubFile(dir, ["garbage", "more garbage"]),
+    stub: stubFile(dir, "garbage that is not json"),
   });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /judge error: judge-invalid-output/);
+  assert.match(result.stdout, /lane failed \[/, "the failing lane must be named in the output");
   const state = gatesState(dir, "fixture");
   assert.equal(state.gates["gap-audit"].verdict, "ERROR");
-  assert.equal(state.judgeCalls.length, 1);
-  assert.equal(state.judgeCalls[0].outcome, "judge-invalid-output");
+  // Fan-out: every lane records its failed judge call for the receipt.
+  assert.equal(state.judgeCalls.length, 4);
+  assert.ok(state.judgeCalls.every((c) => c.outcome === "judge-invalid-output"));
 });
 
 test("retry budget: repeated BLOCKs exhaust the configured budget and tell the agent to stop", () => {
@@ -255,6 +257,111 @@ test("verify PASS prints a per-criterion semantic summary", () => {
   assert.match(result.stdout, /\[semantic\] AC2 PASS - persist\(\) added/);
 });
 
+test("fan-out: one blocking lane blocks the merged gate and per-lane records land in the artifact", () => {
+  const dir = makeProject();
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, {
+      byPurpose: {
+        "lane:ux-behavior": {
+          verdict: "BLOCK",
+          findings: [
+            {
+              area: "ux",
+              severity: "P0",
+              missing: "deletion error state undecided",
+              recommendation: "ask the user for the error behavior",
+              requiresHuman: true,
+            },
+          ],
+        },
+        default: { verdict: "PASS", findings: [] },
+      },
+    }),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /deletion error state undecided/);
+  const state = gatesState(dir, "fixture");
+  assert.equal(state.gates["gap-audit"].verdict, "BLOCK");
+  assert.equal(state.judgeCalls.length, 4, "one judge call per gap-audit lane");
+  const lanePurposes = state.judgeCalls.map((c) => c.purpose).sort();
+  assert.ok(lanePurposes.every((p) => p.startsWith("gate:gap-audit:lane:")));
+  const artifact = JSON.parse(fs.readFileSync(path.join(dir, state.gates["gap-audit"].history.at(-1).artifact), "utf8"));
+  assert.equal(artifact.lanes.length, 4);
+  assert.equal(artifact.lanes.filter((l) => l.verdict === "BLOCK").length, 1);
+  assert.equal(typeof artifact.dedupedCount, "number");
+});
+
+test("fan-out: judge.fanout=false restores the single-judge path with exactly one call", () => {
+  const dir = makeProject({ config: { judge: { fanout: false } } });
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const state = gatesState(dir, "fixture");
+  assert.equal(state.judgeCalls.length, 1);
+  assert.equal(state.judgeCalls[0].purpose, "gate:gap-audit");
+});
+
+test("fan-out: spec gate runs its three review-axis lanes", () => {
+  const dir = makeProject();
+  const result = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, { byPurpose: { default: { verdict: "PASS", findings: [] } } }),
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const state = gatesState(dir, "fixture");
+  const purposes = state.judgeCalls.map((c) => c.purpose).sort();
+  assert.deepEqual(purposes, [
+    "gate:spec:lane:fidelity",
+    "gate:spec:lane:testability",
+    "gate:spec:lane:verification-completeness",
+  ]);
+});
+
+test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of blocking", () => {
+  const dir = makeProject();
+  const round1 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, {
+      byPurpose: {
+        "lane:data-tech": {
+          verdict: "BLOCK",
+          findings: [
+            { area: "data", severity: "P1", missing: "retention undecided", recommendation: "decide", requiresHuman: false },
+          ],
+        },
+        default: { verdict: "PASS", findings: [] },
+      },
+    }),
+  });
+  assert.equal(round1.status, 1);
+
+  // Re-run: the prior data finding is resolved, but a lane invents a NEW P1.
+  const round2 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, {
+      byPurpose: {
+        "lane:ux-behavior": {
+          verdict: "BLOCK",
+          findings: [
+            {
+              area: "ux",
+              severity: "P1",
+              missing: "a newly invented depth-3 trim concern",
+              recommendation: "trim it",
+              requiresHuman: false,
+              origin: "new",
+            },
+          ],
+        },
+        default: { verdict: "PASS", findings: [] },
+      },
+    }),
+  });
+  assert.equal(round2.status, 0, "new non-P0 findings on a re-run cannot hold the gate");
+  assert.match(round2.stdout, /auto-demoted/);
+  const state = gatesState(dir, "fixture");
+  assert.equal(state.gates["gap-audit"].verdict, "PASS");
+  assert.equal(state.gates["gap-audit"].findings[0].severity, "P2");
+});
+
 test("freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gate status", () => {
   const dir = makeProject();
   const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
@@ -288,5 +395,5 @@ test("gate status reports all three gates and the judge call count", () => {
   assert.equal(status.status, 0);
   assert.match(status.stdout, /gate:gap-audit\] PASS/);
   assert.match(status.stdout, /gate:spec\] NOT_RUN/);
-  assert.match(status.stdout, /judge calls recorded: 1/);
+  assert.match(status.stdout, /judge calls recorded: 4/, "fan-out records one judge call per lane");
 });

@@ -63,6 +63,26 @@ test("runMechanical fails fast on the first failing command", () => {
   assert.match(result.runs[0].tail, /boom/);
 });
 
+// Hung-suite fail-closed (PRD judge-fanout R8/AC8): a command that never
+// exits must FAIL at verify.commandTimeoutMs instead of hanging the gate.
+test("runMechanical times out a hung command and fails closed", () => {
+  const dir = tempProject({
+    config: {
+      verify: {
+        commandTimeoutMs: 500,
+        commands: { test: "node -e \"setTimeout(() => {}, 60000)\"" },
+      },
+    },
+  });
+  const startedAt = Date.now();
+  const result = runMechanical(dir, loadConfig(dir));
+  assert.ok(Date.now() - startedAt < 10_000, "must not wait for the hung command");
+  assert.equal(result.ok, false);
+  assert.equal(result.runs[0].ok, false);
+  assert.equal(result.runs[0].exitCode, 124);
+  assert.match(result.runs[0].tail, /timed out after 500ms \(verify\.commandTimeoutMs\)/);
+});
+
 test("no commands anywhere yields an empty resolution", () => {
   const dir = tempProject({});
   const { resolved, configSuggestion } = resolveMechanicalCommands(dir, loadConfig(dir));

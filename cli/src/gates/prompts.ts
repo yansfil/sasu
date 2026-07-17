@@ -44,12 +44,110 @@ export interface PriorFinding {
 }
 
 /**
+ * A fan-out lane: one narrow parallel judge (PRD judge-fanout R1/R2, D-06).
+ * Lanes are fixed in code - gap-audit splits by document area, spec by its
+ * three original review axes. areaHints route prior findings on re-runs.
+ */
+export interface JudgeLane {
+  id: string;
+  title: string;
+  scope: string;
+  areaHints: string[];
+}
+
+export const GAP_AUDIT_LANES: JudgeLane[] = [
+  {
+    id: "goal-scope",
+    title: "goal, scope, and non-goals",
+    scope:
+      "Missing or ambiguous decisions about the product goal, target users, in-scope behavior, explicit non-goals, deferred items without revisit triggers, and scope boundaries the implementing team would otherwise invent.",
+    areaHints: ["goal", "scope", "non-goal", "nongoal", "intent", "product", "user"],
+  },
+  {
+    id: "ux-behavior",
+    title: "UX, behavior, states, and recovery",
+    scope:
+      "Missing or ambiguous decisions about user-facing flows, golden paths, empty/loading/error/permission states, validation, retry/cancel/undo, destructive-action recovery, and copy or taste boundaries needing human judgment.",
+    areaHints: ["ux", "behavior", "state", "recovery", "flow", "copy", "design", "accessibility"],
+  },
+  {
+    id: "data-tech",
+    title: "data, technical structure, and external providers",
+    scope:
+      "Missing or ambiguous decisions about data shape, source of truth, lifecycle/retention, schema or storage, API/service boundaries, external provider contracts, credentials ownership, compatibility, and migration.",
+    areaHints: ["data", "tech", "architecture", "provider", "api", "schema", "storage", "compatibility", "migration", "integration"],
+  },
+  {
+    id: "risk-ops-verification",
+    title: "risk, operation, and verification proof",
+    scope:
+      "Missing or ambiguous decisions about risks and side effects, security/access boundaries, cost or rate limits, rollout/launch/operational needs, and whether every primary behavior has an observable verification proof.",
+    areaHints: ["risk", "operation", "ops", "verification", "security", "launch", "cost", "proof", "observability"],
+  },
+];
+
+export const SPEC_LANES: JudgeLane[] = [
+  {
+    id: "fidelity",
+    title: "fidelity to the interview log",
+    scope:
+      "Every material decision in the interview log's Decision Register must be represented in the PRD without distortion: rejected options stayed rejected, deferred items kept their revisit conditions, and agent assumptions were not upgraded into user decisions.",
+    areaHints: ["fidelity", "intent", "decision", "traceability"],
+  },
+  {
+    id: "testability",
+    title: "testability of acceptance criteria",
+    scope:
+      "Every acceptance criterion must be an observable, testable statement. Flag vague qualifiers (\"적절히\", \"빠르게\", \"appropriately\", \"robust\") used as acceptance language.",
+    areaHints: ["testability", "acceptance", "criteria"],
+  },
+  {
+    id: "verification-completeness",
+    title: "verification completeness",
+    scope:
+      "Every requirement and acceptance criterion must map to a verification item or an explicit human-verification/non-goal disposition, and required verification must state an observable pass intent. Method: walk the R# list and the AC# list ONE BY ONE, and for each id check whether any V row's Covers column (or a human-verification/non-goal line) names it; report every id that nothing covers. This is a mechanical cross-reference - do it exhaustively, it is cheap.",
+    areaHints: ["verification", "coverage", "proof"],
+  },
+];
+
+/**
+ * Lane scoping preamble. Mutual-exclusion wording keeps near-duplicates down
+ * (D-08 accepted tradeoff), while genuinely cross-lane gaps must still be
+ * reported - the CLI deduplicates.
+ */
+function laneContext(lane: JudgeLane | undefined, laneCount: number): string {
+  if (!lane) return "";
+  return `
+LANE SCOPE: you are one of ${laneCount} parallel judges, each owning one lane. Your lane: ${lane.title}.
+${lane.scope}
+Report ONLY gaps that belong to your lane; the other lanes are judged in parallel by other judges,
+so do not report gaps clearly outside your lane. If a gap genuinely spans your lane and another,
+report it anyway - the harness deduplicates.
+Work budget: read the document once, skim the parts outside your lane just enough for context, and
+answer directly. A complete document typically has ZERO to THREE material gaps per lane - finding
+nothing is a normal, correct outcome. Do not manufacture findings to appear thorough, do not
+enumerate micro-variants of one gap (report the one underlying decision), and keep the total small.
+`;
+}
+
+/**
  * Delta re-judgment context (anti progressive-discovery): re-runs carry the
  * previous round's findings so the judge converges instead of opening ever
  * deeper lines of questioning on an honestly revised document.
  */
-function rerunContext(priorFindings: PriorFinding[]): string {
-  if (priorFindings.length === 0) return "";
+function rerunContext(priorFindings: PriorFinding[], rerun = priorFindings.length > 0): string {
+  if (!rerun) return "";
+  if (priorFindings.length === 0) {
+    // A fan-out re-run where no prior finding routed to this lane: origin
+    // labeling is still mandatory so mechanical convergence can apply.
+    return `
+RE-RUN CONTEXT: this document was judged before and has since been revised. No prior finding was
+assigned to your lane, so every finding you report MUST carry an extra field "origin": "new".
+Do NOT open new, deeper lines of questioning about aspects that were previously acceptable: the
+harness enforces convergence mechanically - new findings below P0 cannot block, so report a new
+finding only when the revision introduced it or it is a missed P0.
+`;
+  }
   const lines = priorFindings.map((f) => `- [${f.severity}/${f.area}] ${f.missing}`).join("\n");
   return `
 RE-RUN CONTEXT: this document was judged before and the findings below were reported; the author
@@ -69,7 +167,25 @@ ${lines}
 `;
 }
 
-export function gapAuditPrompt(qaLogContent: string, priorFindings: PriorFinding[] = []): string {
+export interface LanePromptOptions {
+  lane?: JudgeLane;
+  laneCount?: number;
+  rerun?: boolean;
+}
+
+export function gapAuditPrompt(
+  qaLogContent: string,
+  priorFindings: PriorFinding[] = [],
+  options: LanePromptOptions = {},
+): string {
+  const exhaustiveBlock = options.lane
+    ? `Sweep the log ONCE for your lane only and list every material gap in YOUR lane in this single
+reply: a re-run on the fixed log must find nothing new in your lane unless the document changed.`
+    : `Be exhaustive NOW, not later. Before answering, sweep every operation, entity, and behavior the log
+already mentions and list, in this same reply, every unspecified error and edge-case decision for
+each of them (invalid input, missing/unknown id, empty or conflicting state, ordering ties). If an
+edge case of an operation named in the log is worth blocking on, it must appear in THIS pass -
+surfacing it only on a later re-run of the fixed log is a contract violation.`;
   return `You are an independent interview-closure judge for an engineering requirements interview.
 You have no prior context about this project beyond the interview log below.
 Your only job: list the material gaps that would block writing a faithful PRD from this log.
@@ -80,38 +196,43 @@ Resolved decisions, explicitly deferred items with revisit triggers, and explici
 Do not invent nice-to-have process gaps. An empty findings list with verdict PASS is the correct
 answer for a complete log.
 
-Be exhaustive NOW, not later. Before answering, sweep every operation, entity, and behavior the log
-already mentions and list, in this same reply, every unspecified error and edge-case decision for
-each of them (invalid input, missing/unknown id, empty or conflicting state, ordering ties). If an
-edge case of an operation named in the log is worth blocking on, it must appear in THIS pass -
-surfacing it only on a later re-run of the fixed log is a contract violation.
-
+${exhaustiveBlock}
+${laneContext(options.lane, options.laneCount ?? 1)}
 ${GAP_JSON_CONTRACT}
-${rerunContext(priorFindings)}
+${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0)}
 INTERVIEW LOG (qa-log.md):
 ---
 ${clampDocument(qaLogContent)}
 ---`;
 }
 
-export function specGatePrompt(prdContent: string, qaLogContent: string, priorFindings: PriorFinding[] = []): string {
-  return `You are an independent PRD spec-gate judge (fidelity + self-containment).
-You have no prior context beyond the two documents below.
-
-Judge the PRD on exactly three axes (D-21 contract):
+export function specGatePrompt(
+  prdContent: string,
+  qaLogContent: string,
+  priorFindings: PriorFinding[] = [],
+  options: LanePromptOptions = {},
+): string {
+  const axes = options.lane
+    ? `Judge the PRD on exactly ONE axis - ${options.lane.title.toUpperCase()}:
+${options.lane.scope}`
+    : `Judge the PRD on exactly three axes (D-21 contract):
 (a) FIDELITY: every material decision in the interview log's Decision Register is represented in the
     PRD without distortion. Rejected options stayed rejected. Deferred items stayed deferred with a
     revisit condition. Agent assumptions were not upgraded into user decisions.
 (b) TESTABILITY: every acceptance criterion is an observable, testable statement. Flag vague
     qualifiers ("적절히", "빠르게", "appropriately", "robust") used as acceptance language.
 (c) VERIFICATION COMPLETENESS: every requirement and acceptance criterion maps to a verification
-    item or an explicit human-verification/non-goal disposition.
+    item or an explicit human-verification/non-goal disposition.`;
+  return `You are an independent PRD spec-gate judge (fidelity + self-containment).
+You have no prior context beyond the two documents below.
+
+${axes}
 
 Report only material violations as findings; area should be one of: fidelity, testability, verification.
 An empty findings list with verdict PASS is the correct answer for a faithful, self-contained PRD.
-
+${laneContext(options.lane, options.laneCount ?? 1)}
 ${GAP_JSON_CONTRACT}
-${rerunContext(priorFindings)}
+${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0)}
 PRD (prd.md):
 ---
 ${clampDocument(prdContent)}

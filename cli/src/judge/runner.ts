@@ -11,15 +11,18 @@ export interface JudgeOutcome<T> {
 /**
  * One-shot judge call with the D-16 output defense: schema validation plus
  * exactly one retry on invalid output. Backend/model/attempt counts are
- * returned for receipt recording; the caller persists them.
+ * returned for receipt recording; the caller persists them. Async so lane
+ * fan-out can run several judges concurrently; the per-call timeout and
+ * retry semantics are unchanged.
  */
-export function runJudge<T>(
+export async function runJudge<T>(
   config: CheckshirtConfig,
   purpose: string,
   tier: Tier,
   prompt: string,
   validate: (value: unknown) => T | string,
-): JudgeOutcome<T> {
+  options: { effort?: string } = {},
+): Promise<JudgeOutcome<T>> {
   const backend = resolveBackend(config.judge.backend);
   const model = tierModelFor(config, backend.name, tier);
   const startedAt = Date.now();
@@ -33,7 +36,7 @@ export function runJudge<T>(
         : `Your previous reply was rejected: ${lastProblem}. Reply with ONLY the JSON object, no prose, no code fences.\n\n`;
     let text: string;
     try {
-      text = backend.run(retryPreamble + prompt, model, config.judge.timeoutMs).text;
+      text = (await backend.run(retryPreamble + prompt, model, config.judge.timeoutMs, purpose, options.effort)).text;
     } catch (error) {
       if (error instanceof JudgeError) {
         throw Object.assign(error, {

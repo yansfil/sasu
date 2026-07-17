@@ -21,6 +21,18 @@ test("tier-config default mapping: frugal defaults to sonnet-class after the 202
   assert.equal(tierModelFor(config, "claude", "frontier"), "claude-opus-4-8");
   assert.equal(config.judge.retryBudget, 3);
   assert.equal(config.judge.backend, "auto");
+  assert.equal(config.judge.fanout, true, "fan-out is the default gate path");
+  assert.equal(config.verify.commandTimeoutMs, 600_000, "mechanical commands default to a 10-minute timeout");
+});
+
+test("tier-config override: judge.fanout=false and verify.commandTimeoutMs are honored", () => {
+  const config = loadConfig(tempProject({ judge: { fanout: false }, verify: { commandTimeoutMs: 1234 } }));
+  assert.equal(config.judge.fanout, false);
+  assert.equal(config.verify.commandTimeoutMs, 1234);
+});
+
+test("tier-config rejects a non-positive commandTimeoutMs", () => {
+  assert.throws(() => loadConfig(tempProject({ verify: { commandTimeoutMs: 0 } })), /commandTimeoutMs/);
 });
 
 test("tier-config override: agents/config.json overrides tier models and retry budget", () => {

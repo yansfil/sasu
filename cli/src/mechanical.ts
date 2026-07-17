@@ -90,19 +90,26 @@ export function runMechanical(projectRoot: string, config: CheckshirtConfig): Me
       shell: true,
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024,
+      // A hung suite must fail closed instead of hanging the gate forever
+      // (PRD judge-fanout R8); configurable via verify.commandTimeoutMs.
+      timeout: config.verify.commandTimeoutMs,
       env: process.env,
     });
+    const timedOut =
+      (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
     const exitCode = result.status ?? 1;
     const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+    const tailLines = combined.split("\n").slice(-30);
+    if (timedOut) tailLines.push(`[checkshirt] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
     runs.push({
       kind: cmd.kind,
       command: cmd.command,
       source: cmd.source,
-      exitCode,
-      ok: exitCode === 0,
-      tail: combined.split("\n").slice(-30).join("\n"),
+      exitCode: timedOut ? 124 : exitCode,
+      ok: !timedOut && exitCode === 0,
+      tail: tailLines.join("\n"),
     });
-    if (exitCode !== 0) {
+    if (!runs[runs.length - 1]!.ok) {
       ok = false;
       break; // Fail fast: later stages cost more, and semantic must not run anyway.
     }

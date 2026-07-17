@@ -81,6 +81,8 @@ checkshirt doctor           judge backends, verify commands, contract version
 ```
 
 Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with tools disabled, schema validation, one retry, and fail-closed errors.
+The gap-list gates fan out into lane-parallel narrow judges (gap-audit: 4 document-area lanes; spec: 3 review-axis lanes) whose findings the CLI merges mechanically - union, normalized dedupe, any blocking finding blocks - so the wall-clock cost is one narrow judge, not one exhaustive sweep; set `judge.fanout: false` to restore the single-judge path.
+Codex judges run with best-effort isolation (empty ephemeral work root, user config ignored, no-tools instruction) because codex CLI cannot disable its shell; reviewer isolation is strongest on the claude backend, which runs with all tools removed.
 Gates are hard blocks: an agent can fix findings and re-gate within a retry budget, but only the user can override, and every judgment and override lands in `agents/gates/<topic>/` for the receipt.
 A PASS is pinned to the content hash of its input documents; editing the qa-log or PRD afterwards turns the gate `STALE` in `gate status` until it is re-run, so a gate can never keep vouching for a document it has not seen.
 The CLI never executes implementation work: coding stays in the host agent session.

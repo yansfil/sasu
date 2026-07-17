@@ -12,7 +12,15 @@ import {
   type JudgeCallRecord,
 } from "../judge/types";
 import { runMechanical, type MechanicalResult } from "../mechanical";
-import { gapAuditPrompt, semanticVerifyPrompt, specGatePrompt } from "./prompts";
+import {
+  GAP_AUDIT_LANES,
+  SPEC_LANES,
+  gapAuditPrompt,
+  semanticVerifyPrompt,
+  specGatePrompt,
+  type JudgeLane,
+  type PriorFinding,
+} from "./prompts";
 import {
   freshnessHash,
   GateStore,
@@ -51,6 +59,14 @@ function readInputFile(projectRoot: string, filePath: string, label: string): In
   const resolved = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   return { content, input: { path: path.relative(projectRoot, resolved), sha256: freshnessHash(content) } };
 }
+
+/**
+ * Reasoning-effort cap for lane judges. A lane owns a narrow scope, so a low
+ * budget preserved mine detection in calibration while cutting a ~52s call
+ * to ~13s. The single-judge path (judge.fanout: false) keeps the backend's
+ * default effort. Claude-only; codex/stub backends ignore it.
+ */
+const LANE_EFFORT = "low";
 
 function overrideRecovery(topic: string, gate: GateId): string {
   return `To proceed anyway, the USER (never the agent) may run: checkshirt gate override --slug ${topic} --gate ${gate} --reason "<why>"`;
@@ -100,26 +116,166 @@ export function applyRerunConvergence(judged: GapVerdict): {
   return { verdict: blocking > 0 ? "BLOCK" : "PASS", findings, demotedCount };
 }
 
-function runGapListGate(
+/**
+ * Mechanical lane merge (PRD judge-fanout R3, D-08): union of lane findings,
+ * normalized-string dedupe keeping the higher severity, and a verdict derived
+ * purely from the merged findings - any blocking-grade (P0/P1) finding means
+ * BLOCK, an all-advisory (or empty) merge means PASS. Near-duplicates phrased
+ * differently across lanes are an accepted tradeoff observed in calibration.
+ */
+export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[] }[]): {
+  verdict: "PASS" | "BLOCK";
+  findings: Finding[];
+  dedupedCount: number;
+  laneFindingCounts: Record<string, number>;
+} {
+  const severityRank: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+  const seen = new Map<string, Finding>();
+  const laneFindingCounts: Record<string, number> = {};
+  let dedupedCount = 0;
+  for (const lane of lanes) {
+    laneFindingCounts[lane.laneId] = lane.findings.length;
+    for (const finding of lane.findings) {
+      const key = finding.missing
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, finding);
+      } else {
+        dedupedCount += 1;
+        if ((severityRank[finding.severity] ?? 3) < (severityRank[existing.severity] ?? 3)) {
+          seen.set(key, finding);
+        }
+      }
+    }
+  }
+  const findings = [...seen.values()];
+  const verdict = findings.some((f) => f.severity !== "P2") ? "BLOCK" : "PASS";
+  return { verdict, findings, dedupedCount, laneFindingCounts };
+}
+
+/**
+ * Route prior findings to lanes for the re-run convergence contract (D-09):
+ * a prior finding goes to every lane whose areaHints match its area; a
+ * finding matching no lane goes to every lane so it cannot be dropped.
+ */
+export function routePriorFindings(
+  priorFindings: PriorFinding[],
+  lanes: JudgeLane[],
+): Map<string, PriorFinding[]> {
+  const routed = new Map<string, PriorFinding[]>(lanes.map((lane) => [lane.id, []]));
+  for (const finding of priorFindings) {
+    const area = finding.area.toLowerCase();
+    const matches = lanes.filter((lane) => lane.areaHints.some((hint) => area.includes(hint)));
+    for (const lane of matches.length > 0 ? matches : lanes) {
+      routed.get(lane.id)!.push(finding);
+    }
+  }
+  return routed;
+}
+
+async function runGapListGate(
   projectRoot: string,
   config: CheckshirtConfig,
   topic: string,
   gate: Extract<GateId, "gap-audit" | "spec">,
-  buildPrompt: (priorFindings: { severity: string; area: string; missing: string }[]) => string,
+  buildPrompt: (
+    priorFindings: PriorFinding[],
+    options: { lane?: JudgeLane; laneCount?: number; rerun?: boolean },
+  ) => string,
   purpose: string,
   inputs: GateInput[],
-): GateCommandResult {
+): Promise<GateCommandResult> {
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
   const records: JudgeCallRecord[] = [];
   try {
     const priorFindings = priorFindingsFor(state, gate);
     const isRerun = priorFindings.length > 0;
-    const outcome = runJudge(config, purpose, "frugal", buildPrompt(priorFindings), (value) =>
-      validateGapVerdict(value, { requireOrigin: isRerun }),
+
+    if (!config.judge.fanout) {
+      // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).
+      const outcome = await runJudge(config, purpose, "frugal", buildPrompt(priorFindings, {}), (value) =>
+        validateGapVerdict(value, { requireOrigin: isRerun }),
+      );
+      records.push(outcome.record);
+      const converged = isRerun ? applyRerunConvergence(outcome.value) : { ...outcome.value, demotedCount: 0 };
+      state = recordGateResult(
+        store,
+        state,
+        gate,
+        {
+          kind: "verdict",
+          verdict: converged.verdict,
+          findings: converged.findings,
+          inputs,
+          artifactPayload: {
+            verdict: converged.verdict,
+            judgedVerdict: outcome.value.verdict,
+            demotedCount: converged.demotedCount,
+            findings: converged.findings,
+            inputs,
+            judge: outcome.record,
+          },
+        },
+        records,
+      );
+      const status = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
+      return { ok: status.effective === "PASS", status };
+    }
+
+    // Lane-parallel fan-out (R1/R2): narrow judges run concurrently and the
+    // CLI merges mechanically. One fan-out round is one gate attempt.
+    // Lanes run at low effort: calibration showed judge wall time is a flat
+    // per-call reasoning budget (a full-effort lane costs as much as the
+    // exhaustive single judge), so the narrow scope is paired with a small
+    // budget - that pairing, not parallelism alone, is what halves the gate.
+    const lanes = gate === "gap-audit" ? GAP_AUDIT_LANES : SPEC_LANES;
+    const routedPrior = routePriorFindings(priorFindings, lanes);
+    const settled = await Promise.all(
+      lanes.map(async (lane) => {
+        try {
+          const outcome = await runJudge(
+            config,
+            `${purpose}:lane:${lane.id}`,
+            "frugal",
+            buildPrompt(routedPrior.get(lane.id) ?? [], { lane, laneCount: lanes.length, rerun: isRerun }),
+            (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
+            { effort: LANE_EFFORT },
+          );
+          return { laneId: lane.id, outcome, error: null };
+        } catch (error) {
+          return { laneId: lane.id, outcome: null, error };
+        }
+      }),
     );
-    records.push(outcome.record);
-    const converged = isRerun ? applyRerunConvergence(outcome.value) : { ...outcome.value, demotedCount: 0 };
+    for (const lane of settled) {
+      if (lane.outcome) records.push(lane.outcome.record);
+      else {
+        const failureRecord = judgeCallRecordFrom(lane.error);
+        if (failureRecord) records.push(failureRecord);
+      }
+    }
+    const failures = settled.filter((lane) => lane.error !== null);
+    if (failures.length > 0) {
+      // Fail-closed on any lane failure (D-08/D-13/D-14): rate limits,
+      // timeouts, and invalid output all land here, named by lane.
+      const first = failures[0]!.error;
+      const code = first instanceof JudgeError ? first.code : "judge-auth-or-runtime";
+      const backend = first instanceof JudgeError ? first.backend : "claude";
+      const detail = first instanceof Error ? first.message : String(first);
+      const laneList = failures.map((lane) => lane.laneId).join(", ");
+      const laneError = new JudgeError(code, backend, `lane failed [${laneList}]: ${detail}`);
+      return recordJudgeFailure(store, state, gate, config, laneError, records, topic);
+    }
+    const merged = mergeLaneFindings(
+      settled.map((lane) => ({ laneId: lane.laneId, findings: lane.outcome!.value.findings })),
+    );
+    const converged = isRerun
+      ? applyRerunConvergence({ verdict: merged.verdict, findings: merged.findings })
+      : { verdict: merged.verdict, findings: merged.findings, demotedCount: 0 };
     state = recordGateResult(
       store,
       state,
@@ -131,11 +287,17 @@ function runGapListGate(
         inputs,
         artifactPayload: {
           verdict: converged.verdict,
-          judgedVerdict: outcome.value.verdict,
+          judgedVerdict: merged.verdict,
           demotedCount: converged.demotedCount,
+          dedupedCount: merged.dedupedCount,
           findings: converged.findings,
+          lanes: settled.map((lane) => ({
+            laneId: lane.laneId,
+            verdict: lane.outcome!.value.verdict,
+            findingCount: lane.outcome!.value.findings.length,
+            judge: lane.outcome!.record,
+          })),
           inputs,
-          judge: outcome.record,
         },
       },
       records,
@@ -152,14 +314,14 @@ export function runGapAudit(
   config: CheckshirtConfig,
   topic: string,
   qaLogPath: string,
-): GateCommandResult {
+): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   return runGapListGate(
     projectRoot,
     config,
     topic,
     "gap-audit",
-    (prior) => gapAuditPrompt(qaLog.content, prior),
+    (prior, options) => gapAuditPrompt(qaLog.content, prior, options),
     "gate:gap-audit",
     [qaLog.input],
   );
@@ -171,7 +333,7 @@ export function runSpecGate(
   topic: string,
   prdPath: string,
   qaLogPath: string,
-): GateCommandResult {
+): Promise<GateCommandResult> {
   const prd = readInputFile(projectRoot, prdPath, "prd");
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   return runGapListGate(
@@ -179,7 +341,7 @@ export function runSpecGate(
     config,
     topic,
     "spec",
-    (prior) => specGatePrompt(prd.content, qaLog.content, prior),
+    (prior, options) => specGatePrompt(prd.content, qaLog.content, prior, options),
     "gate:spec",
     [prd.input, qaLog.input],
   );
@@ -193,12 +355,12 @@ export interface VerifyOptions {
   skipMechanical?: boolean;
 }
 
-export function runVerifyGate(
+export async function runVerifyGate(
   projectRoot: string,
   config: CheckshirtConfig,
   topic: string,
   options: VerifyOptions,
-): GateCommandResult {
+): Promise<GateCommandResult> {
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
   const records: JudgeCallRecord[] = [];
@@ -253,7 +415,7 @@ export function runVerifyGate(
     throw new Error("empty diff: nothing to verify (use --base <ref> or --diff-file <path>)");
   }
   try {
-    const outcome = runJudge(
+    const outcome = await runJudge(
       config,
       "gate:verify-semantic",
       "standard",

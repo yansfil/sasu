@@ -1,0 +1,20 @@
+{
+  "description": "gap-audit 캘리브레이션 지뢰: qa-log-mined.md에서 의도적으로 빠뜨린 결정 3개. 판사 finding 텍스트에 키워드 중 하나라도 포함되면 해당 지뢰 탐지로 계산한다.",
+  "mines": [
+    {
+      "id": "M1-deletion-propagation",
+      "planted": "양방향 동기화인데 한쪽에서 노트를 삭제했을 때의 전파/보존 결정이 어디에도 없음 (data/scope 레인)",
+      "keywords": ["삭제", "delete", "deletion", "remov", "휴지통", "trash"]
+    },
+    {
+      "id": "M2-edit-conflict",
+      "planted": "UX-02 카드가 편집 충돌 처리와 복구를 placeholder로만 남기고 결정이 없음 (ux 레인)",
+      "keywords": ["충돌", "conflict", "동시 편집", "concurrent", "offline", "오프라인", "양쪽에서 편집"]
+    },
+    {
+      "id": "M3-rate-limit",
+      "planted": "분당 60 요청 한도 증거를 적어두고 대응 결정도 검증 시드도 없음 (provider+verification 교차 레인)",
+      "keywords": ["rate limit", "rate-limit", "한도", "429", "throttl", "분당", "60 요청", "quota"]
+    }
+  ]
+}

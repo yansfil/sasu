@@ -1,0 +1,138 @@
+{
+  "gate": "gap-audit",
+  "doc": "cli/test/fixtures/calibration/qa-log-mined.md",
+  "docChars": 11045,
+  "at": "2026-07-17T03:55:36.087Z",
+  "model": "claude-sonnet-5",
+  "single": {
+    "ms": 62229,
+    "verdict": "BLOCK",
+    "findingCount": 3,
+    "minesDetected": 3,
+    "mines": [
+      {
+        "id": "M1-deletion-propagation",
+        "detected": true
+      },
+      {
+        "id": "M2-edit-conflict",
+        "detected": true
+      },
+      {
+        "id": "M3-rate-limit",
+        "detected": true
+      }
+    ],
+    "findings": [
+      {
+        "area": "data",
+        "severity": "P0",
+        "missing": "No conflict-resolution policy exists for a note edited on both the workspace and NotesHub side within the same sync window (UX-02 explicitly names this as an unresolved 'state/failure' and 'recovery' case with no linked decision, and the NotesHub 409/If-Match version-conflict mechanism is documented as 'material for conflict detection' but never turned into a rule).",
+        "recommendation": "Decide the concurrent-edit policy (e.g., last-write-wins by updated_at, server-wins, or surface a conflict marker to the user) and add it as a resolved decision with an AC and a round-trip/conflict test case.",
+        "requiresHuman": true
+      },
+      {
+        "area": "data",
+        "severity": "P0",
+        "missing": "Deletion propagation is undefined in both directions: what happens when a note is deleted in the workspace meeting-notes folder, and what happens when the corresponding note is deleted in NotesHub (which is documented as permanent, no trash, unrecoverable)?",
+        "recommendation": "Decide explicit delete-propagation rules for each direction (propagate delete, or treat as archive-equivalent leaving the other side untouched) given NotesHub deletes cannot be undone.",
+        "requiresHuman": true
+      },
+      {
+        "area": "risk",
+        "severity": "P1",
+        "missing": "The NotesHub rate limit (60 req/min, with documented risk of key suspension on sustained overage) and the initial backfill of a workspace's existing meeting notes (potentially hundreds, requiring many upsert calls) are flagged in Evidence but never resolved into a throttling, batching, or backoff decision.",
+        "recommendation": "Decide how periodic and initial sync passes stay under the rate limit (e.g., throttled queue with Retry-After backoff) and whether persistent 429s trigger the failure banner from D-16.",
+        "requiresHuman": true
+      }
+    ]
+  },
+  "fanout": {
+    "ms": 17109,
+    "verdict": "BLOCK",
+    "findingCount": 7,
+    "dedupedCount": 0,
+    "laneFindingCounts": {
+      "goal-scope": 0,
+      "ux-behavior": 1,
+      "data-tech": 3,
+      "risk-ops-verification": 3
+    },
+    "minesDetected": 3,
+    "mines": [
+      {
+        "id": "M1-deletion-propagation",
+        "detected": true
+      },
+      {
+        "id": "M2-edit-conflict",
+        "detected": true
+      },
+      {
+        "id": "M3-rate-limit",
+        "detected": true
+      }
+    ],
+    "nearDuplicates": {
+      "pairs": 21,
+      "nearDuplicatePairs": 0
+    },
+    "findings": [
+      {
+        "area": "ux",
+        "severity": "P0",
+        "missing": "UX-02 explicitly leaves conflict handling undecided: no decision on what happens when the same note is edited on both sides (including offline edits) before the next sync, despite NotesHub's API surfacing 409 version conflicts.",
+        "recommendation": "Decide and record a conflict resolution policy (e.g., last-write-wins by updated_at, side-preference, or user-facing conflict prompt) and how it maps to the 409/version data already available from the provider.",
+        "requiresHuman": true
+      },
+      {
+        "area": "data",
+        "severity": "P0",
+        "missing": "No conflict-resolution rule when the same note is edited on both sides within one sync window (UX-02 explicitly lists this as unresolved 'state/failure' and 'recovery' with no linked decision), even though the API provides version/If-Match/409 semantics that could support one.",
+        "recommendation": "Decide the conflict policy (e.g., last-write-wins by updated_at, or surface a conflict marker) and record it as a decision, using the 409 version data already documented.",
+        "requiresHuman": true
+      },
+      {
+        "area": "data",
+        "severity": "P1",
+        "missing": "No decision on delete propagation: what happens when a note is deleted in the workspace, deleted on NotesHub (DELETE is permanent, no trash), or moved out of the meeting-notes folder while already synced.",
+        "recommendation": "Add an explicit decision on delete/move handling in both directions, consistent with the folder-scope and archive rules already made.",
+        "requiresHuman": true
+      },
+      {
+        "area": "provider",
+        "severity": "P1",
+        "missing": "NotesHub's 60 req/min rate limit and 50-item pagination are documented as a risk for workspaces with hundreds of notes, but there's no decision on how the 5-minute periodic sync handles 429/Retry-After or whether it can reliably complete within the limit.",
+        "recommendation": "Decide the throttling/backoff/queuing strategy for periodic sync under rate limits, or explicitly defer with a revisit trigger.",
+        "requiresHuman": false
+      },
+      {
+        "area": "risk",
+        "severity": "P0",
+        "missing": "No decision on how sync behaves when a note is deleted on either side; NotesHub DELETE is permanent with no trash, but the log never decides whether deletions propagate, and if so in which direction(s).",
+        "recommendation": "Decide explicit deletion-sync policy (propagate, ignore, or soft-delete-only-in-workspace) and add it to the decision register with an acceptance criterion.",
+        "requiresHuman": true
+      },
+      {
+        "area": "verification",
+        "severity": "P0",
+        "missing": "Concurrent-edit conflict handling (same note edited on both sides, surfaced by the API's 409/If-Match version conflict) is flagged as unresolved in UX-02's 'state / failure' and 'recovery' fields but never turned into a decision or given a verification proof.",
+        "recommendation": "Add a decision for conflict resolution strategy (e.g., last-write-wins by updated_at, or surfaced conflict UI) and a corresponding test proof.",
+        "requiresHuman": true
+      },
+      {
+        "area": "risk/operation",
+        "severity": "P1",
+        "missing": "The API's 60 req/min rate limit and documented risk of key suspension on sustained overage is captured in Evidence but has no corresponding decision on backoff/throttling behavior for periodic sync of workspaces with hundreds of notes.",
+        "recommendation": "Decide a rate-limit handling strategy (batching/backoff on 429, respecting Retry-After, alerting on suspension risk) and record it in the decision register.",
+        "requiresHuman": false
+      }
+    ]
+  },
+  "passBar": {
+    "detectionParity": true,
+    "timeHalved": true,
+    "speedRatio": 0.275,
+    "pass": true
+  }
+}

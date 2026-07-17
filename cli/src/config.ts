@@ -12,10 +12,14 @@ export interface JudgeConfig {
   };
   retryBudget: number;
   timeoutMs: number;
+  /** Lane-parallel fan-out for the gap-list gates; false restores the single-judge path. */
+  fanout: boolean;
 }
 
 export interface VerifyConfig {
   commands: Partial<Record<"test" | "lint" | "build" | "typecheck", string>>;
+  /** Per-command timeout for mechanical verify runs; a hung suite fails closed instead of hanging the gate. */
+  commandTimeoutMs: number;
 }
 
 export interface CheckshirtConfig {
@@ -53,7 +57,10 @@ const DEFAULT_JUDGE: JudgeConfig = {
   // user-instructed re-run.
   retryBudget: 3,
   timeoutMs: 180_000,
+  fanout: true,
 };
+
+const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
 
 export function loadConfig(projectRoot: string): CheckshirtConfig {
   const configPath = path.join(projectRoot, "agents", "config.json");
@@ -79,13 +86,18 @@ export function loadConfig(projectRoot: string): CheckshirtConfig {
     },
     retryBudget: judgeRaw.retryBudget ?? DEFAULT_JUDGE.retryBudget,
     timeoutMs: judgeRaw.timeoutMs ?? DEFAULT_JUDGE.timeoutMs,
+    fanout: judgeRaw.fanout ?? DEFAULT_JUDGE.fanout,
   };
   if (!Number.isInteger(judge.retryBudget) || judge.retryBudget < 0) {
     throw new Error(`judge.retryBudget must be a non-negative integer, got: ${String(judge.retryBudget)}`);
   }
+  const commandTimeoutMs = verifyRaw.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+  if (!Number.isInteger(commandTimeoutMs) || commandTimeoutMs <= 0) {
+    throw new Error(`verify.commandTimeoutMs must be a positive integer, got: ${String(commandTimeoutMs)}`);
+  }
   return {
     judge,
-    verify: { commands: { ...(verifyRaw.commands ?? {}) } },
+    verify: { commands: { ...(verifyRaw.commands ?? {}) }, commandTimeoutMs },
     configPath: found,
   };
 }
