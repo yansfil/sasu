@@ -13,7 +13,16 @@ import {
 } from "../judge/types";
 import { runMechanical, type MechanicalResult } from "../mechanical";
 import { gapAuditPrompt, semanticVerifyPrompt, specGatePrompt } from "./prompts";
-import { GateStore, gateStatus, overrideGate, recordGateResult, type GateId, type GateStatusView } from "./store";
+import {
+  freshnessHash,
+  GateStore,
+  gateStatus,
+  overrideGate,
+  recordGateResult,
+  type GateId,
+  type GateInput,
+  type GateStatusView,
+} from "./store";
 
 export interface GateCommandResult {
   ok: boolean;
@@ -29,6 +38,18 @@ function readTextFile(projectRoot: string, filePath: string, label: string): str
     throw new Error(`${label} not found: ${filePath}`);
   }
   return fs.readFileSync(resolved, "utf8");
+}
+
+interface InputFile {
+  content: string;
+  input: GateInput;
+}
+
+/** Read a gate input document and pin its freshness hash (body substance, not lifecycle bookkeeping). */
+function readInputFile(projectRoot: string, filePath: string, label: string): InputFile {
+  const content = readTextFile(projectRoot, filePath, label);
+  const resolved = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
+  return { content, input: { path: path.relative(projectRoot, resolved), sha256: freshnessHash(content) } };
 }
 
 function overrideRecovery(topic: string, gate: GateId): string {
@@ -86,6 +107,7 @@ function runGapListGate(
   gate: Extract<GateId, "gap-audit" | "spec">,
   buildPrompt: (priorFindings: { severity: string; area: string; missing: string }[]) => string,
   purpose: string,
+  inputs: GateInput[],
 ): GateCommandResult {
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
@@ -106,17 +128,19 @@ function runGapListGate(
         kind: "verdict",
         verdict: converged.verdict,
         findings: converged.findings,
+        inputs,
         artifactPayload: {
           verdict: converged.verdict,
           judgedVerdict: outcome.value.verdict,
           demotedCount: converged.demotedCount,
           findings: converged.findings,
+          inputs,
           judge: outcome.record,
         },
       },
       records,
     );
-    const status = gateStatus(state, gate, config.judge.retryBudget);
+    const status = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
     return { ok: status.effective === "PASS", status };
   } catch (error) {
     return recordJudgeFailure(store, state, gate, config, error, records, topic);
@@ -129,8 +153,16 @@ export function runGapAudit(
   topic: string,
   qaLogPath: string,
 ): GateCommandResult {
-  const qaLog = readTextFile(projectRoot, qaLogPath, "qa-log");
-  return runGapListGate(projectRoot, config, topic, "gap-audit", (prior) => gapAuditPrompt(qaLog, prior), "gate:gap-audit");
+  const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
+  return runGapListGate(
+    projectRoot,
+    config,
+    topic,
+    "gap-audit",
+    (prior) => gapAuditPrompt(qaLog.content, prior),
+    "gate:gap-audit",
+    [qaLog.input],
+  );
 }
 
 export function runSpecGate(
@@ -140,9 +172,17 @@ export function runSpecGate(
   prdPath: string,
   qaLogPath: string,
 ): GateCommandResult {
-  const prd = readTextFile(projectRoot, prdPath, "prd");
-  const qaLog = readTextFile(projectRoot, qaLogPath, "qa-log");
-  return runGapListGate(projectRoot, config, topic, "spec", (prior) => specGatePrompt(prd, qaLog, prior), "gate:spec");
+  const prd = readInputFile(projectRoot, prdPath, "prd");
+  const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
+  return runGapListGate(
+    projectRoot,
+    config,
+    topic,
+    "spec",
+    (prior) => specGatePrompt(prd.content, qaLog.content, prior),
+    "gate:spec",
+    [prd.input, qaLog.input],
+  );
 }
 
 export interface VerifyOptions {
@@ -162,6 +202,11 @@ export function runVerifyGate(
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
   const records: JudgeCallRecord[] = [];
+  // Read the PRD up front so a bad --prd path fails before any command spend,
+  // and its hash is pinned for freshness tracking. The diff is deliberately
+  // not a freshness input: it changes with every fix loop by design.
+  const prdFile = options.prdPath !== undefined ? readInputFile(projectRoot, options.prdPath, "prd") : null;
+  const inputs = prdFile ? [prdFile.input] : [];
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
   let mechanical: MechanicalResult | undefined;
@@ -184,16 +229,20 @@ export function runVerifyGate(
               recommendation: "Fix the failing check and re-run checkshirt verify.",
               requiresHuman: false,
             })),
+          inputs,
           artifactPayload: { stage: "mechanical", runs: mechanical.runs },
         },
         records,
       );
-      return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget), mechanical };
+      return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), mechanical };
     }
   }
 
   // Stage 2: semantic judge over the diff.
-  const criteria = options.criteria ?? extractAcceptanceCriteria(readTextFile(projectRoot, options.prdPath ?? "", "prd"));
+  if (!options.criteria && !prdFile) {
+    throw new Error("prd not found: pass --prd <path> so acceptance criteria can be extracted");
+  }
+  const criteria = options.criteria ?? extractAcceptanceCriteria(prdFile!.content);
   if (criteria.length === 0) {
     throw new Error("no acceptance criteria found (expected '## 7. Acceptance Criteria' with '- AC#.' items)");
   }
@@ -229,17 +278,19 @@ export function runVerifyGate(
         kind: "verdict",
         verdict: outcome.value.verdict === "PASS" ? "PASS" : "FAIL",
         findings,
+        inputs,
         artifactPayload: {
           stage: "semantic",
           verdict: outcome.value.verdict,
           criteria: outcome.value.criteria,
           mechanical: mechanical?.runs ?? "skipped",
+          inputs,
           judge: outcome.record,
         },
       },
       records,
     );
-    const status = gateStatus(state, "verify", config.judge.retryBudget);
+    const status = gateStatus(state, "verify", config.judge.retryBudget, projectRoot);
     return { ok: status.effective === "PASS", status, mechanical, criteria: outcome.value.criteria };
   } catch (error) {
     return recordJudgeFailure(store, state, "verify", config, error, records, topic);
@@ -267,7 +318,7 @@ function recordJudgeFailure(
   };
   return {
     ok: false,
-    status: gateStatus(state, gate, config.judge.retryBudget),
+    status: gateStatus(state, gate, config.judge.retryBudget, store.projectRoot),
     error: {
       code: error.code,
       message: error.message,
@@ -284,7 +335,7 @@ export function runOverride(
 ): GateStatusView {
   const store = new GateStore(projectRoot, topic);
   const state = overrideGate(store, store.load(), gate, reason);
-  return gateStatus(state, gate, Number.MAX_SAFE_INTEGER);
+  return gateStatus(state, gate, Number.MAX_SAFE_INTEGER, projectRoot);
 }
 
 export function readGateStatus(
@@ -295,9 +346,9 @@ export function readGateStatus(
   const store = new GateStore(projectRoot, topic);
   const state = store.load();
   return {
-    "gap-audit": gateStatus(state, "gap-audit", config.judge.retryBudget),
-    spec: gateStatus(state, "spec", config.judge.retryBudget),
-    verify: gateStatus(state, "verify", config.judge.retryBudget),
+    "gap-audit": gateStatus(state, "gap-audit", config.judge.retryBudget, projectRoot),
+    spec: gateStatus(state, "spec", config.judge.retryBudget, projectRoot),
+    verify: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
     judgeCallCount: state.judgeCalls.length,
   };
 }

@@ -475,6 +475,10 @@ no vague qualifiers), and verification completeness.
   and recovery, and treat the PRD as not `ready` until the user decides.
 - Never run `checkshirt gate override` yourself; it is user-only, and the
   recorded deviation must carry the user's own reason.
+- The PASS is pinned to the content hash of the PRD and qa-log bodies
+  (frontmatter is exempt, so flipping `status`/`human_approval` after the gate
+  is fine): any body edit afterwards makes `checkshirt gate status` report
+  `STALE`, and a stale spec gate must be re-run before implementation.
 - When no intake qa-log exists (conversation-only PRD), record that the spec
   gate was skipped for lack of a source document.
 

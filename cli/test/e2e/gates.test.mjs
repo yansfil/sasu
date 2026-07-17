@@ -255,6 +255,30 @@ test("verify PASS prints a per-criterion semantic summary", () => {
   assert.match(result.stdout, /\[semantic\] AC2 PASS - persist\(\) added/);
 });
 
+test("freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gate status", () => {
+  const dir = makeProject();
+  const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+
+  const fresh = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
+  assert.match(fresh.stdout, /gate:gap-audit\] PASS/);
+
+  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q9: new answer added after the gate passed\n");
+  const stale = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
+  assert.match(stale.stdout, /gate:gap-audit\] STALE/);
+  assert.match(stale.stdout, /stale: qa-log\.md changed after this gate passed/);
+
+  // Re-running the gate on the edited document restores a live PASS.
+  const rerun = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(rerun.status, 0, rerun.stdout + rerun.stderr);
+  const restored = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
+  assert.match(restored.stdout, /gate:gap-audit\] PASS/);
+});
+
 test("gate status reports all three gates and the judge call count", () => {
   const dir = makeProject();
   runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {

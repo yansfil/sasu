@@ -82,6 +82,9 @@ function printStatusView(view: GateStatusView): void {
   const head = `[gate:${view.gate}] ${view.effective}${view.overridden ? " (overridden by user)" : ""}`;
   const meta = `attempts ${view.attempts}/${view.budget}${view.budgetExhausted ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (a user-instructed re-run may continue)" : ""}`;
   process.stdout.write(`${head} | ${meta}\n`);
+  for (const input of view.staleInputs) {
+    process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - re-run the gate on the current document\n`);
+  }
   for (const finding of view.findings) {
     const human = finding.requiresHuman ? " [needs human decision]" : "";
     process.stdout.write(`  - ${finding.severity} ${finding.area}: ${finding.missing}${human}\n`);

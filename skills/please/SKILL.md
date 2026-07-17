@@ -123,6 +123,7 @@ When a gate (gap-audit, spec, or verify) blocks during a `$please` run:
 3. Stop and hand the findings to the user only when a finding is marked `needs human decision`, or the gate output says the retry budget is exhausted.
 
 Never run `checkshirt gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
+A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `checkshirt gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.
 Record each gate outcome in the final report.
 
 When blocked, follow the `implement` blocked/partial handoff rules; do not soften status to `Done`.

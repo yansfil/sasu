@@ -1,8 +1,39 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Finding, GapVerdict, JudgeCallRecord } from "../judge/types";
 
 export type GateId = "gap-audit" | "spec" | "verify";
+
+/** A gate input document, pinned by content hash at the moment the gate ran. */
+export interface GateInput {
+  path: string;
+  sha256: string;
+}
+
+export interface StaleInput {
+  path: string;
+  reason: "changed" | "missing";
+}
+
+export function sha256Of(content: string): string {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Freshness hashes the document substance, not its lifecycle bookkeeping.
+ * Frontmatter (status/human_approval/updated_at flips) and the qa-log's
+ * `## Audit History` section (where the gate's own result is recorded) change
+ * legitimately AFTER a gate passes; hashing them would make every PASS
+ * self-staling. Everything else in the body pins the PASS.
+ */
+export function freshnessHash(content: string): string {
+  let body = content;
+  const frontmatter = body.match(/^---\n[\s\S]*?\n---\n/);
+  if (frontmatter) body = body.slice(frontmatter[0].length);
+  body = body.replace(/^## Audit History\s*$[\s\S]*?(?=^## |(?![\s\S]))/m, "");
+  return sha256Of(body.trim());
+}
 
 export interface GateDeviation {
   at: string;
@@ -27,6 +58,8 @@ export interface GateRecord {
   findings: Finding[];
   lastRunAt: string | null;
   history: GateRunSummary[];
+  /** Input documents hashed at the last verdict run; absent on pre-0.2 state files. */
+  inputs?: GateInput[];
 }
 
 export interface GatesState {
@@ -98,7 +131,9 @@ export class GateStore {
 export interface GateStatusView {
   gate: GateId;
   verdict: GateRecord["verdict"];
-  effective: "PASS" | "BLOCKED" | "NOT_RUN";
+  effective: "PASS" | "STALE" | "BLOCKED" | "NOT_RUN";
+  stale: boolean;
+  staleInputs: StaleInput[];
   overridden: boolean;
   attempts: number;
   budget: number;
@@ -107,13 +142,40 @@ export interface GateStatusView {
   findings: Finding[];
 }
 
-export function gateStatus(state: GatesState, gate: GateId, budget: number): GateStatusView {
+/**
+ * Freshness check: a PASS earned on an input document that has since changed
+ * is not a live PASS. Compares the current file content against the hashes
+ * recorded at the passing run.
+ */
+function staleInputsFor(projectRoot: string, record: GateRecord): StaleInput[] {
+  const stale: StaleInput[] = [];
+  for (const input of record.inputs ?? []) {
+    const resolved = path.join(projectRoot, input.path);
+    if (!fs.existsSync(resolved)) {
+      stale.push({ path: input.path, reason: "missing" });
+    } else if (freshnessHash(fs.readFileSync(resolved, "utf8")) !== input.sha256) {
+      stale.push({ path: input.path, reason: "changed" });
+    }
+  }
+  return stale;
+}
+
+export function gateStatus(state: GatesState, gate: GateId, budget: number, projectRoot?: string): GateStatusView {
   const record = state.gates[gate] ?? { ...EMPTY_GATE };
   const passed = record.verdict === "PASS" || record.overridden;
+  // Staleness applies only to a judged PASS. An overridden gate is a recorded
+  // user deviation and stands until a new run replaces it.
+  const staleInputs =
+    projectRoot !== undefined && record.verdict === "PASS" && !record.overridden
+      ? staleInputsFor(projectRoot, record)
+      : [];
+  const stale = staleInputs.length > 0;
   return {
     gate,
     verdict: record.verdict,
-    effective: passed ? "PASS" : record.verdict === null ? "NOT_RUN" : "BLOCKED",
+    effective: passed ? (stale ? "STALE" : "PASS") : record.verdict === null ? "NOT_RUN" : "BLOCKED",
+    stale,
+    staleInputs,
     overridden: record.overridden,
     attempts: record.attempts,
     budget,
@@ -128,7 +190,13 @@ export function recordGateResult(
   state: GatesState,
   gate: GateId,
   outcome:
-    | { kind: "verdict"; verdict: GapVerdict["verdict"] | "FAIL"; findings: Finding[]; artifactPayload: unknown }
+    | {
+        kind: "verdict";
+        verdict: GapVerdict["verdict"] | "FAIL";
+        findings: Finding[];
+        artifactPayload: unknown;
+        inputs?: GateInput[];
+      }
     | { kind: "error"; message: string },
   judgeRecords: JudgeCallRecord[],
 ): GatesState {
@@ -139,6 +207,7 @@ export function recordGateResult(
     const artifact = store.writeArtifact(gate, { at, gate, ...((outcome.artifactPayload as object) ?? {}) });
     record.verdict = outcome.verdict;
     record.findings = outcome.findings;
+    record.inputs = outcome.inputs ?? [];
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
     if (outcome.verdict === "PASS") record.overridden = false;
     summary = {

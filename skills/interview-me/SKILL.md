@@ -340,6 +340,7 @@ checkshirt gate gap-audit --slug <topic-slug> --qa-log agents/intake/<topic-slug
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use the final-auditor subagent or a recorded local fallback as the closure audit.
 - Never run `checkshirt gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
 - Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.
+- The PASS is pinned to the qa-log's content hash (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit after the gate passed makes `checkshirt gate status` report `STALE`, and a stale gate must be re-run before handoff.
 - The gate returns a findings list, never a numeric score; the numeric-gate ban in the Core Contract stands.
 
 ## Final Quality Gate
