@@ -40,6 +40,11 @@ export class ClaudeBackend implements JudgeBackend {
       "--output-format",
       "json",
       "--strict-mcp-config",
+      // One-shot judge: no tools at all. Without --tools "" the model keeps
+      // Read/Grep/Glob and wanders the host repo for minutes (observed: 24
+      // turns, 260s) instead of judging the documents already in the prompt.
+      "--tools",
+      "",
       "--disallowedTools",
       "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Agent,Task,TodoWrite",
     ];

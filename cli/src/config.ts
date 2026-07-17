@@ -32,7 +32,13 @@ const DEFAULT_JUDGE: JudgeConfig = {
   backend: "auto",
   tierModels: {
     claude: {
-      frugal: "claude-haiku-4-5",
+      // Frugal was claude-haiku-4-5 until live calibration (2026-07-17,
+      // meeting-hub qa-log): on the exhaustive gap-scan prompt haiku spent
+      // 11-20k output tokens per call (146-238s, brushing the 180s timeout)
+      // and flipped verdicts across runs, while sonnet answered in ~7k
+      // tokens (~80s) decisively - faster wall-clock at similar effective
+      // cost. Pin haiku back via judge.tierModels.claude.frugal if desired.
+      frugal: "claude-sonnet-5",
       standard: "claude-sonnet-5",
       frontier: "claude-opus-4-8",
     },

@@ -14,9 +14,9 @@ function tempProject(configJson) {
   return dir;
 }
 
-test("tier-config default mapping: gates use haiku-class frugal and sonnet-class standard", () => {
+test("tier-config default mapping: frugal defaults to sonnet-class after the 2026-07-17 latency calibration", () => {
   const config = loadConfig(tempProject());
-  assert.equal(tierModelFor(config, "claude", "frugal"), "claude-haiku-4-5");
+  assert.equal(tierModelFor(config, "claude", "frugal"), "claude-sonnet-5");
   assert.equal(tierModelFor(config, "claude", "standard"), "claude-sonnet-5");
   assert.equal(tierModelFor(config, "claude", "frontier"), "claude-opus-4-8");
   assert.equal(config.judge.retryBudget, 3);
@@ -36,7 +36,7 @@ test("tier-config override: agents/config.json overrides tier models and retry b
   assert.equal(config.judge.backend, "codex");
   assert.equal(config.judge.retryBudget, 5);
   assert.equal(tierModelFor(config, "claude", "standard"), "claude-opus-4-8");
-  assert.equal(tierModelFor(config, "claude", "frugal"), "claude-haiku-4-5");
+  assert.equal(tierModelFor(config, "claude", "frugal"), "claude-sonnet-5", "unset tiers keep their defaults");
   assert.equal(tierModelFor(config, "codex", "standard"), "gpt-5.2");
 });
 

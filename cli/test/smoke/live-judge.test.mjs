@@ -48,7 +48,7 @@ test("live claude -p returns schema-valid gate JSON", { timeout: 240_000 }, () =
   const outcome = runJudge(configForBackend("claude"), "smoke:claude", "frugal", PROMPT, validateGapVerdict);
   assert.ok(["PASS", "BLOCK"].includes(outcome.value.verdict));
   assert.equal(outcome.record.backend, "claude");
-  assert.equal(outcome.record.model, "claude-haiku-4-5");
+  assert.equal(outcome.record.model, "claude-sonnet-5");
   console.log(`claude smoke: verdict=${outcome.value.verdict} attempts=${outcome.record.attempts} durationMs=${outcome.record.durationMs}`);
 });
 

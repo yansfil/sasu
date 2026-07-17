@@ -83,9 +83,11 @@ Then interview:
      implementing runtime is recommended for reviewer independence but not
      enforced in v1.
    - `judge.tierModels`: per-backend model per tier. Defaults:
-     claude frugal=`claude-haiku-4-5` (gap-audit/spec), standard=`claude-sonnet-5`
+     claude frugal=`claude-sonnet-5` (gap-audit/spec), standard=`claude-sonnet-5`
      (semantic verify), frontier=`claude-opus-4-8`; codex uses the user's own
-     CLI default model unless configured.
+     CLI default model unless configured. (Frugal moved off haiku after live
+     calibration showed haiku slower and less stable on gate prompts; pin
+     `claude.frugal` back to a haiku-class model here if cost matters more.)
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
      (default 3; advisory for autonomous loops - a user-instructed re-run is
      never locked).
@@ -126,7 +128,7 @@ Reference shape:
     "backend": "auto",
     "retryBudget": 3,
     "tierModels": {
-      "claude": { "frugal": "claude-haiku-4-5", "standard": "claude-sonnet-5", "frontier": "claude-opus-4-8" }
+      "claude": { "frugal": "claude-sonnet-5", "standard": "claude-sonnet-5", "frontier": "claude-opus-4-8" }
     }
   },
   "verify": {
