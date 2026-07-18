@@ -89,6 +89,40 @@ test("a full interview turn is two chained commands and the gate prelint accepts
   assert.doesNotMatch(gate.stdout, /\[prelint\] FAIL/);
 });
 
+test("intake coherence is advisory: skips when thin, judges when seeded, never writes gate state", (t) => {
+  const dir = makeProject();
+  runCli(dir, ["intake", "init", "--slug", "coh", "--topic", "Task app", "--where", "greenfield", "--packs", "ux"]);
+
+  // thin interview: skipped, exit 0, no judge call
+  const thin = runCli(dir, ["intake", "coherence", "--slug", "coh", "--json"]);
+  assert.equal(thin.status, 0, thin.stdout + thin.stderr);
+  assert.equal(JSON.parse(thin.stdout).skipped, true);
+
+  for (let i = 1; i <= 3; i += 1) {
+    runCli(dir, [
+      "intake", "decision", "--slug", "coh",
+      "--id", `D-0${i}`, "--kind", "decision", "--area", "ux",
+      "--text", `decision ${i}`, "--priority", "P1", "--source", "user", "--status", "resolved",
+    ]);
+  }
+
+  const stubFile = path.join(dir, "stub.json");
+  fs.writeFileSync(stubFile, JSON.stringify({ verdict: "PASS", findings: [] }));
+  const judged = runCli(dir, ["intake", "coherence", "--slug", "coh", "--json"], { stub: stubFile });
+  assert.equal(judged.status, 0, judged.stdout + judged.stderr);
+  const view = JSON.parse(judged.stdout);
+  assert.equal(view.skipped, false);
+  assert.equal(view.verdict, "PASS");
+  assert.equal(view.resolvedCount, 3);
+  assert.equal(typeof view.durationMs, "number");
+  // advisory contract: no gate directory for the topic
+  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "coh")), false);
+
+  // text mode reports the timing
+  const text = runCli(dir, ["intake", "coherence", "--slug", "coh"], { stub: stubFile });
+  assert.match(text.stdout, /\[intake:coherence\] coherent \(3 resolved decisions judged in [\d.]+s\)/);
+});
+
 test("usage errors exit 2 and unknown subcommands are rejected", () => {
   const dir = makeProject();
   const missing = runCli(dir, ["intake", "log", "--slug", "retry-flow"]);

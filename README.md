@@ -76,6 +76,7 @@ checkshirt intake init      create the interview qa-log skeleton for a topic
 checkshirt intake log       record one answered interview turn (raw capture, counters, cursor)
 checkshirt intake decision  upsert a Decision Register row with enum validation
 checkshirt intake checkpoint  flip needs_normalization and record a normalization checkpoint
+checkshirt intake coherence  advisory mid-interview judge: resolved-decision contradiction + goal drift (never blocks)
 checkshirt intake status    interview state resync: counts, open P0/P1 nodes, checkpoint due, drift
 checkshirt gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
 checkshirt gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
@@ -87,6 +88,8 @@ checkshirt doctor           judge backends, verify commands, contract version
 
 The intake commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation, so a full interview turn costs one short chained command instead of a hand-written multi-hunk markdown edit.
 Every mutating intake command re-runs the structural qa-log prelint (closure-only rules excluded) and reports drift immediately instead of at the gate.
+`intake coherence` adds an independent mid-interview check that the resolved decisions cohere and stay on the stated goal - it reads only the decisions (not the conversation), so it catches direction drift the interviewing agent is biased not to see, and stays advisory: it never touches gate state or the retry budget and its findings are next-question candidates.
+It judges only coherence, never completeness (that is the gap-audit closure gate), and because its input is just the decision table it runs in roughly 3-6s against the frugal-tier judge.
 
 Every command accepts `--json` for structured output: a top-level `contractVersion` (schema-change detection for programmatic consumers), the gate verdict/attempt state, and on gate/verify a `prelint` key kept separate from judge findings.
 Exit codes are identical in both modes (0 pass, 1 block/fail, 2 usage error).

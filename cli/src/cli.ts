@@ -20,6 +20,7 @@ import {
   runIntakeLog,
   type IntakeResult,
 } from "./intake/commands";
+import { runIntakeCoherence, type CoherenceResult } from "./intake/coherence";
 import { contractVersion } from "./version";
 
 const USAGE = `checkshirt - harness CLI: judge gates, verification, doctor
@@ -35,6 +36,7 @@ Usage:
   checkshirt intake log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
   checkshirt intake decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
   checkshirt intake checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
+  checkshirt intake coherence  --slug <topic> [--min-decisions <n>] [--json]
   checkshirt intake status     --slug <topic> [--json]
   checkshirt doctor [--json]
 
@@ -43,6 +45,12 @@ Raw Q&A appends, Decision Register upserts, needs_normalization flips) so the
 interviewing agent records a full turn with one short command. Question choice
 and semantic normalization prose stay with the agent. Register a decision row
 before referencing it from intake log (chain: decision && log).
+
+intake coherence is an advisory mid-interview judge: an independent check that
+the RESOLVED decisions cohere and stay on the stated goal (contradiction and
+drift only, never incompleteness). It never touches gate state or the retry
+budget; its findings are next-question candidates. gap-audit remains the
+closure gate.
 
 --json prints a structured result on every command: a top-level contractVersion,
 and (on gate/verify) a 'prelint' key separate from judge findings. Exit codes are
@@ -193,6 +201,35 @@ function emitIntakeResult(result: IntakeResult, asJson: boolean): never {
   process.exit(0);
 }
 
+function emitCoherenceResult(result: CoherenceResult, asJson: boolean): never {
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
+    process.exit(result.ok ? 0 : 1);
+  }
+  if (result.skipped) {
+    process.stdout.write(`[intake:coherence] skipped - ${result.reason}\n`);
+    process.exit(0);
+  }
+  if (result.error) {
+    process.stdout.write(`[intake:coherence] judge error: ${result.error.code} - ${result.error.message}\n`);
+    process.stdout.write(`recovery: ${result.error.recovery}\n`);
+    process.exit(1);
+  }
+  const timing = result.durationMs !== null ? ` in ${(result.durationMs / 1000).toFixed(1)}s` : "";
+  const head = result.verdict === "PASS" ? "coherent" : "coherence concerns";
+  process.stdout.write(
+    `[intake:coherence] ${head} (${result.resolvedCount} resolved decisions judged${timing})\n`,
+  );
+  for (const finding of result.findings) {
+    const human = finding.requiresHuman ? " [needs human decision]" : "";
+    process.stdout.write(`  - ${finding.severity} ${finding.area}: ${finding.missing}${human}\n`);
+    if (finding.recommendation) process.stdout.write(`    ask: ${finding.recommendation}\n`);
+  }
+  // Advisory: a successful run always exits 0. Findings are next-question
+  // candidates, not a block.
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const [command, subcommand] = args.positional;
@@ -242,6 +279,13 @@ async function main(): Promise<void> {
         .split(",")
         .map((token) => token.trim())
         .filter((token) => token !== "" && token.toLowerCase() !== "none");
+    if (subcommand === "coherence") {
+      const minRaw = optional("min-decisions");
+      const minDecisions = minRaw !== undefined ? Number(minRaw) : 3;
+      if (!Number.isInteger(minDecisions) || minDecisions < 1) fail("--min-decisions must be a positive integer");
+      const coherence = await runIntakeCoherence(projectRoot, loadConfig(projectRoot), { slug, minDecisions });
+      emitCoherenceResult(coherence, asJson);
+    }
     let intakeResult: IntakeResult;
     if (subcommand === "init") {
       intakeResult = runIntakeInit(projectRoot, {

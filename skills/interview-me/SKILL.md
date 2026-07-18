@@ -78,6 +78,21 @@ checkshirt intake checkpoint --slug <slug> --normalized "Q1,Q2" --register-chang
 Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
 If the checkshirt binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
+## Mid-Interview Coherence Check
+
+At each checkpoint, after recording it, run one advisory coherence check:
+
+~~~sh
+checkshirt intake coherence --slug <slug>
+~~~
+
+This is an independent mid-interview judge - it has no access to the interview conversation and reads only the resolved decisions, so it catches direction drift the interviewing agent is biased not to see.
+It judges coherence, not completeness: it reports only contradictions among resolved decisions and drift away from the stated goal, never missing decisions (that is the closure gate's job).
+It is advisory and never blocks: it does not touch gate state or the retry budget, a judge failure is safe to ignore, and it self-skips until at least three decisions are resolved.
+Treat any finding as a high-priority next-question candidate - a P0 coherence finding means the interview may be building on an invalidated premise, so resolve it with the user before piling on more questions.
+A PASS with no findings is the common, correct result; do not manufacture follow-ups from it.
+Do not run this inside the answer-to-question path (it is one judge call); run it at the checkpoint, outside the latency budget.
+
 ## Turn Protocol
 
 The path from receiving an answer to asking the next question is the latency budget; everything else must stay out of it.
@@ -345,7 +360,7 @@ normalization_checkpoint_every: 10
 5. Record the turn with chained `intake decision` and `intake log` commands per the Turn Protocol; reopen an invalidated node with `intake decision --status open`.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
 7. Run the materiality sweep at its trigger.
-8. Checkpoint when `intake status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `intake checkpoint`.
+8. Checkpoint when `intake status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `intake checkpoint`, then run the advisory `intake coherence` check and turn any finding into the next question.
 9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
 10. Run full normalization and record it with `intake checkpoint`.
 11. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
