@@ -38,7 +38,7 @@ An argument after `$please` is a topic brief or emphasis, not a replacement for 
 Before starting, capture verbatim the user message that invoked `$please` (including any argument).
 This exact text is passed to `init --allow-unapproved-prd` later; losing it forces a stop to re-ask.
 
-If `agents/intake/<topic-slug>/qa-log.md` exists for the same topic, use it as an additional canonical interview source per the `gen-prd` skill's normal input rules.
+If `agents/interview/<topic-slug>/qa-log.md` exists for the same topic (or the legacy `agents/intake/<topic-slug>/qa-log.md` from before the rename), use it as an additional canonical interview source per the `gen-prd` skill's normal input rules.
 
 ## Ambiguity Policy
 

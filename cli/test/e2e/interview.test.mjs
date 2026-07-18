@@ -8,7 +8,7 @@ import test from "node:test";
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
 
 function makeProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-intake-e2e-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-interview-e2e-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   return dir;
 }
@@ -28,7 +28,7 @@ function runCli(cwd, args, { stub } = {}) {
 test("a full interview turn is two chained commands and the gate prelint accepts the result", (t) => {
   const dir = makeProject();
   const init = runCli(dir, [
-    "intake", "init",
+    "interview", "init",
     "--slug", "retry-flow",
     "--topic", "Settings retry",
     "--where", "brownfield",
@@ -36,11 +36,11 @@ test("a full interview turn is two chained commands and the gate prelint accepts
     "--understanding", "failed saves need a retry path",
   ]);
   assert.equal(init.status, 0, init.stdout + init.stderr);
-  assert.match(init.stdout, /created agents\/intake\/retry-flow\/qa-log\.md/);
+  assert.match(init.stdout, /created agents\/interview\/retry-flow\/qa-log\.md/);
 
   // per-turn shape: register the decision, then log the turn
   const decision = runCli(dir, [
-    "intake", "decision",
+    "interview", "decision",
     "--slug", "retry-flow",
     "--id", "D-01",
     "--kind", "decision",
@@ -54,7 +54,7 @@ test("a full interview turn is two chained commands and the gate prelint accepts
   assert.equal(decision.status, 0, decision.stdout + decision.stderr);
 
   const log = runCli(dir, [
-    "intake", "log",
+    "interview", "log",
     "--slug", "retry-flow",
     "--label", "Failed save behavior",
     "--asked", "What happens when a save fails?",
@@ -70,10 +70,10 @@ test("a full interview turn is two chained commands and the gate prelint accepts
   assert.deepEqual(parsed.cursor.outstandingNormalization, ["Q1"]);
   assert.deepEqual(parsed.drift, []);
 
-  const checkpoint = runCli(dir, ["intake", "checkpoint", "--slug", "retry-flow", "--normalized", "Q1"]);
+  const checkpoint = runCli(dir, ["interview", "checkpoint", "--slug", "retry-flow", "--normalized", "Q1"]);
   assert.equal(checkpoint.status, 0, checkpoint.stdout + checkpoint.stderr);
 
-  const status = runCli(dir, ["intake", "status", "--slug", "retry-flow", "--json"]);
+  const status = runCli(dir, ["interview", "status", "--slug", "retry-flow", "--json"]);
   assert.equal(status.status, 0, status.stdout + status.stderr);
   const view = JSON.parse(status.stdout);
   assert.equal(view.cursor.questionCount, 1);
@@ -82,25 +82,25 @@ test("a full interview turn is two chained commands and the gate prelint accepts
   // the gap-audit gate's own prelint accepts the CLI-written document
   const stubFile = path.join(dir, "stub.json");
   fs.writeFileSync(stubFile, JSON.stringify({ verdict: "PASS", findings: [] }));
-  const gate = runCli(dir, ["gate", "gap-audit", "--slug", "retry-flow", "--qa-log", "agents/intake/retry-flow/qa-log.md"], {
+  const gate = runCli(dir, ["gate", "gap-audit", "--slug", "retry-flow", "--qa-log", "agents/interview/retry-flow/qa-log.md"], {
     stub: stubFile,
   });
   assert.equal(gate.status, 0, gate.stdout + gate.stderr);
   assert.doesNotMatch(gate.stdout, /\[prelint\] FAIL/);
 });
 
-test("intake coherence is advisory: skips when thin, judges when seeded, never writes gate state", (t) => {
+test("interview coherence is advisory: skips when thin, judges when seeded, never writes gate state", (t) => {
   const dir = makeProject();
-  runCli(dir, ["intake", "init", "--slug", "coh", "--topic", "Task app", "--where", "greenfield", "--packs", "ux"]);
+  runCli(dir, ["interview", "init", "--slug", "coh", "--topic", "Task app", "--where", "greenfield", "--packs", "ux"]);
 
   // thin interview: skipped, exit 0, no judge call
-  const thin = runCli(dir, ["intake", "coherence", "--slug", "coh", "--json"]);
+  const thin = runCli(dir, ["interview", "coherence", "--slug", "coh", "--json"]);
   assert.equal(thin.status, 0, thin.stdout + thin.stderr);
   assert.equal(JSON.parse(thin.stdout).skipped, true);
 
   for (let i = 1; i <= 3; i += 1) {
     runCli(dir, [
-      "intake", "decision", "--slug", "coh",
+      "interview", "decision", "--slug", "coh",
       "--id", `D-0${i}`, "--kind", "decision", "--area", "ux",
       "--text", `decision ${i}`, "--priority", "P1", "--source", "user", "--status", "resolved",
     ]);
@@ -108,7 +108,7 @@ test("intake coherence is advisory: skips when thin, judges when seeded, never w
 
   const stubFile = path.join(dir, "stub.json");
   fs.writeFileSync(stubFile, JSON.stringify({ verdict: "PASS", findings: [] }));
-  const judged = runCli(dir, ["intake", "coherence", "--slug", "coh", "--json"], { stub: stubFile });
+  const judged = runCli(dir, ["interview", "coherence", "--slug", "coh", "--json"], { stub: stubFile });
   assert.equal(judged.status, 0, judged.stdout + judged.stderr);
   const view = JSON.parse(judged.stdout);
   assert.equal(view.skipped, false);
@@ -119,16 +119,16 @@ test("intake coherence is advisory: skips when thin, judges when seeded, never w
   assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "coh")), false);
 
   // text mode reports the timing
-  const text = runCli(dir, ["intake", "coherence", "--slug", "coh"], { stub: stubFile });
-  assert.match(text.stdout, /\[intake:coherence\] coherent \(3 resolved decisions judged in [\d.]+s\)/);
+  const text = runCli(dir, ["interview", "coherence", "--slug", "coh"], { stub: stubFile });
+  assert.match(text.stdout, /\[interview:coherence\] coherent \(3 resolved decisions judged in [\d.]+s\)/);
 });
 
 test("usage errors exit 2 and unknown subcommands are rejected", () => {
   const dir = makeProject();
-  const missing = runCli(dir, ["intake", "log", "--slug", "retry-flow"]);
+  const missing = runCli(dir, ["interview", "log", "--slug", "retry-flow"]);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /missing required --label/);
-  const unknown = runCli(dir, ["intake", "bogus", "--slug", "retry-flow"]);
+  const unknown = runCli(dir, ["interview", "bogus", "--slug", "retry-flow"]);
   assert.equal(unknown.status, 2);
-  assert.match(unknown.stderr, /unknown intake subcommand/);
+  assert.match(unknown.stderr, /unknown interview subcommand/);
 });

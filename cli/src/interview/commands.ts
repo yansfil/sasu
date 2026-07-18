@@ -22,7 +22,7 @@ import {
  * instead of a hand-written multi-hunk markdown edit.
  */
 
-export interface IntakeCursorView {
+export interface InterviewCursorView {
   questionCount: number;
   outstandingNormalization: string[];
   nextDecisionId: string;
@@ -30,12 +30,12 @@ export interface IntakeCursorView {
   checkpointDue: boolean;
 }
 
-export interface IntakeResult {
+export interface InterviewResult {
   ok: boolean;
   action: "init" | "log" | "decision" | "checkpoint" | "status";
   slug: string;
   qaLog: string;
-  cursor: IntakeCursorView;
+  cursor: InterviewCursorView;
   /** Structural drift found by the gap-audit prelint (closure-only rules excluded). */
   drift: PrelintFinding[];
   detail: Record<string, unknown>;
@@ -47,14 +47,34 @@ function assertSlug(slug: string): void {
   }
 }
 
+/** Canonical qa-log path for a topic (the directory `interview init` writes to). */
 export function qaLogPathFor(projectRoot: string, slug: string): string {
+  return path.join(projectRoot, "agents", "interview", slug, "qa-log.md");
+}
+
+/** Legacy path from before the intake -> interview rename; read-only fallback. */
+function legacyQaLogPathFor(projectRoot: string, slug: string): string {
   return path.join(projectRoot, "agents", "intake", slug, "qa-log.md");
 }
 
+/**
+ * Resolve the qa-log to operate on: the canonical path, or the legacy
+ * `agents/intake/` path when an interview started before the rename. Writes go
+ * back to whichever file was resolved, so an in-flight legacy interview keeps
+ * working in place without a migration step.
+ */
+export function resolveQaLogPath(projectRoot: string, slug: string): string {
+  const current = qaLogPathFor(projectRoot, slug);
+  if (fs.existsSync(current)) return current;
+  const legacy = legacyQaLogPathFor(projectRoot, slug);
+  if (fs.existsSync(legacy)) return legacy;
+  return current;
+}
+
 function readQaLog(projectRoot: string, slug: string): { file: string; content: string } {
-  const file = qaLogPathFor(projectRoot, slug);
+  const file = resolveQaLogPath(projectRoot, slug);
   if (!fs.existsSync(file)) {
-    throw new Error(`qa-log not found: ${path.relative(projectRoot, file)} (run intake init first)`);
+    throw new Error(`qa-log not found: ${path.relative(projectRoot, file)} (run interview init first)`);
   }
   return { file, content: fs.readFileSync(file, "utf8") };
 }
@@ -69,18 +89,18 @@ function driftFindings(content: string): PrelintFinding[] {
 }
 
 function result(
-  action: IntakeResult["action"],
+  action: InterviewResult["action"],
   projectRoot: string,
   slug: string,
   content: string,
   detail: Record<string, unknown>,
-): IntakeResult {
+): InterviewResult {
   const state: QaLogState = readQaLogState(content);
   return {
     ok: true,
     action,
     slug,
-    qaLog: path.relative(projectRoot, qaLogPathFor(projectRoot, slug)),
+    qaLog: path.relative(projectRoot, resolveQaLogPath(projectRoot, slug)),
     cursor: {
       questionCount: state.questionCount,
       outstandingNormalization: state.outstanding,
@@ -93,7 +113,7 @@ function result(
   };
 }
 
-export interface IntakeInitOptions {
+export interface InterviewInitOptions {
   slug: string;
   topic: string;
   where: string;
@@ -101,11 +121,12 @@ export interface IntakeInitOptions {
   understanding: string[];
 }
 
-export function runIntakeInit(projectRoot: string, options: IntakeInitOptions): IntakeResult {
+export function runInterviewInit(projectRoot: string, options: InterviewInitOptions): InterviewResult {
   assertSlug(options.slug);
   const file = qaLogPathFor(projectRoot, options.slug);
-  if (fs.existsSync(file)) {
-    throw new Error(`qa-log already exists: ${path.relative(projectRoot, file)} (resume it instead of re-initializing)`);
+  const existing = resolveQaLogPath(projectRoot, options.slug);
+  if (fs.existsSync(existing)) {
+    throw new Error(`qa-log already exists: ${path.relative(projectRoot, existing)} (resume it instead of re-initializing)`);
   }
   const content = renderInitialQaLog({
     topic: options.topic,
@@ -118,12 +139,12 @@ export function runIntakeInit(projectRoot: string, options: IntakeInitOptions): 
   return result("init", projectRoot, options.slug, content, { created: true });
 }
 
-export interface IntakeLogOptions extends QaEntryInput {
+export interface InterviewLogOptions extends QaEntryInput {
   slug: string;
   nextQuestion?: string;
 }
 
-export function runIntakeLog(projectRoot: string, options: IntakeLogOptions): IntakeResult {
+export function runInterviewLog(projectRoot: string, options: InterviewLogOptions): InterviewResult {
   assertSlug(options.slug);
   const { file, content } = readQaLog(projectRoot, options.slug);
   const appended = appendQaEntry(content, options);
@@ -135,12 +156,12 @@ export function runIntakeLog(projectRoot: string, options: IntakeLogOptions): In
   });
 }
 
-export interface IntakeDecisionOptions extends Partial<RegisterRow> {
+export interface InterviewDecisionOptions extends Partial<RegisterRow> {
   slug: string;
   id: string;
 }
 
-export function runIntakeDecision(projectRoot: string, options: IntakeDecisionOptions): IntakeResult {
+export function runInterviewDecision(projectRoot: string, options: InterviewDecisionOptions): InterviewResult {
   assertSlug(options.slug);
   const { file, content } = readQaLog(projectRoot, options.slug);
   const { slug: _slug, ...patch } = options;
@@ -154,7 +175,7 @@ export function runIntakeDecision(projectRoot: string, options: IntakeDecisionOp
   });
 }
 
-export interface IntakeCheckpointOptions {
+export interface InterviewCheckpointOptions {
   slug: string;
   normalized: string[];
   registerChanges: string;
@@ -162,7 +183,7 @@ export interface IntakeCheckpointOptions {
   gap: string;
 }
 
-export function runIntakeCheckpoint(projectRoot: string, options: IntakeCheckpointOptions): IntakeResult {
+export function runInterviewCheckpoint(projectRoot: string, options: InterviewCheckpointOptions): InterviewResult {
   assertSlug(options.slug);
   const { file, content } = readQaLog(projectRoot, options.slug);
   const marked = markNormalized(content, options.normalized);
@@ -182,7 +203,7 @@ export function runIntakeCheckpoint(projectRoot: string, options: IntakeCheckpoi
   });
 }
 
-export function readIntakeStatus(projectRoot: string, slug: string): IntakeResult {
+export function readInterviewStatus(projectRoot: string, slug: string): InterviewResult {
   assertSlug(slug);
   const { content } = readQaLog(projectRoot, slug);
   const state = readQaLogState(content);

@@ -1,5 +1,5 @@
 /**
- * Deterministic qa-log.md bookkeeping for the interview-me intake loop.
+ * Deterministic qa-log.md bookkeeping for the interview-me capture loop.
  *
  * Ownership split (latency contract): the agent owns question judgment and
  * semantic prose (normalization, UX cards, evidence, sweeps); this module owns
@@ -260,7 +260,7 @@ export function appendQaEntry(content: string, entry: QaEntryInput): { content: 
   const registerIds = new Set(parseRegisterRows(content).map((row) => row.id));
   for (const id of entry.decisionIds) {
     if (!registerIds.has(id)) {
-      throw new Error(`--decision-ids references ${id} which is not in the Decision Register (run intake decision first)`);
+      throw new Error(`--decision-ids references ${id} which is not in the Decision Register (run interview decision first)`);
     }
   }
   const qNumber = Math.max(0, ...questionNumbers(content)) + 1;
@@ -424,7 +424,7 @@ export function renderInitialQaLog(options: InitOptions): string {
     CURSOR_HEADING,
     "",
     "- next_decision_id: D-01",
-    "- next_question: (set by intake log --next-question)",
+    "- next_question: (set by interview log --next-question)",
     "- last_materiality_sweep: preflight",
     "- outstanding_raw_entries: none",
     "- next_checkpoint_at: Q10",

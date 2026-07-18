@@ -5,7 +5,7 @@ import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateGapVerdict, type Finding, type JudgeCallRecord } from "../judge/types";
 import { clampDocument } from "../gates/prompts";
 import { parseRegisterRows, type RegisterRow } from "./qalog";
-import { qaLogPathFor } from "./commands";
+import { resolveQaLogPath } from "./commands";
 
 /**
  * Mid-interview coherence check (advisory).
@@ -118,7 +118,7 @@ export interface CoherenceOptions {
  * there is nothing to judge, so it skips (no judge call, no spend) rather than
  * asking a judge to rule on one or two decisions.
  */
-export async function runIntakeCoherence(
+export async function runInterviewCoherence(
   projectRoot: string,
   config: CheckshirtConfig,
   options: CoherenceOptions,
@@ -126,9 +126,9 @@ export async function runIntakeCoherence(
   if (!/^[a-z0-9][a-z0-9-]*$/.test(options.slug)) {
     throw new Error(`invalid topic slug: ${options.slug} (use kebab-case)`);
   }
-  const file = qaLogPathFor(projectRoot, options.slug);
+  const file = resolveQaLogPath(projectRoot, options.slug);
   if (!fs.existsSync(file)) {
-    throw new Error(`qa-log not found: ${path.relative(projectRoot, file)} (run intake init first)`);
+    throw new Error(`qa-log not found: ${path.relative(projectRoot, file)} (run interview init first)`);
   }
   const content = fs.readFileSync(file, "utf8");
   const topic = content.match(/^topic:\s*"?(.*?)"?\s*$/m)?.[1] ?? options.slug;
@@ -159,7 +159,7 @@ export async function runIntakeCoherence(
   try {
     const outcome = await runJudge(
       config,
-      "intake:coherence",
+      "interview:coherence",
       "frugal",
       coherencePrompt(topic, currentUnderstanding(content), decided),
       (value) => validateGapVerdict(value),

@@ -1,6 +1,8 @@
 # PRD pipeline runtime state
 /.hoyeon/
 /.hoyeom/
+/agents/interview/
+/agents/intake/
 /agents/implement/
 /agents/gates/
 

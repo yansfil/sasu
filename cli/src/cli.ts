@@ -13,14 +13,14 @@ import {
 } from "./gates/commands";
 import type { GateId, GateStatusView } from "./gates/store";
 import {
-  readIntakeStatus,
-  runIntakeCheckpoint,
-  runIntakeDecision,
-  runIntakeInit,
-  runIntakeLog,
-  type IntakeResult,
-} from "./intake/commands";
-import { runIntakeCoherence, type CoherenceResult } from "./intake/coherence";
+  readInterviewStatus,
+  runInterviewCheckpoint,
+  runInterviewDecision,
+  runInterviewInit,
+  runInterviewLog,
+  type InterviewResult,
+} from "./interview/commands";
+import { runInterviewCoherence, type CoherenceResult } from "./interview/coherence";
 import { contractVersion } from "./version";
 
 const USAGE = `checkshirt - harness CLI: judge gates, verification, doctor
@@ -32,21 +32,21 @@ Usage:
   checkshirt gate status    --slug <topic> [--json]
   checkshirt gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   checkshirt verify         --slug <topic> --prd <path> [--base <git-ref>] [--diff-file <path>] [--skip-mechanical] [--json]
-  checkshirt intake init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
-  checkshirt intake log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
-  checkshirt intake decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
-  checkshirt intake checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
-  checkshirt intake coherence  --slug <topic> [--min-decisions <n>] [--json]
-  checkshirt intake status     --slug <topic> [--json]
+  checkshirt interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
+  checkshirt interview log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
+  checkshirt interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
+  checkshirt interview checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
+  checkshirt interview coherence  --slug <topic> [--min-decisions <n>] [--json]
+  checkshirt interview status     --slug <topic> [--json]
   checkshirt doctor [--json]
 
-Intake commands own the qa-log's mechanical bookkeeping (counters, cursor,
+Interview commands own the qa-log's mechanical bookkeeping (counters, cursor,
 Raw Q&A appends, Decision Register upserts, needs_normalization flips) so the
 interviewing agent records a full turn with one short command. Question choice
 and semantic normalization prose stay with the agent. Register a decision row
-before referencing it from intake log (chain: decision && log).
+before referencing it from interview log (chain: decision && log).
 
-intake coherence is an advisory mid-interview judge: an independent check that
+interview coherence is an advisory mid-interview judge: an independent check that
 the RESOLVED decisions cohere and stay on the stated goal (contradiction and
 drift only, never incompleteness). It never touches gate state or the retry
 budget; its findings are next-question candidates. gap-audit remains the
@@ -171,21 +171,21 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
   process.exit(result.ok ? 0 : 1);
 }
 
-function emitIntakeResult(result: IntakeResult, asJson: boolean): never {
+function emitInterviewResult(result: InterviewResult, asJson: boolean): never {
   if (asJson) {
     process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
   } else {
     const c = result.cursor;
-    const summary: Record<IntakeResult["action"], () => string> = {
+    const summary: Record<InterviewResult["action"], () => string> = {
       init: () => `created ${result.qaLog}`,
       log: () => `logged ${String(result.detail.logged)} (decision_ids: ${(result.detail.decisionIds as string[]).join(", ") || "none"})`,
       decision: () => `register ${String(result.detail.id)} ${result.detail.created ? "created" : "updated"}`,
       checkpoint: () => `checkpoint ${String(result.detail.checkpoint)} recorded (normalized: ${(result.detail.normalized as string[]).join(", ") || "none"})`,
       status: () => `qa-log: ${result.qaLog}`,
     };
-    process.stdout.write(`[intake:${result.action}] ${summary[result.action]()}\n`);
+    process.stdout.write(`[interview:${result.action}] ${summary[result.action]()}\n`);
     process.stdout.write(
-      `  questions: ${c.questionCount} | outstanding normalization: ${c.outstandingNormalization.join(", ") || "none"} | next checkpoint: ${c.nextCheckpointAt}${c.checkpointDue ? " (DUE - run intake checkpoint after normalizing)" : ""} | next decision id: ${c.nextDecisionId}\n`,
+      `  questions: ${c.questionCount} | outstanding normalization: ${c.outstandingNormalization.join(", ") || "none"} | next checkpoint: ${c.nextCheckpointAt}${c.checkpointDue ? " (DUE - run interview checkpoint after normalizing)" : ""} | next decision id: ${c.nextDecisionId}\n`,
     );
     if (result.action === "status") {
       const open = result.detail.openMaterial as { id: string; area: string; priority: string; status: string }[];
@@ -207,18 +207,18 @@ function emitCoherenceResult(result: CoherenceResult, asJson: boolean): never {
     process.exit(result.ok ? 0 : 1);
   }
   if (result.skipped) {
-    process.stdout.write(`[intake:coherence] skipped - ${result.reason}\n`);
+    process.stdout.write(`[interview:coherence] skipped - ${result.reason}\n`);
     process.exit(0);
   }
   if (result.error) {
-    process.stdout.write(`[intake:coherence] judge error: ${result.error.code} - ${result.error.message}\n`);
+    process.stdout.write(`[interview:coherence] judge error: ${result.error.code} - ${result.error.message}\n`);
     process.stdout.write(`recovery: ${result.error.recovery}\n`);
     process.exit(1);
   }
   const timing = result.durationMs !== null ? ` in ${(result.durationMs / 1000).toFixed(1)}s` : "";
   const head = result.verdict === "PASS" ? "coherent" : "coherence concerns";
   process.stdout.write(
-    `[intake:coherence] ${head} (${result.resolvedCount} resolved decisions judged${timing})\n`,
+    `[interview:coherence] ${head} (${result.resolvedCount} resolved decisions judged${timing})\n`,
   );
   for (const finding of result.findings) {
     const human = finding.requiresHuman ? " [needs human decision]" : "";
@@ -270,7 +270,7 @@ async function main(): Promise<void> {
     emitGateResult(result, asJson);
   }
 
-  if (command === "intake") {
+  if (command === "interview") {
     const slug = requireFlag(args, "slug");
     const optional = (name: string): string | undefined =>
       typeof args.flags.get(name) === "string" ? (args.flags.get(name) as string) : undefined;
@@ -283,12 +283,12 @@ async function main(): Promise<void> {
       const minRaw = optional("min-decisions");
       const minDecisions = minRaw !== undefined ? Number(minRaw) : 3;
       if (!Number.isInteger(minDecisions) || minDecisions < 1) fail("--min-decisions must be a positive integer");
-      const coherence = await runIntakeCoherence(projectRoot, loadConfig(projectRoot), { slug, minDecisions });
+      const coherence = await runInterviewCoherence(projectRoot, loadConfig(projectRoot), { slug, minDecisions });
       emitCoherenceResult(coherence, asJson);
     }
-    let intakeResult: IntakeResult;
+    let interviewResult: InterviewResult;
     if (subcommand === "init") {
-      intakeResult = runIntakeInit(projectRoot, {
+      interviewResult = runInterviewInit(projectRoot, {
         slug,
         topic: requireFlag(args, "topic"),
         where: requireFlag(args, "where"),
@@ -296,7 +296,7 @@ async function main(): Promise<void> {
         understanding: (optional("understanding") ?? "").split("\n").filter((line) => line.trim() !== ""),
       });
     } else if (subcommand === "log") {
-      intakeResult = runIntakeLog(projectRoot, {
+      interviewResult = runInterviewLog(projectRoot, {
         slug,
         label: requireFlag(args, "label"),
         asked: requireFlag(args, "asked"),
@@ -308,7 +308,7 @@ async function main(): Promise<void> {
         nextQuestion: optional("next-question"),
       });
     } else if (subcommand === "decision") {
-      intakeResult = runIntakeDecision(projectRoot, {
+      interviewResult = runInterviewDecision(projectRoot, {
         slug,
         id: requireFlag(args, "id"),
         kind: optional("kind"),
@@ -320,7 +320,7 @@ async function main(): Promise<void> {
         mapping: optional("mapping"),
       });
     } else if (subcommand === "checkpoint") {
-      intakeResult = runIntakeCheckpoint(projectRoot, {
+      interviewResult = runInterviewCheckpoint(projectRoot, {
         slug,
         normalized: csv(optional("normalized")),
         registerChanges: optional("register-changes") ?? "",
@@ -328,11 +328,11 @@ async function main(): Promise<void> {
         gap: optional("gap") ?? "",
       });
     } else if (subcommand === "status") {
-      intakeResult = readIntakeStatus(projectRoot, slug);
+      interviewResult = readInterviewStatus(projectRoot, slug);
     } else {
-      fail(`unknown intake subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
+      fail(`unknown interview subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
     }
-    emitIntakeResult(intakeResult, asJson);
+    emitInterviewResult(interviewResult, asJson);
   }
 
   if (command === "gate") {

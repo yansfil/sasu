@@ -15,7 +15,7 @@ description: |
 # interview-me
 
 Use this skill before gen-prd when an idea needs a decision-quality interview.
-Write artifacts under agents/intake/<topic-slug>/.
+Write artifacts under agents/interview/<topic-slug>/.
 Keep legacy .hoyeon/intake artifacts readable as fallback only.
 Do not implement code, write the PRD itself, create an execution plan, or mutate product implementation state.
 Match the user's language by default.
@@ -42,37 +42,37 @@ Any deliberate scope reduction must be an explicit decision with the omitted beh
 
 ## Low-Latency Capture
 
-The checkshirt intake CLI owns the qa-log's mechanical bookkeeping; the agent owns question choice and semantic prose.
-Never hand-edit the qa-log for a mutation an intake command can perform.
+The checkshirt interview CLI owns the qa-log's mechanical bookkeeping; the agent owns question choice and semantic prose.
+Never hand-edit the qa-log for a mutation an interview command can perform.
 
-Create agents/intake/<topic-slug>/qa-log.md before Q1:
+Create agents/interview/<topic-slug>/qa-log.md before Q1:
 
 ~~~sh
-checkshirt intake init --slug <topic-slug> --topic "<topic>" --where <where> --packs "<packs>" --understanding "<one bullet per line>"
+checkshirt interview init --slug <topic-slug> --topic "<topic>" --where <where> --packs "<packs>" --understanding "<one bullet per line>"
 ~~~
 
 Record each answered question immediately in raw form with one chained command per turn:
 
 ~~~sh
-checkshirt intake decision --slug <slug> --id D-05 --kind decision --area <area> --text "<decision>" --priority P0 --source "user, Q3" --status resolved --mapping "<PRD mapping>" \
-&& checkshirt intake log --slug <slug> --label "<short>" --asked "<question>" --recommended "<recommendation>" --answer "<raw answer>" --route user-decision --decision-ids "D-05" --notes "<interpretation>" --next-question "<next cursor>"
+checkshirt interview decision --slug <slug> --id D-05 --kind decision --area <area> --text "<decision>" --priority P0 --source "user, Q3" --status resolved --mapping "<PRD mapping>" \
+&& checkshirt interview log --slug <slug> --label "<short>" --asked "<question>" --recommended "<recommendation>" --answer "<raw answer>" --route user-decision --decision-ids "D-05" --notes "<interpretation>" --next-question "<next cursor>"
 ~~~
 
-- Register or patch the affected D# rows first, then log the turn: intake log rejects a decision_ids reference that is not in the register.
+- Register or patch the affected D# rows first, then log the turn: interview log rejects a decision_ids reference that is not in the register.
 - The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
 - New raw entries start with needs_normalization: true until their decision, provenance, and impact are normalized at a checkpoint.
 - Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or sweep prose on every turn; touch those sections only when their content materially changes.
-- Every mutating intake command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
-- Resync with `checkshirt intake status --slug <slug> [--json]` instead of re-reading the whole file.
+- Every mutating interview command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
+- Resync with `checkshirt interview status --slug <slug> [--json]` instead of re-reading the whole file.
 - Do not make the user wait for prose polishing.
 
-Normalize outstanding answers every 10 answered questions; `intake status` reports when a checkpoint is DUE.
+Normalize outstanding answers every 10 answered questions; `interview status` reports when a checkpoint is DUE.
 Normalize after every 2 to 3 answers for high-risk work.
 High-risk work includes production data, migrations, PII, credentials, external APIs, payments, cost, legal or compliance, irreversible side effects, and user-facing launch gates.
 At a checkpoint, edit only the semantic prose that normalization requires (Decision Packets, register wording), then record it:
 
 ~~~sh
-checkshirt intake checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
+checkshirt interview checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
 ~~~
 
 Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
@@ -83,7 +83,7 @@ If the checkshirt binary is unavailable, fall back to direct edits that follow t
 At each checkpoint, after recording it, run one advisory coherence check:
 
 ~~~sh
-checkshirt intake coherence --slug <slug>
+checkshirt interview coherence --slug <slug>
 ~~~
 
 This is an independent mid-interview judge - it has no access to the interview conversation and reads only the resolved decisions, so it catches direction drift the interviewing agent is biased not to see.
@@ -97,9 +97,9 @@ Do not run this inside the answer-to-question path (it is one judge call); run i
 
 The path from receiving an answer to asking the next question is the latency budget; everything else must stay out of it.
 
-1. Interpret the answer, then run one chained intake command (decision upserts, then log).
+1. Interpret the answer, then run one chained interview command (decision upserts, then log).
 2. Ask the next question in the same reply.
-3. Do not run `intake status` or re-read the qa-log inside this path; the mutating command already returns the cursor. Resync only when resuming after an interruption or at a checkpoint.
+3. Do not run `interview status` or re-read the qa-log inside this path; the mutating command already returns the cursor. Resync only when resuming after an interruption or at a checkpoint.
 4. Repo or docs verification inside this path is at most one bounded lookup, and only when its result changes which question to ask next; batch anything broader into preflight, a checkpoint, or the materiality sweep.
 5. UX Scenario Cards, Evidence, and Current Understanding edits happen at their trigger but never between an answer and the next question unless the next question depends on them; otherwise fold them into the next checkpoint.
 6. The open P0/P1 nodes in the register are the standing next-question queue; a new question needs a register node before or with its turn, not a prose rewrite.
@@ -264,7 +264,7 @@ Do not turn the sweep into a second user interview.
 ## Artifacts
 
 Use this qa-log.md structure.
-The intake CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, sweep prose, Audit History) and the manual fallback when checkshirt is unavailable.
+The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, sweep prose, Audit History) and the manual fallback when checkshirt is unavailable.
 Keep raw capture light during the interview.
 Complete every normalized field before marking the file PRD-ready.
 
@@ -355,17 +355,17 @@ normalization_checkpoint_every: 10
 
 1. Mirror current understanding in 2 to 4 bullets.
 2. Preflight the repository and classify relevant packs.
-3. Create qa-log.md with `checkshirt intake init`, then seed the preflight facts as register rows with `intake decision`.
+3. Create qa-log.md with `checkshirt interview init`, then seed the preflight facts as register rows with `interview decision`.
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
-5. Record the turn with chained `intake decision` and `intake log` commands per the Turn Protocol; reopen an invalidated node with `intake decision --status open`.
+5. Record the turn with chained `interview decision` and `interview log` commands per the Turn Protocol; reopen an invalidated node with `interview decision --status open`.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
 7. Run the materiality sweep at its trigger.
-8. Checkpoint when `intake status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `intake checkpoint`, then run the advisory `intake coherence` check and turn any finding into the next question.
+8. Checkpoint when `interview status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
 9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
-10. Run full normalization and record it with `intake checkpoint`.
+10. Run full normalization and record it with `interview checkpoint`.
 11. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
 12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
-13. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/intake/<topic-slug>/qa-log.md "<topic>"`.
+13. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
 ## Gap-Audit Gate (checkshirt)
 
@@ -373,7 +373,7 @@ Independent closure judgment is owned by the checkshirt CLI.
 Run it after full normalization, before marking the qa-log complete:
 
 ~~~sh
-checkshirt gate gap-audit --slug <topic-slug> --qa-log agents/intake/<topic-slug>/qa-log.md
+checkshirt gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/qa-log.md
 ~~~
 
 The gate owns the mechanical document lint: it runs a deterministic prelint

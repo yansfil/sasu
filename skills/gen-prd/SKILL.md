@@ -27,7 +27,7 @@ Match the user's language by default.
 Prefer an explicit context path. The canonical interview source is:
 
 ```text
-agents/intake/<topic-slug>/qa-log.md
+agents/interview/<topic-slug>/qa-log.md
 ```
 
 Legacy clarify summaries are still accepted:
@@ -36,8 +36,9 @@ Legacy clarify summaries are still accepted:
 agents/clarify/<topic-slug>/clarity-summary.md
 ```
 
-If no context path is provided, inspect `agents/intake/` first for the matching
-or most recent qa-log, then `agents/clarify/`. If no complete intake source
+If no context path is provided, inspect `agents/interview/` first for the matching
+or most recent qa-log (then the legacy `agents/intake/` path for interviews
+started before the rename), then `agents/clarify/`. If no complete interview source
 exists and major ambiguity remains, ask one blocking question or recommend
 `$interview-me`.
 
@@ -73,7 +74,7 @@ status: "draft | ready"
 human_approval: "pending | approved"
 review_profile: "trivial | standard | high-risk"
 review_rationale: "<one-sentence semantic risk rationale>"
-source_intake: "agents/intake/<topic-slug>/qa-log.md | current conversation"
+source_intake: "agents/interview/<topic-slug>/qa-log.md | current conversation"
 source_clarity: "agents/clarify/<topic-slug>/clarity-summary.md | none"
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
@@ -455,10 +456,10 @@ Classify remaining items as blocking, deferred, or human taste/approval.
 ### Spec Gate (checkshirt)
 
 After the Harness Readiness Gate passes and before marking the PRD `ready`,
-run the independent spec gate when the PRD has an intake qa-log source:
+run the independent spec gate when the PRD has an interview qa-log source:
 
 ```sh
-checkshirt gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log agents/intake/<topic-slug>/qa-log.md
+checkshirt gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log agents/interview/<topic-slug>/qa-log.md
 ```
 
 An independent judge checks fidelity (every material Decision Register entry

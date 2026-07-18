@@ -12,15 +12,15 @@ import {
   renderInitialQaLog,
   sanitizeCell,
   upsertRegisterRow,
-} from "../../dist/intake/qalog.js";
+} from "../../dist/interview/qalog.js";
 import {
   qaLogPathFor,
-  readIntakeStatus,
-  runIntakeCheckpoint,
-  runIntakeDecision,
-  runIntakeInit,
-  runIntakeLog,
-} from "../../dist/intake/commands.js";
+  readInterviewStatus,
+  runInterviewCheckpoint,
+  runInterviewDecision,
+  runInterviewInit,
+  runInterviewLog,
+} from "../../dist/interview/commands.js";
 import { runPrelint } from "../../dist/gates/prelint.js";
 
 const INIT = {
@@ -31,7 +31,7 @@ const INIT = {
 };
 
 function makeProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-intake-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-interview-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   return dir;
 }
@@ -147,15 +147,15 @@ test("sanitizeCell strips pipes and newlines", () => {
   assert.equal(sanitizeCell("a | b\nc"), "a / b c");
 });
 
-test("intake commands round-trip on disk and stay prelint-clean", () => {
+test("interview commands round-trip on disk and stay prelint-clean", () => {
   const dir = makeProject();
   const slug = "widget-feature";
-  const init = runIntakeInit(dir, { slug, ...INIT });
+  const init = runInterviewInit(dir, { slug, ...INIT });
   assert.equal(init.ok, true);
-  assert.throws(() => runIntakeInit(dir, { slug, ...INIT }), /already exists/);
-  assert.throws(() => runIntakeLog(dir, { slug: "missing-topic", ...ENTRY }), /run intake init first/);
+  assert.throws(() => runInterviewInit(dir, { slug, ...INIT }), /already exists/);
+  assert.throws(() => runInterviewLog(dir, { slug: "missing-topic", ...ENTRY }), /run interview init first/);
 
-  runIntakeDecision(dir, {
+  runInterviewDecision(dir, {
     slug,
     id: "D-01",
     kind: "decision",
@@ -166,13 +166,13 @@ test("intake commands round-trip on disk and stay prelint-clean", () => {
     status: "resolved",
     mapping: "R1",
   });
-  const logged = runIntakeLog(dir, { slug, ...ENTRY, decisionIds: ["D-01"], nextQuestion: "persistence next" });
+  const logged = runInterviewLog(dir, { slug, ...ENTRY, decisionIds: ["D-01"], nextQuestion: "persistence next" });
   assert.equal(logged.detail.logged, "Q1");
   assert.deepEqual(logged.cursor.outstandingNormalization, ["Q1"]);
   assert.equal(logged.cursor.nextDecisionId, "D-02");
   assert.deepEqual(logged.drift, []);
 
-  const checkpoint = runIntakeCheckpoint(dir, {
+  const checkpoint = runInterviewCheckpoint(dir, {
     slug,
     normalized: ["Q1"],
     registerChanges: "D-01 resolved",
@@ -182,7 +182,7 @@ test("intake commands round-trip on disk and stay prelint-clean", () => {
   assert.equal(checkpoint.detail.checkpoint, 1);
   assert.deepEqual(checkpoint.cursor.outstandingNormalization, []);
 
-  const status = readIntakeStatus(dir, slug);
+  const status = readInterviewStatus(dir, slug);
   assert.equal(status.cursor.questionCount, 1);
   assert.deepEqual(status.detail.openMaterial, []);
   assert.deepEqual(status.drift, []);
@@ -194,8 +194,8 @@ test("intake commands round-trip on disk and stay prelint-clean", () => {
 test("status surfaces open material nodes but not closure-only prelint rules", () => {
   const dir = makeProject();
   const slug = "open-nodes";
-  runIntakeInit(dir, { slug, ...INIT });
-  runIntakeDecision(dir, {
+  runInterviewInit(dir, { slug, ...INIT });
+  runInterviewDecision(dir, {
     slug,
     id: "D-01",
     kind: "decision",
@@ -204,12 +204,12 @@ test("status surfaces open material nodes but not closure-only prelint rules", (
     priority: "P0",
     source: "user",
   });
-  const status = readIntakeStatus(dir, slug);
+  const status = readInterviewStatus(dir, slug);
   // open P0 is reported as interview state, not as structural drift
   assert.deepEqual(status.detail.openMaterial, [{ id: "D-01", area: "data", priority: "P0", status: "open" }]);
   assert.deepEqual(status.drift, []);
   // real structural damage is surfaced as drift
   const file = qaLogPathFor(dir, slug);
   fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("## Audit History", "## Renamed"));
-  assert.ok(readIntakeStatus(dir, slug).drift.some((finding) => finding.rule === "qa-section-missing"));
+  assert.ok(readInterviewStatus(dir, slug).drift.some((finding) => finding.rule === "qa-section-missing"));
 });
