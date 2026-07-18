@@ -12,6 +12,14 @@ import {
   type GateCommandResult,
 } from "./gates/commands";
 import type { GateId, GateStatusView } from "./gates/store";
+import {
+  readIntakeStatus,
+  runIntakeCheckpoint,
+  runIntakeDecision,
+  runIntakeInit,
+  runIntakeLog,
+  type IntakeResult,
+} from "./intake/commands";
 import { contractVersion } from "./version";
 
 const USAGE = `checkshirt - harness CLI: judge gates, verification, doctor
@@ -23,7 +31,18 @@ Usage:
   checkshirt gate status    --slug <topic> [--json]
   checkshirt gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   checkshirt verify         --slug <topic> --prd <path> [--base <git-ref>] [--diff-file <path>] [--skip-mechanical] [--json]
+  checkshirt intake init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
+  checkshirt intake log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
+  checkshirt intake decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
+  checkshirt intake checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
+  checkshirt intake status     --slug <topic> [--json]
   checkshirt doctor [--json]
+
+Intake commands own the qa-log's mechanical bookkeeping (counters, cursor,
+Raw Q&A appends, Decision Register upserts, needs_normalization flips) so the
+interviewing agent records a full turn with one short command. Question choice
+and semantic normalization prose stay with the agent. Register a decision row
+before referencing it from intake log (chain: decision && log).
 
 --json prints a structured result on every command: a top-level contractVersion,
 and (on gate/verify) a 'prelint' key separate from judge findings. Exit codes are
@@ -144,6 +163,36 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
   process.exit(result.ok ? 0 : 1);
 }
 
+function emitIntakeResult(result: IntakeResult, asJson: boolean): never {
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
+  } else {
+    const c = result.cursor;
+    const summary: Record<IntakeResult["action"], () => string> = {
+      init: () => `created ${result.qaLog}`,
+      log: () => `logged ${String(result.detail.logged)} (decision_ids: ${(result.detail.decisionIds as string[]).join(", ") || "none"})`,
+      decision: () => `register ${String(result.detail.id)} ${result.detail.created ? "created" : "updated"}`,
+      checkpoint: () => `checkpoint ${String(result.detail.checkpoint)} recorded (normalized: ${(result.detail.normalized as string[]).join(", ") || "none"})`,
+      status: () => `qa-log: ${result.qaLog}`,
+    };
+    process.stdout.write(`[intake:${result.action}] ${summary[result.action]()}\n`);
+    process.stdout.write(
+      `  questions: ${c.questionCount} | outstanding normalization: ${c.outstandingNormalization.join(", ") || "none"} | next checkpoint: ${c.nextCheckpointAt}${c.checkpointDue ? " (DUE - run intake checkpoint after normalizing)" : ""} | next decision id: ${c.nextDecisionId}\n`,
+    );
+    if (result.action === "status") {
+      const open = result.detail.openMaterial as { id: string; area: string; priority: string; status: string }[];
+      process.stdout.write(
+        `  register: ${String(result.detail.registerCount)} rows | open P0/P1: ${open.map((row) => `${row.id} (${row.priority} ${row.area}, ${row.status})`).join(", ") || "none"}\n`,
+      );
+    }
+    for (const finding of result.drift) {
+      const where = finding.line !== null ? ` line ${finding.line}` : "";
+      process.stdout.write(`  [drift] ${finding.rule}${where}: ${finding.missing}\n    fix: ${finding.recommendation}\n`);
+    }
+  }
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const [command, subcommand] = args.positional;
@@ -182,6 +231,64 @@ async function main(): Promise<void> {
       skipMechanical: args.flags.get("skip-mechanical") === true,
     });
     emitGateResult(result, asJson);
+  }
+
+  if (command === "intake") {
+    const slug = requireFlag(args, "slug");
+    const optional = (name: string): string | undefined =>
+      typeof args.flags.get(name) === "string" ? (args.flags.get(name) as string) : undefined;
+    const csv = (value: string | undefined): string[] =>
+      (value ?? "")
+        .split(",")
+        .map((token) => token.trim())
+        .filter((token) => token !== "" && token.toLowerCase() !== "none");
+    let intakeResult: IntakeResult;
+    if (subcommand === "init") {
+      intakeResult = runIntakeInit(projectRoot, {
+        slug,
+        topic: requireFlag(args, "topic"),
+        where: requireFlag(args, "where"),
+        packs: requireFlag(args, "packs"),
+        understanding: (optional("understanding") ?? "").split("\n").filter((line) => line.trim() !== ""),
+      });
+    } else if (subcommand === "log") {
+      intakeResult = runIntakeLog(projectRoot, {
+        slug,
+        label: requireFlag(args, "label"),
+        asked: requireFlag(args, "asked"),
+        answer: requireFlag(args, "answer"),
+        route: optional("route") ?? "user-decision",
+        recommended: optional("recommended") ?? "",
+        decisionIds: csv(optional("decision-ids")),
+        notes: optional("notes") ?? "",
+        nextQuestion: optional("next-question"),
+      });
+    } else if (subcommand === "decision") {
+      intakeResult = runIntakeDecision(projectRoot, {
+        slug,
+        id: requireFlag(args, "id"),
+        kind: optional("kind"),
+        area: optional("area"),
+        text: optional("text"),
+        priority: optional("priority"),
+        source: optional("source"),
+        status: optional("status"),
+        mapping: optional("mapping"),
+      });
+    } else if (subcommand === "checkpoint") {
+      intakeResult = runIntakeCheckpoint(projectRoot, {
+        slug,
+        normalized: csv(optional("normalized")),
+        registerChanges: optional("register-changes") ?? "",
+        reopened: optional("reopened") ?? "",
+        gap: optional("gap") ?? "",
+      });
+    } else if (subcommand === "status") {
+      intakeResult = readIntakeStatus(projectRoot, slug);
+    } else {
+      fail(`unknown intake subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
+    }
+    emitIntakeResult(intakeResult, asJson);
   }
 
   if (command === "gate") {

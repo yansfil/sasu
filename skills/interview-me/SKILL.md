@@ -42,16 +42,41 @@ Any deliberate scope reduction must be an explicit decision with the omitted beh
 
 ## Low-Latency Capture
 
-Create agents/intake/<topic-slug>/qa-log.md before Q1.
-Capture each answer immediately in raw form.
-Set needs_normalization: true until its decision, provenance, and impact are normalized.
-Update only the next-question cursor and affected Decision Register rows.
-Do not make the user wait for prose polishing.
+The checkshirt intake CLI owns the qa-log's mechanical bookkeeping; the agent owns question choice and semantic prose.
+Never hand-edit the qa-log for a mutation an intake command can perform.
 
-Normalize outstanding answers every 10 answered questions.
+Create agents/intake/<topic-slug>/qa-log.md before Q1:
+
+~~~sh
+checkshirt intake init --slug <topic-slug> --topic "<topic>" --where <where> --packs "<packs>" --understanding "<one bullet per line>"
+~~~
+
+Record each answered question immediately in raw form with one chained command per turn:
+
+~~~sh
+checkshirt intake decision --slug <slug> --id D-05 --kind decision --area <area> --text "<decision>" --priority P0 --source "user, Q3" --status resolved --mapping "<PRD mapping>" \
+&& checkshirt intake log --slug <slug> --label "<short>" --asked "<question>" --recommended "<recommendation>" --answer "<raw answer>" --route user-decision --decision-ids "D-05" --notes "<interpretation>" --next-question "<next cursor>"
+~~~
+
+- Register or patch the affected D# rows first, then log the turn: intake log rejects a decision_ids reference that is not in the register.
+- The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
+- New raw entries start with needs_normalization: true until their decision, provenance, and impact are normalized at a checkpoint.
+- Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or sweep prose on every turn; touch those sections only when their content materially changes.
+- Every mutating intake command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
+- Resync with `checkshirt intake status --slug <slug> [--json]` instead of re-reading the whole file.
+- Do not make the user wait for prose polishing.
+
+Normalize outstanding answers every 10 answered questions; `intake status` reports when a checkpoint is DUE.
 Normalize after every 2 to 3 answers for high-risk work.
 High-risk work includes production data, migrations, PII, credentials, external APIs, payments, cost, legal or compliance, irreversible side effects, and user-facing launch gates.
+At a checkpoint, edit only the semantic prose that normalization requires (Decision Packets, register wording), then record it:
+
+~~~sh
+checkshirt intake checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
+~~~
+
 Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
+If the checkshirt binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
 ## Preflight And Routing
 
@@ -213,6 +238,7 @@ Do not turn the sweep into a second user interview.
 ## Artifacts
 
 Use this qa-log.md structure.
+The intake CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, sweep prose, Audit History) and the manual fallback when checkshirt is unavailable.
 Keep raw capture light during the interview.
 Complete every normalized field before marking the file PRD-ready.
 
@@ -303,14 +329,14 @@ normalization_checkpoint_every: 10
 
 1. Mirror current understanding in 2 to 4 bullets.
 2. Preflight the repository and classify relevant packs.
-3. Create qa-log.md with selected packs, a Decision Register, and Q1 rationale.
+3. Create qa-log.md with `checkshirt intake init`, then seed the preflight facts as register rows with `intake decision`.
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
-5. Raw-capture the answer, update the affected D# nodes, and reopen invalidated nodes.
+5. Record the turn with chained `intake decision` and `intake log` commands; reopen an invalidated node with `intake decision --status open`.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope.
 7. Run the materiality sweep at its trigger.
-8. Checkpoint every 10 answers or earlier for high-risk work.
+8. Checkpoint when `intake status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `intake checkpoint`.
 9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
-10. Run full normalization.
+10. Run full normalization and record it with `intake checkpoint`.
 11. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
 12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
 13. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/intake/<topic-slug>/qa-log.md "<topic>"`.
