@@ -78,6 +78,17 @@ checkshirt intake checkpoint --slug <slug> --normalized "Q1,Q2" --register-chang
 Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
 If the checkshirt binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
+## Turn Protocol
+
+The path from receiving an answer to asking the next question is the latency budget; everything else must stay out of it.
+
+1. Interpret the answer, then run one chained intake command (decision upserts, then log).
+2. Ask the next question in the same reply.
+3. Do not run `intake status` or re-read the qa-log inside this path; the mutating command already returns the cursor. Resync only when resuming after an interruption or at a checkpoint.
+4. Repo or docs verification inside this path is at most one bounded lookup, and only when its result changes which question to ask next; batch anything broader into preflight, a checkpoint, or the materiality sweep.
+5. UX Scenario Cards, Evidence, and Current Understanding edits happen at their trigger but never between an answer and the next question unless the next question depends on them; otherwise fold them into the next checkpoint.
+6. The open P0/P1 nodes in the register are the standing next-question queue; a new question needs a register node before or with its turn, not a prose rewrite.
+
 ## Preflight And Routing
 
 Before Q1, inspect only the repo and docs facts that can change the interview.
@@ -331,8 +342,8 @@ normalization_checkpoint_every: 10
 2. Preflight the repository and classify relevant packs.
 3. Create qa-log.md with `checkshirt intake init`, then seed the preflight facts as register rows with `intake decision`.
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
-5. Record the turn with chained `intake decision` and `intake log` commands; reopen an invalidated node with `intake decision --status open`.
-6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope.
+5. Record the turn with chained `intake decision` and `intake log` commands per the Turn Protocol; reopen an invalidated node with `intake decision --status open`.
+6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
 7. Run the materiality sweep at its trigger.
 8. Checkpoint when `intake status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `intake checkpoint`.
 9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
