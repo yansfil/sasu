@@ -46,6 +46,15 @@ test("merge: P2-only findings across lanes stay a PASS with advisories", () => {
   assert.equal(merged.findings.length, 2);
 });
 
+test("merge: a human-required P2 is promoted to P1 and blocks", () => {
+  const merged = mergeLaneFindings([
+    { laneId: "a", findings: [finding({ severity: "P2", requiresHuman: true })] },
+  ]);
+  assert.equal(merged.verdict, "BLOCK");
+  assert.equal(merged.findings[0].severity, "P1");
+  assert.equal(merged.findings[0].requiresHuman, true);
+});
+
 test("merge: normalized-equal findings dedupe keeping the higher severity", () => {
   const merged = mergeLaneFindings([
     { laneId: "a", findings: [finding({ severity: "P2", missing: "Retention period... UNDECIDED!" })] },
@@ -55,6 +64,32 @@ test("merge: normalized-equal findings dedupe keeping the higher severity", () =
   assert.equal(merged.findings[0].severity, "P0");
   assert.equal(merged.dedupedCount, 1);
   assert.equal(merged.verdict, "BLOCK");
+});
+
+test("merge: equal-severity duplicates preserve the human-required finding", () => {
+  const merged = mergeLaneFindings([
+    { laneId: "a", findings: [finding({ requiresHuman: false })] },
+    { laneId: "b", findings: [finding({ requiresHuman: true })] },
+  ]);
+  assert.equal(merged.findings.length, 1);
+  assert.equal(merged.findings[0].requiresHuman, true);
+  assert.equal(merged.verdict, "BLOCK");
+});
+
+test("merge: mixed-severity duplicates preserve requiresHuman in either order", () => {
+  for (const findings of [
+    [finding({ severity: "P0", requiresHuman: false }), finding({ severity: "P1", requiresHuman: true })],
+    [finding({ severity: "P1", requiresHuman: true }), finding({ severity: "P0", requiresHuman: false })],
+  ]) {
+    const merged = mergeLaneFindings([
+      { laneId: "a", findings: [findings[0]] },
+      { laneId: "b", findings: [findings[1]] },
+    ]);
+    assert.equal(merged.findings.length, 1);
+    assert.equal(merged.findings[0].severity, "P0");
+    assert.equal(merged.findings[0].requiresHuman, true);
+    assert.equal(merged.verdict, "BLOCK");
+  }
 });
 
 test("routing: prior findings go to area-matching lanes only", () => {

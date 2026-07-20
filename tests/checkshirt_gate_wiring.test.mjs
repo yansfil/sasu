@@ -19,6 +19,8 @@ test("interview-me routes closure through the gap-audit gate", () => {
   assert.match(skill, /hard block/i);
   assert.match(skill, /Never run `checkshirt gate override` yourself/);
   assert.match(skill, /never a numeric score/i, "the numeric-gate ban must survive the gate integration");
+  assert.match(skill, /A gap finding is not an answer/);
+  assert.match(skill, /`requiresHuman: false` does not authorize resolution/);
 });
 
 test("gen-prd routes readiness through the spec gate", () => {

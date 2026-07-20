@@ -30,11 +30,18 @@ Rules:
   existing conventions - parameter type guards, null/undefined contracts, return-shape mechanics,
   which case variant gets stored - are at most P2 notes, NEVER blockers. Block only on decisions
   that change user-visible behavior, data shape, scope, or risk in a way the USER would care about.
+- CONSENT PROVENANCE: compare every resolved decision or assumption with its cited Raw Q&A answer
+  or exact repository evidence. A judge recommendation is not evidence or permission to resolve a
+  policy. If the recorded policy is stronger or broader than the cited answer - including its scope,
+  duration, lifecycle, compatibility, security, cost, or launch effect - report the unsupported part.
+  Treat invented consent as P0 because it corrupts the canonical PRD source, including on a re-run.
 - PASS may carry P2 notes only.
-- requiresHuman is true ONLY for product decisions or taste judgments an agent must not invent.
-  Anything resolvable by reading the codebase or by a reasonable engineering default (function
-  signatures, return types, symmetric error handling) is NOT requiresHuman - report it as a
-  normal finding the implementing agent can close, or omit it if immaterial.
+- requiresHuman is true whenever closure needs explicit user intent or approval, including product
+  behavior, scope, data lifecycle, public or provider contracts, compatibility or deprecation,
+  auth or security, cost, launch, and taste judgments.
+- requiresHuman: false does not authorize the agent to invent or silently resolve a policy. Use false
+  only when exact repository evidence settles the gap or the remaining choice is a reversible internal
+  P2 engineering detail; otherwise recommend explicit confirmation or deferral.
 - Never output a numeric score of any kind.`;
 
 export interface PriorFinding {
@@ -145,8 +152,9 @@ function rerunContext(priorFindings: PriorFinding[], rerun = priorFindings.lengt
 RE-RUN CONTEXT: this document was judged before (and may have passed) and has since been revised.
 No unresolved prior finding carries over, so every finding you report MUST carry an extra field
 "origin": "new". Do NOT open new, deeper lines of questioning about aspects that were previously
-acceptable: the harness enforces convergence mechanically - new findings below P0 cannot block, so
-report a new finding only when the revision introduced it or it is a missed P0.
+acceptable. Report a new finding only when the revision introduced it, it is a missed P0, or closing
+it requires explicit human agreement. The harness keeps human-required findings blocking on re-runs;
+other new findings below P0 cannot block.
 `;
   }
   const lines = priorFindings.map((f) => `- [${f.severity}/${f.area}] ${f.missing}`).join("\n");
@@ -158,10 +166,11 @@ has since revised it. Judge the revision as follows:
 2. Report a prior finding again ONLY if it remains genuinely unaddressed.
 3. Do NOT open new, deeper lines of questioning about aspects that were previously acceptable.
    A NEW finding is allowed only when it was introduced by the revision itself, or it is a
-   missed P0 without which the document is unimplementable - treat that as exceptional.
+   missed P0 without which the document is unimplementable, or closing it requires explicit human
+   agreement - treat all three as exceptional.
 4. On this re-run every finding MUST carry an extra field "origin": "prior-unresolved" (a prior
    finding that is still unaddressed) or "new". The harness enforces convergence mechanically:
-   new findings below P0 cannot block, so label honestly.
+   human-required findings remain blocking; other new findings below P0 cannot block, so label honestly.
 
 PRIOR FINDINGS:
 ${lines}
@@ -193,7 +202,8 @@ Your only job: list the material gaps that would block writing a faithful PRD fr
 
 A material gap is a missing or ambiguous decision about scope, primary user behavior, data,
 acceptance, verification, risk, or operation that the implementing team would otherwise have to invent.
-Resolved decisions, explicitly deferred items with revisit triggers, and explicitly rejected options are NOT gaps.
+Resolved decisions supported by their cited Raw Q&A answers or exact repository evidence,
+explicitly deferred items with revisit triggers, and explicitly rejected options are NOT gaps.
 Do not invent nice-to-have process gaps. An empty findings list with verdict PASS is the correct
 answer for a complete log.
 

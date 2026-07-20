@@ -14,6 +14,14 @@ test("re-run gap-audit prompt carries prior findings and the convergence contrac
   assert.match(prompt, /RE-RUN CONTEXT/);
   assert.match(prompt, /setPriority unknown id/);
   assert.match(prompt, /Do NOT open new, deeper lines of questioning/);
+  assert.match(prompt, /human-required findings remain blocking/i);
+  assert.match(prompt, /other new findings below P0 cannot block/i);
+});
+
+test("post-PASS re-run prompt permits findings that require explicit human agreement", () => {
+  const prompt = gapAuditPrompt("log", [], { rerun: true });
+  assert.match(prompt, /closing\s+it requires explicit human agreement/i);
+  assert.match(prompt, /keeps human-required findings blocking/i);
 });
 
 test("re-run spec prompt carries prior findings", () => {
@@ -24,6 +32,15 @@ test("re-run spec prompt carries prior findings", () => {
 
 test("depth bar is part of the shared gap contract", () => {
   assert.match(gapAuditPrompt("log"), /NEVER blockers/);
+});
+
+test("gap-audit treats explicit consent provenance as a closure requirement", () => {
+  const prompt = gapAuditPrompt("log");
+  assert.match(prompt, /recommendation is not evidence or permission/i);
+  assert.match(prompt, /stronger or broader than the cited answer/i);
+  assert.match(prompt, /invented consent.*P0/i);
+  assert.match(prompt, /requiresHuman: false.*does not authorize/i);
+  assert.match(prompt, /Resolved decisions supported by their cited Raw Q&A answers or exact repository evidence/);
 });
 
 test("clampDocument truncates the middle with a notice", () => {

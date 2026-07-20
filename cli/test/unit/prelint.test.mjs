@@ -34,6 +34,7 @@ const QA_CASES = [
   ["qa-register-columns.md", "qa-register-columns"],
   ["qa-register-row.md", "qa-register-row"],
   ["qa-register-open.md", "qa-register-open"],
+  ["qa-resolved-material-assumption.md", "qa-resolved-material-assumption"],
   ["qa-dangling-decision-id.md", "qa-dangling-decision-id"],
 ];
 

@@ -361,10 +361,11 @@ test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of bl
   assert.equal(state.gates["gap-audit"].findings[0].severity, "P2");
 });
 
-test("fan-out rerun: a post-PASS STALE re-run cannot re-block on a new non-P0 finding", () => {
+test("fan-out rerun: a post-PASS STALE re-run demotes only new non-human non-P0 findings", () => {
   // E2E rehearsal regression (2026-07-17): after a PASS, appending a harmless
   // Q&A and re-running produced fresh P1 blockers. Post-PASS re-runs are
-  // reruns under the convergence rule: only a new P0 may re-block.
+  // reruns under the convergence rule: only a new P0 or a finding requiring
+  // explicit human agreement may re-block.
   const dir = makeProject();
   const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, { byPurpose: { default: { verdict: "PASS", findings: [] } } }),
@@ -397,8 +398,33 @@ test("fan-out rerun: a post-PASS STALE re-run cannot re-block on a new non-P0 fi
   const state = gatesState(dir, "fixture");
   assert.equal(state.gates["gap-audit"].verdict, "PASS");
 
+  // A new P1 that requires explicit human agreement must not be auto-demoted.
+  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q10: consent-sensitive edit\n- answer: pending\n");
+  const human = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, {
+      byPurpose: {
+        "lane:data-tech": {
+          verdict: "BLOCK",
+          findings: [
+            {
+              area: "data/lifecycle",
+              severity: "P1",
+              missing: "retention needs explicit user agreement",
+              recommendation: "ask the user",
+              requiresHuman: true,
+              origin: "new",
+            },
+          ],
+        },
+        default: { verdict: "PASS", findings: [] },
+      },
+    }),
+  });
+  assert.equal(human.status, 1, "a new human-required P1 must block after a PASS");
+  assert.match(human.stdout, /needs human decision/);
+
   // A new P0 still re-blocks: PASS is not immunity against real misses.
-  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q10: another edit\n- answer: sure\n");
+  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q11: another edit\n- answer: sure\n");
   const p0 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, {
       byPurpose: {

@@ -150,9 +150,12 @@ Use Source / owner to distinguish user decisions, code or docs facts, provider e
 Use P0 for a decision that can invalidate the PRD source or primary experience.
 Use P1 for a material decision that changes implementation or verification.
 Use P2 for a bounded detail that can safely remain deferred.
-Use Status only for lifecycle state; an adopted assumption is Kind `assumption` with Status `resolved`, not a separate status.
+Use Status only for lifecycle state; a permitted P2 adopted default is Kind `assumption` with Status `resolved`, not a separate status.
 
 Only silently adopt a default when it is reversible, does not change user-visible behavior, scope, public or provider contract, data shape, auth, security, cost, or launch criteria, and has an explicit verification path.
+Classify every silently adopted default as P2.
+Never mark a P0 or P1 assumption resolved: ask for explicit user agreement and record it as a decision, convert exact repository evidence into a fact, or defer the assumption with an owner and revisit trigger.
+Request explicit confirmation whenever a proposed resolution selects user-visible behavior, data lifecycle, a public or provider contract, compatibility or deprecation, auth or security, cost, or launch intent.
 Record every adopted default as Kind assumption with its source and revisit trigger.
 Treat a short affirmative answer such as `yes`, `응`, or `그렇게 하자` as acceptance only when it unambiguously refers to the immediately preceding explicit recommendation.
 Record that source as a user-accepted recommendation in the relevant Q# rather than as an agent default.
@@ -385,7 +388,11 @@ number: fix the document and re-run freely - prelint failures never call the
 judge and never consume the retry budget.
 
 - The gate is a hard block: exit 1 means closure is blocked and the findings list the material gaps.
-- Findings are next-question candidates: resolve each finding with the user or in the register, then re-run the gate.
+- A gap finding is not an answer; treat it only as evidence that a decision or source is missing.
+- `requiresHuman: false` does not authorize resolution.
+  Close such a finding only with an explicit user answer, exact repository evidence recorded as a fact, or a reversible P2 internal default that satisfies the silent-default rule.
+  Otherwise ask one focused question or defer it with an owner and revisit trigger, then re-run the gate.
+- Never promote a judge recommendation into a user decision or strengthen its scope, duration, lifecycle, compatibility, security, cost, or launch policy beyond the cited answer.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
 - When the output says the retry budget is exhausted, stop and hand the findings to the user instead of re-running.

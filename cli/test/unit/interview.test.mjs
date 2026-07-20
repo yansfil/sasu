@@ -213,3 +213,21 @@ test("status surfaces open material nodes but not closure-only prelint rules", (
   fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("## Audit History", "## Renamed"));
   assert.ok(readInterviewStatus(dir, slug).drift.some((finding) => finding.rule === "qa-section-missing"));
 });
+
+test("interview commands surface a resolved material assumption as consent drift", () => {
+  const dir = makeProject();
+  const slug = "implicit-assumption";
+  runInterviewInit(dir, { slug, ...INIT });
+  const decision = runInterviewDecision(dir, {
+    slug,
+    id: "D-01",
+    kind: "assumption",
+    area: "data",
+    text: "events are retained for the account lifetime",
+    priority: "P1",
+    source: "agent default",
+    status: "resolved",
+    mapping: "R1; revisit if retention changes",
+  });
+  assert.ok(decision.drift.some((finding) => finding.rule === "qa-resolved-material-assumption"));
+});

@@ -30,7 +30,7 @@ normalization_checkpoint_every: 10
 | D-06 | decision | ux | 태그는 이름 매칭 + 자동 생성 | P1 | user Q5 | resolved | R/AC |
 | D-07 | decision | data | 제목 없는 노트는 본문 첫 줄 40자 절단 | P2 | user Q6 | resolved | R |
 | D-08 | decision | scope | 회의 노트 폴더 한정, 전체 동기화는 non-goal | P0 | user Q7 | resolved | non-goal |
-| D-09 | assumption | verification | fake provider 통합 테스트 + 스테이징 키 스모크 1회 | P1 | agent, user 동의 Q8 | resolved | V |
+| D-09 | decision | verification | fake provider 통합 테스트 + 스테이징 키 스모크 1회 | P1 | agent proposal, user 동의 Q8 | resolved | V |
 | D-10 | decision | ux | 목록 헤더에 마지막 동기화 상대 시간 표시 | P2 | user Q9 | resolved | R/AC |
 | D-11 | decision | data | 삭제는 soft-delete 전파: 한쪽에서 삭제되면 상대편은 휴지통으로 이동, 30일 보존 후 영구 삭제 | P0 | user Q10 | resolved | R/AC |
 | D-12 | decision | ux | 편집 충돌은 자동 병합하지 않는다 - 자동 병합(auto-merge) 옵션은 명시적으로 기각. 충돌 노트는 "충돌" 배지를 달고 사용자가 두 버전을 나란히 보고 수동으로 해결한다 | P0 | user Q11 (자동 병합 기각 발언: "자동으로 합치면 회의록이 망가져, 절대 하지 마") | resolved | R/AC + 기각 옵션 가시화 |

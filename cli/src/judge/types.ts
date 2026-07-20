@@ -86,12 +86,14 @@ export function validateGapVerdict(value: unknown, options: { requireOrigin?: bo
     if (options.requireOrigin && origin !== "prior-unresolved" && origin !== "new") {
       return `findings[${i}].origin must be "prior-unresolved" or "new" on a re-run judgment`;
     }
+    const requiresHuman = f["requiresHuman"];
+    if (typeof requiresHuman !== "boolean") return `findings[${i}].requiresHuman must be a boolean`;
     findings.push({
       area,
       severity,
       missing,
       recommendation: asString(f["recommendation"]) ?? "",
-      requiresHuman: f["requiresHuman"] === true,
+      requiresHuman,
       ...(origin === "prior-unresolved" || origin === "new" ? { origin } : {}),
     });
   }

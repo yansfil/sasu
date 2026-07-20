@@ -182,6 +182,15 @@ export function prelintQaLog(content: string): PrelintResult {
             findings.push(
               finding("qa-register-open", row.line, `${id || "row"} is ${priority} and still open`, "Resolve the node with the user or classify it as deferred/blocking/rejected before closure."),
             );
+          } else if (kind === "assumption" && status === "resolved" && (priority === "P0" || priority === "P1")) {
+            findings.push(
+              finding(
+                "qa-resolved-material-assumption",
+                row.line,
+                `${id || "row"} is a resolved ${priority} assumption; material intent or evidence must not remain typed as an assumption`,
+                "Ask for explicit user agreement and record it as a decision, record exact repository evidence as a fact, or defer the assumption with an owner and revisit trigger. Only reversible P2 agent defaults may be silently resolved.",
+              ),
+            );
           }
         }
       }

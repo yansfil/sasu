@@ -104,13 +104,23 @@ test("intake validator rejects duplicate Decision Register IDs", () => {
   assert.match(result.stderr, /duplicates Decision Register ID D-01/);
 });
 
-test("intake validator accepts a reversible agent-owned assumption", () => {
+test("intake validator accepts a reversible P2 agent-owned assumption", () => {
   const qa = fixtureQaLog().replace(
     "| D-01 | decision | UX/design | Failed save exposes retry and preserves input | P0 | user: confirmed 2026-07-14 | resolved | changes retry behavior -> R1, AC1, V1 |",
-    "| D-01 | assumption | UX/design | Retry uses the existing default delay | P1 | agent default from existing repo behavior | resolved | R1, AC1, V1; revisit if retry policy changes |",
+    "| D-01 | assumption | Technical | Retry uses the existing default delay | P2 | agent default from existing repo behavior | resolved | R1, AC1, V1; revisit if retry policy changes |",
   );
   const result = runValidator(qa);
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("intake validator rejects a resolved P0 or P1 assumption", () => {
+  const qa = fixtureQaLog().replace(
+    "| D-01 | decision | UX/design | Failed save exposes retry and preserves input | P0 | user: confirmed 2026-07-14 | resolved | changes retry behavior -> R1, AC1, V1 |",
+    "| D-01 | assumption | Data | Event retention follows the battle lifetime | P1 | agent default | resolved | R1, AC1, V1; revisit if retention changes |",
+  );
+  const result = runValidator(qa);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot resolve material P1 assumption D-01/);
 });
 
 test("intake validator blocks closure while raw notes still need normalization", () => {

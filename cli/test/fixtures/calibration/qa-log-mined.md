@@ -39,7 +39,7 @@ normalization_checkpoint_every: 10
 | D-06 | decision | ux | 태그는 이름 기준 매칭으로 동기화하고, 상대편에 없는 태그는 자동 생성한다 | P1 | user Q5 | resolved | R/AC |
 | D-07 | decision | data | 제목 없는 노트는 본문 첫 줄을 잘라 제목으로 쓴다 (양쪽 동일 규칙) | P2 | user Q6 | resolved | R |
 | D-08 | decision | scope | 동기화 대상은 회의 노트 폴더 하나로 한정, 개인 폴더 전체 동기화는 명시적 non-goal (revisit: 사용자 요청 3건 이상) | P0 | user Q7 | resolved | non-goal |
-| D-09 | assumption | verification | 동기화 로직은 provider를 fake로 대체한 통합 테스트로 검증, 실 API는 스테이징 키로 스모크 1회 | P1 | agent default, user 동의 Q8 | resolved | V |
+| D-09 | decision | verification | 동기화 로직은 provider를 fake로 대체한 통합 테스트로 검증, 실 API는 스테이징 키로 스모크 1회 | P1 | agent proposal, user 동의 Q8 | resolved | V |
 | D-10 | decision | ux | 노트 목록에 마지막 동기화 시각을 상대 시간("3분 전")으로 표시 | P2 | user Q9 | resolved | R/AC |
 | D-11 | decision | data | 본문 1MB 초과 노트는 해당 노트만 동기화 스킵하고 "너무 커서 동기화 제외" 배지를 단다. 본문이 1MB 이하로 줄면 다음 주기에 자동 포함. 다른 노트의 동기화는 영향 없음 | P1 | user Q10 | resolved | R/AC |
 | D-12 | decision | scope | 아카이브된 노트는 동기화 대상에서 제외하고, 아카이브 해제 시 다음 주기부터 다시 포함. 아카이브 상태 자체는 동기화하지 않는다 (NotesHub에 대응 개념 없음) | P1 | user Q11 | resolved | R, non-goal |

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult } from "../../dist/gates/store.js";
+import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
 
 function makeStore() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-store-"));
@@ -81,6 +81,30 @@ test("override unblocks the gate and records a user deviation", () => {
   assert.match(state.deviations[0].reason, /retention/);
 });
 
+test("a new BLOCK supersedes an earlier override", () => {
+  const store = makeStore();
+  let state = store.load();
+  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
+  state = overrideGate(store, state, "gap-audit", "temporary user exception");
+  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
+  const view = gateStatus(state, "gap-audit", 3);
+  assert.equal(view.effective, "BLOCKED");
+  assert.equal(view.overridden, false);
+  assert.equal(state.deviations.length, 1, "the historical deviation remains recorded");
+});
+
+test("a new judge ERROR supersedes an earlier override", () => {
+  const store = makeStore();
+  let state = store.load();
+  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
+  state = overrideGate(store, state, "gap-audit", "temporary user exception");
+  state = recordGateResult(store, state, "gap-audit", { kind: "error", message: "judge-timeout" }, []);
+  const view = gateStatus(state, "gap-audit", 3);
+  assert.equal(view.effective, "BLOCKED");
+  assert.equal(view.verdict, "ERROR");
+  assert.equal(view.overridden, false);
+});
+
 test("receipt fields: judge calls persist with backend, model, and attempts", () => {
   const store = makeStore();
   let state = store.load();
@@ -141,6 +165,28 @@ test("freshness: a PASS stays PASS while the input document is unchanged", () =>
   assert.deepEqual(view.staleInputs, []);
 });
 
+test("freshness: a PASS recorded under the previous input contract becomes STALE", () => {
+  const store = makeStore();
+  const content = "# PRD v1\n";
+  fs.writeFileSync(path.join(store.projectRoot, "prd.md"), content);
+  const state = recordGateResult(
+    store,
+    store.load(),
+    "spec",
+    {
+      kind: "verdict",
+      verdict: "PASS",
+      findings: [],
+      inputs: [{ path: "prd.md", sha256: sha256Of(content.trim()) }],
+      artifactPayload: {},
+    },
+    [],
+  );
+  const view = gateStatus(state, "spec", 2, store.projectRoot);
+  assert.equal(view.effective, "STALE");
+  assert.deepEqual(view.staleInputs, [{ path: "prd.md", reason: "changed" }]);
+});
+
 test("freshness: editing the input document after a PASS turns the gate STALE", () => {
   const store = makeStore();
   const state = passWithInput(store, "prd.md", "# PRD v1\n");
@@ -170,7 +216,7 @@ test("freshness: an overridden gate is a user deviation, never STALE", () => {
   assert.equal(view.stale, false);
 });
 
-test("freshness: pre-0.2 state files without inputs never report STALE", () => {
+test("freshness: legacy PASS records without input hashes are STALE and unverifiable", () => {
   const store = makeStore();
   let state = store.load();
   state = recordGateResult(
@@ -182,8 +228,9 @@ test("freshness: pre-0.2 state files without inputs never report STALE", () => {
   );
   delete state.gates.spec.inputs; // simulate a state file written before freshness existed
   const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "PASS");
-  assert.equal(view.stale, false);
+  assert.equal(view.effective, "STALE");
+  assert.equal(view.stale, true);
+  assert.deepEqual(view.staleInputs, [{ path: "<unrecorded>", reason: "unverifiable" }]);
 });
 
 test("freshness: frontmatter lifecycle flips do not stale the gate", () => {

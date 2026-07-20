@@ -102,10 +102,28 @@ function priorFindingsFor(state: ReturnType<GateStore["load"]>, gate: GateId) {
 }
 
 /**
- * Mechanical convergence rule for re-runs (anti progressive-discovery): only
- * an unresolved prior finding or a NEW P0 may block. Any other new finding is
- * demoted to a non-blocking P2 advisory - recorded, never gate-holding. This
- * moves the convergence guarantee from prompt hope to CLI enforcement.
+ * A finding that explicitly requires a human decision can never remain a P2
+ * advisory. Normalizing it to P1 keeps all fresh and re-run paths fail-closed
+ * even when a judge underestimates its severity.
+ */
+export function enforceHumanBlocking(judged: GapVerdict): GapVerdict {
+  const findings = judged.findings.map((finding) =>
+    finding.requiresHuman && finding.severity === "P2"
+      ? {
+          ...finding,
+          severity: "P1" as const,
+          recommendation: `[promoted: explicit human decision required] ${finding.recommendation}`,
+        }
+      : finding,
+  );
+  return { verdict: findings.some((finding) => finding.severity !== "P2") ? "BLOCK" : "PASS", findings };
+}
+
+/**
+ * Mechanical convergence rule for re-runs (anti progressive-discovery): an
+ * unresolved prior finding, a NEW P0, or a finding that needs explicit human
+ * agreement may block. Other new non-human P1 findings are demoted to P2 so a
+ * re-run cannot grow an endless autonomous checklist.
  */
 export function applyRerunConvergence(judged: GapVerdict): {
   verdict: "PASS" | "BLOCK";
@@ -115,8 +133,10 @@ export function applyRerunConvergence(judged: GapVerdict): {
   const findings: Finding[] = [];
   let blocking = 0;
   let demotedCount = 0;
-  for (const finding of judged.findings) {
-    const canBlock = finding.origin === "prior-unresolved" || (finding.origin === "new" && finding.severity === "P0");
+  for (const finding of enforceHumanBlocking(judged).findings) {
+    const canBlock =
+      finding.origin === "prior-unresolved"
+      || (finding.origin === "new" && (finding.severity === "P0" || finding.requiresHuman));
     if (canBlock && finding.severity !== "P2") {
       blocking += 1;
       findings.push(finding);
@@ -154,7 +174,8 @@ export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[] }
   let dedupedCount = 0;
   for (const lane of lanes) {
     laneFindingCounts[lane.laneId] = lane.findings.length;
-    for (const finding of lane.findings) {
+    for (const rawFinding of lane.findings) {
+      const finding = enforceHumanBlocking({ verdict: "PASS", findings: [rawFinding] }).findings[0]!;
       const key = finding.missing
         .toLowerCase()
         .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -164,9 +185,21 @@ export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[] }
         seen.set(key, finding);
       } else {
         dedupedCount += 1;
-        if ((severityRank[finding.severity] ?? 3) < (severityRank[existing.severity] ?? 3)) {
-          seen.set(key, finding);
-        }
+        const findingRank = severityRank[finding.severity] ?? 3;
+        const existingRank = severityRank[existing.severity] ?? 3;
+        const preferred =
+          findingRank < existingRank
+            ? finding
+            : existingRank < findingRank
+              ? existing
+              : finding.requiresHuman && !existing.requiresHuman
+                ? finding
+                : existing;
+        const combined = enforceHumanBlocking({
+          verdict: "PASS",
+          findings: [{ ...preferred, requiresHuman: existing.requiresHuman || finding.requiresHuman }],
+        }).findings[0]!;
+        seen.set(key, combined);
       }
     }
   }
@@ -215,7 +248,8 @@ async function runGapListGate(
     // Convergence applies to EVERY re-run, including one after a PASS went
     // STALE: the E2E rehearsal (2026-07-17) showed a harmless post-PASS
     // append producing fresh P1 blockers on re-judgment. Once a document has
-    // passed, only an unresolved prior finding or a new P0 may re-block it.
+    // passed, only an unresolved prior finding, a new P0, or a finding that
+    // requires explicit human agreement may re-block it.
     const isRerun = state.gates[gate] !== undefined && state.gates[gate].verdict !== null;
 
     if (!config.judge.fanout) {
@@ -224,7 +258,8 @@ async function runGapListGate(
         validateGapVerdict(value, { requireOrigin: isRerun }),
       );
       records.push(outcome.record);
-      const converged = isRerun ? applyRerunConvergence(outcome.value) : { ...outcome.value, demotedCount: 0 };
+      const humanSafe = enforceHumanBlocking(outcome.value);
+      const converged = isRerun ? applyRerunConvergence(humanSafe) : { ...humanSafe, demotedCount: 0 };
       state = recordGateResult(
         store,
         state,

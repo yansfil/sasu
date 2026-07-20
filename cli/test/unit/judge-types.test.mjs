@@ -37,6 +37,15 @@ test("validateGapVerdict rejects PASS carrying P0 findings", () => {
   assert.equal(typeof result, "string");
 });
 
+test("validateGapVerdict rejects a missing or non-boolean requiresHuman field", () => {
+  for (const requiresHuman of [undefined, "false", 0]) {
+    const finding = { area: "data", severity: "P1", missing: "retention undecided", recommendation: "ask" };
+    if (requiresHuman !== undefined) finding.requiresHuman = requiresHuman;
+    const result = validateGapVerdict({ verdict: "BLOCK", findings: [finding] });
+    assert.match(String(result), /requiresHuman must be a boolean/);
+  }
+});
+
 test("validateGapVerdict rejects numeric-score-shaped output", () => {
   assert.equal(typeof validateGapVerdict({ verdict: 0.19, findings: [] }), "string");
 });

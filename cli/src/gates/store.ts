@@ -13,12 +13,17 @@ export interface GateInput {
 
 export interface StaleInput {
   path: string;
-  reason: "changed" | "missing";
+  reason: "changed" | "missing" | "unverifiable";
 }
 
 export function sha256Of(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
+
+// Bump this whenever gate-input validity changes so a PASS earned under an
+// older prelint or semantic-source contract becomes STALE instead of being
+// trusted by a newer CLI without revalidation.
+export const FRESHNESS_CONTRACT_VERSION = 2;
 
 /**
  * Freshness hashes the document substance, not its lifecycle bookkeeping.
@@ -32,7 +37,7 @@ export function freshnessHash(content: string): string {
   const frontmatter = body.match(/^---\n[\s\S]*?\n---\n/);
   if (frontmatter) body = body.slice(frontmatter[0].length);
   body = body.replace(/^## Audit History\s*$[\s\S]*?(?=^## |(?![\s\S]))/m, "");
-  return sha256Of(body.trim());
+  return sha256Of(`checkshirt-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
 }
 
 export interface GateDeviation {
@@ -148,8 +153,11 @@ export interface GateStatusView {
  * recorded at the passing run.
  */
 function staleInputsFor(projectRoot: string, record: GateRecord): StaleInput[] {
+  if (!record.inputs || record.inputs.length === 0) {
+    return [{ path: "<unrecorded>", reason: "unverifiable" }];
+  }
   const stale: StaleInput[] = [];
-  for (const input of record.inputs ?? []) {
+  for (const input of record.inputs) {
     const resolved = path.join(projectRoot, input.path);
     if (!fs.existsSync(resolved)) {
       stale.push({ path: input.path, reason: "missing" });
@@ -202,6 +210,10 @@ export function recordGateResult(
 ): GatesState {
   const record = state.gates[gate] ?? { ...EMPTY_GATE };
   const at = new Date().toISOString();
+  // A new judged result supersedes any earlier user override. The deviation
+  // remains in history, but it must not turn a later BLOCK/FAIL/ERROR into an
+  // effective PASS.
+  record.overridden = false;
   let summary: GateRunSummary;
   if (outcome.kind === "verdict") {
     const artifact = store.writeArtifact(gate, { at, gate, ...((outcome.artifactPayload as object) ?? {}) });
@@ -209,7 +221,6 @@ export function recordGateResult(
     record.findings = outcome.findings;
     record.inputs = outcome.inputs ?? [];
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
-    if (outcome.verdict === "PASS") record.overridden = false;
     summary = {
       at,
       verdict: outcome.verdict,

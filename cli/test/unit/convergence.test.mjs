@@ -15,16 +15,37 @@ test("re-run convergence: a new P0 still blocks (catastrophic-miss escape hatch)
   assert.equal(out.verdict, "BLOCK");
 });
 
-test("re-run convergence: new P1 is demoted to a non-blocking P2 advisory and gate PASSes", () => {
+test("re-run convergence: a new P1 requiring human agreement remains blocking", () => {
   const out = applyRerunConvergence({
     verdict: "BLOCK",
     findings: [f({ origin: "new", severity: "P1", requiresHuman: true })],
+  });
+  assert.equal(out.verdict, "BLOCK");
+  assert.equal(out.demotedCount, 0);
+  assert.equal(out.findings[0].severity, "P1");
+  assert.equal(out.findings[0].requiresHuman, true);
+});
+
+test("re-run convergence: a new non-human P1 is demoted to a non-blocking P2 advisory", () => {
+  const out = applyRerunConvergence({
+    verdict: "BLOCK",
+    findings: [f({ origin: "new", severity: "P1", requiresHuman: false })],
   });
   assert.equal(out.verdict, "PASS");
   assert.equal(out.demotedCount, 1);
   assert.equal(out.findings[0].severity, "P2");
   assert.equal(out.findings[0].requiresHuman, false, "demoted advisories must not trigger human stops");
   assert.match(out.findings[0].recommendation, /auto-demoted/);
+});
+
+test("re-run convergence: a human-required P2 is promoted and blocks", () => {
+  const out = applyRerunConvergence({
+    verdict: "PASS",
+    findings: [f({ origin: "new", severity: "P2", requiresHuman: true })],
+  });
+  assert.equal(out.verdict, "BLOCK");
+  assert.equal(out.findings[0].severity, "P1");
+  assert.equal(out.findings[0].requiresHuman, true);
 });
 
 test("re-run convergence: mixed findings block only on the prior-unresolved one", () => {

@@ -95,6 +95,8 @@ Every command accepts `--json` for structured output: a top-level `contractVersi
 Exit codes are identical in both modes (0 pass, 1 block/fail, 2 usage error).
 
 Before any judge call, gates run a deterministic document prelint at $0: the qa-log (required sections, Decision Register integrity, dangling `decision_ids`, frontmatter enums, open P0/P1 nodes) at the gap-audit entrance, and the PRD (required sections 1-12, frontmatter enums, dangling Covers references, uncovered ACs, 9.2/9.1 mode conformance) at the spec and verify entrances.
+The qa-log prelint also rejects resolved P0/P1 assumptions, while the gap-audit judge checks that resolved policies do not claim broader user consent than their cited Raw Q&A answers support.
+A finding that requires explicit human agreement remains blocking on re-runs, and a missing or outdated gate-input contract makes older PASS records stale until revalidated.
 A prelint failure hard-blocks with rule IDs and line numbers but never calls the judge and never consumes a retry-budget attempt, so structural defects are fixed for free and judge findings stay purely semantic.
 The rule set targets zero false positives; ID numbering gaps (R1, R2, R4) are deliberately not checked.
 

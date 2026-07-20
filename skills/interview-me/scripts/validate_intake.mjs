@@ -147,6 +147,9 @@ for (const [index, row] of frontier.rows.entries()) {
   if ((node.Priority === "P0" || node.Priority === "P1") && node.Status === "open") {
     fail(label + " leaves material " + node.Priority + " node " + node.ID + " open.");
   }
+  if ((node.Priority === "P0" || node.Priority === "P1") && node.Kind === "assumption" && node.Status === "resolved") {
+    fail(label + " cannot resolve material " + node.Priority + " assumption " + node.ID + "; record explicit user agreement as a decision, verified repository behavior as a fact, or defer the assumption.");
+  }
   nodes.push(node);
 }
 
