@@ -167,22 +167,15 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-prompt
 Before this review, stop verification-only runtime servers, browser sessions, tunnels, and background processes unless there is an explicit reason to leave one running.
 Record shutdown evidence or the intentional left-running exception.
 
-For `high-risk`, perform the full adversarial review.
+For `high-risk`, perform a delta review on top of the recorded gates, not a re-derivation.
 The reviewer must check:
 
-- the requirements fidelity report exists, passed, is fresh, and has no unresolved finding hidden from the final verdict.
-- the fidelity report is the primary semantic artifact proof.
-- disagreements, omissions, or weak reasoning are called out instead of silently repeating the same checklist.
-- the PRD remained free of executor-only write scopes, owners, parallel safety, low-level dependencies, and ready-node scheduling.
-- the execution plan maps every PRD task to nodes.
-- the TaskGraph accounts for execution nodes, task rollups, acceptance criteria, verification, requirements fidelity review, the policy-required final review, and receipt.
-- every acceptance criterion is met with evidence.
-- every required verification item passed with registered artifacts.
-- no missing, empty, invalid, unregistered, hash-drifted, stale, or wrong-kind artifact remains.
-- `Artifact Audit` summarizes valid evidence classes, spot-checks risky or user-critical artifacts, and lists weak or missing proof without duplicating an already sound fidelity checklist.
-- every deviation is recorded and acceptable.
-- implementation follows the PRD structure lock and guardrails.
-- `implementation-result.md`, state, and the planned final user report agree.
+- the requirements fidelity report exists, passed, is fresh, and has no unresolved finding hidden from the final verdict; it is the primary semantic artifact proof, and its V-by-V reasoning is reopened only where missing, generic, inconsistent, or suspicious.
+- harness-owned mechanical gates (roll-ups, artifact registration and hashes, required-verification status) are trusted unless a signal is inconsistent, missing, or suspicious.
+- risky or user-critical artifacts are spot-checked by opening them, without duplicating an already sound fidelity checklist.
+- every deviation is recorded and acceptable, and unrecorded drift between the diff and the plan or structure lock is a finding.
+- implementation follows the PRD structure lock and guardrails with no unmapped scope.
+- nothing was recorded after the reviews, and `implementation-result.md`, state, and the planned final user report agree without overclaiming.
 
 Write:
 
@@ -209,14 +202,13 @@ An earlier report is rejected.
 
 The report must include these sections:
 
-- `Fidelity Review Checked`, citing the recorded fidelity report path and its SHA-256 from `state.json`.
+- `Fidelity Review Checked`, citing the recorded fidelity report path and status.
 - `Findings`.
-- `Checklist Coverage`.
 - `Artifact Audit`.
 - `Deviation Audit`.
 - `Verdict`.
 
-The report must reference every required `V#` and contain a standalone `Status: PASS` line when recording `--status pass`.
+The report must contain a standalone `Status: PASS` line when recording `--status pass`; it does not re-list every required `V#` (the fidelity review owns that checklist).
 The harness stores a git worktree snapshot and makes the review stale when source changes afterward.
 
 ## Complete Finalization

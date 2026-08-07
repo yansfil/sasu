@@ -276,47 +276,20 @@ The phase has not changed since the last directive, so the full procedure is not
 Drive the Next required item above to done, then record it with the matching harness command: \`mark-node\` for execution nodes, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark-node --ac AC1,AC2\` closes a node plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
     : `# Required procedure this turn
 
-1. Mirror progress in the runtime's tracking surface when one is available: with Codex goal tools, call \`get_goal\` and \`create_goal\` for this PRD implementation (\`update_plan\` does not replace Goal state); in Claude Code, use the task list. The harness state, not the tracker, is the completion authority.
-2. Treat the State block above and \`${context.statePath}\` as the source of truth. Read \`${state.runDir}/execution-plan.md\` and \`${state.runDir}/taskgraph.md\` only when planning changed, and consult \`${state.runDir}/ledger.jsonl\` only when the recent-activity summary above is not enough. Do not re-read unchanged plan views every turn.
-3. If the next item is \`VERIFICATION_PLAN VP0\`, read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
-4. If the next item is \`EXECUTION_PLAN EP0\`, run \`${HARNESS} plan-execution\`, inspect \`ready\`, and use \`${state.runDir}/execution-plan.md\` as the work map.
-5. After \`plan-execution\` and before material code edits, the main agent performs the coverage check. Inspect PRD/state/plan/taskgraph paths for intent, ambiguity, coverage, TaskGraph, and structure-lock drift; record material findings in \`${state.runDir}/context-notes.md\`.
-6. Work sequentially on the next ready execution node. Parallel execution is opt-in via config (\`execution.parallel\`); only when the State block shows a Ready parallel groups line may the coordinator assign a safe disjoint group to subagents.
-7. Use the PRD's Major Technical Structure Changes or documented structure lock. Stop for approval before material deviations.
-8. Register artifacts immediately after producing them. Do not leave files under \`${state.runDir}/artifacts\` unregistered; record valid artifacts with \`record-artifact\` before using them as evidence.
-9. After evidence exists, update state with:
-   - \`${HARNESS} mark-node --id <Nn> --status complete --ac <ACn[,ACn...]> --evidence "<command/test/file/screenshot evidence>"\`
+1. The State block above and \`${context.statePath}\` are the source of truth. Mirror progress in the runtime task surface at phase boundaries only; the harness, not the tracker, is the completion authority. Do not re-read unchanged plan files each turn.
+2. If the next item is \`VERIFICATION_PLAN VP0\`: read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
+3. If the next item is \`EXECUTION_PLAN EP0\`: run \`${HARNESS} plan-execution\`, inspect \`ready\`, then do the one-time coverage check (intent, ambiguity, coverage, structure-lock drift) and record material findings in \`${state.runDir}/context-notes.md\` before editing code.
+4. Otherwise drive the next item to done (SKILL.md sections 5-6 hold the details), stop for approval before material structure deviations, register artifacts immediately, then record with:
+   - \`${HARNESS} mark-node --id <Nn[,Nn...]> --status complete [--ac <ACn,...>] --evidence "<evidence>"\`
    - \`${HARNESS} mark --kind ac --id <ACn[,ACn...]> --status met --evidence "<evidence>"\`
-   - \`${HARNESS} verify-run --id <Vn> -- <command>\`
-   - \`${HARNESS} record-artifact --id <Vn> --kind screenshot|log|browser|api|db|file --path <artifact> --description "<what it proves>"\`
-   Batch related marks into one call via comma lists and \`--ac\` instead of one command per item, and skip \`status\` polling: every mark returns counts and the next item. If the PRD file was edited after init (status reports a snapshot violation), run \`${HARNESS} reconcile\` to refresh the snapshot while preserving marks; never use \`init --force\` for PRD-edit recovery.
-10. Let task status roll up from execution nodes, ACs, and verification. Use \`mark --kind task\` only for an explicit blocked/deferred/manual correction with evidence.
-11. Do not mark the tracked goal or report the run complete until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`${HARNESS} status\` reports no open items or final gate violations.
-    If delivery mode is \`pr\`, the receipt alone is not completion. Run the deliver skill and wait for PR creation plus required CI pass or an explicit delivery blocker.
-12. When no open items remain, run the final AC + Verification sweep, then run the requirements fidelity review required by profile ${reviewPolicy.profile} policy v${reviewPolicy.policyVersion}:
-   - \`${HARNESS} requirements-review-prompt\`
-   - ${reviewPolicy.fidelityOwner === "independent"
-    ? "Spawn one fresh independent read-only reviewer sidecar with the raw generated prompt when multi-agent tools are available. Do not include the intended verdict. The sidecar writes only the report and must not mutate harness state. If sidecars are unavailable, perform a fresh manual pass and state that fallback in the report."
-    : "The main agent writes this review. It must read the complete canonical qa-log or conversation source and compare material answers, accepted decisions, rejected alternatives, assumptions, PRD scope, ACs, verification evidence, and implementation result."}
-   - Write \`${state.runDir}/review/requirements-fidelity-review.md\`.
-   - The coordinator records the report. Reviewer sidecars never run harness mutation commands.
-   - \`${HARNESS} requirements-review-record --status pass|fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity verdict>"\`
-13. Before finalization${finalReviewRequired ? " or final adversarial review" : ""}, stop runtime servers, browser sessions, tunnels, or background processes started only for verification, unless explicitly left running and reported.
-${finalReviewRequired ? `14. Only after \`requirements-review-record --status pass\`, run:
-   - \`${HARNESS} review-prompt\`
-   - Spawn a fresh independent adversarial reviewer sidecar with that prompt when multi-agent tools are available. This is the only required reviewer sidecar in the default workflow. Use a default read-only subagent; do not use \`hoyeon-*\` roles unless the user explicitly asked for one.
-   - Write \`${state.runDir}/review/final-review.md\`.
-   - \`${HARNESS} review-record --status pass|fail --report ${state.runDir}/review/final-review.md --summary "<review verdict>"\`
-15. Only after \`review-record --status pass\`, finalize:
-` : `14. This run's effective review policy does not require final adversarial review. After \`requirements-review-record --status pass\`, finalize:
-`}
-   - \`${HARNESS} finalize --status complete --summary "<short evidence-backed summary>"\`
-   - If delivery mode is \`pr\`, immediately hand off to the deliver skill with \`${context.statePath}\`.
-${finalReviewRequired ? "16" : "15"}. If completion is impossible and the next user-facing report will be blocked or partial, run the same requirements fidelity review first and record it before handoff:
-   - \`${HARNESS} requirements-review-prompt\`
-   - Write \`${state.runDir}/review/requirements-fidelity-review.md\` with \`Status: FAIL\` when intent/PRD/evidence do not fully align.
-   - \`${HARNESS} requirements-review-record --status fail --report ${state.runDir}/review/requirements-fidelity-review.md --summary "<requirements fidelity blocker verdict>"\`
-   - Then use \`finalize --status blocked\` or \`finalize --status partial\`; do not report \`Done\`.`;
+   - \`${HARNESS} verify-run --id <Vn> -- <command>\` and \`${HARNESS} record-artifact --id <Vn> --kind <kind> --path <artifact> --description "<what it proves>"\`
+   Batch with comma lists and \`--ac\`; marks return counts and the next item, so do not poll \`status\`. Tasks roll up on their own; \`mark --kind task\` is only for explicit blocked/deferred corrections. If status reports a PRD snapshot violation, run \`${HARNESS} reconcile\`, never \`init --force\`.
+5. When no open items remain: sweep every AC, stop verification-only runtime processes, then run the requirements fidelity review for profile ${reviewPolicy.profile}: \`${HARNESS} requirements-review-prompt\`, ${reviewPolicy.fidelityOwner === "independent"
+    ? "have one fresh independent read-only sidecar write the report from the raw prompt (fresh manual pass if sidecars are unavailable, stating that fallback)"
+    : "write the report as the main agent after reading the complete canonical qa-log or conversation source"}, save \`${state.runDir}/review/requirements-fidelity-review.md\`, and record it with \`${HARNESS} requirements-review-record --status pass|fail --report <path> --summary "<verdict>"\`. Sidecars never mutate harness state; the coordinator records.
+${finalReviewRequired ? `6. Only after fidelity passes: \`${HARNESS} review-prompt\`, have a fresh independent read-only sidecar write \`${state.runDir}/review/final-review.md\`, then \`${HARNESS} review-record --status pass|fail --report <path> --summary "<verdict>"\`.
+7. Only after the final review passes` : `6. This profile requires no final adversarial review. After fidelity passes`}: \`${HARNESS} finalize --status complete --summary "<evidence-backed summary>"\`. Do not report the run complete before \`${state.runDir}/receipt.json\` exists and \`status\` shows no open items or violations. If delivery mode is \`pr\`, the receipt alone is not completion: hand off to the deliver skill with \`${context.statePath}\`.
+${finalReviewRequired ? "8" : "7"}. If completion is impossible: record the fidelity review anyway (\`Status: FAIL\` is allowed), then \`finalize --status blocked\` or \`--status partial\`; never report \`Done\`.`;
   return `<prd-implement-continuation>
 
 You are continuing an active PRD implementation. Do not ask whether to continue. The PRD and state files are the source of truth.

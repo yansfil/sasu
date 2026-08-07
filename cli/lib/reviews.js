@@ -81,24 +81,20 @@ function assertFinalReviewReport(reportAbs, status, state) {
   assertReviewReportStatus(reportAbs, status);
   const text = fs.readFileSync(reportAbs, "utf8");
   const violations = [];
-  for (const heading of ["Fidelity Review Checked", "Findings", "Checklist Coverage", "Artifact Audit", "Deviation Audit", "Verdict"]) {
+  for (const heading of ["Fidelity Review Checked", "Findings", "Artifact Audit", "Deviation Audit", "Verdict"]) {
     if (!meaningfulReviewSection(extractSection(text, heading))) {
       violations.push(`Final review section '${heading}' is missing or empty`);
     }
   }
   // The final review audits the requirements fidelity review as the primary
   // semantic proof; it deliberately does not repeat a per-V# checklist (the
-  // fidelity report already enforces one). Forcing every V# id here contradicted
-  // the skill's own "keep the Artifact Audit thin" guidance, so it is not checked.
+  // fidelity report already enforces one), and the harness stores the fidelity
+  // report hash itself, so no sha citation is demanded from the reviewer.
   const fidelity = state.requirementsFidelityReview;
   if (status === "pass") {
     if (!fidelity || fidelity.status !== "pass") {
       violations.push("Final review cannot pass before a recorded passing requirements fidelity review");
     } else {
-      const shaPrefix = String(fidelity.reportSha256 || "").slice(0, 12);
-      if (shaPrefix && !text.includes(shaPrefix)) {
-        violations.push(`Final review must cite the recorded requirements fidelity review report sha256 prefix ${shaPrefix} in the 'Fidelity Review Checked' section; read it from state.json after the fidelity review is recorded`);
-      }
       const recordedAt = Date.parse(fidelity.recordedAt || "");
       const reportMtime = fs.statSync(reportAbs).mtimeMs;
       if (Number.isFinite(recordedAt) && reportMtime + 2000 < recordedAt) {

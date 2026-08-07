@@ -28,7 +28,10 @@ function cmdMarkNode(options) {
 	    const node = state.executionPlan.nodes.find(entry => String(entry.id).toUpperCase() === id);
 	    if (!node) throw new Error(`Execution node ${id} not found`);
 	    let deviationEntry = null;
-	    if (status === "complete") {
+	    // Out-of-order completion only matters when parallel execution is on:
+	    // sequential runs have no dependency contract to violate, and recording
+	    // a deviation for every harmless reorder buries the real ones.
+	    if (status === "complete" && state.execution && state.execution.parallel) {
 	      const ready = readyExecutionPlan(state);
 	      const wasAlreadyStarted = node.status === "in_progress";
 	      if (!wasAlreadyStarted && !ready.readySequential.includes(node.id)) {

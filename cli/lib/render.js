@@ -572,7 +572,7 @@ Do not repeat the full V-by-V semantic artifact proof from scratch when the requ
 Instead, verify that the fidelity review is fresh, specific, and trustworthy, then focus on disagreement, omission, weak reasoning, risky artifacts, and final-report overclaiming.
 
 You are running AFTER the requirements fidelity review was recorded. ${fidelityLine}
-Read \`${statePath}\` yourself, confirm the recorded fidelity review status and report sha256, and cite that sha256 (at least its first 12 characters) in the 'Fidelity Review Checked' section of your report. Do not write the report from memory of earlier turns.
+Read \`${statePath}\` yourself and confirm the recorded fidelity review status. Do not write the report from memory of earlier turns.
 
 Source of truth:
 - PRD: \`${state.prdPath}\`
@@ -587,24 +587,13 @@ Source of truth:
 - Requirements fidelity review: \`${state.runDir}/review/requirements-fidelity-review.md\`
 - Git diff/worktree: inspect current repository state
 
-Required checks:
-0. Requirements fidelity review exists, passed, is fresh, and its findings are either resolved or explicitly reflected in the final verdict.
-0a. Requirements fidelity review is the primary semantic artifact proof. Audit it as the proof owner, and only reopen full V-by-V artifact reasoning where it is missing, generic, inconsistent with state, or suspicious.
-1. The PRD stayed clean: product requirements, ACs, high-level tasks, and verification contract only; no executor-only fields such as writeScope, owner, parallelSafe, or low-level dependsOn.
-2. Every PRD Task maps to one or more execution-plan nodes.
-3. Every execution node maps back to a PRD task or approved verification/release hygiene and has evidence.
-4. Every PRD Task is complete and its roll-up is supported by execution node, AC, and verification evidence.
-5. Every Acceptance Criterion is met in state and is covered by evidence or by a credible fidelity-review judgment. Open the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the entire fidelity checklist.
-6. The Task Graph accounts for execution nodes, Task rollups, ACs, Verification items, final review, and receipt gate.
-7. The Verification Plan is ready, maps every AC to checks, and has no blocking gaps.
-8. Every required agent verification item passed with an artifact file, not just prose, and every required V# appears in the fidelity review's Verification Intent Checklist. Optional skipped/blocked verification must be explicitly marked non-required by the PRD contract and have evidence.
-9. The executed verification commands match the PRD Verification Contract or derived verification plan. Any command, order, or scope deviation must be recorded in \`state.deviations\` and justified by equivalent coverage.
-10. Screenshots, logs, browser dumps, API logs, or DB/query logs referenced in state actually exist and are non-empty. Screenshots must be real PNG/JPEG files.
-11. No artifact under \`${state.runDir}/artifacts\` is unregistered in state or \`artifacts/manifest.jsonl\`.
-12. The final review is not stale: no evidence, artifact, plan, or deviation was recorded after review.
-13. Ready parallel groups, if used, had disjoint write scopes and no high-risk DB/auth/security/config/migration/production-data work.
-14. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and does not add unmapped scope.
-15. The final report can be trusted by a human who only reads the PRD, state, ledger, and artifacts.
+Required checks (delta review, not a re-derivation):
+1. Requirements fidelity review exists, passed, is fresh, and its findings are either resolved or explicitly reflected in the final verdict. It is the primary semantic artifact proof; reopen its V-by-V reasoning only where it is missing, generic, inconsistent with state, or suspicious.
+2. Trust the harness's mechanical gates (tracked-state roll-ups, artifact registration/hash/kind validity, required-verification pass status) unless a signal is inconsistent, missing, or suspicious; do not re-derive them item by item.
+3. Open and spot-check the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the fidelity checklist.
+4. Audit every recorded deviation in \`state.deviations\` for acceptability, and treat unrecorded drift between the diff and the plan or structure lock as a finding.
+5. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and adds no unmapped scope.
+6. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, ledger, and artifacts.
 
 Write the report to:
 \`${reportPath}\`
@@ -622,7 +611,6 @@ Status: PASS | FAIL
 ## Fidelity Review Checked
 
 - Report: <recorded requirements fidelity review report path>
-- Sha256: <recorded reportSha256 read from state.json>
 - Status: <recorded status>
 - Recorded at: <recordedAt>
 - Findings resolved or reflected: <how>
@@ -630,14 +618,6 @@ Status: PASS | FAIL
 ## Findings
 
 - <severity>: <finding with file/artifact/state reference>
-
-## Checklist Coverage
-
-- Tasks:
-- Acceptance Criteria:
-- Verification: <summarize verification coverage and defer to the fidelity review's per-V# checklist; reopen a specific V# only when you disagree with or distrust it. Do not re-list every V# from scratch.>
-- Execution Plan:
-- Task Graph:
 
 ## Artifact Audit
 
