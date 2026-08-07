@@ -19,8 +19,7 @@ Read this reference before acceptance sweeping, generating either completion rev
 ## Review Profiles
 
 The agent assigns a semantic review profile in PRD frontmatter, and the harness records it during `init`.
-New runs store `reviewProfile.policyVersion: 2` without changing the state schema or adding a lifecycle state.
-Review semantics depend on the profile alone; a state without that field behaves identically.
+Review semantics depend on the profile alone.
 
 | Profile | Requirements fidelity | Final adversarial review | Gate tail |
 | --- | --- | --- | --- |
@@ -171,7 +170,8 @@ For `high-risk`, perform a delta review on top of the recorded gates, not a re-d
 The reviewer must check:
 
 - the requirements fidelity report exists, passed, is fresh, and has no unresolved finding hidden from the final verdict; it is the primary semantic artifact proof, and its V-by-V reasoning is reopened only where missing, generic, inconsistent, or suspicious.
-- harness-owned mechanical gates (roll-ups, artifact registration and hashes, required-verification status) are trusted unless a signal is inconsistent, missing, or suspicious.
+- harness-owned mechanical gates (artifact registration and hashes, required-verification status) are trusted unless a signal is inconsistent, missing, or suspicious.
+- task status is a coordinator self-report with no mechanical precondition; completed tasks are spot-checked against their mapped acceptance criteria and the diff.
 - risky or user-critical artifacts are spot-checked by opening them, without duplicating an already sound fidelity checklist.
 - every deviation is recorded and acceptable, and unrecorded drift between the diff and the plan or structure lock is a finding.
 - implementation follows the PRD structure lock and guardrails with no unmapped scope.
@@ -226,6 +226,7 @@ Do not report done and do not mark the tracked Goal complete until:
 - `receipt.json` exists.
 - `status` reports zero open tracked items.
 - every required verification item is `pass` with artifact-backed evidence.
+- every met acceptance criterion has at least one covering verification item in `pass` status.
 - verification and execution plans are ready.
 - artifact validation has no violation.
 - requirements fidelity status is `pass` and fresh.

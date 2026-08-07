@@ -5,7 +5,8 @@ const path = require("path");
 
 const { SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath, runDirRelFor, formatCommandArgs } = require("../util");
 const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummary } = require("../state_data");
-const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
+const { stripFrontmatter } = require("../prd_parser");
+const { parsePrdContract } = require("./init");
 const { buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { renderViews } = require("../render");
@@ -17,35 +18,9 @@ function cmdPlanVerificationCheck(options) {
   if (!fs.existsSync(prdAbs)) throw new Error(`PRD not found: ${prdAbs}`);
   const prdText = fs.readFileSync(prdAbs, "utf8");
   const parsed = stripFrontmatter(prdText);
-
-  const tasks = parseMarkdownItems(extractFirstSection(parsed.body, [
-    "8. PRD-Level Tasks",
-    "PRD-Level Tasks",
-    "13. Tasks",
-    "Tasks",
-  ]), "T", "Task");
-  const acceptanceCriteria = parseMarkdownItems(extractFirstSection(parsed.body, [
-    "7. Acceptance Criteria",
-    "Acceptance Criteria",
-    "12. Acceptance Criteria",
-  ]), "AC", "AC");
-  const requirements = parseMarkdownItems(extractFirstSection(parsed.body, [
-    "6. Requirements",
-    "Requirements",
-  ]), "R", "R");
-  const verificationSection = extractFirstSection(parsed.body, [
-    "9. Verification Contract",
-    "Verification Contract",
-    "5. Verification - Agent",
-    "Verification - Agent",
-  ]);
-  const verification = parseVerification(verificationSection);
-  const testModeSection = extractFirstNestedSection(verificationSection, [
-    "9.1 Test Mode Contract",
-    "Test Mode Contract",
-  ]);
-  const testModeContract = parseTestModeContract(testModeSection || verificationSection);
-  applyTestModeDefaults(verification, testModeContract);
+  // One parser for both the stateless precheck and init: a PRD this precheck
+  // calls harness-ready must parse identically at init time.
+  const { tasks, acceptanceCriteria, requirements, verification, testModeContract } = parsePrdContract(parsed, projectRoot);
 
   const syntheticState = {
     projectRoot,

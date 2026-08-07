@@ -147,6 +147,7 @@ Any relevant source, plan, evidence, artifact, or deviation change after a passi
 Required verification is closed only by a passing check with valid registered evidence.
 Blocked, skipped, failed, pending, or evidence-free required verification prevents a complete receipt.
 Optional checks may be skipped or blocked only when the PRD contract allows it and the status carries evidence.
+A met acceptance criterion also needs at least one covering verification item in `pass` status; prose evidence alone cannot complete an AC whose entire coverage was skipped or blocked.
 
 Before completion reviews, sweep every verification item and confirm:
 

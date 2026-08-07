@@ -343,9 +343,25 @@ function completionViolations(statePath, state, options = {}) {
     if (task.status !== "complete") violations.push(`Task ${task.id} is ${task.status}`);
     if (!task.evidence.length) violations.push(`Task ${task.id} has no evidence`);
   }
+  const coveragePlan = state.verificationPlan;
+  const checksById = coveragePlan && Array.isArray(coveragePlan.checks)
+    ? new Map(coveragePlan.checks.map(check => [check.id, check]))
+    : new Map();
+  const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
   for (const ac of state.acceptanceCriteria) {
     if (ac.status !== "met") violations.push(`Acceptance ${ac.id} is ${ac.status}`);
     if (!ac.evidence.length) violations.push(`Acceptance ${ac.id} has no evidence`);
+    // Mechanical backstop for the skill's promise that every AC is provably
+    // closed: prose evidence alone cannot complete an AC whose entire
+    // verification coverage was skipped or blocked.
+    if (ac.status === "met" && coveragePlan && coveragePlan.coverage && coveragePlan.coverage[ac.id]) {
+      const anyCoveringPass = (coveragePlan.coverage[ac.id].coveredBy || []).some(checkId => {
+        const check = checksById.get(checkId);
+        const verification = check ? verificationById.get(check.verificationId) : null;
+        return Boolean(verification && verification.status === "pass");
+      });
+      if (!anyCoveringPass) violations.push(`Acceptance ${ac.id} is met but none of its covering verification items passed`);
+    }
   }
 	  for (const verification of state.verification) {
 	    if (isVerificationRequiredForDone(verification)) {

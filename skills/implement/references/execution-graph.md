@@ -190,7 +190,7 @@ Capable agents may use a better local path when it preserves the PRD contract, b
 
 Explicit deviation records are required for:
 
-- completing tasks outside ready guidance. With `execution.parallel` enabled the harness records this `ready_order` deviation for you when a task that was not ready and not already `in_progress` is marked complete.
+- completing a task while its declared dependencies are still open. The harness records this `ready_order` deviation automatically in any mode; reorders of independent tasks stay silent.
 - touching files outside the declared write scope.
 - replacing a planned verification command with an equivalent command.
 - adding verification or release-hygiene work that maps to existing PRD scope.

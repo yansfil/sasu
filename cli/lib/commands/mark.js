@@ -32,16 +32,15 @@ function cmdMark(options) {
     const item = list.find(entry => String(entry.id).toUpperCase() === id);
     if (!item) throw new Error(`${kind} ${id} not found`);
     let deviationEntry = null;
-    // Out-of-order completion only matters when parallel execution is on:
-    // sequential runs have no dependency contract to violate, and recording
-    // a deviation for every harmless reorder buries the real ones.
-    if (kind === "task" && status === "complete" && state.execution && state.execution.parallel) {
+    // Completing a task whose declared dependencies are still open is an
+    // audit-worthy deviation in any mode: the plan's dependsOn contract is the
+    // thing being bypassed. Harmless reorders of independent tasks stay silent.
+    if (kind === "task" && status === "complete") {
       const ready = readyExecutionPlan(state);
-      const wasAlreadyStarted = item.status === "in_progress";
-      if (!wasAlreadyStarted && !ready.readySequential.includes(item.id)) {
-        const blocker = ready.blocked.find(entry => entry.id === item.id);
-        deviationEntry = recordDeviation(state, "ready_order", item.id, "Task completed outside ready guidance", {
-          waitingFor: blocker ? blocker.waitingFor : [],
+      const blocker = ready.blocked.find(entry => entry.id === item.id);
+      if (blocker) {
+        deviationEntry = recordDeviation(state, "ready_order", item.id, "Task completed while its declared dependencies were still open", {
+          waitingFor: blocker.waitingFor,
           readySequential: ready.readySequential,
         });
       }

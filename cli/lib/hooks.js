@@ -270,7 +270,7 @@ function renderContinuationDirective(context) {
   const proceduresBlock = context.verbose === false
     ? `# This turn
 
-The phase has not changed since the last directive, so the full procedure is not repeated. Follow the step-by-step procedure already given for this phase (also in SKILL.md sections 6-12).
+The phase has not changed since the last directive, so the full procedure is not repeated. Follow the step-by-step procedure already given for this phase (also in SKILL.md sections 5-7).
 
 Drive the Next required item above to done, then record it with the matching harness command: \`mark --kind task\` for tasks, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark --kind task --ac AC1,AC2\` closes a task plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
     : `# Required procedure this turn

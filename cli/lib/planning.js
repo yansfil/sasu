@@ -182,7 +182,7 @@ function buildExecutionPlan(state, statePath, taskPlan = null) {
       severity: "blocking",
       code: "no_prd_tasks",
       item: "Tasks",
-      message: "PRD section 13 produced no implementation tasks",
+      message: "PRD section 8 (PRD-Level Tasks) produced no implementation tasks",
     });
   }
 
@@ -202,7 +202,9 @@ function buildExecutionPlan(state, statePath, taskPlan = null) {
     generatedAt: nowIso(),
     prdPath: state.prdPath,
     statePath: toProjectRelative(statePath, state.projectRoot || cwd()),
-    taskPlanApplied: taskPlanProvided,
+    // A rebuild without an explicit plan preserves each task's executor fields,
+    // so the provenance flag must survive the rebuild too.
+    taskPlanApplied: taskPlanProvided || Boolean(state.executionPlan && state.executionPlan.taskPlanApplied),
     gaps,
   };
 }

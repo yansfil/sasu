@@ -374,9 +374,9 @@ function renderRequirementsReviewPrompt(context) {
   const intentTrace = state.intentTrace || {};
   const policy = effectiveReviewPolicy(state);
   const ownershipGuidance = policy.fidelityOwner === "independent"
-    ? "Review policy: standard v2. You are the single fresh independent read-only semantic reviewer for this run. Base the verdict on the raw PRD, state, diff, ledger, and registered artifacts, not on a coordinator-provided conclusion. The coordinator alone records your report in harness state."
+    ? "Review policy: standard. You are the single fresh independent read-only semantic reviewer for this run. Base the verdict on the raw PRD, state, diff, ledger, and registered artifacts, not on a coordinator-provided conclusion. The coordinator alone records your report in harness state."
     : policy.profile === "trivial"
-      ? "Review policy: trivial v2. This is a compact main-agent fidelity check. Cover the complete contract, but keep the report proportional to the small change surface."
+      ? "Review policy: trivial. This is a compact main-agent fidelity check. Cover the complete contract, but keep the report proportional to the small change surface."
       : "Review policy: high-risk. This is the main-agent full requirements fidelity stage. Reopen sensitive data, auth, security, billing, live-service, migration, deployment, and rollback proof before the independent final review.";
   const uxApplicable = hasUserVisibleReviewSurface(state);
   const uxGuidance = uxApplicable
@@ -487,7 +487,7 @@ function renderReviewPrompt(context) {
   const profileGuidance = profile === "high-risk"
     ? "Review profile: high-risk. Run the full adversarial review and reopen any risky semantic, security, data, migration, external-service, or delivery proof."
     : profile === "standard"
-      ? "Review profile: standard v2. Final adversarial review is not required for receipt. If a human explicitly requests this optional review, audit freshness, state consistency, artifact validity, deviations, and overclaiming without repeating the independent combined fidelity review."
+      ? "Review profile: standard. Final adversarial review is not required for receipt. If a human explicitly requests this optional review, audit freshness, state consistency, artifact validity, deviations, and overclaiming without repeating the independent combined fidelity review."
       : "Review profile: trivial. Final adversarial review is optional for receipt; if requested, keep it to a short freshness, artifact, and overclaim check.";
   const fidelityLine = fidelity.reportSha256
     ? `Recorded fidelity review: status ${fidelity.status}, report \`${fidelity.reportPath}\`, sha256 \`${fidelity.reportSha256}\`, recorded at ${fidelity.recordedAt}.`
@@ -518,11 +518,12 @@ Source of truth:
 
 Required checks (delta review, not a re-derivation):
 1. Requirements fidelity review exists, passed, is fresh, and its findings are either resolved or explicitly reflected in the final verdict. It is the primary semantic artifact proof; reopen its V-by-V reasoning only where it is missing, generic, inconsistent with state, or suspicious.
-2. Trust the harness's mechanical gates (tracked-state roll-ups, artifact registration/hash/kind validity, required-verification pass status) unless a signal is inconsistent, missing, or suspicious; do not re-derive them item by item.
-3. Open and spot-check the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the fidelity checklist.
-4. Audit every recorded deviation in \`state.deviations\` for acceptability, and treat unrecorded drift between the diff and the plan or structure lock as a finding.
-5. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and adds no unmapped scope.
-6. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, ledger, and artifacts.
+2. Trust the harness's mechanical gates (artifact registration/hash/kind validity, required-verification pass status) unless a signal is inconsistent, missing, or suspicious; do not re-derive them item by item.
+3. Task status is a coordinator self-report with no mechanical precondition: spot-check each completed task's evidence against its mapped acceptance criteria and diff instead of trusting the status alone.
+4. Open and spot-check the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the fidelity checklist.
+5. Audit every recorded deviation in \`state.deviations\` for acceptability, and treat unrecorded drift between the diff and the plan or structure lock as a finding.
+6. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and adds no unmapped scope.
+7. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, ledger, and artifacts.
 
 Write the report to:
 \`${reportPath}\`
