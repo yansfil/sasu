@@ -17,7 +17,11 @@ test("canonical workflow uses qa-log as the only intake artifact", () => {
   const combined = files.map(file => fs.readFileSync(file, "utf8")).join("\n");
   assert.doesNotMatch(combined, /prd-handoff\.md/);
   assert.match(combined, /one canonical artifact only: qa-log\.md/);
-  assert.match(combined, /semantic losslessness sweep/);
+  // The former standalone "semantic losslessness sweep" now lives inside the
+  // gen-prd Inline Self-Check; the guarantee itself must survive.
+  assert.match(combined, /Losslessness: every material answer/);
+  assert.match(combined, /without treating silence as consent/);
+  assert.match(combined, /do not treat silence or a topic change as approval/);
 });
 
 function fixtureQaLog({ withUxCard = true, withLinkedDecisions = true } = {}) {

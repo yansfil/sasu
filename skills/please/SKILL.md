@@ -57,10 +57,9 @@ Write the PRD by following the `gen-prd` skill in full:
 - Output to `agents/prd/<topic-slug>/prd.md` with every required section.
 - `source_intake: "current conversation"` unless a real intake file exists.
 - Preserve conversation decisions in Decision Traceability: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above.
-- Run the semantic losslessness sweep required by `gen-prd`; do not treat silence or a topic change as approval.
 - Preserve a coherent production-quality product boundary, with every deliberate omission recorded as a non-goal or deferred decision with consequence, rationale, and revisit condition.
 - Assign `review_profile` semantically from the complete product and engineering effects and write a concrete `review_rationale`; use `standard` for small user-facing work and `high-risk` for sensitive or irreversible effects.
-- Run the semantic losslessness sweep, Inline Self-Check Before Ready, and Harness Readiness Gate (`plan-verification --prd`) exactly as the `gen-prd` skill requires.
+- Run the Inline Self-Check Before Ready (including its losslessness item; do not treat silence or a topic change as approval) and the Harness Readiness Gate (`plan-verification --prd`) exactly as the `gen-prd` skill requires.
 - Mark `status: ready` only when those gates pass.
 - Leave `human_approval: "pending"`.
   Never write `approved`; the user did not review the document, and the deviation record in Stage 2 is the honest representation of what happened.

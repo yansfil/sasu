@@ -406,12 +406,19 @@ Quality checking splits by what can verify it:
   agent effort re-deriving what the script already checks (AC coverage
   mapping, missing commands, missing artifact strategy, missing browser
   startup, unsafe external proof).
-- Semantic checks are an inline self-check. No separate audit file, no
-  auditor subagent; the implementation-side requirements fidelity review
-  re-verifies the same intent questions against evidence at the end.
+- Semantic checks are this single inline self-check. No separate audit file,
+  no auditor subagent, no separate quality checklist; the checkshirt Spec Gate
+  and the implementation-side requirements fidelity review independently
+  re-verify the same intent against evidence.
 
 After drafting and before marking the PRD `ready`, verify inline:
 
+- Losslessness: every material answer, accepted recommendation, objection,
+  constraint, rejected option, non-goal, and assumption from the complete
+  source is accounted for in a requirement, acceptance criterion, task,
+  verification item, human verification item, risk, guardrail, deferred
+  decision, or explicit context-only disposition, with meaning and provenance
+  preserved and without treating silence as consent.
 - Intent: every user decision and accepted proposal is represented in scope,
   non-goals, `R#`, `AC#`, `T#`, `V#`, or human verification; rejected and
   deferred options stayed rejected; the PRD does not quietly expand beyond
@@ -422,20 +429,19 @@ After drafting and before marking the PRD `ready`, verify inline:
 - Regression bias: every changed behavior has automated regression coverage
   or an explicit reason why another mode is the better proof.
 - Product completeness: the PRD covers the coherent intended journey and relevant quality boundaries, and every omission is an explicit product decision rather than an implicit MVP cut.
+- Verification semantics: the Test Mode Contract covers the proof classes the
+  product actually needs (build/static, automated behavior, browser/runtime
+  when user-facing, API/DB/external when relevant), and required-for-done and
+  blockable semantics are explicit.
 - Review profile: `review_profile` and `review_rationale` reflect a semantic reading of actual effects rather than keyword matching or PRD size.
 
-Before this self-check, perform a semantic losslessness sweep from the complete source into the PRD.
-Account for every material answer, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption in a requirement, acceptance criterion, task, verification item, human verification item, risk, guardrail, deferred decision, or explicit context-only disposition.
-Preserve meaning and provenance without copying every source sentence verbatim.
-Do not create a sweep report or any additional artifact.
-
 If a check fails, revise the PRD and re-check.
-State in the final report that the semantic losslessness sweep and self-check passed; do not write either check to a file.
+Do not write the self-check to a file; state in the final report that it passed.
 
 ### Harness Readiness Gate
 
-After the audits pass, run the mechanical precheck from the target repository
-root before marking the PRD `ready`:
+After the self-check passes, run the mechanical precheck from the target
+repository root before marking the PRD `ready`:
 
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification --prd agents/prd/<topic-slug>/prd.md
@@ -521,56 +527,26 @@ Require the implementing agent to report:
 4. Ask only contract-breaking questions; do not rerun intake inside PRD.
 5. Derive PRD-level tasks from requirements and acceptance criteria.
 6. Add the Test Mode Contract and Required Agent Verification matrix.
-7. Run the semantic losslessness sweep from the complete source into the PRD and fix omissions or invented consent.
-8. Run the Inline Self-Check Before Ready (intent, pass intent, regression
-   bias, product completeness, and review profile) and fix failures.
-9. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
+7. Run the Inline Self-Check Before Ready (losslessness, intent, pass intent,
+   regression bias, product completeness, verification semantics, and review
+   profile) and fix failures.
+8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
-10. Run the checkshirt Spec Gate and fix findings until it passes or a
+9. Run the checkshirt Spec Gate and fix findings until it passes or a
    human-decision finding stops the loop.
-11. Mark `status: ready` only when blocking decisions are resolved, the semantic losslessness sweep and inline
-   self-check pass, the Harness Readiness Gate reports zero blocking
+10. Mark `status: ready` only when blocking decisions are resolved, the inline
+   self-check passes, the Harness Readiness Gate reports zero blocking
    gaps, and the Spec Gate passes (or its skip/fallback is recorded).
-12. Ask the user to review the PRD using the Approval checklist. Set
+11. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.
-
-## Quality Gate
-
-Before finalizing:
-
-- Every in-scope behavior has an acceptance criterion.
-- Every acceptance criterion has agent verification or a human-only reason.
-- Every requirement maps to an acceptance criterion, verification item, human-only reason, deferred decision, or non-goal.
-- Test Mode Contract covers build/static, automated behavior, runtime/browser
-  when user-facing, and API/DB/external modes when relevant.
-- Changed behavior has automated regression coverage or a clear justified alternative verification mode.
-- Required Agent Verification maps to `R#`, `AC#`, or `T#` IDs.
-- Required-for-done and blockable semantics are explicit.
-- The semantic losslessness sweep accounted for every material qa-log or conversation decision without treating silence as consent.
-- The Inline Self-Check Before Ready passed.
-- Harness Readiness Gate (`plan-verification --prd`) reports zero blocking gaps.
-- Every required `V#` has observable Pass Intent and artifact expectations.
-- Human verification is explicit, even when empty.
-- Pre-work and human decisions are explicit, even when empty.
-- Delivery mode is explicit when the user asks for PR, CI, branch, worktree, or
-  ship automation.
-- Decision traceability preserves accepted proposals, rejected options, and
-  user decisions with mappings to PRD IDs or non-goals.
-- Major Technical Structure Changes is reviewable and avoids executor detail.
-- PRD-Level Tasks derive from requirements and acceptance criteria.
-- Implementation Guardrails prevent hidden scope and unapproved structure drift.
-- The PRD does not omit or quietly expand beyond the intake source.
-- The PRD describes a coherent production-quality product unless the user explicitly chose a prototype or experiment.
-- Scope reductions are explicit non-goals or deferred decisions with user consequence, rationale, and revisit condition.
-- Review profile is semantically assigned, small user-facing changes are not trivial, and sensitive or irreversible work is high-risk.
 
 ## Final Report
 
 After writing the PRD, report concisely:
 
 - PRD path.
-- semantic losslessness sweep, inline self-check, and Harness Readiness Gate results.
+- inline self-check, Harness Readiness Gate, and Spec Gate results.
 - source intake or clarify path.
 - status and `human_approval` state, with the Approval checklist items the
   user needs to review before `implement` can run.
