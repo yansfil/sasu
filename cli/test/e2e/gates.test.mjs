@@ -15,7 +15,7 @@ const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "
 const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8");
 
 function makeProject({ config } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-e2e-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-e2e-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   if (config) fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify(config));
   fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE);
@@ -34,11 +34,11 @@ function stubFile(dir, responses) {
 function runCli(cwd, args, { stub, env: extraEnv } = {}) {
   const env = { ...process.env, ...extraEnv };
   if (stub) {
-    env.CHECKSHIRT_JUDGE_BACKEND = "stub";
-    env.CHECKSHIRT_JUDGE_STUB_FILE = stub;
+    env.SASU_JUDGE_BACKEND = "stub";
+    env.SASU_JUDGE_STUB_FILE = stub;
   } else {
-    delete env.CHECKSHIRT_JUDGE_BACKEND;
-    delete env.CHECKSHIRT_JUDGE_STUB_FILE;
+    delete env.SASU_JUDGE_BACKEND;
+    delete env.SASU_JUDGE_STUB_FILE;
   }
   return spawnSync("node", [CLI, ...args], { cwd, encoding: "utf8", env });
 }
@@ -198,7 +198,7 @@ test("fail-closed: a missing judge binary keeps the gate blocked with cause and 
   const dir = makeProject();
   const nodeDir = path.dirname(process.execPath);
   const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
-    env: { CHECKSHIRT_JUDGE_BACKEND: "claude", PATH: nodeDir },
+    env: { SASU_JUDGE_BACKEND: "claude", PATH: nodeDir },
   });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /judge error: judge-binary-missing/);

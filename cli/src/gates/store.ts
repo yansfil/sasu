@@ -37,7 +37,7 @@ export function freshnessHash(content: string): string {
   const frontmatter = body.match(/^---\n[\s\S]*?\n---\n/);
   if (frontmatter) body = body.slice(frontmatter[0].length);
   body = body.replace(/^## Audit History\s*$[\s\S]*?(?=^## |(?![\s\S]))/m, "");
-  return sha256Of(`checkshirt-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
+  return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
 }
 
 export interface GateDeviation {

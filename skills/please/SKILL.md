@@ -110,19 +110,19 @@ Stop and ask only when:
 - any `implement` or `ship` hard stop fires: DB migrations against real data, auth/security surfaces needing decisions, payments or billing, production data, credentials, destructive or irreversible actions, external spend, unmapped scope, or structure-lock deviations.
 - a required verification fails in a way that needs a product decision.
 - delivery would push or open a PR without config-based or conversational consent.
-- a checkshirt gate stop condition fires (below).
+- a sasu gate stop condition fires (below).
 
-## Checkshirt Gates In The Autonomous Loop
+## Sasu Gates In The Autonomous Loop
 
-A checkshirt gate BLOCK is not a stop: it means "cannot pass until PASS".
+A sasu gate BLOCK is not a stop: it means "cannot pass until PASS".
 When a gate (gap-audit, spec, or verify) blocks during a `$please` run:
 
 1. Fix every agent-fixable finding (amend the qa-log or PRD, fix the code), then re-run the same gate.
 2. Repeat within the gate's retry budget (default 3 autonomous fix attempts).
 3. Stop and hand the findings to the user only when a finding is marked `needs human decision`, or the gate output says the retry budget is exhausted.
 
-Never run `checkshirt gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
-A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `checkshirt gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.
+Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
+A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `sasu gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.
 Record each gate outcome in the final report.
 
 When blocked, follow the `implement` blocked/partial handoff rules; do not soften status to `Done`.

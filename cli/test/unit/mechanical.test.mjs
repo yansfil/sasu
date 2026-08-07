@@ -7,7 +7,7 @@ import { loadConfig } from "../../dist/config.js";
 import { resolveMechanicalCommands, runMechanical } from "../../dist/mechanical.js";
 
 function tempProject({ config, packageJson } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-mech-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-mech-"));
   if (config !== undefined) {
     fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
     fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify(config));

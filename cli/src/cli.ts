@@ -23,22 +23,22 @@ import {
 import { runInterviewCoherence, type CoherenceResult } from "./interview/coherence";
 import { contractVersion } from "./version";
 
-const USAGE = `checkshirt - harness CLI: judge gates, verification, doctor
+const USAGE = `sasu - harness CLI: judge gates, verification, doctor
 
 Usage:
-  checkshirt --contract-version
-  checkshirt gate gap-audit --slug <topic> --qa-log <path> [--json]
-  checkshirt gate spec      --slug <topic> --prd <path> --qa-log <path> [--json]
-  checkshirt gate status    --slug <topic> [--json]
-  checkshirt gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
-  checkshirt verify         --slug <topic> --prd <path> [--base <git-ref>] [--diff-file <path>] [--skip-mechanical] [--json]
-  checkshirt interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
-  checkshirt interview log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
-  checkshirt interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
-  checkshirt interview checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
-  checkshirt interview coherence  --slug <topic> [--min-decisions <n>] [--json]
-  checkshirt interview status     --slug <topic> [--json]
-  checkshirt doctor [--json]
+  sasu --contract-version
+  sasu gate gap-audit --slug <topic> --qa-log <path> [--json]
+  sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--json]
+  sasu gate status    --slug <topic> [--json]
+  sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
+  sasu verify         --slug <topic> --prd <path> [--base <git-ref>] [--diff-file <path>] [--skip-mechanical] [--json]
+  sasu interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
+  sasu interview log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
+  sasu interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
+  sasu interview checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
+  sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
+  sasu interview status     --slug <topic> [--json]
+  sasu doctor [--json]
 
 Interview commands own the qa-log's mechanical bookkeeping (counters, cursor,
 Raw Q&A appends, Decision Register upserts, needs_normalization flips) so the
@@ -98,7 +98,7 @@ function requireFlag(args: Args, name: string): string {
 }
 
 function fail(message: string): never {
-  process.stderr.write(`checkshirt: ${message}\n`);
+  process.stderr.write(`sasu: ${message}\n`);
   process.exit(2);
 }
 
@@ -387,6 +387,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`checkshirt: ${message}\n`);
+  process.stderr.write(`sasu: ${message}\n`);
   process.exit(1);
 });

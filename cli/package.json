@@ -1,11 +1,11 @@
 {
-  "name": "checkshirt-cli",
+  "name": "sasu-cli",
   "version": "0.5.0",
   "private": true,
-  "description": "checkshirt harness CLI: judge gates, verification runner, and absorbed implement state library",
+  "description": "sasu harness CLI: judge gates, verification runner, and absorbed implement state library",
   "type": "commonjs",
   "bin": {
-    "checkshirt": "dist/cli.js"
+    "sasu": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

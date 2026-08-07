@@ -6,7 +6,7 @@ import test from "node:test";
 import { loadConfig, tierModelFor } from "../../dist/config.js";
 
 function tempProject(configJson) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-config-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-config-"));
   if (configJson !== undefined) {
     fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
     fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify(configJson));
@@ -57,7 +57,7 @@ test("tier-config rejects a negative retry budget", () => {
 });
 
 test("loadConfig rejects invalid JSON with a clear error", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-config-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-config-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   fs.writeFileSync(path.join(dir, "agents", "config.json"), "{broken");
   assert.throws(() => loadConfig(dir), /not valid JSON/);

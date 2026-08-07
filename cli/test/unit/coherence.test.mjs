@@ -8,7 +8,7 @@ import { runInterviewDecision, runInterviewInit, qaLogPathFor } from "../../dist
 import { loadConfig } from "../../dist/config.js";
 
 function makeProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-coherence-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-coherence-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   return dir;
 }
@@ -33,14 +33,14 @@ function withStub(dir, response, fn) {
   const stub = path.join(dir, "stub.json");
   fs.writeFileSync(stub, JSON.stringify(response));
   fs.rmSync(`${stub}.cursor`, { force: true });
-  const prev = { backend: process.env.CHECKSHIRT_JUDGE_BACKEND, file: process.env.CHECKSHIRT_JUDGE_STUB_FILE };
-  process.env.CHECKSHIRT_JUDGE_BACKEND = "stub";
-  process.env.CHECKSHIRT_JUDGE_STUB_FILE = stub;
+  const prev = { backend: process.env.SASU_JUDGE_BACKEND, file: process.env.SASU_JUDGE_STUB_FILE };
+  process.env.SASU_JUDGE_BACKEND = "stub";
+  process.env.SASU_JUDGE_STUB_FILE = stub;
   return fn().finally(() => {
-    if (prev.backend === undefined) delete process.env.CHECKSHIRT_JUDGE_BACKEND;
-    else process.env.CHECKSHIRT_JUDGE_BACKEND = prev.backend;
-    if (prev.file === undefined) delete process.env.CHECKSHIRT_JUDGE_STUB_FILE;
-    else process.env.CHECKSHIRT_JUDGE_STUB_FILE = prev.file;
+    if (prev.backend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = prev.backend;
+    if (prev.file === undefined) delete process.env.SASU_JUDGE_STUB_FILE;
+    else process.env.SASU_JUDGE_STUB_FILE = prev.file;
   });
 }
 

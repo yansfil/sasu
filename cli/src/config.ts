@@ -22,7 +22,7 @@ export interface VerifyConfig {
   commandTimeoutMs: number;
 }
 
-export interface CheckshirtConfig {
+export interface SasuConfig {
   judge: JudgeConfig;
   verify: VerifyConfig;
   configPath: string | null;
@@ -62,7 +62,7 @@ const DEFAULT_JUDGE: JudgeConfig = {
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
 
-export function loadConfig(projectRoot: string): CheckshirtConfig {
+export function loadConfig(projectRoot: string): SasuConfig {
   const configPath = path.join(projectRoot, "agents", "config.json");
   let raw: Record<string, unknown> = {};
   let found: string | null = null;
@@ -102,7 +102,7 @@ export function loadConfig(projectRoot: string): CheckshirtConfig {
   };
 }
 
-export function tierModelFor(config: CheckshirtConfig, backend: BackendName, tier: Tier): string | null {
+export function tierModelFor(config: SasuConfig, backend: BackendName, tier: Tier): string | null {
   if (backend === "stub") return null;
   return config.judge.tierModels[backend][tier];
 }

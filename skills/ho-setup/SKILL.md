@@ -31,7 +31,7 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 
 It reports the effective delivery config (config file plus defaults), unknown or
 misspelled config keys, git/origin/gh readiness, worktree sync source problems,
-PR template resolution, ship availability, hook registration, checkshirt gate
+PR template resolution, ship availability, hook registration, sasu gate
 CLI readiness (binary contract version, judge backends, verify commands), and
 any active run with its ship-pending state.
 
@@ -77,7 +77,7 @@ Then interview:
    - Everything under `agents/` is committed and reviewable by default:
      `agents/prd/**`, `agents/rules/**`, `agents/config.json`.
    - Only runtime state is ignored: `agents/implement/**` and `agents/gates/**`.
-6. Checkshirt judge gates (optional; defaults work without config):
+6. Sasu judge gates (optional; defaults work without config):
    - `judge.backend`: `auto` (default; prefers claude, falls back to codex),
      `claude`, or `codex`. Judging with a different vendor than the
      implementing runtime is recommended for reviewer independence but not
@@ -99,7 +99,7 @@ Then interview:
      `--ignore-user-config`, no-tools instruction); the claude backend gives
      the strongest reviewer isolation (all tools removed).
    - `verify.commands`: mechanical verify commands (`test`, `lint`,
-     `typecheck`, `build`). Declared commands win; otherwise checkshirt
+     `typecheck`, `build`). Declared commands win; otherwise sasu
      detects from manifests and suggests pinning here.
    - `verify.commandTimeoutMs`: per-command timeout for mechanical verify
      runs (default 600000 = 10 minutes); a hung suite fails closed at the

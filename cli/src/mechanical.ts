@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { CheckshirtConfig } from "./config";
+import type { SasuConfig } from "./config";
 
 export type MechanicalKind = "test" | "lint" | "build" | "typecheck";
 
@@ -32,7 +32,7 @@ export interface MechanicalResult {
  * win; otherwise detect from project manifests and suggest recording the
  * detection back into config.
  */
-export function resolveMechanicalCommands(projectRoot: string, config: CheckshirtConfig): {
+export function resolveMechanicalCommands(projectRoot: string, config: SasuConfig): {
   resolved: ResolvedCommand[];
   configSuggestion: Record<string, string> | null;
 } {
@@ -80,7 +80,7 @@ function detectFromManifests(projectRoot: string): ResolvedCommand[] {
   return commands;
 }
 
-export function runMechanical(projectRoot: string, config: CheckshirtConfig): MechanicalResult {
+export function runMechanical(projectRoot: string, config: SasuConfig): MechanicalResult {
   const { resolved, configSuggestion } = resolveMechanicalCommands(projectRoot, config);
   const runs: MechanicalRun[] = [];
   let ok = true;
@@ -100,7 +100,7 @@ export function runMechanical(projectRoot: string, config: CheckshirtConfig): Me
     const exitCode = result.status ?? 1;
     const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
     const tailLines = combined.split("\n").slice(-30);
-    if (timedOut) tailLines.push(`[checkshirt] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
+    if (timedOut) tailLines.push(`[sasu] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
     runs.push({
       kind: cmd.kind,
       command: cmd.command,

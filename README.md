@@ -1,12 +1,12 @@
-# checkshirt
+# sasu
 
-<p align="center"><img src="assets/mascot.svg" width="220" alt="checkshirt-boy mascot"/></p>
+<p align="center"><img src="assets/mascot.png" width="260" alt="sasu mascot"/></p>
 
-**One PRD pipeline, two runtimes, one checkshirt.**
+**One PRD pipeline, two runtimes, one 사수.**
 A personal engineering workflow harness that turns a conversation into a shipped pull request, with the same skills, the same state machine, and the same completion guarantees whether the agent is Codex or Claude Code.
 
-The concept: you are working with one very senior developer in a plaid shirt.
-He scopes before he specs, he specs before he builds, he does not say "done" without evidence, and he never has to be told the same thing twice.
+The concept: you are working with your sasu (사수) - the seasoned senior who reviews everything you ship, still wearing the plaid shirt.
+He scopes before he specs, he specs before he builds, he does not say "done" without evidence, he never has to be told the same thing twice, and nothing merges until he signs off.
 
 ```text
 conversation
@@ -20,7 +20,7 @@ please = the whole chain in one invocation, stopping only for risky work
 remember = lessons land as enforcement, not notes
 ```
 
-## The Checkshirt Skills
+## The Sasu Skills
 
 | Skill | What it owns |
 | --- | --- |
@@ -64,25 +64,25 @@ The mechanics that make one source possible:
 - **Idempotent hook registration.**
   The installer merges harness hooks into existing hook files without touching unrelated entries, and refuses to overwrite a foreign skill directory.
 
-## The Checkshirt CLI
+## The Sasu CLI
 
-`cli/` builds the `checkshirt` binary: the single CLI that owns the pipeline's deterministic logic and its LLM judgment gates.
+`cli/` builds the `sasu` binary: the single CLI that owns the pipeline's deterministic logic and its LLM judgment gates.
 Skills stay thin orchestration prompts; the CLI owns state, gates, verification, and receipts.
 The installer builds it and writes a shim onto the pnpm bin path, so the binary always matches the installed skills (same-repo versioning, no skew).
 
 ```text
-checkshirt interview init       create the interview qa-log skeleton for a topic
-checkshirt interview log        record one answered interview turn (raw capture, counters, cursor)
-checkshirt interview decision   upsert a Decision Register row with enum validation
-checkshirt interview checkpoint  flip needs_normalization and record a normalization checkpoint
-checkshirt interview coherence  advisory mid-interview judge: resolved-decision contradiction + goal drift (never blocks)
-checkshirt interview status     interview state resync: counts, open P0/P1 nodes, checkpoint due, drift
-checkshirt gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
-checkshirt gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
-checkshirt verify           PRD prelint + mechanical checks ($0) first, then an independent diff-vs-AC judge
-checkshirt gate status      gate verdicts, attempts, freshness, judge usage for a topic
-checkshirt gate override    user-only escape hatch; records a deviation with the user's reason
-checkshirt doctor           judge backends, verify commands, contract version
+sasu interview init       create the interview qa-log skeleton for a topic
+sasu interview log        record one answered interview turn (raw capture, counters, cursor)
+sasu interview decision   upsert a Decision Register row with enum validation
+sasu interview checkpoint  flip needs_normalization and record a normalization checkpoint
+sasu interview coherence  advisory mid-interview judge: resolved-decision contradiction + goal drift (never blocks)
+sasu interview status     interview state resync: counts, open P0/P1 nodes, checkpoint due, drift
+sasu gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
+sasu gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
+sasu verify           PRD prelint + mechanical checks ($0) first, then an independent diff-vs-AC judge
+sasu gate status      gate verdicts, attempts, freshness, judge usage for a topic
+sasu gate override    user-only escape hatch; records a deviation with the user's reason
+sasu doctor           judge backends, verify commands, contract version
 ```
 
 The interview commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation, so a full interview turn costs one short chained command instead of a hand-written multi-hunk markdown edit.

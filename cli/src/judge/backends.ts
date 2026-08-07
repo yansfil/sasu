@@ -124,7 +124,7 @@ export class ClaudeBackend implements JudgeBackend {
     const result = await runProcess(this.binary, args, {
       input: prompt,
       timeoutMs,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "checkshirt-judge" },
+      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge" },
     });
     interpretSpawnFailure(this.name, result);
     const envelope = safeParse(result.stdout);
@@ -190,7 +190,7 @@ export class CodexBackend implements JudgeBackend {
     if (prompt.length > 400_000) {
       throw new JudgeError("judge-invalid-output", this.name, "prompt exceeds codex argv budget (400k chars); reduce gate input");
     }
-    const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-judge-"));
+    const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-judge-"));
     const lastMessagePath = path.join(workRoot, "last-message.txt");
     const args = codexExecArgs(model, workRoot, lastMessagePath);
     args.push(CODEX_NO_TOOLS_PREAMBLE + prompt);
@@ -210,7 +210,7 @@ export class CodexBackend implements JudgeBackend {
 
 /**
  * Deterministic test backend: returns canned responses from
- * CHECKSHIRT_JUDGE_STUB_FILE. Supported shapes:
+ * SASU_JUDGE_STUB_FILE. Supported shapes:
  * - a single object/string reused for every call
  * - a JSON array consumed in order via a .cursor side file (sequential runs)
  * - `{ "byPurpose": { "<substring>": <response>, "default": <response> } }`
@@ -222,13 +222,13 @@ export class StubBackend implements JudgeBackend {
   readonly binary = "stub";
 
   available(): boolean {
-    return Boolean(process.env["CHECKSHIRT_JUDGE_STUB_FILE"]);
+    return Boolean(process.env["SASU_JUDGE_STUB_FILE"]);
   }
 
   async run(_prompt: string, _model: string | null, _timeoutMs: number, purpose?: string): Promise<BackendRunResult> {
-    const stubFile = process.env["CHECKSHIRT_JUDGE_STUB_FILE"];
+    const stubFile = process.env["SASU_JUDGE_STUB_FILE"];
     if (!stubFile || !fs.existsSync(stubFile)) {
-      throw new JudgeError("judge-binary-missing", this.name, "CHECKSHIRT_JUDGE_STUB_FILE is not set or missing");
+      throw new JudgeError("judge-binary-missing", this.name, "SASU_JUDGE_STUB_FILE is not set or missing");
     }
     const raw = JSON.parse(fs.readFileSync(stubFile, "utf8")) as unknown;
     if (raw && typeof raw === "object" && !Array.isArray(raw) && "byPurpose" in (raw as Record<string, unknown>)) {
@@ -288,7 +288,7 @@ function safeParse(text: string): unknown | null {
 }
 
 export function resolveBackend(preference: "auto" | BackendName): JudgeBackend {
-  const envOverride = process.env["CHECKSHIRT_JUDGE_BACKEND"] as BackendName | undefined;
+  const envOverride = process.env["SASU_JUDGE_BACKEND"] as BackendName | undefined;
   const effective = envOverride ?? preference;
   const claude = new ClaudeBackend();
   const codex = new CodexBackend();

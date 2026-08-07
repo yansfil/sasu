@@ -6,7 +6,7 @@ import test from "node:test";
 import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
 
 function makeStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-store-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-store-"));
   return new GateStore(dir, "topic-a");
 }
 

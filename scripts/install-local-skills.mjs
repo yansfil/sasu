@@ -179,8 +179,8 @@ function ensureHooks(file, entriesByEvent) {
   return { file, changed };
 }
 
-// Build the checkshirt CLI and expose its binary. The shim execs the built
-// entry in this repository, so `checkshirt` always matches the installed
+// Build the sasu CLI and expose its binary. The shim execs the built
+// entry in this repository, so `sasu` always matches the installed
 // skills (same-repo versioning is the skew defense from PRD D-06).
 function installCliBinary() {
   const cliDir = path.join(repoRoot, "cli");
@@ -201,7 +201,7 @@ function installCliBinary() {
   const binDir = process.env.PNPM_HOME
     || (process.platform === "darwin" ? path.join(home, "Library", "pnpm") : path.join(home, ".local", "bin"));
   ensureDir(binDir);
-  const shimPath = path.join(binDir, "checkshirt");
+  const shimPath = path.join(binDir, "sasu");
   const entry = path.join(cliDir, "dist", "cli.js");
   fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
   const version = spawnSync("node", [entry, "--contract-version"], { encoding: "utf8" });

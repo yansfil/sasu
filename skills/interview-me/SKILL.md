@@ -26,7 +26,7 @@ Match the user's language by default.
 - Keep one canonical artifact only: qa-log.md.
 - Own ordinary Q&A in the main agent.
 - Do not spawn, retain, resume, or update subagents during ordinary questions.
-- Closure judgment is owned by the checkshirt gap-audit gate; use one fresh independent auditor subagent only as the recorded fallback when the checkshirt binary or judge backend is unavailable.
+- Closure judgment is owned by the sasu gap-audit gate; use one fresh independent auditor subagent only as the recorded fallback when the sasu binary or judge backend is unavailable.
 - Do not use a numeric ambiguity score as a completion gate.
 - Stop when the intended product is coherent, material decisions are traceable, and completion is testable, not when every imaginable detail is exhausted.
 
@@ -41,20 +41,20 @@ Any deliberate scope reduction must be an explicit decision with the omitted beh
 
 ## Low-Latency Capture
 
-The checkshirt interview CLI owns the qa-log's mechanical bookkeeping; the agent owns question choice and semantic prose.
+The sasu interview CLI owns the qa-log's mechanical bookkeeping; the agent owns question choice and semantic prose.
 Never hand-edit the qa-log for a mutation an interview command can perform.
 
 Create agents/interview/<topic-slug>/qa-log.md before Q1:
 
 ~~~sh
-checkshirt interview init --slug <topic-slug> --topic "<topic>" --where <where> --packs "<packs>" --understanding "<one bullet per line>"
+sasu interview init --slug <topic-slug> --topic "<topic>" --where <where> --packs "<packs>" --understanding "<one bullet per line>"
 ~~~
 
 Record each answered question immediately in raw form with one chained command per turn:
 
 ~~~sh
-checkshirt interview decision --slug <slug> --id D-05 --kind decision --area <area> --text "<decision>" --priority P0 --source "user, Q3" --status resolved --mapping "<PRD mapping>" \
-&& checkshirt interview log --slug <slug> --label "<short>" --asked "<question>" --recommended "<recommendation>" --answer "<raw answer>" --route user-decision --decision-ids "D-05" --notes "<interpretation>" --next-question "<next cursor>"
+sasu interview decision --slug <slug> --id D-05 --kind decision --area <area> --text "<decision>" --priority P0 --source "user, Q3" --status resolved --mapping "<PRD mapping>" \
+&& sasu interview log --slug <slug> --label "<short>" --asked "<question>" --recommended "<recommendation>" --answer "<raw answer>" --route user-decision --decision-ids "D-05" --notes "<interpretation>" --next-question "<next cursor>"
 ~~~
 
 - Register or patch the affected D# rows first, then log the turn: interview log rejects a decision_ids reference that is not in the register.
@@ -62,7 +62,7 @@ checkshirt interview decision --slug <slug> --id D-05 --kind decision --area <ar
 - New raw entries start with needs_normalization: true until their decision, provenance, and impact are normalized at a checkpoint.
 - Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or checkpoint prose on every turn; touch those sections only when their content materially changes.
 - Every mutating interview command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
-- Resync with `checkshirt interview status --slug <slug> [--json]` instead of re-reading the whole file.
+- Resync with `sasu interview status --slug <slug> [--json]` instead of re-reading the whole file.
 - Do not make the user wait for prose polishing.
 
 Normalize outstanding answers every 10 answered questions; `interview status` reports when a checkpoint is DUE.
@@ -74,18 +74,18 @@ The sweep's outcome is the `--gap` value: either no material gap or the one high
 Then record the checkpoint:
 
 ~~~sh
-checkshirt interview checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
+sasu interview checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
 ~~~
 
 Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
-If the checkshirt binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
+If the sasu binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
 ## Mid-Interview Coherence Check
 
 At each checkpoint, after recording it, run one advisory coherence check:
 
 ~~~sh
-checkshirt interview coherence --slug <slug>
+sasu interview coherence --slug <slug>
 ~~~
 
 This is an independent mid-interview judge - it has no access to the interview conversation and reads only the resolved decisions, so it catches direction drift the interviewing agent is biased not to see.
@@ -265,7 +265,7 @@ Use this Decision Packet for material free-text answers:
 ## Artifacts
 
 Use this qa-log.md structure.
-The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, Audit History) and the manual fallback when checkshirt is unavailable.
+The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, Audit History) and the manual fallback when sasu is unavailable.
 Keep raw capture light during the interview.
 Complete every normalized field before marking the file PRD-ready.
 
@@ -349,24 +349,24 @@ normalization_checkpoint_every: 10
 
 1. Mirror current understanding in 2 to 4 bullets.
 2. Preflight the repository and classify relevant packs.
-3. Create qa-log.md with `checkshirt interview init`, then seed the preflight facts as register rows with `interview decision`.
+3. Create qa-log.md with `sasu interview init`, then seed the preflight facts as register rows with `interview decision`.
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
 5. Record the turn with chained `interview decision` and `interview log` commands per the Turn Protocol; reopen an invalidated node with `interview decision --status open`.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
 7. Checkpoint when `interview status` reports DUE (every 10 answers), earlier for high-risk work, or immediately when a P0 node is reopened or invalidated; run the intent, impact, and verification sweep as part of the checkpoint, record it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
 8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
 9. Run full normalization and record it with `interview checkpoint`.
-10. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
+10. Run the sasu gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `sasu` binary is unavailable.
 11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
 12. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
-## Gap-Audit Gate (checkshirt)
+## Gap-Audit Gate (sasu)
 
-Independent closure judgment is owned by the checkshirt CLI.
+Independent closure judgment is owned by the sasu CLI.
 Run it after full normalization, before marking the qa-log complete:
 
 ~~~sh
-checkshirt gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/qa-log.md
+sasu gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/qa-log.md
 ~~~
 
 The gate owns the mechanical document lint: it runs a deterministic prelint
@@ -387,9 +387,9 @@ judge and never consume the retry budget.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
 - When the output says the retry budget is exhausted, stop and hand the findings to the user instead of re-running.
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use the final-auditor subagent or a recorded local fallback as the closure audit.
-- Never run `checkshirt gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
+- Never run `sasu gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
 - Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.
-- The PASS is pinned to the qa-log's content hash (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit after the gate passed makes `checkshirt gate status` report `STALE`, and a stale gate must be re-run before handoff.
+- The PASS is pinned to the qa-log's content hash (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit after the gate passed makes `sasu gate status` report `STALE`, and a stale gate must be re-run before handoff.
 - The gate returns a findings list, never a numeric score; the numeric-gate ban in the Core Contract stands.
 
 ## Final Quality Gate

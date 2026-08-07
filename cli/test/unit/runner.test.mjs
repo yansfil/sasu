@@ -8,24 +8,24 @@ import { validateGapVerdict } from "../../dist/judge/types.js";
 import { loadConfig } from "../../dist/config.js";
 
 async function withStub(responses, fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-stub-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-stub-"));
   const stubFile = path.join(dir, "stub.json");
   fs.writeFileSync(stubFile, JSON.stringify(responses));
-  const previousBackend = process.env.CHECKSHIRT_JUDGE_BACKEND;
-  const previousFile = process.env.CHECKSHIRT_JUDGE_STUB_FILE;
-  process.env.CHECKSHIRT_JUDGE_BACKEND = "stub";
-  process.env.CHECKSHIRT_JUDGE_STUB_FILE = stubFile;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousFile = process.env.SASU_JUDGE_STUB_FILE;
+  process.env.SASU_JUDGE_BACKEND = "stub";
+  process.env.SASU_JUDGE_STUB_FILE = stubFile;
   try {
     return await fn();
   } finally {
-    if (previousBackend === undefined) delete process.env.CHECKSHIRT_JUDGE_BACKEND;
-    else process.env.CHECKSHIRT_JUDGE_BACKEND = previousBackend;
-    if (previousFile === undefined) delete process.env.CHECKSHIRT_JUDGE_STUB_FILE;
-    else process.env.CHECKSHIRT_JUDGE_STUB_FILE = previousFile;
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    if (previousFile === undefined) delete process.env.SASU_JUDGE_STUB_FILE;
+    else process.env.SASU_JUDGE_STUB_FILE = previousFile;
   }
 }
 
-const config = loadConfig(fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-proj-")));
+const config = loadConfig(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-")));
 
 test("runJudge accepts a valid first reply with attempts=1", async () => {
   await withStub([{ verdict: "PASS", findings: [] }], async () => {
@@ -83,13 +83,13 @@ test("runJudge byPurpose stub selects the matching lane response", async () => {
 // refactor must keep enforcing judge.timeoutMs per call. A fake `claude`
 // binary that sleeps past the timeout must surface as judge-timeout.
 test("runJudge enforces judge.timeoutMs per call after the async refactor", async () => {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-fakebin-"));
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 5\n");
   fs.chmodSync(fakeClaude, 0o755);
-  const previousBackend = process.env.CHECKSHIRT_JUDGE_BACKEND;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.CHECKSHIRT_JUDGE_BACKEND = "claude";
+  process.env.SASU_JUDGE_BACKEND = "claude";
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}`;
   const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 300 } };
   try {
@@ -100,8 +100,8 @@ test("runJudge enforces judge.timeoutMs per call after the async refactor", asyn
     );
     assert.ok(Date.now() - startedAt < 4000, "timeout must fire well before the fake binary exits");
   } finally {
-    if (previousBackend === undefined) delete process.env.CHECKSHIRT_JUDGE_BACKEND;
-    else process.env.CHECKSHIRT_JUDGE_BACKEND = previousBackend;
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
     process.env.PATH = previousPath;
   }
 });

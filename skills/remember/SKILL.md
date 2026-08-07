@@ -10,7 +10,7 @@ description: |
 
 # remember
 
-The checkshirt guy is never told the same thing twice.
+The sasu guy is never told the same thing twice.
 This skill turns a lesson into a landed asset: a documented fact, a machine-checked invariant, or a regression test.
 A lesson that only becomes prose is not learned; it must end up somewhere that a machine or a future session is forced to encounter.
 

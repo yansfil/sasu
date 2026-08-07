@@ -1,4 +1,4 @@
-import type { CheckshirtConfig, Tier } from "../config";
+import type { SasuConfig, Tier } from "../config";
 import { tierModelFor } from "../config";
 import { resolveBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeCallRecord } from "./types";
@@ -16,7 +16,7 @@ export interface JudgeOutcome<T> {
  * retry semantics are unchanged.
  */
 export async function runJudge<T>(
-  config: CheckshirtConfig,
+  config: SasuConfig,
   purpose: string,
   tier: Tier,
   prompt: string,

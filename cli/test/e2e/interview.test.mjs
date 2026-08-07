@@ -8,7 +8,7 @@ import test from "node:test";
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
 
 function makeProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-interview-e2e-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-interview-e2e-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   return dir;
 }
@@ -16,11 +16,11 @@ function makeProject() {
 function runCli(cwd, args, { stub } = {}) {
   const env = { ...process.env };
   if (stub) {
-    env.CHECKSHIRT_JUDGE_BACKEND = "stub";
-    env.CHECKSHIRT_JUDGE_STUB_FILE = stub;
+    env.SASU_JUDGE_BACKEND = "stub";
+    env.SASU_JUDGE_STUB_FILE = stub;
   } else {
-    delete env.CHECKSHIRT_JUDGE_BACKEND;
-    delete env.CHECKSHIRT_JUDGE_STUB_FILE;
+    delete env.SASU_JUDGE_BACKEND;
+    delete env.SASU_JUDGE_STUB_FILE;
   }
   return spawnSync("node", [CLI, ...args], { cwd, encoding: "utf8", env });
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { loadConfig, type CheckshirtConfig } from "./config";
+import { loadConfig, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 
@@ -16,7 +16,7 @@ function binaryVersion(binary: string): string | null {
 }
 
 export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorSection[] } {
-  let config: CheckshirtConfig | null = null;
+  let config: SasuConfig | null = null;
   let configError: string | null = null;
   try {
     config = loadConfig(projectRoot);
@@ -69,7 +69,7 @@ export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorS
   sections.push({
     section: "contract",
     ok: true,
-    lines: [`checkshirt contract version: ${contractVersion()}`],
+    lines: [`sasu contract version: ${contractVersion()}`],
   });
 
   return { ok: sections.every((s) => s.ok || s.section === "verify"), sections };

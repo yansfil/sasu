@@ -31,7 +31,7 @@ const INIT = {
 };
 
 function makeProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "checkshirt-interview-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-interview-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   return dir;
 }

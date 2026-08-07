@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { CheckshirtConfig } from "../config";
+import type { SasuConfig } from "../config";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import {
   JudgeError,
@@ -50,7 +50,7 @@ export interface GateCommandResult {
  */
 function prelintBlock(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   topic: string,
   gate: GateId,
   prelint: PrelintResult,
@@ -88,7 +88,7 @@ function readInputFile(projectRoot: string, filePath: string, label: string): In
 const LANE_EFFORT = "low";
 
 function overrideRecovery(topic: string, gate: GateId): string {
-  return `To proceed anyway, the USER (never the agent) may run: checkshirt gate override --slug ${topic} --gate ${gate} --reason "<why>"`;
+  return `To proceed anyway, the USER (never the agent) may run: sasu gate override --slug ${topic} --gate ${gate} --reason "<why>"`;
 }
 
 /**
@@ -230,7 +230,7 @@ export function routePriorFindings(
 
 async function runGapListGate(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   topic: string,
   gate: Extract<GateId, "gap-audit" | "spec">,
   buildPrompt: (
@@ -369,7 +369,7 @@ async function runGapListGate(
 
 export async function runGapAudit(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   topic: string,
   qaLogPath: string,
 ): Promise<GateCommandResult> {
@@ -390,7 +390,7 @@ export async function runGapAudit(
 
 export async function runSpecGate(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   topic: string,
   prdPath: string,
   qaLogPath: string,
@@ -421,7 +421,7 @@ export interface VerifyOptions {
 
 export async function runVerifyGate(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   topic: string,
   options: VerifyOptions,
 ): Promise<GateCommandResult> {
@@ -462,7 +462,7 @@ export async function runVerifyGate(
               area: "mechanical",
               severity: "P0" as const,
               missing: `${r.kind} failed (exit ${r.exitCode}): ${r.command}`,
-              recommendation: "Fix the failing check and re-run checkshirt verify.",
+              recommendation: "Fix the failing check and re-run sasu verify.",
               requiresHuman: false,
             })),
           inputs,
@@ -503,7 +503,7 @@ export async function runVerifyGate(
         area: "semantic",
         severity: "P0" as const,
         missing: `${c.id}: ${c.reason}`,
-        recommendation: "Address the criterion and re-run checkshirt verify.",
+        recommendation: "Address the criterion and re-run sasu verify.",
         requiresHuman: false,
       }));
     state = recordGateResult(
@@ -537,7 +537,7 @@ function recordJudgeFailure(
   store: GateStore,
   state: ReturnType<GateStore["load"]>,
   gate: GateId,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   error: unknown,
   records: JudgeCallRecord[],
   topic: string,
@@ -576,7 +576,7 @@ export function runOverride(
 
 export function readGateStatus(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   topic: string,
 ): Record<GateId, GateStatusView> & { judgeCallCount: number } {
   const store = new GateStore(projectRoot, topic);

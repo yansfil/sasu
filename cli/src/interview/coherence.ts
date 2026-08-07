@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { CheckshirtConfig } from "../config";
+import type { SasuConfig } from "../config";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateGapVerdict, type Finding, type JudgeCallRecord } from "../judge/types";
 import { clampDocument } from "../gates/prompts";
@@ -120,7 +120,7 @@ export interface CoherenceOptions {
  */
 export async function runInterviewCoherence(
   projectRoot: string,
-  config: CheckshirtConfig,
+  config: SasuConfig,
   options: CoherenceOptions,
 ): Promise<CoherenceResult> {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(options.slug)) {

@@ -293,15 +293,15 @@ A production connection string in a test path is a hard stop.
 
 Read `references/verification-and-evidence.md` for exact-command deviations, cost-bearing benchmark controls, artifact placement, registration, hash refresh, and required-verification semantics.
 
-### Verify Gate (checkshirt)
+### Verify Gate (sasu)
 
 Per completed task, run only the project's mechanical checks (tests/lint;
 $0, no judge). Then, after every code-changing task is complete and before
-the acceptance sweep, submit the full run diff to the checkshirt verify gate
+the acceptance sweep, submit the full run diff to the sasu verify gate
 once:
 
 ```sh
-checkshirt verify --slug <topic-slug> --prd <prd-path> --base <baseline-ref>
+sasu verify --slug <topic-slug> --prd <prd-path> --base <baseline-ref>
 ```
 
 The gate judges the diff against the PRD's complete acceptance criteria, so
@@ -325,11 +325,11 @@ acceptance criteria to an independent judge only after both pass.
   findings to the user.
 - Fail-closed judge errors report their cause and recovery; the gate stays
   blocked until it passes or the user overrides.
-- Never run `checkshirt gate override` yourself: overrides are user-only, and
+- Never run `sasu gate override` yourself: overrides are user-only, and
   the recorded deviation must carry the user's own reason.
 - Record the gate's PASS (or the user's override) as node/AC evidence; the
   gate state lives under `agents/gates/<topic-slug>/`.
-- If the `checkshirt` binary is unavailable, record that limitation in
+- If the `sasu` binary is unavailable, record that limitation in
   `context-notes.md` and continue with the PRD verification contract alone.
 
 ## 7. Review And Finalize

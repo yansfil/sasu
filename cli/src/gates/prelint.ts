@@ -353,7 +353,7 @@ export function runPrelint(doc: "qa-log" | "prd", content: string): PrelintResul
     return {
       ok: false,
       doc,
-      findings: [finding("prelint-internal-error", null, `prelint crashed: ${message}`, "Fix the document or report a checkshirt bug; the judge was not consulted (fail-closed).")],
+      findings: [finding("prelint-internal-error", null, `prelint crashed: ${message}`, "Fix the document or report a sasu bug; the judge was not consulted (fail-closed).")],
     };
   }
 }

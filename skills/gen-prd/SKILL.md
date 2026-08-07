@@ -407,7 +407,7 @@ Quality checking splits by what can verify it:
   mapping, missing commands, missing artifact strategy, missing browser
   startup, unsafe external proof).
 - Semantic checks are this single inline self-check. No separate audit file,
-  no auditor subagent, no separate quality checklist; the checkshirt Spec Gate
+  no auditor subagent, no separate quality checklist; the sasu Spec Gate
   and the implementation-side requirements fidelity review independently
   re-verify the same intent against evidence.
 
@@ -459,13 +459,13 @@ one-second check.
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
 
-### Spec Gate (checkshirt)
+### Spec Gate (sasu)
 
 After the Harness Readiness Gate passes and before marking the PRD `ready`,
 run the independent spec gate when the PRD has an interview qa-log source:
 
 ```sh
-checkshirt gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log agents/interview/<topic-slug>/qa-log.md
+sasu gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log agents/interview/<topic-slug>/qa-log.md
 ```
 
 An independent judge checks fidelity (every material Decision Register entry
@@ -480,11 +480,11 @@ no vague qualifiers), and verification completeness.
   the user.
 - If the judge backend is unavailable, the gate fails closed; report the cause
   and recovery, and treat the PRD as not `ready` until the user decides.
-- Never run `checkshirt gate override` yourself; it is user-only, and the
+- Never run `sasu gate override` yourself; it is user-only, and the
   recorded deviation must carry the user's own reason.
 - The PASS is pinned to the content hash of the PRD and qa-log bodies
   (frontmatter is exempt, so flipping `status`/`human_approval` after the gate
-  is fine): any body edit afterwards makes `checkshirt gate status` report
+  is fine): any body edit afterwards makes `sasu gate status` report
   `STALE`, and a stale spec gate must be re-run before implementation.
 - When no intake qa-log exists (conversation-only PRD), record that the spec
   gate was skipped for lack of a source document.
@@ -532,7 +532,7 @@ Require the implementing agent to report:
    profile) and fix failures.
 8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
-9. Run the checkshirt Spec Gate and fix findings until it passes or a
+9. Run the sasu Spec Gate and fix findings until it passes or a
    human-decision finding stops the loop.
 10. Mark `status: ready` only when blocking decisions are resolved, the inline
    self-check passes, the Harness Readiness Gate reports zero blocking

@@ -6,7 +6,7 @@
 /agents/implement/
 /agents/gates/
 
-# checkshirt CLI build output (+ stray npm-prefix pollution from cli-sync)
+# sasu CLI build output (+ stray npm-prefix pollution from cli-sync)
 /cli/node_modules/
 /cli/dist/
 /cli/bin/
