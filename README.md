@@ -2,11 +2,19 @@
 
 <p align="center"><img src="assets/mascot.png" width="260" alt="sasu mascot"/></p>
 
-**One PRD pipeline, two runtimes, one 사수.**
-A personal engineering workflow harness that turns a conversation into a shipped pull request, with the same skills, the same state machine, and the same completion guarantees whether the agent is Codex or Claude Code.
+**Your agent codes. Sasu reviews.**
 
-The concept: you are working with your sasu (사수) - the seasoned senior who reviews everything you ship, still wearing the plaid shirt.
-He scopes before he specs, he specs before he builds, he does not say "done" without evidence, he never has to be told the same thing twice, and nothing merges until he signs off.
+sasu (사수) is the Korean word for the senior developer who sits next to you, asks what you actually meant, and looks over every line before it ships.
+This harness gives your coding agent that senior.
+
+The idea is simple but strict:
+
+1. **Interview the tacit knowledge out of your head.** What you meant, not just what you typed.
+2. **Pin it down in a PRD.** A human decision contract, not a vibe.
+3. **Verify everything.** "Done" is a provable state backed by evidence and receipts, never a claim.
+
+It is agent-agnostic by design - one source of skills and one CLI drive every runtime the same way.
+Codex and Claude Code ship today; any agent that can read a skill and run a command can work under the same 사수.
 
 ```text
 conversation
