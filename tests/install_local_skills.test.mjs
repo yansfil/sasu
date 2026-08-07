@@ -85,10 +85,10 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "implement", "agents")));
   assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "implement", "agents")), false);
 
-  // Hooks: Codex gets Stop + SubagentStop + PreToolUse, Claude gets Stop only.
+  // Hooks: Codex gets Stop + PreToolUse, Claude gets Stop only.
   const codexHooks = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
   assert.ok(codexHooks.hooks.Stop.some(matcher => matcher.hooks.some(hook => hook.command.includes("prd_state_harness.js"))));
-  assert.ok(codexHooks.hooks.SubagentStop.some(matcher => matcher.hooks.some(hook => hook.command.includes("hook subagent-stop"))));
+  assert.equal(codexHooks.hooks.SubagentStop, undefined);
   assert.ok(codexHooks.hooks.PreToolUse.some(matcher => matcher.hooks.some(hook => hook.command.includes("hook pretool-use"))));
   const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.ok(claudeSettings.hooks.Stop.some(matcher => matcher.hooks.some(hook => hook.command.includes("prd_state_harness.js"))));

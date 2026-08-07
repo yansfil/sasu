@@ -280,7 +280,6 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   assert.equal(fidelityRecord.ok, true);
 
   state = readState();
-  assert.equal(state.reviewProfile.policyVersion, 2);
   assert.equal(state.finalReview, null);
   assert.equal(state.taskGraph, undefined);
 
@@ -298,7 +297,6 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   const receipt = JSON.parse(fs.readFileSync(path.join(runDir, "receipt.json"), "utf8"));
   assert.equal(receipt.status, "complete");
   assert.equal(receipt.reviewProfile.profile, "standard");
-  assert.equal(receipt.reviewProfile.policyVersion, 2);
   assert.equal(receipt.reviewPolicy.fidelityOwner, "independent");
   assert.equal(receipt.reviewPolicy.finalReviewRequired, false);
   assert(receipt.initialWorktreeSnapshot);

@@ -2,7 +2,7 @@
 
 const path = require("path");
 
-const { nowIso, writeJson, appendJsonl, REVIEW_POLICY_VERSION } = require("../util");
+const { nowIso, writeJson, appendJsonl } = require("../util");
 const { recordDeviation, effectiveReviewPolicy } = require("../state_data");
 const { loadState, syncActive, persistState } = require("../state_store");
 
@@ -62,7 +62,6 @@ function cmdReviewPolicy(options) {
     source: "user-override",
     reason,
     signals: previous && Array.isArray(previous.signals) ? previous.signals : [],
-    policyVersion: REVIEW_POLICY_VERSION,
     overriddenAt: nowIso(),
     previous: previous ? { profile: previous.profile, source: previous.source } : null,
   };

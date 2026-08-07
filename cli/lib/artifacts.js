@@ -114,10 +114,16 @@ function verificationEvidenceKindViolations(state) {
     const qualifying = (verification.artifacts || []).filter(artifact => {
       if (!artifact || !artifact.path) return false;
       if (/\.(md|markdown)$/i.test(artifact.path)) return false;
-      return allowed.includes(artifact.kind);
+      if (!allowed.includes(artifact.kind)) return false;
+      // Command and automated checks must come from verify-run, which stamps
+      // the execution metadata; a hand-registered log proves nothing ran.
+      if (["command", "automated"].includes(category) && typeof artifact.exitCode !== "number") return false;
+      return true;
     });
     if (!qualifying.length) {
-      violations.push(`Required verification ${verification.id} (${category}) has no qualifying evidence artifact: expected kind ${allowed.join("/")} captured from the actual run; markdown summaries and prose files do not count`);
+      violations.push(["command", "automated"].includes(category)
+        ? `Required verification ${verification.id} (${category}) has no qualifying evidence artifact: run it through verify-run so the command log carries execution metadata; hand-registered logs and prose files do not count`
+        : `Required verification ${verification.id} (${category}) has no qualifying evidence artifact: expected kind ${allowed.join("/")} captured from the actual run; markdown summaries and prose files do not count`);
     }
   }
   return violations;

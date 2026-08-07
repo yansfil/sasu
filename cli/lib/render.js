@@ -84,7 +84,6 @@ function renderChecklist(state) {
   const reviewPolicy = effectiveReviewPolicy(state);
   lines.push("## Review Policy", "");
   lines.push(`- Profile: ${reviewPolicy.profile}`);
-  lines.push(`- Policy version: ${reviewPolicy.policyVersion}`);
   lines.push(`- Requirements fidelity owner: ${reviewPolicy.fidelityOwner}`);
   lines.push(`- Final adversarial review required: ${reviewPolicy.finalReviewRequired ? "yes" : "no"}`, "");
   lines.push("## Tasks", "");
@@ -267,7 +266,6 @@ function writeImplementationReport(statePath, state) {
 
   lines.push("", "## Review Policy", "");
   lines.push(`- Effective profile: ${policy.profile}`);
-  lines.push(`- Policy version: ${policy.policyVersion}`);
   lines.push(`- Classification source: ${profile.source || "default"}`);
   lines.push(`- Classification reason: ${profile.reason || "none recorded"}`);
   lines.push(`- Requirements fidelity owner: ${policy.fidelityOwner}`);
@@ -408,7 +406,7 @@ Source of truth:
 - Ledger: \`${state.runDir}/ledger.jsonl\`
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
 - Git diff/worktree: inspect current repository state
-- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` files that exist.
+- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/interview/**\` files that exist (legacy \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` paths may appear in older PRDs).
 - When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A and Decision Packets, UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.
 - Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources). This count is not semantic coverage proof.
 ${decisionLines}

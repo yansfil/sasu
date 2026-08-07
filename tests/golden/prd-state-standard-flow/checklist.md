@@ -5,7 +5,6 @@ Source PRD: agents/prd/standard-regression/prd.md
 ## Review Policy
 
 - Profile: standard
-- Policy version: 2
 - Requirements fidelity owner: independent
 - Final adversarial review required: no
 

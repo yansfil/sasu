@@ -39,7 +39,10 @@ function cmdMark(options) {
       const ready = readyExecutionPlan(state);
       const blocker = ready.blocked.find(entry => entry.id === item.id);
       if (blocker) {
-        deviationEntry = recordDeviation(state, "ready_order", item.id, "Task completed while its declared dependencies were still open", {
+        const planSentinelsOnly = (blocker.waitingFor || []).every(waitId => ["VP0", "EP0"].includes(waitId));
+        deviationEntry = recordDeviation(state, "ready_order", item.id, planSentinelsOnly
+          ? "Task completed while the verification/execution plan still had blocking gaps"
+          : "Task completed while its declared dependencies were still open", {
           waitingFor: blocker.waitingFor,
           readySequential: ready.readySequential,
         });

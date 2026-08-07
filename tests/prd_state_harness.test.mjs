@@ -168,7 +168,6 @@ test("review profile uses agent-declared semantics with a standard fallback", ()
   });
   assert.equal(declared.profile, "high-risk");
   assert.equal(declared.source, "prd");
-  assert.equal(declared.policyVersion, 2);
   assert.deepEqual(declared.signals, [
     "PRD semantic assessment: This change migrates production data and needs the stronger review path.",
   ]);
@@ -476,7 +475,6 @@ PASS.
   runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
   const status = runJson(["status"], projectRoot);
   assert.equal(status.reviewProfile.profile, "trivial");
-  assert.equal(status.reviewProfile.policyVersion, 2);
   assert.equal(status.reviewPolicy.finalReviewRequired, false);
   assert.equal(status.next, null);
   const reviewedState = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
@@ -852,7 +850,6 @@ test("review profile sources act as safety floors and cannot lower stronger risk
   const status = runJson(["status"], root);
   assert.equal(status.reviewProfile.profile, "high-risk");
   assert.equal(status.reviewProfile.source, "config");
-  assert.equal(status.reviewProfile.policyVersion, 2);
 
   // A per-run profile cannot lower the configured safety floor.
   const root2 = initGitRepo();
@@ -862,7 +859,6 @@ test("review profile sources act as safety floors and cannot lower stronger risk
   const status2 = runJson(["status"], root2);
   assert.equal(status2.reviewProfile.profile, "high-risk");
   assert.equal(status2.reviewProfile.source, "config");
-  assert.equal(status2.reviewProfile.policyVersion, 2);
 });
 
 test("policy v2 high-risk graph retains the independent final review gate", () => {
@@ -877,7 +873,6 @@ test("policy v2 high-risk graph retains the independent final review gate", () =
   const status = runJson(["status"], root);
   assert.equal(status.reviewProfile.profile, "high-risk");
   assert.equal(status.reviewProfile.source, "prd");
-  assert.equal(status.reviewProfile.policyVersion, 2);
   assert(status.reviewProfile.signals.some(signal => /production data migration/.test(signal)));
   assert.equal(status.reviewPolicy.finalReviewRequired, true);
   const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "high-risk-graph", "state.json"), "utf8"));

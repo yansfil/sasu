@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { PROJECT_CONFIG_PATH, REVIEW_POLICY_VERSION, resolveProjectPath, canonicalPath, readJson, stringArray, commandArray, safeBranchSegment } = require("./util");
+const { PROJECT_CONFIG_PATH, resolveProjectPath, canonicalPath, readJson, stringArray, commandArray, safeBranchSegment } = require("./util");
 const { currentBranch } = require("./git");
 
 function readProjectConfig(projectRoot) {
@@ -88,7 +88,6 @@ function reviewProfileResult(profile, source, reason, signals = []) {
     source,
     reason,
     signals,
-    policyVersion: REVIEW_POLICY_VERSION,
   };
 }
 

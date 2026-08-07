@@ -58,7 +58,7 @@ References do not require nested reference chasing.
 
 | Reference | Read when |
 | --- | --- |
-| [`references/execution-graph.md`](references/execution-graph.md) | Before `plan-execution`, during task implementation or subagent assignment, when modifying this skill, or when diagnosing ready, deviation, and parallel behavior. |
+| [`references/execution-planning.md`](references/execution-planning.md) | Before `plan-execution`, during task implementation or subagent assignment, when modifying this skill, or when diagnosing ready, deviation, and parallel behavior. |
 | [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before `plan-verification`, before running any required `V#`, and whenever runtime evidence is recorded, replaced, refreshed, or rejected. |
 | [`references/reviews-and-finalization.md`](references/reviews-and-finalization.md) | Before the acceptance sweep, requirements fidelity review, final adversarial review, receipt finalization, or blocked and partial handoff. |
 | [`references/worktrees-and-delivery.md`](references/worktrees-and-delivery.md) | When `agents/config.json` exists, delivery is `pr`, worktrees are enabled, an existing run is resumed, session binding needs diagnosis, or a local active pointer must be cleaned. |
@@ -229,7 +229,7 @@ Without an explicit task plan, tasks remain safely sequential.
 Perform the main-agent coverage check before editing.
 Inspect intent sources, verification coverage, the task plan and its gaps, ambiguity, structure-lock drift, and unmapped scope.
 Record material findings in `context-notes.md` and stop on a material blocker.
-Use `references/execution-graph.md` for task executor fields, deviations, and parallel guidance.
+Use `references/execution-planning.md` for task executor fields, deviations, and parallel guidance.
 
 ## 5. Implement Ready Tasks
 

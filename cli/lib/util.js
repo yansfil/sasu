@@ -51,10 +51,6 @@ function runDirRelFor(slug) {
 
 const DEFAULT_HOOK_TIMEOUT_MS = 9000;
 
-// Stamped onto every new run's reviewProfile and reported as the effective
-// policy version. Review semantics are keyed on the profile alone.
-const REVIEW_POLICY_VERSION = 2;
-
 // The harness is installed under more than one skills root (~/.codex/skills,
 // ~/.claude/skills) with runtime-specific directory names. Every emitted
 // command and sibling-script lookup must derive from the invoked script path,
@@ -322,7 +318,6 @@ module.exports = {
   ACTIVE_PATH,
   PROJECT_CONFIG_PATH,
   DEFAULT_HOOK_TIMEOUT_MS,
-  REVIEW_POLICY_VERSION,
   SELF_PATH,
   displayPath,
   harnessCommand,

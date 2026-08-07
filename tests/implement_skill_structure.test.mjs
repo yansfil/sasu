@@ -9,7 +9,7 @@ const skillPath = path.join(skillDir, "SKILL.md");
 const referencesDir = path.join(skillDir, "references");
 
 const expectedReferences = [
-  "execution-graph.md",
+  "execution-planning.md",
   "reviews-and-finalization.md",
   "verification-and-evidence.md",
   "worktrees-and-delivery.md",

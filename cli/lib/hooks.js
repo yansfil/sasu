@@ -11,7 +11,7 @@ const { completionViolations } = require("./reviews");
 const { sameSessionId, sessionIdFromHookPayload, readActive, syncActive } = require("./state_store");
 
 function cmdHook(kind) {
-  if (kind !== "stop" && kind !== "subagent-stop" && kind !== "pretool-use") return;
+  if (kind !== "stop" && kind !== "pretool-use") return;
   const started = Date.now();
   readStdinJson(DEFAULT_HOOK_TIMEOUT_MS, payload => {
     try {
@@ -89,8 +89,7 @@ If delivery is genuinely blocked, report the blocker explicitly to the user inst
 function runStopHook(payload, started) {
   if (!payload || typeof payload !== "object") return "";
 	  const event = payload.hook_event_name;
-	  if (event !== "Stop" && event !== "SubagentStop") return "";
-  if (event === "SubagentStop") return "";
+	  if (event !== "Stop") return "";
 	  if (payload.stop_hook_active === true) return "";
   const hookCwd = typeof payload.cwd === "string" ? payload.cwd : cwd();
   const sessionId = sessionIdFromHookPayload(payload);

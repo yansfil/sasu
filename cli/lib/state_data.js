@@ -1,7 +1,7 @@
 // @ts-check
 "use strict";
 
-const { nowIso, REVIEW_POLICY_VERSION } = require("./util");
+const { nowIso } = require("./util");
 
 /** @typedef {import("./types").State} State */
 /** @typedef {import("./types").VerificationItem} VerificationItem */
@@ -149,7 +149,6 @@ function effectiveReviewPolicy(state) {
   const profile = reviewProfileName(state);
   return {
     profile,
-    policyVersion: REVIEW_POLICY_VERSION,
     fidelityOwner: independentFidelityRequiredForState(state) ? "independent" : "main-agent",
     fidelityDepth: profile === "trivial" ? "compact" : "full",
     finalReviewRequired: finalReviewRequiredForState(state),

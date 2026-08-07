@@ -57,7 +57,7 @@ node scripts/install-local-skills.mjs
 | Invocation | `$interview-me`, `$gen-prd`, ... | `/interview-me`, `/gen-prd`, ... |
 | `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$implement` becomes `/implement`) |
 | `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
-| Hooks | `Stop` + `SubagentStop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
+| Hooks | `Stop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
 
 The mechanics that make one source possible:
 

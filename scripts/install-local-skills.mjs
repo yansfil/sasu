@@ -17,7 +17,7 @@
 // installs share one implementation.
 //
 // The installer also registers the harness hooks idempotently
-// (~/.codex/hooks.json: Stop/PreToolUse/SubagentStop; ~/.claude/settings.json:
+// (~/.codex/hooks.json: Stop/PreToolUse; ~/.claude/settings.json:
 // Stop only, since Claude Code has no update_goal tool) and removes legacy
 // pre-rename install directories it owns (intake, prd, prd-implement, ...).
 
@@ -160,6 +160,20 @@ function ensureHooks(file, entriesByEvent) {
   }
   if (!config.hooks || typeof config.hooks !== "object") config.hooks = {};
   let changed = false;
+  // Retract harness-owned entries from events we no longer register (e.g. the
+  // retired SubagentStop hook); foreign matchers on those events are preserved.
+  for (const event of Object.keys(config.hooks)) {
+    if (Object.prototype.hasOwnProperty.call(entriesByEvent, event)) continue;
+    const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
+    const kept = existing.filter(matcher =>
+      !(Array.isArray(matcher.hooks) && matcher.hooks.some(hook =>
+        typeof hook.command === "string" && hook.command.includes("prd_state_harness.js"))));
+    if (kept.length !== existing.length) {
+      if (kept.length) config.hooks[event] = kept;
+      else delete config.hooks[event];
+      changed = true;
+    }
+  }
   for (const [event, command] of Object.entries(entriesByEvent)) {
     const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
     const kept = existing.filter(matcher =>
@@ -228,7 +242,6 @@ const hooks = {
   // Codex uses the PreToolUse guard for premature `update_goal complete`.
   codex: ensureHooks(path.join(home, ".codex", "hooks.json"), {
     Stop: codexHookCommand("stop"),
-    SubagentStop: codexHookCommand("subagent-stop"),
     PreToolUse: codexHookCommand("pretool-use"),
   }),
   // Claude Code has no update_goal tool; the Stop hook is the only guard.

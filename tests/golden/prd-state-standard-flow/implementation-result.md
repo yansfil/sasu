@@ -13,7 +13,6 @@ Receipt: agents/implement/standard-regression/receipt.json
 ## Review Policy
 
 - Effective profile: standard
-- Policy version: 2
 - Classification source: explicit
 - Classification reason: set as a safety floor by --review-profile
 - Requirements fidelity owner: independent
@@ -80,12 +79,10 @@ Receipt: agents/implement/standard-regression/receipt.json
     "profile": "standard",
     "source": "explicit",
     "reason": "set as a safety floor by --review-profile",
-    "signals": [],
-    "policyVersion": 2
+    "signals": []
   },
   "reviewPolicy": {
     "profile": "standard",
-    "policyVersion": 2,
     "fidelityOwner": "independent",
     "fidelityDepth": "full",
     "finalReviewRequired": false

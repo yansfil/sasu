@@ -147,7 +147,6 @@
  * @property {string} source
  * @property {string} [reason]
  * @property {string[]} [signals]
- * @property {number} [policyVersion]
  */
 
 /**
