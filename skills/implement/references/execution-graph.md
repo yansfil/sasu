@@ -72,8 +72,8 @@ The harness validates task IDs, dependencies, dependency cycles, repository-rela
 
 Inspect `execution-plan.md`, `taskgraph.md`, or `status` after planning.
 The TaskGraph must account for verification planning, execution planning, execution nodes, PRD task rollups, acceptance criteria, verification items, requirements fidelity review, any final review required by the effective policy, and receipt.
-Policy v2 `trivial` and `standard` omit `REVIEW` entirely and connect `REQ_FIDELITY_REVIEW` directly to `FINALIZE`.
-Policy v2 `high-risk` and legacy v1 states retain their existing `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` shape, although legacy `trivial` does not require the review to pass.
+`trivial` and `standard` omit `REVIEW` entirely and connect `REQ_FIDELITY_REVIEW` directly to `FINALIZE`.
+`high-risk` uses the `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` shape.
 `ready` identifies runnable execution nodes and never proves final eligibility.
 
 The main agent owns the post-planning coverage check.

@@ -5,7 +5,7 @@
 const path = require("path");
 
 const { nowIso, cwd, toProjectRelative, sha256Text, uniqueMatches } = require("./util");
-const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState, finalReviewNodePresentForState, independentFidelityRequiredForState } = require("./state_data");
+const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState, independentFidelityRequiredForState } = require("./state_data");
 const { inferVerificationMode } = require("./prd_parser");
 const { repoSignals, classifyVerification, commandFromText, commandForMode, coverageFromText, artifactsForVerification, passCriteriaFromText, toolForVerification, targetForVerification, plannedCheckStatus, plannerNotes, hasAppStartupSignal } = require("./inference");
 
@@ -705,15 +705,14 @@ function addReviewAndReceiptNodes(graph, state, reviewedItems) {
     artifactCount: state.requirementsFidelityReview && state.requirementsFidelityReview.reportPath ? 1 : 0,
   });
   const finalReviewRequired = finalReviewRequiredForState(state);
-  const finalReviewPresent = finalReviewNodePresentForState(state);
-  if (finalReviewPresent) {
+  if (finalReviewRequired) {
     graph.addNode({
       id: "REVIEW",
       kind: "final_review",
       title: "Adversarial final review",
-      status: state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped",
-      closed: finalReviewRequired ? Boolean(state.finalReview && state.finalReview.status === "pass") : true,
-      requiredForDone: finalReviewRequired,
+      status: state.finalReview ? state.finalReview.status : "pending",
+      closed: Boolean(state.finalReview && state.finalReview.status === "pass"),
+      requiredForDone: true,
       evidenceCount: state.finalReview ? 1 : 0,
       artifactCount: state.finalReview && state.finalReview.reportPath ? 1 : 0,
     });
@@ -730,14 +729,11 @@ function addReviewAndReceiptNodes(graph, state, reviewedItems) {
 
   for (const item of reviewedItems) {
     graph.addEdge(item.id, "REQ_FIDELITY_REVIEW", "requirements_review_input", "requirements reviewer must audit this item against original user intent and PRD decisions");
-    if (finalReviewPresent) graph.addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
+    if (finalReviewRequired) graph.addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
   }
   if (finalReviewRequired) {
     graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", "final reviewer must audit the requirements fidelity verdict");
     graph.addEdge("REVIEW", "FINALIZE", "gates", "receipt can be written only after passing final review");
-  } else if (finalReviewPresent) {
-    graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", "legacy trivial policy skips mandatory final review after requirements fidelity passes");
-    graph.addEdge("REVIEW", "FINALIZE", "gates", "legacy receipt can be written after requirements fidelity review and mechanical gates pass");
   } else {
     graph.addEdge("REQ_FIDELITY_REVIEW", "FINALIZE", "gates", "receipt can be written after requirements fidelity review and mechanical gates pass");
   }

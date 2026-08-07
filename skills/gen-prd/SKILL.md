@@ -11,8 +11,8 @@ description: |
 
 # gen-prd
 
-PRDs live under the visible `agents/` namespace (`agents/prd/**`); legacy
-`.hoyeon/prd/**` files stay readable as a fallback.
+PRDs live under the visible `agents/` namespace (`agents/prd/**`), which is the
+only namespace the pipeline reads or writes.
 
 Use this skill to write an implementation-ready PRD from intake output or the
 current conversation.

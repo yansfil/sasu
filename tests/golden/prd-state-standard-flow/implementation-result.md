@@ -19,7 +19,6 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Requirements fidelity owner: independent
 - Requirements fidelity depth: full
 - Final adversarial review required: no
-- Final review node present: no
 - Classification signals: none
 
 ## Execution Plan And Changed Modules
@@ -98,8 +97,7 @@ Receipt: agents/implement/standard-regression/receipt.json
     "policyVersion": 2,
     "fidelityOwner": "independent",
     "fidelityDepth": "full",
-    "finalReviewRequired": false,
-    "finalReviewNodePresent": false
+    "finalReviewRequired": false
   },
   "counts": {
     "executionOpen": 0,

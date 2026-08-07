@@ -12,7 +12,7 @@ description: |
 # implement
 
 Artifacts live under the visible `agents/` namespace at `agents/implement/**` and `agents/implement/.prd-implement-active.json`.
-A legacy `.hoyeon/implement/**` tree from older runs remains readable as a fallback.
+`agents/` is the only namespace the harness reads or writes.
 
 Use this skill to implement an approved PRD end to end.
 This is the execution counterpart to `gen-prd`.
@@ -40,8 +40,7 @@ Current PRDs should include:
 - `## 11. Implementation Guardrails`.
 - `## 12. Implementation Result Report Contract`.
 
-Current PRDs use one `prd.md`, an inline semantic self-check, and the stateless Harness Readiness Gate.
-Legacy PRDs may have `intent-scope-audit.md` or `verification-contract-audit.md`; read those files when present.
+PRDs use one `prd.md`, an inline semantic self-check, and the stateless Harness Readiness Gate.
 
 Stop when required pre-work, human approval, credentials, migration windows, production data, or product decisions remain unresolved.
 
@@ -139,12 +138,11 @@ Before editing:
 3. Never set human approval yourself; when the user explicitly approves in conversation, either update frontmatter with that quoted approval in the implementation notes or pass the exact approval to `init --allow-unapproved-prd`.
 4. Confirm blocking pre-work and human decisions are resolved.
 5. Treat Major Technical Structure Changes as the approved structure lock.
-6. Read legacy side audits when they exist and stop on unresolved failures unless the user explicitly accepts the risk.
-7. Read Implementation Guardrails and Risks.
-8. Read `agents/config.json` when it exists.
-9. Run `doctor` when delivery, worktree sync, or PR and CI readiness is uncertain.
-10. Inspect `git status --short` and preserve unrelated changes.
-11. Read the files likely to be touched before editing.
+6. Read Implementation Guardrails and Risks.
+7. Read `agents/config.json` when it exists.
+8. Run `doctor` when delivery, worktree sync, or PR and CI readiness is uncertain.
+9. Inspect `git status --short` and preserve unrelated changes.
+10. Read the files likely to be touched before editing.
 
 For files around 1000 lines or longer, use `rg` to locate relevant functions or sections and read only those ranges.
 Avoid repeatedly loading whole large files because context loss can force costly re-reads.
@@ -349,8 +347,8 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-
 When the user explicitly reduces or raises review scope mid-run (for example "리뷰 한번만 돌리고 마무리해"), record it with `review-policy --profile <profile> --reason "<their verbatim words>"` and follow the resulting effective policy instead of ignoring the request or silently skipping gates.
 
 For `trivial`, the main agent performs a compact fidelity review.
-For policy v2 `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
-For `high-risk` and legacy `standard`, the main agent performs full fidelity before the required independent final review.
+For `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
+For `high-risk`, the main agent performs full fidelity before the required independent final review.
 Every fidelity review must compare the complete original qa-log or conversation source, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result.
 Do not use a handoff summary or the harness's parsed intent sample as a substitute for reading the canonical source.
 Fail when a material answer, accepted recommendation, objection, constraint, rejected option, non-goal, or assumption is lost or changes provenance across `qa-log -> PRD -> implementation`.

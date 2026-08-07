@@ -3,16 +3,15 @@
 const fs = require("fs");
 const path = require("path");
 
-const { PROJECT_CONFIG_PATH, LEGACY_PROJECT_CONFIG_PATH, resolveReadRel, resolveProjectPath, canonicalPath, readJson, stringArray, commandArray, safeBranchSegment } = require("./util");
+const { PROJECT_CONFIG_PATH, REVIEW_POLICY_VERSION, resolveProjectPath, canonicalPath, readJson, stringArray, commandArray, safeBranchSegment } = require("./util");
 const { currentBranch } = require("./git");
 
 function readProjectConfig(projectRoot) {
-  const configRel = resolveReadRel(projectRoot, PROJECT_CONFIG_PATH, LEGACY_PROJECT_CONFIG_PATH);
-  const configPath = path.join(projectRoot, configRel);
+  const configPath = path.join(projectRoot, PROJECT_CONFIG_PATH);
   if (!fs.existsSync(configPath)) return {};
   const parsed = readJson(configPath);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${configRel} must contain a JSON object`);
+    throw new Error(`${PROJECT_CONFIG_PATH} must contain a JSON object`);
   }
   return parsed;
 }
@@ -82,8 +81,6 @@ function normalizeExecutionConfig(projectConfig, options) {
     : Boolean(input.parallel);
   return { schema: "hoyeon.execution.v1", parallel };
 }
-
-const REVIEW_POLICY_VERSION = 2;
 
 function reviewProfileResult(profile, source, reason, signals = []) {
   return {

@@ -6,22 +6,18 @@ const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 
-// Namespace layout mirror of fulfill's util.js constants. Kept local so the
-// deliver skill stays installable without a fulfill checkout, but the values
+// Namespace layout mirror of implement's util.js constants. Kept local so the
+// ship skill stays installable without an implement checkout, but the values
 // and the namespace.root override lookup must match; change both together.
-// The legacy `.hoyeon` tree is a read-only fallback for runs started before
-// the agents/ namespace migration.
 function readNamespaceOverride() {
-  for (const rel of [path.join("agents", "config.json"), path.join(".hoyeon", "config.json")]) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), rel), "utf8"));
-      const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
-        ? parsed.namespace.root.trim()
-        : "";
-      if (root && /^[A-Za-z0-9._-]+$/.test(root) && root !== ".hoyeon") return root;
-    } catch {
-      // Missing or invalid config falls back to the default namespace.
-    }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), "agents", "config.json"), "utf8"));
+    const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
+      ? parsed.namespace.root.trim()
+      : "";
+    if (root && /^[A-Za-z0-9._-]+$/.test(root)) return root;
+  } catch {
+    // Missing or invalid config falls back to the default namespace.
   }
   return null;
 }
@@ -30,15 +26,9 @@ const NAMESPACE_ROOT = readNamespaceOverride() || "agents";
 const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
 const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
-const LEGACY_NAMESPACE_ROOT = ".hoyeon";
-const LEGACY_IMPLEMENT_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "implement");
-const LEGACY_SESSIONS_DIR_REL = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
-const LEGACY_ACTIVE_PATH = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
-// Resolve the sibling fulfill harness relative to this script so the same
-// file works from the repo, ~/.codex/skills, and ~/.claude/skills. The
-// pre-rename legacy directory name (prd-implement) is kept as a fallback for
-// stale installs.
+// Resolve the sibling implement harness relative to this script so the same
+// file works from the repo, ~/.codex/skills, and ~/.claude/skills.
 function defaultHarnessPath() {
   const selfPath = path.resolve(process.argv[1] || __filename);
   const roots = [path.dirname(path.dirname(path.dirname(selfPath)))];
@@ -48,10 +38,8 @@ function defaultHarnessPath() {
     // Keep the argv-based root only.
   }
   for (const root of roots) {
-    for (const dir of ["implement", "fulfill", "prd-implement"]) {
-      const candidate = path.join(root, dir, "scripts", "prd_state_harness.js");
-      if (fs.existsSync(candidate)) return candidate;
-    }
+    const candidate = path.join(root, "implement", "scripts", "prd_state_harness.js");
+    if (fs.existsSync(candidate)) return candidate;
   }
   return path.join(roots[0], "implement", "scripts", "prd_state_harness.js");
 }
@@ -267,10 +255,8 @@ function resolveState(options) {
   const repoRoot = findGitRoot(process.cwd());
   let statePath = options.state ? resolveInput(options.state, repoRoot) : null;
   if (!statePath) {
-    const activePath = [ACTIVE_PATH, LEGACY_ACTIVE_PATH]
-      .map(rel => path.join(repoRoot, rel))
-      .find(candidate => fs.existsSync(candidate));
-    if (!activePath) throw new Error(`No --state provided and no active file at ${ACTIVE_PATH} (or legacy ${LEGACY_ACTIVE_PATH})`);
+    const activePath = path.join(repoRoot, ACTIVE_PATH);
+    if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active file at ${ACTIVE_PATH}`);
     const active = readJson(activePath);
     statePath = resolveInput(active.statePath, repoRoot);
   }
@@ -394,8 +380,7 @@ function summarizeReviews(state) {
   const requirements = state.requirementsFidelityReview || {};
   const final = state.finalReview || {};
   const profile = state.reviewProfile && state.reviewProfile.profile ? state.reviewProfile.profile : "standard";
-  const policyVersion = state.reviewProfile && state.reviewProfile.policyVersion;
-  const finalRequired = profile === "high-risk" || (profile === "standard" && policyVersion !== 2);
+  const finalRequired = profile === "high-risk";
   const finalLine = !final.status && !finalRequired
     ? `- Final adversarial review: not required by ${profile} review policy`
     : `- Final adversarial review: ${final.status || "unknown"}${final.reportPath ? ` - ${final.reportPath}` : ""}`;
@@ -538,8 +523,6 @@ function defaultExcludedPaths(context) {
   return [
     ACTIVE_PATH,
     SESSIONS_DIR_REL,
-    LEGACY_ACTIVE_PATH,
-    LEGACY_SESSIONS_DIR_REL,
     path.join(runDir, "artifacts"),
   ];
 }
@@ -582,7 +565,7 @@ function nodeWriteScopes(context) {
 
 function isUnsafeBroadWriteScope(item) {
   const rel = normalizeRepoPath(item);
-  return rel === "." || rel === "/" || rel === NAMESPACE_ROOT || rel === LEGACY_NAMESPACE_ROOT;
+  return rel === "." || rel === "/" || rel === NAMESPACE_ROOT;
 }
 
 function defaultAllowedPaths(context, config, options = {}) {

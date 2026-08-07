@@ -113,9 +113,8 @@ agents/implement/
 agents/gates/
 ```
 
-Projects that still have a legacy `.hoyeon` tree keep their old ignore rules
-untouched; the legacy tree is a read-only fallback and new runs write under
-`agents/`. Do not add contradictory duplicates for either namespace.
+`agents/` is the only harness namespace. Do not add contradictory duplicate
+ignore rules for it.
 
 Reference shape:
 

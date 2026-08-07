@@ -5,7 +5,7 @@ const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, RULES_ROOT_REL, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
+const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, RULES_ROOT_REL, NAMESPACE_ROOT, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
 const { readLedger, loadInvariants, loadPending, globLiteralPrefix } = require("../rules");
 const { gitTracked, gitIgnored } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig } = require("../config");
@@ -13,7 +13,7 @@ const { verificationPlanSummary, executionPlanSummary, countState, reviewProfile
 const { taskGraphSummary, refreshExecutionTraceMatrix, readyExecutionPlan, buildTaskGraph, nextItem } = require("../planning");
 const { collectArtifacts } = require("../artifacts");
 const { validateArtifacts, reviewWorktreeSnapshotViolations, prdCopyDriftWarnings, completionReadiness, prdSnapshotViolations } = require("../reviews");
-const { activePointerCandidates, activeRootsForState, removeActiveRecordForState, activeDiagnostics, loadState, latestPrdSlug } = require("../state_store");
+const { activePath, activeRootsForState, removeActiveRecordForState, activeDiagnostics, loadState, latestPrdSlug } = require("../state_store");
 const { deliveryShipPending } = require("../hooks");
 
 function cmdStatus(options) {
@@ -88,7 +88,6 @@ function cmdDoctor() {
     add("error", "origin", "Delivery mode is pr but no 'origin' remote is configured; push and PR creation will fail");
   }
   if (gitOk) doctorCheckGitignorePolicy(projectRoot, add);
-  doctorCheckLegacyNamespace(projectRoot, add);
   doctorCheckAgentsMdConvention(projectRoot, add);
   doctorCheckRulesLedger(projectRoot, add);
   doctorCheckGithubCli(projectRoot, prMode, add);
@@ -222,14 +221,6 @@ function doctorCheckGitignorePolicy(projectRoot, add) {
   } else {
     add("warn", "gitignore", "agents/gates/** is not ignored; sasu gate state and judge artifacts should stay out of normal commits");
   }
-}
-
-// Informational only: a legacy tree is a supported read-only fallback, not a
-// problem, so it must never surface as a warning (this repo itself keeps
-// in-flight legacy runs while migrating).
-function doctorCheckLegacyNamespace(projectRoot, add) {
-  if (!fs.existsSync(path.join(projectRoot, LEGACY_NAMESPACE_ROOT))) return;
-  add("ok", "legacy-namespace", `Legacy ${LEGACY_NAMESPACE_ROOT}/ tree detected; it stays readable as a fallback while new runs write under ${NAMESPACE_ROOT}/. Move committed PRDs to ${PRD_ROOT_REL}/ when convenient.`);
 }
 
 function doctorCheckAgentsMdConvention(projectRoot, add) {
@@ -403,8 +394,8 @@ function doctorCheckHookRegistration(add) {
 }
 
 function doctorCollectActiveRun(projectRoot, add) {
-  const activeFile = activePointerCandidates(projectRoot).find(candidate => fs.existsSync(candidate));
-  if (!activeFile) return null;
+  const activeFile = activePath(projectRoot);
+  if (!fs.existsSync(activeFile)) return null;
   try {
     const active = readJson(activeFile);
     const stateAbs = resolveProjectPath(active.statePath, projectRoot);

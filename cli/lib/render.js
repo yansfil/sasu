@@ -3,8 +3,8 @@
 const fs = require("fs");
 const path = require("path");
 
-const { writeJson, writeMarkdown, NAMESPACE_ROOT, LEGACY_NAMESPACE_ROOT } = require("./util");
-const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState, finalReviewNodePresentForState, effectiveReviewPolicy } = require("./state_data");
+const { writeJson, writeMarkdown, NAMESPACE_ROOT } = require("./util");
+const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
 const { taskGraphSummary, readyExecutionPlan, buildTaskGraph } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
 const { snapshotEntriesEqual } = require("./git");
@@ -183,11 +183,10 @@ function renderChecklist(state) {
     lines.push(`  - Report: ${state.requirementsFidelityReview.reportPath}`);
     lines.push(`  - Summary: ${state.requirementsFidelityReview.summary}`);
   }
-  const finalReviewRequired = finalReviewRequiredForState(state);
-  if (finalReviewNodePresentForState(state)) {
+  if (finalReviewRequiredForState(state)) {
     lines.push("", "## Final Adversarial Review", "");
-    lines.push(`- ${checkbox(!finalReviewRequired || Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review${finalReviewRequired ? "" : " (not required by legacy trivial policy)"}`);
-    lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "skipped"}`);
+    lines.push(`- ${checkbox(Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review`);
+    lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : "pending"}`);
     if (state.finalReview) {
       lines.push(`  - Report: ${state.finalReview.reportPath}`);
       lines.push(`  - Summary: ${state.finalReview.summary}`);
@@ -332,7 +331,6 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Requirements fidelity owner: ${policy.fidelityOwner}`);
   lines.push(`- Requirements fidelity depth: ${policy.fidelityDepth}`);
   lines.push(`- Final adversarial review required: ${policy.finalReviewRequired ? "yes" : "no"}`);
-  lines.push(`- Final review node present: ${policy.finalReviewNodePresent ? "yes" : "no"}`);
   if (Array.isArray(profile.signals) && profile.signals.length) {
     lines.push("- Classification signals:");
     for (const signal of profile.signals) lines.push(`  - ${signal}`);
@@ -426,14 +424,14 @@ function writeImplementationReport(statePath, state) {
   } else {
     lines.push("- Status: pending");
   }
-  if (finalReviewNodePresentForState(state)) {
+  if (finalReviewRequiredForState(state)) {
     lines.push("", "## Final Adversarial Review", "");
     if (state.finalReview) {
       lines.push(`- Status: ${state.finalReview.status}`);
       lines.push(`- Report: ${state.finalReview.reportPath}`);
       lines.push(`- Summary: ${state.finalReview.summary}`);
     } else {
-      lines.push(`- Status: ${finalReviewRequiredForState(state) ? "pending" : "skipped"}`);
+      lines.push("- Status: pending");
     }
   }
   lines.push("", "## Final Receipt", "", "```json", JSON.stringify(state.finalReceipt, null, 2), "```", "");
@@ -448,9 +446,7 @@ function renderRequirementsReviewPrompt(context) {
     ? "Review policy: standard v2. You are the single fresh independent read-only semantic reviewer for this run. Base the verdict on the raw PRD, state, diff, ledger, and registered artifacts, not on a coordinator-provided conclusion. The coordinator alone records your report in harness state."
     : policy.profile === "trivial"
       ? "Review policy: trivial v2. This is a compact main-agent fidelity check. Cover the complete contract, but keep the report proportional to the small change surface."
-      : policy.profile === "high-risk"
-        ? "Review policy: high-risk. This is the main-agent full requirements fidelity stage. Reopen sensitive data, auth, security, billing, live-service, migration, deployment, and rollback proof before the independent final review."
-        : "Review policy: legacy standard. This is the main-agent full requirements fidelity stage that precedes the legacy independent final review.";
+      : "Review policy: high-risk. This is the main-agent full requirements fidelity stage. Reopen sensitive data, auth, security, billing, live-service, migration, deployment, and rollback proof before the independent final review.";
   const uxApplicable = hasUserVisibleReviewSurface(state);
   const uxGuidance = uxApplicable
     ? "UI and UX evidence is applicable. Judge the registered evidence for primary user flows and relevant loading, empty, and error states. Judge responsive behavior and accessibility when contracted, copy and visual hierarchy where applicable, and clearly separate evidence-backed findings from remaining human taste judgment. This is an overlay within fidelity review, not a separate gate."
@@ -482,7 +478,7 @@ Source of truth:
 - Ledger: \`${state.runDir}/ledger.jsonl\`
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
 - Git diff/worktree: inspect current repository state
-- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` files (or their legacy \`${LEGACY_NAMESPACE_ROOT}/\` equivalents) that exist.
+- Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` files that exist.
 - When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A and Decision Packets, UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.
 - Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources). This count is not semantic coverage proof.
 ${decisionLines}
@@ -558,13 +554,10 @@ function renderReviewPrompt(context) {
   const { state, statePath, reportPath } = context;
   const fidelity = state.requirementsFidelityReview || {};
   const profile = reviewProfileName(state);
-  const policy = effectiveReviewPolicy(state);
   const profileGuidance = profile === "high-risk"
     ? "Review profile: high-risk. Run the full adversarial review and reopen any risky semantic, security, data, migration, external-service, or delivery proof."
     : profile === "standard"
-      ? policy.finalReviewRequired
-        ? "Review profile: legacy standard. Keep this as a thin required final gate: audit freshness, state consistency, artifact validity, deviations, and overclaiming; reopen full V-by-V proof only when the fidelity review is weak, generic, inconsistent, or suspicious."
-        : "Review profile: standard v2. Final adversarial review is not required for receipt. If a human explicitly requests this optional review, audit freshness, state consistency, artifact validity, deviations, and overclaiming without repeating the independent combined fidelity review."
+      ? "Review profile: standard v2. Final adversarial review is not required for receipt. If a human explicitly requests this optional review, audit freshness, state consistency, artifact validity, deviations, and overclaiming without repeating the independent combined fidelity review."
       : "Review profile: trivial. Final adversarial review is optional for receipt; if requested, keep it to a short freshness, artifact, and overclaim check.";
   const fidelityLine = fidelity.reportSha256
     ? `Recorded fidelity review: status ${fidelity.status}, report \`${fidelity.reportPath}\`, sha256 \`${fidelity.reportSha256}\`, recorded at ${fidelity.recordedAt}.`

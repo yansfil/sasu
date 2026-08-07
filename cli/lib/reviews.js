@@ -5,7 +5,7 @@ const path = require("path");
 
 const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, normalizeRelPath, escapeRegExp } = require("./util");
 const { worktreeSnapshot, snapshotMaterializedInHead, snapshotEntriesEqual, snapshotPathMatches, primaryWorktreeRoot } = require("./git");
-const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState, finalReviewNodePresentForState } = require("./state_data");
+const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
 const { collectArtifacts, inspectArtifact, verificationEvidenceKindViolations, unregisteredArtifactViolations } = require("./artifacts");
@@ -448,8 +448,8 @@ function taskGraphViolations(state) {
     if (!nodeIds.has(verification.id)) violations.push(`Task graph is missing verification node ${verification.id}`);
   }
   if (!nodeIds.has("REQ_FIDELITY_REVIEW")) violations.push("Task graph is missing REQ_FIDELITY_REVIEW node");
-  if (finalReviewNodePresentForState(state) && !nodeIds.has("REVIEW")) violations.push("Task graph is missing the REVIEW node required by the effective or legacy review policy");
-  if (!finalReviewNodePresentForState(state) && nodeIds.has("REVIEW")) violations.push("Task graph contains REVIEW node that is not part of the effective review policy");
+  if (finalReviewRequiredForState(state) && !nodeIds.has("REVIEW")) violations.push("Task graph is missing the REVIEW node required by the effective review policy");
+  if (!finalReviewRequiredForState(state) && nodeIds.has("REVIEW")) violations.push("Task graph contains REVIEW node that is not part of the effective review policy");
   if (!nodeIds.has("FINALIZE")) violations.push("Task graph is missing FINALIZE node");
   return violations;
 }

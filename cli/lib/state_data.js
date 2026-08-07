@@ -1,7 +1,7 @@
 // @ts-check
 "use strict";
 
-const { nowIso } = require("./util");
+const { nowIso, REVIEW_POLICY_VERSION } = require("./util");
 
 /** @typedef {import("./types").State} State */
 /** @typedef {import("./types").VerificationItem} VerificationItem */
@@ -138,41 +138,29 @@ function reviewProfileName(state) {
   return ["trivial", "standard", "high-risk"].includes(profile) ? profile : "standard";
 }
 
-/** @param {State} state */
-function reviewPolicyVersion(state) {
-  const version = Number(state && state.reviewProfile && state.reviewProfile.policyVersion);
-  return Number.isInteger(version) && version >= 2 ? version : 1;
-}
-
+// Only `high-risk` carries a required final adversarial review; trivial and
+// standard finalize on the requirements fidelity review alone.
 /** @param {State} state */
 function finalReviewRequiredForState(state) {
-  const profile = reviewProfileName(state);
-  if (profile === "high-risk") return true;
-  if (profile === "trivial") return false;
-  return reviewPolicyVersion(state) === 1;
+  return reviewProfileName(state) === "high-risk";
 }
 
-/** @param {State} state */
-function finalReviewNodePresentForState(state) {
-  return reviewPolicyVersion(state) === 1 || finalReviewRequiredForState(state);
-}
-
+// `standard` is the one profile whose fidelity review must come from a fresh
+// independent reviewer rather than the main agent.
 /** @param {State} state */
 function independentFidelityRequiredForState(state) {
-  return reviewPolicyVersion(state) >= 2 && reviewProfileName(state) === "standard";
+  return reviewProfileName(state) === "standard";
 }
 
 /** @param {State} state */
 function effectiveReviewPolicy(state) {
   const profile = reviewProfileName(state);
-  const policyVersion = reviewPolicyVersion(state);
   return {
     profile,
-    policyVersion,
+    policyVersion: REVIEW_POLICY_VERSION,
     fidelityOwner: independentFidelityRequiredForState(state) ? "independent" : "main-agent",
     fidelityDepth: profile === "trivial" ? "compact" : "full",
     finalReviewRequired: finalReviewRequiredForState(state),
-    finalReviewNodePresent: finalReviewNodePresentForState(state),
   };
 }
 
@@ -270,9 +258,7 @@ module.exports = {
   findTrackedItem,
   countState,
   reviewProfileName,
-  reviewPolicyVersion,
   finalReviewRequiredForState,
-  finalReviewNodePresentForState,
   independentFidelityRequiredForState,
   effectiveReviewPolicy,
   verificationPlanSummary,

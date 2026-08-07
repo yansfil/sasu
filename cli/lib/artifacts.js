@@ -12,10 +12,6 @@ function artifactManifestPath(statePath) {
   return path.join(path.dirname(statePath), "artifacts", "manifest.jsonl");
 }
 
-function reviewDir(statePath) {
-  return path.join(path.dirname(statePath), "review");
-}
-
 function ensureRunDirs(runDirAbs) {
   ensureDir(runDirAbs);
   ensureDir(path.join(runDirAbs, "artifacts"));
@@ -179,7 +175,6 @@ function assertArtifactPathIsEvidence(state, statePath, absPath) {
 
 module.exports = {
   artifactManifestPath,
-  reviewDir,
   ensureRunDirs,
   collectArtifacts,
   inspectArtifact,

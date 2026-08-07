@@ -13,25 +13,21 @@ const SCHEMA = "hoyeon.prd-implement.state.v1";
 // scattered literals make namespace migrations unsafe.
 //
 // `agents/` is the visible agent namespace: prd/ and rules/ are committed,
-// implement/ is runtime state and stays gitignored. The pre-rename `.hoyeon`
-// tree is a read-only fallback so existing projects and in-flight runs keep
-// working; new runs always write under the active namespace.
+// implement/ is runtime state and stays gitignored.
 // Projects whose codebase already owns an `agents/` directory can move the
 // harness namespace with `namespace.root` in the pipeline config. The config
-// file itself stays at a fixed bootstrap location (agents/config.json, legacy
-// .hoyeon/config.json) so the override can be found at all; harness commands
-// read it relative to the working directory, which is always the project root.
+// file itself stays at a fixed bootstrap location (agents/config.json) so the
+// override can be found at all; harness commands read it relative to the
+// working directory, which is always the project root.
 function readNamespaceOverride() {
-  for (const rel of [path.join("agents", "config.json"), path.join(".hoyeon", "config.json")]) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), rel), "utf8"));
-      const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
-        ? parsed.namespace.root.trim()
-        : "";
-      if (root && /^[A-Za-z0-9._-]+$/.test(root) && root !== ".hoyeon") return root;
-    } catch {
-      // Missing or invalid config falls back to the default namespace.
-    }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), "agents", "config.json"), "utf8"));
+    const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
+      ? parsed.namespace.root.trim()
+      : "";
+    if (root && /^[A-Za-z0-9._-]+$/.test(root)) return root;
+  } catch {
+    // Missing or invalid config falls back to the default namespace.
   }
   return null;
 }
@@ -46,38 +42,15 @@ const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
 const PROJECT_CONFIG_PATH = path.join("agents", "config.json");
 
-const LEGACY_NAMESPACE_ROOT = ".hoyeon";
-const LEGACY_PRD_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "prd");
-const LEGACY_IMPLEMENT_ROOT_REL = path.join(LEGACY_NAMESPACE_ROOT, "implement");
-const LEGACY_SESSIONS_DIR_REL = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
-const LEGACY_ACTIVE_PATH = path.join(LEGACY_IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
-const LEGACY_PROJECT_CONFIG_PATH = path.join(LEGACY_NAMESPACE_ROOT, "config.json");
-
 function runDirRelFor(slug) {
   return path.join(IMPLEMENT_ROOT_REL, slug);
 }
 
-function legacyRunDirRelFor(slug) {
-  return path.join(LEGACY_IMPLEMENT_ROOT_REL, slug);
-}
-
-// Read-side resolution: prefer the active namespace, fall back to the legacy
-// tree when only it exists. Writers must not use this; new artifacts always
-// land under the active namespace.
-function resolveReadRel(projectRoot, rel, legacyRel) {
-  if (fs.existsSync(path.join(projectRoot, rel))) return rel;
-  if (legacyRel && fs.existsSync(path.join(projectRoot, legacyRel))) return legacyRel;
-  return rel;
-}
-
-// True when a relative artifact path (runDir, statePath) belongs to the
-// legacy namespace; used to keep pointer writes for legacy runs consistent.
-function isLegacyNamespaceRel(rel) {
-  const normalized = String(rel || "").replace(/\\/g, "/");
-  return normalized === LEGACY_NAMESPACE_ROOT || normalized.startsWith(`${LEGACY_NAMESPACE_ROOT}/`);
-}
-
 const DEFAULT_HOOK_TIMEOUT_MS = 9000;
+
+// Stamped onto every new run's reviewProfile and reported as the effective
+// policy version. Review semantics are keyed on the profile alone.
+const REVIEW_POLICY_VERSION = 2;
 
 // The harness is installed under more than one skills root (~/.codex/skills,
 // ~/.claude/skills) with runtime-specific directory names. Every emitted
@@ -96,11 +69,10 @@ function harnessCommand() {
   return `node ${displayPath(SELF_PATH)}`;
 }
 
-// Sibling skills use the butler directory names (deliver) everywhere, with the
-// pre-rename legacy names (prd-ship) kept as a fallback for stale installs.
-// Resolve against the invoked path first so emitted paths match the current
-// install, then fall back through the symlink target to the repo layout.
-function siblingSkillScript(candidateDirs, scriptName) {
+// Resolve a sibling skill's script against the invoked path first so emitted
+// paths match the current install, then fall back through the symlink target
+// to the repo layout.
+function siblingSkillScript(skillDir, scriptName) {
   const roots = [path.dirname(path.dirname(path.dirname(SELF_PATH)))];
   try {
     roots.push(path.dirname(path.dirname(path.dirname(fs.realpathSync(SELF_PATH)))));
@@ -108,16 +80,14 @@ function siblingSkillScript(candidateDirs, scriptName) {
     // Keep the argv-based root only.
   }
   for (const root of roots) {
-    for (const dir of candidateDirs) {
-      const candidate = path.join(root, dir, "scripts", scriptName);
-      if (fs.existsSync(candidate)) return candidate;
-    }
+    const candidate = path.join(root, skillDir, "scripts", scriptName);
+    if (fs.existsSync(candidate)) return candidate;
   }
-  return path.join(roots[0], candidateDirs[0], "scripts", scriptName);
+  return path.join(roots[0], skillDir, "scripts", scriptName);
 }
 
 function shipScriptPath() {
-  return siblingSkillScript(["ship", "deliver", "prd-ship"], "prd_ship.js");
+  return siblingSkillScript("ship", "prd_ship.js");
 }
 
 function parseIdList(value, normalize = item => item) {
@@ -345,19 +315,11 @@ module.exports = {
   IMPLEMENT_ROOT_REL,
   SESSIONS_DIR_REL,
   RULES_ROOT_REL,
-  LEGACY_NAMESPACE_ROOT,
-  LEGACY_PRD_ROOT_REL,
-  LEGACY_IMPLEMENT_ROOT_REL,
-  LEGACY_SESSIONS_DIR_REL,
-  LEGACY_ACTIVE_PATH,
-  LEGACY_PROJECT_CONFIG_PATH,
   runDirRelFor,
-  legacyRunDirRelFor,
-  resolveReadRel,
-  isLegacyNamespaceRel,
   ACTIVE_PATH,
   PROJECT_CONFIG_PATH,
   DEFAULT_HOOK_TIMEOUT_MS,
+  REVIEW_POLICY_VERSION,
   SELF_PATH,
   displayPath,
   harnessCommand,

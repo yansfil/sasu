@@ -32,7 +32,7 @@ remember = lessons land as enforcement, not notes
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
 
-Run artifacts live under the visible `agents/` namespace in the target project (`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`); a legacy `.hoyeon/` tree and the pre-rename `agents/intake/**` path from older runs stay readable as a fallback, and new runs always write under `agents/interview/`.
+Run artifacts live under the visible `agents/` namespace in the target project (`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`), which is the only namespace the harness reads or writes.
 
 ## Dual Runtime, One Source
 
@@ -180,4 +180,3 @@ tests/
 Modules only require layers to their left, so the dependency graph stays acyclic.
 
 Run artifacts live in the target project, not here: PRDs under `agents/prd/**` (committed), implementation state and evidence under `agents/implement/**` (gitignored by the one-line policy `agents/implement/`, enforced by `doctor`).
-Legacy `.hoyeon/**` trees stay readable as a fallback for runs that started before the namespace migration.

@@ -15,7 +15,6 @@ description: |
 
 Use this skill before gen-prd when an idea needs a decision-quality interview.
 Write artifacts under agents/interview/<topic-slug>/.
-Keep legacy .hoyeon/intake artifacts readable as fallback only.
 Do not implement code, write the PRD itself, create an execution plan, or mutate product implementation state.
 Match the user's language by default.
 

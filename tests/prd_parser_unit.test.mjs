@@ -13,8 +13,7 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "
 const require = createRequire(import.meta.url);
 const parserPath = [
   path.join(repoRoot, "cli", "lib", "prd_parser.js"),
-  ...["implement", "fulfill", "prd-implement"]
-    .map(dir => path.join(repoRoot, "skills", dir, "scripts", "lib", "prd_parser.js")),
+  path.join(repoRoot, "skills", "implement", "scripts", "lib", "prd_parser.js"),
 ].find(candidate => fs.existsSync(candidate));
 const parser = require(parserPath);
 

@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath, runDirRelFor, legacyRunDirRelFor } = require("../util");
+const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
@@ -31,13 +31,6 @@ function cmdInit(options) {
   const runDirRel = runDirRelFor(inputs.slug);
   const runDirAbs = path.join(inputs.projectRoot, runDirRel);
   const existingStatePath = path.join(runDirAbs, "state.json");
-  const legacyStatePath = path.join(inputs.projectRoot, legacyRunDirRelFor(inputs.slug), "state.json");
-  if (!fs.existsSync(existingStatePath) && fs.existsSync(legacyStatePath) && !options.force) {
-    throw new Error([
-      `A legacy-namespace run for this PRD already exists: ${toProjectRelative(legacyStatePath, inputs.projectRoot)}`,
-      "Resume it with status/next (pass --state if the pointer is gone), or rerun init with --force to start a fresh run under the new namespace.",
-    ].join("\n"));
-  }
   if (fs.existsSync(existingStatePath) && !options.force) {
     throw new Error([
       `Implementation state already exists: ${toProjectRelative(existingStatePath, inputs.projectRoot)}`,
@@ -211,18 +204,15 @@ function writeWorktreePointer(inputs, worktreePreparation) {
 }
 
 // Parse every tracked collection out of the PRD body. Section headings accept
-// both the numbered canonical form and legacy unnumbered variants.
+// both the numbered canonical form and its unnumbered variant.
 function parsePrdContract(parsed, projectRoot) {
   const tasks = parseMarkdownItems(extractFirstSection(parsed.body, [
     "8. PRD-Level Tasks",
     "PRD-Level Tasks",
-    "13. Tasks",
-    "Tasks",
   ]), "T", "Task");
   const acceptanceCriteria = parseMarkdownItems(extractFirstSection(parsed.body, [
     "7. Acceptance Criteria",
     "Acceptance Criteria",
-    "12. Acceptance Criteria",
   ]), "AC", "AC");
   const requirements = parseMarkdownItems(extractFirstSection(parsed.body, [
     "6. Requirements",
@@ -231,8 +221,6 @@ function parsePrdContract(parsed, projectRoot) {
   const verificationSection = extractFirstSection(parsed.body, [
     "9. Verification Contract",
     "Verification Contract",
-    "5. Verification - Agent",
-    "Verification - Agent",
   ]);
   const verification = parseVerification(verificationSection);
   const testModeSection = extractFirstNestedSection(verificationSection, [
@@ -251,14 +239,10 @@ function parsePrdContract(parsed, projectRoot) {
     technicalStructure: extractFirstSection(parsed.body, [
       "5. Major Technical Structure Changes",
       "Major Technical Structure Changes",
-      "2. Technical Structure And Changes",
-      "Technical Structure And Changes",
     ]),
     implementationNotes: extractFirstSection(parsed.body, [
       "11. Implementation Guardrails",
       "Implementation Guardrails",
-      "14. Implementation Notes",
-      "Implementation Notes",
     ]),
   };
 }

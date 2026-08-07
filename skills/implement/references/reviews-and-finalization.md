@@ -20,15 +20,13 @@ Read this reference before acceptance sweeping, generating either completion rev
 
 The agent assigns a semantic review profile in PRD frontmatter, and the harness records it during `init`.
 New runs store `reviewProfile.policyVersion: 2` without changing the state schema or adding a lifecycle state.
-States without that field use legacy policy v1 so an active run keeps the gate it had when initialized.
+Review semantics depend on the profile alone; a state without that field behaves identically.
 
-| Effective policy | Requirements fidelity | Final adversarial review | TaskGraph tail |
+| Profile | Requirements fidelity | Final adversarial review | TaskGraph tail |
 | --- | --- | --- | --- |
-| Policy v2 `trivial` | Compact, main-agent owned | Not required | `REQ_FIDELITY_REVIEW -> FINALIZE` |
-| Policy v2 `standard` | Full combined semantic review by one fresh independent reviewer | Not required | `REQ_FIDELITY_REVIEW -> FINALIZE` |
-| Policy v2 `high-risk` | Full, main-agent owned | Full, fresh independent reviewer | `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` |
-| Legacy v1 `trivial` | Compact, main-agent owned | Not required, legacy skipped node retained | `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` |
-| Legacy v1 `standard` | Full, main-agent owned | Thin, fresh independent reviewer | `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` |
+| `trivial` | Compact, main-agent owned | Not required | `REQ_FIDELITY_REVIEW -> FINALIZE` |
+| `standard` | Full combined semantic review by one fresh independent reviewer | Not required | `REQ_FIDELITY_REVIEW -> FINALIZE` |
+| `high-risk` | Full, main-agent owned | Full, fresh independent reviewer | `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` |
 
 Read the complete intent, user-visible behavior, data effects, technical structure, external side effects, and delivery plan before choosing the profile.
 Use `trivial` only for bounded work with no changed user-visible behavior or runtime contract.
@@ -67,8 +65,8 @@ Lowering a stronger PRD or project-policy floor requires correcting that source 
 ## Review Ownership
 
 The main agent owns compact `trivial` fidelity and full `high-risk` fidelity.
-A policy v2 `standard` run uses one fresh independent read-only sidecar for its combined requirements fidelity review when multi-agent tools are available.
-The required final adversarial review uses a fresh independent sidecar for policy v2 `high-risk` and legacy v1 `standard`.
+A `standard` run uses one fresh independent read-only sidecar for its combined requirements fidelity review when multi-agent tools are available.
+The required final adversarial review uses a fresh independent sidecar for `high-risk`.
 Use a default independent subagent with fresh context for either independent role.
 In Codex, omit `agent_type` and use `fork_context: false` when the tool supports that option.
 In Claude Code, use the default general-purpose subagent.
@@ -168,10 +166,6 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-prompt
 
 Before this review, stop verification-only runtime servers, browser sessions, tunnels, and background processes unless there is an explicit reason to leave one running.
 Record shutdown evidence or the intentional left-running exception.
-
-For legacy v1 `standard`, keep the final review thin.
-Audit freshness, state consistency, artifact validity, deviations, and overclaiming.
-Reopen full item-by-item proof only when the fidelity review is weak, generic, inconsistent, or suspicious.
 
 For `high-risk`, perform the full adversarial review.
 The reviewer must check:

@@ -16,11 +16,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-// The fulfill skill directory is mid-rename from its legacy prd-implement
-// name; resolve whichever layout the checkout currently has.
-const harness = ["implement", "fulfill", "prd-implement"]
-  .map(dir => path.join(repoRoot, "skills", dir, "scripts", "prd_state_harness.js"))
-  .find(candidate => fs.existsSync(candidate));
+const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
 const goldenDir = path.join(repoRoot, "tests", "golden", "prd-state-standard-flow");
 const updateGolden = process.env.UPDATE_GOLDEN === "1";
 
