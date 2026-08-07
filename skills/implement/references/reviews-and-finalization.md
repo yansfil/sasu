@@ -120,6 +120,7 @@ The reviewer must check:
 - every required `V#` has a Verification Intent Checklist entry mapping Pass Intent to concrete registered artifacts.
 - every mapped `R#` and `AC#` is actually proven by those artifacts.
 - remaining human judgment is not reported as complete.
+- every recorded deviation is judged acceptable or called out; on `trivial` and `standard` profiles the fidelity review is the only reviewer that ever sees deviations.
 
 Write:
 
@@ -127,7 +128,7 @@ Write:
 agents/implement/<topic-slug>/review/requirements-fidelity-review.md
 ```
 
-The report must include the sections `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, and `Verdict`; the generated prompt emits this skeleton.
+The report must include the sections `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, `Deviation Audit`, and `Verdict`; the generated prompt emits this skeleton.
 For every required `V#`, list the PRD Pass Intent or derived pass criteria, covered `R#` and `AC#` IDs, registered artifact paths inspected, a `PASS` or `FAIL` judgment, and any gap.
 A passing review must fail when a required `V#` is missing, lacks a registered artifact path, or has an artifact that does not prove its mapped requirement or acceptance criterion.
 

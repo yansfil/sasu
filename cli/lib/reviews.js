@@ -122,6 +122,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     "Findings",
     "Verification Intent Checklist",
     "Coverage Judgment",
+    "Deviation Audit",
     "Verdict",
   ];
   const violations = [];
@@ -329,19 +330,20 @@ function completionReadiness(statePath, state, options = {}) {
 // into the receipt so a skipped gate is visible, never silent.
 function verifyGateStatus(state) {
   const projectRoot = state.projectRoot || cwd();
-  if (!state.topicSlug) return { effective: "NOT_RUN", verdict: null, overridden: false };
+  if (!state.topicSlug) return { effective: "NOT_RUN", verdict: null, overridden: false, lastRunAt: null };
   const gatesPath = path.join(projectRoot, "agents", "gates", state.topicSlug, "gates.json");
-  if (!fs.existsSync(gatesPath)) return { effective: "NOT_RUN", verdict: null, overridden: false };
+  if (!fs.existsSync(gatesPath)) return { effective: "NOT_RUN", verdict: null, overridden: false, lastRunAt: null };
   let gatesState;
   try {
     gatesState = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
   } catch {
-    return { effective: "NOT_RUN", verdict: null, overridden: false, unreadable: true };
+    return { effective: "NOT_RUN", verdict: null, overridden: false, lastRunAt: null, unreadable: true };
   }
   try {
     const store = require("../dist/gates/store.js");
     const view = store.gateStatus(gatesState, "verify", 0, projectRoot);
-    return { effective: view.effective, verdict: view.verdict, overridden: view.overridden, staleInputs: view.staleInputs };
+    const record = (gatesState.gates && gatesState.gates.verify) || {};
+    return { effective: view.effective, verdict: view.verdict, overridden: view.overridden, staleInputs: view.staleInputs, lastRunAt: record.lastRunAt || null };
   } catch {
     // CLI dist not built: fall back to the recorded verdict without freshness.
     const record = (gatesState.gates && gatesState.gates.verify) || {};
@@ -350,6 +352,7 @@ function verifyGateStatus(state) {
       effective: passed ? "PASS" : record.verdict == null ? "NOT_RUN" : "BLOCKED",
       verdict: record.verdict || null,
       overridden: record.overridden === true,
+      lastRunAt: record.lastRunAt || null,
       freshnessUnverified: true,
     };
   }

@@ -403,9 +403,10 @@ If none are needed, write `None required` with a short reason.
 Quality checking splits by what can verify it:
 
 - Mechanical checks belong to the Harness Readiness Gate below. Do not spend
-  agent effort re-deriving what the script already checks (AC coverage
-  mapping, missing commands, missing artifact strategy, missing browser
-  startup, unsafe external proof).
+  agent effort re-deriving what the script already checks (requirement and AC
+  coverage mapping, dangling AC references, missing commands, missing
+  artifact strategy; browser-startup and external-proof concerns surface as
+  warnings).
 - Semantic checks are this single inline self-check. No separate audit file,
   no auditor subagent, no separate quality checklist; the sasu Spec Gate
   and the implementation-side requirements fidelity review independently
@@ -449,10 +450,11 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification --
 
 This is stateless: it parses the PRD exactly the way `implement` will,
 derives the verification plan against real repo signals, and writes nothing.
-Exit code 2 means the verification contract is not harness-readable (missing
-commands or artifact strategy, uncovered ACs, missing browser startup, unsafe
-external proof). Fix the PRD and rerun until `blockingGaps` is empty; resolve
-or consciously accept warnings. Skipping this gate pushes the same failures
+Exit code 2 means the verification contract is not harness-readable: an
+uncovered requirement or AC, a dangling AC reference, or a check without a
+concrete command, coverage mapping, or artifact strategy. Browser-startup and
+external-proof concerns are warnings, not blockers. Fix the PRD and rerun
+until `blockingGaps` is empty; resolve or consciously accept warnings. Skipping this gate pushes the same failures
 into `implement`, where they cost a re-init and a re-plan instead of a
 one-second check.
 

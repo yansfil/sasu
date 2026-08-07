@@ -425,6 +425,7 @@ Required checks:
 8. Any missing source artifact, ambiguous decision, or human taste judgment is called out as blocking unless the PRD explicitly made it non-required.
 9. No hidden scope, architecture, storage, API, auth, billing, production-data, or external-service decision was added without approval.
 10. The implementation result report does not overclaim Done when user intent is partially met, blocked, or still needs human judgment.
+11. Every recorded deviation in \`state.deviations\` (approval overrides, equivalent-command substitutions, out-of-order completions, write-scope drift, review-policy changes) is acceptable against the user's intent; on trivial and standard profiles this review is the only place a deviation is ever judged.
 
 Write the report to:
 \`${reportPath}\`
@@ -466,6 +467,10 @@ Include every required Verification item. A passing review must fail if a requir
 - User-visible behavior:
 - Non-goals and rejected options:
 - Human verification:
+
+## Deviation Audit
+
+- <deviation id>: <acceptable | not acceptable> - <why> (or "- none recorded")
 
 ## Verdict
 

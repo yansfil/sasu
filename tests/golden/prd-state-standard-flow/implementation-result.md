@@ -183,14 +183,15 @@ Receipt: agents/implement/standard-regression/receipt.json
   "verifyGate": {
     "effective": "NOT_RUN",
     "verdict": null,
-    "overridden": false
+    "overridden": false,
+    "lastRunAt": null
   },
   "artifactCount": 1,
   "requirementsFidelityReview": {
     "status": "pass",
     "summary": "PASS",
     "reportPath": "agents/implement/standard-regression/review/requirements-fidelity-review.md",
-    "reportBytes": 718,
+    "reportBytes": 755,
     "reportSha256": "<SHA>",
     "worktreeSnapshot": {
       "capturedAt": "<TS>",

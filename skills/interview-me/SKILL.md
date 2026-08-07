@@ -87,7 +87,7 @@ At each checkpoint, after recording it, run one advisory coherence check:
 sasu interview coherence --slug <slug>
 ~~~
 
-This is an independent mid-interview judge - it has no access to the interview conversation and reads only the resolved decisions, so it catches direction drift the interviewing agent is biased not to see.
+This is an independent mid-interview judge - it has no access to the interview conversation and reads only the resolved decisions plus the Current Understanding summary, so it catches direction drift without inheriting the turn-by-turn framing that biases the interviewing agent.
 It judges coherence, not completeness: it reports only contradictions among resolved decisions and drift away from the stated goal, never missing decisions (that is the closure gate's job).
 It is advisory and never blocks: it does not touch gate state or the retry budget, a judge failure is safe to ignore, and it self-skips until at least three decisions are resolved.
 Treat any finding as a high-priority next-question candidate - a P0 coherence finding means the interview may be building on an invalidated premise, so resolve it with the user before piling on more questions.
@@ -334,7 +334,7 @@ normalization_checkpoint_every: 10
 ## Audit History
 
 ### Audit N
-- type: gap-audit-gate | local-fallback | final-auditor
+- type: gap-audit-gate | local-fallback | independent-auditor
 - result: pass | fail | unavailable | skipped
 - missing decision_ids:
 - unsupported assumptions:
@@ -355,7 +355,7 @@ normalization_checkpoint_every: 10
 7. Checkpoint when `interview status` reports DUE (every 10 answers), earlier for high-risk work, or immediately when a P0 node is reopened or invalidated; run the intent, impact, and verification sweep as part of the checkpoint, record it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
 8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
 9. Run full normalization and record it with `interview checkpoint`.
-10. Run the sasu gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `sasu` binary is unavailable.
+10. Run the sasu gap-audit gate. Fall back to one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback only when the `sasu` binary or its judge backend is unavailable.
 11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
 12. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
@@ -385,7 +385,7 @@ judge and never consume the retry budget.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
 - When the output says the retry budget is exhausted, stop and hand the findings to the user instead of re-running.
-- If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use the final-auditor subagent or a recorded local fallback as the closure audit.
+- If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback as the closure audit.
 - Never run `sasu gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
 - Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.
 - The PASS is pinned to the qa-log's content hash (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit after the gate passed makes `sasu gate status` report `STALE`, and a stale gate must be re-run before handoff.

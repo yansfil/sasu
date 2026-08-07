@@ -20,7 +20,7 @@ Read this reference before `plan-execution`, while implementing tasks, when assi
 - `verification-plan.json` and `verification-plan.md` contain the repo-specific proof plan derived from the PRD Verification Contract.
 - `execution-plan.json` and `execution-plan.md` hold plan metadata (status, gaps, whether a task plan was applied) plus a rendered view of the tasks and their trace matrix.
 - `ledger.jsonl` and `artifacts/manifest.jsonl` form the durable evidence trail.
-- `state.deviations` records soft-gate deviations that the final reviewer must explicitly accept.
+- `state.deviations` records soft-gate deviations that a completion review must explicitly accept: the fidelity review's Deviation Audit on every profile, plus the final adversarial review on `high-risk`.
 
 Rendered views are derived, not authoritative. `plan-verification`, `plan-execution`, `reconcile`, and `finalize` regenerate them; marking commands write only `state.json`. Run `render` to refresh the views at any point without mutating the run.
 
@@ -195,5 +195,5 @@ Explicit deviation records are required for:
 - replacing a planned verification command with an equivalent command.
 - adding verification or release-hygiene work that maps to existing PRD scope.
 
-The final reviewer decides whether each deviation is acceptable.
+The fidelity review's Deviation Audit (and the final review on `high-risk`) decides whether each deviation is acceptable.
 Unrecorded deviations are PRD drift.

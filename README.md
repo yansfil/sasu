@@ -56,7 +56,8 @@ node scripts/install-local-skills.mjs
 | Install root | `~/.codex/skills/<name>/` | `~/.claude/skills/<name>/` |
 | Invocation | `$interview-me`, `$gen-prd`, ... | `/interview-me`, `/gen-prd`, ... |
 | `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$implement` becomes `/implement`) |
-| `scripts/`, `references/` | Symlinked to this repository | Symlinked to this repository |
+| `scripts/` | Symlinked to this repository | Symlinked to this repository |
+| `references/` | Symlinked to this repository | Copied with the same substitutions as `SKILL.md` |
 | Hooks | `Stop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
 
 The mechanics that make one source possible:
@@ -68,7 +69,7 @@ The mechanics that make one source possible:
   Session ids are canonicalized bare: `codex:`, `claude:`, and `opencode:` prefixes are stripped for storage and comparison, and legacy prefixed state files keep matching.
   Init binds from `CODEX_SESSION_ID`, `CODEX_THREAD_ID`, or `CLAUDE_SESSION_ID`, and otherwise the first hook payload claims the run.
 - **Install-time substitution instead of forked docs.**
-  The Claude copies of `SKILL.md` are generated, so a skill edit in this repository lands in both runtimes on the next install.
+  The Claude copies of `SKILL.md` and `references/*.md` are generated, so a skill edit in this repository lands in both runtimes on the next install.
 - **Idempotent hook registration.**
   The installer merges harness hooks into existing hook files without touching unrelated entries, and refuses to overwrite a foreign skill directory.
 
@@ -181,7 +182,7 @@ tests/
   rules_engine.test.mjs           rules add/check/relevant + seed-agents-md
   install_local_skills.test.mjs   dual-runtime installer + hook registration
   prd_ship.test.mjs               ship delivery gates
-  checkshirt_gate_wiring.test.mjs / checkshirt_judge_timeout.test.mjs   sasu gate CLI wiring
+  sasu_gate_wiring.test.mjs / sasu_judge_timeout.test.mjs   sasu gate CLI wiring
   interview_me_validator.test.mjs / implement_skill_structure.test.mjs  skill-doc contracts
   golden/                         normalized golden files (regenerate: UPDATE_GOLDEN=1)
 ```

@@ -186,6 +186,10 @@ Status: PASS
 - Non-goals and rejected options: none reintroduced.
 - Human verification: none required.
 
+## Deviation Audit
+
+- none recorded
+
 ## Verdict
 
 PASS.
@@ -266,7 +270,7 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   // The prompts are agent-facing contracts; pin their key anchors before the
   // renderers move to their own module.
   const fidelityPrompt = run(process.execPath, [harness, "requirements-review-prompt"], { cwd: projectRoot }).stdout;
-  for (const anchor of ["Decision Trace", "Verification Intent Checklist", "Coverage Judgment", "fresh independent read-only semantic reviewer", "Do not rerun the complete test suite", "read the complete file", "not semantic coverage proof", "invented consent"]) {
+  for (const anchor of ["Decision Trace", "Verification Intent Checklist", "Coverage Judgment", "Deviation Audit", "fresh independent read-only semantic reviewer", "Do not rerun the complete test suite", "read the complete file", "not semantic coverage proof", "invented consent"]) {
     assert.ok(fidelityPrompt.includes(anchor), `requirements-review-prompt lost anchor: ${anchor}`);
   }
 

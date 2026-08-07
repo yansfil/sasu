@@ -468,6 +468,10 @@ Status: PASS
 - Non-goals and rejected options: none reintroduced.
 - Human verification: none required.
 
+## Deviation Audit
+
+- none recorded
+
 ## Verdict
 
 PASS.
@@ -542,6 +546,10 @@ Status: PASS
 - User-visible behavior: no user-visible behavior.
 - Non-goals and rejected options: none reintroduced.
 - Human verification: none required.
+
+## Deviation Audit
+
+- none recorded
 
 ## Verdict
 
@@ -1008,6 +1016,10 @@ Status: PASS
 - Non-goals and rejected options: none reintroduced.
 - Human verification: none required.
 
+## Deviation Audit
+
+- none recorded
+
 ## Verdict
 
 PASS.
@@ -1144,6 +1156,10 @@ Status: PASS
 - User-visible behavior: no user-visible behavior.
 - Non-goals and rejected options: none reintroduced.
 - Human verification: none required.
+
+## Deviation Audit
+
+- none recorded
 
 ## Verdict
 
@@ -1389,6 +1405,10 @@ Status: PASS
 - User-visible behavior: no user-visible behavior.
 - Non-goals and rejected options: none reintroduced.
 - Human verification: none required.
+
+## Deviation Audit
+
+- none recorded
 
 ## Verdict
 

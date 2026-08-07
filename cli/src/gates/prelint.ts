@@ -57,12 +57,15 @@ function checkEnum(
   allowed: string[],
   rulePrefix: string,
   findings: PrelintFinding[],
+  options: { allowMissing?: boolean } = {},
 ): void {
   const entry = fm.values.get(key);
   if (!entry) {
-    findings.push(
-      finding(`${rulePrefix}-frontmatter-enum`, null, `frontmatter is missing "${key}"`, `Add ${key}: one of ${allowed.join(" | ")}.`),
-    );
+    if (!options.allowMissing) {
+      findings.push(
+        finding(`${rulePrefix}-frontmatter-enum`, null, `frontmatter is missing "${key}"`, `Add ${key}: one of ${allowed.join(" | ")}.`),
+      );
+    }
     return;
   }
   if (!allowed.includes(entry.value)) {
@@ -250,7 +253,9 @@ export function prelintPrd(content: string): PrelintResult {
   } else {
     checkEnum(fm, "status", ["draft", "ready"], "prd", findings);
     checkEnum(fm, "human_approval", ["pending", "approved"], "prd", findings);
-    checkEnum(fm, "review_profile", ["trivial", "standard", "high-risk"], "prd", findings);
+    // Absence is legal: implement's init defaults a missing declaration to
+    // "standard". Only a present-but-invalid value blocks.
+    checkEnum(fm, "review_profile", ["trivial", "standard", "high-risk"], "prd", findings, { allowMissing: true });
   }
 
   const sectionNumbers = new Set<number>();
@@ -267,12 +272,18 @@ export function prelintPrd(content: string): PrelintResult {
   // Defined IDs: list items plus 9.2 table ID cells.
   const defined = new Set<string>();
   const acDefinitionLines = new Map<string, number>();
+  const acRequirementRefs = new Map<string, Set<string>>();
   for (let i = 0; i < lines.length; i += 1) {
     const match = lines[i]!.match(ID_DEFINITION);
     if (!match) continue;
     const id = `${match[1]}${match[2]}`;
     defined.add(id);
-    if (match[1] === "AC" && !acDefinitionLines.has(id)) acDefinitionLines.set(id, i + 1);
+    if (match[1] === "AC" && !acDefinitionLines.has(id)) {
+      acDefinitionLines.set(id, i + 1);
+      // The readiness planner counts an AC covered when a check covers any R#
+      // the AC references; record those refs so both engines agree.
+      acRequirementRefs.set(id, new Set(lines[i]!.match(/\bR\d+\b/g) ?? []));
+    }
   }
 
   const verification = findSubsection(lines, "9.2");
@@ -291,11 +302,13 @@ export function prelintPrd(content: string): PrelintResult {
     if (covers) for (const id of coversTokens(covers[1]!)) references.push({ id, line: i + 1 });
   }
   const coveredAcs = new Set<string>();
+  const coveredRs = new Set<string>();
   for (const row of vRows) {
     if (coversColumn === -1 || row.cells[coversColumn] === undefined) continue;
     for (const id of coversTokens(row.cells[coversColumn]!)) {
       references.push({ id, line: row.line });
       if (id.startsWith("AC")) coveredAcs.add(id);
+      if (id.startsWith("R")) coveredRs.add(id);
     }
   }
   for (const ref of references) {
@@ -305,8 +318,9 @@ export function prelintPrd(content: string): PrelintResult {
   }
 
   for (const [ac, line] of acDefinitionLines) {
-    if (!coveredAcs.has(ac)) {
-      findings.push(finding("prd-uncovered-ac", line, `${ac} is not covered by any V row in 9.2 Required Agent Verification`, `Add ${ac} to a V row's Covers (or add a V row).`));
+    const viaRequirement = [...(acRequirementRefs.get(ac) ?? [])].some((r) => coveredRs.has(r));
+    if (!coveredAcs.has(ac) && !viaRequirement) {
+      findings.push(finding("prd-uncovered-ac", line, `${ac} is not covered by any V row in 9.2 Required Agent Verification (directly or via a covered R# it references)`, `Add ${ac} (or an R# it references) to a V row's Covers.`));
     }
   }
 
