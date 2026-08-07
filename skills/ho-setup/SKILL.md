@@ -31,7 +31,7 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 
 It reports the effective delivery config (config file plus defaults), unknown or
 misspelled config keys, git/origin/gh readiness, worktree sync source problems,
-PR template resolution, ship availability, hook registration, sasu gate
+ship availability, hook registration, sasu gate
 CLI readiness (binary contract version, judge backends, verify commands), and
 any active run with its ship-pending state.
 
@@ -63,8 +63,11 @@ Then interview:
    Remind the user that `pr` means implement runs end into `ship`
    (branch, PR, CI) automatically after the receipt, and that per-PRD approval
    still happens in the PRD Summary checklist.
-2. When mode is `pr`: base branch (default `main`) and branch prefix
-   (default `gen-prd`).
+2. When mode is `pr`: base branch and branch prefix (default `gen-prd`).
+   Always write `baseBranch` explicitly: when it is omitted, the harness
+   defaults to whatever branch is current at `implement init` time, not
+   `main`, so a run started from a feature branch would open its PR against
+   that feature branch.
 3. Worktree isolation: `worktree.enabled` (default false).
    When enabled, ask which gitignored local files the app needs:
    - `link`: read-only shared files (`.env`, certs).

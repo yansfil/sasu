@@ -111,7 +111,7 @@ Judge responsive behavior and accessibility when contracted, copy and hierarchy 
 The reviewer must check:
 
 - original intake, clarify, or current-conversation sources named by PRD frontmatter or PRD sections were read when available.
-- when the source is qa-log.md, the complete Current Understanding, Decision Register, material Raw Q&A and Decision Packets, UX Scenario Cards, objections, evidence, and audit findings were read instead of relying on a summary or parsed sample.
+- when the source is qa-log.md, the complete Current Understanding, Decision Register, material Raw Q&A (Decision Packet content lives in each entry's `immediate_notes`), UX Scenario Cards, objections, evidence, and audit findings were read instead of relying on a summary or parsed sample.
 - every material answer, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption has the same meaning and provenance across `qa-log -> PRD -> implementation` or an explicit approved disposition.
 - silence, lack of objection, topic changes, and continued participation were not upgraded into user approval, while unambiguous affirmative responses to explicit recommendations were preserved as accepted recommendations.
 - every user decision and accepted initial proposal is represented in scope, non-goals, requirements, acceptance criteria, verification, or human verification.

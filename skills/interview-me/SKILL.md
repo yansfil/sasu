@@ -76,6 +76,8 @@ Then record the checkpoint:
 sasu interview checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
 ~~~
 
+`--normalized` must list exactly the outstanding raw entries; naming an already-normalized entry aborts the whole checkpoint without writing anything.
+
 Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
 If the sasu binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
@@ -260,6 +262,8 @@ Use this Decision Packet for material free-text answers:
 - unresolved follow-up:
 - source:
 ~~~
+
+Record the packet as the entry's `immediate_notes` value when logging the turn; the qa-log has no separate Decision Packets section.
 
 ## Artifacts
 

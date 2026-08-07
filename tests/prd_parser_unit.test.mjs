@@ -167,3 +167,24 @@ test("parseDecisionTraceItems accepts bullets and tables, skips none rows, infer
   assert.equal(table[0].stance, "accepted");
   assert.equal(table[0].target, "R1");
 });
+
+test("buildIntentTrace parses the nested 4.3 decision-traceability subsection", () => {
+  const parsed = parser.stripFrontmatter([
+    "---",
+    'topic: "t"',
+    "---",
+    "",
+    "## 4. Pre-Work And Required Decisions",
+    "",
+    "### 4.3 Decision Traceability For Fidelity Review",
+    "",
+    "- User chose CSV export: represented by R1, AC1.",
+    "- User rejected XML: non-goal.",
+    "",
+    "## 5. Major Technical Structure Changes",
+    "",
+    "None.",
+  ].join("\n"));
+  const trace = parser.buildIntentTrace(parsed, process.cwd());
+  assert.equal(trace.prdDecisionCount, 2);
+});

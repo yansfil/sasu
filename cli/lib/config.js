@@ -42,7 +42,6 @@ function normalizeDeliveryConfig(projectRoot, options, projectConfig, slug) {
     mode,
     branch,
     baseBranch: String(deliveryInput.baseBranch || currentBranch(projectRoot) || "main"),
-    prTemplate: deliveryInput.prTemplate ? String(deliveryInput.prTemplate) : null,
     ci: {
       watch: deliveryInput.ci && typeof deliveryInput.ci === "object" && deliveryInput.ci.watch !== undefined
         ? Boolean(deliveryInput.ci.watch)
@@ -50,6 +49,14 @@ function normalizeDeliveryConfig(projectRoot, options, projectConfig, slug) {
       maxFixAttempts: Number.isFinite(Number(deliveryInput.ci && deliveryInput.ci.maxFixAttempts))
         ? Number(deliveryInput.ci.maxFixAttempts)
         : 2,
+      // Ship reads these from state.delivery.ci; dropping them here silently
+      // pinned every pipeline to the built-in 240s/15s watch defaults.
+      ...(Number.isFinite(Number(deliveryInput.ci && deliveryInput.ci.timeoutSeconds))
+        ? { timeoutSeconds: Number(deliveryInput.ci.timeoutSeconds) }
+        : {}),
+      ...(Number.isFinite(Number(deliveryInput.ci && deliveryInput.ci.intervalSeconds))
+        ? { intervalSeconds: Number(deliveryInput.ci.intervalSeconds) }
+        : {}),
     },
     staging: {
       include: stringArray(stagingInput.include),

@@ -52,7 +52,6 @@ Optional project config:
     "mode": "pr",
     "branchPrefix": "prd",
     "baseBranch": "main",
-    "prTemplate": ".github/pull_request_template.md",
     "staging": {
       "include": [],
       "exclude": []

@@ -106,7 +106,6 @@ Receipt: agents/implement/standard-regression/receipt.json
     "mode": "local",
     "branch": "prd/standard-regression",
     "baseBranch": "main",
-    "prTemplate": null,
     "ci": {
       "watch": false,
       "maxFixAttempts": 2

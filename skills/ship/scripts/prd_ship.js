@@ -589,8 +589,20 @@ function excludedPaths(context, config, options = {}) {
 
 function stageablePaths(context, config, options = {}) {
   const changed = gitStatusPaths(context.repoRoot);
-  const excluded = excludedPaths(context, config, options);
+  // Explicit include entries (config staging.include or --include) re-admit
+  // otherwise-excluded paths, as the skill contract promises.
+  const includes = Array.from(new Set([
+    ...optionList(config.staging && config.staging.include),
+    ...optionList(options.include),
+  ].map(normalizeRepoPath).filter(Boolean)));
+  const excluded = excludedPaths(context, config, options)
+    .filter(item => !includes.some(include => include === item || include.startsWith(`${item}/`) || item.startsWith(`${include}/`)));
   const allowed = defaultAllowedPaths(context, config, options);
+  for (const include of includes) {
+    if (!changed.some(item => pathMatches(item, [include]))) {
+      process.stderr.write(`warning: include entry '${include}' matches no changed path; it will stage nothing\n`);
+    }
+  }
   const ignored = changed.filter(item => pathMatches(item, excluded));
   const candidates = changed.filter(item => !pathMatches(item, excluded));
   const unrelated = candidates.filter(item => !pathMatches(item, allowed));
@@ -896,7 +908,9 @@ function cmdShip(options) {
 // Failures are fail-closed; --skip-rules needs a --reason and lands in the
 // ship log like every other override.
 function runRulesGate(context, options, overrides) {
-  const result = run(process.execPath, [harnessPath(), "rules", "check"], {
+  const checkArgs = [harnessPath(), "rules", "check"];
+  if (options.base) checkArgs.push("--base", String(options.base));
+  const result = run(process.execPath, checkArgs, {
     cwd: context.repoRoot,
     allowFailure: true,
   });
@@ -904,7 +918,11 @@ function runRulesGate(context, options, overrides) {
   try {
     report = JSON.parse(result.stdout.trim());
   } catch {
-    throw new Error(`rules check did not return a readable report:\n${result.stderr || result.stdout}`);
+    if (options["skip-rules"]) {
+      overrides.push({ kind: "rules-unreadable", reason: requireReason(options, "skip-rules") });
+      return { ok: false, checked: 0, failures: [], pendingCount: 0, unreadable: true };
+    }
+    throw new Error(`rules check did not return a readable report:\n${result.stderr || result.stdout}\nFix the malformed rule/report, or pass --skip-rules --reason "<user-approved reason>".`);
   }
   const warnings = [];
   if (report.pending && report.pending.count > 0) {
@@ -1027,7 +1045,8 @@ function cmdMerge(options) {
   if (!["pass", "no-checks"].includes(ciVerdict)) {
     throw new Error(`Required CI is '${ciVerdict}'. Wait for a pass or return to implement for source fixes before merge.`);
   }
-  const rules = runRulesGate(context, {}, []);
+  // The tree is clean by merge time; examine the PR's actual change set.
+  const rules = runRulesGate(context, { base: `origin/${deliveryConfig(context, options).baseBranch}` }, []);
   const method = mergeMethod(options);
   const mergeArgs = ["pr", "merge", pr.url || prRef, `--${method}`, "--match-head-commit", headSha];
   if (options["delete-branch"]) mergeArgs.push("--delete-branch");

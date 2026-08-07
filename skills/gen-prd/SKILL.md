@@ -24,26 +24,20 @@ Match the user's language by default.
 
 ## Default Inputs
 
-Prefer an explicit context path. The canonical interview source is:
+Prefer an explicit context path, passed directly or as `--context <path>` (the form `$interview-me` suggests at handoff). The canonical interview source is:
 
 ```text
 agents/interview/<topic-slug>/qa-log.md
 ```
 
-Legacy clarify summaries are still accepted:
-
-```text
-agents/clarify/<topic-slug>/clarity-summary.md
-```
-
 If no context path is provided, inspect `agents/interview/` first for the matching
 or most recent qa-log (then the legacy `agents/intake/` path for interviews
-started before the rename), then `agents/clarify/`. If no complete interview source
+started before the rename). If no complete interview source
 exists and major ambiguity remains, ask one blocking question or recommend
 `$interview-me`.
 
 When qa-log.md is the source, read the complete file.
-Treat its Current Understanding as a navigation aid, not a substitute for the Decision Register, material Raw Q&A, Decision Packets, UX Scenario Cards, objections, evidence, and audit findings.
+Treat its Current Understanding as a navigation aid, not a substitute for the Decision Register, material Raw Q&A (Decision Packet content lives in each entry's `immediate_notes`), UX Scenario Cards, objections, evidence, and audit findings.
 The qa-log is the canonical interview source even when a shorter summary exists elsewhere.
 
 ## Output Contract
@@ -75,7 +69,6 @@ human_approval: "pending | approved"
 review_profile: "trivial | standard | high-risk"
 review_rationale: "<one-sentence semantic risk rationale>"
 source_intake: "agents/interview/<topic-slug>/qa-log.md | current conversation"
-source_clarity: "agents/clarify/<topic-slug>/clarity-summary.md | none"
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
 ---
@@ -340,7 +333,8 @@ If a PRD marks automated behavior as optional, blocked, or not applicable, it mu
 
 #### 9.2 Required Agent Verification
 
-Use a lean verification matrix by default.
+Use a lean verification matrix when the repository's `package.json` has a canonically named script the planner can derive commands from (`verify`, `check`, `build`, `typecheck`, `lint`, `test`, `test:unit`, `test:integration`, `test:e2e`).
+Outside that case (Python/Go/Rust repos, non-canonical script names, no `package.json`), write the Method-bearing matrix below instead; the lean form would fail the Harness Readiness Gate with `command-missing`.
 `Mode` is required and must match one row from the Test Mode Contract.
 Write this matrix under the `9.2 Required Agent Verification` subsection.
 Do not put Test Mode Contract rows in this subsection.
@@ -353,8 +347,8 @@ Do not put Test Mode Contract rows in this subsection.
 | V3 | browser/runtime | R1-R4, AC1-AC4 | main flow works in browser runtime | yes | no |
 ```
 
-Full legacy matrices are still valid for old PRDs. When writing a new PRD with
-exact commands already known, still include `Mode`:
+The Method-bearing matrix is the current form whenever exact commands are
+known or the lean form cannot derive them; always include `Mode`:
 
 ```markdown
 | ID | Mode | Covers | Method | Artifact | Pass Criteria | Environment | Required For Done | Can Be Blocked | Safe Probe | Live Proof | Side Effect | Sensitive Data Policy |
@@ -535,7 +529,11 @@ Require the implementing agent to report:
 8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
    blocking gaps.
 9. Run the sasu Spec Gate and fix findings until it passes or a
-   human-decision finding stops the loop.
+   human-decision finding stops the loop. When the `sasu` binary or its judge
+   backend is unavailable, record that limitation in the final report and
+   proceed on the Harness Readiness Gate plus the inline self-check alone;
+   that recorded limitation (or the documented no-qa-log skip) is the
+   "skip/fallback" step 10 refers to.
 10. Mark `status: ready` only when blocking decisions are resolved, the inline
    self-check passes, the Harness Readiness Gate reports zero blocking
    gaps, and the Spec Gate passes (or its skip/fallback is recorded).

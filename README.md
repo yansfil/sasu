@@ -166,7 +166,7 @@ After changing installed skills, confirm visibility:
 
 ```text
 skills/
-  interview-me/  SKILL.md, scripts/validate_intake.mjs
+  interview-me/  SKILL.md
   gen-prd/   SKILL.md
   implement/  SKILL.md, scripts/prd_state_harness.js (thin entry into cli/lib), references/
   ship/   SKILL.md, scripts/prd_ship.js
@@ -183,7 +183,7 @@ tests/
   install_local_skills.test.mjs   dual-runtime installer + hook registration
   prd_ship.test.mjs               ship delivery gates
   sasu_gate_wiring.test.mjs / sasu_judge_timeout.test.mjs   sasu gate CLI wiring
-  interview_me_validator.test.mjs / implement_skill_structure.test.mjs  skill-doc contracts
+  interview_me_docs.test.mjs / implement_skill_structure.test.mjs       skill-doc contracts
   golden/                         normalized golden files (regenerate: UPDATE_GOLDEN=1)
 ```
 

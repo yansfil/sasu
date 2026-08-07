@@ -131,7 +131,9 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
 }
 
 function buildIntentTrace(parsed, projectRoot) {
-  const prdDecisionTraceSection = extractFirstSection(parsed.body, [
+  // Real PRDs write this as a `### 4.3` subsection, so the nested extractor
+  // (any #{2,6} depth) is required; the two-hash extractor parses it empty.
+  const prdDecisionTraceSection = extractFirstNestedSection(parsed.body, [
     "4.3 Decision Traceability For Fidelity Review",
     "Decision Traceability For Fidelity Review",
   ]);

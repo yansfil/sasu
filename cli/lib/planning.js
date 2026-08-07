@@ -467,6 +467,16 @@ function structuralParseGaps(state) {
   const verifications = state.verification || [];
   const requirements = state.requirements || [];
 
+  // The stateless readiness precheck runs this too, so a PRD whose Tasks
+  // section failed to parse blocks before approval, not at plan-execution.
+  if (tasks.length === 0) {
+    gaps.push({
+      severity: "blocking",
+      code: "no_prd_tasks",
+      item: "Tasks",
+      message: "PRD section 8 (PRD-Level Tasks) produced no implementation tasks; check the heading text and bullet IDs",
+    });
+  }
   if (tasks.length > 0 && acs.length === 0) {
     gaps.push({
       severity: "blocking",

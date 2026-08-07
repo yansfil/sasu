@@ -149,7 +149,7 @@ function doctorCheckProjectConfig(projectRoot, add) {
   }
 
   const knownKeys = {
-    delivery: new Set(["mode", "default", "branchPrefix", "branch", "baseBranch", "prTemplate", "staging", "ci"]),
+    delivery: new Set(["mode", "default", "branchPrefix", "branch", "baseBranch", "staging", "ci"]),
     "delivery.staging": new Set(["include", "exclude"]),
     "delivery.ci": new Set(["watch", "maxFixAttempts", "timeoutSeconds", "intervalSeconds"]),
     worktree: new Set(["enabled", "root", "path", "link", "copy", "setup"]),
@@ -357,7 +357,6 @@ function doctorCheckWorktreeSyncSources(projectRoot, delivery, gitOk, add) {
 
 function doctorCheckPrDeliveryAssets(projectRoot, delivery, add) {
   const templateCandidates = [
-    delivery && delivery.prTemplate,
     ".github/pull_request_template.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     "docs/pull_request_template.md",

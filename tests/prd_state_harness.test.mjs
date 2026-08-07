@@ -1614,3 +1614,18 @@ test("a BLOCKED or stale verify gate blocks completion; PASS and NOT_RUN do not"
   const stale = runJson(["status"], root);
   assert.ok(stale.completion.violations.some(item => /Verify gate PASS is stale/.test(item)));
 });
+
+test("readiness precheck blocks a PRD whose Tasks section failed to parse", () => {
+  const root = initGitRepo();
+  const prdPath = writeApprovedPrd(root, "no-tasks");
+  const broken = fs.readFileSync(prdPath, "utf8").replace("## 8. PRD-Level Tasks", "## 8. Tasks");
+  fs.writeFileSync(prdPath, broken);
+  const result = run(process.execPath, [harness, "plan-verification", "--prd", prdPath], {
+    cwd: root,
+    allowFailure: true,
+  });
+  assert.equal(result.status, 2);
+  const report = JSON.parse(result.stdout.trim());
+  assert.ok(report.blockingGaps.some(gap => gap.code === "no_prd_tasks"),
+    `expected no_prd_tasks gap, got: ${JSON.stringify(report.blockingGaps)}`);
+});
