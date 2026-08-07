@@ -6,7 +6,6 @@ description: |
   clarify or pressure-test requirements, reduce ambiguity, prepare a PRD
   source, or wants UX, behavior, scope, technical, verification, risk,
   operation, and documented-domain decisions captured before writing a PRD.
-  The "$ho-interview" and "$ho-scope" compatibility aliases follow this same workflow.
   Run low-latency main-agent-led Q&A with raw capture, decision tracking,
   targeted UX scenario coverage, periodic checkpoint backfill, and a final
   PRD-ready qa-log.

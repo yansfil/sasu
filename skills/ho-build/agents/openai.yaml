@@ -1,4 +1,0 @@
-interface:
-  display_name: "ho-build legacy alias"
-  short_description: "Compatibility alias for implement"
-  default_prompt: "Use $ho-build only for compatibility with an existing approved-PRD implementation workflow."

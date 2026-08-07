@@ -31,7 +31,6 @@ remember = lessons land as enforcement, not notes
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
-| `ho-interview`, `ho-scope`, `ho-spec`, `ho-build`, `ho-ship` | Explicit compatibility aliases for existing prompts and automation |
 
 Run artifacts live under the visible `agents/` namespace in the target project (`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`); a legacy `.hoyeon/` tree and the pre-rename `agents/intake/**` path from older runs stay readable as a fallback, and new runs always write under `agents/interview/`.
 
@@ -162,7 +161,6 @@ skills/
   gen-prd/   SKILL.md
   implement/  SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
   ship/   SKILL.md, scripts/prd_ship.js
-  ho-interview/, ho-scope/, ho-spec/, ho-build/, ho-ship/  compatibility aliases
   ho-setup/  SKILL.md
   please/    SKILL.md
   remember/  SKILL.md

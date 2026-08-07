@@ -2,8 +2,8 @@
 
 // Installs the PRD workflow skills for both runtimes from this repository.
 //
-// Both runtimes install the canonical pipeline names plus thin compatibility
-// aliases for the former ho-* invocations.
+// Both runtimes install the canonical pipeline names. The former ho-*
+// compatibility aliases are retired; existing installs of them are removed.
 //
 // - Codex   (~/.codex/skills/<name>/):  SKILL.md copied verbatim.
 // - Claude  (~/.claude/skills/<name>/): SKILL.md copied with substitutions
@@ -30,12 +30,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const CANONICAL_SKILL_NAMES = ["interview-me", "gen-prd", "implement", "ship", "ho-setup", "please", "remember"];
-const COMPATIBILITY_SKILL_NAMES = ["ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-ship"];
-const SKILL_NAMES = [...CANONICAL_SKILL_NAMES, ...COMPATIBILITY_SKILL_NAMES];
+const SKILL_NAMES = ["interview-me", "gen-prd", "implement", "ship", "ho-setup", "please", "remember"];
 
-// Pre-rename install directories that this pipeline used to own.
-const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver"];
+// Pre-rename install directories that this pipeline used to own, including
+// the retired ho-* compatibility aliases.
+const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver", "ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-ship"];
 // Frontmatter names that mark a legacy install as ours: any current name plus
 // every earlier generation (butler set, pre-rename prd-* set).
 const OWNED_LEGACY_NAMES = [...SKILL_NAMES, ...LEGACY_DIRS];
@@ -57,7 +56,7 @@ const TARGETS = {
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
   // Invocation tokens: $interview-me -> /interview-me.
-  return roots.replace(/\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember|ho-interview|ho-scope|ho-spec|ho-build|ho-ship)\b/g, "/$1");
+  return roots.replace(/\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember)\b/g, "/$1");
 }
 
 function ensureDir(dir) {

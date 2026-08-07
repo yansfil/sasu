@@ -1,4 +1,0 @@
-interface:
-  display_name: "ho-spec legacy alias"
-  short_description: "Compatibility alias for gen-prd"
-  default_prompt: "Use $ho-spec only for compatibility with an existing PRD-writing workflow."

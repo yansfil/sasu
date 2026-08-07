@@ -48,7 +48,7 @@ function defaultHarnessPath() {
     // Keep the argv-based root only.
   }
   for (const root of roots) {
-    for (const dir of ["implement", "ho-build", "fulfill", "prd-implement"]) {
+    for (const dir of ["implement", "fulfill", "prd-implement"]) {
       const candidate = path.join(root, dir, "scripts", "prd_state_harness.js");
       if (fs.existsSync(candidate)) return candidate;
     }

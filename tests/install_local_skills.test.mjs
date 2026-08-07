@@ -25,35 +25,22 @@ function freshHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "install-skills-home-"));
 }
 
-test("installer installs canonical skills and all compatibility aliases with correct substitutions", () => {
+test("installer installs canonical skills with correct substitutions and no aliases", () => {
   const home = freshHome();
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
-  assert.equal(report.installed.codex.length, 12);
-  assert.equal(report.installed.claude.length, 12);
+  assert.equal(report.installed.codex.length, 7);
+  assert.equal(report.installed.claude.length, 7);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
   assert.match(codexInterviewText, /^name: interview-me$/m);
   assert.match(codexInterviewText, /\$interview-me/);
-  const aliases = new Map([
-    ["ho-interview", "interview-me"],
-    ["ho-scope", "interview-me"],
-    ["ho-spec", "gen-prd"],
-    ["ho-build", "implement"],
-    ["ho-ship", "ship"],
-  ]);
-  for (const [alias, canonical] of aliases) {
-    const codexAlias = fs.readFileSync(path.join(home, ".codex", "skills", alias, "SKILL.md"), "utf8");
-    assert.match(codexAlias, new RegExp(`^name: ${alias}$`, "m"));
-    assert.match(codexAlias, new RegExp(`\\.\\.\\/${canonical}\\/SKILL\\.md`));
-    const claudeAlias = fs.readFileSync(path.join(home, ".claude", "skills", alias, "SKILL.md"), "utf8");
-    assert.match(claudeAlias, new RegExp(`/${alias}`));
-    assert.doesNotMatch(claudeAlias, new RegExp(`\\$${alias}\\b`));
-    const aliasMetadata = fs.readFileSync(path.join(home, ".codex", "skills", alias, "agents", "openai.yaml"), "utf8");
-    assert.match(aliasMetadata, /legacy alias/);
-    assert.equal(fs.existsSync(path.join(home, ".claude", "skills", alias, "agents")), false);
+  // The retired ho-* aliases are not installed.
+  for (const alias of ["ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-ship"]) {
+    assert.equal(fs.existsSync(path.join(home, ".codex", "skills", alias)), false);
+    assert.equal(fs.existsSync(path.join(home, ".claude", "skills", alias)), false);
   }
 
   const claudeInterview = fs.readFileSync(path.join(home, ".claude", "skills", "interview-me", "SKILL.md"), "utf8");
@@ -74,7 +61,7 @@ test("installer installs canonical skills and all compatibility aliases with cor
   assert.doesNotMatch(claudeText, /~\/\.codex\/skills\//);
   assert.doesNotMatch(
     claudeText,
-    /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember|ho-interview|ho-scope|ho-spec|ho-build|ho-ship)\b/,
+    /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember)\b/,
   );
 
   // remember installs on both runtimes with the substituted harness path.
@@ -97,10 +84,6 @@ test("installer installs canonical skills and all compatibility aliases with cor
   assert.equal(fs.realpathSync(claudeScripts), fs.realpathSync(path.join(repoRoot, "skills", "implement", "scripts")));
   assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "implement", "agents")));
   assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "implement", "agents")), false);
-  const legacyBuildScripts = path.join(home, ".codex", "skills", "ho-build", "scripts");
-  const legacyShipScripts = path.join(home, ".codex", "skills", "ho-ship", "scripts");
-  assert.equal(fs.realpathSync(legacyBuildScripts), fs.realpathSync(path.join(repoRoot, "skills", "implement", "scripts")));
-  assert.equal(fs.realpathSync(legacyShipScripts), fs.realpathSync(path.join(repoRoot, "skills", "ship", "scripts")));
 
   // Hooks: Codex gets Stop + SubagentStop + PreToolUse, Claude gets Stop only.
   const codexHooks = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
@@ -119,14 +102,19 @@ test("installer removes owned legacy directories and keeps foreign ones", () => 
   const ownedLegacy = path.join(home, ".codex", "skills", "prd-implement");
   fs.mkdirSync(ownedLegacy, { recursive: true });
   fs.writeFileSync(path.join(ownedLegacy, "SKILL.md"), "---\nname: fulfill\n---\n\n# fulfill\n");
+  // A previously installed ho-* compatibility alias of ours.
+  const ownedAlias = path.join(home, ".codex", "skills", "ho-build");
+  fs.mkdirSync(ownedAlias, { recursive: true });
+  fs.writeFileSync(path.join(ownedAlias, "SKILL.md"), "---\nname: ho-build\n---\n\n# ho-build compatibility alias\n");
   // An unrelated skill that happens to use a legacy directory name.
   const foreignLegacy = path.join(home, ".codex", "skills", "intake");
   fs.mkdirSync(foreignLegacy, { recursive: true });
   fs.writeFileSync(path.join(foreignLegacy, "SKILL.md"), "---\nname: someone-elses-intake\n---\n\n# other\n");
 
   const report = JSON.parse(runInstaller(home).stdout);
-  assert.deepEqual(report.removedLegacy.codex, [ownedLegacy]);
+  assert.deepEqual(report.removedLegacy.codex, [ownedLegacy, ownedAlias]);
   assert.equal(fs.existsSync(ownedLegacy), false);
+  assert.equal(fs.existsSync(ownedAlias), false);
   assert.equal(fs.existsSync(foreignLegacy), true);
 });
 

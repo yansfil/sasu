@@ -1,4 +1,0 @@
-interface:
-  display_name: "ho-ship legacy alias"
-  short_description: "Compatibility alias for ship"
-  default_prompt: "Use $ho-ship only for compatibility with an existing PR delivery workflow."
