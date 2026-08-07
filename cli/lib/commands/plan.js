@@ -6,8 +6,9 @@ const path = require("path");
 const { SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath, runDirRelFor, formatCommandArgs } = require("../util");
 const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummary } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
-const { taskGraphSummary, buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, rollupTasksFromExecutionPlan, nextItem } = require("../planning");
-const { loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
+const { loadState, syncActive, persistState } = require("../state_store");
+const { renderViews } = require("../render");
 const { invariantsForWriteScopes } = require("../rules");
 
 function cmdPlanVerificationCheck(options) {
@@ -86,13 +87,11 @@ function cmdPlanVerification(options) {
   if (options.prd) return cmdPlanVerificationCheck(options);
   const { statePath, state } = loadState(options);
   state.verificationPlan = buildVerificationPlan(state, statePath);
-  if (state.executionPlan) {
-    state.executionPlan = buildExecutionPlan(state, statePath);
-    rollupTasksFromExecutionPlan(state);
-  }
+  if (state.executionPlan) state.executionPlan = buildExecutionPlan(state, statePath);
   markCompletionReviewsStale(state, "Verification plan was regenerated after review");
   state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
+  renderViews(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "verification_plan_generated",
@@ -106,7 +105,6 @@ function cmdPlanVerification(options) {
     ok: true,
     statePath: toProjectRelative(statePath),
     verificationPlan: verificationPlanSummary(state),
-    taskGraph: taskGraphSummary(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
     planPath: toProjectRelative(path.join(path.dirname(statePath), "verification-plan.json"), state.projectRoot || cwd()),
@@ -119,21 +117,20 @@ function cmdPlanExecution(options) {
   const { statePath, state } = loadState(options);
   const taskPlanInput = readTaskPlanInput(options, state);
   state.executionPlan = buildExecutionPlan(state, statePath, taskPlanInput ? taskPlanInput.tasks : null);
-  rollupTasksFromExecutionPlan(state);
   const injectedRules = injectRuleVerification(state);
   if (injectedRules.length && state.verificationPlan) {
     state.verificationPlan = buildVerificationPlan(state, statePath);
     state.executionPlan = buildExecutionPlan(state, statePath, taskPlanInput ? taskPlanInput.tasks : null);
-    rollupTasksFromExecutionPlan(state);
   }
   markCompletionReviewsStale(state, "Execution plan was regenerated after review");
   state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
+  renderViews(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "execution_plan_generated",
     status: state.executionPlan.status,
-    nodeCount: state.executionPlan.nodes.length,
+    taskCount: (state.tasks || []).length,
     gapCount: state.executionPlan.gaps.length,
     taskPlanSource: taskPlanInput ? taskPlanInput.path : null,
     injectedRules: injectedRules.map(item => item.sourceRuleId),
@@ -143,7 +140,6 @@ function cmdPlanExecution(options) {
     ok: true,
     statePath: toProjectRelative(statePath),
     executionPlan: executionPlanSummary(state),
-    taskGraph: taskGraphSummary(state),
     ready: readyExecutionPlan(state),
     taskPlanSource: taskPlanInput ? taskPlanInput.path : null,
     injectedRules: injectedRules.map(item => ({ id: item.id, rule: item.sourceRuleId, title: item.title })),
@@ -180,15 +176,15 @@ function readTaskPlanInput(options, state) {
 }
 
 // Best-effort learned-rule injection (R11 of the agents-remember contract):
-// invariants whose triggers prefix-overlap any execution write scope become
+// invariants whose triggers prefix-overlap any task write scope become
 // verification items, so passing them is part of the receipt. The exact,
 // changed-file-based enforcement stays with the deliver gate; this match is
 // conservative and says so in the injected item text.
 function injectRuleVerification(state) {
   const projectRoot = state.projectRoot || cwd();
-  const executionNodes = state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : [];
-  const scopes = executionNodes
-    .flatMap(node => Array.isArray(node.writeScope) ? node.writeScope : [])
+  const tasks = state.tasks || [];
+  const scopes = tasks
+    .flatMap(task => Array.isArray(task.writeScope) ? task.writeScope : [])
     .filter(scope => typeof scope === "string" && !scope.startsWith("TBD:"));
   let matched;
   try {
@@ -200,16 +196,16 @@ function injectRuleVerification(state) {
   const injected = [];
   for (const rule of matched) {
     if (state.verification.some(item => item.sourceRuleId === rule.id)) continue;
-    const coveredTasks = executionNodes
-      .filter(node => {
+    const coveredTasks = tasks
+      .filter(task => {
         try {
-          return invariantsForWriteScopes(projectRoot, node.writeScope || [])
+          return invariantsForWriteScopes(projectRoot, task.writeScope || [])
             .some(candidate => candidate.id === rule.id);
         } catch {
           return false;
         }
       })
-      .map(node => node.sourceTask)
+      .map(task => task.id)
       .filter(Boolean);
     const nextIndex = state.verification.filter(item => item.source === "rules_injection").length + 1;
     const manual = rule.check.type === "manual";

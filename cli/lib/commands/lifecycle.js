@@ -4,7 +4,7 @@ const path = require("path");
 
 const { nowIso, writeJson, appendJsonl } = require("../util");
 const { recordDeviation, effectiveReviewPolicy } = require("../state_data");
-const { loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { loadState, syncActive, persistState } = require("../state_store");
 
 // Mute the stop-hook continuation loop while the user has redirected the
 // conversation away from the implementation (unrelated questions, "wrap it up
@@ -27,7 +27,7 @@ function cmdPause(options) {
   if (!reason) throw new Error("--reason is required; quote the user's redirect or wrap-up request");
   state.paused = { at: nowIso(), reason };
   state.updatedAt = nowIso();
-  // Deliberately not persistStateAndArtifacts: that path clears `paused` as
+  // Deliberately not persistState: that path clears `paused` as
   // the auto-resume signal for every real mutation command.
   writeJson(statePath, state);
   syncActive(statePath, state);
@@ -67,7 +67,7 @@ function cmdReviewPolicy(options) {
     previous: previous ? { profile: previous.profile, source: previous.source } : null,
   };
   state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "review_profile_overridden",

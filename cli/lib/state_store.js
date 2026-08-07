@@ -8,9 +8,7 @@ const path = require("path");
 
 const { SCHEMA, ACTIVE_PATH, PRD_ROOT_REL, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson, writeJson, appendJsonl, safeTimestamp } = require("./util");
 const { primaryWorktreeRoot } = require("./git");
-const { refreshExecutionTraceMatrix, buildTaskGraph } = require("./planning");
 const { artifactManifestPath, inspectArtifact, assertArtifactPathIsEvidence } = require("./artifacts");
-const { writeArtifacts } = require("./render");
 
 function activePath(baseDir = cwd()) {
   return path.join(baseDir, ACTIVE_PATH);
@@ -151,18 +149,17 @@ function syncActive(statePath, state) {
 }
 
 /**
- * Single write path for state.json plus every derived artifact document.
+ * Single write path for state.json. Derived views (checklist, plans,
+ * verification) are rendered on demand by the planning, reconcile, finalize,
+ * and `render` commands, never on every mark.
  * @param {string} statePath
  * @param {State} state
  */
-function persistStateAndArtifacts(statePath, state) {
+function persistState(statePath, state) {
   // Every real mutation command flows through here, so progress on the run
   // implicitly resumes a paused stop-hook loop (see commands/lifecycle.js).
   if (state.paused) delete state.paused;
-  refreshExecutionTraceMatrix(state);
-  state.taskGraph = buildTaskGraph(state);
   writeJson(statePath, state);
-  writeArtifacts(statePath, state);
 }
 
 function attachArtifact(statePath, state, match, kind, inputPath, description, extra = {}) {
@@ -231,7 +228,7 @@ module.exports = {
   loadState,
   activeRecordForState,
   syncActive,
-  persistStateAndArtifacts,
+  persistState,
   attachArtifact,
   latestPrdSlug,
 };

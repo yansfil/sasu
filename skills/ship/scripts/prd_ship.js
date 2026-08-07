@@ -552,12 +552,10 @@ function pathMatches(candidate, patterns) {
   });
 }
 
-function nodeWriteScopes(context) {
-  const nodes = context.state.executionPlan && Array.isArray(context.state.executionPlan.nodes)
-    ? context.state.executionPlan.nodes
-    : [];
-  return nodes
-    .flatMap(node => Array.isArray(node.writeScope) ? node.writeScope : [])
+function taskWriteScopes(context) {
+  const tasks = Array.isArray(context.state.tasks) ? context.state.tasks : [];
+  return tasks
+    .flatMap(task => Array.isArray(task.writeScope) ? task.writeScope : [])
     .map(normalizeRepoPath)
     .filter(item => item && !item.startsWith("TBD:") && !path.isAbsolute(item))
     .filter(item => !isUnsafeBroadWriteScope(item));
@@ -574,7 +572,7 @@ function defaultAllowedPaths(context, config, options = {}) {
     context.state.prdPath ? path.dirname(context.state.prdPath) : null,
     runDir,
     context.state.delivery && context.state.delivery.configPath,
-    ...nodeWriteScopes(context),
+    ...taskWriteScopes(context),
     ...optionList(config.staging && config.staging.include),
     ...optionList(options.include),
   ];

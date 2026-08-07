@@ -253,8 +253,8 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   const ready = runJson(["ready"], projectRoot);
   assert.ok(Array.isArray(ready.ready.readySequential) && ready.ready.readySequential.length >= 1);
 
-  const nodeIds = readState().executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  const taskIds = readState().tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test tasks completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
 
@@ -282,8 +282,7 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   state = readState();
   assert.equal(state.reviewProfile.policyVersion, 2);
   assert.equal(state.finalReview, null);
-  assert.equal(state.taskGraph.nodes.some(node => node.id === "REVIEW"), false);
-  assert(state.taskGraph.edges.some(edge => edge.from === "REQ_FIDELITY_REVIEW" && edge.to === "FINALIZE"));
+  assert.equal(state.taskGraph, undefined);
 
   const status = runJson(["status"], projectRoot);
   assert.equal(status.reviewProfile.profile, "standard");
@@ -325,7 +324,6 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
     "checklist.md",
     "execution-plan.md",
     "verification-plan.md",
-    "taskgraph.md",
     "verification.md",
     "implementation-result.md",
   ]) {

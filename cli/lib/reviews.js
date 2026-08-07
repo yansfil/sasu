@@ -339,19 +339,6 @@ function completionViolations(statePath, state, options = {}) {
   } else if (executionPlan.blockingGapCount > 0) {
     violations.push(`Execution plan has ${executionPlan.blockingGapCount} blocking gap(s)`);
   }
-  for (const node of (state.executionPlan && state.executionPlan.nodes) || []) {
-    if (node.status !== "complete") violations.push(`Execution node ${node.id} is ${node.status}`);
-    if (!node.evidence || node.evidence.length === 0) violations.push(`Execution node ${node.id} has no evidence`);
-  }
-  for (const task of state.tasks || []) {
-    const rollup = state.executionPlan && state.executionPlan.rollups && state.executionPlan.rollups.tasks
-      ? state.executionPlan.rollups.tasks[task.id]
-      : null;
-    if (!rollup || !rollup.nodes || rollup.nodes.length === 0) {
-      violations.push(`Task ${task.id} has no execution node mapping`);
-    }
-  }
-  violations.push(...taskGraphViolations(state));
   for (const task of state.tasks) {
     if (task.status !== "complete") violations.push(`Task ${task.id} is ${task.status}`);
     if (!task.evidence.length) violations.push(`Task ${task.id} has no evidence`);
@@ -425,31 +412,6 @@ function prdSnapshotViolations(statePath, state) {
   return violations;
 }
 
-function taskGraphViolations(state) {
-  const graph = state.taskGraph;
-  const violations = [];
-  if (!graph) return ["Task graph is missing"];
-  const nodeIds = new Set((graph.nodes || []).map(node => node.id));
-  if (!nodeIds.has("EP0")) violations.push("Task graph is missing EP0 execution-plan node");
-  for (const node of (state.executionPlan && state.executionPlan.nodes) || []) {
-    if (!nodeIds.has(node.id)) violations.push(`Task graph is missing execution node ${node.id}`);
-  }
-  for (const task of state.tasks || []) {
-    if (!nodeIds.has(task.id)) violations.push(`Task graph is missing task node ${task.id}`);
-  }
-  for (const ac of state.acceptanceCriteria || []) {
-    if (!nodeIds.has(ac.id)) violations.push(`Task graph is missing acceptance node ${ac.id}`);
-  }
-  for (const verification of state.verification || []) {
-    if (!nodeIds.has(verification.id)) violations.push(`Task graph is missing verification node ${verification.id}`);
-  }
-  if (!nodeIds.has("REQ_FIDELITY_REVIEW")) violations.push("Task graph is missing REQ_FIDELITY_REVIEW node");
-  if (finalReviewRequiredForState(state) && !nodeIds.has("REVIEW")) violations.push("Task graph is missing the REVIEW node required by the effective review policy");
-  if (!finalReviewRequiredForState(state) && nodeIds.has("REVIEW")) violations.push("Task graph contains REVIEW node that is not part of the effective review policy");
-  if (!nodeIds.has("FINALIZE")) violations.push("Task graph is missing FINALIZE node");
-  return violations;
-}
-
 function requirementsFidelityHandoffViolations(state) {
   const review = state.requirementsFidelityReview;
   if (!review) return ["Requirements fidelity review must be recorded before blocked/partial finalization"];
@@ -485,11 +447,6 @@ function assertAllowedStatus(kind, status) {
   if (!allowed.includes(status)) throw new Error(`Invalid ${kind} status '${status}'. Allowed: ${allowed.join(", ")}`);
 }
 
-function assertAllowedExecutionStatus(status) {
-  const allowed = ["pending", "in_progress", "complete", "blocked", "deferred"];
-  if (!allowed.includes(status)) throw new Error(`Invalid execution node status '${status}'. Allowed: ${allowed.join(", ")}`);
-}
-
 function prdCopyDriftWarnings(state) {
   const projectRoot = state.projectRoot || cwd();
   const primary = primaryWorktreeRoot(projectRoot);
@@ -520,9 +477,7 @@ module.exports = {
   completionReadiness,
   completionViolations,
   prdSnapshotViolations,
-  taskGraphViolations,
   requirementsFidelityHandoffViolations,
   assertAllowedStatus,
-  assertAllowedExecutionStatus,
   prdCopyDriftWarnings,
 };

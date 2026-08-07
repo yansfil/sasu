@@ -9,9 +9,10 @@ const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapsh
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
-const { taskGraphSummary, verificationContractHash, buildVerificationPlan, readyExecutionPlan, nextItem } = require("../planning");
+const { verificationContractHash, buildVerificationPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
-const { activePath, normalizeSessionId, writeActiveRecord, persistStateAndArtifacts } = require("../state_store");
+const { activePath, normalizeSessionId, writeActiveRecord, persistState } = require("../state_store");
+const { renderViews } = require("../render");
 
 function cmdInit(options) {
   const inputs = resolveInitInputs(options);
@@ -49,7 +50,8 @@ function cmdInit(options) {
 
   const statePath = path.join(runDirAbs, "state.json");
   state.verificationPlan = buildVerificationPlan(state, statePath);
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
+  renderViews(statePath, state);
   writeActiveRecord(inputs.projectRoot, statePath, state);
   appendJsonl(path.join(runDirAbs, "ledger.jsonl"), {
     ts: nowIso(),
@@ -78,7 +80,6 @@ function cmdInit(options) {
     counts: countState(state),
     verificationPlan: verificationPlanSummary(state),
     executionPlan: executionPlanSummary(state),
-    taskGraph: taskGraphSummary(state),
     ready: readyExecutionPlan(state),
     next: nextItem(state),
   }, null, 2) + "\n");
@@ -308,7 +309,6 @@ function buildInitialState(inputs, contract, worktreePreparation, options, runDi
     testModeContract,
     verificationPlan: null,
     executionPlan: null,
-    taskGraph: null,
     deviations: [],
     requirementsFidelityReview: null,
     finalReview: null,

@@ -22,11 +22,11 @@ The agent assigns a semantic review profile in PRD frontmatter, and the harness 
 New runs store `reviewProfile.policyVersion: 2` without changing the state schema or adding a lifecycle state.
 Review semantics depend on the profile alone; a state without that field behaves identically.
 
-| Profile | Requirements fidelity | Final adversarial review | TaskGraph tail |
+| Profile | Requirements fidelity | Final adversarial review | Gate tail |
 | --- | --- | --- | --- |
-| `trivial` | Compact, main-agent owned | Not required | `REQ_FIDELITY_REVIEW -> FINALIZE` |
-| `standard` | Full combined semantic review by one fresh independent reviewer | Not required | `REQ_FIDELITY_REVIEW -> FINALIZE` |
-| `high-risk` | Full, main-agent owned | Full, fresh independent reviewer | `REQ_FIDELITY_REVIEW -> REVIEW -> FINALIZE` |
+| `trivial` | Compact, main-agent owned | Not required | fidelity review, then finalize |
+| `standard` | Full combined semantic review by one fresh independent reviewer | Not required | fidelity review, then finalize |
+| `high-risk` | Full, main-agent owned | Full, fresh independent reviewer | fidelity review, then final review, then finalize |
 
 Read the complete intent, user-visible behavior, data effects, technical structure, external side effects, and delivery plan before choosing the profile.
 Use `trivial` only for bounded work with no changed user-visible behavior or runtime contract.
@@ -227,7 +227,6 @@ Do not report done and do not mark the tracked Goal complete until:
 - `status` reports zero open tracked items.
 - every required verification item is `pass` with artifact-backed evidence.
 - verification and execution plans are ready.
-- the TaskGraph has no blocking gate violations.
 - artifact validation has no violation.
 - requirements fidelity status is `pass` and fresh.
 - final review status is `pass` and fresh when the profile requires it.
@@ -274,10 +273,9 @@ Goal state is lifecycle control and may mirror a successful receipt, but it is n
 
 - the receipt is missing.
 - a Goal is missing when Goal tools were available.
-- the execution plan is missing or has open nodes.
-- PRD tasks, acceptance criteria, or verification items are open.
+- the execution plan is missing or has blocking gaps.
+- PRD tasks, acceptance criteria, or verification items are open or lack evidence.
 - the verification plan has blocking gaps.
-- the TaskGraph is missing execution nodes or gates.
 - requirements fidelity is missing, failed, or stale.
 - a required final review is missing, failed, or stale.
 - source, evidence, artifacts, plans, or deviations changed after a passing review.

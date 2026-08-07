@@ -1,7 +1,7 @@
 // @ts-check
 "use strict";
 
-// JSDoc typedefs for the hoyeon.prd-implement.state.v1 schema and the
+// JSDoc typedefs for the hoyeon.prd-implement.state.v2 schema and the
 // documents derived from it. Runtime-empty: modules import these types with
 // `@typedef {import("./types").State} State` style annotations so editors and
 // `tsc --checkJs` can catch state-field typos without a TypeScript migration.
@@ -25,6 +25,7 @@
 
 /**
  * Task (T#), acceptance criterion (AC#), or requirement (R#) parsed from the PRD.
+ * Tasks additionally carry the executor fields applied by `plan-execution`.
  * @typedef {Object} TrackedItem
  * @property {string} id
  * @property {string} title
@@ -34,6 +35,11 @@
  * @property {string} status
  * @property {Evidence[]} evidence
  * @property {Artifact[]} artifacts
+ * @property {string[]} [dependsOn] task ids that must complete first (tasks only)
+ * @property {string[]} [writeScope] repository-relative paths the task owns (tasks only)
+ * @property {boolean} [parallelSafe] tasks only
+ * @property {string} [risk] low|medium|high (tasks only)
+ * @property {string|null} [owner] coordinator or subagent:<id> (tasks only)
  */
 
 /**
@@ -82,22 +88,6 @@
  */
 
 /**
- * @typedef {Object} ExecutionNode
- * @property {string} id N# id
- * @property {string} title
- * @property {string} status pending|in_progress|complete|blocked|deferred
- * @property {string} sourceTask T# id
- * @property {string[]} dependsOn
- * @property {string[]} writeScope
- * @property {boolean} parallelSafe
- * @property {string} risk low|medium|high
- * @property {string|null} owner
- * @property {{requirements: string[], acceptanceCriteria: string[], verification: string[]}} covers
- * @property {Evidence[]} evidence
- * @property {Artifact[]} artifacts
- */
-
-/**
  * @typedef {Object} PlanGap
  * @property {string} severity "blocking" or a warning level
  * @property {string} id
@@ -115,12 +105,15 @@
  */
 
 /**
+ * Plan metadata only. The executor fields it validates live on `state.tasks`.
  * @typedef {Object} ExecutionPlan
+ * @property {string} schema
  * @property {string} status
  * @property {string} generatedAt
- * @property {ExecutionNode[]} nodes
+ * @property {string} prdPath
+ * @property {string} statePath
+ * @property {boolean} taskPlanApplied
  * @property {PlanGap[]} gaps
- * @property {Object} [traceMatrix]
  */
 
 /**
@@ -158,7 +151,7 @@
  */
 
 /**
- * The persisted state.json document (hoyeon.prd-implement.state.v1).
+ * The persisted state.json document (hoyeon.prd-implement.state.v2).
  * @typedef {Object} State
  * @property {string} schema
  * @property {string} status active|complete|partial|blocked
@@ -186,7 +179,6 @@
  * @property {TestModeRow[]} testModeContract
  * @property {VerificationPlan|null} verificationPlan
  * @property {ExecutionPlan|null} executionPlan
- * @property {Object|null} taskGraph
  * @property {Deviation[]} deviations
  * @property {ReviewRecord|null} requirementsFidelityReview
  * @property {ReviewRecord|null} finalReview

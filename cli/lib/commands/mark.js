@@ -6,46 +6,49 @@ const childProcess = require("child_process");
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, appendJsonl, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, markCompletionReviewsStale, findTrackedItem, countState } = require("../state_data");
 const { commandsMatchContract } = require("../inference");
-const { readyExecutionPlan, rollupTasksFromExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
+const { readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertAllowedStatus, assertAllowedExecutionStatus } = require("../reviews");
-const { attachArtifact, loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { assertAllowedStatus } = require("../reviews");
+const { attachArtifact, loadState, syncActive, persistState } = require("../state_store");
 
-function cmdMarkNode(options) {
+function cmdMark(options) {
+  const kind = options.kind;
   const ids = parseIdList(options.id, value => value.toUpperCase());
   const status = String(options.status || "");
   const evidence = String(options.evidence || "").trim();
   const acIds = options.ac ? parseIdList(options.ac, value => value.toUpperCase()) : [];
+  if (!["task", "ac", "verification"].includes(kind)) throw new Error("--kind must be task, ac, or verification");
   if (!ids.length) throw new Error("--id is required");
   if (!status) throw new Error("--status is required");
   if (!evidence) throw new Error("--evidence is required");
-  if (acIds.length && status !== "complete") throw new Error("--ac requires --status complete; acceptance criteria are only co-marked with a completed node");
-  assertAllowedExecutionStatus(status);
+  if (acIds.length && kind !== "task") throw new Error("--ac is only valid with --kind task");
+  if (acIds.length && status !== "complete") throw new Error("--ac requires --status complete; acceptance criteria are only co-marked with a completed task");
+
   const { statePath, state } = loadState(options);
-	  if (!state.executionPlan || !Array.isArray(state.executionPlan.nodes)) throw new Error("Execution plan is missing; run plan-execution first");
+  const list = kind === "task" ? state.tasks : kind === "ac" ? state.acceptanceCriteria : state.verification;
+  assertAllowedStatus(kind, status);
   const marked = [];
   for (const id of ids) {
-	    const node = state.executionPlan.nodes.find(entry => String(entry.id).toUpperCase() === id);
-	    if (!node) throw new Error(`Execution node ${id} not found`);
-	    let deviationEntry = null;
-	    // Out-of-order completion only matters when parallel execution is on:
-	    // sequential runs have no dependency contract to violate, and recording
-	    // a deviation for every harmless reorder buries the real ones.
-	    if (status === "complete" && state.execution && state.execution.parallel) {
-	      const ready = readyExecutionPlan(state);
-	      const wasAlreadyStarted = node.status === "in_progress";
-	      if (!wasAlreadyStarted && !ready.readySequential.includes(node.id)) {
-	        const blocker = ready.blocked.find(item => item.id === node.id);
-	        deviationEntry = recordDeviation(state, "ready_order", node.id, "Execution node completed outside ready guidance", {
-	          waitingFor: blocker ? blocker.waitingFor : [],
-	          readySequential: ready.readySequential,
-	        });
-	      }
-	    }
-	    node.status = status;
-	    if (!node.evidence) node.evidence = [];
-	    node.evidence.push({ ts: nowIso(), text: evidence });
-    marked.push({ kind: "execution_node", id, status, sourceTask: node.sourceTask, deviation: deviationEntry });
+    const item = list.find(entry => String(entry.id).toUpperCase() === id);
+    if (!item) throw new Error(`${kind} ${id} not found`);
+    let deviationEntry = null;
+    // Out-of-order completion only matters when parallel execution is on:
+    // sequential runs have no dependency contract to violate, and recording
+    // a deviation for every harmless reorder buries the real ones.
+    if (kind === "task" && status === "complete" && state.execution && state.execution.parallel) {
+      const ready = readyExecutionPlan(state);
+      const wasAlreadyStarted = item.status === "in_progress";
+      if (!wasAlreadyStarted && !ready.readySequential.includes(item.id)) {
+        const blocker = ready.blocked.find(entry => entry.id === item.id);
+        deviationEntry = recordDeviation(state, "ready_order", item.id, "Task completed outside ready guidance", {
+          waitingFor: blocker ? blocker.waitingFor : [],
+          readySequential: ready.readySequential,
+        });
+      }
+    }
+    item.status = status;
+    item.evidence.push({ ts: nowIso(), text: evidence });
+    marked.push(deviationEntry ? { kind, id, status, deviation: deviationEntry } : { kind, id, status });
   }
   for (const acId of acIds) {
     const item = state.acceptanceCriteria.find(entry => String(entry.id).toUpperCase() === acId);
@@ -55,80 +58,9 @@ function cmdMarkNode(options) {
     item.evidence.push({ ts: nowIso(), text: evidence });
     marked.push({ kind: "ac", id: acId, status: "met" });
   }
-	  rollupTasksFromExecutionPlan(state);
-	  markCompletionReviewsStale(state, `Execution node(s) ${ids.join(", ")} were marked after review`);
-	  state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "execution_node_marked",
-    ids,
-    status,
-	    evidence,
-	    marked,
-	  });
-  syncActive(statePath, state);
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    marked,
-    counts: countState(state),
-    next: nextBrief(state),
-  }, null, 2) + "\n");
-}
-
-function cmdAssignNode(options) {
-  const id = String(options.id || "").toUpperCase();
-  const owner = String(options.owner || "").trim();
-  if (!id) throw new Error("--id is required");
-  if (!owner) throw new Error("--owner is required");
-  const { statePath, state } = loadState(options);
-  if (!state.executionPlan || !Array.isArray(state.executionPlan.nodes)) throw new Error("Execution plan is missing; run plan-execution first");
-  const node = state.executionPlan.nodes.find(entry => String(entry.id).toUpperCase() === id);
-  if (!node) throw new Error(`Execution node ${id} not found`);
-	  node.owner = owner;
-	  markCompletionReviewsStale(state, `Execution node ${id} assignment changed after review`);
-	  state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "node_assigned",
-    id,
-    sourceTask: node.sourceTask,
-    owner,
-  });
-  syncActive(statePath, state);
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    assigned: { id, owner },
-    next: nextBrief(state),
-  }, null, 2) + "\n");
-}
-
-function cmdMark(options) {
-  const kind = options.kind;
-  const ids = parseIdList(options.id, value => value.toUpperCase());
-  const status = String(options.status || "");
-  const evidence = String(options.evidence || "").trim();
-  if (!["task", "ac", "verification"].includes(kind)) throw new Error("--kind must be task, ac, or verification");
-  if (!ids.length) throw new Error("--id is required");
-  if (!status) throw new Error("--status is required");
-  if (!evidence) throw new Error("--evidence is required");
-
-  const { statePath, state } = loadState(options);
-  const list = kind === "task" ? state.tasks : kind === "ac" ? state.acceptanceCriteria : state.verification;
-  assertAllowedStatus(kind, status);
-  const marked = [];
-  for (const id of ids) {
-    const item = list.find(entry => String(entry.id).toUpperCase() === id);
-    if (!item) throw new Error(`${kind} ${id} not found`);
-	  item.status = status;
-	  item.evidence.push({ ts: nowIso(), text: evidence });
-    marked.push({ kind, id, status });
-  }
-	  rollupTasksFromExecutionPlan(state);
-	  markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
-	  state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
+  state.updatedAt = nowIso();
+  persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "marked",
@@ -136,12 +68,39 @@ function cmdMark(options) {
     ids,
     status,
     evidence,
+    marked,
   });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
     marked,
     counts: countState(state),
+    next: nextBrief(state),
+  }, null, 2) + "\n");
+}
+
+function cmdAssign(options) {
+  const id = String(options.id || "").toUpperCase();
+  const owner = String(options.owner || "").trim();
+  if (!id) throw new Error("--id is required");
+  if (!owner) throw new Error("--owner is required");
+  const { statePath, state } = loadState(options);
+  const task = (state.tasks || []).find(entry => String(entry.id).toUpperCase() === id);
+  if (!task) throw new Error(`Task ${id} not found`);
+  task.owner = owner;
+  markCompletionReviewsStale(state, `Task ${id} assignment changed after review`);
+  state.updatedAt = nowIso();
+  persistState(statePath, state);
+  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
+    ts: nowIso(),
+    event: "task_assigned",
+    id,
+    owner,
+  });
+  syncActive(statePath, state);
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    assigned: { id, owner },
     next: nextBrief(state),
   }, null, 2) + "\n");
 }
@@ -160,10 +119,9 @@ function cmdRecordArtifact(options) {
   const match = findTrackedItem(state, id);
   if (!match) throw new Error(`Tracked item ${id} not found`);
 	  const artifact = attachArtifact(statePath, state, match, kind, artifactPath, description);
-	  rollupTasksFromExecutionPlan(state);
 	  markCompletionReviewsStale(state, `Artifact was recorded for ${match.kind} ${match.item.id} after review`);
 	  state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "artifact_recorded",
@@ -234,7 +192,7 @@ function cmdRefreshArtifacts(options) {
   if (refreshed.length) {
     markCompletionReviewsStale(state, "Registered artifacts were refreshed after review");
     state.updatedAt = nowIso();
-    persistStateAndArtifacts(statePath, state);
+    persistState(statePath, state);
     appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
       ts: nowIso(),
       event: "artifacts_refreshed",
@@ -329,10 +287,9 @@ function cmdVerifyRun(rawArgs) {
     ts: nowIso(),
     text: `Command ${exitCode === 0 ? "passed" : "failed"} with exit code ${exitCode}: ${commandText}. Log: ${artifact.path}`,
   });
-	  rollupTasksFromExecutionPlan(state);
 	  markCompletionReviewsStale(state, `Verification ${id} was run after review`);
 	  state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "verification_run",
@@ -358,9 +315,8 @@ function cmdVerifyRun(rawArgs) {
 }
 
 module.exports = {
-  cmdMarkNode,
-  cmdAssignNode,
   cmdMark,
+  cmdAssign,
   cmdRecordArtifact,
   cmdRefreshArtifacts,
   cmdVerifyRun,

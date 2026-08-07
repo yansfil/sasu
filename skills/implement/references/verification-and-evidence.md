@@ -123,7 +123,7 @@ Harness state and plan files, including `state.json`, verification plans, and re
 
 Register an artifact immediately after producing it.
 Do not leave files under `artifacts/` unregistered.
-If an artifact exists before registration, run `record-artifact` before using it as evidence for a node, acceptance criterion, review, or final report.
+If an artifact exists before registration, run `record-artifact` before using it as evidence for a task, acceptance criterion, review, or final report.
 
 Before final review, run `status` and resolve every artifact violation.
 Register valid evidence or remove only unregistered artifacts created by the current implementation run.

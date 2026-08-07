@@ -6,7 +6,10 @@ const path = require("path");
 const crypto = require("crypto");
 const childProcess = require("child_process");
 
-const SCHEMA = "hoyeon.prd-implement.state.v1";
+// Bumped when the persisted shape changes incompatibly. v2 moved executor
+// fields onto `state.tasks` and dropped the execution-node and taskGraph
+// layers; loadState and the hooks reject older files rather than misread them.
+const SCHEMA = "hoyeon.prd-implement.state.v2";
 
 // Single source of truth for where harness artifacts live inside a target
 // project. Every path the harness builds must derive from these constants;

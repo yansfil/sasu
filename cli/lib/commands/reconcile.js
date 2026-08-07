@@ -6,9 +6,12 @@ const path = require("path");
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text } = require("../util");
 const { recordDeviation, markCompletionReviewsStale, countState } = require("../state_data");
 const { stripFrontmatter } = require("../prd_parser");
-const { buildVerificationPlan, buildExecutionPlan, verificationContractHash, rollupTasksFromExecutionPlan, nextBrief } = require("../planning");
-const { loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { buildVerificationPlan, buildExecutionPlan, verificationContractHash, nextBrief } = require("../planning");
+const { loadState, syncActive, persistState } = require("../state_store");
+const { renderViews } = require("../render");
 const { parsePrdContract } = require("./init");
+
+const EXECUTOR_FIELDS = ["dependsOn", "writeScope", "parallelSafe", "risk", "owner"];
 
 // A verification item is part of the PRD contract unless the rules engine
 // injected it; injected items survive reconcile untouched.
@@ -100,7 +103,17 @@ function cmdReconcile(options) {
   const contract = parsePrdContract(parsed, projectRoot);
   const changes = { added: [], changed: [], removed: [], unchanged: 0 };
 
+  // Executor fields are plan data, not recorded progress: a task whose PRD text
+  // changed still owns the same files and dependencies until the coordinator
+  // replans, so they survive the status reset that a changed definition forces.
+  const priorExecutorFields = new Map((state.tasks || []).map(task => [
+    String(task.id).toUpperCase(),
+    Object.fromEntries(EXECUTOR_FIELDS.filter(field => task[field] !== undefined).map(field => [field, task[field]])),
+  ]));
   state.tasks = reconcileList("task", state.tasks || [], contract.tasks, changes);
+  for (const task of state.tasks) {
+    Object.assign(task, priorExecutorFields.get(String(task.id).toUpperCase()) || {});
+  }
   state.acceptanceCriteria = reconcileList("ac", state.acceptanceCriteria || [], contract.acceptanceCriteria, changes);
   state.requirements = reconcileList("requirement", state.requirements || [], contract.requirements, changes);
   const injectedVerification = (state.verification || []).filter(isRulesInjectedVerification);
@@ -131,25 +144,8 @@ function cmdReconcile(options) {
     }),
   };
 
-  const changedTaskIds = new Set(changes.changed.filter(entry => entry.kind === "task").map(entry => String(entry.id).toUpperCase()));
   state.verificationPlan = buildVerificationPlan(state, statePath);
-  if (state.executionPlan) {
-    const priorNodesByTask = new Map((state.executionPlan.nodes || []).map(node => [node.sourceTask, node]));
-    state.executionPlan = buildExecutionPlan(state, statePath);
-    for (const node of state.executionPlan.nodes || []) {
-      const prior = priorNodesByTask.get(node.sourceTask);
-      if (!prior) continue;
-      node.status = changedTaskIds.has(String(node.sourceTask).toUpperCase()) ? "pending" : prior.status;
-      node.owner = prior.owner || null;
-      node.evidence = Array.isArray(prior.evidence) ? prior.evidence : [];
-      node.artifacts = Array.isArray(prior.artifacts) ? prior.artifacts : [];
-      node.dependsOn = Array.isArray(prior.dependsOn) ? prior.dependsOn : node.dependsOn;
-      node.writeScope = Array.isArray(prior.writeScope) ? prior.writeScope : node.writeScope;
-      node.parallelSafe = prior.parallelSafe === true;
-      node.risk = prior.risk || node.risk;
-    }
-  }
-  rollupTasksFromExecutionPlan(state);
+  if (state.executionPlan) state.executionPlan = buildExecutionPlan(state, statePath);
 
   const materialChange = changes.added.length > 0 || changes.changed.length > 0 || changes.removed.length > 0;
   const reason = String(options.reason || "").trim() ||
@@ -167,7 +163,8 @@ function cmdReconcile(options) {
     markCompletionReviewsStale(state, "PRD contract items changed during reconcile");
   }
   state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
+  renderViews(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "prd_reconciled",

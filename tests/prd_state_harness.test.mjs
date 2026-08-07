@@ -408,23 +408,23 @@ test("verify-run preserves quoted argument whitespace when comparing commands", 
   assert.match(result.stderr, /command differs from PRD contract/);
 });
 
-test("batch mark-node with a bad id does not persist partial mutation", () => {
+test("batch task mark with a bad id does not persist partial mutation", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "batch-bad-id");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
   runJson(["plan-execution"], projectRoot);
   const statePath = path.join(projectRoot, "agents", "implement", "batch-bad-id", "state.json");
   const before = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  assert.equal(before.executionPlan.nodes[0].status, "pending");
-  const result = run(process.execPath, [harness, "mark-node", "--id", `${before.executionPlan.nodes[0].id},N999`, "--status", "complete", "--evidence", "should not persist"], {
+  assert.equal(before.tasks[0].status, "pending");
+  const result = run(process.execPath, [harness, "mark", "--kind", "task", "--id", `${before.tasks[0].id},T999`, "--status", "complete", "--evidence", "should not persist"], {
     cwd: projectRoot,
     allowFailure: true,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Execution node N999 not found/);
+  assert.match(result.stderr, /task T999 not found/);
   const after = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  assert.equal(after.executionPlan.nodes[0].status, "pending");
-  assert.deepEqual(after.executionPlan.nodes[0].evidence, []);
+  assert.equal(after.tasks[0].status, "pending");
+  assert.deepEqual(after.tasks[0].evidence, []);
 });
 
 test("trivial review profile can finalize with requirements fidelity review only", () => {
@@ -433,8 +433,8 @@ test("trivial review profile can finalize with requirements fidelity review only
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "trivial-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
   let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
-  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--", "node", "-e", "void 0; process.exit(0)"], projectRoot);
 
@@ -480,8 +480,10 @@ PASS.
   assert.equal(status.reviewPolicy.finalReviewRequired, false);
   assert.equal(status.next, null);
   const reviewedState = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
-  assert.equal(reviewedState.taskGraph.nodes.some(node => node.id === "REVIEW"), false);
-  assert(reviewedState.taskGraph.edges.some(edge => edge.from === "REQ_FIDELITY_REVIEW" && edge.to === "FINALIZE"));
+  assert.equal(reviewedState.finalReview, null);
+  assert.equal(reviewedState.taskGraph, undefined);
+  const reviewedChecklist = fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "checklist.md"), "utf8");
+  assert.doesNotMatch(reviewedChecklist, /## Final Adversarial Review/);
   const stopHook = run(process.execPath, [harness, "hook", "stop"], {
     cwd: projectRoot,
     input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "trivial-session" }),
@@ -554,8 +556,8 @@ function driveToFidelity(projectRoot, slug, sessionId) {
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", sessionId], projectRoot);
   runJson(["plan-execution"], projectRoot);
   const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
-  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "done"], projectRoot);
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "done"], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
   const after = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
@@ -709,11 +711,10 @@ test("mutation command output is compact and stop directive gates verbose proced
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "co-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
   const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
-  const firstNode = state.executionPlan.nodes[0].id;
+  const firstTask = state.tasks[0].id;
 
-  const markOut = runJson(["mark-node", "--id", firstNode, "--status", "complete", "--evidence", "done"], projectRoot);
+  const markOut = runJson(["mark", "--kind", "task", "--id", firstTask, "--status", "complete", "--evidence", "done"], projectRoot);
   assert.equal(markOut.ok, true);
-  assert.equal(markOut.taskGraph, undefined);
   assert.equal(markOut.executionPlan, undefined);
   assert.equal(markOut.ready, undefined);
   assert.equal(markOut.next.writeScope, undefined);
@@ -799,7 +800,7 @@ test("parallel ready groups are config-gated and off by default", () => {
   runJson(["plan-execution", "--task-plan", taskPlanPath], rootB);
   const readyB = runJson(["ready"], rootB);
   assert.equal(readyB.ready.parallelEnabled, true);
-  assert.deepEqual(readyB.ready.readyParallelGroups, [["N1", "N2"]]);
+  assert.deepEqual(readyB.ready.readyParallelGroups, [["T1", "T2"]]);
   const stopB = run(process.execPath, [harness, "hook", "stop"], {
     cwd: rootB,
     input: JSON.stringify({ hook_event_name: "Stop", cwd: rootB, session_id: "par-s" }),
@@ -811,7 +812,7 @@ test("parallel ready groups are config-gated and off by default", () => {
   } }, null, 2));
   runJson(["plan-execution", "--task-plan", taskPlanPath], rootB);
   const partialState = JSON.parse(fs.readFileSync(path.join(rootB, "agents", "implement", "par-on", "state.json"), "utf8"));
-  const omitted = partialState.executionPlan.nodes.find(node => node.sourceTask === "T2");
+  const omitted = partialState.tasks.find(task => task.id === "T2");
   assert.deepEqual(omitted.writeScope, []);
   assert.equal(omitted.risk, "medium");
   assert.equal(omitted.parallelSafe, false);
@@ -837,9 +838,9 @@ test("task-plan paths are canonicalized before parallel overlap checks", () => {
   assert.throws(() => normalizeWriteScopes([path.join(root, "src/a")], root), /must be repository-relative/);
   assert.throws(() => normalizeWriteScopes(["src/**"], root), /not a glob/);
   assert.deepEqual(findDependencyCycle([
-    { id: "N1", dependsOn: ["N2"] },
-    { id: "N2", dependsOn: ["N1"] },
-  ]), ["N1", "N2", "N1"]);
+    { id: "T1", dependsOn: ["T2"] },
+    { id: "T2", dependsOn: ["T1"] },
+  ]), ["T1", "T2", "T1"]);
 });
 
 test("review profile sources act as safety floors and cannot lower stronger risk", () => {
@@ -880,9 +881,9 @@ test("policy v2 high-risk graph retains the independent final review gate", () =
   assert(status.reviewProfile.signals.some(signal => /production data migration/.test(signal)));
   assert.equal(status.reviewPolicy.finalReviewRequired, true);
   const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "high-risk-graph", "state.json"), "utf8"));
-  assert(state.taskGraph.nodes.some(node => node.id === "REVIEW"));
-  assert(state.taskGraph.edges.some(edge => edge.from === "REQ_FIDELITY_REVIEW" && edge.to === "REVIEW"));
-  assert(state.taskGraph.edges.some(edge => edge.from === "REVIEW" && edge.to === "FINALIZE"));
+  assert.equal(state.taskGraph, undefined);
+  const highRiskChecklist = fs.readFileSync(path.join(root, "agents", "implement", "high-risk-graph", "checklist.md"), "utf8");
+  assert.match(highRiskChecklist, /## Final Adversarial Review/);
 });
 
 test("policy v2 standard fidelity prompt owns conditional UI and UX judgment", () => {
@@ -1113,8 +1114,8 @@ test("not-watched PR delivery ship log keeps hook delivery guard active", () => 
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--delivery", "pr", "--skip-worktree", "--session-id", "ship-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
   let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "pr-not-watched", "state.json"), "utf8"));
-  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
 
@@ -1244,15 +1245,15 @@ test("plan-execution injects matching learned invariants as verification items",
   assert.deepEqual(injectedCheck.covers.tasks, ["T1"]);
   assert.equal(injectedCheck.status, "planned");
   assert.equal(state.verificationPlan.status, "ready");
-  assert(state.executionPlan.nodes[0].covers.verification.includes(injected.id));
+  assert(state.verification.some(item => item.id === injected.id && item.matrix.covers.includes("T1")));
 
   // Re-planning must not duplicate the injected item.
   runJson(["plan-execution"], projectRoot);
   let replanned = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-injection", "state.json"), "utf8"));
   assert.equal(replanned.verification.filter(item => item.sourceRuleId === "INV-src-guard").length, 1);
 
-  const nodeIds = replanned.executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Implementation node completed."], projectRoot);
+  const taskIds = replanned.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Implementation node completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
   runJson(["verify-run", "--id", injected.id, "--", "node", "-e", "process.exit(0)"], projectRoot);
@@ -1296,8 +1297,8 @@ test("plan-execution gives grep invariants an executable targeted verification c
   assert.doesNotMatch(check.command, /<changed files>/);
   assert.match(check.command, /rules check --id INV-grep-guard --all/);
 
-  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Implementation node completed."], projectRoot);
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Implementation node completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
   runJson([
@@ -1359,8 +1360,8 @@ test("deliver ship fails closed on a failing learned invariant and honors --skip
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--delivery", "pr", "--session-id", "gate-session"], projectRoot);
   runJson(["plan-execution"], projectRoot);
   let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-gate", "state.json"), "utf8"));
-  const nodeIds = state.executionPlan.nodes.map(node => node.id).join(",");
-  runJson(["mark-node", "--id", nodeIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
   runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
   runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
   state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "rules-gate", "state.json"), "utf8"));
@@ -1431,9 +1432,9 @@ test("reconcile preserves marks across a PRD edit and resets only changed items"
   const prdPath = writeApprovedPrd(root, "reconcile-flow");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], root);
   runJson(["plan-execution"], root);
-  // Batch mark: close the node and its AC in one call.
-  const marked = runJson(["mark-node", "--id", "N1", "--status", "complete", "--ac", "AC1", "--evidence", "test evidence for N1 and AC1"], root);
-  assert.deepEqual(marked.marked.map(entry => `${entry.kind}:${entry.id}`), ["execution_node:N1", "ac:AC1"]);
+  // Batch mark: close the task and its AC in one call.
+  const marked = runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "test evidence for T1 and AC1"], root);
+  assert.deepEqual(marked.marked.map(entry => `${entry.kind}:${entry.id}`), ["task:T1", "ac:AC1"]);
 
   const statePath = path.join(root, "agents", "implement", "reconcile-flow", "state.json");
 
@@ -1447,11 +1448,11 @@ test("reconcile preserves marks across a PRD edit and resets only changed items"
   assert.equal(first.reviewsMarkedStale, false);
   let state = JSON.parse(fs.readFileSync(statePath, "utf8"));
   assert.equal(state.acceptanceCriteria.find(item => item.id === "AC1").status, "met");
-  assert.equal(state.executionPlan.nodes.find(node => node.id === "N1").status, "complete");
+  assert.equal(state.tasks.find(task => task.id === "T1").status, "complete");
   const afterStatus = runJson(["status"], root);
   assert.ok(!afterStatus.completion.violations.some(item => /PRD file changed after implementation state was initialized/.test(item)));
 
-  // Now change AC1's definition: only AC1 resets; the node and task survive.
+  // Now change AC1's definition: only AC1 resets; the task survives.
   const edited = fs.readFileSync(prdPath, "utf8")
     .replace("- AC1. V1 passes with a command-log artifact.", "- AC1. V1 passes with a command-log artifact and prints a summary.");
   fs.writeFileSync(prdPath, edited);
@@ -1462,7 +1463,7 @@ test("reconcile preserves marks across a PRD edit and resets only changed items"
   const ac1 = state.acceptanceCriteria.find(item => item.id === "AC1");
   assert.equal(ac1.status, "pending");
   assert.ok(ac1.evidence.some(entry => /PRD reconcile: definition changed/.test(entry.text)));
-  assert.equal(state.executionPlan.nodes.find(node => node.id === "N1").status, "complete");
+  assert.equal(state.tasks.find(task => task.id === "T1").status, "complete");
   assert.ok(state.deviations.some(entry => entry.type === "prd_reconciled"));
 
   // Reconcile with a matching snapshot is a no-op.
@@ -1486,7 +1487,7 @@ test("pause mutes the stop hook until the next harness mutation resumes it", () 
   assert.equal(muted.stdout.trim(), "");
 
   // Any real mutation clears the pause.
-  runJson(["mark-node", "--id", "N1", "--status", "in_progress", "--evidence", "resumed work"], root);
+  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "in_progress", "--evidence", "resumed work"], root);
   const resumed = run(process.execPath, [harness, "hook", "stop"], { cwd: root, input: stopInput });
   assert.match(JSON.parse(resumed.stdout).reason, /prd-implement-continuation/);
 

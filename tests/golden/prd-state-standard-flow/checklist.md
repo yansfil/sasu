@@ -9,25 +9,16 @@ Source PRD: agents/prd/standard-regression/prd.md
 - Requirements fidelity owner: independent
 - Final adversarial review required: no
 
-## Execution Nodes
-
-- [x] N1. Run the local command verification. Covers R1, AC1.
-  - Status: complete
-  - Source Task: T1
-  - Parallel Safe: no
-  - Risk: medium
-  - Covers: R: R1; AC: AC1; V: V1
-  - Evidence:
-    - <TS>: Test nodes completed.
-
 ## Tasks
 
 - [x] T1. Run the local command verification. Covers R1, AC1.
   - Status: complete
+  - Parallel Safe: no
+  - Risk: medium
   - Requirements: R1
   - Acceptance Criteria: AC1
   - Evidence:
-    - <TS>: Execution roll-up: N1 complete; ACs AC1 met; required Verification V1 passed.
+    - <TS>: Test tasks completed.
 
 ## Acceptance Criteria
 

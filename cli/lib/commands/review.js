@@ -5,11 +5,11 @@ const path = require("path");
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, appendJsonl, simpleHash } = require("../util");
 const { worktreeSnapshot } = require("../git");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
-const { taskGraphSummary, readyExecutionPlan, rollupTasksFromExecutionPlan, nextItem } = require("../planning");
+const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations } = require("../reviews");
-const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
-const { loadState, syncActive, persistStateAndArtifacts } = require("../state_store");
+const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt, renderViews } = require("../render");
+const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
 
 function cmdReviewPrompt(options) {
@@ -68,7 +68,7 @@ function cmdRequirementsReviewRecord(options) {
   };
   state.finalReview = null;
   state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "requirements_fidelity_review_recorded",
@@ -82,7 +82,6 @@ function cmdRequirementsReviewRecord(options) {
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
     next: nextItem(state),
   }, null, 2) + "\n");
 }
@@ -119,7 +118,7 @@ function cmdReviewRecord(options) {
     recordedAt: nowIso(),
   };
   state.updatedAt = nowIso();
-  persistStateAndArtifacts(statePath, state);
+  persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "final_review_recorded",
@@ -132,7 +131,6 @@ function cmdReviewRecord(options) {
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
-    taskGraph: taskGraphSummary(state),
     next: nextItem(state),
   }, null, 2) + "\n");
 }
@@ -143,7 +141,6 @@ function cmdFinalize(options) {
   if (!["complete", "partial", "blocked"].includes(status)) throw new Error("--status must be complete, partial, or blocked");
   if (!summary) throw new Error("--summary is required");
   const { statePath, state } = loadState(options);
-  rollupTasksFromExecutionPlan(state, { recordEvidence: false });
   const counts = countState(state);
   const violations = [];
   if (status === "complete") {
@@ -163,13 +160,11 @@ function cmdFinalize(options) {
     }
     if (status === "partial") {
       const completed = [
-        ...((state.executionPlan && state.executionPlan.nodes) || []).filter(item => item.status === "complete" && item.evidence && item.evidence.length),
         ...state.tasks.filter(item => item.status === "complete" && item.evidence.length),
         ...state.acceptanceCriteria.filter(item => item.status === "met" && item.evidence.length),
         ...state.verification.filter(item => item.status === "pass" && item.evidence.length),
       ];
       const incomplete = [
-        ...((state.executionPlan && state.executionPlan.nodes) || []).filter(item => item.status !== "complete"),
         ...state.tasks.filter(item => item.status !== "complete"),
         ...state.acceptanceCriteria.filter(item => item.status !== "met"),
         ...state.verification.filter(item => isVerificationRequiredForDone(item) && item.status !== "pass"),
@@ -200,7 +195,6 @@ function cmdFinalize(options) {
     initialWorktreeSnapshot: state.initialWorktreeSnapshot || null,
     worktreeSnapshot: worktreeSnapshot(state),
     executionPlan: executionPlanSummary(state),
-    taskGraph: null,
     artifactCount: collectArtifacts(state).length,
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,
@@ -215,11 +209,9 @@ function cmdFinalize(options) {
     })),
   };
   state.finalReceipt = receipt;
-  receipt.taskGraph = taskGraphSummary(state);
-  persistStateAndArtifacts(statePath, state);
-  state.finalReceipt.taskGraph = taskGraphSummary(state);
-  writeJson(statePath, state);
+  persistState(statePath, state);
   writeJson(path.join(path.dirname(statePath), "receipt.json"), receipt);
+  renderViews(statePath, state);
   writeImplementationReport(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),

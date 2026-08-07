@@ -5,7 +5,7 @@ const path = require("path");
 
 const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson } = require("./util");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
-const { taskGraphSummary, readyExecutionPlan, nextItem } = require("./planning");
+const { readyExecutionPlan, nextItem } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
 const { completionViolations } = require("./reviews");
 const { sameSessionId, sessionIdFromHookPayload, readActive, syncActive } = require("./state_store");
@@ -223,12 +223,12 @@ State: \`${toProjectRelative(statePath, hookCwd)}\`
 	Open tracked items: ${counts.totalOpen}
 	Required verification not passed: ${counts.requiredVerificationNotPassed}
 	Verification plan: ${verificationPlanSummary(state).status} (${verificationPlanSummary(state).blockingGapCount} blocking gaps)
-	Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openNodeCount} open nodes, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
+	Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openTaskCount} open tasks, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
 	Requirements fidelity review: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}
 	Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "not required by policy"}
 	Receipt: ${state.finalReceipt ? "present" : "missing"}
 
-	Run \`${harnessCommand()} status\`, close all execution nodes and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the goal complete.
+	Run \`${harnessCommand()} status\`, close all tasks and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the goal complete.
 	</prd-implement-goal-guard>`,
   });
 }
@@ -251,7 +251,6 @@ function renderContinuationDirective(context) {
   const verificationPlan = verificationPlanSummary(state);
   const executionPlan = executionPlanSummary(state);
   const ready = readyExecutionPlan(state);
-  const taskGraph = taskGraphSummary(state);
   const finalGateViolations = next ? [] : completionViolations(context.stateAbsPath, state, { includeFinalReview: true });
   const nextLine = next
     ? `${next.kind.toUpperCase()} ${next.item.id}: ${next.item.title}`
@@ -273,17 +272,17 @@ function renderContinuationDirective(context) {
 
 The phase has not changed since the last directive, so the full procedure is not repeated. Follow the step-by-step procedure already given for this phase (also in SKILL.md sections 6-12).
 
-Drive the Next required item above to done, then record it with the matching harness command: \`mark-node\` for execution nodes, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark-node --ac AC1,AC2\` closes a node plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
+Drive the Next required item above to done, then record it with the matching harness command: \`mark --kind task\` for tasks, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark --kind task --ac AC1,AC2\` closes a task plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
     : `# Required procedure this turn
 
 1. The State block above and \`${context.statePath}\` are the source of truth. Mirror progress in the runtime task surface at phase boundaries only; the harness, not the tracker, is the completion authority. Do not re-read unchanged plan files each turn.
 2. If the next item is \`VERIFICATION_PLAN VP0\`: read \`${state.runDir}/verification-plan.md\`, fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
 3. If the next item is \`EXECUTION_PLAN EP0\`: run \`${HARNESS} plan-execution\`, inspect \`ready\`, then do the one-time coverage check (intent, ambiguity, coverage, structure-lock drift) and record material findings in \`${state.runDir}/context-notes.md\` before editing code.
 4. Otherwise drive the next item to done (SKILL.md sections 5-6 hold the details), stop for approval before material structure deviations, register artifacts immediately, then record with:
-   - \`${HARNESS} mark-node --id <Nn[,Nn...]> --status complete [--ac <ACn,...>] --evidence "<evidence>"\`
+   - \`${HARNESS} mark --kind task --id <Tn[,Tn...]> --status complete [--ac <ACn,...>] --evidence "<evidence>"\`
    - \`${HARNESS} mark --kind ac --id <ACn[,ACn...]> --status met --evidence "<evidence>"\`
    - \`${HARNESS} verify-run --id <Vn> -- <command>\` and \`${HARNESS} record-artifact --id <Vn> --kind <kind> --path <artifact> --description "<what it proves>"\`
-   Batch with comma lists and \`--ac\`; marks return counts and the next item, so do not poll \`status\`. Tasks roll up on their own; \`mark --kind task\` is only for explicit blocked/deferred corrections. If status reports a PRD snapshot violation, run \`${HARNESS} reconcile\`, never \`init --force\`.
+   Batch with comma lists and \`--ac\`; marks return counts and the next item, so do not poll \`status\`. A task closes only when you mark it with evidence that its mapped ACs and verification are satisfied. If status reports a PRD snapshot violation, run \`${HARNESS} reconcile\`, never \`init --force\`.
 5. When no open items remain: sweep every AC, stop verification-only runtime processes, then run the requirements fidelity review for profile ${reviewPolicy.profile}: \`${HARNESS} requirements-review-prompt\`, ${reviewPolicy.fidelityOwner === "independent"
     ? "have one fresh independent read-only sidecar write the report from the raw prompt (fresh manual pass if sidecars are unavailable, stating that fallback)"
     : "write the report as the main agent after reading the complete canonical qa-log or conversation source"}, save \`${state.runDir}/review/requirements-fidelity-review.md\`, and record it with \`${HARNESS} requirements-review-record --status pass|fail --report <path> --summary "<verdict>"\`. Sidecars never mutate harness state; the coordinator records.
@@ -302,16 +301,14 @@ Exception: if the user's latest message redirects to unrelated work or explicitl
 - Run dir: \`${state.runDir}\`
 - Delivery mode: ${(state.delivery && state.delivery.mode) || "local"}
 - Verification plan: ${verificationPlan.status} (${verificationPlan.checkCount} checks, ${verificationPlan.blockingGapCount} blocking gaps)
-- Execution plan: ${executionPlan.status} (${executionPlan.nodeCount} nodes, ${executionPlan.openNodeCount} open, ${executionPlan.blockingGapCount} blocking gaps)
-- Task graph: ${taskGraph.status} (${taskGraph.nodeCount} nodes, ${taskGraph.edgeCount} edges, ${taskGraph.openNodeCount} open)
-- Ready execution nodes: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}${ready.parallelEnabled ? `\n- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}` : ""}
-- Blocked execution nodes: ${ready.blocked.length ? ready.blocked.map(item => `${item.id} waits for ${item.waitingFor.join(", ")}`).join("; ") : "none"}
-- Open execution nodes: ${counts.executionOpen}
+- Execution plan: ${executionPlan.status} (${executionPlan.taskCount} tasks, ${executionPlan.openTaskCount} open, ${executionPlan.blockingGapCount} blocking gaps)
+- Ready tasks: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}${ready.parallelEnabled ? `\n- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}` : ""}
+- Blocked tasks: ${ready.blocked.length ? ready.blocked.map(item => `${item.id} waits for ${item.waitingFor.join(", ")}`).join("; ") : "none"}
 	- Open tasks: ${counts.tasksOpen}
 	- Open acceptance criteria: ${counts.acOpen}
 	- Open verification items: ${counts.verificationOpen}
 	- Required verification not passed: ${counts.requiredVerificationNotPassed}
-	- Blocked items: execution ${counts.blocked.execution}, tasks ${counts.blocked.tasks}, AC ${counts.blocked.acceptanceCriteria}, verification ${counts.blocked.verification}
+	- Blocked items: tasks ${counts.blocked.tasks}, AC ${counts.blocked.acceptanceCriteria}, verification ${counts.blocked.verification}
 	- Artifact count: ${collectArtifacts(state).length}
 - Requirements fidelity review: ${requirementsReviewStatus}
 - Final review: ${finalReviewStatus}

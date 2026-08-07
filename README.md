@@ -34,7 +34,7 @@ remember = lessons land as enforcement, not notes
 | --- | --- |
 | `interview-me` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, and one normalized PRD-ready `qa-log.md` |
 | `gen-prd` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
-| `implement` | Agent-planned, harness-checked implementation: TaskGraph, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
+| `implement` | Agent-planned, harness-checked implementation: task-level execution plan, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
 | `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |

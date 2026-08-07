@@ -89,7 +89,6 @@ function markCompletionReviewsStale(state, reason) {
 function findTrackedItem(state, id, preferredKind = null) {
   const normalized = String(id || "").toUpperCase();
   const groups = [
-    { kind: "execution_node", list: state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : [] },
     { kind: "task", list: state.tasks || [] },
     { kind: "ac", list: state.acceptanceCriteria || [] },
     { kind: "verification", list: state.verification || [] },
@@ -104,27 +103,20 @@ function findTrackedItem(state, id, preferredKind = null) {
 
 /** @param {State} state */
 function countState(state) {
-  const executionOpen = state.executionPlan && Array.isArray(state.executionPlan.nodes)
-    ? state.executionPlan.nodes.filter(item => !["complete", "deferred", "blocked"].includes(item.status)).length
-    : 1;
   const tasksOpen = state.tasks.filter(item => !["complete", "deferred", "blocked"].includes(item.status)).length;
   const acOpen = state.acceptanceCriteria.filter(item => !["met", "not_met", "blocked"].includes(item.status)).length;
   const verificationOpen = state.verification.filter(item => !verificationIsClosedForAccounting(item)).length;
   const blocked = {
-    execution: state.executionPlan && Array.isArray(state.executionPlan.nodes)
-      ? state.executionPlan.nodes.filter(item => item.status === "blocked").length
-      : 0,
     tasks: state.tasks.filter(item => item.status === "blocked").length,
     acceptanceCriteria: state.acceptanceCriteria.filter(item => item.status === "blocked" || item.status === "not_met").length,
     verification: state.verification.filter(item => item.status === "blocked" || item.status === "fail").length,
     requiredVerification: state.verification.filter(item => isVerificationRequiredForDone(item) && item.status !== "pass").length,
   };
   return {
-    executionOpen,
     tasksOpen,
     acOpen,
     verificationOpen,
-    totalOpen: executionOpen + tasksOpen + acOpen + verificationOpen,
+    totalOpen: tasksOpen + acOpen + verificationOpen,
     blocked,
     requiredVerificationNotPassed: blocked.requiredVerification,
   };
@@ -197,18 +189,18 @@ function executionPlanSummary(state) {
   if (!plan) {
     return {
       status: "missing",
-      nodeCount: 0,
-      openNodeCount: 1,
+      taskCount: 0,
+      openTaskCount: 1,
       blockingGapCount: 1,
       warningCount: 0,
     };
   }
-  const nodes = plan.nodes || [];
+  const tasks = state.tasks || [];
   const gaps = plan.gaps || [];
   return {
     status: plan.status || "unknown",
-    nodeCount: nodes.length,
-    openNodeCount: nodes.filter(node => !["complete", "blocked", "deferred"].includes(node.status)).length,
+    taskCount: tasks.length,
+    openTaskCount: tasks.filter(task => !["complete", "blocked", "deferred"].includes(task.status)).length,
     blockingGapCount: gaps.filter(gap => gap.severity === "blocking").length,
     warningCount: gaps.filter(gap => gap.severity !== "blocking").length,
     generatedAt: plan.generatedAt,
@@ -231,9 +223,8 @@ function latestEvidenceTimestamp(state) {
     if (!Number.isFinite(time)) return;
     if (!latest || time > latest.time) latest = { time, label };
   };
-  /** @type {Array<[string, Array<import("./types").TrackedItem|import("./types").VerificationItem|import("./types").ExecutionNode>]>} */
+  /** @type {Array<[string, Array<import("./types").TrackedItem|import("./types").VerificationItem>]>} */
   const groups = [
-    ["execution node", state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : []],
     ["task", state.tasks || []],
     ["acceptance", state.acceptanceCriteria || []],
     ["verification", state.verification || []],

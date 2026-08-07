@@ -15,21 +15,6 @@ function commandFromMatrixMethod(method) {
   return codeSpan ? codeSpan[1].trim() : value;
 }
 
-/** @param {State} state */
-function taskGraphSummary(state) {
-  const graph = state.taskGraph && state.taskGraph.schema === "hoyeon.prd-implement.taskgraph.v2"
-    ? state.taskGraph
-    : buildTaskGraph(state);
-  return {
-    status: graph.status || "unknown",
-    nodeCount: graph.summary ? graph.summary.nodeCount : (graph.nodes || []).length,
-    edgeCount: graph.summary ? graph.summary.edgeCount : (graph.edges || []).length,
-    openNodeCount: graph.summary ? graph.summary.openNodeCount : (graph.nodes || []).filter(node => !node.closed).length,
-    blockingGapCount: graph.summary ? graph.summary.blockingGapCount : verificationPlanSummary(state).blockingGapCount,
-    generatedAt: graph.generatedAt,
-  };
-}
-
 function verificationContractHash(state) {
   return sha256Text(JSON.stringify({
     verification: (state.verification || []).map(item => ({
@@ -122,42 +107,46 @@ function buildVerificationPlan(state, statePath) {
   };
 }
 
+// Applies the optional agent-authored task plan onto `state.tasks` and returns
+// the plan metadata. Executor fields live on the task itself; the plan document
+// carries only status, provenance, and gaps.
 /**
  * @param {State} state
  * @param {string} statePath
  * @returns {import("./types").ExecutionPlan}
  */
 function buildExecutionPlan(state, statePath, taskPlan = null) {
-  const previous = state.executionPlan && Array.isArray(state.executionPlan.nodes)
-    ? new Map(state.executionPlan.nodes.map(node => [node.id, node]))
-    : new Map();
   const gaps = [];
-  const nodes = [];
-  const taskToNodeId = new Map();
   const taskPlanProvided = taskPlan !== null;
-  for (const [index, task] of (state.tasks || []).entries()) {
-    taskToNodeId.set(task.id, `N${index + 1}`);
-  }
+  const taskIds = new Set((state.tasks || []).map(task => String(task.id).toUpperCase()));
 
-  for (const [index, task] of (state.tasks || []).entries()) {
-    const id = `N${index + 1}`;
-    const prior = previous.get(id) || {};
-    const declared = taskPlanProvided && Object.prototype.hasOwnProperty.call(taskPlan, task.id)
-      ? normalizeTaskPlanEntry(task.id, taskPlan[task.id], state, taskToNodeId)
+  for (const task of state.tasks || []) {
+    const declared = taskPlanProvided && Object.prototype.hasOwnProperty.call(taskPlan, String(task.id).toUpperCase())
+      ? normalizeTaskPlanEntry(task.id, taskPlan[String(task.id).toUpperCase()], state, taskIds)
       : null;
-    const writeScope = declared
-      ? declared.writeScope
-      : taskPlanProvided
-        ? []
-        : normalizeWriteScopes(prior.writeScope || [], state.projectRoot);
-    const risk = declared ? declared.risk : taskPlanProvided ? "medium" : prior.risk || "medium";
-    const dependsOn = declared
-      ? declared.dependsOn
-      : taskPlanProvided
-        ? []
-        : Array.isArray(prior.dependsOn) ? prior.dependsOn : [];
-    const parallelSafe = declared ? declared.parallelSafe : taskPlanProvided ? false : prior.parallelSafe === true;
-    const covers = executionCoverageForTask(state, task);
+    if (declared) {
+      task.dependsOn = declared.dependsOn;
+      task.writeScope = declared.writeScope;
+      task.parallelSafe = declared.parallelSafe;
+      task.risk = declared.risk;
+    } else if (taskPlanProvided) {
+      // An explicit plan that omits a task means "keep it conservatively
+      // sequential", not "keep whatever an earlier plan declared".
+      task.dependsOn = [];
+      task.writeScope = [];
+      task.parallelSafe = false;
+      task.risk = "medium";
+    } else {
+      task.dependsOn = Array.isArray(task.dependsOn) ? task.dependsOn : [];
+      task.writeScope = normalizeWriteScopes(task.writeScope || [], state.projectRoot);
+      task.parallelSafe = task.parallelSafe === true;
+      task.risk = task.risk || "medium";
+    }
+    if (task.owner === undefined) task.owner = null;
+    if (!task.status) task.status = "pending";
+    if (!Array.isArray(task.evidence)) task.evidence = [];
+    if (!Array.isArray(task.artifacts)) task.artifacts = [];
+
     if ((task.requirements || []).length === 0) {
       gaps.push({
         severity: "warning",
@@ -166,7 +155,7 @@ function buildExecutionPlan(state, statePath, taskPlan = null) {
         message: "Task has no explicit requirement mapping",
       });
     }
-    if (covers.acceptanceCriteria.length === 0) {
+    if (executionCoverageForTask(state, task).acceptanceCriteria.length === 0) {
       gaps.push({
         severity: "warning",
         code: "task_without_acceptance_mapping",
@@ -174,26 +163,11 @@ function buildExecutionPlan(state, statePath, taskPlan = null) {
         message: "Task has no acceptance-criterion mapping",
       });
     }
-    nodes.push({
-      id,
-      kind: "implementation",
-      sourceTask: task.id,
-      title: task.title,
-      dependsOn,
-      writeScope,
-      covers,
-      parallelSafe,
-      risk,
-      owner: prior.owner || null,
-      status: prior.status || "pending",
-      evidence: Array.isArray(prior.evidence) ? prior.evidence : [],
-      artifacts: Array.isArray(prior.artifacts) ? prior.artifacts : [],
-    });
   }
 
-  const unscopedParallelTasks = nodes
-    .filter(node => state.execution && state.execution.parallel && node.writeScope.length === 0)
-    .map(node => node.sourceTask);
+  const unscopedParallelTasks = (state.tasks || [])
+    .filter(task => state.execution && state.execution.parallel && task.writeScope.length === 0)
+    .map(task => task.id);
   if (unscopedParallelTasks.length) {
     gaps.push({
       severity: "warning",
@@ -212,16 +186,7 @@ function buildExecutionPlan(state, statePath, taskPlan = null) {
     });
   }
 
-  const rollups = { tasks: {} };
-  for (const task of state.tasks || []) {
-    const node = nodes.find(candidate => candidate.sourceTask === task.id);
-    rollups.tasks[task.id] = {
-      nodes: node ? [node.id] : [],
-      acceptanceCriteria: node ? node.covers.acceptanceCriteria : task.acceptanceCriteria || [],
-      verification: node ? node.covers.verification : [],
-    };
-  }
-  const dependencyCycle = findDependencyCycle(nodes);
+  const dependencyCycle = findDependencyCycle(state.tasks || []);
   if (dependencyCycle.length) {
     gaps.push({
       severity: "blocking",
@@ -230,49 +195,38 @@ function buildExecutionPlan(state, statePath, taskPlan = null) {
       message: `Execution task plan contains a dependency cycle: ${dependencyCycle.join(" -> ")}`,
     });
   }
-  const traceMatrix = buildTraceMatrix(state, nodes, rollups);
 
   return {
-    schema: "hoyeon.prd-implement.execution-plan.v1",
+    schema: "hoyeon.prd-implement.execution-plan.v2",
     status: gaps.some(gap => gap.severity === "blocking") ? "needs_review" : "ready",
     generatedAt: nowIso(),
     prdPath: state.prdPath,
     statePath: toProjectRelative(statePath, state.projectRoot || cwd()),
-    nodes,
-    rollups,
-    traceMatrix,
+    taskPlanApplied: taskPlanProvided,
     gaps,
   };
 }
 
-function buildTraceMatrix(state, nodes, rollups) {
+// Derived on demand for the rendered execution plan; never stored, so it can
+// never disagree with the tasks it summarizes.
+function buildTraceMatrix(state) {
   const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
   return (state.tasks || []).map(task => {
-    const rollup = rollups.tasks[task.id] || { nodes: [], acceptanceCriteria: [], verification: [] };
-    const requiredVerification = rollup.verification.filter(id => {
+    const covers = executionCoverageForTask(state, task);
+    const requiredVerification = covers.verification.filter(id => {
       const item = verificationById.get(id);
       return item ? isVerificationRequiredForDone(item) : true;
     });
-    const optionalVerification = rollup.verification.filter(id => !requiredVerification.includes(id));
     return {
       taskId: task.id,
-      nodeIds: rollup.nodes || [],
-      requirements: task.requirements || [],
-      acceptanceCriteria: rollup.acceptanceCriteria || [],
-      verification: rollup.verification || [],
+      status: task.status,
+      requirements: covers.requirements,
+      acceptanceCriteria: covers.acceptanceCriteria,
+      verification: covers.verification,
       requiredVerification,
-      optionalVerification,
-      nodeStatuses: (rollup.nodes || []).map(id => {
-        const node = nodes.find(candidate => candidate.id === id);
-        return { id, status: node ? node.status : "missing" };
-      }),
+      optionalVerification: covers.verification.filter(id => !requiredVerification.includes(id)),
     };
   });
-}
-
-function refreshExecutionTraceMatrix(state) {
-  if (!state.executionPlan || !state.executionPlan.rollups || !Array.isArray(state.executionPlan.nodes)) return;
-  state.executionPlan.traceMatrix = buildTraceMatrix(state, state.executionPlan.nodes, state.executionPlan.rollups);
 }
 
 function executionCoverageForTask(state, task) {
@@ -300,7 +254,7 @@ function executionCoverageForTask(state, task) {
   };
 }
 
-function normalizeTaskPlanEntry(taskId, entry, state, taskToNodeId) {
+function normalizeTaskPlanEntry(taskId, entry, state, taskIds) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     throw new Error(`Task plan ${taskId} must be an object`);
   }
@@ -322,14 +276,13 @@ function normalizeTaskPlanEntry(taskId, entry, state, taskToNodeId) {
   const dependsOn = [];
   for (const raw of entry.dependsOn || []) {
     const dependency = String(raw || "").trim().toUpperCase();
-    const nodeId = taskToNodeId.get(dependency) || (/^N\d+$/.test(dependency) ? dependency : null);
-    if (!nodeId || !Array.from(taskToNodeId.values()).includes(nodeId)) {
+    if (!taskIds.has(dependency)) {
       throw new Error(`Task plan ${taskId} has unknown dependency '${raw}'`);
     }
-    if (nodeId === taskToNodeId.get(taskId)) {
+    if (dependency === String(taskId).toUpperCase()) {
       throw new Error(`Task plan ${taskId} cannot depend on itself`);
     }
-    if (!dependsOn.includes(nodeId)) dependsOn.push(nodeId);
+    if (!dependsOn.includes(dependency)) dependsOn.push(dependency);
   }
   return { writeScope, parallelSafe, risk, dependsOn };
 }
@@ -362,8 +315,8 @@ function normalizeWriteScopes(scopes, projectRoot) {
   return normalized;
 }
 
-function findDependencyCycle(nodes) {
-  const byId = new Map(nodes.map(node => [node.id, node]));
+function findDependencyCycle(items) {
+  const byId = new Map(items.map(item => [String(item.id).toUpperCase(), item]));
   const visiting = new Set();
   const visited = new Set();
   const stack = [];
@@ -375,9 +328,9 @@ function findDependencyCycle(nodes) {
     if (visited.has(id)) return [];
     visiting.add(id);
     stack.push(id);
-    const node = byId.get(id);
-    for (const dependency of node && node.dependsOn || []) {
-      const cycle = visit(dependency);
+    const item = byId.get(id);
+    for (const dependency of item && item.dependsOn || []) {
+      const cycle = visit(String(dependency).toUpperCase());
       if (cycle.length) return cycle;
     }
     stack.pop();
@@ -385,8 +338,8 @@ function findDependencyCycle(nodes) {
     visited.add(id);
     return [];
   };
-  for (const node of nodes) {
-    const cycle = visit(node.id);
+  for (const item of items) {
+    const cycle = visit(String(item.id).toUpperCase());
     if (cycle.length) return cycle;
   }
   return [];
@@ -396,7 +349,7 @@ function readyExecutionPlan(state) {
   const plan = state.executionPlan;
   const planSummary = executionPlanSummary(state);
   const verificationSummary = verificationPlanSummary(state);
-  if (!plan || !Array.isArray(plan.nodes)) {
+  if (!plan) {
     return {
       readySequential: [],
       readyParallelGroups: [],
@@ -405,24 +358,24 @@ function readyExecutionPlan(state) {
       plan: planSummary,
     };
   }
-  const nodesById = new Map(plan.nodes.map(node => [node.id, node]));
+  const tasksById = new Map((state.tasks || []).map(task => [String(task.id).toUpperCase(), task]));
   const blocked = [];
   const ready = [];
-  for (const node of plan.nodes) {
-    if (!["pending", "in_progress"].includes(node.status)) continue;
+  for (const task of state.tasks || []) {
+    if (!["pending", "in_progress"].includes(task.status)) continue;
     const waitingFor = [];
     if (verificationSummary.status !== "ready" || verificationSummary.blockingGapCount > 0) waitingFor.push("VP0");
     if (plan.status !== "ready" || planSummary.blockingGapCount > 0) waitingFor.push("EP0");
-    for (const depId of node.dependsOn || []) {
-      const dep = nodesById.get(depId);
+    for (const depId of task.dependsOn || []) {
+      const dep = tasksById.get(String(depId).toUpperCase());
       if (!dep || dep.status !== "complete") waitingFor.push(depId);
     }
-    if (waitingFor.length) blocked.push({ id: node.id, waitingFor: Array.from(new Set(waitingFor)) });
-    else ready.push(node);
+    if (waitingFor.length) blocked.push({ id: task.id, waitingFor: Array.from(new Set(waitingFor)) });
+    else ready.push(task);
   }
   const parallelEnabled = Boolean(state.execution && state.execution.parallel);
   return {
-    readySequential: ready.map(node => node.id),
+    readySequential: ready.map(task => task.id),
     readyParallelGroups: parallelEnabled ? buildParallelGroups(ready) : [],
     parallelEnabled,
     blocked,
@@ -430,11 +383,11 @@ function readyExecutionPlan(state) {
   };
 }
 
-function buildParallelGroups(readyNodes) {
-  const candidates = readyNodes.filter(node => {
-    if (!node.parallelSafe) return false;
-    if (!["low", "medium"].includes(node.risk)) return false;
-    return Array.isArray(node.writeScope) && node.writeScope.length > 0;
+function buildParallelGroups(readyTasks) {
+  const candidates = readyTasks.filter(task => {
+    if (!task.parallelSafe) return false;
+    if (!["low", "medium"].includes(task.risk)) return false;
+    return Array.isArray(task.writeScope) && task.writeScope.length > 0;
   });
   const groups = [];
   let remaining = [...candidates];
@@ -445,7 +398,7 @@ function buildParallelGroups(readyNodes) {
       if (compatible) group.push(candidate);
       return !compatible;
     });
-    if (group.length > 1) groups.push(group.map(node => node.id));
+    if (group.length > 1) groups.push(group.map(task => task.id));
   }
   return groups;
 }
@@ -469,274 +422,6 @@ function scopeComparisonKey(value) {
   if (!text || text.startsWith("TBD:")) return null;
   const normalized = path.posix.normalize(`/${text}`).replace(/^\/+/, "") || ".";
   return process.platform === "darwin" ? normalized.toLowerCase() : normalized;
-}
-
-function rollupTasksFromExecutionPlan(state, options = {}) {
-  const recordEvidence = options.recordEvidence !== false;
-  const plan = state.executionPlan;
-  if (!plan || !plan.rollups || !plan.rollups.tasks) return;
-  const nodesById = new Map((plan.nodes || []).map(node => [node.id, node]));
-  const acById = new Map((state.acceptanceCriteria || []).map(ac => [ac.id, ac]));
-  const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
-  for (const task of state.tasks || []) {
-    if (["blocked", "deferred"].includes(task.status)) continue;
-    const rollup = plan.rollups.tasks[task.id];
-    if (!rollup || !rollup.nodes || rollup.nodes.length === 0) continue;
-    const nodes = rollup.nodes.map(id => nodesById.get(id)).filter(Boolean);
-    if (nodes.some(node => node.status === "blocked")) {
-      task.status = "blocked";
-      if (recordEvidence && !task.evidence.some(entry => /Execution roll-up/.test(entry.text))) {
-        task.evidence.push({ ts: nowIso(), text: `Execution roll-up: blocked by ${nodes.filter(node => node.status === "blocked").map(node => node.id).join(", ")}` });
-      }
-      continue;
-    }
-    const allNodesComplete = nodes.length > 0 && nodes.every(node => node.status === "complete");
-    const mappedAcs = (rollup.acceptanceCriteria || []).map(id => acById.get(id)).filter(Boolean);
-    const mappedVerification = (rollup.verification || []).map(id => verificationById.get(id)).filter(Boolean);
-    const acsMet = mappedAcs.every(ac => ac.status === "met");
-    const verificationClosed = mappedVerification.every(item => verificationIsClosedForAccounting(item));
-    if (allNodesComplete && acsMet && verificationClosed) {
-      task.status = "complete";
-      if (recordEvidence && !task.evidence.some(entry => /Execution roll-up/.test(entry.text))) {
-        task.evidence.push({
-          ts: nowIso(),
-          text: `Execution roll-up: ${nodes.map(node => node.id).join(", ")} complete; ACs ${mappedAcs.map(ac => ac.id).join(", ") || "none"} met; required Verification ${mappedVerification.filter(item => isVerificationRequiredForDone(item)).map(item => item.id).join(", ") || "none"} passed.`,
-        });
-      }
-    } else if (task.status === "complete") {
-      task.status = "in_progress";
-      if (recordEvidence) task.evidence.push({
-        ts: nowIso(),
-        text: "Execution roll-up reopened: mapped ACs must be met and all required Verification items must pass before task completion.",
-      });
-    } else if (nodes.some(node => ["in_progress", "complete"].includes(node.status)) && task.status === "pending") {
-      task.status = "in_progress";
-    }
-  }
-}
-
-/** @param {State} state */
-function buildTaskGraph(state) {
-  const verificationPlan = verificationPlanSummary(state);
-  const executionPlan = executionPlanSummary(state);
-  const graph = createTaskGraphBuilder();
-  const tasks = state.tasks || [];
-  const acceptanceCriteria = state.acceptanceCriteria || [];
-  const verificationItems = state.verification || [];
-  const executionNodes = state.executionPlan && Array.isArray(state.executionPlan.nodes) ? state.executionPlan.nodes : [];
-
-  addPlanGateNodes(graph, verificationPlan, executionPlan);
-  addTaskRollupNodes(graph, tasks);
-  addExecutionGraphNodes(graph, executionNodes);
-  addAcceptanceCriterionNodes(graph, acceptanceCriteria);
-  addVerificationGraphNodes(graph, state, tasks, acceptanceCriteria, verificationItems);
-  addReviewAndReceiptNodes(graph, state, [...tasks, ...executionNodes, ...acceptanceCriteria, ...verificationItems]);
-
-  const { nodes, edges } = graph;
-  return {
-    schema: "hoyeon.prd-implement.taskgraph.v2",
-    generatedAt: nowIso(),
-    prdPath: state.prdPath,
-    status: state.finalReceipt
-      ? "complete"
-      : verificationPlanBlocksImplementation(state)
-        ? "blocked_by_verification_plan"
-        : executionPlanBlocksImplementation(state)
-          ? "blocked_by_execution_plan"
-          : "active",
-    summary: {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      openNodeCount: nodes.filter(node => !node.closed).length,
-      blockingGapCount: verificationPlan.blockingGapCount + executionPlan.blockingGapCount,
-      executionNodeCount: executionPlan.nodeCount,
-      openExecutionNodeCount: executionPlan.openNodeCount,
-    },
-    nodes,
-    edges: edges.map(({ key, ...edge }) => edge),
-  };
-}
-
-function createTaskGraphBuilder() {
-  const nodes = [];
-  const edges = [];
-  return {
-    nodes,
-    edges,
-    addNode(node) {
-      nodes.push({
-        ...node,
-        evidenceCount: Array.isArray(node.evidence) ? node.evidence.length : node.evidenceCount || 0,
-        artifactCount: Array.isArray(node.artifacts) ? node.artifacts.length : node.artifactCount || 0,
-      });
-    },
-    addEdge(from, to, type, reason) {
-      if (!from || !to || from === to) return;
-      const key = `${from}->${to}:${type}`;
-      if (edges.some(edge => edge.key === key)) return;
-      edges.push({ key, from, to, type, reason });
-    },
-  };
-}
-
-function addPlanGateNodes(graph, verificationPlan, executionPlan) {
-  graph.addNode({
-    id: "VP0",
-    kind: "verification_plan",
-    title: "Generate and resolve verification plan",
-    status: verificationPlan.status,
-    closed: verificationPlan.status === "ready" && verificationPlan.blockingGapCount === 0,
-    blockingGapCount: verificationPlan.blockingGapCount,
-    checkCount: verificationPlan.checkCount,
-  });
-  graph.addNode({
-    id: "EP0",
-    kind: "execution_plan",
-    title: "Generate execution plan from PRD tasks",
-    status: executionPlan.status,
-    closed: executionPlan.status === "ready" && executionPlan.blockingGapCount === 0,
-    blockingGapCount: executionPlan.blockingGapCount,
-    nodeCount: executionPlan.nodeCount,
-  });
-  graph.addEdge("VP0", "EP0", "unblocks", "execution planning starts after verification planning");
-}
-
-function addTaskRollupNodes(graph, tasks) {
-  for (const task of tasks) {
-    graph.addNode({
-      id: task.id,
-      kind: "task_rollup",
-      title: task.title,
-      status: task.status,
-      closed: task.status === "complete",
-      requirements: task.requirements || [],
-      acceptanceCriteria: task.acceptanceCriteria || [],
-      evidence: task.evidence || [],
-      artifacts: task.artifacts || [],
-    });
-  }
-}
-
-function addExecutionGraphNodes(graph, executionNodes) {
-  for (const node of executionNodes) {
-    graph.addNode({
-      id: node.id,
-      kind: "execution_node",
-      title: node.title,
-      status: node.status,
-      closed: node.status === "complete",
-      sourceTask: node.sourceTask,
-      dependsOn: node.dependsOn || [],
-      writeScope: node.writeScope || [],
-      parallelSafe: node.parallelSafe,
-      risk: node.risk,
-      owner: node.owner || null,
-      covers: node.covers || { requirements: [], acceptanceCriteria: [], verification: [] },
-      evidence: node.evidence || [],
-      artifacts: node.artifacts || [],
-    });
-    graph.addEdge("EP0", node.id, "unblocks", "execution node comes from the execution plan");
-    graph.addEdge(node.sourceTask, node.id, "decomposes_to", "PRD task is executed through this implementation node");
-    for (const depId of node.dependsOn || []) graph.addEdge(depId, node.id, "depends_on", "execution dependency");
-    for (const acId of (node.covers && node.covers.acceptanceCriteria) || []) graph.addEdge(node.id, acId, "satisfies", "execution node covers this acceptance criterion");
-    for (const verificationId of (node.covers && node.covers.verification) || []) graph.addEdge(node.id, verificationId, "verified_by", "execution node is proven by this verification item");
-  }
-}
-
-function addAcceptanceCriterionNodes(graph, acceptanceCriteria) {
-  for (const ac of acceptanceCriteria) {
-    graph.addNode({
-      id: ac.id,
-      kind: "acceptance_criterion",
-      title: ac.title,
-      status: ac.status,
-      closed: ac.status === "met",
-      requirements: ac.requirements || [],
-      evidence: ac.evidence || [],
-      artifacts: ac.artifacts || [],
-    });
-  }
-}
-
-function addVerificationGraphNodes(graph, state, tasks, acceptanceCriteria, verificationItems) {
-  const checksByVerificationId = new Map();
-  for (const check of (state.verificationPlan && state.verificationPlan.checks) || []) {
-    checksByVerificationId.set(check.verificationId, check);
-  }
-  for (const verification of verificationItems) {
-    const check = checksByVerificationId.get(verification.id);
-    const covers = check ? check.covers : coverageFromText(verification.text || "");
-    graph.addNode({
-      id: verification.id,
-      kind: "verification",
-      title: verification.title,
-      status: verification.status,
-      closed: verificationIsClosedForAccounting(verification),
-      level: verification.level,
-      category: check ? check.category : null,
-      tool: check ? check.tool : null,
-      requiredForDone: isVerificationRequiredForDone(verification),
-      covers,
-      evidence: verification.evidence || [],
-      artifacts: verification.artifacts || [],
-    });
-    graph.addEdge("VP0", verification.id, "plans", "verification check comes from the verification plan");
-    for (const taskId of covers.tasks || []) graph.addEdge(taskId, verification.id, "verified_by", "verification covers this task");
-    for (const acId of covers.acceptanceCriteria || []) graph.addEdge(acId, verification.id, "verified_by", "verification covers this acceptance criterion");
-    for (const reqId of covers.requirements || []) {
-      for (const task of tasks.filter(item => (item.requirements || []).includes(reqId))) {
-        graph.addEdge(task.id, verification.id, "verified_by", `verification covers ${reqId}`);
-      }
-      for (const ac of acceptanceCriteria.filter(item => (item.requirements || []).includes(reqId))) {
-        graph.addEdge(ac.id, verification.id, "verified_by", `verification covers ${reqId}`);
-      }
-    }
-  }
-}
-
-function addReviewAndReceiptNodes(graph, state, reviewedItems) {
-  graph.addNode({
-    id: "REQ_FIDELITY_REVIEW",
-    kind: "requirements_fidelity_review",
-    title: "Requirements fidelity review",
-    status: state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending",
-    closed: Boolean(state.requirementsFidelityReview && state.requirementsFidelityReview.status === "pass"),
-    evidenceCount: state.requirementsFidelityReview ? 1 : 0,
-    artifactCount: state.requirementsFidelityReview && state.requirementsFidelityReview.reportPath ? 1 : 0,
-  });
-  const finalReviewRequired = finalReviewRequiredForState(state);
-  if (finalReviewRequired) {
-    graph.addNode({
-      id: "REVIEW",
-      kind: "final_review",
-      title: "Adversarial final review",
-      status: state.finalReview ? state.finalReview.status : "pending",
-      closed: Boolean(state.finalReview && state.finalReview.status === "pass"),
-      requiredForDone: true,
-      evidenceCount: state.finalReview ? 1 : 0,
-      artifactCount: state.finalReview && state.finalReview.reportPath ? 1 : 0,
-    });
-  }
-  graph.addNode({
-    id: "FINALIZE",
-    kind: "receipt",
-    title: "Final receipt",
-    status: state.finalReceipt ? state.finalReceipt.status : "pending",
-    closed: Boolean(state.finalReceipt),
-    evidenceCount: state.finalReceipt ? 1 : 0,
-    artifactCount: state.finalReceipt ? 1 : 0,
-  });
-
-  for (const item of reviewedItems) {
-    graph.addEdge(item.id, "REQ_FIDELITY_REVIEW", "requirements_review_input", "requirements reviewer must audit this item against original user intent and PRD decisions");
-    if (finalReviewRequired) graph.addEdge(item.id, "REVIEW", "review_input", "final reviewer must audit this item and its evidence");
-  }
-  if (finalReviewRequired) {
-    graph.addEdge("REQ_FIDELITY_REVIEW", "REVIEW", "review_input", "final reviewer must audit the requirements fidelity verdict");
-    graph.addEdge("REVIEW", "FINALIZE", "gates", "receipt can be written only after passing final review");
-  } else {
-    graph.addEdge("REQ_FIDELITY_REVIEW", "FINALIZE", "gates", "receipt can be written after requirements fidelity review and mechanical gates pass");
-  }
 }
 
 function plannedCommandForVerification(state, verificationId) {
@@ -952,16 +637,18 @@ function nextItem(state) {
   }
   const ready = readyExecutionPlan(state);
   if (ready.readySequential.length) {
-    const nodeId = ready.readySequential[0];
-    const node = state.executionPlan.nodes.find(item => item.id === nodeId);
-    return { kind: "execution_node", item: node };
+    const readyId = ready.readySequential[0];
+    return { kind: "task", item: state.tasks.find(item => item.id === readyId) };
   }
   const ac = state.acceptanceCriteria.find(item => !["met", "not_met", "blocked"].includes(item.status));
   if (ac) return { kind: "ac", item: ac };
   const verification = state.verification.find(item => !verificationIsClosedForAccounting(item));
   if (verification) return { kind: "verification", item: verification };
+  // A task can be open yet absent from `ready` when it waits on a blocked or
+  // deferred dependency. Surface it rather than advancing to the review gates,
+  // which finalize would reject anyway.
   const task = state.tasks.find(item => !["complete", "deferred", "blocked"].includes(item.status));
-  if (task) return { kind: "task_rollup", item: task };
+  if (task) return { kind: "task", item: task };
   if (!state.requirementsFidelityReview || state.requirementsFidelityReview.status !== "pass") {
     const independent = independentFidelityRequiredForState(state);
     return {
@@ -990,8 +677,8 @@ function nextItem(state) {
 }
 
 // Compact view of the next required item for per-mutation command output. The
-// full execution-node object (writeScope, covers, evidence history) is large and
-// unchanged between marks; callers that need the whole graph run `status`.
+// full task object (writeScope, evidence history, artifacts) is large and mostly
+// unchanged between marks; callers that need all of it run `status`.
 function nextBrief(state) {
   const next = nextItem(state);
   if (!next) return null;
@@ -999,20 +686,16 @@ function nextBrief(state) {
 }
 
 module.exports = {
-  taskGraphSummary,
   verificationContractHash,
   buildVerificationPlan,
   buildExecutionPlan,
   buildTraceMatrix,
-  refreshExecutionTraceMatrix,
   executionCoverageForTask,
   normalizeWriteScopes,
   findDependencyCycle,
   readyExecutionPlan,
   buildParallelGroups,
   writeScopesOverlap,
-  rollupTasksFromExecutionPlan,
-  buildTaskGraph,
   plannedCommandForVerification,
   buildCoverageMatrix,
   structuralParseGaps,

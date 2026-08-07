@@ -24,22 +24,13 @@ Receipt: agents/implement/standard-regression/receipt.json
 ## Execution Plan And Changed Modules
 
 - Status: ready
-- Nodes: 1
-- Open nodes: 0
+- Tasks: 1
+- Open tasks: 0
 - Artifact: agents/implement/standard-regression/execution-plan.md
-- N1: complete - Run the local command verification. Covers R1, AC1. (source: T1, risk: medium, parallelSafe: no)
-
-## Task Graph
-
-- Status: complete
-- Nodes: 8
-- Edges: 13
-- Open nodes: 0
-- Artifact: agents/implement/standard-regression/taskgraph.md
 
 ## Tasks
 
-- T1: complete - Run the local command verification. Covers R1, AC1.
+- T1: complete - Run the local command verification. Covers R1, AC1. (risk: medium, parallelSafe: no)
 
 ## Acceptance Criteria
 
@@ -100,13 +91,11 @@ Receipt: agents/implement/standard-regression/receipt.json
     "finalReviewRequired": false
   },
   "counts": {
-    "executionOpen": 0,
     "tasksOpen": 0,
     "acOpen": 0,
     "verificationOpen": 0,
     "totalOpen": 0,
     "blocked": {
-      "execution": 0,
       "tasks": 0,
       "acceptanceCriteria": 0,
       "verification": 0,
@@ -187,18 +176,10 @@ Receipt: agents/implement/standard-regression/receipt.json
   },
   "executionPlan": {
     "status": "ready",
-    "nodeCount": 1,
-    "openNodeCount": 0,
+    "taskCount": 1,
+    "openTaskCount": 0,
     "blockingGapCount": 0,
     "warningCount": 0,
-    "generatedAt": "<TS>"
-  },
-  "taskGraph": {
-    "status": "complete",
-    "nodeCount": 8,
-    "edgeCount": 13,
-    "openNodeCount": 0,
-    "blockingGapCount": 0,
     "generatedAt": "<TS>"
   },
   "artifactCount": 1,

@@ -4,9 +4,9 @@
 const { SELF_PATH, displayPath, parseArgs } = require("../../../cli/lib/util");
 const { cmdHook } = require("../../../cli/lib/hooks");
 const { cmdInit } = require("../../../cli/lib/commands/init");
-const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
+const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdRender, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
 const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
-const { cmdMarkNode, cmdAssignNode, cmdMark, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
+const { cmdMark, cmdAssign, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
 const { cmdReconcile } = require("../../../cli/lib/commands/reconcile");
 const { cmdPause, cmdReviewPolicy } = require("../../../cli/lib/commands/lifecycle");
@@ -36,9 +36,9 @@ const COMMANDS = [
   { name: "plan-execution", usageArgs: ["[--state <path>] [--task-plan <json-path>]"], run: args => cmdPlanExecution(parseArgs(args)) },
   { name: "ready", usageArgs: ["[--state <path>]"], run: args => cmdReady(parseArgs(args)) },
   {
-    name: "mark-node",
-    usageArgs: ["--id <Nn[,Nn...]> --status pending|in_progress|complete|blocked|deferred [--ac <ACn[,ACn...]>] --evidence <text>"],
-    run: args => cmdMarkNode(parseArgs(args)),
+    name: "render",
+    usageArgs: ["[--state <path>]   (regenerate checklist/plan/verification views from state.json)"],
+    run: args => cmdRender(parseArgs(args)),
   },
   {
     name: "reconcile",
@@ -46,13 +46,13 @@ const COMMANDS = [
     run: args => cmdReconcile(parseArgs(args)),
   },
   {
-    name: "assign-node",
-    usageArgs: ["--id <Nn> --owner coordinator|subagent:<id>|<short-owner>"],
-    run: args => cmdAssignNode(parseArgs(args)),
+    name: "assign",
+    usageArgs: ["--id <Tn> --owner coordinator|subagent:<id>|<short-owner>"],
+    run: args => cmdAssign(parseArgs(args)),
   },
   {
     name: "mark",
-    usageArgs: ["--kind task|ac|verification --id <id[,id...]> --status <status> --evidence <text>"],
+    usageArgs: ["--kind task|ac|verification --id <id[,id...]> --status <status> [--ac <ACn[,ACn...]>] --evidence <text>"],
     run: args => cmdMark(parseArgs(args)),
   },
   { name: "verify-run", usageArgs: ["--id <Vn> -- <command...>"], run: args => cmdVerifyRun(args) },

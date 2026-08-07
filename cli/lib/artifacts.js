@@ -26,7 +26,6 @@ function ensureRunDirs(runDirAbs) {
 function collectArtifacts(state) {
   const artifacts = [];
   for (const group of [
-    ["execution_node", state.executionPlan && state.executionPlan.nodes ? state.executionPlan.nodes : []],
     ["task", state.tasks || []],
     ["ac", state.acceptanceCriteria || []],
     ["verification", state.verification || []],

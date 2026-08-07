@@ -5,7 +5,7 @@ const path = require("path");
 
 const { writeJson, writeMarkdown, NAMESPACE_ROOT } = require("./util");
 const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
-const { taskGraphSummary, readyExecutionPlan, buildTaskGraph } = require("./planning");
+const { readyExecutionPlan, buildTraceMatrix, executionCoverageForTask } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
 const { snapshotEntriesEqual } = require("./git");
 
@@ -33,7 +33,8 @@ function renderExecutionPlan(state) {
     `- PRD: ${state.prdPath}`,
     `- Status: ${plan.status}`,
     `- Generated: ${plan.generatedAt}`,
-    `- Nodes: ${(plan.nodes || []).length}`,
+    `- Tasks: ${(state.tasks || []).length}`,
+    `- Task plan applied: ${plan.taskPlanApplied ? "yes" : "no"}`,
     `- Blocking gaps: ${(plan.gaps || []).filter(gap => gap.severity === "blocking").length}`,
     `- Warnings: ${(plan.gaps || []).filter(gap => gap.severity !== "blocking").length}`,
     "",
@@ -42,85 +43,38 @@ function renderExecutionPlan(state) {
     `- Ready sequential: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}`,
     `- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}`,
     "",
-    "## Nodes",
+    "## Tasks",
     "",
   ];
-  for (const node of plan.nodes || []) {
-    lines.push(`### ${node.id}. ${node.title}`);
+  for (const task of state.tasks || []) {
+    lines.push(`### ${task.id}. ${task.title}`);
     lines.push("");
-    lines.push(`- Status: ${node.status}`);
-    lines.push(`- Source task: ${node.sourceTask}`);
-    lines.push(`- Owner: ${node.owner || "unassigned"}`);
-    lines.push(`- Depends on: ${(node.dependsOn || []).length ? node.dependsOn.join(", ") : "none"}`);
-    lines.push(`- Write scope: ${(node.writeScope || []).length ? node.writeScope.join(", ") : "unknown"}`);
-    lines.push(`- Parallel safe: ${node.parallelSafe ? "yes" : "no"}`);
-    lines.push(`- Risk: ${node.risk}`);
-    lines.push(`- Covers: ${formatCoverage(node.covers)}`);
-    if (node.evidence && node.evidence.length) {
+    lines.push(`- Status: ${task.status}`);
+    lines.push(`- Owner: ${task.owner || "unassigned"}`);
+    lines.push(`- Depends on: ${(task.dependsOn || []).length ? task.dependsOn.join(", ") : "none"}`);
+    lines.push(`- Write scope: ${(task.writeScope || []).length ? task.writeScope.join(", ") : "unknown"}`);
+    lines.push(`- Parallel safe: ${task.parallelSafe ? "yes" : "no"}`);
+    lines.push(`- Risk: ${task.risk}`);
+    lines.push(`- Covers: ${formatCoverage(executionCoverageForTask(state, task))}`);
+    if (task.evidence && task.evidence.length) {
       lines.push("- Evidence:");
-      for (const entry of node.evidence) lines.push(`  - ${entry.ts}: ${entry.text}`);
+      for (const entry of task.evidence) lines.push(`  - ${entry.ts}: ${entry.text}`);
     }
-    if (node.artifacts && node.artifacts.length) {
+    if (task.artifacts && task.artifacts.length) {
       lines.push("- Artifacts:");
-      for (const artifact of node.artifacts) lines.push(`  - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`);
+      for (const artifact of task.artifacts) lines.push(`  - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`);
     }
     lines.push("");
   }
-	  lines.push("## Rollups", "");
-	  for (const [taskId, rollup] of Object.entries((plan.rollups && plan.rollups.tasks) || {})) {
-	    lines.push(`- ${taskId}: nodes ${rollup.nodes.length ? rollup.nodes.join(", ") : "none"}; AC ${rollup.acceptanceCriteria.length ? rollup.acceptanceCriteria.join(", ") : "none"}; Verification ${rollup.verification.length ? rollup.verification.join(", ") : "none"}`);
-	  }
-	  lines.push("", "## Trace Matrix", "");
-	  for (const row of plan.traceMatrix || []) {
-	    lines.push(`- ${row.taskId}: N ${row.nodeIds.length ? row.nodeIds.join(", ") : "none"}; R ${row.requirements.length ? row.requirements.join(", ") : "none"}; AC ${row.acceptanceCriteria.length ? row.acceptanceCriteria.join(", ") : "none"}; required V ${row.requiredVerification.length ? row.requiredVerification.join(", ") : "none"}; optional V ${row.optionalVerification.length ? row.optionalVerification.join(", ") : "none"}`);
-	  }
-	  lines.push("", "## Gaps", "");
+  lines.push("## Trace Matrix", "");
+  for (const row of buildTraceMatrix(state)) {
+    lines.push(`- ${row.taskId}: R ${row.requirements.length ? row.requirements.join(", ") : "none"}; AC ${row.acceptanceCriteria.length ? row.acceptanceCriteria.join(", ") : "none"}; required V ${row.requiredVerification.length ? row.requiredVerification.join(", ") : "none"}; optional V ${row.optionalVerification.length ? row.optionalVerification.join(", ") : "none"}`);
+  }
+  lines.push("", "## Gaps", "");
   if (!plan.gaps || plan.gaps.length === 0) {
     lines.push("- None");
   } else {
     for (const gap of plan.gaps) lines.push(`- ${gap.severity}: ${gap.code} ${gap.item} - ${gap.message}`);
-  }
-  return lines.join("\n");
-}
-
-function renderTaskGraph(state, graph = state.taskGraph || buildTaskGraph(state)) {
-  const lines = [
-    `# Task Graph: ${state.topicSlug}`,
-    "",
-    `- PRD: ${state.prdPath}`,
-    `- Status: ${graph.status}`,
-    `- Generated: ${graph.generatedAt}`,
-    `- Nodes: ${graph.summary.nodeCount}`,
-    `- Edges: ${graph.summary.edgeCount}`,
-    `- Open nodes: ${graph.summary.openNodeCount}`,
-    `- Verification blocking gaps: ${graph.summary.blockingGapCount}`,
-    "",
-    "## Nodes",
-    "",
-  ];
-  for (const node of graph.nodes || []) {
-    lines.push(`- ${node.closed ? "[x]" : "[ ]"} ${node.id} (${node.kind}) - ${node.status}: ${node.title}`);
-    if (node.requirements && node.requirements.length) lines.push(`  - Requirements: ${node.requirements.join(", ")}`);
-    if (node.acceptanceCriteria && node.acceptanceCriteria.length) lines.push(`  - Acceptance Criteria: ${node.acceptanceCriteria.join(", ")}`);
-    if (node.sourceTask) lines.push(`  - Source Task: ${node.sourceTask}`);
-    if (node.dependsOn && node.dependsOn.length) lines.push(`  - Depends On: ${node.dependsOn.join(", ")}`);
-    if (node.writeScope && node.writeScope.length) lines.push(`  - Write Scope: ${node.writeScope.join(", ")}`);
-    if (node.risk) lines.push(`  - Risk: ${node.risk}`);
-    if (typeof node.parallelSafe === "boolean") lines.push(`  - Parallel Safe: ${node.parallelSafe ? "yes" : "no"}`);
-    if (node.owner) lines.push(`  - Owner: ${node.owner}`);
-    if (node.covers) lines.push(`  - Covers: ${formatCoverage(node.covers)}`);
-	    if (node.tool) lines.push(`  - Tool: ${node.tool}`);
-	    if (typeof node.requiredForDone === "boolean") lines.push(`  - Required For Done: ${node.requiredForDone ? "yes" : "no"}`);
-	    lines.push(`  - Evidence: ${node.evidenceCount}`);
-    lines.push(`  - Artifacts: ${node.artifactCount}`);
-  }
-  lines.push("", "## Edges", "");
-  if (!graph.edges || graph.edges.length === 0) {
-    lines.push("- None");
-  } else {
-    for (const edge of graph.edges) {
-      lines.push(`- ${edge.from} -> ${edge.to} (${edge.type}): ${edge.reason}`);
-    }
   }
   return lines.join("\n");
 }
@@ -133,28 +87,16 @@ function renderChecklist(state) {
   lines.push(`- Policy version: ${reviewPolicy.policyVersion}`);
   lines.push(`- Requirements fidelity owner: ${reviewPolicy.fidelityOwner}`);
   lines.push(`- Final adversarial review required: ${reviewPolicy.finalReviewRequired ? "yes" : "no"}`, "");
-  lines.push("## Execution Nodes", "");
-  if (state.executionPlan && state.executionPlan.nodes && state.executionPlan.nodes.length) {
-    for (const node of state.executionPlan.nodes) {
-	      lines.push(`- ${checkbox(node.status === "complete")} ${node.id}. ${node.title}`);
-      lines.push(`  - Status: ${node.status}`);
-      lines.push(`  - Source Task: ${node.sourceTask}`);
-      if (node.dependsOn && node.dependsOn.length) lines.push(`  - Depends On: ${node.dependsOn.join(", ")}`);
-      if (node.writeScope && node.writeScope.length) lines.push(`  - Write Scope: ${node.writeScope.join(", ")}`);
-      lines.push(`  - Parallel Safe: ${node.parallelSafe ? "yes" : "no"}`);
-      lines.push(`  - Risk: ${node.risk}`);
-      lines.push(`  - Covers: ${formatCoverage(node.covers)}`);
-      if (node.evidence && node.evidence.length) lines.push("  - Evidence:", evidenceText(node));
-      if (node.artifacts && node.artifacts.length) lines.push("  - Artifacts:", artifactText(node));
-    }
-  } else {
-    lines.push("- [ ] EP0. Run `plan-execution`");
-  }
-  lines.push("");
   lines.push("## Tasks", "");
-	  for (const task of state.tasks) {
-	    lines.push(`- ${checkbox(task.status === "complete")} ${task.id}. ${task.title}`);
+  if (!state.executionPlan) lines.push("- [ ] EP0. Run `plan-execution`", "");
+  for (const task of state.tasks) {
+    lines.push(`- ${checkbox(task.status === "complete")} ${task.id}. ${task.title}`);
     lines.push(`  - Status: ${task.status}`);
+    if (task.owner) lines.push(`  - Owner: ${task.owner}`);
+    if (task.dependsOn && task.dependsOn.length) lines.push(`  - Depends On: ${task.dependsOn.join(", ")}`);
+    if (task.writeScope && task.writeScope.length) lines.push(`  - Write Scope: ${task.writeScope.join(", ")}`);
+    if (typeof task.parallelSafe === "boolean") lines.push(`  - Parallel Safe: ${task.parallelSafe ? "yes" : "no"}`);
+    if (task.risk) lines.push(`  - Risk: ${task.risk}`);
     if (task.requirements.length) lines.push(`  - Requirements: ${task.requirements.join(", ")}`);
     if (task.acceptanceCriteria.length) lines.push(`  - Acceptance Criteria: ${task.acceptanceCriteria.join(", ")}`);
     if (task.evidence.length) lines.push("  - Evidence:", evidenceText(task));
@@ -340,25 +282,14 @@ function writeImplementationReport(statePath, state) {
   const executionPlan = executionPlanSummary(state);
   lines.push("", "## Execution Plan And Changed Modules", "");
   lines.push(`- Status: ${executionPlan.status}`);
-  lines.push(`- Nodes: ${executionPlan.nodeCount}`);
-  lines.push(`- Open nodes: ${executionPlan.openNodeCount}`);
+  lines.push(`- Tasks: ${executionPlan.taskCount}`);
+  lines.push(`- Open tasks: ${executionPlan.openTaskCount}`);
   lines.push(`- Artifact: ${state.runDir}/execution-plan.md`);
-  if (state.executionPlan && state.executionPlan.nodes) {
-    for (const node of state.executionPlan.nodes) {
-      lines.push(`- ${node.id}: ${node.status} - ${node.title} (source: ${node.sourceTask}, risk: ${node.risk}, parallelSafe: ${node.parallelSafe ? "yes" : "no"})`);
-      if (Array.isArray(node.writeScope) && node.writeScope.length) lines.push(`  - Write scope: ${node.writeScope.join(", ")}`);
-    }
-  }
-  lines.push("");
-  const graph = taskGraphSummary(state);
-  lines.push("## Task Graph", "");
-  lines.push(`- Status: ${graph.status}`);
-  lines.push(`- Nodes: ${graph.nodeCount}`);
-  lines.push(`- Edges: ${graph.edgeCount}`);
-  lines.push(`- Open nodes: ${graph.openNodeCount}`);
-  lines.push(`- Artifact: ${state.runDir}/taskgraph.md`);
   lines.push("", "## Tasks", "");
-  for (const task of state.tasks) lines.push(`- ${task.id}: ${task.status} - ${task.title}`);
+  for (const task of state.tasks) {
+    lines.push(`- ${task.id}: ${task.status} - ${task.title} (risk: ${task.risk || "unknown"}, parallelSafe: ${task.parallelSafe ? "yes" : "no"})`);
+    if (Array.isArray(task.writeScope) && task.writeScope.length) lines.push(`  - Write scope: ${task.writeScope.join(", ")}`);
+  }
   lines.push("", "## Acceptance Criteria", "");
   for (const ac of state.acceptanceCriteria) lines.push(`- ${ac.id}: ${ac.status} - ${ac.title}`);
   lines.push("", "## Verification Evidence And Regression Coverage", "");
@@ -472,7 +403,6 @@ Source of truth:
 - Checklist: \`${state.runDir}/checklist.md\`
 - Context notes: \`${state.runDir}/context-notes.md\`
 - Execution plan: \`${state.runDir}/execution-plan.json\` and \`${state.runDir}/execution-plan.md\`
-- Task graph: \`${state.runDir}/taskgraph.json\` and \`${state.runDir}/taskgraph.md\`
 - Verification plan: \`${state.runDir}/verification-plan.json\` and \`${state.runDir}/verification-plan.md\`
 - Verification: \`${state.runDir}/verification.md\`
 - Ledger: \`${state.runDir}/ledger.jsonl\`
@@ -579,7 +509,6 @@ Source of truth:
 - State JSON: \`${statePath}\`
 - Checklist: \`${state.runDir}/checklist.md\`
 - Execution plan: \`${state.runDir}/execution-plan.json\` and \`${state.runDir}/execution-plan.md\`
-- Task graph: \`${state.runDir}/taskgraph.json\` and \`${state.runDir}/taskgraph.md\`
 - Verification plan: \`${state.runDir}/verification-plan.json\` and \`${state.runDir}/verification-plan.md\`
 - Verification: \`${state.runDir}/verification.md\`
 - Ledger: \`${state.runDir}/ledger.jsonl\`
@@ -636,12 +565,12 @@ Status: PASS | FAIL
 PASS only if all tracked work is complete, the requirements fidelity review is trustworthy, every required verification item has valid artifact-backed evidence, optional verification exceptions are explicitly non-required and justified, no stale review/artifact drift remains, and no PRD drift remains.`;
 }
 
-function writeArtifacts(statePath, state) {
+// Derived documents, regenerated from state.json on demand. Marking commands do
+// not call this; `render` exists so a coordinator can refresh the views without
+// mutating the run.
+function renderViews(statePath, state) {
   const runDir = path.dirname(statePath);
-  const taskGraph = state.taskGraph || buildTaskGraph(state);
   writeMarkdown(path.join(runDir, "checklist.md"), renderChecklist(state));
-  writeJson(path.join(runDir, "taskgraph.json"), taskGraph);
-  writeMarkdown(path.join(runDir, "taskgraph.md"), renderTaskGraph(state, taskGraph));
   if (state.executionPlan) {
     writeJson(path.join(runDir, "execution-plan.json"), state.executionPlan);
     writeMarkdown(path.join(runDir, "execution-plan.md"), renderExecutionPlan(state));
@@ -661,7 +590,6 @@ module.exports = {
   evidenceText,
   artifactText,
   renderExecutionPlan,
-  renderTaskGraph,
   renderChecklist,
   renderVerificationPlan,
   formatCoverage,
@@ -669,5 +597,5 @@ module.exports = {
   writeImplementationReport,
   renderRequirementsReviewPrompt,
   renderReviewPrompt,
-  writeArtifacts,
+  renderViews,
 };
