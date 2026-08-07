@@ -27,7 +27,7 @@ Match the user's language by default.
 - Keep one canonical artifact only: qa-log.md.
 - Own ordinary Q&A in the main agent.
 - Do not spawn, retain, resume, or update subagents during ordinary questions.
-- Use one fresh independent auditor only for non-trivial final closure when subagent tools are available and the user has not opted out.
+- Closure judgment is owned by the checkshirt gap-audit gate; use one fresh independent auditor subagent only as the recorded fallback when the checkshirt binary or judge backend is unavailable.
 - Do not use a numeric ambiguity score as a completion gate.
 - Stop when the intended product is coherent, material decisions are traceable, and completion is testable, not when every imaginable detail is exhausted.
 
@@ -61,7 +61,7 @@ checkshirt interview decision --slug <slug> --id D-05 --kind decision --area <ar
 - Register or patch the affected D# rows first, then log the turn: interview log rejects a decision_ids reference that is not in the register.
 - The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
 - New raw entries start with needs_normalization: true until their decision, provenance, and impact are normalized at a checkpoint.
-- Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or sweep prose on every turn; touch those sections only when their content materially changes.
+- Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or checkpoint prose on every turn; touch those sections only when their content materially changes.
 - Every mutating interview command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
 - Resync with `checkshirt interview status --slug <slug> [--json]` instead of re-reading the whole file.
 - Do not make the user wait for prose polishing.
@@ -69,7 +69,10 @@ checkshirt interview decision --slug <slug> --id D-05 --kind decision --area <ar
 Normalize outstanding answers every 10 answered questions; `interview status` reports when a checkpoint is DUE.
 Normalize after every 2 to 3 answers for high-risk work.
 High-risk work includes production data, migrations, PII, credentials, external APIs, payments, cost, legal or compliance, irreversible side effects, and user-facing launch gates.
-At a checkpoint, edit only the semantic prose that normalization requires (Decision Packets, register wording), then record it:
+Treat a checkpoint as due early when a P0 node is reopened or invalidated.
+At a checkpoint, edit only the semantic prose that normalization requires (Decision Packets, register wording), and run one local intent, impact, and verification sweep over the resolved decisions.
+The sweep's outcome is the `--gap` value: either no material gap or the one highest-impact follow-up; do not turn it into a second user interview.
+Then record the checkpoint:
 
 ~~~sh
 checkshirt interview checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
@@ -100,7 +103,7 @@ The path from receiving an answer to asking the next question is the latency bud
 1. Interpret the answer, then run one chained interview command (decision upserts, then log).
 2. Ask the next question in the same reply.
 3. Do not run `interview status` or re-read the qa-log inside this path; the mutating command already returns the cursor. Resync only when resuming after an interruption or at a checkpoint.
-4. Repo or docs verification inside this path is at most one bounded lookup, and only when its result changes which question to ask next; batch anything broader into preflight, a checkpoint, or the materiality sweep.
+4. Repo or docs verification inside this path is at most one bounded lookup, and only when its result changes which question to ask next; batch anything broader into preflight or a checkpoint.
 5. UX Scenario Cards, Evidence, and Current Understanding edits happen at their trigger but never between an answer and the next question unless the next question depends on them; otherwise fold them into the next checkpoint.
 6. The open P0/P1 nodes in the register are the standing next-question queue; a new question needs a register node before or with its turn, not a prose rewrite.
 
@@ -260,14 +263,10 @@ Use this Decision Packet for material free-text answers:
 - source:
 ~~~
 
-Run a local intent, impact, and verification sweep after three material decisions or when a P0 node changes.
-The sweep must produce either no material gap or one highest-impact follow-up.
-Do not turn the sweep into a second user interview.
-
 ## Artifacts
 
 Use this qa-log.md structure.
-The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, sweep prose, Audit History) and the manual fallback when checkshirt is unavailable.
+The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, Audit History) and the manual fallback when checkshirt is unavailable.
 Keep raw capture light during the interview.
 Complete every normalized field before marking the file PRD-ready.
 
@@ -334,17 +333,10 @@ normalization_checkpoint_every: 10
 - reopened_decisions:
 - highest_remaining_gap:
 
-### Sweep N
-- trigger:
-- intent_drift:
-- impact_gap:
-- verification_gap:
-- next_action:
-
 ## Audit History
 
 ### Audit N
-- type: local | final-auditor
+- type: gap-audit-gate | local-fallback | final-auditor
 - result: pass | fail | unavailable | skipped
 - missing decision_ids:
 - unsupported assumptions:
@@ -362,13 +354,12 @@ normalization_checkpoint_every: 10
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
 5. Record the turn with chained `interview decision` and `interview log` commands per the Turn Protocol; reopen an invalidated node with `interview decision --status open`.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
-7. Run the materiality sweep at its trigger.
-8. Checkpoint when `interview status` reports DUE (every 10 answers) or earlier for high-risk work, recording it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
-9. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
-10. Run full normalization and record it with `interview checkpoint`.
-11. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
-12. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
-13. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
+7. Checkpoint when `interview status` reports DUE (every 10 answers), earlier for high-risk work, or immediately when a P0 node is reopened or invalidated; run the intent, impact, and verification sweep as part of the checkpoint, record it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
+8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
+9. Run full normalization and record it with `interview checkpoint`.
+10. Run the checkshirt gap-audit gate, falling back to final auditor closure or a recorded local fallback only when the `checkshirt` binary is unavailable.
+11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
+12. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
 ## Gap-Audit Gate (checkshirt)
 
@@ -415,4 +406,4 @@ Before marking qa-log.md complete, verify:
 - Rejected options and non-goals remain visible.
 - Required verification is seeded with an observable result.
 - High-risk boundaries, compatibility, and operation needs are explicit when relevant.
-- The final auditor or local closure audit has no hidden material blocker.
+- The gap-audit gate (or its recorded fallback audit) found no hidden material blocker.
