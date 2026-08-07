@@ -838,6 +838,11 @@ function structuralParseGaps(state) {
   return gaps;
 }
 
+// Words that make a verification check likely to read or write a database.
+// Intentionally broad: the gap is a non-blocking warning that tells the agent
+// to confirm the target is disposable before running, not a classifier.
+const DB_TOUCH_PATTERN = /\b(migrat\w*|seed\w*|db|database|sql|psql|drizzle|prisma|supabase|neon|postgres\w*|mysql|sqlite|mongo\w*|redis)\b/i;
+
 function buildVerificationGaps(state, checks, coverage, signals) {
   const gaps = structuralParseGaps(state);
   for (const [acId, item] of Object.entries(coverage)) {
@@ -894,6 +899,17 @@ function buildVerificationGaps(state, checks, coverage, signals) {
           message: `${check.id}/${check.verificationId} touches API/external/live behavior but has no Sensitive Data Policy column`,
         });
       }
+    }
+    const verificationItem = (state.verification || []).find(entry => entry.id === check.verificationId);
+    const dbHaystack = [check.command, check.passCriteria, check.target, verificationItem ? verificationItem.text : ""]
+      .filter(Boolean).join(" ");
+    if (DB_TOUCH_PATTERN.test(dbHaystack) || (check.artifactKinds || []).includes("db")) {
+      gaps.push({
+        severity: "warning",
+        code: "db-safety",
+        item: check.id,
+        message: `${check.id}/${check.verificationId} appears to touch a database. Before running it, confirm the connection target is a disposable local or branch database, never production data; a production connection string in a test or migration path is a hard stop.`,
+      });
     }
   }
   if (checks.some(check => check.category === "browser") && !hasAppStartupSignal(signals)) {

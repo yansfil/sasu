@@ -181,6 +181,9 @@ function syncActive(statePath, state) {
  * @param {State} state
  */
 function persistStateAndArtifacts(statePath, state) {
+  // Every real mutation command flows through here, so progress on the run
+  // implicitly resumes a paused stop-hook loop (see commands/lifecycle.js).
+  if (state.paused) delete state.paused;
   refreshExecutionTraceMatrix(state);
   state.taskGraph = buildTaskGraph(state);
   writeJson(statePath, state);

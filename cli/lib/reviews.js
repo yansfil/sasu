@@ -404,7 +404,7 @@ function prdSnapshotViolations(statePath, state) {
     const prdAbs = resolveProjectPath(state.prdPath, state.projectRoot || cwd());
     const currentText = fs.readFileSync(prdAbs, "utf8");
     if (snapshot.sha256 && snapshot.sha256 !== sha256Text(currentText)) {
-      violations.push("PRD file changed after implementation state was initialized; rerun init --force or explicitly reconcile the PRD snapshot");
+      violations.push("PRD file changed after implementation state was initialized; run `reconcile` to refresh the snapshot while preserving recorded marks (init --force is only for a user-requested clean restart)");
     }
   } catch (error) {
     violations.push(`PRD snapshot cannot be validated: ${error.message}`);

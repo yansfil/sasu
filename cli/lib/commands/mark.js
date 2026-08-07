@@ -15,9 +15,11 @@ function cmdMarkNode(options) {
   const ids = parseIdList(options.id, value => value.toUpperCase());
   const status = String(options.status || "");
   const evidence = String(options.evidence || "").trim();
+  const acIds = options.ac ? parseIdList(options.ac, value => value.toUpperCase()) : [];
   if (!ids.length) throw new Error("--id is required");
   if (!status) throw new Error("--status is required");
   if (!evidence) throw new Error("--evidence is required");
+  if (acIds.length && status !== "complete") throw new Error("--ac requires --status complete; acceptance criteria are only co-marked with a completed node");
   assertAllowedExecutionStatus(status);
   const { statePath, state } = loadState(options);
 	  if (!state.executionPlan || !Array.isArray(state.executionPlan.nodes)) throw new Error("Execution plan is missing; run plan-execution first");
@@ -41,6 +43,14 @@ function cmdMarkNode(options) {
 	    if (!node.evidence) node.evidence = [];
 	    node.evidence.push({ ts: nowIso(), text: evidence });
     marked.push({ kind: "execution_node", id, status, sourceTask: node.sourceTask, deviation: deviationEntry });
+  }
+  for (const acId of acIds) {
+    const item = state.acceptanceCriteria.find(entry => String(entry.id).toUpperCase() === acId);
+    if (!item) throw new Error(`ac ${acId} not found`);
+    item.status = "met";
+    if (!item.evidence) item.evidence = [];
+    item.evidence.push({ ts: nowIso(), text: evidence });
+    marked.push({ kind: "ac", id: acId, status: "met" });
   }
 	  rollupTasksFromExecutionPlan(state);
 	  markCompletionReviewsStale(state, `Execution node(s) ${ids.join(", ")} were marked after review`);

@@ -517,6 +517,7 @@ function copyRequiredInitInputsToWorktree(sourceRoot, targetRoot, prdAbs, delive
 
 module.exports = {
   cmdInit,
+  parsePrdContract,
   prepareDeliveryWorktree,
   syncPathForWorktree,
   copyRequiredInitInputsToWorktree,

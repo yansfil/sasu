@@ -1576,3 +1576,115 @@ PASS.
   });
   assert.doesNotMatch(String(overridden.stderr), /Learned invariant checks failed/);
 });
+
+test("reconcile preserves marks across a PRD edit and resets only changed items", () => {
+  const root = initGitRepo();
+  const prdPath = writeApprovedPrd(root, "reconcile-flow");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], root);
+  runJson(["plan-execution"], root);
+  // Batch mark: close the node and its AC in one call.
+  const marked = runJson(["mark-node", "--id", "N1", "--status", "complete", "--ac", "AC1", "--evidence", "test evidence for N1 and AC1"], root);
+  assert.deepEqual(marked.marked.map(entry => `${entry.kind}:${entry.id}`), ["execution_node:N1", "ac:AC1"]);
+
+  const statePath = path.join(root, "agents", "implement", "reconcile-flow", "state.json");
+
+  // Edit the PRD without touching contract items: reconcile keeps everything.
+  fs.appendFileSync(prdPath, "\nAdditional non-contract prose added mid-run.\n");
+  const beforeStatus = runJson(["status"], root);
+  assert.ok(beforeStatus.completion.violations.some(item => /PRD file changed after implementation state was initialized/.test(item)));
+  const first = runJson(["reconcile", "--reason", "prose-only edit"], root);
+  assert.equal(first.changed, true);
+  assert.deepEqual(first.changedItems, []);
+  assert.equal(first.reviewsMarkedStale, false);
+  let state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(state.acceptanceCriteria.find(item => item.id === "AC1").status, "met");
+  assert.equal(state.executionPlan.nodes.find(node => node.id === "N1").status, "complete");
+  const afterStatus = runJson(["status"], root);
+  assert.ok(!afterStatus.completion.violations.some(item => /PRD file changed after implementation state was initialized/.test(item)));
+
+  // Now change AC1's definition: only AC1 resets; the node and task survive.
+  const edited = fs.readFileSync(prdPath, "utf8")
+    .replace("- AC1. V1 passes with a command-log artifact.", "- AC1. V1 passes with a command-log artifact and prints a summary.");
+  fs.writeFileSync(prdPath, edited);
+  const second = runJson(["reconcile"], root);
+  assert.deepEqual(second.changedItems, ["ac:AC1"]);
+  assert.equal(second.reviewsMarkedStale, true);
+  state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const ac1 = state.acceptanceCriteria.find(item => item.id === "AC1");
+  assert.equal(ac1.status, "pending");
+  assert.ok(ac1.evidence.some(entry => /PRD reconcile: definition changed/.test(entry.text)));
+  assert.equal(state.executionPlan.nodes.find(node => node.id === "N1").status, "complete");
+  assert.ok(state.deviations.some(entry => entry.type === "prd_reconciled"));
+
+  // Reconcile with a matching snapshot is a no-op.
+  const third = runJson(["reconcile"], root);
+  assert.equal(third.changed, false);
+});
+
+test("pause mutes the stop hook until the next harness mutation resumes it", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "pause-flow");
+  runJson(["init", "--prd", prd, "--review-profile", "trivial", "--session-id", "pause-s"], root);
+  runJson(["plan-execution"], root);
+  const stopInput = JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "pause-s" });
+
+  const active = run(process.execPath, [harness, "hook", "stop"], { cwd: root, input: stopInput });
+  assert.match(JSON.parse(active.stdout).reason, /prd-implement-continuation/);
+  assert.match(JSON.parse(active.stdout).reason, /pause --reason/);
+
+  runJson(["pause", "--reason", "user asked an unrelated question"], root);
+  const muted = run(process.execPath, [harness, "hook", "stop"], { cwd: root, input: stopInput });
+  assert.equal(muted.stdout.trim(), "");
+
+  // Any real mutation clears the pause.
+  runJson(["mark-node", "--id", "N1", "--status", "in_progress", "--evidence", "resumed work"], root);
+  const resumed = run(process.execPath, [harness, "hook", "stop"], { cwd: root, input: stopInput });
+  assert.match(JSON.parse(resumed.stdout).reason, /prd-implement-continuation/);
+
+  // Explicit clear also works.
+  runJson(["pause", "--reason", "second redirect"], root);
+  runJson(["pause", "--clear"], root);
+  const cleared = run(process.execPath, [harness, "hook", "stop"], { cwd: root, input: stopInput });
+  assert.match(JSON.parse(cleared.stdout).reason, /prd-implement-continuation/);
+});
+
+test("review-policy records a user-directed profile override as a deviation", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "review-override");
+  runJson(["init", "--prd", prd, "--review-profile", "high-risk"], root);
+  const result = runJson(["review-policy", "--profile", "standard", "--reason", "리뷰 한번만 돌리고 마무리해"], root);
+  assert.equal(result.ok, true);
+  assert.equal(result.effectivePolicy.profile, "standard");
+  assert.equal(result.effectivePolicy.finalReviewRequired, false);
+  assert.equal(result.reviewProfile.source, "user-override");
+  assert.equal(result.reviewProfile.previous.profile, "high-risk");
+  const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "review-override", "state.json"), "utf8"));
+  assert.ok(state.deviations.some(entry => entry.type === "review_profile_override" && /리뷰 한번만/.test(entry.summary)));
+
+  const missingReason = run(process.execPath, [harness, "review-policy", "--profile", "trivial"], { cwd: root, allowFailure: true });
+  assert.notEqual(missingReason.status, 0);
+  assert.match(missingReason.stderr, /--reason is required/);
+});
+
+test("plan-verification warns when a check appears to touch a database", () => {
+  const root = initGitRepo();
+  const prdPath = writeApprovedPrd(root, "db-safety");
+  const edited = fs.readFileSync(prdPath, "utf8")
+    .replace('`node -e "process.exit(0)"`', '`psql "$DATABASE_URL" -c "select count(*) from applications"`');
+  fs.writeFileSync(prdPath, edited);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], root);
+  const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "db-safety", "state.json"), "utf8"));
+  const dbGaps = state.verificationPlan.gaps.filter(gap => gap.code === "db-safety");
+  assert.equal(dbGaps.length, 1);
+  assert.equal(dbGaps[0].severity, "warning");
+  assert.match(dbGaps[0].message, /disposable local or branch database/);
+  // The warning must not block implementation.
+  assert.equal(state.verificationPlan.status, "ready");
+
+  // A non-DB command produces no db-safety warning.
+  const cleanRoot = initGitRepo();
+  const cleanPrd = writeApprovedPrd(cleanRoot, "db-safety-clean");
+  runJson(["init", "--prd", cleanPrd, "--review-profile", "trivial"], cleanRoot);
+  const cleanState = JSON.parse(fs.readFileSync(path.join(cleanRoot, "agents", "implement", "db-safety-clean", "state.json"), "utf8"));
+  assert.equal(cleanState.verificationPlan.gaps.filter(gap => gap.code === "db-safety").length, 0);
+});

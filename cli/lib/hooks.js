@@ -108,6 +108,16 @@ function runStopHook(payload, started) {
     }
     return "";
   }
+  // The user redirected the conversation; stay silent until the next harness
+  // mutation clears the pause (see commands/lifecycle.js).
+  if (state.paused) return "";
+  // The receipt is the completion proof. Once it exists, the continuation loop
+  // has nothing left to drive; only a pending PR handoff may still speak.
+  if (state.finalReceipt) {
+    return deliveryShipPending(statePath, state)
+      ? renderShipHandoffDirective(statePath, state, hookCwd)
+      : "";
+  }
   if (!state.activeSessionId) {
     state.activeSessionId = sessionId;
     state.updatedAt = nowIso();
@@ -116,7 +126,6 @@ function runStopHook(payload, started) {
   }
   const counts = countState(state);
   const next = nextItem(state);
-  if (!next && state.finalReceipt) return "";
   // Re-inject the full step-by-step procedure only when the phase changes;
   // otherwise emit the compact State block so the loop does not burn ~1.7k
   // tokens repeating an unchanged procedure every turn.
@@ -264,7 +273,7 @@ function renderContinuationDirective(context) {
 
 The phase has not changed since the last directive, so the full procedure is not repeated. Follow the step-by-step procedure already given for this phase (also in SKILL.md sections 6-12).
 
-Drive the Next required item above to done, then record it with the matching harness command: \`mark-node\` for execution nodes, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Run \`status\` if you need the full graph again.`
+Drive the Next required item above to done, then record it with the matching harness command: \`mark-node\` for execution nodes, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark-node --ac AC1,AC2\` closes a node plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
     : `# Required procedure this turn
 
 1. Mirror progress in the runtime's tracking surface when one is available: with Codex goal tools, call \`get_goal\` and \`create_goal\` for this PRD implementation (\`update_plan\` does not replace Goal state); in Claude Code, use the task list. The harness state, not the tracker, is the completion authority.
@@ -276,10 +285,11 @@ Drive the Next required item above to done, then record it with the matching har
 7. Use the PRD's Major Technical Structure Changes or documented structure lock. Stop for approval before material deviations.
 8. Register artifacts immediately after producing them. Do not leave files under \`${state.runDir}/artifacts\` unregistered; record valid artifacts with \`record-artifact\` before using them as evidence.
 9. After evidence exists, update state with:
-   - \`${HARNESS} mark-node --id <Nn> --status complete --evidence "<command/test/file/screenshot evidence>"\`
-   - \`${HARNESS} mark --kind ac --id <ACn> --status met --evidence "<evidence>"\`
+   - \`${HARNESS} mark-node --id <Nn> --status complete --ac <ACn[,ACn...]> --evidence "<command/test/file/screenshot evidence>"\`
+   - \`${HARNESS} mark --kind ac --id <ACn[,ACn...]> --status met --evidence "<evidence>"\`
    - \`${HARNESS} verify-run --id <Vn> -- <command>\`
    - \`${HARNESS} record-artifact --id <Vn> --kind screenshot|log|browser|api|db|file --path <artifact> --description "<what it proves>"\`
+   Batch related marks into one call via comma lists and \`--ac\` instead of one command per item, and skip \`status\` polling: every mark returns counts and the next item. If the PRD file was edited after init (status reports a snapshot violation), run \`${HARNESS} reconcile\` to refresh the snapshot while preserving marks; never use \`init --force\` for PRD-edit recovery.
 10. Let task status roll up from execution nodes, ACs, and verification. Use \`mark --kind task\` only for an explicit blocked/deferred/manual correction with evidence.
 11. Do not mark the tracked goal or report the run complete until \`${state.runDir}/receipt.json\` exists, requirements fidelity review is pass, ${finalReviewRequired ? "final review is pass, " : ""}verification plan is ready, execution plan nodes are complete, every required verification item is pass, artifact validation has no violations, runtime processes started for verification are stopped or explicitly reported, and \`${HARNESS} status\` reports no open items or final gate violations.
     If delivery mode is \`pr\`, the receipt alone is not completion. Run the deliver skill and wait for PR creation plus required CI pass or an explicit delivery blocker.
@@ -310,6 +320,7 @@ ${finalReviewRequired ? "16" : "15"}. If completion is impossible and the next u
   return `<prd-implement-continuation>
 
 You are continuing an active PRD implementation. Do not ask whether to continue. The PRD and state files are the source of truth.
+Exception: if the user's latest message redirects to unrelated work or explicitly asks to wrap up, run \`${HARNESS} pause --reason "<their words>"\`, then answer them; the loop stays silent until the next harness mutation resumes it.
 
 # State
 

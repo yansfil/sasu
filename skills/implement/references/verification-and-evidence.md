@@ -8,6 +8,7 @@ Read this reference before `plan-verification`, before running any required `V#`
 - [Focused And Final Verification](#focused-and-final-verification)
 - [Cost-Bearing Benchmarks](#cost-bearing-benchmarks)
 - [Shell Verification](#shell-verification)
+- [Database Safety](#database-safety)
 - [Runtime Evidence](#runtime-evidence)
 - [Required Artifact Classes](#required-artifact-classes)
 - [Artifact Registration And Integrity](#artifact-registration-and-integrity)
@@ -79,6 +80,14 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
 
 `verify-run` captures a command log, records the artifact, updates verification status, and preserves the command in the ledger.
 Do not run a required command outside the harness and later substitute a prose result when `verify-run` can capture it directly.
+
+## Database Safety
+
+Any verification, test, seed, or migration that writes to a database must target a disposable database: a local instance, an ephemeral container, or a provider branch (for example a Neon branch).
+Before the first DB-touching run, resolve which connection string the command will actually use and confirm it is not production.
+A production connection string in a test, seed, or migration path is a hard stop: pause the work and ask the user; do not proceed on an assumption that the data is disposable.
+`plan-verification` flags likely DB-touching checks with a non-blocking `db-safety` warning gap; treat each flagged check as unconfirmed until the connection target has been verified once and noted in `context-notes.md`.
+Deleting or mutating production rows to make a test pass is never acceptable evidence.
 
 ## Runtime Evidence
 

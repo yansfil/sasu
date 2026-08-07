@@ -5,6 +5,7 @@ Read this reference before acceptance sweeping, generating either completion rev
 ## Contents
 
 - [Review Profiles](#review-profiles)
+- [User-Directed Review Override](#user-directed-review-override)
 - [Review Ownership](#review-ownership)
 - [Acceptance Sweep](#acceptance-sweep)
 - [Requirements Fidelity Review](#requirements-fidelity-review)
@@ -37,6 +38,21 @@ The PRD's `review_rationale` makes this semantic decision auditable without teac
 The PRD declaration, fixed project config, and explicit CLI value are safety floors.
 The harness uses the strongest declared profile, so an operational override may raise review strength but cannot silently lower a stronger semantic judgment.
 A missing declaration safely falls back to `standard` only when no other floor is supplied.
+
+## User-Directed Review Override
+
+The safety floors above bind agent-initiated choices; they are not a license to overrule the user.
+When the user explicitly changes review scope mid-run, for example "리뷰 한번만 돌리고 마무리해" or "this needs the full high-risk review", record it instead of ignoring it or silently skipping gates:
+
+```sh
+node ~/.codex/skills/implement/scripts/prd_state_harness.js review-policy \
+  --profile trivial|standard|high-risk \
+  --reason "<the user's verbatim instruction>"
+```
+
+The command records a `review_profile_override` deviation with the quoted instruction, updates the effective policy, and the receipt carries both.
+Follow the resulting effective policy from that point.
+Do not run `review-policy` on your own judgment; it exists only to carry an explicit user instruction.
 
 Supply an explicit profile when the run needs a stronger floor than the PRD or project policy.
 

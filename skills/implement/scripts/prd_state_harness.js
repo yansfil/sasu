@@ -8,6 +8,8 @@ const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdCleanupAc
 const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
 const { cmdMarkNode, cmdAssignNode, cmdMark, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
+const { cmdReconcile } = require("../../../cli/lib/commands/reconcile");
+const { cmdPause, cmdReviewPolicy } = require("../../../cli/lib/commands/lifecycle");
 const { cmdRules } = require("../../../cli/lib/commands/rules");
 const { cmdSeedAgentsMd } = require("../../../cli/lib/commands/setup");
 
@@ -35,8 +37,13 @@ const COMMANDS = [
   { name: "ready", usageArgs: ["[--state <path>]"], run: args => cmdReady(parseArgs(args)) },
   {
     name: "mark-node",
-    usageArgs: ["--id <Nn[,Nn...]> --status pending|in_progress|complete|blocked|deferred --evidence <text>"],
+    usageArgs: ["--id <Nn[,Nn...]> --status pending|in_progress|complete|blocked|deferred [--ac <ACn[,ACn...]>] --evidence <text>"],
     run: args => cmdMarkNode(parseArgs(args)),
+  },
+  {
+    name: "reconcile",
+    usageArgs: ['[--reason "<why the PRD changed>"] [--state <path>]  (refresh PRD snapshot after an edit; preserves marks, never init --force)'],
+    run: args => cmdReconcile(parseArgs(args)),
   },
   {
     name: "assign-node",
@@ -73,6 +80,16 @@ const COMMANDS = [
     run: args => cmdFinalize(parseArgs(args)),
   },
   { name: "cleanup-active", usageArgs: ["[--state <path>]"], run: args => cmdCleanupActive(parseArgs(args)) },
+  {
+    name: "pause",
+    usageArgs: ['--reason "<verbatim user redirect or wrap-up request>"', "--clear"],
+    run: args => cmdPause(parseArgs(args)),
+  },
+  {
+    name: "review-policy",
+    usageArgs: ['--profile trivial|standard|high-risk --reason "<verbatim user instruction>"'],
+    run: args => cmdReviewPolicy(parseArgs(args)),
+  },
   {
     name: "rules",
     usageArgs: [

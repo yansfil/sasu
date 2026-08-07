@@ -170,6 +170,8 @@ With Codex Goal tools:
 
 In Claude Code, apply the same rules to TaskCreate and TaskUpdate.
 Do not complete the final task before the receipt exists and any required PR delivery handoff is complete or explicitly blocked.
+Keep the mirror lightweight: one task for the whole run, or at most one update per phase boundary.
+Do not mirror every node, acceptance criterion, or verification item; harness state is the single bookkeeping surface and a second per-item ledger only burns turns.
 
 When no Goal or task tools exist, record that limitation in `context-notes.md` or the final report.
 
@@ -193,6 +195,16 @@ Read `references/reviews-and-finalization.md` for the exact gate owned by each p
 
 `init` refuses to overwrite existing state without `--force`.
 Use `--force` only when the user explicitly requests a clean restart.
+
+If the PRD file changes after init, `status` reports a snapshot violation.
+Recover with `reconcile`, never with `init --force`:
+
+```sh
+node ~/.codex/skills/implement/scripts/prd_state_harness.js reconcile --reason "<why the PRD changed>"
+```
+
+`reconcile` refreshes the PRD snapshot in place: items whose definition is unchanged keep their status, evidence, and artifacts; items whose text changed reset to pending with an audit note; removed items are archived in the ledger.
+`init --force` wipes every mark and forces a full re-marking pass, so it is only for a user-requested clean restart.
 
 ## 4. Plan Before Implementation
 
@@ -230,14 +242,18 @@ For each node, re-read relevant files, make the smallest mapped change, record m
 node ~/.codex/skills/implement/scripts/prd_state_harness.js mark-node \
   --id N1 \
   --status complete \
+  --ac AC1,AC2 \
   --evidence "<file/test/runtime evidence>"
 
 node ~/.codex/skills/implement/scripts/prd_state_harness.js mark \
   --kind ac \
-  --id AC1 \
+  --id AC3,AC4 \
   --status met \
   --evidence "<evidence>"
 ```
+
+Batch related marks instead of running one command per item: `--id` accepts comma lists, and `mark-node --ac` closes a completed node plus the acceptance criteria its evidence proves in one call.
+Every mark command already returns updated counts and the next item, so do not poll `status` between marks.
 
 Task completion rolls up from nodes, mapped acceptance criteria, and verification.
 Do not manually close a task merely because one node is done.
@@ -267,8 +283,13 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js record-artifact \
 ```
 
 Use `chromux` for browser QA when available.
+Browser QA must cover the state-dependent UI variants the acceptance criteria name (for example each status an admin row can be in), not only the happy path.
 Required verification is not complete without a passing status and a valid evidence kind.
 Do not use self-authored summaries or harness state files as proof.
+
+Any verification, test, seed, or migration that writes to a database must target a disposable local or branch database.
+`plan-verification` flags likely DB-touching checks with a `db-safety` warning; confirm the connection target once before the first such run.
+A production connection string in a test path is a hard stop.
 
 Read `references/verification-and-evidence.md` for exact-command deviations, cost-bearing benchmark controls, artifact placement, registration, hash refresh, and required-verification semantics.
 
@@ -325,6 +346,8 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-
   --summary "<verdict>"
 ```
 
+When the user explicitly reduces or raises review scope mid-run (for example "리뷰 한번만 돌리고 마무리해"), record it with `review-policy --profile <profile> --reason "<their verbatim words>"` and follow the resulting effective policy instead of ignoring the request or silently skipping gates.
+
 For `trivial`, the main agent performs a compact fidelity review.
 For policy v2 `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
 For `high-risk` and legacy `standard`, the main agent performs full fidelity before the required independent final review.
@@ -360,6 +383,19 @@ Do not report `Done` or complete the tracked Goal until `receipt.json` exists an
 For local delivery, clean active pointers after the receipt.
 For PR delivery, continue through `$ship` according to `references/worktrees-and-delivery.md` before completing the tracked Goal.
 
+## User Redirects And Pausing
+
+The continuation stop hook drives the run while state is active.
+When the user redirects to unrelated work, asks a side question, or explicitly asks to wrap up, do not fight the loop:
+
+```sh
+node ~/.codex/skills/implement/scripts/prd_state_harness.js pause --reason "<the user's words>"
+```
+
+Then serve the user's request.
+Any mark, verify, plan, review, or finalize command resumes the loop automatically, and `pause --clear` resumes it explicitly.
+Pausing never claims completion; the receipt contract is unchanged.
+
 ## Hard Stops
 
 Stop and ask when:
@@ -368,6 +404,7 @@ Stop and ask when:
 - PRD status is not `ready` or approval is absent without an authorized verbatim deviation.
 - work adds unmapped scope or changes the approved structure.
 - credentials, billing, production data, destructive DB changes, or irreversible deploy steps are required but not approved.
+- a test, seed, or migration would run against a production database or production connection string.
 - verification failure requires a product or structure decision.
 - delivery would push or open a PR without configuration-based or conversational consent.
 
