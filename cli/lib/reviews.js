@@ -43,7 +43,7 @@ function validateArtifacts(statePath, state, options = {}) {
     }
   }
   const finalReview = state.finalReview;
-	  if (includeFinalReview && finalReview && finalReview.reportPath) {
+    if (includeFinalReview && finalReview && finalReview.reportPath) {
     try {
       const abs = resolveProjectPath(finalReview.reportPath, state.projectRoot || cwd());
       inspectArtifact(abs, "log");
@@ -53,17 +53,17 @@ function validateArtifacts(statePath, state, options = {}) {
     } catch (error) {
       violations.push(`Final review report invalid: ${error.message}`);
     }
-	  }
-	  violations.push(...unregisteredArtifactViolations(statePath, state));
-	  violations.push(...verificationEvidenceKindViolations(state));
-	  if (includeRequirementsFidelityReview) violations.push(...requirementsFidelityReviewFreshnessViolations(state));
-	  if (includeFinalReview) violations.push(...finalReviewFreshnessViolations(state));
-	  violations.push(...reviewWorktreeSnapshotViolations(state, {
-	    includeRequirementsFidelityReview,
-	    includeFinalReview,
-	  }));
-	  return violations;
-	}
+    }
+    violations.push(...unregisteredArtifactViolations(statePath, state));
+    violations.push(...verificationEvidenceKindViolations(state));
+    if (includeRequirementsFidelityReview) violations.push(...requirementsFidelityReviewFreshnessViolations(state));
+    if (includeFinalReview) violations.push(...finalReviewFreshnessViolations(state));
+    violations.push(...reviewWorktreeSnapshotViolations(state, {
+      includeRequirementsFidelityReview,
+      includeFinalReview,
+    }));
+    return violations;
+  }
 
 function assertReviewReportStatus(reportAbs, status) {
   const expected = status === "pass" ? "PASS" : "FAIL";
@@ -322,11 +322,56 @@ function completionReadiness(statePath, state, options = {}) {
   };
 }
 
+// The sasu verify gate judges the run diff against the PRD acceptance
+// criteria. Completion refuses a gate that ran and failed (BLOCKED) or whose
+// passing inputs changed afterward (STALE). A gate that never ran does not
+// block - offline and test runs stay possible - but its status is stamped
+// into the receipt so a skipped gate is visible, never silent.
+function verifyGateStatus(state) {
+  const projectRoot = state.projectRoot || cwd();
+  if (!state.topicSlug) return { effective: "NOT_RUN", verdict: null, overridden: false };
+  const gatesPath = path.join(projectRoot, "agents", "gates", state.topicSlug, "gates.json");
+  if (!fs.existsSync(gatesPath)) return { effective: "NOT_RUN", verdict: null, overridden: false };
+  let gatesState;
+  try {
+    gatesState = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
+  } catch {
+    return { effective: "NOT_RUN", verdict: null, overridden: false, unreadable: true };
+  }
+  try {
+    const store = require("../dist/gates/store.js");
+    const view = store.gateStatus(gatesState, "verify", 0, projectRoot);
+    return { effective: view.effective, verdict: view.verdict, overridden: view.overridden, staleInputs: view.staleInputs };
+  } catch {
+    // CLI dist not built: fall back to the recorded verdict without freshness.
+    const record = (gatesState.gates && gatesState.gates.verify) || {};
+    const passed = record.verdict === "PASS" || record.overridden === true;
+    return {
+      effective: passed ? "PASS" : record.verdict == null ? "NOT_RUN" : "BLOCKED",
+      verdict: record.verdict || null,
+      overridden: record.overridden === true,
+      freshnessUnverified: true,
+    };
+  }
+}
+
+function verifyGateViolations(state) {
+  const gate = verifyGateStatus(state);
+  if (gate.effective === "BLOCKED") {
+    return [`Verify gate is BLOCKED (verdict ${gate.verdict}); fix the cited findings and re-run \`sasu verify\`, or have the user record an override`];
+  }
+  if (gate.effective === "STALE") {
+    return ["Verify gate PASS is stale: its input documents changed after the passing run; re-run `sasu verify` against the current diff"];
+  }
+  return [];
+}
+
 function completionViolations(statePath, state, options = {}) {
   const includeFinalReview = options.includeFinalReview !== false;
   const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
   const violations = [];
   violations.push(...prdSnapshotViolations(statePath, state));
+  violations.push(...verifyGateViolations(state));
   const verificationPlan = verificationPlanSummary(state);
   if (verificationPlan.status === "missing") {
     violations.push("Verification plan is missing");
@@ -363,16 +408,16 @@ function completionViolations(statePath, state, options = {}) {
       if (!anyCoveringPass) violations.push(`Acceptance ${ac.id} is met but none of its covering verification items passed`);
     }
   }
-	  for (const verification of state.verification) {
-	    if (isVerificationRequiredForDone(verification)) {
-	      if (verification.status !== "pass") violations.push(`Required verification ${verification.id} is ${verification.status}`);
-	    } else if (!["pass", "skipped", "blocked"].includes(verification.status)) {
-	      violations.push(`Optional verification ${verification.id} is ${verification.status}`);
-	    }
-	    if (!verification.evidence.length) violations.push(`Verification ${verification.id} has no evidence`);
-	    if (verification.status === "pass" && (!verification.artifacts || verification.artifacts.length === 0)) {
-	      violations.push(`Verification ${verification.id} has no artifact-backed evidence`);
-	    }
+    for (const verification of state.verification) {
+      if (isVerificationRequiredForDone(verification)) {
+        if (verification.status !== "pass") violations.push(`Required verification ${verification.id} is ${verification.status}`);
+      } else if (!["pass", "skipped", "blocked"].includes(verification.status)) {
+        violations.push(`Optional verification ${verification.id} is ${verification.status}`);
+      }
+      if (!verification.evidence.length) violations.push(`Verification ${verification.id} has no evidence`);
+      if (verification.status === "pass" && (!verification.artifacts || verification.artifacts.length === 0)) {
+        violations.push(`Verification ${verification.id} has no artifact-backed evidence`);
+      }
   }
   violations.push(...validateArtifacts(statePath, state, {
     includeRequirementsFidelityReview,
@@ -392,8 +437,8 @@ function completionViolations(statePath, state, options = {}) {
       violations.push("Final adversarial review has no report path");
     }
   }
-	  return violations;
-	}
+    return violations;
+  }
 
 function prdSnapshotViolations(statePath, state) {
   const snapshot = state.prdSnapshot;
@@ -492,6 +537,8 @@ module.exports = {
   reviewSnapshotMatchesCurrent,
   completionReadiness,
   completionViolations,
+  verifyGateStatus,
+  verifyGateViolations,
   prdSnapshotViolations,
   requirementsFidelityHandoffViolations,
   assertAllowedStatus,

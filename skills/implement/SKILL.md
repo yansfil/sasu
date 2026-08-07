@@ -33,6 +33,7 @@ Current PRDs should include:
 
 - `## 4. Pre-Work And Required Decisions`.
 - `## 5. Major Technical Structure Changes`.
+- `## 6. Requirements`.
 - `## 7. Acceptance Criteria`.
 - `## 8. PRD-Level Tasks`.
 - `## 9. Verification Contract`.
@@ -328,6 +329,11 @@ acceptance criteria to an independent judge only after both pass.
   the recorded deviation must carry the user's own reason.
 - Record the gate's PASS (or the user's override) as task/AC evidence; the
   gate state lives under `agents/gates/<topic-slug>/`.
+- Enforcement: `finalize` and the completion checks refuse a gate that ran
+  and is BLOCKED, or whose PASS went stale because its inputs changed.
+  A gate that never ran does not block completion, but its `NOT_RUN` status
+  is stamped into `receipt.json` and `implementation-result.md`, so skipping
+  it is always visible and needs the recorded reason below.
 - If the `sasu` binary is unavailable, record that limitation in
   `context-notes.md` and continue with the PRD verification contract alone.
 

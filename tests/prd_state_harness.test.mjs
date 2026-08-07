@@ -1533,3 +1533,64 @@ test("plan-verification warns when a check appears to touch a database", () => {
   const cleanState = JSON.parse(fs.readFileSync(path.join(cleanRoot, "agents", "implement", "db-safety-clean", "state.json"), "utf8"));
   assert.equal(cleanState.verificationPlan.gaps.filter(gap => gap.code === "db-safety").length, 0);
 });
+
+test("required command verification only closes through verify-run execution metadata", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "provenance");
+  runJson(["init", "--prd", prd, "--review-profile", "trivial"], root);
+  runJson(["plan-execution"], root);
+  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "implementation done"], root);
+
+  // Hand-author a plausible log and register it without running anything.
+  const fakeLog = path.join(root, "agents", "implement", "provenance", "artifacts", "logs", "fake.log");
+  write(fakeLog, "command: node -e \"process.exit(0)\"\nexitCode: 0\n--- stdout ---\n");
+  runJson(["record-artifact", "--id", "V1", "--kind", "command-log", "--path", fakeLog, "--description", "hand-authored log"], root);
+  runJson(["mark", "--kind", "verification", "--id", "V1", "--status", "pass", "--evidence", "manually marked"], root);
+  const before = runJson(["status"], root);
+  assert.ok(
+    before.completion.violations.some(item => /run it through verify-run so the command log carries execution metadata/.test(item)),
+    `expected provenance violation, got: ${JSON.stringify(before.completion.violations)}`,
+  );
+
+  // The genuine run satisfies the same check.
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], root);
+  const after = runJson(["status"], root);
+  assert.ok(!after.completion.violations.some(item => /verify-run so the command log carries execution metadata/.test(item)));
+});
+
+test("a BLOCKED or stale verify gate blocks completion; PASS and NOT_RUN do not", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "gate-wire");
+  runJson(["init", "--prd", prd, "--review-profile", "trivial"], root);
+  runJson(["plan-execution"], root);
+
+  const gatesDir = path.join(root, "agents", "gates", "gate-wire");
+  const gatesPath = path.join(gatesDir, "gates.json");
+  const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
+  const writeGates = verify => write(gatesPath, JSON.stringify({
+    gates: { "gap-audit": { ...emptyGate }, spec: { ...emptyGate }, verify },
+    deviations: [],
+    judgeCalls: [],
+  }, null, 2));
+
+  // NOT_RUN (no gates file): no gate violation.
+  const notRun = runJson(["status"], root);
+  assert.ok(!notRun.completion.violations.some(item => /Verify gate/.test(item)));
+
+  // Gate ran and failed: completion blocked.
+  writeGates({ ...emptyGate, verdict: "FAIL", attempts: 1 });
+  const blocked = runJson(["status"], root);
+  assert.ok(blocked.completion.violations.some(item => /Verify gate is BLOCKED/.test(item)));
+
+  // Fresh PASS pinned to the current PRD content: no gate violation.
+  const store = requireModule(path.join(repoRoot, "cli", "dist", "gates", "store.js"));
+  const inputs = [{ path: path.relative(root, prd), sha256: store.freshnessHash(fs.readFileSync(prd, "utf8")) }];
+  writeGates({ ...emptyGate, verdict: "PASS", attempts: 1, inputs });
+  const passed = runJson(["status"], root);
+  assert.ok(!passed.completion.violations.some(item => /Verify gate/.test(item)));
+
+  // PASS whose pinned input hash no longer matches: stale, blocked again.
+  writeGates({ ...emptyGate, verdict: "PASS", attempts: 1, inputs: [{ path: path.relative(root, prd), sha256: "0".repeat(64) }] });
+  const stale = runJson(["status"], root);
+  assert.ok(stale.completion.violations.some(item => /Verify gate PASS is stale/.test(item)));
+});

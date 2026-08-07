@@ -82,6 +82,20 @@ test("installer installs canonical skills with correct substitutions and no alia
   const claudeScripts = path.join(home, ".claude", "skills", "implement", "scripts");
   assert.ok(fs.lstatSync(claudeScripts).isSymbolicLink());
   assert.equal(fs.realpathSync(claudeScripts), fs.realpathSync(path.join(repoRoot, "skills", "implement", "scripts")));
+
+  // References are substituted real copies for Claude: no Codex path or $token
+  // may survive anywhere in the Claude tree (following symlinked scripts is
+  // fine; they self-locate and carry no runtime paths in docs).
+  const claudeReferences = path.join(home, ".claude", "skills", "implement", "references");
+  assert.equal(fs.lstatSync(claudeReferences).isSymbolicLink(), false);
+  for (const referenceName of fs.readdirSync(claudeReferences)) {
+    if (!referenceName.endsWith(".md")) continue;
+    const referenceText = fs.readFileSync(path.join(claudeReferences, referenceName), "utf8");
+    assert.doesNotMatch(referenceText, /~\/\.codex\/skills\//, `${referenceName} keeps a Codex path`);
+    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
+  }
+  // Codex references stay symlinked (verbatim source is correct there).
+  assert.ok(fs.lstatSync(path.join(home, ".codex", "skills", "implement", "references")).isSymbolicLink());
   assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "implement", "agents")));
   assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "implement", "agents")), false);
 

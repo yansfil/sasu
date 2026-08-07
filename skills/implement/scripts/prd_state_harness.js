@@ -4,7 +4,7 @@
 const { SELF_PATH, displayPath, parseArgs } = require("../../../cli/lib/util");
 const { cmdHook } = require("../../../cli/lib/hooks");
 const { cmdInit } = require("../../../cli/lib/commands/init");
-const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdNext, cmdReady, cmdRender, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
+const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdReady, cmdRender, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
 const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
 const { cmdMark, cmdAssign, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
@@ -24,7 +24,6 @@ const COMMANDS = [
   { name: "status", usageArgs: ["[--state <path>]"], run: args => cmdStatus(parseArgs(args)) },
   { name: "verify-delivery", usageArgs: ["[--state <path>]"], run: args => cmdVerifyDelivery(parseArgs(args)) },
   { name: "doctor", usageArgs: [""], run: () => cmdDoctor() },
-  { name: "next", usageArgs: ["[--state <path>]"], run: args => cmdNext(parseArgs(args)) },
   {
     name: "plan-verification",
     usageArgs: [

@@ -120,9 +120,9 @@ function cmdRecordArtifact(options) {
   const { statePath, state } = loadState(options);
   const match = findTrackedItem(state, id);
   if (!match) throw new Error(`Tracked item ${id} not found`);
-	  const artifact = attachArtifact(statePath, state, match, kind, artifactPath, description);
-	  markCompletionReviewsStale(state, `Artifact was recorded for ${match.kind} ${match.item.id} after review`);
-	  state.updatedAt = nowIso();
+    const artifact = attachArtifact(statePath, state, match, kind, artifactPath, description);
+    markCompletionReviewsStale(state, `Artifact was recorded for ${match.kind} ${match.item.id} after review`);
+    state.updatedAt = nowIso();
   persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
@@ -227,24 +227,24 @@ function cmdVerifyRun(rawArgs) {
   if (!id) throw new Error("--id is required");
   if (!commandArgs.length) throw new Error("verification command is required after --");
 
-	  const { statePath, state } = loadState(options);
-	  const match = findTrackedItem(state, id, "verification");
-	  if (!match) throw new Error(`Verification ${id} not found`);
-	  const commandText = formatCommandArgs(commandArgs);
-	  const commandCompareText = commandArgsForCompare(commandArgs);
-	  const plannedCommand = plannedCommandForVerification(state, id);
-	  const deviation = String(options.deviation || "").trim();
-	  let deviationEntry = null;
-	  if (!commandsMatchContract(commandCompareText, plannedCommand)) {
-	    if (!deviation) {
-	      throw new Error(`Verification ${id} command differs from PRD contract. Expected: ${plannedCommand}. Actual: ${commandText}. Re-run with --deviation <reason> if this is an intentional equivalent verifier.`);
-	    }
-	    deviationEntry = recordDeviation(state, "verification_command", id, deviation, {
-	      expectedCommand: plannedCommand,
-	      actualCommand: commandText,
-	    });
-	  }
-	  const startedAt = nowIso();
+    const { statePath, state } = loadState(options);
+    const match = findTrackedItem(state, id, "verification");
+    if (!match) throw new Error(`Verification ${id} not found`);
+    const commandText = formatCommandArgs(commandArgs);
+    const commandCompareText = commandArgsForCompare(commandArgs);
+    const plannedCommand = plannedCommandForVerification(state, id);
+    const deviation = String(options.deviation || "").trim();
+    let deviationEntry = null;
+    if (!commandsMatchContract(commandCompareText, plannedCommand)) {
+      if (!deviation) {
+        throw new Error(`Verification ${id} command differs from PRD contract. Expected: ${plannedCommand}. Actual: ${commandText}. Re-run with --deviation <reason> if this is an intentional equivalent verifier.`);
+      }
+      deviationEntry = recordDeviation(state, "verification_command", id, deviation, {
+        expectedCommand: plannedCommand,
+        actualCommand: commandText,
+      });
+    }
+    const startedAt = nowIso();
   const result = childProcess.spawnSync(commandArgs[0], commandArgs.slice(1), {
     cwd: state.projectRoot || cwd(),
     shell: false,
@@ -276,30 +276,30 @@ function cmdVerifyRun(rawArgs) {
   ].filter(line => line !== "").join("\n"));
 
   const description = `verify-run ${exitCode === 0 ? "passed" : "failed"}: ${commandText}`;
-	  const artifact = attachArtifact(statePath, state, match, "command-log", logAbs, description, {
-	    command: commandText,
-	    contractCommand: plannedCommand || null,
-	    deviationId: deviationEntry ? deviationEntry.id : null,
-	    exitCode,
-	    startedAt,
-	    finishedAt,
-	  });
+    const artifact = attachArtifact(statePath, state, match, "command-log", logAbs, description, {
+      command: commandText,
+      contractCommand: plannedCommand || null,
+      deviationId: deviationEntry ? deviationEntry.id : null,
+      exitCode,
+      startedAt,
+      finishedAt,
+    });
   match.item.status = exitCode === 0 ? "pass" : "fail";
   match.item.evidence.push({
     ts: nowIso(),
     text: `Command ${exitCode === 0 ? "passed" : "failed"} with exit code ${exitCode}: ${commandText}. Log: ${artifact.path}`,
   });
-	  markCompletionReviewsStale(state, `Verification ${id} was run after review`);
-	  state.updatedAt = nowIso();
+    markCompletionReviewsStale(state, `Verification ${id} was run after review`);
+    state.updatedAt = nowIso();
   persistState(statePath, state);
   appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
     ts: nowIso(),
     event: "verification_run",
     id,
-	    command: commandText,
-	    contractCommand: plannedCommand || null,
-	    deviation: deviationEntry,
-	    exitCode,
+      command: commandText,
+      contractCommand: plannedCommand || null,
+      deviation: deviationEntry,
+      exitCode,
     logPath: artifact.path,
   });
   syncActive(statePath, state);

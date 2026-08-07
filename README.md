@@ -126,7 +126,7 @@ The harness treats "done" as a provable state, and the enforcement works identic
   Required verification items need registered artifacts of the right kind per mode (command logs, screenshots, API/DB probes).
   Self-authored summaries never count as evidence, and artifact hashes plus git snapshots make stale reviews detectable.
 - **Profile-aware review.**
-  Every run gets a requirements fidelity review, while only high-risk and compatible legacy runs require a second adversarial review.
+  Every run gets a requirements fidelity review, while only high-risk runs require a second adversarial review.
   The agent declares semantic risk from full context, and the harness validates the profile instead of classifying natural language with keyword rules.
   PRD, project policy, and CLI profiles act as safety floors, so a runtime flag cannot silently lower a stronger judgment.
   Any source change after a passing review marks it stale.
@@ -148,11 +148,11 @@ node --test tests/*.test.mjs
 node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
 ```
 
-Optional state-schema typecheck (no npm dependency; uses the JSDoc typedefs in `scripts/lib/types.js`):
+Optional state-schema typecheck (uses the JSDoc typedefs in `cli/lib/types.js`):
 
 ```sh
 npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --skipLibCheck \
-  skills/implement/scripts/lib/state_data.js skills/implement/scripts/lib/types.js
+  cli/lib/state_data.js cli/lib/types.js
 ```
 
 `doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
@@ -167,7 +167,7 @@ After changing installed skills, confirm visibility:
 skills/
   interview-me/  SKILL.md, scripts/validate_intake.mjs
   gen-prd/   SKILL.md
-  implement/  SKILL.md, scripts/prd_state_harness.js (CLI entry), scripts/lib/ (layered modules), references/
+  implement/  SKILL.md, scripts/prd_state_harness.js (thin entry into cli/lib), references/
   ship/   SKILL.md, scripts/prd_ship.js
   ho-setup/  SKILL.md
   please/    SKILL.md
@@ -175,16 +175,19 @@ skills/
 scripts/
   install-local-skills.mjs   dual-runtime installer + hook registration
 tests/
-  prd_state_harness.test.mjs
+  prd_state_harness.test.mjs      harness command behavior end to end
   prd_state_regression.test.mjs   full standard-profile flow + golden artifact snapshots
-  prd_parser_unit.test.mjs        direct unit tests for scripts/lib/prd_parser.js
+  prd_parser_unit.test.mjs        direct unit tests for cli/lib/prd_parser.js
   rules_engine.test.mjs           rules add/check/relevant + seed-agents-md
-  install_local_skills.test.mjs
+  install_local_skills.test.mjs   dual-runtime installer + hook registration
+  prd_ship.test.mjs               ship delivery gates
+  checkshirt_gate_wiring.test.mjs / checkshirt_judge_timeout.test.mjs   sasu gate CLI wiring
+  interview_me_validator.test.mjs / implement_skill_structure.test.mjs  skill-doc contracts
   golden/                         normalized golden files (regenerate: UPDATE_GOLDEN=1)
 ```
 
-`prd_state_harness.js` is a thin dispatcher over `scripts/lib/`:
+`prd_state_harness.js` is a thin dispatcher over `cli/lib/`:
 `util` → `git` → `config` → `rules` → `state_data` → `prd_parser` → `inference` → `planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` → `commands/*`.
 Modules only require layers to their left, so the dependency graph stays acyclic.
 
-Run artifacts live in the target project, not here: PRDs under `agents/prd/**` (committed), implementation state and evidence under `agents/implement/**` (gitignored by the one-line policy `agents/implement/`, enforced by `doctor`).
+Run artifacts live in the target project, not here: PRDs under `agents/prd/**` (committed), implementation state and evidence under `agents/implement/**` (gitignored via `agents/implement/` plus `agents/gates/**` judgment artifacts, enforced by `doctor`).

@@ -18,6 +18,7 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Requirements fidelity owner: independent
 - Requirements fidelity depth: full
 - Final adversarial review required: no
+- Verify gate: NOT_RUN
 - Classification signals: none
 
 ## Execution Plan And Changed Modules
@@ -178,6 +179,11 @@ Receipt: agents/implement/standard-regression/receipt.json
     "blockingGapCount": 0,
     "warningCount": 0,
     "generatedAt": "<TS>"
+  },
+  "verifyGate": {
+    "effective": "NOT_RUN",
+    "verdict": null,
+    "overridden": false
   },
   "artifactCount": 1,
   "requirementsFidelityReview": {

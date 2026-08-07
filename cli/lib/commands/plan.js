@@ -153,7 +153,7 @@ function readTaskPlanInput(options, state) {
 // Best-effort learned-rule injection (R11 of the agents-remember contract):
 // invariants whose triggers prefix-overlap any task write scope become
 // verification items, so passing them is part of the receipt. The exact,
-// changed-file-based enforcement stays with the deliver gate; this match is
+// changed-file-based enforcement stays with the ship gate; this match is
 // conservative and says so in the injected item text.
 function injectRuleVerification(state) {
   const projectRoot = state.projectRoot || cwd();

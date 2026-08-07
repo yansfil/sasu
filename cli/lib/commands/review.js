@@ -7,7 +7,7 @@ const { worktreeSnapshot } = require("../git");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations } = require("../reviews");
+const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, verifyGateStatus } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt, renderViews } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
@@ -195,6 +195,9 @@ function cmdFinalize(options) {
     initialWorktreeSnapshot: state.initialWorktreeSnapshot || null,
     worktreeSnapshot: worktreeSnapshot(state),
     executionPlan: executionPlanSummary(state),
+    // Visible even when NOT_RUN: a skipped verify gate must be readable from
+    // the receipt, not silently absent.
+    verifyGate: verifyGateStatus(state),
     artifactCount: collectArtifacts(state).length,
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,

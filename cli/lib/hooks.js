@@ -75,7 +75,7 @@ Implementation receipt is complete, but delivery mode is 'pr' and no pull reques
 PRD: \`${state.prdPath}\`
 State: \`${toProjectRelative(statePath, hookCwd)}\`
 
-The thread is not done until the deliver skill opens the PR and required CI passes or the delivery is explicitly reported as blocked. Run:
+The thread is not done until the ship skill opens the PR and required CI passes or the delivery is explicitly reported as blocked. Run:
 
   ${shipCommand} body --state ${toProjectRelative(statePath, hookCwd)}
   (fill the AGENT-FILL prose sections from implementation-result.md)
@@ -88,9 +88,9 @@ If delivery is genuinely blocked, report the blocker explicitly to the user inst
 
 function runStopHook(payload, started) {
   if (!payload || typeof payload !== "object") return "";
-	  const event = payload.hook_event_name;
-	  if (event !== "Stop") return "";
-	  if (payload.stop_hook_active === true) return "";
+  const event = payload.hook_event_name;
+  if (event !== "Stop") return "";
+  if (payload.stop_hook_active === true) return "";
   const hookCwd = typeof payload.cwd === "string" ? payload.cwd : cwd();
   const sessionId = sessionIdFromHookPayload(payload);
   if (!sessionId) return "";
@@ -219,16 +219,16 @@ Blocked premature update_goal complete.
 
 PRD: \`${state.prdPath}\`
 State: \`${toProjectRelative(statePath, hookCwd)}\`
-	Open tracked items: ${counts.totalOpen}
-	Required verification not passed: ${counts.requiredVerificationNotPassed}
-	Verification plan: ${verificationPlanSummary(state).status} (${verificationPlanSummary(state).blockingGapCount} blocking gaps)
-	Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openTaskCount} open tasks, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
-	Requirements fidelity review: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}
-	Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "not required by policy"}
-	Receipt: ${state.finalReceipt ? "present" : "missing"}
+Open tracked items: ${counts.totalOpen}
+Required verification not passed: ${counts.requiredVerificationNotPassed}
+Verification plan: ${verificationPlanSummary(state).status} (${verificationPlanSummary(state).blockingGapCount} blocking gaps)
+Execution plan: ${executionPlanSummary(state).status} (${executionPlanSummary(state).openTaskCount} open tasks, ${executionPlanSummary(state).blockingGapCount} blocking gaps)
+Requirements fidelity review: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}
+Final review: ${state.finalReview ? state.finalReview.status : finalReviewRequired ? "pending" : "not required by policy"}
+Receipt: ${state.finalReceipt ? "present" : "missing"}
 
-	Run \`${harnessCommand()} status\`, close all tasks and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the goal complete.
-	</prd-implement-goal-guard>`,
+Run \`${harnessCommand()} status\`, close all tasks and PRD items with artifact-backed evidence, record a passing requirements fidelity review, ${finalReviewRequirement}, then finalize before marking the goal complete.
+</prd-implement-goal-guard>`,
   });
 }
 
@@ -286,7 +286,7 @@ Drive the Next required item above to done, then record it with the matching har
     ? "have one fresh independent read-only sidecar write the report from the raw prompt (fresh manual pass if sidecars are unavailable, stating that fallback)"
     : "write the report as the main agent after reading the complete canonical qa-log or conversation source"}, save \`${state.runDir}/review/requirements-fidelity-review.md\`, and record it with \`${HARNESS} requirements-review-record --status pass|fail --report <path> --summary "<verdict>"\`. Sidecars never mutate harness state; the coordinator records.
 ${finalReviewRequired ? `6. Only after fidelity passes: \`${HARNESS} review-prompt\`, have a fresh independent read-only sidecar write \`${state.runDir}/review/final-review.md\`, then \`${HARNESS} review-record --status pass|fail --report <path> --summary "<verdict>"\`.
-7. Only after the final review passes` : `6. This profile requires no final adversarial review. After fidelity passes`}: \`${HARNESS} finalize --status complete --summary "<evidence-backed summary>"\`. Do not report the run complete before \`${state.runDir}/receipt.json\` exists and \`status\` shows no open items or violations. If delivery mode is \`pr\`, the receipt alone is not completion: hand off to the deliver skill with \`${context.statePath}\`.
+7. Only after the final review passes` : `6. This profile requires no final adversarial review. After fidelity passes`}: \`${HARNESS} finalize --status complete --summary "<evidence-backed summary>"\`. Do not report the run complete before \`${state.runDir}/receipt.json\` exists and \`status\` shows no open items or violations. If delivery mode is \`pr\`, the receipt alone is not completion: hand off to the ship skill with \`${context.statePath}\`.
 ${finalReviewRequired ? "8" : "7"}. If completion is impossible: record the fidelity review anyway (\`Status: FAIL\` is allowed), then \`finalize --status blocked\` or \`--status partial\`; never report \`Done\`.`;
   return `<prd-implement-continuation>
 
@@ -303,12 +303,12 @@ Exception: if the user's latest message redirects to unrelated work or explicitl
 - Execution plan: ${executionPlan.status} (${executionPlan.taskCount} tasks, ${executionPlan.openTaskCount} open, ${executionPlan.blockingGapCount} blocking gaps)
 - Ready tasks: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}${ready.parallelEnabled ? `\n- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}` : ""}
 - Blocked tasks: ${ready.blocked.length ? ready.blocked.map(item => `${item.id} waits for ${item.waitingFor.join(", ")}`).join("; ") : "none"}
-	- Open tasks: ${counts.tasksOpen}
-	- Open acceptance criteria: ${counts.acOpen}
-	- Open verification items: ${counts.verificationOpen}
-	- Required verification not passed: ${counts.requiredVerificationNotPassed}
-	- Blocked items: tasks ${counts.blocked.tasks}, AC ${counts.blocked.acceptanceCriteria}, verification ${counts.blocked.verification}
-	- Artifact count: ${collectArtifacts(state).length}
+- Open tasks: ${counts.tasksOpen}
+- Open acceptance criteria: ${counts.acOpen}
+- Open verification items: ${counts.verificationOpen}
+- Required verification not passed: ${counts.requiredVerificationNotPassed}
+- Blocked items: tasks ${counts.blocked.tasks}, AC ${counts.blocked.acceptanceCriteria}, verification ${counts.blocked.verification}
+- Artifact count: ${collectArtifacts(state).length}
 - Requirements fidelity review: ${requirementsReviewStatus}
 - Final review: ${finalReviewStatus}
 - Recent activity: ${recentActivity}
@@ -320,7 +320,7 @@ ${proceduresBlock}
 # Completion rule
 
 The turn may end only after one tracked item is marked with evidence, artifact-backed verification is recorded, a concrete blocker is marked, or the final receipt is written.
-If delivery mode is \`pr\`, a final completion answer also requires the deliver (prd-ship) PR URL and CI verdict.
+If delivery mode is \`pr\`, a final completion answer also requires the ship PR URL and CI verdict.
 Do not provide a final completion answer before the receipt exists.
 
 </prd-implement-continuation>

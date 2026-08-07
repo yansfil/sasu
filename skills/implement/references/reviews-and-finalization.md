@@ -127,7 +127,7 @@ Write:
 agents/implement/<topic-slug>/review/requirements-fidelity-review.md
 ```
 
-The report must include a `Verification Intent Checklist` section.
+The report must include the sections `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, and `Verdict`; the generated prompt emits this skeleton.
 For every required `V#`, list the PRD Pass Intent or derived pass criteria, covered `R#` and `AC#` IDs, registered artifact paths inspected, a `PASS` or `FAIL` judgment, and any gap.
 A passing review must fail when a required `V#` is missing, lacks a registered artifact path, or has an artifact that does not prove its mapped requirement or acceptance criterion.
 
@@ -270,16 +270,21 @@ Otherwise leave the Goal active and report the receipt state honestly.
 The receipt is the only authoritative implementation completion proof.
 Goal state is lifecycle control and may mirror a successful receipt, but it is not a second proof artifact.
 
-`finalize --status complete` and completion hooks must reject completion when any of these remain:
+`finalize --status complete` rejects completion mechanically when any of these remain:
 
 - the receipt is missing.
-- a Goal is missing when Goal tools were available.
-- the execution plan is missing or has blocking gaps.
+- the execution or verification plan is missing or has blocking gaps.
 - PRD tasks, acceptance criteria, or verification items are open or lack evidence.
-- the verification plan has blocking gaps.
+- a met acceptance criterion has no covering verification item in `pass` status.
 - requirements fidelity is missing, failed, or stale.
 - a required final review is missing, failed, or stale.
 - source, evidence, artifacts, plans, or deviations changed after a passing review.
-- required artifacts are missing, empty, invalid, unregistered, hash-mismatched, or the wrong kind.
+- required artifacts are missing, empty, invalid, unregistered, hash-mismatched, the wrong kind, or (for command/automated checks) missing verify-run execution metadata.
 - required verification is blocked, skipped, failed, pending, or lacks artifact-backed evidence.
-- verification-only runtime processes are still running without an explicit exception.
+- the sasu verify gate ran and is BLOCKED, or its PASS went stale.
+
+The agent additionally owns these completion duties, which the harness cannot check:
+
+- create or complete the tracked Goal when Goal tools are available.
+- stop verification-only runtime processes or record the explicit exception.
+- run the verify gate (or record the `sasu` binary's unavailability in `context-notes.md`); a `NOT_RUN` gate is stamped into the receipt.

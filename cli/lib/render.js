@@ -7,6 +7,7 @@ const { writeJson, writeMarkdown, NAMESPACE_ROOT } = require("./util");
 const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
 const { readyExecutionPlan, buildTraceMatrix, executionCoverageForTask } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
+const { verifyGateStatus } = require("./reviews");
 const { snapshotEntriesEqual } = require("./git");
 
 function checkbox(done) {
@@ -102,18 +103,18 @@ function renderChecklist(state) {
     if (task.artifacts && task.artifacts.length) lines.push("  - Artifacts:", artifactText(task));
   }
   lines.push("", "## Acceptance Criteria", "");
-	  for (const ac of state.acceptanceCriteria) {
-	    lines.push(`- ${checkbox(ac.status === "met")} ${ac.id}. ${ac.title}`);
+    for (const ac of state.acceptanceCriteria) {
+      lines.push(`- ${checkbox(ac.status === "met")} ${ac.id}. ${ac.title}`);
     lines.push(`  - Status: ${ac.status}`);
     if (ac.requirements.length) lines.push(`  - Requirements: ${ac.requirements.join(", ")}`);
     if (ac.evidence.length) lines.push("  - Evidence:", evidenceText(ac));
     if (ac.artifacts && ac.artifacts.length) lines.push("  - Artifacts:", artifactText(ac));
   }
   lines.push("", "## Verification Evidence", "");
-	  for (const verification of state.verification) {
-	    lines.push(`- ${checkbox(verificationIsClosedForAccounting(verification))} ${verification.id}. ${verification.level}: ${verification.title}`);
-	    lines.push(`  - Status: ${verification.status}`);
-	    lines.push(`  - Required For Done: ${isVerificationRequiredForDone(verification) ? "yes" : "no"}`);
+    for (const verification of state.verification) {
+      lines.push(`- ${checkbox(verificationIsClosedForAccounting(verification))} ${verification.id}. ${verification.level}: ${verification.title}`);
+      lines.push(`  - Status: ${verification.status}`);
+      lines.push(`  - Required For Done: ${isVerificationRequiredForDone(verification) ? "yes" : "no"}`);
     if (verification.evidence.length) lines.push("  - Evidence:", evidenceText(verification));
     if (verification.artifacts && verification.artifacts.length) lines.push("  - Artifacts:", artifactText(verification));
   }
@@ -178,20 +179,20 @@ function renderVerificationPlan(state) {
     lines.push(`- Tool: ${check.tool}`);
     if (check.command) lines.push(`- Command: \`${check.command}\``);
     if (check.target) lines.push(`- Target: ${check.target}`);
-	    lines.push(`- Covers: ${formatCoverage(check.covers)}`);
-	    lines.push(`- Artifacts: ${check.artifactKinds.join(", ")}`);
-	    lines.push(`- Pass criteria: ${check.passCriteria}`);
-	    lines.push(`- Required for done: ${check.requiredForDone ? "yes" : "no"}`);
-	    lines.push(`- Can be blocked: ${check.canBeBlocked ? "yes" : "no"}`);
-	    if (check.contract) {
-	      lines.push(`- Contract method: ${check.contract.method || "missing"}`);
-	      lines.push(`- Contract artifact: ${check.contract.artifact || "missing"}`);
-	      if (check.contract.environment) lines.push(`- Contract environment: ${check.contract.environment}`);
-	      if (check.contract.safeProbe) lines.push(`- Safe probe: ${check.contract.safeProbe}`);
-	      if (check.contract.liveProof) lines.push(`- Live proof: ${check.contract.liveProof}`);
-	      if (check.contract.sideEffect) lines.push(`- Side effect: ${check.contract.sideEffect}`);
-	      if (check.contract.sensitiveDataPolicy) lines.push(`- Sensitive data policy: ${check.contract.sensitiveDataPolicy}`);
-	    }
+      lines.push(`- Covers: ${formatCoverage(check.covers)}`);
+      lines.push(`- Artifacts: ${check.artifactKinds.join(", ")}`);
+      lines.push(`- Pass criteria: ${check.passCriteria}`);
+      lines.push(`- Required for done: ${check.requiredForDone ? "yes" : "no"}`);
+      lines.push(`- Can be blocked: ${check.canBeBlocked ? "yes" : "no"}`);
+      if (check.contract) {
+        lines.push(`- Contract method: ${check.contract.method || "missing"}`);
+        lines.push(`- Contract artifact: ${check.contract.artifact || "missing"}`);
+        if (check.contract.environment) lines.push(`- Contract environment: ${check.contract.environment}`);
+        if (check.contract.safeProbe) lines.push(`- Safe probe: ${check.contract.safeProbe}`);
+        if (check.contract.liveProof) lines.push(`- Live proof: ${check.contract.liveProof}`);
+        if (check.contract.sideEffect) lines.push(`- Side effect: ${check.contract.sideEffect}`);
+        if (check.contract.sensitiveDataPolicy) lines.push(`- Sensitive data policy: ${check.contract.sensitiveDataPolicy}`);
+      }
     lines.push(`- Status: ${check.status}`);
     if (check.notes.length) {
       lines.push("- Notes:");
@@ -271,6 +272,8 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Requirements fidelity owner: ${policy.fidelityOwner}`);
   lines.push(`- Requirements fidelity depth: ${policy.fidelityDepth}`);
   lines.push(`- Final adversarial review required: ${policy.finalReviewRequired ? "yes" : "no"}`);
+  const verifyGate = verifyGateStatus(state);
+  lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
   if (Array.isArray(profile.signals) && profile.signals.length) {
     lines.push("- Classification signals:");
     for (const signal of profile.signals) lines.push(`  - ${signal}`);

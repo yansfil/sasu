@@ -34,12 +34,12 @@ function cmdStatus(options) {
     ready: readyExecutionPlan(state),
     active: activeDiagnostics(cwd(), statePath),
     warnings: prdCopyDriftWarnings(state),
-	    artifactCount: collectArtifacts(state).length,
-	    artifactViolations: validateArtifacts(statePath, state),
-	    completion: completionReadiness(statePath, state, { includeFinalReview: true }),
-	    requirementsFidelityReview: state.requirementsFidelityReview,
-	    finalReview: state.finalReview,
-	    next: nextItem(state),
+      artifactCount: collectArtifacts(state).length,
+      artifactViolations: validateArtifacts(statePath, state),
+      completion: completionReadiness(statePath, state, { includeFinalReview: true }),
+      requirementsFidelityReview: state.requirementsFidelityReview,
+      finalReview: state.finalReview,
+      next: nextItem(state),
     finalReceipt: state.finalReceipt,
   }, null, 2) + "\n");
 }
@@ -371,7 +371,7 @@ function doctorCheckPrDeliveryAssets(projectRoot, delivery, add) {
   else add("warn", "pr-template", "No repository or global PR template found");
 
   const shipScript = shipScriptPath();
-  if (fs.existsSync(shipScript)) add("ok", "prd-ship", `deliver (prd-ship) script found: ${displayPath(shipScript)}`);
+  if (fs.existsSync(shipScript)) add("ok", "prd-ship", `ship script found: ${displayPath(shipScript)}`);
   else add("error", "prd-ship", `Delivery mode is pr but ${displayPath(shipScript)} is missing`);
 }
 
@@ -415,19 +415,6 @@ function doctorCollectActiveRun(projectRoot, add) {
     add("warn", "active-run", `Active file unreadable: ${error.message}`);
     return null;
   }
-}
-
-function cmdNext(options) {
-  const { statePath, state } = loadState(options);
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    statePath: toProjectRelative(statePath),
-    next: nextItem(state),
-    counts: countState(state),
-    verificationPlan: verificationPlanSummary(state),
-    executionPlan: executionPlanSummary(state),
-    ready: readyExecutionPlan(state),
-  }, null, 2) + "\n");
 }
 
 function cmdReady(options) {
@@ -476,7 +463,6 @@ module.exports = {
   cmdStatus,
   cmdVerifyDelivery,
   cmdDoctor,
-  cmdNext,
   cmdReady,
   cmdRender,
   cmdCleanupActive,

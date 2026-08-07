@@ -114,6 +114,25 @@ function installSkill(targetKey, name) {
     const source = path.join(sourceDir, entry.name);
     const linkTarget = path.join(targetDir, entry.name);
     removePath(linkTarget);
+    // References carry the same runtime-specific paths and invocation tokens
+    // as SKILL.md, so the Claude install must substitute them; a symlink would
+    // leave ~/.codex paths in every reference command. Scripts stay symlinked
+    // for both runtimes (they self-locate from the invoked path).
+    if (targetKey === "claude" && entry.isDirectory() && entry.name === "references") {
+      ensureDir(linkTarget);
+      for (const referenceEntry of fs.readdirSync(source)) {
+        const referenceSource = path.join(source, referenceEntry);
+        if (referenceEntry.endsWith(".md")) {
+          fs.writeFileSync(
+            path.join(linkTarget, referenceEntry),
+            target.transformSkillMd(fs.readFileSync(referenceSource, "utf8")),
+          );
+        } else {
+          fs.symlinkSync(referenceSource, path.join(linkTarget, referenceEntry), fs.statSync(referenceSource).isDirectory() ? "dir" : "file");
+        }
+      }
+      continue;
+    }
     const linkType = fs.statSync(source).isDirectory() ? "dir" : "file";
     fs.symlinkSync(source, linkTarget, linkType);
   }

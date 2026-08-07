@@ -90,8 +90,9 @@ const REQUIRED_EVIDENCE_KINDS_BY_CATEGORY = {
   server: ["log", "command-log", "api", "screenshot"],
   api: ["api", "command-log", "log"],
   db: ["db", "command-log", "log"],
-  // A required check that classified as manual-agent still needs a concrete
-  // captured artifact; a hand-authored file/markdown must not satisfy it.
+  // Manual-agent evidence is agent-authored by construction; this list only
+  // keeps markdown prose out. The real control on these checks is the fidelity
+  // review's Verification Intent Checklist, not an extension filter.
   "manual-agent": ["screenshot", "image", "browser", "api", "db", "log", "command-log"],
 };
 
