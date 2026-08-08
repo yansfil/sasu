@@ -14,7 +14,6 @@ const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts } = require("../artifacts");
 const { validateArtifacts, reviewWorktreeSnapshotViolations, prdCopyDriftWarnings, completionReadiness, prdSnapshotViolations } = require("../reviews");
 const { activePath, activeRootsForState, removeActiveRecordForState, activeDiagnostics, loadState, latestPrdSlug } = require("../state_store");
-const { renderViews } = require("../render");
 const { deliveryShipPending } = require("../hooks");
 
 function cmdStatus(options) {
@@ -427,23 +426,6 @@ function cmdReady(options) {
   }, null, 2) + "\n");
 }
 
-// Regenerates every derived view from state.json. The mark commands write only
-// state.json, so this is how a coordinator refreshes the readable documents
-// without mutating the run.
-function cmdRender(options) {
-  const { statePath, state } = loadState(options);
-  renderViews(statePath, state);
-  const runDir = path.dirname(statePath);
-  const rendered = ["checklist.md", "verification.md"];
-  if (state.executionPlan) rendered.push("execution-plan.json", "execution-plan.md");
-  if (state.verificationPlan) rendered.push("verification-plan.json", "verification-plan.md");
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    statePath: toProjectRelative(statePath),
-    rendered: rendered.map(name => toProjectRelative(path.join(runDir, name), state.projectRoot || cwd())),
-  }, null, 2) + "\n");
-}
-
 function cmdCleanupActive(options) {
   const { statePath, state } = loadState(options);
   const removed = [];
@@ -463,6 +445,5 @@ module.exports = {
   cmdVerifyDelivery,
   cmdDoctor,
   cmdReady,
-  cmdRender,
   cmdCleanupActive,
 };

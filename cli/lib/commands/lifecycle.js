@@ -2,7 +2,7 @@
 
 const path = require("path");
 
-const { nowIso, writeJson, appendJsonl } = require("../util");
+const { nowIso, writeJson } = require("../util");
 const { recordDeviation, effectiveReviewPolicy } = require("../state_data");
 const { loadState, syncActive, persistState } = require("../state_store");
 
@@ -12,14 +12,11 @@ const { loadState, syncActive, persistState } = require("../state_store");
 // so forgetting to resume cannot silently kill an active run.
 function cmdPause(options) {
   const { statePath, state } = loadState(options);
-  const ledgerPath = path.join(path.dirname(statePath), "ledger.jsonl");
   if (options.clear) {
-    const wasPaused = Boolean(state.paused);
     delete state.paused;
     state.updatedAt = nowIso();
     writeJson(statePath, state);
     syncActive(statePath, state);
-    if (wasPaused) appendJsonl(ledgerPath, { ts: nowIso(), event: "resumed" });
     process.stdout.write(JSON.stringify({ ok: true, paused: false }, null, 2) + "\n");
     return;
   }
@@ -31,7 +28,6 @@ function cmdPause(options) {
   // the auto-resume signal for every real mutation command.
   writeJson(statePath, state);
   syncActive(statePath, state);
-  appendJsonl(ledgerPath, { ts: nowIso(), event: "paused", reason });
   process.stdout.write(JSON.stringify({
     ok: true,
     paused: true,
@@ -67,14 +63,6 @@ function cmdReviewPolicy(options) {
   };
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "review_profile_overridden",
-    from: previous ? previous.profile : null,
-    to: profile,
-    reason,
-    deviationId: deviation.id,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,

@@ -3,12 +3,11 @@
 const fs = require("fs");
 const path = require("path");
 
-const { nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text } = require("../util");
+const { nowIso, cwd, resolveProjectPath, toProjectRelative, sha256Text } = require("../util");
 const { recordDeviation, markCompletionReviewsStale, countState } = require("../state_data");
 const { stripFrontmatter } = require("../prd_parser");
 const { buildVerificationPlan, buildExecutionPlan, verificationContractHash, nextBrief } = require("../planning");
 const { loadState, syncActive, persistState } = require("../state_store");
-const { renderViews } = require("../render");
 const { parsePrdContract } = require("./init");
 
 const EXECUTOR_FIELDS = ["dependsOn", "writeScope", "parallelSafe", "risk", "owner"];
@@ -157,27 +156,15 @@ function cmdReconcile(options) {
     sha256: newSha,
     added: changes.added.map(entry => `${entry.kind}:${entry.id}`),
     changed: changes.changed.map(entry => `${entry.kind}:${entry.id}`),
-    removed: changes.removed.map(entry => `${entry.kind}:${entry.id}`),
+    // Removed items are archived here in full so their evidence trail survives
+    // even though they leave the tracked lists.
+    removed: changes.removed,
   });
   if (materialChange) {
     markCompletionReviewsStale(state, "PRD contract items changed during reconcile");
   }
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  renderViews(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "prd_reconciled",
-    previousSha256: previousSha,
-    sha256: newSha,
-    added: changes.added.map(entry => `${entry.kind}:${entry.id}`),
-    changed: changes.changed.map(entry => `${entry.kind}:${entry.id}`),
-    unchanged: changes.unchanged,
-    // Removed items are archived here in full so their evidence trail survives
-    // even though they leave state.json.
-    removed: changes.removed,
-    deviationId: deviation.id,
-  });
   syncActive(statePath, state);
 
   process.stdout.write(JSON.stringify({

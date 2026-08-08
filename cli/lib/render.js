@@ -3,246 +3,11 @@
 const fs = require("fs");
 const path = require("path");
 
-const { writeJson, writeMarkdown, NAMESPACE_ROOT } = require("./util");
-const { isVerificationRequiredForDone, verificationIsClosedForAccounting, executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
-const { readyExecutionPlan, buildTraceMatrix, executionCoverageForTask } = require("./planning");
+const { writeMarkdown, NAMESPACE_ROOT } = require("./util");
+const { executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
 const { collectArtifacts } = require("./artifacts");
 const { verifyGateStatus } = require("./reviews");
 const { snapshotEntriesEqual } = require("./git");
-
-function checkbox(done) {
-  return done ? "[x]" : "[ ]";
-}
-
-function evidenceText(item) {
-  if (!item.evidence || item.evidence.length === 0) return "";
-  return item.evidence.map(entry => `    - ${entry.ts}: ${entry.text}`).join("\n");
-}
-
-function artifactText(item) {
-  if (!item.artifacts || item.artifacts.length === 0) return "";
-  return item.artifacts.map(artifact => `    - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`).join("\n");
-}
-
-function renderExecutionPlan(state) {
-  const plan = state.executionPlan;
-  if (!plan) return "# Execution Plan\n\nStatus: missing\n";
-  const ready = readyExecutionPlan(state);
-  const lines = [
-    `# Execution Plan: ${state.topicSlug}`,
-    "",
-    `- PRD: ${state.prdPath}`,
-    `- Status: ${plan.status}`,
-    `- Generated: ${plan.generatedAt}`,
-    `- Tasks: ${(state.tasks || []).length}`,
-    `- Task plan applied: ${plan.taskPlanApplied ? "yes" : "no"}`,
-    `- Blocking gaps: ${(plan.gaps || []).filter(gap => gap.severity === "blocking").length}`,
-    `- Warnings: ${(plan.gaps || []).filter(gap => gap.severity !== "blocking").length}`,
-    "",
-    "## Ready Guidance",
-    "",
-    `- Ready sequential: ${ready.readySequential.length ? ready.readySequential.join(", ") : "none"}`,
-    `- Ready parallel groups: ${ready.readyParallelGroups.length ? ready.readyParallelGroups.map(group => `[${group.join(", ")}]`).join(", ") : "none"}`,
-    "",
-    "## Tasks",
-    "",
-  ];
-  for (const task of state.tasks || []) {
-    lines.push(`### ${task.id}. ${task.title}`);
-    lines.push("");
-    lines.push(`- Status: ${task.status}`);
-    lines.push(`- Owner: ${task.owner || "unassigned"}`);
-    lines.push(`- Depends on: ${(task.dependsOn || []).length ? task.dependsOn.join(", ") : "none"}`);
-    lines.push(`- Write scope: ${(task.writeScope || []).length ? task.writeScope.join(", ") : "unknown"}`);
-    lines.push(`- Parallel safe: ${task.parallelSafe ? "yes" : "no"}`);
-    lines.push(`- Risk: ${task.risk}`);
-    lines.push(`- Covers: ${formatCoverage(executionCoverageForTask(state, task))}`);
-    if (task.evidence && task.evidence.length) {
-      lines.push("- Evidence:");
-      for (const entry of task.evidence) lines.push(`  - ${entry.ts}: ${entry.text}`);
-    }
-    if (task.artifacts && task.artifacts.length) {
-      lines.push("- Artifacts:");
-      for (const artifact of task.artifacts) lines.push(`  - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`);
-    }
-    lines.push("");
-  }
-  lines.push("## Trace Matrix", "");
-  for (const row of buildTraceMatrix(state)) {
-    lines.push(`- ${row.taskId}: R ${row.requirements.length ? row.requirements.join(", ") : "none"}; AC ${row.acceptanceCriteria.length ? row.acceptanceCriteria.join(", ") : "none"}; required V ${row.requiredVerification.length ? row.requiredVerification.join(", ") : "none"}; optional V ${row.optionalVerification.length ? row.optionalVerification.join(", ") : "none"}`);
-  }
-  lines.push("", "## Gaps", "");
-  if (!plan.gaps || plan.gaps.length === 0) {
-    lines.push("- None");
-  } else {
-    for (const gap of plan.gaps) lines.push(`- ${gap.severity}: ${gap.code} ${gap.item} - ${gap.message}`);
-  }
-  return lines.join("\n");
-}
-
-function renderChecklist(state) {
-  const lines = [`# PRD Implementation Checklist: ${state.topicSlug}`, "", `Source PRD: ${state.prdPath}`, ""];
-  const reviewPolicy = effectiveReviewPolicy(state);
-  lines.push("## Review Policy", "");
-  lines.push(`- Profile: ${reviewPolicy.profile}`);
-  lines.push(`- Requirements fidelity owner: ${reviewPolicy.fidelityOwner}`);
-  lines.push(`- Final adversarial review required: ${reviewPolicy.finalReviewRequired ? "yes" : "no"}`, "");
-  lines.push("## Tasks", "");
-  if (!state.executionPlan) lines.push("- [ ] EP0. Run `plan-execution`", "");
-  for (const task of state.tasks) {
-    lines.push(`- ${checkbox(task.status === "complete")} ${task.id}. ${task.title}`);
-    lines.push(`  - Status: ${task.status}`);
-    if (task.owner) lines.push(`  - Owner: ${task.owner}`);
-    if (task.dependsOn && task.dependsOn.length) lines.push(`  - Depends On: ${task.dependsOn.join(", ")}`);
-    if (task.writeScope && task.writeScope.length) lines.push(`  - Write Scope: ${task.writeScope.join(", ")}`);
-    if (typeof task.parallelSafe === "boolean") lines.push(`  - Parallel Safe: ${task.parallelSafe ? "yes" : "no"}`);
-    if (task.risk) lines.push(`  - Risk: ${task.risk}`);
-    if (task.requirements.length) lines.push(`  - Requirements: ${task.requirements.join(", ")}`);
-    if (task.acceptanceCriteria.length) lines.push(`  - Acceptance Criteria: ${task.acceptanceCriteria.join(", ")}`);
-    if (task.evidence.length) lines.push("  - Evidence:", evidenceText(task));
-    if (task.artifacts && task.artifacts.length) lines.push("  - Artifacts:", artifactText(task));
-  }
-  lines.push("", "## Acceptance Criteria", "");
-    for (const ac of state.acceptanceCriteria) {
-      lines.push(`- ${checkbox(ac.status === "met")} ${ac.id}. ${ac.title}`);
-    lines.push(`  - Status: ${ac.status}`);
-    if (ac.requirements.length) lines.push(`  - Requirements: ${ac.requirements.join(", ")}`);
-    if (ac.evidence.length) lines.push("  - Evidence:", evidenceText(ac));
-    if (ac.artifacts && ac.artifacts.length) lines.push("  - Artifacts:", artifactText(ac));
-  }
-  lines.push("", "## Verification Evidence", "");
-    for (const verification of state.verification) {
-      lines.push(`- ${checkbox(verificationIsClosedForAccounting(verification))} ${verification.id}. ${verification.level}: ${verification.title}`);
-      lines.push(`  - Status: ${verification.status}`);
-      lines.push(`  - Required For Done: ${isVerificationRequiredForDone(verification) ? "yes" : "no"}`);
-    if (verification.evidence.length) lines.push("  - Evidence:", evidenceText(verification));
-    if (verification.artifacts && verification.artifacts.length) lines.push("  - Artifacts:", artifactText(verification));
-  }
-  lines.push("", "## Requirements Fidelity Review", "");
-  lines.push(`- ${checkbox(Boolean(state.requirementsFidelityReview && state.requirementsFidelityReview.status === "pass"))} REQ_FIDELITY_REVIEW. Requirements fidelity review`);
-  lines.push(`  - Status: ${state.requirementsFidelityReview ? state.requirementsFidelityReview.status : "pending"}`);
-  if (state.requirementsFidelityReview) {
-    lines.push(`  - Report: ${state.requirementsFidelityReview.reportPath}`);
-    lines.push(`  - Summary: ${state.requirementsFidelityReview.summary}`);
-  }
-  if (finalReviewRequiredForState(state)) {
-    lines.push("", "## Final Adversarial Review", "");
-    lines.push(`- ${checkbox(Boolean(state.finalReview && state.finalReview.status === "pass"))} REVIEW. Final adversarial review`);
-    lines.push(`  - Status: ${state.finalReview ? state.finalReview.status : "pending"}`);
-    if (state.finalReview) {
-      lines.push(`  - Report: ${state.finalReview.reportPath}`);
-      lines.push(`  - Summary: ${state.finalReview.summary}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-function renderVerificationPlan(state) {
-  const plan = state.verificationPlan;
-  if (!plan) return "# Verification Plan\n\nStatus: missing\n";
-  const lines = [
-    `# Verification Plan: ${state.topicSlug}`,
-    "",
-    `- Status: ${plan.status}`,
-    `- Generated: ${plan.generatedAt}`,
-    `- PRD: ${plan.prdPath}`,
-    "",
-    "## Environment",
-    "",
-    `- Package manager: ${plan.environment.packageManager || "unknown"}`,
-    `- Browser tool: ${plan.environment.browserTool}`,
-    `- Server strategy: ${plan.environment.serverStrategy}`,
-    `- Service strategy: ${plan.environment.serviceStrategy}`,
-    `- DB strategy: ${plan.environment.dbStrategy}`,
-    "",
-    "## Test Mode Contract",
-    "",
-  ];
-  if (state.testModeContract && state.testModeContract.length) {
-    for (const mode of state.testModeContract) {
-      lines.push(`- ${mode.mode}: required=${mode.requiredForDone ? "yes" : "no"}; blockable=${mode.canBeBlocked ? "yes" : "no"}; covers=${mode.covers || "unspecified"}; human=${mode.humanDecision || "none"}`);
-    }
-  } else {
-    lines.push("- None parsed");
-  }
-  lines.push(
-    "",
-    "## Checks",
-    "",
-  );
-  for (const check of plan.checks || []) {
-    lines.push(`### ${check.id}. ${check.verificationId} - ${check.category}`);
-    lines.push("");
-    lines.push(`- Level: ${check.level}`);
-    lines.push(`- Source: ${check.source}`);
-    if (check.testMode) lines.push(`- Test mode: ${check.testMode}`);
-    lines.push(`- Tool: ${check.tool}`);
-    if (check.command) lines.push(`- Command: \`${check.command}\``);
-    if (check.target) lines.push(`- Target: ${check.target}`);
-      lines.push(`- Covers: ${formatCoverage(check.covers)}`);
-      lines.push(`- Artifacts: ${check.artifactKinds.join(", ")}`);
-      lines.push(`- Pass criteria: ${check.passCriteria}`);
-      lines.push(`- Required for done: ${check.requiredForDone ? "yes" : "no"}`);
-      lines.push(`- Can be blocked: ${check.canBeBlocked ? "yes" : "no"}`);
-      if (check.contract) {
-        lines.push(`- Contract method: ${check.contract.method || "missing"}`);
-        lines.push(`- Contract artifact: ${check.contract.artifact || "missing"}`);
-        if (check.contract.environment) lines.push(`- Contract environment: ${check.contract.environment}`);
-        if (check.contract.safeProbe) lines.push(`- Safe probe: ${check.contract.safeProbe}`);
-        if (check.contract.liveProof) lines.push(`- Live proof: ${check.contract.liveProof}`);
-        if (check.contract.sideEffect) lines.push(`- Side effect: ${check.contract.sideEffect}`);
-        if (check.contract.sensitiveDataPolicy) lines.push(`- Sensitive data policy: ${check.contract.sensitiveDataPolicy}`);
-      }
-    lines.push(`- Status: ${check.status}`);
-    if (check.notes.length) {
-      lines.push("- Notes:");
-      for (const note of check.notes) lines.push(`  - ${note}`);
-    }
-    lines.push("");
-  }
-  lines.push("## Acceptance Coverage", "");
-  for (const [id, entry] of Object.entries(plan.coverage || {})) {
-    lines.push(`- ${id}: ${entry.status} (${entry.coveredBy.length ? entry.coveredBy.join(", ") : "no checks"}) - ${entry.title}`);
-  }
-  lines.push("", "## Gaps", "");
-  if (!plan.gaps || plan.gaps.length === 0) {
-    lines.push("- None");
-  } else {
-    for (const gap of plan.gaps) lines.push(`- ${gap.severity}: ${gap.code} ${gap.item} - ${gap.message}`);
-  }
-  return lines.join("\n");
-}
-
-function formatCoverage(covers) {
-  covers = covers || {};
-  const parts = [];
-  if ((covers.requirements || []).length) parts.push(`R: ${covers.requirements.join(", ")}`);
-  if ((covers.acceptanceCriteria || []).length) parts.push(`AC: ${covers.acceptanceCriteria.join(", ")}`);
-  if ((covers.tasks || []).length) parts.push(`T: ${covers.tasks.join(", ")}`);
-  if ((covers.verification || []).length) parts.push(`V: ${covers.verification.join(", ")}`);
-  return parts.length ? parts.join("; ") : "unmapped";
-}
-
-function renderVerification(state) {
-  const lines = [`# Verification`, "", `PRD: ${state.prdPath}`, ""];
-  for (const item of state.verification) {
-    lines.push(`## ${item.id}. ${item.level}`);
-    lines.push("");
-    lines.push(`- Status: ${item.status}`);
-    if (item.source) lines.push(`- Source: ${item.source}`);
-    lines.push(`- Check: ${item.text}`);
-    if (item.evidence.length) {
-      lines.push("- Evidence:");
-      for (const entry of item.evidence) lines.push(`  - ${entry.ts}: ${entry.text}`);
-    }
-    if (item.artifacts && item.artifacts.length) {
-      lines.push("- Artifacts:");
-      for (const artifact of item.artifacts) lines.push(`  - ${artifact.kind}: ${artifact.path} (${String(artifact.sha256 || "").slice(0, 12)})`);
-    }
-    lines.push("");
-  }
-  return lines.join("\n");
-}
 
 function writeImplementationReport(statePath, state) {
   const statusLabel = state.status === "complete"
@@ -285,7 +50,6 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Status: ${executionPlan.status}`);
   lines.push(`- Tasks: ${executionPlan.taskCount}`);
   lines.push(`- Open tasks: ${executionPlan.openTaskCount}`);
-  lines.push(`- Artifact: ${state.runDir}/execution-plan.md`);
   lines.push("", "## Tasks", "");
   for (const task of state.tasks) {
     lines.push(`- ${task.id}: ${task.status} - ${task.title} (risk: ${task.risk || "unknown"}, parallelSafe: ${task.parallelSafe ? "yes" : "no"})`);
@@ -375,7 +139,7 @@ function renderRequirementsReviewPrompt(context) {
   const intentTrace = state.intentTrace || {};
   const policy = effectiveReviewPolicy(state);
   const ownershipGuidance = policy.fidelityOwner === "independent"
-    ? "Review policy: standard. You are the single fresh independent read-only semantic reviewer for this run. Base the verdict on the raw PRD, state, diff, ledger, and registered artifacts, not on a coordinator-provided conclusion. The coordinator alone records your report in harness state."
+    ? "Review policy: standard. You are the single fresh independent read-only semantic reviewer for this run. Base the verdict on the raw PRD, state, diff, and registered artifacts, not on a coordinator-provided conclusion. The coordinator alone records your report in harness state."
     : policy.profile === "trivial"
       ? "Review policy: trivial. This is a compact main-agent fidelity check. Cover the complete contract, but keep the report proportional to the small change surface."
       : "Review policy: high-risk. This is the main-agent full requirements fidelity stage. Reopen sensitive data, auth, security, billing, live-service, migration, deployment, and rollback proof before the independent final review.";
@@ -400,13 +164,8 @@ Harness-owned mechanical gates already enforce tracked completion, required veri
 
 Source of truth:
 - PRD: \`${state.prdPath}\`
-- State JSON: \`${statePath}\`
-- Checklist: \`${state.runDir}/checklist.md\`
+- State JSON: \`${statePath}\` - the single machine record: tasks, acceptance criteria, verification items with evidence and artifacts, the execution and verification plans, and recorded deviations all live here.
 - Context notes: \`${state.runDir}/context-notes.md\`
-- Execution plan: \`${state.runDir}/execution-plan.json\` and \`${state.runDir}/execution-plan.md\`
-- Verification plan: \`${state.runDir}/verification-plan.json\` and \`${state.runDir}/verification-plan.md\`
-- Verification: \`${state.runDir}/verification.md\`
-- Ledger: \`${state.runDir}/ledger.jsonl\`
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
 - Git diff/worktree: inspect current repository state
 - Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/interview/**\` files that exist (legacy \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` paths may appear in older PRDs).
@@ -512,12 +271,8 @@ Read \`${statePath}\` yourself and confirm the recorded fidelity review status. 
 
 Source of truth:
 - PRD: \`${state.prdPath}\`
-- State JSON: \`${statePath}\`
-- Checklist: \`${state.runDir}/checklist.md\`
-- Execution plan: \`${state.runDir}/execution-plan.json\` and \`${state.runDir}/execution-plan.md\`
-- Verification plan: \`${state.runDir}/verification-plan.json\` and \`${state.runDir}/verification-plan.md\`
-- Verification: \`${state.runDir}/verification.md\`
-- Ledger: \`${state.runDir}/ledger.jsonl\`
+- State JSON: \`${statePath}\` - the single machine record: tasks, acceptance criteria, verification items with evidence and artifacts, the execution and verification plans, and recorded deviations all live here.
+- Context notes: \`${state.runDir}/context-notes.md\`
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
 - Requirements fidelity review: \`${state.runDir}/review/requirements-fidelity-review.md\`
 - Git diff/worktree: inspect current repository state
@@ -529,7 +284,7 @@ Required checks (delta review, not a re-derivation):
 4. Open and spot-check the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the fidelity checklist.
 5. Audit every recorded deviation in \`state.deviations\` for acceptability, and treat unrecorded drift between the diff and the plan or structure lock as a finding.
 6. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and adds no unmapped scope.
-7. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, ledger, and artifacts.
+7. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, and artifacts.
 
 Write the report to:
 \`${reportPath}\`
@@ -572,37 +327,19 @@ Status: PASS | FAIL
 PASS only if all tracked work is complete, the requirements fidelity review is trustworthy, every required verification item has valid artifact-backed evidence, optional verification exceptions are explicitly non-required and justified, no stale review/artifact drift remains, and no PRD drift remains.`;
 }
 
-// Derived documents, regenerated from state.json on demand. Marking commands do
-// not call this; `render` exists so a coordinator can refresh the views without
-// mutating the run.
-function renderViews(statePath, state) {
+// The run directory carries no derived view files: state.json is the single
+// machine record and `status` renders it on demand. Only the coordinator's
+// free-form notes file needs a one-time seed.
+function ensureContextNotes(statePath, state) {
   const runDir = path.dirname(statePath);
-  writeMarkdown(path.join(runDir, "checklist.md"), renderChecklist(state));
-  if (state.executionPlan) {
-    writeJson(path.join(runDir, "execution-plan.json"), state.executionPlan);
-    writeMarkdown(path.join(runDir, "execution-plan.md"), renderExecutionPlan(state));
-  }
-  if (state.verificationPlan) {
-    writeJson(path.join(runDir, "verification-plan.json"), state.verificationPlan);
-    writeMarkdown(path.join(runDir, "verification-plan.md"), renderVerificationPlan(state));
-  }
   if (!fs.existsSync(path.join(runDir, "context-notes.md"))) {
     writeMarkdown(path.join(runDir, "context-notes.md"), `# Context Notes\n\n- PRD: ${state.prdPath}\n`);
   }
-  writeMarkdown(path.join(runDir, "verification.md"), renderVerification(state));
 }
 
 module.exports = {
-  checkbox,
-  evidenceText,
-  artifactText,
-  renderExecutionPlan,
-  renderChecklist,
-  renderVerificationPlan,
-  formatCoverage,
-  renderVerification,
   writeImplementationReport,
   renderRequirementsReviewPrompt,
   renderReviewPrompt,
-  renderViews,
+  ensureContextNotes,
 };

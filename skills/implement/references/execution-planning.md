@@ -17,12 +17,11 @@ Read this reference before `plan-execution`, while implementing tasks, when assi
 
 - The PRD owns product requirements, acceptance criteria, PRD-level tasks, major technical structure changes, the verification contract, the test mode contract, human review needs, and implementation guardrails.
 - `state.json` is the single source of truth for progress. PRD tasks live in `state.tasks`, and `plan-execution` writes the executor fields onto those same task items, so there is exactly one place a task's status and plan are recorded.
-- `verification-plan.json` and `verification-plan.md` contain the repo-specific proof plan derived from the PRD Verification Contract.
-- `execution-plan.json` and `execution-plan.md` hold plan metadata (status, gaps, whether a task plan was applied) plus a rendered view of the tasks and their trace matrix.
-- `ledger.jsonl` and `artifacts/manifest.jsonl` form the durable evidence trail.
+- `state.verificationPlan` holds the repo-specific proof plan derived from the PRD Verification Contract, and `state.executionPlan` holds plan metadata (status, gaps, whether a task plan was applied); both live inside `state.json` with no separate plan files.
+- `artifacts/manifest.jsonl` is the durable evidence registration trail.
 - `state.deviations` records soft-gate deviations that a completion review must explicitly accept: the fidelity review's Deviation Audit on every profile, plus the final adversarial review on `high-risk`.
 
-Rendered views are derived, not authoritative. `plan-verification`, `plan-execution`, `reconcile`, and `finalize` regenerate them; marking commands write only `state.json`. Run `render` to refresh the views at any point without mutating the run.
+There are no derived view files. `status` renders the current plans, counts, ready tasks, and violations on demand from `state.json`.
 
 Do not add executor-only fields to the PRD.
 `writeScope`, `parallelSafe`, `risk`, low-level `dependsOn`, owner, ready state, and subagent scheduling belong to implementation artifacts.
@@ -70,7 +69,7 @@ The task plan is an agent-owned implementation input, not a PRD artifact.
 The harness validates task IDs, dependencies, dependency cycles, repository-relative normalized write scopes, and the rule that high-risk or unscoped work cannot be parallel-safe.
 A task omitted from an explicit task plan is reset to conservative sequential defaults, so include every task you want to keep a declared scope for.
 
-Inspect `execution-plan.md` or `status` after planning.
+Inspect the `plan-execution` output or `status` after planning.
 `plan-execution` reports these gaps: `task_without_requirement`, `task_without_acceptance_mapping`, `missing_write_scope` (parallel enabled but a task declares no scope), `no_prd_tasks`, and `execution_dependency_cycle`.
 Only `no_prd_tasks` and `execution_dependency_cycle` are blocking.
 `ready` identifies runnable tasks and never proves final eligibility.

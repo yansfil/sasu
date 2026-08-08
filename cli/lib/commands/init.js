@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, appendJsonl, runCommand, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
+const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, runCommand, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
@@ -12,7 +12,7 @@ const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseM
 const { verificationContractHash, buildVerificationPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, writeActiveRecord, persistState } = require("../state_store");
-const { renderViews } = require("../render");
+const { ensureContextNotes } = require("../render");
 
 function cmdInit(options) {
   const inputs = resolveInitInputs(options);
@@ -51,26 +51,8 @@ function cmdInit(options) {
   const statePath = path.join(runDirAbs, "state.json");
   state.verificationPlan = buildVerificationPlan(state, statePath);
   persistState(statePath, state);
-  renderViews(statePath, state);
+  ensureContextNotes(statePath, state);
   writeActiveRecord(inputs.projectRoot, statePath, state);
-  appendJsonl(path.join(runDirAbs, "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "initialized",
-    prdPath: state.prdPath,
-    taskCount: contract.tasks.length,
-    acceptanceCriteriaCount: contract.acceptanceCriteria.length,
-    verificationCount: contract.verification.length,
-    verificationPlanStatus: state.verificationPlan.status,
-    verificationPlanGapCount: state.verificationPlan.gaps.length,
-    initialWorktreeSnapshot: state.initialWorktreeSnapshot
-      ? {
-          capturedAt: state.initialWorktreeSnapshot.capturedAt,
-          headSha: state.initialWorktreeSnapshot.headSha,
-          statusHash: state.initialWorktreeSnapshot.statusHash,
-          entryCount: state.initialWorktreeSnapshot.entryCount,
-        }
-      : null,
-  });
 
   process.stdout.write(JSON.stringify({
     ok: true,

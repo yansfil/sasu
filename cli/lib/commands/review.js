@@ -2,13 +2,13 @@
 
 const path = require("path");
 
-const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, appendJsonl, simpleHash } = require("../util");
+const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash } = require("../util");
 const { worktreeSnapshot } = require("../git");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, verifyGateStatus } = require("../reviews");
-const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt, renderViews } = require("../render");
+const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
 
@@ -69,11 +69,6 @@ function cmdRequirementsReviewRecord(options) {
   state.finalReview = null;
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "requirements_fidelity_review_recorded",
-    review: state.requirementsFidelityReview,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -119,11 +114,6 @@ function cmdReviewRecord(options) {
   };
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "final_review_recorded",
-    review: state.finalReview,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -214,14 +204,7 @@ function cmdFinalize(options) {
   state.finalReceipt = receipt;
   persistState(statePath, state);
   writeJson(path.join(path.dirname(statePath), "receipt.json"), receipt);
-  renderViews(statePath, state);
   writeImplementationReport(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "finalized",
-    status,
-    receipt,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,

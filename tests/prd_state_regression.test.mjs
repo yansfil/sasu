@@ -322,14 +322,17 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   }
   assert.match(implementationResult, /Added, changed, or removed after initialization: baseline-only\.txt\./);
 
-  for (const name of [
+  for (const legacyView of [
     "checklist.md",
+    "execution-plan.json",
     "execution-plan.md",
+    "verification-plan.json",
     "verification-plan.md",
     "verification.md",
-    "implementation-result.md",
+    "ledger.jsonl",
   ]) {
-    const rendered = fs.readFileSync(path.join(runDir, name), "utf8");
-    assertGolden(name, normalizeArtifact(rendered, projectRoot));
+    assert.equal(fs.existsSync(path.join(runDir, legacyView)), false, `derived view ${legacyView} must no longer be written`);
   }
+  const rendered = fs.readFileSync(path.join(runDir, "implementation-result.md"), "utf8");
+  assertGolden("implementation-result.md", normalizeArtifact(rendered, projectRoot));
 });

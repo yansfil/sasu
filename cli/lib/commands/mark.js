@@ -3,7 +3,7 @@
 const path = require("path");
 const childProcess = require("child_process");
 
-const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, appendJsonl, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
+const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, markCompletionReviewsStale, findTrackedItem, countState } = require("../state_data");
 const { commandsMatchContract } = require("../inference");
 const { readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
@@ -63,15 +63,6 @@ function cmdMark(options) {
   markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "marked",
-    kind,
-    ids,
-    status,
-    evidence,
-    marked,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -93,12 +84,6 @@ function cmdAssign(options) {
   markCompletionReviewsStale(state, `Task ${id} assignment changed after review`);
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "task_assigned",
-    id,
-    owner,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -124,12 +109,6 @@ function cmdRecordArtifact(options) {
     markCompletionReviewsStale(state, `Artifact was recorded for ${match.kind} ${match.item.id} after review`);
     state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "artifact_recorded",
-    attachedTo: { kind: match.kind, id: match.item.id },
-    artifact,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -195,13 +174,6 @@ function cmdRefreshArtifacts(options) {
     markCompletionReviewsStale(state, "Registered artifacts were refreshed after review");
     state.updatedAt = nowIso();
     persistState(statePath, state);
-    appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-      ts: nowIso(),
-      event: "artifacts_refreshed",
-      filterId,
-      refreshed,
-      missing,
-    });
     syncActive(statePath, state);
   }
 
@@ -292,16 +264,6 @@ function cmdVerifyRun(rawArgs) {
     markCompletionReviewsStale(state, `Verification ${id} was run after review`);
     state.updatedAt = nowIso();
   persistState(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "verification_run",
-    id,
-      command: commandText,
-      contractCommand: plannedCommand || null,
-      deviation: deviationEntry,
-      exitCode,
-    logPath: artifact.path,
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: exitCode === 0,

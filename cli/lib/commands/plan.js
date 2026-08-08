@@ -3,13 +3,12 @@
 const fs = require("fs");
 const path = require("path");
 
-const { SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, appendJsonl, sha256Text, slugFromPrdPath, runDirRelFor, formatCommandArgs } = require("../util");
+const { SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, sha256Text, slugFromPrdPath, runDirRelFor, formatCommandArgs } = require("../util");
 const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummary } = require("../state_data");
 const { stripFrontmatter } = require("../prd_parser");
 const { parsePrdContract } = require("./init");
 const { buildVerificationPlan, buildExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { loadState, syncActive, persistState } = require("../state_store");
-const { renderViews } = require("../render");
 const { invariantsForWriteScopes } = require("../rules");
 
 function cmdPlanVerificationCheck(options) {
@@ -66,15 +65,6 @@ function cmdPlanVerification(options) {
   markCompletionReviewsStale(state, "Verification plan was regenerated after review");
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  renderViews(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "verification_plan_generated",
-    status: state.verificationPlan.status,
-    checkCount: state.verificationPlan.checks.length,
-    gapCount: state.verificationPlan.gaps.length,
-    executionPlanRefreshed: Boolean(state.executionPlan),
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -82,8 +72,6 @@ function cmdPlanVerification(options) {
     verificationPlan: verificationPlanSummary(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
-    planPath: toProjectRelative(path.join(path.dirname(statePath), "verification-plan.json"), state.projectRoot || cwd()),
-    planMarkdownPath: toProjectRelative(path.join(path.dirname(statePath), "verification-plan.md"), state.projectRoot || cwd()),
     next: nextItem(state),
   }, null, 2) + "\n");
 }
@@ -100,16 +88,6 @@ function cmdPlanExecution(options) {
   markCompletionReviewsStale(state, "Execution plan was regenerated after review");
   state.updatedAt = nowIso();
   persistState(statePath, state);
-  renderViews(statePath, state);
-  appendJsonl(path.join(path.dirname(statePath), "ledger.jsonl"), {
-    ts: nowIso(),
-    event: "execution_plan_generated",
-    status: state.executionPlan.status,
-    taskCount: (state.tasks || []).length,
-    gapCount: state.executionPlan.gaps.length,
-    taskPlanSource: taskPlanInput ? taskPlanInput.path : null,
-    injectedRules: injectedRules.map(item => item.sourceRuleId),
-  });
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -118,8 +96,6 @@ function cmdPlanExecution(options) {
     ready: readyExecutionPlan(state),
     taskPlanSource: taskPlanInput ? taskPlanInput.path : null,
     injectedRules: injectedRules.map(item => ({ id: item.id, rule: item.sourceRuleId, title: item.title })),
-    planPath: toProjectRelative(path.join(path.dirname(statePath), "execution-plan.json"), state.projectRoot || cwd()),
-    planMarkdownPath: toProjectRelative(path.join(path.dirname(statePath), "execution-plan.md"), state.projectRoot || cwd()),
     next: nextItem(state),
   }, null, 2) + "\n");
 }

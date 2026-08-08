@@ -149,9 +149,8 @@ function syncActive(statePath, state) {
 }
 
 /**
- * Single write path for state.json. Derived views (checklist, plans,
- * verification) are rendered on demand by the planning, reconcile, finalize,
- * and `render` commands, never on every mark.
+ * Single write path for state.json, the run's only machine record; `status`
+ * renders it on demand instead of any derived view files.
  * @param {string} statePath
  * @param {State} state
  */

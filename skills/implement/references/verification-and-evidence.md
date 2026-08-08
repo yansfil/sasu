@@ -29,7 +29,7 @@ The planner binds the PRD Verification Contract to repository reality.
 - Checks are classified as command, automated, browser, server, API, DB, or manual-agent.
 - The planner creates acceptance-criterion coverage and blocking gaps for missing coverage, missing commands, missing artifact strategy, missing browser startup, or unsafe external proof.
 
-Do not implement while `verification-plan.md` has blocking gaps.
+Do not implement while the verification plan has blocking gaps (`plan-verification` output or `status` shows them).
 Fix the PRD contract, supply missing repository context, or ask for the missing decision, then rerun `plan-verification`.
 
 ## Focused And Final Verification
@@ -78,7 +78,7 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
   -- <replacement command>
 ```
 
-`verify-run` captures a command log, records the artifact, updates verification status, and preserves the command in the ledger.
+`verify-run` captures a command log, records the artifact with the executed command and exit code, and updates verification status.
 Do not run a required command outside the harness and later substitute a prose result when `verify-run` can capture it directly.
 
 ## Database Safety
@@ -136,7 +136,7 @@ Run:
 node ~/.codex/skills/implement/scripts/prd_state_harness.js refresh-artifacts [--id V3]
 ```
 
-`refresh-artifacts` re-hashes registered files, records the refresh in the ledger, and marks completion reviews stale.
+`refresh-artifacts` re-hashes registered files and marks completion reviews stale.
 Rerun stale reviews before finalization.
 
 Artifact-backed review freshness also depends on the final source snapshot.

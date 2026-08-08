@@ -26,7 +26,6 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Status: ready
 - Tasks: 1
 - Open tasks: 0
-- Artifact: agents/implement/standard-regression/execution-plan.md
 
 ## Tasks
 

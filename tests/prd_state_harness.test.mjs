@@ -484,8 +484,9 @@ PASS.
   const reviewedState = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "state.json"), "utf8"));
   assert.equal(reviewedState.finalReview, null);
   assert.equal(reviewedState.taskGraph, undefined);
-  const reviewedChecklist = fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "checklist.md"), "utf8");
-  assert.doesNotMatch(reviewedChecklist, /## Final Adversarial Review/);
+  for (const legacyView of ["checklist.md", "verification.md", "verification-plan.json", "verification-plan.md", "execution-plan.json", "execution-plan.md", "ledger.jsonl"]) {
+    assert.equal(fs.existsSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", legacyView)), false, `derived view ${legacyView} must no longer be written`);
+  }
   const stopHook = run(process.execPath, [harness, "hook", "stop"], {
     cwd: projectRoot,
     input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "trivial-session" }),
@@ -729,7 +730,6 @@ test("mutation command output is compact and stop directive gates verbose proced
   const first = run(process.execPath, [harness, "hook", "stop"], { cwd: projectRoot, input: stopInput });
   const firstReason = JSON.parse(first.stdout).reason;
   assert.match(firstReason, /Required procedure this turn/);
-  assert.match(firstReason, /Recent activity:/);
 
   const second = run(process.execPath, [harness, "hook", "stop"], { cwd: projectRoot, input: stopInput });
   const secondReason = JSON.parse(second.stdout).reason;
@@ -885,8 +885,7 @@ test("policy v2 high-risk graph retains the independent final review gate", () =
   assert.equal(status.reviewPolicy.finalReviewRequired, true);
   const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "high-risk-graph", "state.json"), "utf8"));
   assert.equal(state.taskGraph, undefined);
-  const highRiskChecklist = fs.readFileSync(path.join(root, "agents", "implement", "high-risk-graph", "checklist.md"), "utf8");
-  assert.match(highRiskChecklist, /## Final Adversarial Review/);
+  assert.equal(fs.existsSync(path.join(root, "agents", "implement", "high-risk-graph", "checklist.md")), false);
 });
 
 test("policy v2 standard fidelity prompt owns conditional UI and UX judgment", () => {
