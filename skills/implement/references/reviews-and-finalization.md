@@ -228,7 +228,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
 
 `finalize --status complete` ends with a harness-timed reverification: every required verification item whose evidence carries an executed command and whose contract declares no side effect is re-run on the final tree, and any nonzero exit rejects the receipt with a `Final reverification failed` violation and a log under the run's `reverify/` directory (receipt provenance, not registered agent evidence).
 This is deliberate: verify-run passes are recorded on the agent's schedule, so the receipt re-earns them on the harness's schedule.
-Skipped items (non-shell evidence, declared side effects) are stamped into the receipt's `finalReverification` with their reason - do not try to route around the re-run; fix the failing check instead.
+A pass earned on a worktree whose fingerprint (HEAD plus dirty-file hashes, harness bookkeeping excluded) still matches at finalize is skipped as `fresh pass` - the honest flow of running the final suite right before finalizing therefore costs nothing, and only passes the tree has drifted away from re-run.
+The accepted blind spot of that skip is gitignored-only drift, which git status cannot see; any tracked or untracked change re-triggers the run.
+Skipped items (non-shell evidence, declared side effects, fresh passes) are stamped into the receipt's `finalReverification` with their reason - do not try to route around the re-run; fix the failing check instead.
 
 Do not report done and do not mark the tracked Goal complete until:
 

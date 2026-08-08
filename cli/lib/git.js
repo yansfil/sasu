@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { ACTIVE_PATH, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
+const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
 
 function runGit(projectRoot, args, options = {}) {
   return runCommand("git", args, { ...options, cwd: projectRoot });
@@ -159,6 +159,31 @@ function worktreeSnapshot(state) {
   };
 }
 
+/**
+ * Fingerprint of the tree a command-backed verification pass was earned on,
+ * for receipt-time reverification freshness: when the fingerprint at finalize
+ * still matches the one recorded at the pass, re-running the command would
+ * repeat the identical experiment, so the re-run is skipped with that reason.
+ *
+ * worktreeSnapshot already excludes the run directory and active pointer;
+ * judge-gate state (agents/gates/**) is filtered here as well because the
+ * gate legitimately writes between the final pass and finalize and must not
+ * defeat the comparison. Known accepted blind spot: gitignored drift (build
+ * output, env files) is invisible to git status, so an ignored-only mutation
+ * after the pass skips the re-run - the tracked path, which is how the agent
+ * itself changes code, always triggers it.
+ */
+function reverifyFingerprint(state) {
+  const snapshot = worktreeSnapshot(state);
+  if (!snapshot) return null;
+  const gatesPrefix = normalizeRelPath(path.join(NAMESPACE_ROOT, "gates"));
+  const entries = (snapshot.entries || []).filter(entry => {
+    const rel = normalizeRelPath(entry.path || "");
+    return !(rel === gatesPrefix || rel.startsWith(`${gatesPrefix}/`));
+  });
+  return { headSha: snapshot.headSha, statusHash: simpleHash(JSON.stringify(entries)) };
+}
+
 function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
   if (!savedSnapshot || !currentSnapshot || !savedSnapshot.headSha || !currentSnapshot.headSha) return false;
   if (savedSnapshot.headSha === currentSnapshot.headSha) return false;
@@ -304,6 +329,7 @@ module.exports = {
   parseGitStatusEntry,
   parseGitStatusZ,
   worktreeSnapshot,
+  reverifyFingerprint,
   snapshotMaterializedInHead,
   snapshotEntriesEqual,
   snapshotPathMatches,

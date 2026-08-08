@@ -5,7 +5,7 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash, safeTimestamp, writeMarkdown } = require("../util");
 const { shellLikeTokens } = require("../inference");
-const { worktreeSnapshot } = require("../git");
+const { worktreeSnapshot, reverifyFingerprint } = require("../git");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
@@ -148,6 +148,7 @@ const REVERIFY_TIMEOUT_MS = 10 * 60 * 1000;
  */
 function reverifyRequiredVerifications(statePath, state) {
   const projectRoot = state.projectRoot || cwd();
+  const currentFingerprint = reverifyFingerprint(state);
   const results = [];
   for (const item of state.verification || []) {
     if (!isVerificationRequiredForDone(item)) continue;
@@ -163,7 +164,20 @@ function reverifyRequiredVerifications(statePath, state) {
       results.push({ id: item.id, skipped: `declared side effect: ${sideEffect}` });
       continue;
     }
-    const command = commandLogs[commandLogs.length - 1].command;
+    const lastLog = commandLogs[commandLogs.length - 1];
+    // A pass earned on the identical tree would re-run the identical
+    // experiment; skip it. The common honest flow (final suite, then
+    // finalize) therefore costs nothing - only stale passes re-run.
+    if (
+      lastLog.exitCode === 0 &&
+      lastLog.treeFingerprint && currentFingerprint &&
+      lastLog.treeFingerprint.headSha === currentFingerprint.headSha &&
+      lastLog.treeFingerprint.statusHash === currentFingerprint.statusHash
+    ) {
+      results.push({ id: item.id, skipped: `fresh pass: worktree unchanged since the recorded pass (${currentFingerprint.statusHash})` });
+      continue;
+    }
+    const command = lastLog.command;
     const tokens = shellLikeTokens(command);
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {

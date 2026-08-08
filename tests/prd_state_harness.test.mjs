@@ -1699,6 +1699,10 @@ test("finalize reverifies required command verifications on the final tree", () 
   runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--",
     "node", "-e", "process.exit(require('fs').existsSync('ok.txt') ? 0 : 1)"], projectRoot);
 
+  // Later "task work" changes the visible tree after the recorded pass, so
+  // the pass fingerprint goes stale and finalize must actually re-run V1.
+  write(path.join(projectRoot, "src", "extra.js"), "// later task work\n");
+
   state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify", "state.json"), "utf8"));
   const logPath = state.verification[0].artifacts[0].path;
   const reviewPath = path.join(projectRoot, "agents", "implement", "reverify", "review", "requirements-fidelity-review.md");
@@ -1759,4 +1763,69 @@ PASS.
   assert.equal(receipt.finalReverification.results.length, 1);
   assert.equal(receipt.finalReverification.results[0].id, "V1");
   assert.equal(receipt.finalReverification.results[0].exitCode, 0);
+});
+
+test("finalize skips reverification for a pass earned on the unchanged tree", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "reverify-skip");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "skip-s"], projectRoot);
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify-skip", "state.json"), "utf8"));
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--",
+    "node", "-e", "void 0; process.exit(0)"], projectRoot);
+
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify-skip", "state.json"), "utf8"));
+  const logPath = state.verification[0].artifacts[0].path;
+  assert.ok(state.verification[0].artifacts[0].treeFingerprint, "verify-run must stamp a tree fingerprint on the pass");
+  const reviewPath = path.join(projectRoot, "agents", "implement", "reverify-skip", "review", "requirements-fidelity-review.md");
+  write(reviewPath, `# Requirements Fidelity Review
+
+Status: PASS
+
+## Intent Sources Read
+
+- agents/prd/reverify-skip/prd.md
+
+## Decision Trace
+
+- User approved the test scope: represented by R1, AC1, T1, V1 | gap: none
+
+## Findings
+
+- none: no material findings
+
+## Verification Intent Checklist
+
+- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
+
+## Coverage Judgment
+
+- Requirements: covered by V1.
+- Acceptance Criteria: AC1 is met.
+- User-visible behavior: no user-visible behavior.
+- Non-goals and rejected options: none reintroduced.
+- Human verification: none required.
+
+## Deviation Audit
+
+- none recorded
+
+## Verdict
+
+PASS.
+`);
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  // Nothing visible changed since the pass: the honest final-suite-then-finalize
+  // flow must cost zero re-runs.
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Fresh pass, no re-run."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify-skip", "receipt.json"), "utf8"));
+  assert.equal(receipt.finalReverification.failures.length, 0);
+  assert.equal(receipt.finalReverification.results.length, 1);
+  assert.match(receipt.finalReverification.results[0].skipped, /fresh pass: worktree unchanged/);
+  assert.equal(fs.existsSync(path.join(projectRoot, "agents", "implement", "reverify-skip", "reverify")), false,
+    "no reverify log directory when everything was skipped fresh");
 });

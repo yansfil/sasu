@@ -6,6 +6,7 @@ const childProcess = require("child_process");
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, markCompletionReviewsStale, findTrackedItem, countState } = require("../state_data");
 const { commandsMatchContract } = require("../inference");
+const { reverifyFingerprint } = require("../git");
 const { readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertAllowedStatus } = require("../reviews");
@@ -255,6 +256,9 @@ function cmdVerifyRun(rawArgs) {
       exitCode,
       startedAt,
       finishedAt,
+      // The tree this result was earned on; finalize skips its reverification
+      // when the fingerprint still matches (see reverifyFingerprint).
+      treeFingerprint: exitCode === 0 ? reverifyFingerprint(state) : null,
     });
   match.item.status = exitCode === 0 ? "pass" : "fail";
   match.item.evidence.push({
