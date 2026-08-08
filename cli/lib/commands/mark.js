@@ -4,7 +4,7 @@ const path = require("path");
 const childProcess = require("child_process");
 
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
-const { recordDeviation, markCompletionReviewsStale, findTrackedItem, countState } = require("../state_data");
+const { recordDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
 const { commandsMatchContract } = require("../inference");
 const { reverifyFingerprint } = require("../git");
 const { readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
@@ -61,6 +61,9 @@ function cmdMark(options) {
     item.evidence.push({ ts: nowIso(), text: evidence });
     marked.push({ kind: "ac", id: acId, status: "met" });
   }
+  // A verification pass may settle the whole coverage of pending ACs; derive
+  // those closes instead of waiting for a manual sweep mark.
+  const autoMet = autoCloseAcceptanceCriteria(state);
   markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
   state.updatedAt = nowIso();
   persistState(statePath, state);
@@ -68,6 +71,7 @@ function cmdMark(options) {
   process.stdout.write(JSON.stringify({
     ok: true,
     marked,
+    autoMetAcceptanceCriteria: autoMet,
     counts: countState(state),
     next: nextBrief(state),
   }, null, 2) + "\n");
@@ -265,6 +269,7 @@ function cmdVerifyRun(rawArgs) {
     ts: nowIso(),
     text: `Command ${exitCode === 0 ? "passed" : "failed"} with exit code ${exitCode}: ${commandText}. Log: ${artifact.path}`,
   });
+    const autoMet = autoCloseAcceptanceCriteria(state);
     markCompletionReviewsStale(state, `Verification ${id} was run after review`);
     state.updatedAt = nowIso();
   persistState(statePath, state);
@@ -276,6 +281,7 @@ function cmdVerifyRun(rawArgs) {
     command: commandText,
     exitCode,
     logPath: artifact.path,
+    autoMetAcceptanceCriteria: autoMet,
     counts: countState(state),
     next: nextBrief(state),
   }, null, 2) + "\n");

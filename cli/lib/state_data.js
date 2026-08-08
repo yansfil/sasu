@@ -126,6 +126,49 @@ function countState(state) {
 }
 
 /**
+ * Auto-close acceptance criteria whose entire verification coverage is
+ * settled. An AC's runtime status is derivable bookkeeping: the PRD contract
+ * (enforced by prelint) maps every AC to covering V rows, and the real
+ * guarantees are the covering V passes plus the judge gate - a manual
+ * `mark ac met` after the covering V passed only re-states what the harness
+ * already knows, and forgetting it is what the acceptance sweep existed to
+ * catch. Deriving the close removes that ceremony and the sweep leftovers.
+ *
+ * Conservative rule: only `pending` ACs close (a manual met/not_met/blocked
+ * judgment is never overridden), every covering verification must be closed
+ * for accounting, and at least one must be a pass.
+ * @param {State} state
+ * @returns {string[]} ids of ACs closed by this call
+ */
+function autoCloseAcceptanceCriteria(state) {
+  const plan = state.verificationPlan;
+  if (!plan || !plan.coverage) return [];
+  const checksById = new Map((plan.checks || []).map(check => [check.id, check]));
+  const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
+  const closed = [];
+  for (const ac of state.acceptanceCriteria || []) {
+    if (ac.status !== "pending") continue;
+    const coveredBy = (plan.coverage[ac.id] && plan.coverage[ac.id].coveredBy) || [];
+    if (!coveredBy.length) continue;
+    const covering = coveredBy.map(checkId => {
+      const check = checksById.get(checkId);
+      return check ? verificationById.get(check.verificationId) : null;
+    });
+    if (covering.some(item => !item)) continue;
+    if (!covering.every(item => verificationIsClosedForAccounting(item))) continue;
+    const passes = covering.filter(item => item.status === "pass");
+    if (!passes.length) continue;
+    ac.status = "met";
+    ac.evidence.push({
+      ts: nowIso(),
+      text: `Auto-met: covering verification ${passes.map(item => item.id).join(", ")} passed (harness-derived)`,
+    });
+    closed.push(ac.id);
+  }
+  return closed;
+}
+
+/**
  * Per-verification rehearsal history from the PostToolUse observer's
  * rehearsals.jsonl (side-door Bash runs of contract commands - see
  * runPostToolUseHook). This is the signal countState cannot give: a required
@@ -284,6 +327,7 @@ module.exports = {
   markCompletionReviewsStale,
   findTrackedItem,
   countState,
+  autoCloseAcceptanceCriteria,
   rehearsalSummary,
   reviewProfileName,
   finalReviewRequiredForState,

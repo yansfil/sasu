@@ -82,13 +82,16 @@ Mechanical completion belongs to the harness.
 Reviewers should trust passing tracked-state, artifact-registration, hash, freshness, and required-verification gates unless evidence is inconsistent, missing, or suspicious.
 They should not spend the default path rerunning the complete test suite or recomputing every artifact hash.
 
-## Acceptance Sweep
+## Acceptance Residue Check
 
-Before completion reviews, sweep every acceptance criterion.
+Acceptance criteria close themselves: when every verification item covering a pending AC settles and at least one passes, the harness marks it met with derived evidence (`autoMetAcceptanceCriteria` in mark/verify-run output).
+A manual `met`/`not_met`/`blocked` judgment is never overridden by the auto-close.
 
-- Set status to `Met`, `Not Met`, or `Blocked`.
-- Attach command, test, screenshot, DOM result, API response, DB query, or file evidence.
-- Include related task IDs.
+Before completion reviews, check only the residue - any AC still `pending` means one of:
+
+- a covering verification has not run yet: run it.
+- the AC's proof genuinely lives outside the verification contract: mark `met` manually with real evidence.
+- the criterion is not satisfied or is stuck: mark `not_met` or `blocked` with the reason - these always remain manual judgments.
 
 Keep working when a required acceptance criterion is not met and no concrete blocker exists.
 

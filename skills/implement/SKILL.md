@@ -112,8 +112,8 @@ goal tracking opened
   -> init (PRD contract parsed; verification and execution plans auto-built)
   -> main-agent coverage check
   -> ready task implementation
-  -> verify-run / record-artifact
-  -> acceptance sweep (code freeze)
+  -> verify-run / record-artifact (covered ACs auto-met on verification pass)
+  -> residue check + code freeze
   -> sasu verify gate ∥ requirements fidelity review (concurrent, read-only)
   -> blocked/partial handoff when completion is impossible
   -> final adversarial review when required
@@ -236,12 +236,13 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js mark \
 
 node ~/.codex/skills/implement/scripts/prd_state_harness.js mark \
   --kind ac \
-  --id AC3,AC4 \
-  --status met \
-  --evidence "<evidence>"
+  --id AC5 \
+  --status not_met \
+  --evidence "<why the criterion is not satisfied>"
 ```
 
 Batch related marks instead of running one command per item: `--id` accepts comma lists, and `mark --kind task --ac` closes a completed task plus the acceptance criteria its evidence proves in one call.
+Do not hand-mark an AC `met` that covering verification will prove: the harness auto-mets a pending AC when its covering verification settles with a pass, so manual `met` is only for ACs whose proof genuinely lives outside the verification contract, and `not_met`/`blocked` stay manual judgments.
 Every mark command already returns updated counts and the next item, so do not poll `status` between marks.
 
 You close a task yourself, with evidence that its mapped acceptance criteria and verification are satisfied.
@@ -335,7 +336,9 @@ acceptance criteria to an independent judge only after both pass.
 
 ## 7. Review And Finalize
 
-Sweep every acceptance criterion before review and keep working while a required criterion is unmet without a concrete blocker.
+Acceptance criteria close themselves: when every verification item covering a pending AC is settled and at least one passed, the harness marks it met with derived evidence (`autoMetAcceptanceCriteria` in the mark/verify-run output).
+Before review, check only the residue - ACs still open mean uncovered contract or missing verification runs, and `not_met`/`blocked` remain manual judgments.
+Keep working while a required criterion is unmet without a concrete blocker.
 
 Generate requirements fidelity and run it concurrently with the sasu verify gate (both are read-only over the frozen code; fidelity precedes only the final adversarial review, not the gate):
 

@@ -1829,3 +1829,31 @@ PASS.
   assert.equal(fs.existsSync(path.join(projectRoot, "agents", "implement", "reverify-skip", "reverify")), false,
     "no reverify log directory when everything was skipped fresh");
 });
+
+test("verification pass auto-mets covered acceptance criteria; manual judgments survive", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "auto-ac");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "auto-s"], projectRoot);
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "auto-ac", "state.json"), "utf8"));
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+
+  // No manual ac mark: the covering verification pass must close AC1 itself.
+  const verified = runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--",
+    "node", "-e", "void 0; process.exit(0)"], projectRoot);
+  assert.deepEqual(verified.autoMetAcceptanceCriteria, ["AC1"]);
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "auto-ac", "state.json"), "utf8"));
+  assert.equal(state.acceptanceCriteria[0].status, "met");
+  assert.ok(state.acceptanceCriteria[0].evidence.some(entry => /Auto-met: covering verification V1 passed/.test(entry.text)),
+    "derived evidence must name the covering pass");
+  const status = runJson(["status"], projectRoot);
+  assert.equal(status.counts.acOpen, 0);
+
+  // A manual judgment is never overridden: flip to not_met, re-run the pass.
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "not_met", "--evidence", "Human judged the outcome insufficient."], projectRoot);
+  const rerun = runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--",
+    "node", "-e", "void 0; process.exit(0)"], projectRoot);
+  assert.deepEqual(rerun.autoMetAcceptanceCriteria, []);
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "auto-ac", "state.json"), "utf8"));
+  assert.equal(state.acceptanceCriteria[0].status, "not_met");
+});
