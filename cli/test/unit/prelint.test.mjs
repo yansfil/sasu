@@ -57,6 +57,8 @@ const PRD_CASES = [
   ["prd-dangling-ref.md", "prd-dangling-ref"],
   ["prd-uncovered-ac.md", "prd-uncovered-ac"],
   ["prd-mode-mismatch.md", "prd-mode-mismatch"],
+  ["prd-method-runner-unknown.md", "prd-method-runner-unknown"],
+  ["prd-method-parenthetical-scope.md", "prd-method-parenthetical-scope"],
 ];
 
 for (const [file, rule] of PRD_CASES) {

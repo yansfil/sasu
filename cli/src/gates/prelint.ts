@@ -14,6 +14,28 @@ import type { Finding } from "../judge/types";
  * re-fixes are harmless.
  */
 
+// Shared with the verification planner (cli/lib/inference.js commandFromText):
+// a Method command this lint accepts must be one the planner can parse, so both
+// read the same runner list instead of keeping two copies in step by hand.
+const { RUNNER_PATTERN } = require("../../lib/runners.js") as { RUNNER_PATTERN: string };
+
+const ENV_ASSIGNMENT = "(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+)*";
+const RUNNER_PREFIX = new RegExp(`^${ENV_ASSIGNMENT}(?:${RUNNER_PATTERN})\\b`, "i");
+
+/**
+ * A parenthetical is a scope qualifier only when it is *nothing but* a
+ * directory ("cli/", "app/web/", "repo root"), optionally followed by a comma
+ * and prose. Both halves of that test earn their place against real cells:
+ * "(see docs/testing.md)" contains a path but does not open with one, and
+ * "(backends/mechanical 유닛 포함)" opens with something path-shaped that is
+ * actually prose - only a trailing slash distinguishes a directory from a
+ * source path someone is naming in passing.
+ */
+const DIRECTORY_QUALIFIER = /^\s*(?:(?:[\w.-]+\/)+|repo(?:sitory)?\s+root|저장소\s*루트)\s*(?:[,;]|$)/i;
+
+/** Commands that already carry their own working directory need no qualifier. */
+const SELF_SCOPED_COMMAND = /(^|\s)(?:cd\s|-C\s|--prefix[\s=]|--cwd[\s=]|--directory[\s=])/;
+
 export interface PrelintFinding extends Finding {
   /** Stable rule identifier, e.g. "qa-dangling-decision-id". */
   rule: string;
@@ -339,7 +361,76 @@ export function prelintPrd(content: string): PrelintResult {
     }
   }
 
+  checkMethodCommands(verificationTable, vRows, findings);
+
   return { ok: findings.length === 0, doc: "prd", findings };
+}
+
+/**
+ * 9.2 Method commands must be executable exactly as written.
+ *
+ * The harness runs `verify-run` from the repository root and takes the command
+ * from the Method cell's backticks, so two shapes that read fine to a human
+ * silently diverge from what actually runs, and every run then records a
+ * `verification_command` deviation for the same cell:
+ *
+ *   `npm test` (cli/)      -> the harness runs `npm test` at the root
+ *   `checkshirt gate ...`  -> not a recognized runner, so no command is parsed
+ *                             and a "runtime" Mode misclassifies as browser
+ *                             evidence (a demanded screenshot that never comes)
+ *
+ * Both are fixed the same way: fold the whole thing into one runner-prefixed
+ * command, e.g. `bash -c "cd cli && npm test"`.
+ *
+ * Scoped to rows whose Artifact is a command log, which is the PRD's own
+ * statement that this row is proven by running something. Manual-agent and
+ * human-calibration rows also put names in backticks (a skill, a gate, a menu
+ * item) and must not be read as shell commands.
+ */
+function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line: number }[], findings: PrelintFinding[]): void {
+  if (!table) return;
+  const methodColumn = table.header.indexOf("Method");
+  const artifactColumn = table.header.indexOf("Artifact");
+  if (methodColumn === -1 || artifactColumn === -1) return;
+
+  for (const row of vRows) {
+    const id = row.cells[0] ?? "";
+    const method = row.cells[methodColumn];
+    if (method === undefined || method === "") continue;
+    if (!/\bcommand[-\s]?log\b/i.test(row.cells[artifactColumn] ?? "")) continue;
+
+    const spans = [...method.matchAll(/`([^`]+)`/g)];
+    if (spans.length === 0) continue;
+
+    const runner = spans.find((span) => RUNNER_PREFIX.test(span[1]!.trim()));
+    if (!runner) {
+      const first = spans[0]![1]!.trim();
+      findings.push(
+        finding(
+          "prd-method-runner-unknown",
+          row.line,
+          `${id}: Method command \`${first}\` does not start with a runner the verification planner recognizes`,
+          `Wrap it so the command starts with a known runner, e.g. \`bash -c "${first}"\`.`,
+        ),
+      );
+      continue;
+    }
+
+    // A scope qualifier parked outside the backticks never reaches the shell.
+    if (SELF_SCOPED_COMMAND.test(runner[1]!)) continue;
+    const trailing = method.slice(method.indexOf(runner[0]!) + runner[0]!.length);
+    const parenthetical = trailing.match(/^\s*\(([^)]*)\)/);
+    if (parenthetical && DIRECTORY_QUALIFIER.test(parenthetical[1]!)) {
+      findings.push(
+        finding(
+          "prd-method-parenthetical-scope",
+          row.line,
+          `${id}: Method puts the working directory in a parenthetical "(${parenthetical[1]!.trim()})" instead of the command, but the harness runs from the repository root`,
+          `Fold the directory into the command, e.g. \`bash -c "cd <dir> && ${runner[1]!.trim()}"\`.`,
+        ),
+      );
+    }
+  }
 }
 
 function findSubsection(lines: string[], number: string): { start: number; end: number } | null {

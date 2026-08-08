@@ -358,6 +358,18 @@ known or the lean form cannot derive them; always include `Mode`:
 
 Rules:
 
+- A `Method` command must be runnable exactly as written, because `implement`
+  takes it from the backticks and runs it from the repository root. Two shapes
+  read fine to a human but diverge from what actually runs, and the gate's PRD
+  prelint rejects both:
+  - a directory parked outside the command. Write
+    `bash -c "cd cli && npm test"`, not `` `npm test` `` followed by `(cli/)`.
+  - a command whose first word is not a runner the planner knows
+    (`pnpm`/`npm`/`node`/`bash`/`python`/`go`/`cargo`/... - see
+    `cli/lib/runners.js`). Wrap anything else, including bare `grep` and
+    project binaries: `bash -c "grep -q foo README.md"`.
+  Prose Method cells for `manual-agent` and human-decision rows are unaffected;
+  the rules apply only to rows whose `Artifact` is a command log.
 - `Required For Done` is `yes` by default.
 - The Test Mode Contract sets the mode-level default. Verification rows should
   repeat `Required For Done`; if omitted, `implement` inherits the mode

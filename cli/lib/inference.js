@@ -5,6 +5,7 @@ const path = require("path");
 
 const { toProjectRelative, readJson, uniqueMatches } = require("./util");
 const { modeMatches } = require("./prd_parser");
+const { RUNNER_PATTERN } = require("./runners");
 
 function repoSignals(projectRoot) {
   const rootPackagePath = path.join(projectRoot, "package.json");
@@ -86,7 +87,7 @@ function hasCommandLogArtifact(verification) {
 }
 
 function commandFromText(text) {
-  const runnerCommands = "(?:pnpm|npm|npx|yarn|bun|pytest|python|node|tsx|ts-node|deno|go|cargo|make|docker|docker-compose|bash|sh|zsh|test|sed|cat|curl|jq|uv|uvx|php|ruby|perl|mvn|gradle)";
+  const runnerCommands = `(?:${RUNNER_PATTERN})`;
   const envAssignment = "(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+)*";
   const commandPrefix = new RegExp(`^${envAssignment}${runnerCommands}\\b`, "i");
   for (const backtick of String(text).matchAll(/`([^`]+)`/g)) {
