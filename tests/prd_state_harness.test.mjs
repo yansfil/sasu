@@ -778,8 +778,7 @@ test("parallel ready groups are config-gated and off by default", () => {
   const rootA = initGitRepo();
   const prdA = writeApprovedPrd(rootA, "seq-default");
   runJson(["init", "--prd", prdA, "--review-profile", "trivial", "--session-id", "seq-s"], rootA);
-  runJson(["plan-execution"], rootA);
-  const readyA = runJson(["ready"], rootA);
+  const readyA = runJson(["status"], rootA);
   assert.equal(readyA.ready.parallelEnabled, false);
   assert.deepEqual(readyA.ready.readyParallelGroups, []);
   const stopA = run(process.execPath, [harness, "hook", "stop"], {
@@ -804,7 +803,7 @@ test("parallel ready groups are config-gated and off by default", () => {
   } }, null, 2));
   runJson(["init", "--prd", prdB, "--review-profile", "trivial", "--session-id", "par-s"], rootB);
   runJson(["plan-execution", "--task-plan", taskPlanPath], rootB);
-  const readyB = runJson(["ready"], rootB);
+  const readyB = runJson(["status"], rootB);
   assert.equal(readyB.ready.parallelEnabled, true);
   assert.deepEqual(readyB.ready.readyParallelGroups, [["T1", "T2"]]);
   const stopB = run(process.execPath, [harness, "hook", "stop"], {

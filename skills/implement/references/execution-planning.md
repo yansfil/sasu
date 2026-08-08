@@ -28,16 +28,10 @@ Do not add executor-only fields to the PRD.
 
 ## Planning And Coverage Check
 
-Run:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-execution
-node ~/.codex/skills/implement/scripts/prd_state_harness.js ready
-```
-
-`plan-execution` validates the PRD tasks, records traceability from `T#` to `AC#` and `V#`, and reports gaps.
+`init` builds both plans automatically: it validates the PRD tasks, records traceability from `T#` to `AC#` and `V#`, and reports gaps, so a default sequential run needs no separate planning command.
 Default tasks have no declared write scope, medium risk, no dependencies, and `parallelSafe: false`.
 The harness does not infer file ownership, task risk, or dependencies from PRD prose.
+Run `plan-execution` only to apply an explicit task plan or to replan after PRD task changes.
 
 When `execution.parallel` is enabled and parallel work is useful, inspect the repository and write one compact task-plan JSON object keyed by PRD task ID:
 
@@ -69,10 +63,10 @@ The task plan is an agent-owned implementation input, not a PRD artifact.
 The harness validates task IDs, dependencies, dependency cycles, repository-relative normalized write scopes, and the rule that high-risk or unscoped work cannot be parallel-safe.
 A task omitted from an explicit task plan is reset to conservative sequential defaults, so include every task you want to keep a declared scope for.
 
-Inspect the `plan-execution` output or `status` after planning.
-`plan-execution` reports these gaps: `task_without_requirement`, `task_without_acceptance_mapping`, `missing_write_scope` (parallel enabled but a task declares no scope), `no_prd_tasks`, and `execution_dependency_cycle`.
+Inspect the `init` or `plan-execution` output, or `status`, after planning.
+The execution plan reports these gaps: `task_without_requirement`, `task_without_acceptance_mapping`, `missing_write_scope` (parallel enabled but a task declares no scope), `no_prd_tasks`, and `execution_dependency_cycle`.
 Only `no_prd_tasks` and `execution_dependency_cycle` are blocking.
-`ready` identifies runnable tasks and never proves final eligibility.
+`status` lists ready tasks; ready never proves final eligibility.
 
 The main agent owns the post-planning coverage check.
 When the PRD references an intake qa-log, read it completely and compare its material intent with PRD decisions, verification coverage, the task plan, structure lock, ambiguity, and unmapped scope.
@@ -159,7 +153,7 @@ The coordinator decides whether parallel work is useful and remains responsible 
 
 Parallelize only when work is both safe and useful.
 
-- Run `ready` before assigning work.
+- Check the ready list (`status` or the latest mark output) before assigning work.
 - Give each worker a bounded task with exact file ownership or a read-only scope, and record it with `assign`.
 - Tell workers they are not alone in the codebase and must not revert other changes.
 - Reviewer and verifier sidecars are read-only and must not run `mark`, `assign`, `requirements-review-record`, `review-record`, `finalize`, or Goal tools.

@@ -109,9 +109,7 @@ agents/implement/<topic-slug>/review/final-review.md
 
 ```text
 goal tracking opened
-  -> PRD Verification Contract
-  -> Verification Planner
-  -> Execution Plan
+  -> init (PRD contract parsed; verification and execution plans auto-built)
   -> main-agent coverage check
   -> ready task implementation
   -> verify-run / record-artifact
@@ -200,21 +198,18 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js reconcile --reason "
 
 ## 4. Plan Before Implementation
 
-Plan verification first:
+`init` already built both plans: the verification plan from the PRD Verification Contract and the default sequential execution plan with `T#` to `AC#`/`V#` traceability.
+Inspect the init output (or `status`) for blocking gaps and ready tasks.
+
+Do not implement while either plan has blocking gaps.
+Fix the PRD contract (then `reconcile`) or rerun the planner:
 
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification
-```
-
-Do not implement while the verification plan has blocking gaps.
-Read `references/verification-and-evidence.md` for planner semantics, command binding, evidence classes, and safe live-proof rules.
-
-Then plan execution and inspect ready work:
-
-```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-execution
-node ~/.codex/skills/implement/scripts/prd_state_harness.js ready
 ```
+
+Read `references/verification-and-evidence.md` for planner semantics, command binding, evidence classes, and safe live-proof rules.
 
 When parallel execution is enabled and a useful split exists, inspect the repo and pass one explicit task-plan JSON file to `plan-execution --task-plan <path>`.
 Do not put file ownership or low-level dependencies in the PRD.

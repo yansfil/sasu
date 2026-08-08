@@ -4,7 +4,7 @@
 const { SELF_PATH, displayPath, parseArgs } = require("../../../cli/lib/util");
 const { cmdHook } = require("../../../cli/lib/hooks");
 const { cmdInit } = require("../../../cli/lib/commands/init");
-const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdReady, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
+const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
 const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
 const { cmdMark, cmdAssign, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
@@ -33,7 +33,6 @@ const COMMANDS = [
     run: args => cmdPlanVerification(parseArgs(args)),
   },
   { name: "plan-execution", usageArgs: ["[--state <path>] [--task-plan <json-path>]"], run: args => cmdPlanExecution(parseArgs(args)) },
-  { name: "ready", usageArgs: ["[--state <path>]"], run: args => cmdReady(parseArgs(args)) },
   {
     name: "reconcile",
     usageArgs: ['[--reason "<why the PRD changed>"] [--state <path>]  (refresh PRD snapshot after an edit; preserves marks, never init --force)'],

@@ -9,7 +9,7 @@ const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapsh
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
-const { verificationContractHash, buildVerificationPlan, readyExecutionPlan, nextItem } = require("../planning");
+const { verificationContractHash, buildVerificationPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, writeActiveRecord, persistState } = require("../state_store");
 const { ensureContextNotes } = require("../render");
@@ -50,6 +50,9 @@ function cmdInit(options) {
 
   const statePath = path.join(runDirAbs, "state.json");
   state.verificationPlan = buildVerificationPlan(state, statePath);
+  // The default sequential execution plan needs no agent input, so init builds
+  // it directly; `plan-execution --task-plan` reruns it for parallel scoping.
+  applyExecutionPlan(state, statePath);
   persistState(statePath, state);
   ensureContextNotes(statePath, state);
   writeActiveRecord(inputs.projectRoot, statePath, state);

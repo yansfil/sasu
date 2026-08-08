@@ -137,7 +137,7 @@ The harness treats "done" as a provable state, and the enforcement works identic
   Its explicit merge command rechecks CI and mergeability and pins the reviewed PR head with `--match-head-commit` before recording the merge commit.
   Every override needs a `--reason` and lands in the ship log.
 - **Learned invariants gate delivery.**
-  Lessons registered through `rules add` carry trigger globs and an executable check; `ship` matches every changed file against the triggers and fails closed on a failing check, `plan-execution` injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
+  Lessons registered through `rules add` carry trigger globs and an executable check; `ship` matches every changed file against the triggers and fails closed on a failing check, execution planning (run by `init` and `plan-execution`) injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
   Evidence-free or unverifiable rules are rejected at registration, so the rulebook cannot decay into wishes.
 - **Premature-completion guards.**
   Codex gets a `PreToolUse` guard that blocks `update_goal complete` before the receipt; Claude Code has no goal tool, so the Stop hook carries the guarantee alone.

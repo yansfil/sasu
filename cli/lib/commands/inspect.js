@@ -415,17 +415,6 @@ function doctorCollectActiveRun(projectRoot, add) {
   }
 }
 
-function cmdReady(options) {
-  const { statePath, state } = loadState(options);
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    statePath: toProjectRelative(statePath),
-    executionPlan: executionPlanSummary(state),
-    ready: readyExecutionPlan(state),
-    next: nextItem(state),
-  }, null, 2) + "\n");
-}
-
 function cmdCleanupActive(options) {
   const { statePath, state } = loadState(options);
   const removed = [];
@@ -444,6 +433,5 @@ module.exports = {
   cmdStatus,
   cmdVerifyDelivery,
   cmdDoctor,
-  cmdReady,
   cmdCleanupActive,
 };

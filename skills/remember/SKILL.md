@@ -124,7 +124,7 @@ Pending lessons are visible debt: `ship` warns on every ship and `doctor` report
 You do not need to re-teach landed lessons; the harness carries them:
 
 - `ship` matches every changed file against invariant triggers and fails closed on a failing check (`--skip-rules --reason` is the only way past, and it lands in the ship log).
-- `implement plan-execution` injects invariants whose triggers overlap the run's write scopes as verification items, so the receipt depends on them.
+- implement's execution planning (run automatically at `init`, rerun by `plan-execution`) injects invariants whose triggers overlap the run's write scopes as verification items, so the receipt depends on them.
 - `ho-setup doctor` rot-checks the ledger: missing landings, dead triggers, and pending debt.
 
 ## Hard Stops

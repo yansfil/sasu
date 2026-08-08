@@ -4,7 +4,8 @@
 
 const path = require("path");
 
-const { nowIso, cwd, toProjectRelative, sha256Text, uniqueMatches } = require("./util");
+const { SELF_PATH, nowIso, cwd, toProjectRelative, sha256Text, uniqueMatches, formatCommandArgs } = require("./util");
+const { invariantsForWriteScopes } = require("./rules");
 const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState, independentFidelityRequiredForState } = require("./state_data");
 const { inferVerificationMode } = require("./prd_parser");
 const { repoSignals, classifyVerification, commandFromText, commandForMode, coverageFromText, artifactsForVerification, passCriteriaFromText, toolForVerification, targetForVerification, plannedCheckStatus, plannerNotes, hasAppStartupSignal } = require("./inference");
@@ -624,6 +625,101 @@ function buildVerificationGaps(state, checks, coverage, signals) {
   return gaps;
 }
 
+// Build (or rebuild) the execution plan and inject scope-matched learned-rule
+// invariants as verification items. Init runs this automatically for the
+// default sequential case; `plan-execution` reruns it to apply an explicit
+// task plan or to replan after PRD task changes.
+function applyExecutionPlan(state, statePath, taskPlanTasks = null) {
+  state.executionPlan = buildExecutionPlan(state, statePath, taskPlanTasks);
+  const injectedRules = injectRuleVerification(state);
+  if (injectedRules.length && state.verificationPlan) {
+    state.verificationPlan = buildVerificationPlan(state, statePath);
+    state.executionPlan = buildExecutionPlan(state, statePath, taskPlanTasks);
+  }
+  return injectedRules;
+}
+
+// Best-effort learned-rule injection (R11 of the agents-remember contract):
+// invariants whose triggers prefix-overlap any task write scope become
+// verification items, so passing them is part of the receipt. The exact,
+// changed-file-based enforcement stays with the ship gate; this match is
+// conservative and says so in the injected item text.
+function injectRuleVerification(state) {
+  const projectRoot = state.projectRoot || cwd();
+  const tasks = state.tasks || [];
+  const scopes = tasks
+    .flatMap(task => Array.isArray(task.writeScope) ? task.writeScope : [])
+    .filter(scope => typeof scope === "string" && !scope.startsWith("TBD:"));
+  let matched;
+  try {
+    matched = invariantsForWriteScopes(projectRoot, scopes);
+  } catch {
+    // An unreadable rules tree must not block planning; doctor reports it.
+    return [];
+  }
+  const injected = [];
+  for (const rule of matched) {
+    if (state.verification.some(item => item.sourceRuleId === rule.id)) continue;
+    const coveredTasks = tasks
+      .filter(task => {
+        try {
+          return invariantsForWriteScopes(projectRoot, task.writeScope || [])
+            .some(candidate => candidate.id === rule.id);
+        } catch {
+          return false;
+        }
+      })
+      .map(task => task.id)
+      .filter(Boolean);
+    const nextIndex = state.verification.filter(item => item.source === "rules_injection").length + 1;
+    const manual = rule.check.type === "manual";
+    const method = rule.check.type === "command"
+      ? rule.check.run
+      : rule.check.type === "grep"
+        ? formatCommandArgs([
+          process.execPath,
+          SELF_PATH,
+          "rules",
+          "check",
+          "--id",
+          rule.id,
+          "--all",
+        ])
+        : `human confirmation: ${rule.check.confirm}`;
+    const item = {
+      id: `RV${nextIndex}`,
+      level: "rule",
+      title: `Learned invariant ${rule.id}`,
+      text: `${rule.summary} (auto-injected: write scope overlaps trigger ${rule.trigger.paths.join(", ")}; full targeted check required, changed files rechecked at deliver)`,
+      status: "pending",
+      evidence: [],
+      artifacts: [],
+      source: "rules_injection",
+      sourceRuleId: rule.id,
+      testMode: manual ? "human" : "build/static",
+      matrix: {
+        mode: manual ? "human" : "build/static",
+        covers: coveredTasks.length ? coveredTasks.join(", ") : rule.id,
+        method,
+        artifact: manual ? "none" : "command-log",
+        passCriteria: manual ? rule.check.confirm : "check passes (exit 0 / pattern expectation holds)",
+        environment: "local shell",
+        requiredForDone: !manual,
+        requiredForDoneRaw: manual ? "no" : "yes",
+        canBeBlocked: manual,
+        canBeBlockedRaw: manual ? "yes" : "no",
+        safeProbe: "none (local check)",
+        liveProof: "command log",
+        sideEffect: "none",
+        sensitiveDataPolicy: "no secrets",
+      },
+    };
+    state.verification.push(item);
+    injected.push(item);
+  }
+  return injected;
+}
+
 function nextItem(state) {
   if (verificationPlanBlocksImplementation(state)) {
     const summary = verificationPlanSummary(state);
@@ -698,6 +794,7 @@ function nextBrief(state) {
 }
 
 module.exports = {
+  applyExecutionPlan,
   verificationContractHash,
   buildVerificationPlan,
   buildExecutionPlan,

@@ -254,7 +254,7 @@ test("policy v2 standard profile finalizes after one combined fidelity review an
   assert(Array.isArray(state.initialWorktreeSnapshot.entries));
 
   runJson(["plan-execution"], projectRoot);
-  const ready = runJson(["ready"], projectRoot);
+  const ready = runJson(["status"], projectRoot);
   assert.ok(Array.isArray(ready.ready.readySequential) && ready.ready.readySequential.length >= 1);
 
   const taskIds = readState().tasks.map(task => task.id).join(",");

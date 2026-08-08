@@ -252,9 +252,9 @@ Drive the Next required item above to done, then record it with the matching har
     : `# Required procedure this turn
 
 1. The State block above and \`${context.statePath}\` are the source of truth. Mirror progress in the runtime task surface at phase boundaries only; the harness, not the tracker, is the completion authority. Do not re-read unchanged plan files each turn.
-2. If the next item is \`VERIFICATION_PLAN VP0\`: inspect the blocking gaps in the \`plan-verification\` output (or \`${HARNESS} status\`), fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
-3. If the next item is \`EXECUTION_PLAN EP0\`: run \`${HARNESS} plan-execution\`, inspect \`ready\`, then do the one-time coverage check (intent, ambiguity, coverage, structure-lock drift) and record material findings in \`${state.runDir}/context-notes.md\` before editing code.
-4. Otherwise drive the next item to done (SKILL.md sections 5-6 hold the details), stop for approval before material structure deviations, register artifacts immediately, then record with:
+2. If the next item is \`VERIFICATION_PLAN VP0\`: inspect the blocking gaps in \`${HARNESS} status\`, fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
+3. If the next item is \`EXECUTION_PLAN EP0\`: the auto-built execution plan has blocking gaps (unparsable PRD tasks or a dependency cycle); fix the PRD, run \`${HARNESS} reconcile\`, then \`${HARNESS} plan-execution\` until the gaps clear.
+4. Otherwise drive the next item to done (SKILL.md sections 5-6 hold the details). Before the first code edit of the run, do the one-time coverage check (intent, ambiguity, coverage, structure-lock drift) and record material findings in \`${state.runDir}/context-notes.md\`. Stop for approval before material structure deviations, register artifacts immediately, then record with:
    - \`${HARNESS} mark --kind task --id <Tn[,Tn...]> --status complete [--ac <ACn,...>] --evidence "<evidence>"\`
    - \`${HARNESS} mark --kind ac --id <ACn[,ACn...]> --status met --evidence "<evidence>"\`
    - \`${HARNESS} verify-run --id <Vn> -- <command>\` and \`${HARNESS} record-artifact --id <Vn> --kind <kind> --path <artifact> --description "<what it proves>"\`
