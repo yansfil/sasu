@@ -1,8 +1,10 @@
 "use strict";
 
+const childProcess = require("child_process");
 const path = require("path");
 
-const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash } = require("../util");
+const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash, safeTimestamp, writeMarkdown } = require("../util");
+const { shellLikeTokens } = require("../inference");
 const { worktreeSnapshot } = require("../git");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
@@ -125,6 +127,80 @@ function cmdReviewRecord(options) {
   }, null, 2) + "\n");
 }
 
+// A hung command must fail the reverification rather than hang the receipt.
+const REVERIFY_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Final reverification: re-run every required command-backed verification at
+ * receipt time, on the harness's clock instead of the agent's.
+ *
+ * verify-run scores honestly but the agent chooses when to call it, so a pass
+ * recorded at task 3 says nothing about the code as it stands at finalize
+ * (audited runs: 50 executions, zero recorded failures - submission bias, and
+ * no freshness link between evidence and later edits). Re-running the exact
+ * recorded commands closes both holes deterministically: no LLM, no judgment,
+ * just the same command on the final tree.
+ *
+ * Only mechanical proof is re-runnable: items whose evidence carries an
+ * executed command and whose contract declares no side effect. Everything
+ * else (browser/db/api evidence, side-effectful checks) is skipped with the
+ * reason stamped into the receipt - a skip must be legible, never silent.
+ */
+function reverifyRequiredVerifications(statePath, state) {
+  const projectRoot = state.projectRoot || cwd();
+  const results = [];
+  for (const item of state.verification || []) {
+    if (!isVerificationRequiredForDone(item)) continue;
+    if (item.status !== "pass") continue; // open/blocked items are already violations elsewhere
+    const commandLogs = (item.artifacts || []).filter(artifact =>
+      artifact.kind === "command-log" && typeof artifact.command === "string" && artifact.command.trim() !== "");
+    if (!commandLogs.length) {
+      results.push({ id: item.id, skipped: "no recorded command (non-shell evidence)" });
+      continue;
+    }
+    const sideEffect = item.matrix && typeof item.matrix.sideEffect === "string" ? item.matrix.sideEffect.trim() : "";
+    if (sideEffect && !/^(none|없음|-|n\/a)$/i.test(sideEffect)) {
+      results.push({ id: item.id, skipped: `declared side effect: ${sideEffect}` });
+      continue;
+    }
+    const command = commandLogs[commandLogs.length - 1].command;
+    const tokens = shellLikeTokens(command);
+    const startedAt = nowIso();
+    const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
+      cwd: projectRoot,
+      shell: false,
+      encoding: "utf8",
+      timeout: REVERIFY_TIMEOUT_MS,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
+    // Not under artifacts/: reverify logs are receipt provenance, not agent
+    // evidence, so they must not trip unregistered-artifact validation.
+    const logRel = path.join(state.runDir, "reverify", `${item.id}-${safeTimestamp()}.log`);
+    writeMarkdown(path.join(projectRoot, logRel), [
+      `command: ${command}`,
+      `phase: final reverification (finalize)`,
+      `startedAt: ${startedAt}`,
+      `finishedAt: ${nowIso()}`,
+      `exitCode: ${exitCode}`,
+      spawned.signal ? `signal: ${spawned.signal}` : "",
+      spawned.error && spawned.error.message ? `error: ${spawned.error.message}` : "",
+      "",
+      "--- stdout ---",
+      spawned.stdout || "",
+      "",
+      "--- stderr ---",
+      spawned.stderr || "",
+    ].filter(line => line !== "").join("\n"));
+    results.push({ id: item.id, command, exitCode, logPath: logRel });
+  }
+  return {
+    ranAt: nowIso(),
+    results,
+    failures: results.filter(result => typeof result.exitCode === "number" && result.exitCode !== 0),
+  };
+}
+
 function cmdFinalize(options) {
   const status = String(options.status || "");
   const summary = String(options.summary || "").trim();
@@ -164,9 +240,18 @@ function cmdFinalize(options) {
     }
     violations.push(...validateArtifacts(statePath, state));
   }
+  // Reverify only when the cheap checks pass and completion is claimed; the
+  // re-run is the last gate before the receipt, on the harness's clock.
+  let finalReverification = null;
+  if (status === "complete" && violations.length === 0) {
+    finalReverification = reverifyRequiredVerifications(statePath, state);
+    for (const failure of finalReverification.failures) {
+      violations.push(`Final reverification failed: ${failure.id} exited ${failure.exitCode} re-running \`${failure.command}\` (log: ${failure.logPath})`);
+    }
+  }
   const uniqueViolations = Array.from(new Set(violations));
   if (uniqueViolations.length) {
-    process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations: uniqueViolations }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations: uniqueViolations, finalReverification }, null, 2) + "\n");
     process.exitCode = 2;
     return;
   }
@@ -192,6 +277,9 @@ function cmdFinalize(options) {
     // that never failed anywhere never demonstrated it can fail; make that
     // legible in the completion proof.
     rehearsals: rehearsalSummary(statePath),
+    // Receipt-time re-run of required command verifications on the final
+    // tree, harness-timed. Skips carry their reason - never silent.
+    finalReverification,
     artifactCount: collectArtifacts(state).length,
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,

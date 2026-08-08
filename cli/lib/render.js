@@ -162,11 +162,14 @@ Your job is to verify that the implementation still satisfies the user's origina
 Do not implement fixes. Do not mark anything complete. Review only.
 Harness-owned mechanical gates already enforce tracked completion, required verification status, artifact registration, hash integrity, freshness, and receipt eligibility. Do not rerun the complete test suite or recompute every hash unless the recorded evidence is inconsistent, missing, or suspicious.
 
+Role boundary with the sasu verify gate: the gate independently judges the diff against every acceptance criterion and records per-criterion verdicts under \`${NAMESPACE_ROOT}/gates/<topic-slug>/\`. Do not re-derive code-vs-AC satisfaction verdicts from the diff - that lane is the gate's, and duplicating it slows the run without adding independence. Your lane is everything the gate cannot see: the intent lineage from the original conversation through the PRD to the implementation, decision provenance, recorded deviations, and whether the registered evidence actually proves the intent behind each criterion. The two reviews may run concurrently on frozen code; neither consumes the other's output.
+
 Source of truth:
 - PRD: \`${state.prdPath}\`
 - State JSON: \`${statePath}\` - the single machine record: tasks, acceptance criteria, verification items with evidence and artifacts, the execution and verification plans, and recorded deviations all live here.
 - Context notes: \`${state.runDir}/context-notes.md\`
 - Artifact manifest: \`${state.runDir}/artifacts/manifest.jsonl\`
+- Rehearsal ledger: \`${state.runDir}/rehearsals.jsonl\` (may be absent) - side-door Bash runs of contract commands the harness observer recorded, exit codes included. A required check whose official pass shows no failure anywhere in its history is a signal worth weighing, not an automatic finding: confirm the check exercises what it claims to protect.
 - Git diff/worktree: inspect current repository state
 - Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/interview/**\` files that exist (legacy \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` paths may appear in older PRDs).
 - When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A entries (Decision Packet content lives in each entry's immediate_notes field), UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.

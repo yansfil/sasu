@@ -188,6 +188,18 @@ Receipt: agents/implement/standard-regression/receipt.json
     "recorded": false,
     "byVerification": {}
   },
+  "finalReverification": {
+    "ranAt": "<TS>",
+    "results": [
+      {
+        "id": "V1",
+        "command": "bash -lc 'node -e '\\''process.exit(0)'\\'''",
+        "exitCode": 0,
+        "logPath": "agents/implement/standard-regression/reverify/V1-<TS>.log"
+      }
+    ],
+    "failures": []
+  },
   "artifactCount": 1,
   "requirementsFidelityReview": {
     "status": "pass",

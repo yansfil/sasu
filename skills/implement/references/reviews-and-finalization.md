@@ -100,6 +100,10 @@ Generate the strict intent-review prompt:
 node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-prompt
 ```
 
+The fidelity review and the sasu verify gate divide the semantic lane and may run concurrently once the acceptance sweep is done and the code is frozen.
+The gate owns per-criterion code-vs-AC verdicts from the diff; the fidelity reviewer owns intent lineage, decision provenance, deviations, and whether registered evidence proves the intent - neither consumes the other's output, so launch the reviewer as a background sidecar and run `sasu verify` while it works.
+If the gate fails and the fix changes code, the fidelity review goes stale under the normal freshness rule and must re-run; accept that risk instead of serializing the two calls.
+
 This review compares the complete canonical qa-log or conversation source, accepted decisions, rejected alternatives, PRD scope, acceptance criteria, verification evidence, and implementation result.
 It is not a general code-quality review.
 Fail on material semantic drift, missing user-visible behavior, diluted acceptance criteria, hidden scope, unapproved decision reversal, weak evidence for the actual user goal, or an overclaimed `Done` status.
@@ -221,6 +225,10 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
   --status complete \
   --summary "<evidence-backed summary>"
 ```
+
+`finalize --status complete` ends with a harness-timed reverification: every required verification item whose evidence carries an executed command and whose contract declares no side effect is re-run on the final tree, and any nonzero exit rejects the receipt with a `Final reverification failed` violation and a log under the run's `reverify/` directory (receipt provenance, not registered agent evidence).
+This is deliberate: verify-run passes are recorded on the agent's schedule, so the receipt re-earns them on the harness's schedule.
+Skipped items (non-shell evidence, declared side effects) are stamped into the receipt's `finalReverification` with their reason - do not try to route around the re-run; fix the failing check instead.
 
 Do not report done and do not mark the tracked Goal complete until:
 

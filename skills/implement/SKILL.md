@@ -113,11 +113,12 @@ goal tracking opened
   -> main-agent coverage check
   -> ready task implementation
   -> verify-run / record-artifact
-  -> requirements fidelity review
+  -> acceptance sweep (code freeze)
+  -> sasu verify gate ∥ requirements fidelity review (concurrent, read-only)
   -> blocked/partial handoff when completion is impossible
   -> final adversarial review when required
   -> runtime cleanup
-  -> receipt
+  -> receipt (finalize re-runs required command verifications first)
   -> PR delivery handoff when delivery mode is pr
 ```
 
@@ -284,13 +285,20 @@ Read `references/verification-and-evidence.md` for exact-command deviations, cos
 ### Verify Gate (sasu)
 
 Per completed task, run only the project's mechanical checks (tests/lint;
-$0, no judge). Then, after every code-changing task is complete and before
-the acceptance sweep, submit the full run diff to the sasu verify gate
-once:
+$0, no judge). Then, after every code-changing task is complete and the
+acceptance sweep has frozen the code, submit the full run diff to the sasu
+verify gate once:
 
 ```sh
 sasu verify --slug <topic-slug> --prd <prd-path> --base <baseline-ref>
 ```
+
+The gate and the requirements fidelity review divide the semantic lane and
+neither consumes the other's output, so run them concurrently: launch the
+fidelity reviewer as a background sidecar, run `sasu verify` while it works,
+and record both results as they land. If the gate fails and the fix changes
+code, the fidelity review goes stale under the normal freshness rule and
+re-runs; accept that occasional cost instead of always paying a serial wait.
 
 The gate judges the diff against the PRD's complete acceptance criteria, so
 do not call it mid-run while later tasks are still unimplemented: missing ACs
@@ -329,7 +337,7 @@ acceptance criteria to an independent judge only after both pass.
 
 Sweep every acceptance criterion before review and keep working while a required criterion is unmet without a concrete blocker.
 
-Generate and complete requirements fidelity first:
+Generate requirements fidelity and run it concurrently with the sasu verify gate (both are read-only over the frozen code; fidelity precedes only the final adversarial review, not the gate):
 
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-prompt
@@ -371,6 +379,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
   --status complete \
   --summary "<evidence-backed summary>"
 ```
+
+`finalize --status complete` re-runs every required command-backed verification on the final tree before writing the receipt, on the harness's schedule rather than yours; a nonzero exit rejects the receipt with a `Final reverification failed` violation.
+Fix the failing check and finalize again - do not try to route around the re-run.
 
 Do not report `Done` or complete the tracked Goal until `receipt.json` exists and `status` reports zero open tracked items.
 For local delivery, clean active pointers after the receipt.

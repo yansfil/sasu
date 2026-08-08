@@ -1677,3 +1677,86 @@ test("posttool-use hook records side-door rehearsals of contract commands", () =
   assert.equal(status.rehearsals.recorded, true);
   assert.deepEqual(status.rehearsals.byVerification.V1, { runs: 3, failures: 2, unknown: 0, lastExitCode: 1 });
 });
+
+test("finalize reverifies required command verifications on the final tree", () => {
+  const projectRoot = initGitRepo();
+  // The sentinel is gitignored: its disappearance is invisible to the review
+  // freshness snapshot (like build-output drift), so the receipt-time re-run
+  // is the only gate that can catch the regression.
+  write(path.join(projectRoot, ".gitignore"), "ok.txt\n");
+  run("git", ["add", ".gitignore"], { cwd: projectRoot });
+  run("git", ["commit", "-m", "Ignore sentinel"], { cwd: projectRoot });
+  const prdPath = writeApprovedPrd(projectRoot, "reverify");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "rev-s"], projectRoot);
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify", "state.json"), "utf8"));
+  const taskIds = state.tasks.map(task => task.id).join(",");
+  runJson(["mark", "--kind", "task", "--id", taskIds, "--status", "complete", "--evidence", "Test nodes completed."], projectRoot);
+  runJson(["mark", "--kind", "ac", "--id", "AC1", "--status", "met", "--evidence", "V1 proves AC1."], projectRoot);
+
+  // The official pass depends on a file that exists NOW - a state-dependent check.
+  const sentinel = path.join(projectRoot, "ok.txt");
+  write(sentinel, "present");
+  runJson(["verify-run", "--id", "V1", "--deviation", "equivalent command preserves coverage", "--",
+    "node", "-e", "process.exit(require('fs').existsSync('ok.txt') ? 0 : 1)"], projectRoot);
+
+  state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify", "state.json"), "utf8"));
+  const logPath = state.verification[0].artifacts[0].path;
+  const reviewPath = path.join(projectRoot, "agents", "implement", "reverify", "review", "requirements-fidelity-review.md");
+  write(reviewPath, `# Requirements Fidelity Review
+
+Status: PASS
+
+## Intent Sources Read
+
+- agents/prd/reverify/prd.md
+
+## Decision Trace
+
+- User approved the test scope: represented by R1, AC1, T1, V1 | gap: none
+
+## Findings
+
+- none: no material findings
+
+## Verification Intent Checklist
+
+- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
+
+## Coverage Judgment
+
+- Requirements: covered by V1.
+- Acceptance Criteria: AC1 is met.
+- User-visible behavior: no user-visible behavior.
+- Non-goals and rejected options: none reintroduced.
+- Human verification: none required.
+
+## Deviation Audit
+
+- none recorded
+
+## Verdict
+
+PASS.
+`);
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  // Code "regresses" after the recorded pass: the sentinel disappears.
+  fs.rmSync(sentinel);
+  const rejected = runJson(["finalize", "--status", "complete", "--summary", "Should be rejected."], projectRoot, { allowFailure: true });
+  assert.equal(rejected.ok, false);
+  assert.ok(rejected.violations.some(item => /Final reverification failed: V1/.test(item)),
+    `expected reverification violation, got: ${JSON.stringify(rejected.violations)}`);
+  assert.equal(rejected.finalReverification.failures.length, 1);
+  const reverifyLog = rejected.finalReverification.failures[0].logPath;
+  assert.ok(fs.existsSync(path.join(projectRoot, reverifyLog)), "reverify log must be written");
+
+  // Fix the tree; the same finalize now passes and the receipt records the re-run.
+  write(sentinel, "restored");
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Reverified clean."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "reverify", "receipt.json"), "utf8"));
+  assert.equal(receipt.finalReverification.failures.length, 0);
+  assert.equal(receipt.finalReverification.results.length, 1);
+  assert.equal(receipt.finalReverification.results[0].id, "V1");
+  assert.equal(receipt.finalReverification.results[0].exitCode, 0);
+});
