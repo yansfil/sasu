@@ -184,6 +184,10 @@ Receipt: agents/implement/standard-regression/receipt.json
     "overridden": false,
     "lastRunAt": null
   },
+  "rehearsals": {
+    "recorded": false,
+    "byVerification": {}
+  },
   "artifactCount": 1,
   "requirementsFidelityReview": {
     "status": "pass",

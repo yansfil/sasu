@@ -3,21 +3,24 @@
 const fs = require("fs");
 const path = require("path");
 
-const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson } = require("./util");
+const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson, appendJsonl } = require("./util");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
-const { readyExecutionPlan, nextItem } = require("./planning");
+const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
 const { completionViolations } = require("./reviews");
 const { sameSessionId, sessionIdFromHookPayload, readActive, syncActive } = require("./state_store");
+const { normalizeCommandForCompare } = require("./inference");
 
 function cmdHook(kind) {
-  if (kind !== "stop" && kind !== "pretool-use") return;
+  if (kind !== "stop" && kind !== "pretool-use" && kind !== "posttool-use") return;
   const started = Date.now();
   readStdinJson(DEFAULT_HOOK_TIMEOUT_MS, payload => {
     try {
       const output = kind === "pretool-use"
         ? runPreToolUseHook(payload)
-        : runStopHook(payload, started);
+        : kind === "posttool-use"
+          ? runPostToolUseHook(payload)
+          : runStopHook(payload, started);
       if (output) process.stdout.write(output);
     } catch {
       // Hooks must fail open. The skill and finalizer remain the source of enforcement.
@@ -212,6 +215,94 @@ Run \`${harnessCommand()} status\`, close all tasks and PRD items with artifact-
   });
 }
 
+/**
+ * PostToolUse observer: the honest ledger for verification rehearsals.
+ *
+ * `verify-run` only ever records runs the agent chose to submit, and agents
+ * submit when they expect green - six audited runs held 50 verification
+ * executions with zero failures. The failures happen off the books, in plain
+ * Bash calls of the same commands during development. This hook writes those
+ * side-door runs to rehearsals.jsonl so a check's history shows whether it
+ * ever went red before its official pass - a check that never failed anywhere
+ * is indistinguishable from a check that guards nothing.
+ *
+ * Observer only: never blocks, never mutates state.json, fails open. Partial
+ * coverage is fine (a rehearsal in an unmatched shape just goes unrecorded);
+ * the goal is an honest sample, not a perimeter.
+ */
+function runPostToolUseHook(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  if (payload.hook_event_name !== "PostToolUse") return "";
+  const toolName = String(payload.tool_name || payload.toolName || "");
+  if (!/^(?:Bash|shell|local_shell)$/i.test(toolName)) return "";
+  const input = payload.tool_input || payload.toolInput || {};
+  const command = typeof input.command === "string" ? input.command : "";
+  if (!command) return "";
+  // The official channel: verify-run already records itself, with provenance.
+  if (/prd_state_harness\.js|\bverify-run\b/.test(command)) return "";
+
+  const hookCwd = typeof payload.cwd === "string" ? payload.cwd : cwd();
+  const active = readActive(hookCwd, { sessionId: sessionIdFromHookPayload(payload) });
+  if (!active) return "";
+  const statePath = resolveProjectPath(active.active.statePath, hookCwd);
+  if (!fs.existsSync(statePath)) return "";
+  const state = readJson(statePath);
+  if (state.schema !== SCHEMA || state.status !== "active") return "";
+
+  const verificationId = matchRehearsalCommand(state, command);
+  if (!verificationId) return "";
+  appendJsonl(path.join(path.dirname(statePath), "rehearsals.jsonl"), {
+    ts: nowIso(),
+    verificationId,
+    command,
+    exitCode: rehearsalExitCode(payload),
+    sessionId: sessionIdFromHookPayload(payload),
+  });
+  return "";
+}
+
+/**
+ * Match a Bash command against the run's verification contract. A planned
+ * command is either the resolved command itself or a prose Method cell around
+ * a backticked command, so compare the raw text and every backtick span
+ * (commandFromText's prose fallback truncates at periods - `process.exit(0)`
+ * would lose its tail). A leading `cd <dir> &&` on either side is ignored:
+ * scoping into a package dir is the dominant rehearsal shape and does not
+ * change which check is being rehearsed.
+ */
+function matchRehearsalCommand(state, command) {
+  const normalizedActual = normalizeRehearsalCommand(command);
+  if (!normalizedActual) return null;
+  for (const item of state.verification || []) {
+    const contract = plannedCommandForVerification(state, item.id);
+    if (!contract) continue;
+    const candidates = [contract, ...[...String(contract).matchAll(/`([^`]+)`/g)].map(span => span[1])];
+    for (const candidate of candidates) {
+      const normalizedContract = normalizeRehearsalCommand(candidate);
+      if (normalizedContract && normalizedContract === normalizedActual) return item.id;
+    }
+  }
+  return null;
+}
+
+function normalizeRehearsalCommand(command) {
+  return normalizeCommandForCompare(command).replace(/^cd\s+\S+\s*&&\s*/, "");
+}
+
+/** Exit code from a PostToolUse payload, tolerant of runtime shape drift. */
+function rehearsalExitCode(payload) {
+  const response = payload.tool_response || payload.toolResponse || payload.tool_result || {};
+  for (const key of ["exit_code", "exitCode", "code", "returncode", "status"]) {
+    const value = response && typeof response === "object" ? response[key] : undefined;
+    if (typeof value === "number" && Number.isInteger(value)) return value;
+  }
+  if (response && typeof response === "object") {
+    if (response.is_error === true || response.success === false) return 1;
+    if (response.is_error === false || response.success === true) return 0;
+  }
+  return null;
+}
+
 function isUpdateGoalCompleteAttempt(payload) {
   const toolName = String(payload.tool_name || payload.toolName || payload.name || payload.tool || "");
   if (!/update_goal/i.test(toolName)) return false;
@@ -311,6 +402,7 @@ module.exports = {
   runStopHook,
   directivePhase,
   runPreToolUseHook,
+  runPostToolUseHook,
   isUpdateGoalCompleteAttempt,
   renderContinuationDirective,
 };

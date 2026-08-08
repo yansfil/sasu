@@ -1627,3 +1627,53 @@ test("readiness precheck blocks a PRD whose Tasks section failed to parse", () =
   assert.ok(report.blockingGaps.some(gap => gap.code === "no_prd_tasks"),
     `expected no_prd_tasks gap, got: ${JSON.stringify(report.blockingGaps)}`);
 });
+
+test("posttool-use hook records side-door rehearsals of contract commands", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "rehearsal");
+  run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root });
+  runJson(["plan-verification"], root);
+  const rehearsalsPath = path.join(root, "agents", "implement", "rehearsal", "rehearsals.jsonl");
+
+  const postTool = (command, exitCode) => run(process.execPath, [harness, "hook", "posttool-use"], {
+    cwd: root,
+    input: JSON.stringify({
+      hook_event_name: "PostToolUse",
+      cwd: root,
+      session_id: "reh-s",
+      tool_name: "Bash",
+      tool_input: { command },
+      tool_response: { exit_code: exitCode },
+    }),
+  });
+
+  // A failing side-door run of the V1 contract command lands in the ledger.
+  postTool('node -e "process.exit(0)"', 1);
+  assert.ok(fs.existsSync(rehearsalsPath), "rehearsals.jsonl must be created");
+  let entries = fs.readFileSync(rehearsalsPath, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].verificationId, "V1");
+  assert.equal(entries[0].exitCode, 1);
+
+  // A leading `cd <dir> &&` is the dominant rehearsal shape; still V1.
+  postTool('cd cli && node -e "process.exit(0)"', 0);
+  entries = fs.readFileSync(rehearsalsPath, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(entries.length, 2);
+  assert.equal(entries[1].verificationId, "V1");
+  assert.equal(entries[1].exitCode, 0);
+
+  // Unrelated commands and the official verify-run channel stay off the ledger.
+  postTool("npm run lint", 1);
+  postTool(`node ${harness} verify-run --id V1 -- node -e "process.exit(0)"`, 0);
+  entries = fs.readFileSync(rehearsalsPath, "utf8").trim().split("\n");
+  assert.equal(entries.length, 2, "non-contract and harness commands must not be recorded");
+
+  // The observer never blocks: stdout stays empty.
+  const observed = postTool('node -e "process.exit(0)"', 1);
+  assert.equal(observed.stdout.trim(), "");
+
+  // status surfaces the honest history per verification id.
+  const status = runJson(["status"], root);
+  assert.equal(status.rehearsals.recorded, true);
+  assert.deepEqual(status.rehearsals.byVerification.V1, { runs: 3, failures: 2, unknown: 0, lastExitCode: 1 });
+});

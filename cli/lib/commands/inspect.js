@@ -9,7 +9,7 @@ const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, RULES_ROOT_REL, N
 const { readLedger, loadInvariants, loadPending, globLiteralPrefix } = require("../rules");
 const { gitTracked, gitIgnored } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig } = require("../config");
-const { verificationPlanSummary, executionPlanSummary, countState, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("../state_data");
+const { verificationPlanSummary, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts } = require("../artifacts");
 const { validateArtifacts, reviewWorktreeSnapshotViolations, prdCopyDriftWarnings, completionReadiness, prdSnapshotViolations } = require("../reviews");
@@ -28,6 +28,7 @@ function cmdStatus(options) {
     runDir: state.runDir,
     delivery: state.delivery || null,
     counts: countState(state),
+    rehearsals: rehearsalSummary(statePath),
     verificationPlan: verificationPlanSummary(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),

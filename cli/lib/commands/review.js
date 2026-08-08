@@ -4,7 +4,7 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash } = require("../util");
 const { worktreeSnapshot } = require("../git");
-const { isVerificationRequiredForDone, executionPlanSummary, countState, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
+const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, verifyGateStatus } = require("../reviews");
@@ -188,6 +188,10 @@ function cmdFinalize(options) {
     // Visible even when NOT_RUN: a skipped verify gate must be readable from
     // the receipt, not silently absent.
     verifyGate: verifyGateStatus(state),
+    // Side-door failure history per verification (rehearsals.jsonl). A check
+    // that never failed anywhere never demonstrated it can fail; make that
+    // legible in the completion proof.
+    rehearsals: rehearsalSummary(statePath),
     artifactCount: collectArtifacts(state).length,
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,

@@ -94,7 +94,7 @@ const COMMANDS = [
     run: args => cmdRules(args),
   },
   { name: "seed-agents-md", usageArgs: ["[--project-root <path>]"], run: args => cmdSeedAgentsMd(parseArgs(args)) },
-  { name: "hook", usageArgs: ["stop|pretool-use"], run: args => cmdHook(args[0] || "stop") },
+  { name: "hook", usageArgs: ["stop|pretool-use|posttool-use"], run: args => cmdHook(args[0] || "stop") },
 ];
 
 function main() {

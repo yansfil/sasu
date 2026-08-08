@@ -263,9 +263,12 @@ const hooks = {
     Stop: codexHookCommand("stop"),
     PreToolUse: codexHookCommand("pretool-use"),
   }),
-  // Claude Code has no update_goal tool; the Stop hook is the only guard.
+  // Claude Code has no update_goal tool, so no PreToolUse guard; PostToolUse
+  // observes side-door Bash runs of verification-contract commands and writes
+  // them to the run's rehearsals.jsonl (honest failure history, never blocks).
   claude: ensureHooks(path.join(home, ".claude", "settings.json"), {
     Stop: claudeHookCommand("stop"),
+    PostToolUse: claudeHookCommand("posttool-use"),
   }),
 };
 

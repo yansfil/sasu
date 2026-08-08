@@ -81,6 +81,10 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
 `verify-run` captures a command log, records the artifact with the executed command and exit code, and updates verification status.
 Do not run a required command outside the harness and later substitute a prose result when `verify-run` can capture it directly.
 
+Plain Bash runs of a contract command during development are fine and expected; a PostToolUse hook records them (with exit codes) to the run's `rehearsals.jsonl`, and `status` and the receipt surface per-verification rehearsal counts and failures.
+This ledger is observational and never blocks: its purpose is an honest failure history, so a required check whose recorded history never once failed is visible for what it is.
+Do not edit `rehearsals.jsonl` or cite it as passing evidence; only `verify-run` closes a verification item.
+
 ## Database Safety
 
 Any verification, test, seed, or migration that writes to a database must target a disposable database: a local instance, an ephemeral container, or a provider branch (for example a Neon branch).

@@ -1,6 +1,9 @@
 // @ts-check
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+
 const { nowIso } = require("./util");
 
 /** @typedef {import("./types").State} State */
@@ -120,6 +123,40 @@ function countState(state) {
     blocked,
     requiredVerificationNotPassed: blocked.requiredVerification,
   };
+}
+
+/**
+ * Per-verification rehearsal history from the PostToolUse observer's
+ * rehearsals.jsonl (side-door Bash runs of contract commands - see
+ * runPostToolUseHook). This is the signal countState cannot give: a required
+ * check whose entire history is green never demonstrated it can fail.
+ * @param {string} statePath
+ */
+function rehearsalSummary(statePath) {
+  const file = path.join(path.dirname(statePath), "rehearsals.jsonl");
+  if (!fs.existsSync(file)) return { recorded: false, byVerification: {} };
+  /** @type {Record<string, {runs: number, failures: number, unknown: number, lastExitCode: number|null}>} */
+  const byVerification = {};
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const id = String(entry.verificationId || "").toUpperCase();
+    if (!id) continue;
+    const bucket = byVerification[id] || (byVerification[id] = { runs: 0, failures: 0, unknown: 0, lastExitCode: null });
+    bucket.runs += 1;
+    if (typeof entry.exitCode === "number") {
+      if (entry.exitCode !== 0) bucket.failures += 1;
+      bucket.lastExitCode = entry.exitCode;
+    } else {
+      bucket.unknown += 1;
+    }
+  }
+  return { recorded: true, byVerification };
 }
 
 /** @param {State} state */
@@ -247,6 +284,7 @@ module.exports = {
   markCompletionReviewsStale,
   findTrackedItem,
   countState,
+  rehearsalSummary,
   reviewProfileName,
   finalReviewRequiredForState,
   independentFidelityRequiredForState,
