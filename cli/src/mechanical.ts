@@ -16,15 +16,19 @@ export interface ResolvedCommand {
   kind: MechanicalKind;
   command: string;
   source: "config" | "detected" | "contract";
-  /** Criterion the command belongs to, for contract-declared checks and captures. */
-  criterionId?: string;
+  /**
+   * Criteria this command proves, for contract-declared checks and captures.
+   * A list because two criteria may declare the same command: it runs once,
+   * but its result is evidence for both of them.
+   */
+  criterionIds?: string[];
 }
 
 export interface MechanicalRun {
   kind: MechanicalKind;
   command: string;
   source: "config" | "detected" | "contract";
-  criterionId?: string;
+  criterionIds?: string[];
   exitCode: number;
   ok: boolean;
   tail: string;
@@ -105,39 +109,75 @@ export function runMechanical(
     ? { resolved: [] as ResolvedCommand[], configSuggestion: null }
     : resolveMechanicalCommands(projectRoot, config);
   const configSuggestion = base.configSuggestion;
-  const resolved = [...base.resolved, ...extra];
+  // A contract that restates a configured command (the natural thing to write
+  // when you want the check tier and `npm test` is the only command you have)
+  // must not run the suite twice.
+  // A command declared more than once runs once. Deduping must never drop a
+  // criterion's proof, though: the surviving run inherits every criterion that
+  // declared the command, and a capture outranks an identical check because it
+  // also has to produce an artifact.
+  const byCommand = new Map<string, ResolvedCommand>();
+  for (const cmd of base.resolved) byCommand.set(cmd.command.trim(), cmd);
+  const order: string[] = [];
+  for (const cmd of extra) {
+    const key = cmd.command.trim();
+    const existing = byCommand.get(key);
+    if (!existing) {
+      byCommand.set(key, { ...cmd, ...(cmd.criterionIds ? { criterionIds: [...cmd.criterionIds] } : {}) });
+      order.push(key);
+      continue;
+    }
+    const merged = new Set([...(existing.criterionIds ?? []), ...(cmd.criterionIds ?? [])]);
+    byCommand.set(key, {
+      ...(cmd.kind === "capture" ? cmd : existing),
+      ...(merged.size > 0 ? { criterionIds: [...merged] } : {}),
+    });
+  }
+  const resolved = [...base.resolved.map((cmd) => byCommand.get(cmd.command.trim())!), ...order.map((key) => byCommand.get(key)!)];
   const runs: MechanicalRun[] = [];
   let ok = true;
   for (const cmd of resolved) {
-    const result = spawnSync(cmd.command, {
-      cwd: projectRoot,
-      shell: true,
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-      // A hung suite must fail closed instead of hanging the gate forever
-      // (PRD judge-fanout R8); configurable via verify.commandTimeoutMs.
-      timeout: config.verify.commandTimeoutMs,
-      env: process.env,
-    });
-    const timedOut =
-      (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
-    const exitCode = result.status ?? 1;
-    const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
-    const tailLines = combined.split("\n").slice(-30);
-    if (timedOut) tailLines.push(`[sasu] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
-    runs.push({
-      kind: cmd.kind,
-      command: cmd.command,
-      source: cmd.source,
-      ...(cmd.criterionId !== undefined ? { criterionId: cmd.criterionId } : {}),
-      exitCode: timedOut ? 124 : exitCode,
-      ok: !timedOut && exitCode === 0,
-      tail: tailLines.join("\n"),
-    });
-    if (!runs[runs.length - 1]!.ok) {
+    const run = runOne(projectRoot, cmd, config);
+    runs.push(run);
+    if (!run.ok) {
       ok = false;
-      break; // Fail fast: later stages cost more, and semantic must not run anyway.
+      // Fail fast on the project's own checks: later stages cost more and the
+      // judge must not run anyway. Criterion-scoped commands are the exception
+      // - they are a criterion's evidence, and skipping them would leave the
+      // receipt for a failed run silent about which criteria were already
+      // satisfied, which is exactly the report that most needs the detail.
+      for (const next of resolved.slice(resolved.indexOf(cmd) + 1)) {
+        if ((next.criterionIds ?? []).length > 0) runs.push(runOne(projectRoot, next, config));
+      }
+      break;
     }
   }
   return { ok, runs, resolved, configSuggestion };
+}
+
+function runOne(projectRoot: string, cmd: ResolvedCommand, config: SasuConfig): MechanicalRun {
+  const result = spawnSync(cmd.command, {
+    cwd: projectRoot,
+    shell: true,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+    // A hung suite must fail closed instead of hanging the gate forever
+    // (PRD judge-fanout R8); configurable via verify.commandTimeoutMs.
+    timeout: config.verify.commandTimeoutMs,
+    env: process.env,
+  });
+  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
+  const exitCode = result.status ?? 1;
+  const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+  const tailLines = combined.split("\n").slice(-30);
+  if (timedOut) tailLines.push(`[sasu] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
+  return {
+    kind: cmd.kind,
+    command: cmd.command,
+    source: cmd.source,
+    ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
+    exitCode: timedOut ? 124 : exitCode,
+    ok: !timedOut && exitCode === 0,
+    tail: tailLines.join("\n"),
+  };
 }

@@ -23,6 +23,7 @@ Ship it.
 
 - AC1. the widget renders
 - AC2. the API answers
+  - check: \`curl -sf localhost:3000/health\`
   - evidence: agents/quick/demo/evidence/api.json
 - AC3. dark mode looks right
   - capture: \`node scripts/shot.js out/dark.png\` -> out/dark.png
@@ -39,6 +40,7 @@ test("parses checks, criteria, and every evidence field", () => {
   const [ac1, ac2, ac3, ac4] = parsed.criteria;
   assert.equal(ac1.text, "the widget renders");
   assert.deepEqual(ac1.evidence, []);
+  assert.deepEqual(ac2.checks.map((c) => c.command), ["curl -sf localhost:3000/health"]);
   assert.deepEqual(ac2.evidence.map((e) => e.path), ["agents/quick/demo/evidence/api.json"]);
   assert.deepEqual(ac3.captures.map((c) => [c.command, c.path]), [["node scripts/shot.js out/dark.png", "out/dark.png"]]);
   assert.equal(ac4.human, "compare against the mock the user attached");
@@ -73,6 +75,8 @@ const DEFECT_CASES = [
   ["escaping evidence path", "## Acceptance Criteria\n\n- AC1. x\n  - evidence: ../../secrets.txt\n", "contract-evidence-path"],
   ["escaping capture artifact", "## Acceptance Criteria\n\n- AC1. x\n  - capture: `shot` -> ../out.png\n", "contract-capture-path"],
   ["human mixed with machine evidence", "## Acceptance Criteria\n\n- AC1. x\n  - human: eyeball it\n  - evidence: a.txt\n", "contract-human-conflict"],
+  ["human mixed with a criterion check", "## Acceptance Criteria\n\n- AC1. x\n  - human: eyeball it\n  - check: `true`\n", "contract-human-conflict"],
+  ["unbackticked criterion check", "## Acceptance Criteria\n\n- AC1. x\n  - check: npm test\n", "contract-criterion-check-format"],
 ];
 
 for (const [label, body, rule] of DEFECT_CASES) {

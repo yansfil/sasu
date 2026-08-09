@@ -50,16 +50,18 @@ status: active
 
 ## Checks
 
-- `<a command the harness runs to prove a criterion>`
+- `<a command that must pass for the whole run, e.g. a smoke test>`
 
 ## Acceptance Criteria
 
 - AC1. <a statement the diff judge can check against the code change>
-- AC2. <a statement proven by a runtime artifact>
+- AC2. <a statement a command can prove>
+  - check: `<command that passes only when AC2 holds>`
+- AC3. <a statement proven by a runtime artifact>
   - evidence: agents/quick/<slug>/evidence/response.json
-- AC3. <a statement proven by something visible>
+- AC4. <a statement proven by something visible>
   - capture: `<command that writes the artifact>` -> agents/quick/<slug>/evidence/screen.png
-- AC4. <a statement only a person can settle>
+- AC5. <a statement only a person can settle>
   - human: <what to check and why no command can>
 ```
 
@@ -75,26 +77,34 @@ The judge sees the diff, plus whatever the harness collected for it. It never go
 
 Four tiers, most trustworthy first. **Always use the highest tier a criterion can reach**; drop a tier only when the one above is genuinely impossible:
 
-1. **`## Checks` command** - a command that passes only when the criterion holds (`curl -sf localhost:3000/health`, a targeted test). The harness runs it; no LLM judgment, no submission bias, no way to fake it. Reach for this first, always.
+1. **`check: \`<cmd>\`` under a criterion** - a command that passes only when that criterion holds (`curl -sf localhost:3000/health`, a targeted test). The harness runs it on its own clock and shows the judge the command, its exit code, and its output, labelled with the criterion it proves. Reach for this first, always. A bullet under `## Checks` is the same mechanism scoped to the whole run: it gates the gate, but it proves no particular criterion, so prefer the criterion-scoped form when a command maps to one.
 2. **`evidence: <path>`** - a text artifact (log, API response, DB dump) inlined into the judge prompt and hash-pinned. Cap is 64KB per file; over that, turn it into a tier-1 command. Weaker than tier 1 because you could have written the file by hand.
-3. **`capture: \`<cmd>\` -> <path>`** - for what has to be *seen*. Declare the command, not the image: the harness runs it on its own clock, so the artifact is fresh by construction, then attaches it to the judge. An image you produced yourself is not accepted - the judge cannot tell a current screenshot from last week's.
+
+3. **`capture: \`<cmd>\` -> <path>`** - for what has to be *seen*. Declare the command, not the image: the harness runs it on its own clock, so the artifact is fresh by construction, then attaches it to the judge. An image you produced yourself is not accepted - the judge cannot tell a current screenshot from last week's. Both halves are required: the command in backticks, then ` -> ` and the exact path that command writes, so the harness knows what to look for.
 4. **`human: <why>`** - proof no command can reproduce (a comparison against a design mock, real-device behavior). Never judged; comes back as a `requiresHuman` finding and the run ends by handing it to the user, which the Stop hook already allows.
 
 Constraints worth knowing before you write the contract:
 
 - Image attachment is a backend capability. `codex` supports it; `claude` does not (its headless mode has no local-image flag, and the judge is deliberately tool-less). On a claude backend a `capture:` criterion falls to tier 4 automatically - the capture still runs and is hash-pinned, but a person reviews it. Set `judge.backend` to `codex` in `agents/config.json` when a run leans on visual criteria.
-- Evidence paths must be project-relative and inside the tree. Keep them under `agents/quick/<slug>/evidence/`.
+- An image only reaches the judge through `capture:`. The same file declared with `evidence:` goes to the human lane instead, because nothing proves when it was made.
+- Evidence paths must be relative to the project root (an absolute path is refused even when it points inside), and must resolve to an ordinary file whose content lives in the tree - symlinks out of the tree and hard links are refused at read time. Keep artifacts under `agents/quick/<slug>/evidence/`.
+- Inline evidence must be text. Binary content is refused - use a capture for something visual, or a check command for what the binary proves.
+- A criterion cannot carry both `human:` and machine evidence; the contract lint refuses it at $0. Split it in two if a person owns half the proof.
 - **Never write a taste criterion.** "The spacing is balanced", "the design looks clean" - the judge confirms propositions ("the toggle renders", "the response is 200"), not quality. Visual quality goes in the final report as a human-review item, not into an AC.
-- Every evidence file and capture artifact is hashed into the PASS pin, exactly like the contract itself. Changing one after a pass re-opens the gate.
-- Write `agents/quick/.quick-active.json`:
+- Every evidence file and capture artifact is hashed into the verdict, exactly like the contract itself. Changing one afterwards re-opens the gate.
+- Identical commands run once no matter how many places declare them, and every declaring criterion still gets the result. Naming a configured `verify.commands` entry as a criterion's `check:` is fine when that command really is the criterion's proof; a bare `## Checks` restatement of it is just noise.
+
+### Arming the run
+
+Write `agents/quick/.quick-active.json`:
 
 ```json
 { "slug": "<slug>", "contractPath": "agents/quick/<slug>/contract.md", "baseRef": "<sha>", "startedAt": "<iso>" }
 ```
 
-From this point the Stop hook blocks turn completion until the verify gate passes fresh and finalization is done. On its first firing the hook claims the run by rewriting the marker with an `activeSessionId`; leave that field alone.
+From this point the Stop hook blocks turn completion until the verify gate is settled and finalization is done. On its first firing the hook claims the run by rewriting the marker with an `activeSessionId`; leave that field alone while the run is yours. The one exception is adopting an orphan: if the guard reports the run is owned by another session and you know that session is gone, clear `activeSessionId` and finish the run normally.
 
-- Summarize the contract in chat (goal, ACs, assumptions). Informational, not an approval request; continue immediately - the user can interrupt.
+Then summarize the contract in chat (goal, ACs, assumptions). Informational, not an approval request; continue immediately - the user can interrupt.
 
 ## Stage 2: Implement
 
@@ -106,27 +116,39 @@ Implement directly in the conversation. No task plan, no state harness. Keep the
 sasu verify --slug <slug> --contract agents/quick/<slug>/contract.md --base <baseRef> --json
 ```
 
+The JSON carries everything the receipt needs, on every settled path: `criteria` (per-AC judge verdicts; empty when no judge ran), `judgedCriteriaIds` (the criteria sent to the judge), `judgedVerdict` (its verdict before the human lane was folded in; absent when no judge ran), `checks` (criterion-scoped command results), `mechanical.runs`, `evidence` (artifact paths with hashes, including artifacts no judge could read), `inputs` (everything pinned), and `status.findings`.
+
+The judge sees the diff against your base ref, including files the run created. It does not see gitignored files - if something only exists there, prove it with a check command instead. The harness's own `agents/gates/` and `agents/quick/` trees are excluded from both the diff and the tree fingerprint, so your contract prose never crowds out the code and writing the receipt never stales a PASS.
+
+A failing project check stops the run, but criterion-scoped `check:` commands still execute, so a blocked receipt can still say which criteria were already satisfied. `mechanical.resolved` lists every command the run planned, which is where a genuinely skipped one shows up.
+
 - Mechanical commands come from `agents/config.json` `verify.commands` or manifest detection, then the contract's own `## Checks` and `capture:` commands. When the CLI suggests pinning detected commands, relay the suggestion once in the final report.
-- On BLOCK/FAIL: fix and re-run, within the judge retry budget (default 3). Prelint findings are free to fix and re-run.
-- An `evidence` finding means a declared artifact is missing, empty, or oversized - fix the declaration or the command that produces it. This blocks before the judge call, so the loop is free.
-- A `human-verification` finding is not a failure to fix: check it yourself, then report it to the user as the open item. The gate stays non-PASS by design, and the Stop hook lets that run end.
+- On BLOCK/FAIL: fix and re-run, within the judge retry budget (default 3). Prelint findings never consume an attempt; every other blocked run does, including a mechanical or evidence failure that costs no judge call. Three typo'd evidence paths exhaust the budget just as three failing test runs would. The CLI reports exhaustion rather than refusing to run, so honour it: the Stop guard treats it as the end of the fix loop and moves you to the handoff close.
+- An `evidence` finding means a declared artifact is missing, empty, binary, oversized, or resolves outside the project - fix the declaration or the command that produces it. It blocks before the judge call, so it costs nothing but the attempt.
+- A `human-verification` finding is not a failure to fix: check it yourself, then carry it into the receipt and the report as an open item. The gate stays non-PASS by design, and the run closes through the handoff path below.
 - Never run `sasu gate override`; it is user-only.
-- Stop and hand to the user when a finding is marked `requiresHuman` or the budget is exhausted - the Stop hook allows those stops by design.
-- A PASS is pinned to the contract hash and the tree fingerprint. Editing the contract or the code after a PASS re-opens the gate; re-run verify on the current state instead of arguing with the hook.
+- A verdict is pinned to the contract hash, every evidence artifact's hash, and (for a PASS) the tree fingerprint. Editing any of them re-opens the gate; re-run verify on the current state instead of arguing with the hook.
 
 ## Stage 4: Finalize
 
-Only after a live PASS:
+A quick run closes in one of two ways. Both write the same three artifacts; only the report differs.
 
-1. Write `agents/quick/<slug>/receipt.md`: goal, one-line outcome, then the verify `--json` per-AC verdicts, mechanical runs, and evidence artifacts (path + hash) embedded verbatim - never restate verification results by hand (derived bookkeeping is how ledgers rot).
-2. Flip the contract frontmatter to `status: complete` (freshness hashing ignores frontmatter, so this does not stale the PASS).
-3. Delete `agents/quick/.quick-active.json`.
-4. Report: what changed, AC verdicts, assumptions made, anything deferred, and an explicit human-review section for every `human:` criterion plus any visual or taste judgment the judge did not make. Do not commit or push unless the conversation agreed to it.
+**Closing on a live PASS** - every criterion was judged and passed.
+
+**Closing on a handoff** - the fix loop ended without a PASS because a finding needs a person (`requiresHuman`) or the retry budget is exhausted. This is a legitimate ending, not an abandoned run: a contract with any `human:` criterion can never reach PASS by construction, and it still has to be closed out properly.
+
+In both cases:
+
+1. Write `agents/quick/<slug>/receipt.md`: goal, one-line outcome, then the verify `--json` per-AC verdicts, check results, mechanical runs, and evidence artifacts (path + hash) embedded verbatim - never restate verification results by hand (derived bookkeeping is how ledgers rot). On a handoff, add an "Open items" section listing every unsettled criterion and what a person must check. When no judge ran (an all-human contract), `criteria` is empty and the receipt rests on `status.findings`, `checks`, and `evidence` instead.
+2. Flip the contract frontmatter to `status: complete` (freshness hashing ignores frontmatter, so this does not stale the verdict).
+3. Report: what changed, AC verdicts, assumptions made, anything deferred, and an explicit human-review section for every `human:` criterion plus any visual or taste judgment the judge did not make. On a handoff, say plainly that the run did not reach a full PASS and name what is open - never call it Done. Do not commit or push unless the conversation agreed to it.
+
+Do not delete `agents/quick/.quick-active.json` yourself. The Stop guard checks steps 1 and 2 and retires the marker once both are done; deleting it by hand only skips the check.
 
 ## Stops
 
-Never stop for stage transitions. Stop and ask only when:
+Never stop for stage transitions, and never stop before Stage 4 has run. Stop and ask only when:
 
 - a contract-breaking ambiguity has no defensible assumption.
-- a verify finding is marked `requiresHuman`, or the retry budget is exhausted.
+- a verify finding is marked `requiresHuman`, or the retry budget is exhausted - after closing the run through the handoff path.
 - the work touches an implement-pipeline hard stop (real-data migrations, auth/security decisions, payments, production data, credentials, destructive actions, external spend).

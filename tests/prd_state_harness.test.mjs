@@ -1929,7 +1929,12 @@ test("quick guard blocks a stop before verify has run, and claims the session", 
   assert.match(directive.reason, /sasu verify --slug demo --contract agents\/quick\/demo\/contract\.md --json/);
   const marker = JSON.parse(fs.readFileSync(path.join(root, "agents", "quick", ".quick-active.json"), "utf8"));
   assert.equal(marker.activeSessionId, "quick-s");
-  assert.equal(quickStop(root, "other-session"), "", "another session must not be blocked by this run");
+  // A foreign session must be told, not silently released: a stray hook
+  // firing in this directory would otherwise disarm the guard for the owner.
+  const foreign = JSON.parse(quickStop(root, "other-session"));
+  assert.equal(foreign.decision, "block");
+  assert.match(foreign.reason, /owned by another session/);
+  assert.match(foreign.reason, /quick-s/);
 });
 
 test("quick guard demands finalization on a live PASS, and silence once the marker is gone", () => {
@@ -1963,7 +1968,7 @@ test("quick guard re-opens a PASS when the contract changed after it", () => {
   assert.match(directive.reason, /changed after the pass/);
 });
 
-test("quick guard keeps the fix loop inside the budget and releases exhausted or human-decision runs", () => {
+test("quick guard drives the fix loop inside the budget, then switches to handoff instead of another verify", () => {
   const root = makeQuickProject();
   const finding = { area: "semantic", severity: "P0", missing: "AC1: no render in diff", recommendation: "add it", requiresHuman: false };
   writeQuickGates(root, { verdict: "FAIL", attempts: 1, findings: [finding] });
@@ -1971,12 +1976,16 @@ test("quick guard keeps the fix loop inside the budget and releases exhausted or
   assert.equal(directive.decision, "block");
   assert.match(directive.reason, /attempt 1\/3/);
   assert.match(directive.reason, /AC1: no render in diff/);
+  assert.match(directive.reason, /sasu verify/, "inside the budget the guard asks for another verify");
 
+  // Ending the loop is not ending the run: both exits still owe the receipt.
   writeQuickGates(root, { verdict: "FAIL", attempts: 3, findings: [finding] });
-  assert.equal(quickStop(root), "", "an exhausted budget must hand the run to the user");
+  const exhausted = JSON.parse(quickStop(root));
+  assert.match(exhausted.reason, /exhausted its 3-attempt verify budget/);
+  assert.ok(!/Fix the findings and re-run/.test(exhausted.reason), "an exhausted budget must stop driving the fix loop");
 
   writeQuickGates(root, { verdict: "BLOCK", attempts: 1, findings: [{ ...finding, requiresHuman: true }] });
-  assert.equal(quickStop(root), "", "a human-decision finding must hand the run to the user");
+  assert.match(JSON.parse(quickStop(root)).reason, /needs human verification/);
 });
 
 test("quick guard treats a user override as passable and demands finalization", () => {
@@ -1985,4 +1994,101 @@ test("quick guard treats a user override as passable and demands finalization", 
   const directive = JSON.parse(quickStop(root));
   assert.equal(directive.decision, "block");
   assert.match(directive.reason, /receipt\.md/);
+});
+
+test("quick guard closes out a human-verification run instead of letting it vanish", () => {
+  const root = makeQuickProject();
+  const pass = passRecord(root);
+  writeQuickGates(root, {
+    verdict: "FAIL",
+    attempts: 1,
+    findings: [{
+      area: "human-verification",
+      severity: "P0",
+      missing: "AC2: declared human-verified - compare against the printed mock",
+      recommendation: "Confirm AC2 yourself and report the result; no judge can settle it.",
+      requiresHuman: true,
+    }],
+    inputs: pass.inputs,
+  });
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block", "a human handoff still owes the user a receipt and a clean marker");
+  assert.match(directive.reason, /needs human verification/);
+  assert.match(directive.reason, /compare against the printed mock/);
+  assert.match(directive.reason, /receipt\.md/);
+  assert.match(directive.reason, /Do not call the run Done/);
+
+  // Doing the finalize work - not deleting the marker - is what ends the run.
+  write(path.join(root, "agents", "quick", "demo", "receipt.md"), "# receipt\n");
+  const stillOpen = JSON.parse(quickStop(root));
+  assert.match(stillOpen.reason, /status: complete/, "the receipt alone must not close the run");
+  assert.ok(!/receipt\.md/.test(stillOpen.reason), "a step already done must drop off the list");
+
+  const contractPath = path.join(root, "agents", "quick", "demo", "contract.md");
+  write(contractPath, fs.readFileSync(contractPath, "utf8").replace("status: active", "status: complete"));
+  assert.equal(quickStop(root), "", "once the run is closed out the guard is silent");
+  assert.equal(
+    fs.existsSync(path.join(root, "agents", "quick", ".quick-active.json")),
+    false,
+    "the guard retires the marker itself, so deleting it can never be the shortcut",
+  );
+});
+
+test("quick guard closes out an exhausted budget the same way", () => {
+  const root = makeQuickProject();
+  writeQuickGates(root, {
+    verdict: "FAIL",
+    attempts: 3,
+    findings: [{ area: "semantic", severity: "P0", missing: "AC1: still not implemented", recommendation: "fix", requiresHuman: false }],
+    inputs: passRecord(root).inputs,
+  });
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /exhausted its 3-attempt verify budget/);
+  assert.match(directive.reason, /receipt\.md/);
+});
+
+test("quick guard refuses to close out a handoff whose evidence drifted", () => {
+  const root = makeQuickProject();
+  write(path.join(root, "agents", "quick", "demo", "evidence", "api.json"), '{"status":200}');
+  const evidencePath = "agents/quick/demo/evidence/api.json";
+  const { sha256Of } = requireModule(path.join(repoRoot, "cli", "lib", "gate_freshness.js"));
+  writeQuickGates(root, {
+    verdict: "FAIL",
+    attempts: 1,
+    findings: [{ area: "human-verification", severity: "P0", missing: "AC2: human", recommendation: "check it", requiresHuman: true }],
+    inputs: [{ path: evidencePath, sha256: sha256Of(fs.readFileSync(path.join(root, evidencePath))), kind: "evidence" }],
+  });
+  assert.match(JSON.parse(quickStop(root)).reason, /needs human verification/, "a matching artifact closes out normally");
+
+  write(path.join(root, evidencePath), '{"status":500}');
+  const directive = JSON.parse(quickStop(root));
+  assert.match(directive.reason, /evidence no longer matches/);
+  assert.match(directive.reason, /api\.json changed after the verdict/);
+});
+
+test("hooks stay silent inside a judge subprocess so the judge is never derailed", () => {
+  const root = makeQuickProject();
+  // Sanity: this state does block a normal session.
+  assert.equal(JSON.parse(quickStop(root)).decision, "block");
+  fs.rmSync(path.join(root, "agents", "quick", ".quick-active.json"));
+  write(
+    path.join(root, "agents", "quick", ".quick-active.json"),
+    JSON.stringify({ slug: "demo", contractPath: "agents/quick/demo/contract.md" }),
+  );
+
+  // A judge call is a full CLI session in this project, so the user's hooks
+  // fire inside it. Answering there both corrupts the judge's reply and lets
+  // its session id claim the marker, locking out the agent that asked.
+  const judged = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "judge-session" }),
+    env: { ...process.env, SASU_JUDGE_SUBPROCESS: "1" },
+  });
+  assert.equal(judged.stdout.trim(), "", "a judge subprocess must get no directive");
+  const marker = JSON.parse(fs.readFileSync(path.join(root, "agents", "quick", ".quick-active.json"), "utf8"));
+  assert.equal(marker.activeSessionId, undefined, "the judge must not claim the run marker");
+
+  // The owning session still gets its directive afterwards.
+  assert.equal(JSON.parse(quickStop(root)).decision, "block");
 });

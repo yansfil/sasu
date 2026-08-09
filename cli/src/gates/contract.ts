@@ -10,7 +10,9 @@
  *
  * Evidence tiers, most trustworthy first (the skill requires escalating to the
  * highest tier a criterion can reach):
- *   1. `## Checks` command      - the harness runs it; no LLM, no submission bias.
+ *   1. `check: <cmd>`           - the harness runs it and shows the judge its exit
+ *                                 code and output; no submission bias. A `## Checks`
+ *                                 bullet is the same thing scoped to the whole run.
  *   2. `evidence: <path>`       - text inlined into the judge prompt, hash-pinned.
  *   3. `capture: <cmd> -> <path>` - harness-run capture attached to the judge.
  *   4. `human: <why>`           - not judged; handed to the user as requiresHuman.
@@ -30,10 +32,17 @@ export interface CaptureRef {
   line: number;
 }
 
+export interface CriterionCheck {
+  command: string;
+  line: number;
+}
+
 export interface ContractCriterion {
   id: string;
   text: string;
   line: number;
+  /** Commands that prove THIS criterion; their result is shown to the judge. */
+  checks: CriterionCheck[];
   evidence: EvidenceRef[];
   captures: CaptureRef[];
   /** Non-null when the criterion is declared human-verified; never judged. */
@@ -128,7 +137,7 @@ export function parseContract(content: string): ParsedContract {
       const raw = lines[i]!;
       const acMatch = raw.match(AC_LINE);
       if (acMatch) {
-        current = { id: acMatch[1]!, text: acMatch[2]!.trim(), line: i + 1, evidence: [], captures: [], human: null };
+        current = { id: acMatch[1]!, text: acMatch[2]!.trim(), line: i + 1, checks: [], evidence: [], captures: [], human: null };
         criteria.push(current);
         continue;
       }
@@ -145,7 +154,19 @@ export function parseContract(content: string): ParsedContract {
         });
         continue;
       }
-      if (key === "evidence") {
+      if (key === "check") {
+        const backticked = value.match(BACKTICKED);
+        if (!backticked) {
+          defects.push({
+            rule: "contract-criterion-check-format",
+            line: i + 1,
+            missing: `${current.id}: check "${value}" is not a single backticked command`,
+            recommendation: "Write the whole command in backticks, e.g. check: `bash -c \"curl -sf localhost:3000/health\"`.",
+          });
+          continue;
+        }
+        current.checks.push({ command: backticked[1]!.trim(), line: i + 1 });
+      } else if (key === "evidence") {
         if (value === "") {
           defects.push({ rule: "contract-evidence-empty", line: i + 1, missing: `${current.id}: evidence has no path`, recommendation: "Give a project-relative path to the evidence file." });
           continue;
@@ -179,7 +200,7 @@ export function parseContract(content: string): ParsedContract {
           rule: "contract-unknown-subfield",
           line: i + 1,
           missing: `${current.id}: unknown evidence field "${key}"`,
-          recommendation: "Use one of: evidence, capture, human.",
+          recommendation: "Use one of: check, evidence, capture, human.",
         });
       }
     }
@@ -188,7 +209,7 @@ export function parseContract(content: string): ParsedContract {
   // A criterion cannot be both judged and handed to a person: the mixed shape
   // reads as "verified" while nobody owns half the proof.
   for (const criterion of criteria) {
-    if (criterion.human !== null && (criterion.evidence.length > 0 || criterion.captures.length > 0)) {
+    if (criterion.human !== null && (criterion.evidence.length > 0 || criterion.captures.length > 0 || criterion.checks.length > 0)) {
       defects.push({
         rule: "contract-human-conflict",
         line: criterion.line,

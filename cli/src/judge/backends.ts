@@ -36,6 +36,19 @@ export interface JudgeBackend {
   run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult>;
 }
 
+/**
+ * Marks every process below a judge call.
+ *
+ * The judge is a real CLI session, not a bare completion: it loads the user's
+ * hooks and runs them with the project as its working directory. Without this
+ * flag the harness's own Stop hook fires *inside the judge*, which both
+ * derails the judge (it answers the hook's directive instead of emitting its
+ * verdict, so the call fails as judge-invalid-output) and lets the judge's
+ * session id claim the run marker, locking out the agent that started it.
+ * Hook entrypoints bail immediately when they see this in their environment.
+ */
+export const JUDGE_SUBPROCESS_ENV = "SASU_JUDGE_SUBPROCESS";
+
 function binaryOnPath(binary: string): boolean {
   const probe = spawnSync(process.platform === "win32" ? "where" : "which", [binary], { encoding: "utf8" });
   return probe.status === 0;
@@ -144,7 +157,7 @@ export class ClaudeBackend implements JudgeBackend {
     const result = await runProcess(this.binary, args, {
       input: prompt,
       timeoutMs,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge" },
+      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
     });
     interpretSpawnFailure(this.name, result);
     const envelope = safeParse(result.stdout);
@@ -219,7 +232,10 @@ export class CodexBackend implements JudgeBackend {
     const args = codexExecArgs(model, workRoot, lastMessagePath, images);
     args.push(CODEX_NO_TOOLS_PREAMBLE + prompt);
     try {
-      const result = await runProcess(this.binary, args, { timeoutMs });
+      const result = await runProcess(this.binary, args, {
+        timeoutMs,
+        env: { ...process.env, [JUDGE_SUBPROCESS_ENV]: "1" },
+      });
       interpretSpawnFailure(this.name, result);
       if (fs.existsSync(lastMessagePath)) {
         const text = fs.readFileSync(lastMessagePath, "utf8");

@@ -13,8 +13,16 @@ const { completionViolations } = require("./reviews");
 const { sameSessionId, sessionIdFromHookPayload, readActive, syncActive } = require("./state_store");
 const { normalizeCommandForCompare } = require("./inference");
 
+// Keep in sync with JUDGE_SUBPROCESS_ENV in cli/src/judge/backends.ts.
+const JUDGE_SUBPROCESS_ENV = "SASU_JUDGE_SUBPROCESS";
+
 function cmdHook(kind) {
   if (kind !== "stop" && kind !== "pretool-use" && kind !== "posttool-use") return;
+  // A judge call is a real CLI session running in this project, so the user's
+  // hooks fire inside it. Answering there is never right: the directive
+  // derails the judge's reply and its session id would claim state belonging
+  // to the agent that asked for the judgment.
+  if (process.env[JUDGE_SUBPROCESS_ENV] === "1") return;
   const started = Date.now();
   readStdinJson(DEFAULT_HOOK_TIMEOUT_MS, payload => {
     try {
@@ -97,18 +105,21 @@ If delivery is genuinely blocked, report the blocker explicitly to the user inst
  * (fresh contract hash AND unchanged tree fingerprint) plus the finalize
  * steps (receipt, contract status flip, marker removal).
  *
- * Two outcomes deliberately allow the stop so the agent can hand the run to
- * the user instead of looping: a finding marked requiresHuman, and an
- * exhausted retry budget. Everything else about a non-PASS verify blocks with
- * the exact command to run. Same philosophy as the implement Stop guard:
- * fail open on any read error - the skill remains the source of enforcement.
+ * Two outcomes end the autonomous fix loop rather than driving another verify:
+ * a finding marked requiresHuman, and an exhausted retry budget. Both still
+ * demand the finalization steps, because a run handed to a person needs its
+ * receipt and its open items just as much as a passing one does - and a
+ * marker left behind becomes the next session's phantom active run.
+ * Everything else about a non-PASS verify blocks with the exact command to
+ * run. Same philosophy as the implement Stop guard: fail open on any read
+ * error - the skill remains the source of enforcement.
  */
 function quickStopDirective(hookCwd, sessionId) {
   const markerPath = path.join(hookCwd, QUICK_ACTIVE_PATH);
   if (!fs.existsSync(markerPath)) return "";
   const marker = readJson(markerPath);
   if (!marker || typeof marker.slug !== "string" || typeof marker.contractPath !== "string") return "";
-  if (marker.activeSessionId && !sameSessionId(marker.activeSessionId, sessionId)) return "";
+  const foreignOwner = marker.activeSessionId && !sameSessionId(marker.activeSessionId, sessionId);
   if (!marker.activeSessionId) {
     marker.activeSessionId = sessionId;
     writeJson(markerPath, marker);
@@ -116,6 +127,13 @@ function quickStopDirective(hookCwd, sessionId) {
 
   const verifyCommand = `sasu verify --slug ${marker.slug} --contract ${marker.contractPath}${marker.baseRef ? ` --base ${marker.baseRef}` : ""} --json`;
   const block = reason => JSON.stringify({ decision: "block", reason: `<quick-verify-guard>\n${reason}\n</quick-verify-guard>` });
+
+  // A marker claimed by another session used to silently allow the stop, which
+  // meant a stray hook firing in this directory could disarm the guard for the
+  // session actually doing the work. Say so instead of going quiet.
+  if (foreignOwner) {
+    return block(`A quick run ('${marker.slug}') is active in this directory but is owned by another session (${marker.activeSessionId}).\n\nIf that run is yours, adopt it by clearing "activeSessionId" in \`${QUICK_ACTIVE_PATH}\` and finish it normally. If it is genuinely abandoned, say so to the user and let them decide - do not start a second quick run alongside it.`);
+  }
   const gatesPath = path.join(hookCwd, "agents", "gates", marker.slug, "gates.json");
   const gates = fs.existsSync(gatesPath) ? readJson(gatesPath) : null;
   const record = gates && gates.gates ? gates.gates.verify : null;
@@ -124,10 +142,29 @@ function quickStopDirective(hookCwd, sessionId) {
     return block(`Quick run '${marker.slug}' is active but its verify gate has not run.\n\nContract: \`${marker.contractPath}\`\n\nThe turn is not done until verification passes. Run:\n\n  ${verifyCommand}`);
   }
 
-  const finalizeDirective = () =>
-    block(`Quick run '${marker.slug}' has a live verify PASS. Finish the run before stopping:\n\n1. Write \`agents/quick/${marker.slug}/receipt.md\` from the verify --json output (embed the per-AC verdicts verbatim; do not restate them by hand).\n2. Set \`status: complete\` in \`${marker.contractPath}\` frontmatter.\n3. Delete \`${QUICK_ACTIVE_PATH}\`.\n\nThen report the result to the user.`);
+  // The guard checks the finalize steps it can see rather than trusting a
+  // deleted marker as proof of a finished run, and retires the marker itself
+  // once they are done - so "delete the file" is never the way out.
+  const finalizeDirective = (opening, closing) => {
+    const receiptRel = path.join(path.dirname(marker.contractPath), "receipt.md");
+    const remaining = [];
+    if (!fs.existsSync(path.join(hookCwd, receiptRel))) {
+      remaining.push(`Write \`${receiptRel}\` from the verify --json output (embed the per-AC verdicts, check results, evidence artifacts, and mechanical runs verbatim; do not restate them by hand).`);
+    }
+    if (!/^status:\s*complete\s*$/m.test(readTextOrEmpty(path.join(hookCwd, marker.contractPath)))) {
+      remaining.push(`Set \`status: complete\` in \`${marker.contractPath}\` frontmatter.`);
+    }
+    if (remaining.length === 0) {
+      fs.rmSync(markerPath, { force: true });
+      return "";
+    }
+    const steps = remaining.map((step, index) => `${index + 1}. ${step}`).join("\n");
+    return block(`Quick run '${marker.slug}' ${opening.trimEnd()}\n\nFinish the run before stopping:\n\n${steps}\n\n${closing}`);
+  };
 
-  if (record.overridden) return finalizeDirective();
+  const passDirective = () => finalizeDirective("has a live verify PASS.", "Then report the result to the user. The guard retires the run marker itself once these are done.");
+
+  if (record.overridden) return passDirective();
 
   if (record.verdict === "PASS") {
     const staleReasons = [];
@@ -151,20 +188,50 @@ function quickStopDirective(hookCwd, sessionId) {
     if (staleReasons.length) {
       return block(`Quick run '${marker.slug}' has a verify PASS that is no longer live:\n\n${staleReasons.map(item => `- ${item}`).join("\n")}\n\nRe-run verification on the current state:\n\n  ${verifyCommand}`);
     }
-    return finalizeDirective();
+    return passDirective();
   }
 
-  // BLOCKED / FAIL / ERROR: keep fixing inside the retry budget; hand a
-  // human-decision finding or an exhausted budget to the user instead.
+  // BLOCKED / FAIL / ERROR: keep fixing inside the retry budget; a
+  // human-decision finding or an exhausted budget ends the autonomous loop.
   const findings = Array.isArray(record.findings) ? record.findings : [];
-  if (findings.some(item => item && item.requiresHuman)) return "";
+  const humanFindings = findings.filter(item => item && item.requiresHuman);
   const budget = quickRetryBudget(hookCwd);
-  if (typeof record.attempts === "number" && record.attempts >= budget) return "";
+  const budgetExhausted = typeof record.attempts === "number" && record.attempts >= budget;
+  if (humanFindings.length || budgetExhausted) {
+    // Ending the fix loop is not the same as ending the run: the user still
+    // needs the receipt and the open items, and a marker left behind becomes
+    // the next session's phantom active run. Verification staleness matters
+    // here too, because the artifacts are exactly what the person will read.
+    const evidenceDrift = [];
+    for (const input of record.inputs || []) {
+      const hash = hashGateInput(path.join(hookCwd, input.path), input.kind);
+      if (hash === null) evidenceDrift.push(`${input.path} is missing`);
+      else if (hash !== input.sha256) evidenceDrift.push(`${input.path} changed after the verdict`);
+    }
+    if (evidenceDrift.length) {
+      return block(`Quick run '${marker.slug}' ended its fix loop, but its recorded evidence no longer matches what is on disk:\n\n${evidenceDrift.map(item => `- ${item}`).join("\n")}\n\nRe-run verification so the handoff carries real artifacts:\n\n  ${verifyCommand}`);
+    }
+    const why = humanFindings.length
+      ? `needs human verification and cannot reach PASS on its own:\n\n${humanFindings.map(item => `- ${item.missing}`).join("\n")}`
+      : `exhausted its ${budget}-attempt verify budget.`;
+    return finalizeDirective(
+      why,
+      "Then report to the user: what passed, what is still open, and exactly what you need them to confirm. Do not call the run Done - name the open items. The guard retires the run marker itself once these are done.",
+    );
+  }
   const findingLines = findings
     .slice(0, 6)
     .map(item => `- ${item.severity} ${item.area}: ${item.missing}`)
     .join("\n");
   return block(`Quick run '${marker.slug}' verify gate is ${record.verdict} (attempt ${record.attempts}/${budget}).\n${findingLines ? `\nFindings:\n${findingLines}\n` : ""}\nFix the findings and re-run:\n\n  ${verifyCommand}\n\nNever run 'sasu gate override' yourself; if a finding needs a human decision, report it to the user instead.`);
+}
+
+function readTextOrEmpty(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 function quickRetryBudget(hookCwd) {

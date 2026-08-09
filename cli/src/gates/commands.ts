@@ -21,6 +21,7 @@ import {
   gapAuditPrompt,
   semanticVerifyPrompt,
   specGatePrompt,
+  type CheckResult,
   type EvidenceMaterial,
   type JudgeLane,
   type PriorFinding,
@@ -44,6 +45,17 @@ export interface GateCommandResult {
   prelint?: PrelintResult;
   mechanical?: MechanicalResult;
   criteria?: { id: string; verdict: "PASS" | "FAIL"; reason: string }[];
+  /**
+   * Everything the receipt has to quote, so it can be written from this output
+   * alone instead of reaching into gate state: what was pinned, which criteria
+   * the judge actually saw, and what the judge said before the human lane was
+   * folded in.
+   */
+  inputs?: GateInput[];
+  evidence?: Omit<EvidenceMaterial, "text">[];
+  checks?: CheckResult[];
+  judgedCriteriaIds?: string[];
+  judgedVerdict?: "PASS" | "FAIL";
   error?: { code: string; message: string; recovery: string };
 }
 
@@ -475,13 +487,27 @@ export async function runVerifyGate(
       contractCommands.push({ kind: "check", command: check.command, source: "contract" });
     }
     for (const criterion of contract.criteria) {
+      for (const check of criterion.checks) {
+        contractCommands.push({ kind: "check", command: check.command, source: "contract", criterionIds: [criterion.id] });
+      }
       for (const capture of criterion.captures) {
-        contractCommands.push({ kind: "capture", command: capture.command, source: "contract", criterionId: criterion.id });
+        contractCommands.push({ kind: "capture", command: capture.command, source: "contract", criterionIds: [criterion.id] });
       }
     }
   }
 
   let mechanical: MechanicalResult | undefined;
+  /**
+   * Criterion-scoped command results, shared by the judge prompt and every
+   * settled return. Attribution, not command kind, decides membership: a
+   * criterion check that collided with a configured command survives the
+   * dedupe under the project's kind, and filtering on kind there would
+   * silently delete the very proof the criterion declared.
+   */
+  const collectCheckResults = (): CheckResult[] =>
+    (mechanical?.runs ?? []).flatMap((run) =>
+      (run.criterionIds ?? []).map((criterionId) => ({ criterionId, command: run.command, exitCode: run.exitCode, tail: run.tail })),
+    );
   // Captures are evidence production, not a project check: skipping the
   // mechanical stage must not silently leave the judge with a stale artifact,
   // so a contract with captures always runs them.
@@ -510,7 +536,17 @@ export async function runVerifyGate(
         },
         records,
       );
-      return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), prelint, mechanical };
+      return {
+        ok: false,
+        status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
+        prelint,
+        mechanical,
+        criteria: [],
+        inputs,
+        evidence: [],
+        checks: collectCheckResults(),
+        judgedCriteriaIds: [],
+      };
     }
   }
 
@@ -533,7 +569,9 @@ export async function runVerifyGate(
     ? readTextFile(projectRoot, options.diffFile, "diff file")
     : gitDiff(projectRoot, options.baseRef);
   if (diff.trim() === "") {
-    throw new Error("empty diff: nothing to verify (use --base <ref> or --diff-file <path>)");
+    throw new Error(
+      `empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}. Implement the change first, or point --base at the commit you started from. Note that gitignored files are invisible here even when they exist.`,
+    );
   }
 
   // Stage 1b: collect the evidence lane. A declared artifact that is missing
@@ -550,11 +588,23 @@ export async function runVerifyGate(
         verdict: "FAIL",
         findings: lane.findings,
         inputs,
-        artifactPayload: { stage: "evidence", findings: lane.findings, mechanical: mechanical?.runs ?? "skipped" },
+        artifactPayload: { stage: "evidence", findings: lane.findings, inputs, mechanical: mechanical?.runs ?? "skipped" },
       },
       records,
     );
-    return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), prelint, mechanical };
+    // The receipt contract is the same on every settled path: report what was
+    // judged (nothing), what was pinned, and what ran.
+    return {
+      ok: false,
+      status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
+      prelint,
+      mechanical,
+      criteria: [],
+      inputs,
+      evidence: [],
+      checks: collectCheckResults(),
+      judgedCriteriaIds: [],
+    };
   }
 
   // Criteria whose proof no judge can see - declared human, or an attached
@@ -577,19 +627,44 @@ export async function runVerifyGate(
         verdict: "FAIL",
         findings: humanLane,
         inputs: allInputs,
-        artifactPayload: { stage: "human-lane", findings: humanLane, mechanical: mechanical?.runs ?? "skipped", inputs: allInputs },
+        artifactPayload: {
+          stage: "human-lane",
+          findings: humanLane,
+          judgedCriteriaIds: [],
+          evidence: lane ? lane.artifacts : [],
+          mechanical: mechanical?.runs ?? "skipped",
+          inputs: allInputs,
+        },
       },
       records,
     );
-    return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), prelint, mechanical };
+    return {
+      ok: false,
+      status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
+      prelint,
+      mechanical,
+      // No judge ran, so there are no per-criterion verdicts to quote: the
+      // receipt for an all-human close rests on the findings and the artifacts.
+      criteria: [],
+      inputs: allInputs,
+      evidence: lane ? lane.artifacts : [],
+      checks: collectCheckResults(),
+      judgedCriteriaIds: [],
+    };
   }
 
+  // Criterion-scoped checks reach the judge as evidence for their criterion;
+  // a run-wide check has no criterion to name and stays a gate-only signal.
+  const checkResults = collectCheckResults();
+  const prompt = semanticVerifyPrompt(diff, judgedCriteria, lane ? lane.material : [], checkResults, {
+    mechanicalRan: options.skipMechanical !== true,
+  });
   try {
     const outcome = await runJudge(
       config,
       "gate:verify-semantic",
       "standard",
-      semanticVerifyPrompt(diff, judgedCriteria, lane ? lane.material : []),
+      prompt,
       (value) => validateSemanticVerdict(value, judgedCriteria.map((c) => c.id)),
       lane && lane.images.length > 0 ? { images: lane.images } : {},
     );
@@ -617,6 +692,8 @@ export async function runVerifyGate(
     // one passed: nobody has confirmed it yet, and the honest report of that
     // is a blocking requiresHuman finding, not a PASS.
     const passed = outcome.value.verdict === "PASS" && humanLane.length === 0;
+    const evidenceSummary = lane ? lane.artifacts : [];
+    const judgedCriteriaIds = judgedCriteria.map((c) => c.id);
     state = recordGateResult(
       store,
       state,
@@ -633,7 +710,12 @@ export async function runVerifyGate(
           judgedVerdict: outcome.value.verdict,
           criteria: outcome.value.criteria,
           humanLane,
-          evidence: lane ? lane.material.map(({ text: _text, ...rest }) => rest) : [],
+          // What the judge was actually shown, so "AC4 was never sent" is an
+          // auditable fact rather than something you re-derive from the code.
+          judgedCriteriaIds,
+          promptSha256: sha256Of(prompt),
+          checks: checkResults,
+          evidence: evidenceSummary,
           mechanical: mechanical?.runs ?? "skipped",
           treeFingerprint,
           inputs: allInputs,
@@ -643,13 +725,73 @@ export async function runVerifyGate(
       records,
     );
     const status = gateStatus(state, "verify", config.judge.retryBudget, projectRoot);
-    return { ok: status.effective === "PASS", status, prelint, mechanical, criteria: outcome.value.criteria };
+    return {
+      ok: status.effective === "PASS",
+      status,
+      prelint,
+      mechanical,
+      criteria: outcome.value.criteria,
+      inputs: allInputs,
+      evidence: evidenceSummary,
+      checks: checkResults,
+      judgedCriteriaIds,
+      judgedVerdict: outcome.value.verdict,
+    };
   } catch (error) {
-    return { ...recordJudgeFailure(store, state, "verify", config, error, records, topic), prelint };
+    // A broken judge call does not erase the run's real work: the receipt
+    // contract holds on this path too, minus the verdicts nobody produced.
+    const evidenceSummary = lane ? lane.artifacts : [];
+    const failurePayload = {
+      judgedCriteriaIds: judgedCriteria.map((c) => c.id),
+      promptSha256: sha256Of(prompt),
+      checks: checkResults,
+      evidence: evidenceSummary,
+      mechanical: mechanical?.runs ?? "skipped",
+      inputs: allInputs,
+    };
+    return {
+      ...recordJudgeFailure(store, state, "verify", config, error, records, topic, failurePayload),
+      prelint,
+      mechanical,
+      criteria: [],
+      inputs: allInputs,
+      evidence: evidenceSummary,
+      checks: checkResults,
+      judgedCriteriaIds: judgedCriteria.map((c) => c.id),
+    };
   }
 }
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+/** Attachment budget for image evidence; the inline text cap does not apply to images. */
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Why an evidence path may not be readable as project content.
+ *
+ * The lexical contract lint only sees the string that was written, and the
+ * evidence lane ships whatever it reads to an external judge, so containment
+ * is decided here on the real file. Two link kinds defeat a naive check and
+ * are both refused: a symlink leaving the tree (visible via realpath) and a
+ * hard link to an outside file (invisible to realpath - the link IS a real
+ * directory entry inside the project, so it is caught by its link count).
+ */
+function containmentProblem(projectRoot: string, resolved: string): string | null {
+  let stat: fs.Stats;
+  try {
+    const realRoot = fs.realpathSync(projectRoot);
+    const realTarget = fs.realpathSync(resolved);
+    const rel = path.relative(realRoot, realTarget);
+    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return "resolves outside the project";
+    stat = fs.statSync(realTarget);
+  } catch {
+    return "cannot be resolved to a real file inside the project";
+  }
+  if (stat.isFile() && stat.nlink > 1) {
+    return "is a hard link, so its content may live outside the project";
+  }
+  return null;
+}
 
 interface EvidenceLane {
   /** Blocking defects: a declared artifact that is missing, empty, or oversized. */
@@ -658,6 +800,12 @@ interface EvidenceLane {
   humanFindings: Finding[];
   /** Ids behind humanFindings, so the judge's criteria list is filtered by identity, not by string matching. */
   humanCriterionIds: Set<string>;
+  /**
+   * Every artifact the run pinned, including ones no judge could read. The
+   * receipt quotes this: a screenshot handed to a person still needs its hash
+   * on the record, and `material` only holds what the judge was shown.
+   */
+  artifacts: Omit<EvidenceMaterial, "text">[];
   material: EvidenceMaterial[];
   images: string[];
   inputs: GateInput[];
@@ -673,7 +821,15 @@ interface EvidenceLane {
  * it does not - the escalation ladder never silently drops a criterion.
  */
 function collectEvidence(projectRoot: string, contract: ParsedContract, config: SasuConfig): EvidenceLane {
-  const lane: EvidenceLane = { findings: [], humanFindings: [], humanCriterionIds: new Set(), material: [], images: [], inputs: [] };
+  const lane: EvidenceLane = {
+    findings: [],
+    humanFindings: [],
+    humanCriterionIds: new Set(),
+    artifacts: [],
+    material: [],
+    images: [],
+    inputs: [],
+  };
   const pinned = new Set<string>();
   let canAttach = false;
   try {
@@ -708,7 +864,7 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
       ...criterion.evidence.map((item) => ({ path: item.path })),
       ...criterion.captures.map((item) => ({ path: item.path, producedBy: item.command })),
     ];
-    let unjudgeableImage: string | null = null;
+    let unjudgeable: { path: string; reason: string; fix: string } | null = null;
 
     for (const artifact of artifacts) {
       const resolved = path.join(projectRoot, artifact.path);
@@ -726,9 +882,36 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
         );
         continue;
       }
+      // Containment is decided on the RESOLVED path, not the written one: the
+      // contract's lexical prelint stops `..` and absolute paths, but a
+      // symlink inside the project is spelled like any other relative path and
+      // would hand an arbitrary host file to the judge backend.
+      const containment = containmentProblem(projectRoot, resolved);
+      if (containment !== null) {
+        lane.findings.push(
+          blocking(
+            criterion.id,
+            `evidence path ${containment}: ${artifact.path}`,
+            "Evidence must be an ordinary file whose content lives inside the project; symlinks out of the tree and hard links are refused. Copy the proving excerpt in, or prove it with a check command.",
+          ),
+        );
+        continue;
+      }
       const bytes = fs.statSync(resolved).size;
       if (bytes === 0) {
         lane.findings.push(blocking(criterion.id, `evidence file is empty: ${artifact.path}`, "An empty artifact proves nothing; produce real output or drop the declaration."));
+        continue;
+      }
+
+      const isImage = IMAGE_EXTENSIONS.has(path.extname(artifact.path).toLowerCase());
+      if (isImage && bytes > IMAGE_MAX_BYTES) {
+        lane.findings.push(
+          blocking(
+            criterion.id,
+            `image evidence is ${bytes} bytes, over the ${IMAGE_MAX_BYTES}-byte attachment budget: ${artifact.path}`,
+            "Capture a smaller region or downscale the image in the capture command.",
+          ),
+        );
         continue;
       }
       const raw = fs.readFileSync(resolved);
@@ -737,11 +920,32 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
         pinned.add(artifact.path);
         lane.inputs.push({ path: artifact.path, sha256, kind: "evidence" });
       }
+      lane.artifacts.push({
+        criterionId: criterion.id,
+        path: artifact.path,
+        sha256,
+        bytes,
+        ...(artifact.producedBy !== undefined ? { producedBy: artifact.producedBy } : {}),
+      });
 
-      const isImage = IMAGE_EXTENSIONS.has(path.extname(artifact.path).toLowerCase());
       if (isImage) {
+        // Provenance, not format, is what makes an image judgeable: the
+        // harness must have produced it on this run. An image handed over as
+        // `evidence:` could be any age, and the judge cannot tell.
+        if (artifact.producedBy === undefined) {
+          unjudgeable = {
+            path: artifact.path,
+            reason: `image evidence (${artifact.path}) was not produced by a capture command, so its freshness is unproven`,
+            fix: `Declare it as capture: \`<command that produces it>\` -> ${artifact.path} so the harness makes it on its own clock, or review it yourself and report the result.`,
+          };
+          continue;
+        }
         if (!canAttach) {
-          unjudgeableImage = artifact.path;
+          unjudgeable = {
+            path: artifact.path,
+            reason: `image evidence (${artifact.path}) cannot be shown to the ${config.judge.backend} judge backend, which has no attachment support`,
+            fix: `Review ${artifact.path} yourself and report the result, or set judge.backend to "codex" in agents/config.json so the judge can see it.`,
+          };
           continue;
         }
         lane.images.push(resolved);
@@ -751,7 +955,7 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
           sha256,
           bytes,
           attachedImage: true,
-          ...(artifact.producedBy !== undefined ? { producedBy: artifact.producedBy } : {}),
+          producedBy: artifact.producedBy,
         });
         continue;
       }
@@ -761,6 +965,20 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
             criterion.id,
             `evidence file is ${bytes} bytes, over the ${EVIDENCE_MAX_BYTES}-byte inline budget: ${artifact.path}`,
             "Reduce it to the proving excerpt, or turn the check into a `## Checks` command the harness runs (evidence tier 1).",
+          ),
+        );
+        continue;
+      }
+      // Inlining a binary would put mojibake in front of the judge and read as
+      // evidence of nothing. Only text and recognized images have a lane.
+      if (raw.includes(0)) {
+        lane.findings.push(
+          blocking(
+            criterion.id,
+            `evidence file is binary, not text: ${artifact.path}`,
+            artifact.producedBy
+              ? "A captured artifact must be an image the judge can look at or text it can read. Make the command write one of those, or prove the criterion with a check command."
+              : "Inline evidence must be readable text. Capture an image for something visual, or prove the criterion with a check command.",
           ),
         );
         continue;
@@ -775,13 +993,13 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
       });
     }
 
-    if (unjudgeableImage !== null) {
+    if (unjudgeable !== null) {
       lane.humanCriterionIds.add(criterion.id);
       lane.humanFindings.push({
         area: "human-verification",
         severity: "P0",
-        missing: `${criterion.id}: image evidence (${unjudgeableImage}) cannot be shown to the ${config.judge.backend} judge backend, which has no attachment support`,
-        recommendation: `Review ${unjudgeableImage} yourself and report the result, or set judge.backend to "codex" in agents/config.json so the judge can see it.`,
+        missing: `${criterion.id}: ${unjudgeable.reason}`,
+        recommendation: unjudgeable.fix,
         requiresHuman: true,
       });
     }
@@ -798,11 +1016,18 @@ function recordJudgeFailure(
   error: unknown,
   records: JudgeCallRecord[],
   topic: string,
+  artifactPayload?: unknown,
 ): GateCommandResult {
   if (!(error instanceof JudgeError)) throw error;
   const failureRecord = judgeCallRecordFrom(error);
   if (failureRecord) records.push(failureRecord);
-  state = recordGateResult(store, state, gate, { kind: "error", message: error.message }, records);
+  state = recordGateResult(
+    store,
+    state,
+    gate,
+    { kind: "error", message: error.message, ...(artifactPayload !== undefined ? { artifactPayload } : {}) },
+    records,
+  );
   const recoveryByCode: Record<string, string> = {
     "judge-binary-missing": "Install the judge CLI (claude or codex) or set judge.backend in agents/config.json.",
     "judge-auth-or-runtime": "Check the judge CLI login/auth status and re-run.",
@@ -871,7 +1096,47 @@ export function extractAcceptanceCriteria(prdContent: string): { id: string; tex
   return criteria;
 }
 
+/**
+ * The change under judgment, including files the run created.
+ *
+ * `git diff` only knows about tracked paths, so a new module - the most common
+ * shape of a small task - would be invisible to the judge, and a run that only
+ * adds files would produce no diff at all. Untracked files are therefore
+ * rendered as add-diffs and appended. The harness's own run bookkeeping is
+ * excluded: the contract and its artifacts are already pinned as inputs, and
+ * replaying them into the diff would just crowd out the code.
+ */
 function gitDiff(projectRoot: string, baseRef: string | undefined): string {
-  const args = baseRef ? ["diff", baseRef, "--", "."] : ["diff", "HEAD", "--", "."];
-  return execFileSync("git", args, { cwd: projectRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const tracked = execFileSync("git", baseRef ? ["diff", baseRef, "--", "."] : ["diff", "HEAD", "--", "."], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  })
+    .split("\0")
+    .filter((file) => file !== "" && !isHarnessPath(file));
+  const additions: string[] = [];
+  for (const file of untracked) {
+    try {
+      // --no-index exits 1 when the files differ, which is always here.
+      execFileSync("git", ["diff", "--no-index", "--", "/dev/null", file], {
+        cwd: projectRoot,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      });
+    } catch (error) {
+      const stdout = (error as { stdout?: string }).stdout;
+      if (typeof stdout === "string" && stdout.trim() !== "") additions.push(stdout);
+    }
+  }
+  return [tracked, ...additions].filter((part) => part.trim() !== "").join("\n");
+}
+
+function isHarnessPath(file: string): boolean {
+  const normalized = file.replace(/\\/g, "/");
+  return normalized.startsWith("agents/gates/") || normalized.startsWith("agents/quick/");
 }

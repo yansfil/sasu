@@ -142,11 +142,30 @@ export class GateStore {
   }
 }
 
+const { quickTreeFingerprint } = require("../../lib/git.js") as {
+  quickTreeFingerprint: (projectRoot: string) => { headSha: string | null; statusHash: string } | null;
+};
+
+function currentTreeFingerprint(projectRoot: string): { headSha: string | null; statusHash: string } | null {
+  try {
+    return quickTreeFingerprint(projectRoot);
+  } catch {
+    return null;
+  }
+}
+
 export interface GateStatusView {
   gate: GateId;
   verdict: GateRecord["verdict"];
   effective: "PASS" | "STALE" | "BLOCKED" | "NOT_RUN";
+  /** True only when drift downgrades an otherwise-passing gate. */
   stale: boolean;
+  /**
+   * True whenever `staleInputs` is non-empty, including on a blocked gate that
+   * cannot be "stale" but whose recorded artifacts no longer match disk. A
+   * consumer branching on `stale` alone would miss that.
+   */
+  inputsDrifted: boolean;
   staleInputs: StaleInput[];
   overridden: boolean;
   attempts: number;
@@ -177,18 +196,35 @@ function staleInputsFor(projectRoot: string, record: GateRecord): StaleInput[] {
 export function gateStatus(state: GatesState, gate: GateId, budget: number, projectRoot?: string): GateStatusView {
   const record = state.gates[gate] ?? { ...EMPTY_GATE };
   const passed = record.verdict === "PASS" || record.overridden;
-  // Staleness applies only to a judged PASS. An overridden gate is a recorded
-  // user deviation and stands until a new run replaces it.
+  // Freshness is reported for any judged verdict, not just a PASS. A quick run
+  // that ends on a requiresHuman finding is still handed to a person with its
+  // evidence attached, so silently accepting a swapped artifact there would
+  // leave the one document a human reads unpinned. An overridden gate is a
+  // recorded user deviation and stands until a new run replaces it.
   const staleInputs =
-    projectRoot !== undefined && record.verdict === "PASS" && !record.overridden
-      ? staleInputsFor(projectRoot, record)
+    projectRoot !== undefined && record.verdict !== null && !record.overridden
+      ? // "unverifiable" exists to distrust a pre-0.2 PASS with no recorded
+        // inputs; on a blocked gate it is noise, not a warning.
+        staleInputsFor(projectRoot, record).filter((input) => passed || input.reason !== "unverifiable")
       : [];
-  const stale = staleInputs.length > 0;
+  // The tree a PASS was earned on is part of what the PASS vouches for, so the
+  // same check the Stop hook makes has to be visible here too - an agent that
+  // reads `gate status` must not see a live PASS the harness treats as dead.
+  if (passed && projectRoot !== undefined && record.verdict === "PASS" && record.treeFingerprint) {
+    const current = currentTreeFingerprint(projectRoot);
+    if (current && (current.statusHash !== record.treeFingerprint.statusHash || current.headSha !== record.treeFingerprint.headSha)) {
+      staleInputs.push({ path: "<worktree>", reason: "changed" });
+    }
+  }
+  // `stale` only downgrades an otherwise-passing gate; on a blocked gate the
+  // list is informational and must not turn BLOCKED into STALE.
+  const stale = passed && staleInputs.length > 0;
   return {
     gate,
     verdict: record.verdict,
     effective: passed ? (stale ? "STALE" : "PASS") : record.verdict === null ? "NOT_RUN" : "BLOCKED",
     stale,
+    inputsDrifted: staleInputs.length > 0,
     staleInputs,
     overridden: record.overridden,
     attempts: record.attempts,
@@ -212,7 +248,7 @@ export function recordGateResult(
         inputs?: GateInput[];
         treeFingerprint?: { headSha: string | null; statusHash: string } | null;
       }
-    | { kind: "error"; message: string },
+    | { kind: "error"; message: string; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],
 ): GatesState {
   const record = state.gates[gate] ?? { ...EMPTY_GATE };
@@ -239,9 +275,16 @@ export function recordGateResult(
     };
   } else {
     // Fail-closed (D-15): a judge failure counts as a blocked run, never a pass.
+    // The run still produced real work before the judge broke - commands ran,
+    // artifacts were pinned - so that evidence is written out rather than lost
+    // with the failed call.
+    const artifact =
+      outcome.artifactPayload !== undefined
+        ? store.writeArtifact(gate, { at, gate, stage: "judge-error", error: outcome.message, ...(outcome.artifactPayload as object) })
+        : null;
     record.verdict = "ERROR";
     record.attempts += 1;
-    summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact: null };
+    summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };
   }
   record.lastRunAt = at;
   record.history = [...record.history.slice(-19), summary];

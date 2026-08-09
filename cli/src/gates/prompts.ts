@@ -268,6 +268,14 @@ export interface EvidenceMaterial {
   attachedImage?: boolean;
 }
 
+/** A criterion-scoped check the harness ran, with the result the judge must weigh. */
+export interface CheckResult {
+  criterionId: string;
+  command: string;
+  exitCode: number;
+  tail: string;
+}
+
 /**
  * Evidence block: material the harness collected on its own clock, never
  * fetched by the judge. Provenance is stated inline so the judge weighs a
@@ -295,19 +303,47 @@ ${blocks.join("\n\n")}
 `;
 }
 
+/**
+ * Criterion-scoped check results. Unlike the run-wide mechanical stage, these
+ * name the criterion they prove, so the judge can rest a verdict on "the
+ * harness ran this and it exited 0" instead of re-deriving it from the diff.
+ */
+function checkSection(checks: CheckResult[]): string {
+  if (checks.length === 0) return "";
+  const lines = checks.map(
+    (check) =>
+      `[${check.criterionId}] the harness ran \`${check.command}\` just now and it exited ${check.exitCode}.\nOutput tail:\n---\n${clampDocument(check.tail, 8_000)}\n---`,
+  );
+  return `
+HARNESS CHECK RESULTS (run by the harness on its own clock, one per criterion):
+A check that exits 0 is direct evidence for its criterion - stronger than anything you can read off
+the diff, because it observed the running system. Weigh it accordingly, but still FAIL a criterion
+whose check clearly tests something other than what the criterion states.
+
+${lines.join("\n\n")}
+`;
+}
+
 export function semanticVerifyPrompt(
   diffContent: string,
   criteria: { id: string; text: string }[],
   evidence: EvidenceMaterial[] = [],
+  checks: CheckResult[] = [],
+  options: { mechanicalRan?: boolean } = {},
 ): string {
   const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
+  const mechanicalNote =
+    options.mechanicalRan === false
+      ? `The project's mechanical checks were SKIPPED for this run - do not assume tests, lint, or build pass.`
+      : `The project's mechanical checks (tests/lint/build) already passed; do not re-litigate them.`;
   return `You are an independent implementation reviewer.
 You have no prior context beyond the acceptance criteria, the diff, and any evidence below.
-The mechanical checks (tests/lint/build, plus any contract-declared check commands) already passed;
-do not re-litigate them.
+${mechanicalNote}
 
-For EACH acceptance criterion, judge whether the diff (and its evidence, where provided) satisfies it.
-PASS a criterion only when there is concrete evidence for it (code, test, config, doc, or a listed artifact).
+For EACH acceptance criterion, judge whether the diff (and its check results and evidence, where
+provided) satisfies it.
+PASS a criterion only when there is concrete evidence for it (code, test, config, doc, a passing
+harness check, or a listed artifact).
 FAIL a criterion when the evidence is missing it, contradicts it, or only gestures at it.
 Judge only the listed criteria. Base reasons on specific files/hunks or named artifacts.
 Judge propositions, not taste: whether something renders or returns the stated value is yours to
@@ -326,7 +362,7 @@ Rules:
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
-${evidenceSection(evidence)}
+${checkSection(checks)}${evidenceSection(evidence)}
 DIFF:
 ---
 ${clampDocument(diffContent, 160_000)}
