@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { SasuConfig } from "../config";
+import { resolveBackend } from "../judge/backends";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import {
   JudgeError,
@@ -11,7 +12,8 @@ import {
   type GapVerdict,
   type JudgeCallRecord,
 } from "../judge/types";
-import { runMechanical, type MechanicalResult } from "../mechanical";
+import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../mechanical";
+import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { runPrelint, type PrelintResult } from "./prelint";
 import {
   GAP_AUDIT_LANES,
@@ -19,6 +21,7 @@ import {
   gapAuditPrompt,
   semanticVerifyPrompt,
   specGatePrompt,
+  type EvidenceMaterial,
   type JudgeLane,
   type PriorFinding,
 } from "./prompts";
@@ -28,6 +31,7 @@ import {
   gateStatus,
   overrideGate,
   recordGateResult,
+  sha256Of,
   type GateId,
   type GateInput,
   type GateStatusView,
@@ -413,11 +417,21 @@ export async function runSpecGate(
 
 export interface VerifyOptions {
   prdPath?: string;
+  /**
+   * Quick-path contract document: replaces the PRD as the acceptance-criteria
+   * source and runs the lighter contract prelint instead of the full PRD lint.
+   * Mutually exclusive with prdPath.
+   */
+  contractPath?: string;
   criteria?: { id: string; text: string }[];
   diffFile?: string;
   baseRef?: string;
   skipMechanical?: boolean;
 }
+
+const { quickTreeFingerprint } = require("../../lib/git.js") as {
+  quickTreeFingerprint: (projectRoot: string) => { headSha: string | null; statusHash: string } | null;
+};
 
 export async function runVerifyGate(
   projectRoot: string,
@@ -428,26 +442,52 @@ export async function runVerifyGate(
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
   const records: JudgeCallRecord[] = [];
-  // Read the PRD up front so a bad --prd path fails before any command spend,
-  // and its hash is pinned for freshness tracking. The diff is deliberately
-  // not a freshness input: it changes with every fix loop by design.
-  const prdFile = options.prdPath !== undefined ? readInputFile(projectRoot, options.prdPath, "prd") : null;
-  const inputs = prdFile ? [prdFile.input] : [];
+  if (options.prdPath !== undefined && options.contractPath !== undefined) {
+    throw new Error("pass either --prd or --contract, not both");
+  }
+  // Read the AC-source document up front so a bad path fails before any
+  // command spend, and its hash is pinned for freshness tracking. The diff is
+  // deliberately not a freshness input: it changes with every fix loop by
+  // design; code drift after a PASS is caught by the tree fingerprint instead.
+  const docKind: "prd" | "contract" = options.contractPath !== undefined ? "contract" : "prd";
+  const docPath = options.contractPath ?? options.prdPath;
+  const docFile = docPath !== undefined ? readInputFile(projectRoot, docPath, docKind) : null;
+  const inputs = docFile ? [docFile.input] : [];
 
-  // Stage 0: PRD prelint ($0, D-06). The judge reads this PRD's acceptance
-  // criteria, so a structurally broken PRD blocks before the mechanical
-  // commands even run - there is no point testing code against a broken
-  // contract, and the fix loop must stay free.
+  // Stage 0: document prelint ($0, D-06). The judge reads this document's
+  // acceptance criteria, so a structurally broken document blocks before the
+  // mechanical commands even run - there is no point testing code against a
+  // broken contract, and the fix loop must stay free.
   let prelint: PrelintResult | undefined;
-  if (prdFile) {
-    prelint = runPrelint("prd", prdFile.content);
+  if (docFile) {
+    prelint = runPrelint(docKind, docFile.content);
     if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "verify", prelint);
   }
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
+  // The quick contract's own check and capture commands join this stage: the
+  // harness owns their execution timing, which is what makes a capture fresh
+  // rather than something the agent submitted whenever it looked good.
+  const contract = docKind === "contract" && docFile ? parseContract(docFile.content) : null;
+  const contractCommands: ResolvedCommand[] = [];
+  if (contract) {
+    for (const check of contract.checks) {
+      contractCommands.push({ kind: "check", command: check.command, source: "contract" });
+    }
+    for (const criterion of contract.criteria) {
+      for (const capture of criterion.captures) {
+        contractCommands.push({ kind: "capture", command: capture.command, source: "contract", criterionId: criterion.id });
+      }
+    }
+  }
+
   let mechanical: MechanicalResult | undefined;
-  if (!options.skipMechanical) {
-    mechanical = runMechanical(projectRoot, config);
+  // Captures are evidence production, not a project check: skipping the
+  // mechanical stage must not silently leave the judge with a stale artifact,
+  // so a contract with captures always runs them.
+  if (!options.skipMechanical || contractCommands.some((cmd) => cmd.kind === "capture")) {
+    const commandsToRun = options.skipMechanical ? contractCommands.filter((cmd) => cmd.kind === "capture") : contractCommands;
+    mechanical = runMechanical(projectRoot, config, commandsToRun, { skipProjectCommands: options.skipMechanical === true });
     if (!mechanical.ok) {
       state = recordGateResult(
         store,
@@ -475,12 +515,19 @@ export async function runVerifyGate(
   }
 
   // Stage 2: semantic judge over the diff.
-  if (!options.criteria && !prdFile) {
-    throw new Error("prd not found: pass --prd <path> so acceptance criteria can be extracted");
+  if (!options.criteria && !docFile) {
+    throw new Error("no acceptance-criteria source: pass --prd <path> or --contract <path>");
   }
-  const criteria = options.criteria ?? extractAcceptanceCriteria(prdFile!.content);
+  // The contract has one grammar: its own parser owns criteria extraction so
+  // the evidence lane and the judge can never disagree about what AC3 is.
+  const criteria =
+    options.criteria ?? (contract ? contract.criteria.map((c) => ({ id: c.id, text: c.text })) : extractAcceptanceCriteria(docFile!.content));
   if (criteria.length === 0) {
-    throw new Error("no acceptance criteria found (expected '## 7. Acceptance Criteria' with '- AC#.' items)");
+    throw new Error(
+      docKind === "contract"
+        ? "no acceptance criteria found (expected '## Acceptance Criteria' with '- AC#.' items)"
+        : "no acceptance criteria found (expected '## 7. Acceptance Criteria' with '- AC#.' items)",
+    );
   }
   const diff = options.diffFile
     ? readTextFile(projectRoot, options.diffFile, "diff file")
@@ -488,13 +535,63 @@ export async function runVerifyGate(
   if (diff.trim() === "") {
     throw new Error("empty diff: nothing to verify (use --base <ref> or --diff-file <path>)");
   }
+
+  // Stage 1b: collect the evidence lane. A declared artifact that is missing
+  // or oversized blocks here, before the judge call, the same way a broken
+  // document does - an absent proof is not a judgment problem.
+  const lane = contract ? collectEvidence(projectRoot, contract, config) : null;
+  if (lane && lane.findings.length > 0) {
+    state = recordGateResult(
+      store,
+      state,
+      "verify",
+      {
+        kind: "verdict",
+        verdict: "FAIL",
+        findings: lane.findings,
+        inputs,
+        artifactPayload: { stage: "evidence", findings: lane.findings, mechanical: mechanical?.runs ?? "skipped" },
+      },
+      records,
+    );
+    return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), prelint, mechanical };
+  }
+
+  // Criteria whose proof no judge can see - declared human, or an attached
+  // image on a backend that cannot attach - never reach the judge. They come
+  // back as requiresHuman findings, which the Stop hook already lets the agent
+  // hand to the user.
+  const humanLane = lane ? lane.humanFindings : [];
+  const judgedCriteria = lane ? criteria.filter((c) => !lane.humanCriterionIds.has(c.id)) : criteria;
+  const evidenceInputs = lane ? lane.inputs : [];
+  const allInputs = [...inputs, ...evidenceInputs];
+
+  if (judgedCriteria.length === 0) {
+    // Everything is human-verified: an honest zero-LLM-call outcome.
+    state = recordGateResult(
+      store,
+      state,
+      "verify",
+      {
+        kind: "verdict",
+        verdict: "FAIL",
+        findings: humanLane,
+        inputs: allInputs,
+        artifactPayload: { stage: "human-lane", findings: humanLane, mechanical: mechanical?.runs ?? "skipped", inputs: allInputs },
+      },
+      records,
+    );
+    return { ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), prelint, mechanical };
+  }
+
   try {
     const outcome = await runJudge(
       config,
       "gate:verify-semantic",
       "standard",
-      semanticVerifyPrompt(diff, criteria),
-      (value) => validateSemanticVerdict(value, criteria.map((c) => c.id)),
+      semanticVerifyPrompt(diff, judgedCriteria, lane ? lane.material : []),
+      (value) => validateSemanticVerdict(value, judgedCriteria.map((c) => c.id)),
+      lane && lane.images.length > 0 ? { images: lane.images } : {},
     );
     records.push(outcome.record);
     const findings: Finding[] = outcome.value.criteria
@@ -506,21 +603,40 @@ export async function runVerifyGate(
         recommendation: "Address the criterion and re-run sasu verify.",
         requiresHuman: false,
       }));
+    findings.push(...humanLane);
+    // Pin the tree the verdict was earned on; the Stop-hook quick guard
+    // recomputes this to catch code edited after a PASS. Best-effort: a
+    // non-git project records null and the guard skips the comparison.
+    let treeFingerprint: { headSha: string | null; statusHash: string } | null = null;
+    try {
+      treeFingerprint = quickTreeFingerprint(projectRoot);
+    } catch {
+      treeFingerprint = null;
+    }
+    // An unjudged human criterion keeps the gate closed even when every judged
+    // one passed: nobody has confirmed it yet, and the honest report of that
+    // is a blocking requiresHuman finding, not a PASS.
+    const passed = outcome.value.verdict === "PASS" && humanLane.length === 0;
     state = recordGateResult(
       store,
       state,
       "verify",
       {
         kind: "verdict",
-        verdict: outcome.value.verdict === "PASS" ? "PASS" : "FAIL",
+        verdict: passed ? "PASS" : "FAIL",
         findings,
-        inputs,
+        inputs: allInputs,
+        treeFingerprint,
         artifactPayload: {
           stage: "semantic",
-          verdict: outcome.value.verdict,
+          verdict: passed ? "PASS" : "FAIL",
+          judgedVerdict: outcome.value.verdict,
           criteria: outcome.value.criteria,
+          humanLane,
+          evidence: lane ? lane.material.map(({ text: _text, ...rest }) => rest) : [],
           mechanical: mechanical?.runs ?? "skipped",
-          inputs,
+          treeFingerprint,
+          inputs: allInputs,
           judge: outcome.record,
         },
       },
@@ -531,6 +647,147 @@ export async function runVerifyGate(
   } catch (error) {
     return { ...recordJudgeFailure(store, state, "verify", config, error, records, topic), prelint };
   }
+}
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+interface EvidenceLane {
+  /** Blocking defects: a declared artifact that is missing, empty, or oversized. */
+  findings: Finding[];
+  /** Criteria no judge can settle, reported as requiresHuman. */
+  humanFindings: Finding[];
+  /** Ids behind humanFindings, so the judge's criteria list is filtered by identity, not by string matching. */
+  humanCriterionIds: Set<string>;
+  material: EvidenceMaterial[];
+  images: string[];
+  inputs: GateInput[];
+}
+
+/**
+ * Gather the contract's evidence lane after the harness ran its commands.
+ *
+ * Everything collected here is hashed into the PASS pin, so changing a log or
+ * a screenshot after the fact stales the verdict exactly like editing the
+ * contract does. Text rides inline in the judge prompt; images ride as
+ * attachments when the backend supports them and become a human handoff when
+ * it does not - the escalation ladder never silently drops a criterion.
+ */
+function collectEvidence(projectRoot: string, contract: ParsedContract, config: SasuConfig): EvidenceLane {
+  const lane: EvidenceLane = { findings: [], humanFindings: [], humanCriterionIds: new Set(), material: [], images: [], inputs: [] };
+  const pinned = new Set<string>();
+  let canAttach = false;
+  try {
+    canAttach = resolveBackend(config.judge.backend).attachments;
+  } catch {
+    // No backend resolvable: the judge call downstream reports it properly.
+    canAttach = false;
+  }
+
+  const blocking = (criterionId: string, missing: string, recommendation: string): Finding => ({
+    area: "evidence",
+    severity: "P0",
+    missing: `${criterionId}: ${missing}`,
+    recommendation,
+    requiresHuman: false,
+  });
+
+  for (const criterion of contract.criteria) {
+    if (criterion.human !== null) {
+      lane.humanCriterionIds.add(criterion.id);
+      lane.humanFindings.push({
+        area: "human-verification",
+        severity: "P0",
+        missing: `${criterion.id}: declared human-verified - ${criterion.human}`,
+        recommendation: `Confirm ${criterion.id} yourself and report the result; no judge can settle it.`,
+        requiresHuman: true,
+      });
+      continue;
+    }
+
+    const artifacts: { path: string; producedBy?: string }[] = [
+      ...criterion.evidence.map((item) => ({ path: item.path })),
+      ...criterion.captures.map((item) => ({ path: item.path, producedBy: item.command })),
+    ];
+    let unjudgeableImage: string | null = null;
+
+    for (const artifact of artifacts) {
+      const resolved = path.join(projectRoot, artifact.path);
+      if (!fs.existsSync(resolved)) {
+        lane.findings.push(
+          blocking(
+            criterion.id,
+            artifact.producedBy
+              ? `capture command succeeded but produced no artifact at ${artifact.path}`
+              : `evidence file not found: ${artifact.path}`,
+            artifact.producedBy
+              ? "Fix the capture command so it writes the declared path, or correct the path."
+              : "Produce the evidence file (prefer a command the harness can run) or correct the path.",
+          ),
+        );
+        continue;
+      }
+      const bytes = fs.statSync(resolved).size;
+      if (bytes === 0) {
+        lane.findings.push(blocking(criterion.id, `evidence file is empty: ${artifact.path}`, "An empty artifact proves nothing; produce real output or drop the declaration."));
+        continue;
+      }
+      const raw = fs.readFileSync(resolved);
+      const sha256 = sha256Of(raw);
+      if (!pinned.has(artifact.path)) {
+        pinned.add(artifact.path);
+        lane.inputs.push({ path: artifact.path, sha256, kind: "evidence" });
+      }
+
+      const isImage = IMAGE_EXTENSIONS.has(path.extname(artifact.path).toLowerCase());
+      if (isImage) {
+        if (!canAttach) {
+          unjudgeableImage = artifact.path;
+          continue;
+        }
+        lane.images.push(resolved);
+        lane.material.push({
+          criterionId: criterion.id,
+          path: artifact.path,
+          sha256,
+          bytes,
+          attachedImage: true,
+          ...(artifact.producedBy !== undefined ? { producedBy: artifact.producedBy } : {}),
+        });
+        continue;
+      }
+      if (bytes > EVIDENCE_MAX_BYTES) {
+        lane.findings.push(
+          blocking(
+            criterion.id,
+            `evidence file is ${bytes} bytes, over the ${EVIDENCE_MAX_BYTES}-byte inline budget: ${artifact.path}`,
+            "Reduce it to the proving excerpt, or turn the check into a `## Checks` command the harness runs (evidence tier 1).",
+          ),
+        );
+        continue;
+      }
+      lane.material.push({
+        criterionId: criterion.id,
+        path: artifact.path,
+        sha256,
+        bytes,
+        text: raw.toString("utf8"),
+        ...(artifact.producedBy !== undefined ? { producedBy: artifact.producedBy } : {}),
+      });
+    }
+
+    if (unjudgeableImage !== null) {
+      lane.humanCriterionIds.add(criterion.id);
+      lane.humanFindings.push({
+        area: "human-verification",
+        severity: "P0",
+        missing: `${criterion.id}: image evidence (${unjudgeableImage}) cannot be shown to the ${config.judge.backend} judge backend, which has no attachment support`,
+        recommendation: `Review ${unjudgeableImage} yourself and report the result, or set judge.backend to "codex" in agents/config.json so the judge can see it.`,
+        requiresHuman: true,
+      });
+    }
+  }
+
+  return lane;
 }
 
 function recordJudgeFailure(

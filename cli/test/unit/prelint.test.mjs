@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { prelintQaLog, prelintPrd, runPrelint } from "../../dist/gates/prelint.js";
+import { prelintQaLog, prelintPrd, prelintContract, runPrelint } from "../../dist/gates/prelint.js";
 
 const FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
 
@@ -96,6 +96,53 @@ test("ID numbering gaps alone are NOT flagged (continuity is an explicit non-goa
     .replace("| V1 | automated behavior | R1, AC1, AC2 |", "| V1 | automated behavior | R1, AC1, AC7 |");
   const result = prelintPrd(prd);
   assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+});
+
+// --- quick-contract matrix: same single-rule guarantee as the PRD cases ---
+
+const CLEAN_CONTRACT = `---
+topic: fix-widget
+status: active
+---
+
+## Goal
+
+Fix the widget.
+
+## Acceptance Criteria
+
+- AC1. the widget renders
+- AC2. the widget persists its state
+`;
+
+test("clean contract passes with zero findings (false-positive zero)", () => {
+  const result = prelintContract(CLEAN_CONTRACT);
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.doc, "contract");
+});
+
+const CONTRACT_CASES = [
+  ["missing frontmatter", CLEAN_CONTRACT.replace(/^---\n[\s\S]*?\n---\n/, ""), "contract-frontmatter-missing"],
+  ["missing topic", CLEAN_CONTRACT.replace("topic: fix-widget\n", ""), "contract-frontmatter-topic"],
+  ["invalid status", CLEAN_CONTRACT.replace("status: active", "status: wip"), "contract-frontmatter-enum"],
+  ["missing status", CLEAN_CONTRACT.replace("status: active\n", ""), "contract-frontmatter-enum"],
+  ["missing AC section", CLEAN_CONTRACT.replace("## Acceptance Criteria", "## Criteria"), "contract-ac-section-missing"],
+  ["no AC items", CLEAN_CONTRACT.replace(/- AC\d\..*\n/g, ""), "contract-ac-empty"],
+  ["duplicate AC id", CLEAN_CONTRACT.replace("- AC2.", "- AC1."), "contract-ac-duplicate"],
+];
+
+for (const [label, content, rule] of CONTRACT_CASES) {
+  test(`contract prelint flags ${label} with only ${rule}`, () => {
+    const result = prelintContract(content);
+    assert.equal(result.ok, false);
+    assert.deepEqual([...new Set(result.findings.map((f) => f.rule))], [rule], JSON.stringify(result.findings, null, 2));
+  });
+}
+
+test("runPrelint routes the contract doc kind", () => {
+  assert.equal(runPrelint("contract", CLEAN_CONTRACT).ok, true);
+  assert.equal(runPrelint("contract", "no structure at all").ok, false);
 });
 
 test("runPrelint fails closed on an internal crash instead of throwing (D-11)", () => {

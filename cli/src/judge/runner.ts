@@ -21,7 +21,7 @@ export async function runJudge<T>(
   tier: Tier,
   prompt: string,
   validate: (value: unknown) => T | string,
-  options: { effort?: string } = {},
+  options: { effort?: string; images?: string[] } = {},
 ): Promise<JudgeOutcome<T>> {
   const backend = resolveBackend(config.judge.backend);
   const model = tierModelFor(config, backend.name, tier);
@@ -36,7 +36,15 @@ export async function runJudge<T>(
         : `Your previous reply was rejected: ${lastProblem}. Reply with ONLY the JSON object, no prose, no code fences.\n\n`;
     let text: string;
     try {
-      text = (await backend.run(retryPreamble + prompt, model, config.judge.timeoutMs, purpose, options.effort)).text;
+      text = (
+        await backend.run(retryPreamble + prompt, {
+          model,
+          timeoutMs: config.judge.timeoutMs,
+          purpose,
+          ...(options.effort !== undefined ? { effort: options.effort } : {}),
+          ...(options.images !== undefined ? { images: options.images } : {}),
+        })
+      ).text;
     } catch (error) {
       if (error instanceof JudgeError) {
         throw Object.assign(error, {

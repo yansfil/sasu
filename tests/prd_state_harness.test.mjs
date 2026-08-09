@@ -1857,3 +1857,132 @@ test("verification pass auto-mets covered acceptance criteria; manual judgments 
   state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "auto-ac", "state.json"), "utf8"));
   assert.equal(state.acceptanceCriteria[0].status, "not_met");
 });
+
+// --- quick-path Stop guard ---
+
+const { freshnessHash } = requireModule(path.join(repoRoot, "cli", "lib", "gate_freshness.js"));
+const { quickTreeFingerprint } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
+
+const QUICK_CONTRACT = `---
+topic: demo
+status: active
+---
+
+## Goal
+
+Render the widget.
+
+## Acceptance Criteria
+
+- AC1. the widget renders
+`;
+
+function makeQuickProject() {
+  const root = initGitRepo();
+  write(path.join(root, "agents", "quick", "demo", "contract.md"), QUICK_CONTRACT);
+  write(
+    path.join(root, "agents", "quick", ".quick-active.json"),
+    JSON.stringify({ slug: "demo", contractPath: "agents/quick/demo/contract.md", startedAt: "2026-08-08T00:00:00Z" }),
+  );
+  return root;
+}
+
+function quickStop(root, sessionId = "quick-s") {
+  const result = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: root,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: sessionId }),
+  });
+  return result.stdout.trim();
+}
+
+function writeQuickGates(root, verifyRecord) {
+  write(
+    path.join(root, "agents", "gates", "demo", "gates.json"),
+    JSON.stringify({
+      schema: 1,
+      topic: "demo",
+      gates: {
+        "gap-audit": { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] },
+        spec: { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] },
+        verify: { attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [], ...verifyRecord },
+      },
+      deviations: [],
+      judgeCalls: [],
+    }),
+  );
+}
+
+function passRecord(root) {
+  const contract = fs.readFileSync(path.join(root, "agents", "quick", "demo", "contract.md"), "utf8");
+  return {
+    verdict: "PASS",
+    inputs: [{ path: "agents/quick/demo/contract.md", sha256: freshnessHash(contract) }],
+    treeFingerprint: quickTreeFingerprint(root),
+  };
+}
+
+test("quick guard blocks a stop before verify has run, and claims the session", () => {
+  const root = makeQuickProject();
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /verify gate has not run/);
+  assert.match(directive.reason, /sasu verify --slug demo --contract agents\/quick\/demo\/contract\.md --json/);
+  const marker = JSON.parse(fs.readFileSync(path.join(root, "agents", "quick", ".quick-active.json"), "utf8"));
+  assert.equal(marker.activeSessionId, "quick-s");
+  assert.equal(quickStop(root, "other-session"), "", "another session must not be blocked by this run");
+});
+
+test("quick guard demands finalization on a live PASS, and silence once the marker is gone", () => {
+  const root = makeQuickProject();
+  writeQuickGates(root, passRecord(root));
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /receipt\.md/);
+  assert.match(directive.reason, /status: complete/);
+  fs.rmSync(path.join(root, "agents", "quick", ".quick-active.json"));
+  assert.equal(quickStop(root), "", "no marker means no quick guard");
+});
+
+test("quick guard re-opens a PASS when the code changed after it", () => {
+  const root = makeQuickProject();
+  writeQuickGates(root, passRecord(root));
+  write(path.join(root, "src.txt"), "edited after the pass");
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /working tree changed after the pass/);
+  assert.match(directive.reason, /Re-run verification/);
+});
+
+test("quick guard re-opens a PASS when the contract changed after it", () => {
+  const root = makeQuickProject();
+  writeQuickGates(root, passRecord(root));
+  const contractPath = path.join(root, "agents", "quick", "demo", "contract.md");
+  write(contractPath, fs.readFileSync(contractPath, "utf8").replace("- AC1. the widget renders", "- AC1. the widget renders twice"));
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /changed after the pass/);
+});
+
+test("quick guard keeps the fix loop inside the budget and releases exhausted or human-decision runs", () => {
+  const root = makeQuickProject();
+  const finding = { area: "semantic", severity: "P0", missing: "AC1: no render in diff", recommendation: "add it", requiresHuman: false };
+  writeQuickGates(root, { verdict: "FAIL", attempts: 1, findings: [finding] });
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /attempt 1\/3/);
+  assert.match(directive.reason, /AC1: no render in diff/);
+
+  writeQuickGates(root, { verdict: "FAIL", attempts: 3, findings: [finding] });
+  assert.equal(quickStop(root), "", "an exhausted budget must hand the run to the user");
+
+  writeQuickGates(root, { verdict: "BLOCK", attempts: 1, findings: [{ ...finding, requiresHuman: true }] });
+  assert.equal(quickStop(root), "", "a human-decision finding must hand the run to the user");
+});
+
+test("quick guard treats a user override as passable and demands finalization", () => {
+  const root = makeQuickProject();
+  writeQuickGates(root, { verdict: "FAIL", attempts: 2, overridden: true, findings: [] });
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /receipt\.md/);
+});

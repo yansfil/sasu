@@ -3,7 +3,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson, appendJsonl } = require("./util");
+const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, QUICK_ACTIVE_PATH, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson, appendJsonl } = require("./util");
+const { hashGateInput } = require("./gate_freshness");
+const { quickTreeFingerprint } = require("./git");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
 const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
@@ -89,6 +91,93 @@ If delivery is genuinely blocked, report the blocker explicitly to the user inst
   });
 }
 
+/**
+ * Quick-path Stop guard: while `agents/quick/.quick-active.json` marks an
+ * unfinished quick run, the turn may not end without a live verify PASS
+ * (fresh contract hash AND unchanged tree fingerprint) plus the finalize
+ * steps (receipt, contract status flip, marker removal).
+ *
+ * Two outcomes deliberately allow the stop so the agent can hand the run to
+ * the user instead of looping: a finding marked requiresHuman, and an
+ * exhausted retry budget. Everything else about a non-PASS verify blocks with
+ * the exact command to run. Same philosophy as the implement Stop guard:
+ * fail open on any read error - the skill remains the source of enforcement.
+ */
+function quickStopDirective(hookCwd, sessionId) {
+  const markerPath = path.join(hookCwd, QUICK_ACTIVE_PATH);
+  if (!fs.existsSync(markerPath)) return "";
+  const marker = readJson(markerPath);
+  if (!marker || typeof marker.slug !== "string" || typeof marker.contractPath !== "string") return "";
+  if (marker.activeSessionId && !sameSessionId(marker.activeSessionId, sessionId)) return "";
+  if (!marker.activeSessionId) {
+    marker.activeSessionId = sessionId;
+    writeJson(markerPath, marker);
+  }
+
+  const verifyCommand = `sasu verify --slug ${marker.slug} --contract ${marker.contractPath}${marker.baseRef ? ` --base ${marker.baseRef}` : ""} --json`;
+  const block = reason => JSON.stringify({ decision: "block", reason: `<quick-verify-guard>\n${reason}\n</quick-verify-guard>` });
+  const gatesPath = path.join(hookCwd, "agents", "gates", marker.slug, "gates.json");
+  const gates = fs.existsSync(gatesPath) ? readJson(gatesPath) : null;
+  const record = gates && gates.gates ? gates.gates.verify : null;
+
+  if (!record || record.verdict === null) {
+    return block(`Quick run '${marker.slug}' is active but its verify gate has not run.\n\nContract: \`${marker.contractPath}\`\n\nThe turn is not done until verification passes. Run:\n\n  ${verifyCommand}`);
+  }
+
+  const finalizeDirective = () =>
+    block(`Quick run '${marker.slug}' has a live verify PASS. Finish the run before stopping:\n\n1. Write \`agents/quick/${marker.slug}/receipt.md\` from the verify --json output (embed the per-AC verdicts verbatim; do not restate them by hand).\n2. Set \`status: complete\` in \`${marker.contractPath}\` frontmatter.\n3. Delete \`${QUICK_ACTIVE_PATH}\`.\n\nThen report the result to the user.`);
+
+  if (record.overridden) return finalizeDirective();
+
+  if (record.verdict === "PASS") {
+    const staleReasons = [];
+    for (const input of record.inputs || []) {
+      const hash = hashGateInput(path.join(hookCwd, input.path), input.kind);
+      if (hash === null) staleReasons.push(`${input.kind === "evidence" ? "evidence" : "input"} ${input.path} is missing`);
+      else if (hash !== input.sha256) staleReasons.push(`${input.kind === "evidence" ? "evidence" : "input"} ${input.path} changed after the pass`);
+    }
+    const saved = record.treeFingerprint;
+    if (saved && saved.statusHash) {
+      let current = null;
+      try {
+        current = quickTreeFingerprint(hookCwd);
+      } catch {
+        current = null;
+      }
+      if (current && (current.statusHash !== saved.statusHash || current.headSha !== saved.headSha)) {
+        staleReasons.push("the working tree changed after the pass (code edited since verification)");
+      }
+    }
+    if (staleReasons.length) {
+      return block(`Quick run '${marker.slug}' has a verify PASS that is no longer live:\n\n${staleReasons.map(item => `- ${item}`).join("\n")}\n\nRe-run verification on the current state:\n\n  ${verifyCommand}`);
+    }
+    return finalizeDirective();
+  }
+
+  // BLOCKED / FAIL / ERROR: keep fixing inside the retry budget; hand a
+  // human-decision finding or an exhausted budget to the user instead.
+  const findings = Array.isArray(record.findings) ? record.findings : [];
+  if (findings.some(item => item && item.requiresHuman)) return "";
+  const budget = quickRetryBudget(hookCwd);
+  if (typeof record.attempts === "number" && record.attempts >= budget) return "";
+  const findingLines = findings
+    .slice(0, 6)
+    .map(item => `- ${item.severity} ${item.area}: ${item.missing}`)
+    .join("\n");
+  return block(`Quick run '${marker.slug}' verify gate is ${record.verdict} (attempt ${record.attempts}/${budget}).\n${findingLines ? `\nFindings:\n${findingLines}\n` : ""}\nFix the findings and re-run:\n\n  ${verifyCommand}\n\nNever run 'sasu gate override' yourself; if a finding needs a human decision, report it to the user instead.`);
+}
+
+function quickRetryBudget(hookCwd) {
+  try {
+    const config = readJson(path.join(hookCwd, "agents", "config.json"));
+    const budget = config && config.judge ? config.judge.retryBudget : undefined;
+    if (Number.isInteger(budget) && budget >= 0) return budget;
+  } catch {
+    // Missing or malformed config falls back to the CLI default below.
+  }
+  return 3;
+}
+
 function runStopHook(payload, started) {
   if (!payload || typeof payload !== "object") return "";
   const event = payload.hook_event_name;
@@ -97,13 +186,15 @@ function runStopHook(payload, started) {
   const hookCwd = typeof payload.cwd === "string" ? payload.cwd : cwd();
   const sessionId = sessionIdFromHookPayload(payload);
   if (!sessionId) return "";
+  // An implement run owns the session's Stop guard when one is active here;
+  // the quick guard covers every path where no implement run claims the stop.
   const active = readActive(hookCwd, { sessionId });
-  if (!active) return "";
+  if (!active) return quickStopDirective(hookCwd, sessionId);
   const statePath = resolveProjectPath(active.active.statePath, hookCwd);
-  if (!fs.existsSync(statePath)) return "";
+  if (!fs.existsSync(statePath)) return quickStopDirective(hookCwd, sessionId);
   const state = readJson(statePath);
-  if (state.schema !== SCHEMA) return "";
-  if (state.activeSessionId && !sameSessionId(state.activeSessionId, sessionId)) return "";
+  if (state.schema !== SCHEMA) return quickStopDirective(hookCwd, sessionId);
+  if (state.activeSessionId && !sameSessionId(state.activeSessionId, sessionId)) return quickStopDirective(hookCwd, sessionId);
   if (state.status !== "active") {
     if (deliveryShipPending(statePath, state)) {
       return renderShipHandoffDirective(statePath, state, hookCwd);

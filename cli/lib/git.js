@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
+const { ACTIVE_PATH, NAMESPACE_ROOT, QUICK_ROOT_REL, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
 
 function runGit(projectRoot, args, options = {}) {
   return runCommand("git", args, { ...options, cwd: projectRoot });
@@ -184,6 +184,25 @@ function reverifyFingerprint(state) {
   return { headSha: snapshot.headSha, statusHash: simpleHash(JSON.stringify(entries)) };
 }
 
+/**
+ * Tree fingerprint for the quick path, recorded by `sasu verify` at a verdict
+ * and recomputed by the Stop-hook quick guard: a PASS earned on one tree must
+ * not vouch for a tree the agent kept editing afterwards. Same contract as
+ * reverifyFingerprint, but keyed on a bare projectRoot (quick has no implement
+ * state) and additionally blind to agents/quick/**, where the contract,
+ * receipt, and active marker legitimately change around the pass.
+ */
+function quickTreeFingerprint(projectRoot) {
+  const snapshot = worktreeSnapshot({ projectRoot });
+  if (!snapshot) return null;
+  const excludedPrefixes = [path.join(NAMESPACE_ROOT, "gates"), QUICK_ROOT_REL].map(normalizeRelPath);
+  const entries = (snapshot.entries || []).filter(entry => {
+    const rel = normalizeRelPath(entry.path || "");
+    return !excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`));
+  });
+  return { headSha: snapshot.headSha, statusHash: simpleHash(JSON.stringify(entries)) };
+}
+
 function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
   if (!savedSnapshot || !currentSnapshot || !savedSnapshot.headSha || !currentSnapshot.headSha) return false;
   if (savedSnapshot.headSha === currentSnapshot.headSha) return false;
@@ -330,6 +349,7 @@ module.exports = {
   parseGitStatusZ,
   worktreeSnapshot,
   reverifyFingerprint,
+  quickTreeFingerprint,
   snapshotMaterializedInHead,
   snapshotEntriesEqual,
   snapshotPathMatches,

@@ -3,18 +3,28 @@ import fs from "node:fs";
 import path from "node:path";
 import type { SasuConfig } from "./config";
 
-export type MechanicalKind = "test" | "lint" | "build" | "typecheck";
+/**
+ * `check` and `capture` are the quick path's contract-declared commands: a
+ * check proves a criterion by running (evidence tier 1), a capture produces a
+ * fresh artifact for the judge (tier 3). Both run on the harness clock in the
+ * mechanical stage, which is what makes their result unforgeable.
+ */
+export type ProjectMechanicalKind = "test" | "lint" | "build" | "typecheck";
+export type MechanicalKind = ProjectMechanicalKind | "check" | "capture";
 
 export interface ResolvedCommand {
   kind: MechanicalKind;
   command: string;
-  source: "config" | "detected";
+  source: "config" | "detected" | "contract";
+  /** Criterion the command belongs to, for contract-declared checks and captures. */
+  criterionId?: string;
 }
 
 export interface MechanicalRun {
   kind: MechanicalKind;
   command: string;
-  source: "config" | "detected";
+  source: "config" | "detected" | "contract";
+  criterionId?: string;
   exitCode: number;
   ok: boolean;
   tail: string;
@@ -38,7 +48,7 @@ export function resolveMechanicalCommands(projectRoot: string, config: SasuConfi
 } {
   const declared = config.verify.commands;
   const resolved: ResolvedCommand[] = [];
-  const kinds: MechanicalKind[] = ["test", "lint", "typecheck", "build"];
+  const kinds: ProjectMechanicalKind[] = ["test", "lint", "typecheck", "build"];
   const declaredKinds = kinds.filter((k) => typeof declared[k] === "string" && declared[k]!.trim() !== "");
   if (declaredKinds.length > 0) {
     for (const kind of declaredKinds) {
@@ -60,7 +70,7 @@ function detectFromManifests(projectRoot: string): ResolvedCommand[] {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> };
       const scripts = pkg.scripts ?? {};
       const runner = fs.existsSync(path.join(projectRoot, "pnpm-lock.yaml")) ? "pnpm" : "npm";
-      for (const kind of ["test", "lint", "typecheck", "build"] as MechanicalKind[]) {
+      for (const kind of ["test", "lint", "typecheck", "build"] as ProjectMechanicalKind[]) {
         if (scripts[kind]) commands.push({ kind, command: `${runner} run ${kind}`, source: "detected" });
       }
     } catch {
@@ -80,8 +90,22 @@ function detectFromManifests(projectRoot: string): ResolvedCommand[] {
   return commands;
 }
 
-export function runMechanical(projectRoot: string, config: SasuConfig): MechanicalResult {
-  const { resolved, configSuggestion } = resolveMechanicalCommands(projectRoot, config);
+/**
+ * @param extra contract-declared commands (quick path) appended after the
+ * project's own checks: a broken build should surface before a capture script
+ * fails for the same reason.
+ */
+export function runMechanical(
+  projectRoot: string,
+  config: SasuConfig,
+  extra: ResolvedCommand[] = [],
+  options: { skipProjectCommands?: boolean } = {},
+): MechanicalResult {
+  const base = options.skipProjectCommands
+    ? { resolved: [] as ResolvedCommand[], configSuggestion: null }
+    : resolveMechanicalCommands(projectRoot, config);
+  const configSuggestion = base.configSuggestion;
+  const resolved = [...base.resolved, ...extra];
   const runs: MechanicalRun[] = [];
   let ok = true;
   for (const cmd of resolved) {
@@ -105,6 +129,7 @@ export function runMechanical(projectRoot: string, config: SasuConfig): Mechanic
       kind: cmd.kind,
       command: cmd.command,
       source: cmd.source,
+      ...(cmd.criterionId !== undefined ? { criterionId: cmd.criterionId } : {}),
       exitCode: timedOut ? 124 : exitCode,
       ok: !timedOut && exitCode === 0,
       tail: tailLines.join("\n"),

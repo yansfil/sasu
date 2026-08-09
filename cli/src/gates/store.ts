@@ -5,10 +5,18 @@ import type { Finding, GapVerdict, JudgeCallRecord } from "../judge/types";
 
 export type GateId = "gap-audit" | "spec" | "verify";
 
-/** A gate input document, pinned by content hash at the moment the gate ran. */
+/**
+ * A gate input pinned by content hash at the moment the gate ran.
+ *
+ * `document` inputs (the default) hash the markdown body only, so lifecycle
+ * frontmatter flips do not stale a PASS. `evidence` inputs are the quick
+ * path's proof artifacts - logs, API dumps, screenshots - and hash their raw
+ * bytes: every byte is substance there, and a screenshot is not text.
+ */
 export interface GateInput {
   path: string;
   sha256: string;
+  kind?: "document" | "evidence";
 }
 
 export interface StaleInput {
@@ -16,28 +24,22 @@ export interface StaleInput {
   reason: "changed" | "missing" | "unverifiable";
 }
 
-export function sha256Of(content: string): string {
+export function sha256Of(content: string | Buffer): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
-// Bump this whenever gate-input validity changes so a PASS earned under an
-// older prelint or semantic-source contract becomes STALE instead of being
-// trusted by a newer CLI without revalidation.
-export const FRESHNESS_CONTRACT_VERSION = 2;
+// Canonical freshness implementation lives in cli/lib/gate_freshness.js so the
+// Stop-hook quick guard (plain JS, no dist dependency) hashes identically.
+const freshnessLib = require("../../lib/gate_freshness.js") as {
+  FRESHNESS_CONTRACT_VERSION: number;
+  freshnessHash: (content: string) => string;
+  hashGateInput: (absPath: string, kind: string | undefined) => string | null;
+};
 
-/**
- * Freshness hashes the document substance, not its lifecycle bookkeeping.
- * Frontmatter (status/human_approval/updated_at flips) and the qa-log's
- * `## Audit History` section (where the gate's own result is recorded) change
- * legitimately AFTER a gate passes; hashing them would make every PASS
- * self-staling. Everything else in the body pins the PASS.
- */
+export const FRESHNESS_CONTRACT_VERSION = freshnessLib.FRESHNESS_CONTRACT_VERSION;
+
 export function freshnessHash(content: string): string {
-  let body = content;
-  const frontmatter = body.match(/^---\n[\s\S]*?\n---\n/);
-  if (frontmatter) body = body.slice(frontmatter[0].length);
-  body = body.replace(/^## Audit History\s*$[\s\S]*?(?=^## |(?![\s\S]))/m, "");
-  return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
+  return freshnessLib.freshnessHash(content);
 }
 
 export interface GateDeviation {
@@ -65,6 +67,13 @@ export interface GateRecord {
   history: GateRunSummary[];
   /** Input documents hashed at the last verdict run; absent on pre-0.2 state files. */
   inputs?: GateInput[];
+  /**
+   * Worktree fingerprint captured at the last verdict run (verify gate only):
+   * a PASS vouches for the tree it was earned on, and the Stop-hook quick
+   * guard recomputes this to detect code edited after the pass. Null when the
+   * project is not a git checkout.
+   */
+  treeFingerprint?: { headSha: string | null; statusHash: string } | null;
 }
 
 export interface GatesState {
@@ -158,12 +167,9 @@ function staleInputsFor(projectRoot: string, record: GateRecord): StaleInput[] {
   }
   const stale: StaleInput[] = [];
   for (const input of record.inputs) {
-    const resolved = path.join(projectRoot, input.path);
-    if (!fs.existsSync(resolved)) {
-      stale.push({ path: input.path, reason: "missing" });
-    } else if (freshnessHash(fs.readFileSync(resolved, "utf8")) !== input.sha256) {
-      stale.push({ path: input.path, reason: "changed" });
-    }
+    const hash = freshnessLib.hashGateInput(path.join(projectRoot, input.path), input.kind);
+    if (hash === null) stale.push({ path: input.path, reason: "missing" });
+    else if (hash !== input.sha256) stale.push({ path: input.path, reason: "changed" });
   }
   return stale;
 }
@@ -204,6 +210,7 @@ export function recordGateResult(
         findings: Finding[];
         artifactPayload: unknown;
         inputs?: GateInput[];
+        treeFingerprint?: { headSha: string | null; statusHash: string } | null;
       }
     | { kind: "error"; message: string },
   judgeRecords: JudgeCallRecord[],
@@ -220,6 +227,7 @@ export function recordGateResult(
     record.verdict = outcome.verdict;
     record.findings = outcome.findings;
     record.inputs = outcome.inputs ?? [];
+    record.treeFingerprint = outcome.treeFingerprint ?? null;
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
     summary = {
       at,

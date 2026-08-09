@@ -43,6 +43,9 @@ const RULES_ROOT_REL = path.join(NAMESPACE_ROOT, "rules");
 
 const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
+const QUICK_ROOT_REL = path.join(NAMESPACE_ROOT, "quick");
+const QUICK_ACTIVE_PATH = path.join(QUICK_ROOT_REL, ".quick-active.json");
+
 const PROJECT_CONFIG_PATH = path.join("agents", "config.json");
 
 function runDirRelFor(slug) {
@@ -316,6 +319,8 @@ module.exports = {
   RULES_ROOT_REL,
   runDirRelFor,
   ACTIVE_PATH,
+  QUICK_ROOT_REL,
+  QUICK_ACTIVE_PATH,
   PROJECT_CONFIG_PATH,
   DEFAULT_HOOK_TIMEOUT_MS,
   SELF_PATH,

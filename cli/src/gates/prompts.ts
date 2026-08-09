@@ -255,22 +255,69 @@ ${clampDocument(qaLogContent)}
 ---`;
 }
 
-export function semanticVerifyPrompt(diffContent: string, criteria: { id: string; text: string }[]): string {
+/** Runtime proof the harness collected for one criterion (quick evidence lane). */
+export interface EvidenceMaterial {
+  criterionId: string;
+  path: string;
+  sha256: string;
+  bytes: number;
+  /** Text content, inlined below; absent for images, which ride as attachments. */
+  text?: string;
+  /** Command the harness ran to produce this artifact, for capture evidence. */
+  producedBy?: string;
+  attachedImage?: boolean;
+}
+
+/**
+ * Evidence block: material the harness collected on its own clock, never
+ * fetched by the judge. Provenance is stated inline so the judge weighs a
+ * harness-run capture differently from a file that was merely present.
+ */
+function evidenceSection(evidence: EvidenceMaterial[]): string {
+  if (evidence.length === 0) return "";
+  const blocks = evidence.map((item) => {
+    const provenance = item.producedBy
+      ? `produced by the harness running \`${item.producedBy}\` just now`
+      : "file recorded as evidence by the contract";
+    const head = `[${item.criterionId}] ${item.path} (${item.bytes} bytes, sha256 ${item.sha256.slice(0, 12)}, ${provenance})`;
+    if (item.attachedImage) {
+      return `${head}\nThis image is attached to this prompt. Judge its criterion from what you can see in it.`;
+    }
+    return `${head}\n---\n${clampDocument(item.text ?? "", 40_000)}\n---`;
+  });
+  return `
+RUNTIME EVIDENCE (collected by the harness, not by you):
+Some criteria are proven by runtime artifacts rather than by the diff alone. Judge those criteria
+against the evidence below plus the diff. The evidence is what it is - do not assume anything the
+artifacts do not show, and FAIL a criterion whose evidence does not actually demonstrate it.
+
+${blocks.join("\n\n")}
+`;
+}
+
+export function semanticVerifyPrompt(
+  diffContent: string,
+  criteria: { id: string; text: string }[],
+  evidence: EvidenceMaterial[] = [],
+): string {
   const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
   return `You are an independent implementation reviewer.
-You have no prior context beyond the acceptance criteria and the diff below.
-The mechanical checks (tests/lint/build) already passed; do not re-litigate them.
+You have no prior context beyond the acceptance criteria, the diff, and any evidence below.
+The mechanical checks (tests/lint/build, plus any contract-declared check commands) already passed;
+do not re-litigate them.
 
-For EACH acceptance criterion, judge whether the diff plausibly satisfies it.
-PASS a criterion only when the diff contains concrete evidence for it (code, test, config, doc).
-FAIL a criterion when the diff is missing it, contradicts it, or only gestures at it.
-Judge only the listed criteria. Base reasons on specific files/hunks in the diff.
+For EACH acceptance criterion, judge whether the diff (and its evidence, where provided) satisfies it.
+PASS a criterion only when there is concrete evidence for it (code, test, config, doc, or a listed artifact).
+FAIL a criterion when the evidence is missing it, contradicts it, or only gestures at it.
+Judge only the listed criteria. Base reasons on specific files/hunks or named artifacts.
+Judge propositions, not taste: whether something renders or returns the stated value is yours to
+judge; whether it looks well-designed is not, and no criterion here should ask you for that.
 
 Reply with ONLY a JSON object, no prose, no code fences:
 {
   "verdict": "PASS" | "FAIL",
   "criteria": [
-    { "id": "<criterion id>", "verdict": "PASS" | "FAIL", "reason": "<one sentence citing diff evidence>" }
+    { "id": "<criterion id>", "verdict": "PASS" | "FAIL", "reason": "<one sentence citing the evidence>" }
   ]
 }
 Rules:
@@ -279,7 +326,7 @@ Rules:
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
-
+${evidenceSection(evidence)}
 DIFF:
 ---
 ${clampDocument(diffContent, 160_000)}

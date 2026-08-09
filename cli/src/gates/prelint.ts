@@ -1,4 +1,5 @@
 import type { Finding } from "../judge/types";
+import { parseContract } from "./contract";
 
 /**
  * Deterministic pre-judge document lint (PRD gate-prelint-json R2/R3).
@@ -45,7 +46,7 @@ export interface PrelintFinding extends Finding {
 
 export interface PrelintResult {
   ok: boolean;
-  doc: "qa-log" | "prd";
+  doc: "qa-log" | "prd" | "contract";
   findings: PrelintFinding[];
 }
 
@@ -433,6 +434,66 @@ function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line
   }
 }
 
+// --- quick-contract rules (verify gate entrance for the quick path) ---
+
+/**
+ * The quick contract is deliberately tiny - a goal plus acceptance criteria -
+ * so its lint checks only what the verify gate mechanically depends on: a
+ * frontmatter block (freshnessHash strips it, letting the post-PASS
+ * status flip to complete without staling the verdict), extractable
+ * `- AC#.` items under `## Acceptance Criteria` (what the semantic judge
+ * reads), and a well-formed evidence lane (what the harness has to execute
+ * and hash). Everything else about the document is the agent's prose.
+ */
+export function prelintContract(content: string): PrelintResult {
+  const findings: PrelintFinding[] = [];
+  const lines = content.split("\n");
+
+  const fm = parseFrontmatter(lines);
+  if (!fm) {
+    findings.push(
+      finding("contract-frontmatter-missing", 1, "contract has no frontmatter block", "Start the file with --- frontmatter containing topic/status."),
+    );
+  } else {
+    if (!fm.values.get("topic")?.value) {
+      findings.push(finding("contract-frontmatter-topic", null, `frontmatter is missing "topic"`, "Add topic: <kebab-case-slug> matching the --slug value."));
+    }
+    checkEnum(fm, "status", ["active", "complete"], "contract", findings);
+  }
+
+  const parsed = parseContract(content);
+  for (const defect of parsed.defects) {
+    findings.push(finding(defect.rule, defect.line, defect.missing, defect.recommendation));
+  }
+
+  const section = sectionRange(lines, "## Acceptance Criteria");
+  if (!section) {
+    findings.push(
+      finding("contract-ac-section-missing", null, `required section "## Acceptance Criteria" is missing`, "Add ## Acceptance Criteria with '- AC1. ...' items."),
+    );
+    return { ok: findings.length === 0, doc: "contract", findings };
+  }
+
+  const seen = new Map<string, number>();
+  for (const criterion of parsed.criteria) {
+    const firstLine = seen.get(criterion.id);
+    if (firstLine !== undefined) {
+      findings.push(
+        finding("contract-ac-duplicate", criterion.line, `${criterion.id} is defined more than once (first at line ${firstLine})`, "Give every criterion a unique AC id."),
+      );
+    } else {
+      seen.set(criterion.id, criterion.line);
+    }
+  }
+  if (seen.size === 0) {
+    findings.push(
+      finding("contract-ac-empty", section.start + 1, "## Acceptance Criteria has no '- AC#. <text>' items", "Add at least one criterion the diff judge can verify."),
+    );
+  }
+
+  return { ok: findings.length === 0, doc: "contract", findings };
+}
+
 function findSubsection(lines: string[], number: string): { start: number; end: number } | null {
   const start = lines.findIndex((line) => new RegExp(`^###\\s+${number.replace(".", "\\.")}\\b`).test(line));
   if (start === -1) return null;
@@ -450,9 +511,9 @@ function findSubsection(lines: string[], number: string): { start: number; end: 
  * Uniform fail-closed wrapper (D-11): any prelint execution error - not just a
  * recognized document defect - blocks the gate instead of reaching the judge.
  */
-export function runPrelint(doc: "qa-log" | "prd", content: string): PrelintResult {
+export function runPrelint(doc: "qa-log" | "prd" | "contract", content: string): PrelintResult {
   try {
-    return doc === "qa-log" ? prelintQaLog(content) : prelintPrd(content);
+    return doc === "qa-log" ? prelintQaLog(content) : doc === "contract" ? prelintContract(content) : prelintPrd(content);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {

@@ -9,16 +9,31 @@ export interface BackendRunResult {
   text: string;
 }
 
+export interface BackendRunOptions {
+  model: string | null;
+  timeoutMs: number;
+  /** Telemetry, plus the stub backend's lane selector. */
+  purpose?: string;
+  /** Caps the model's reasoning budget where the backend supports it (claude `--effort`). */
+  effort?: string;
+  /** Image paths attached to the prompt; only meaningful when `attachments` is true. */
+  images?: string[];
+}
+
 export interface JudgeBackend {
   name: BackendName;
   binary: string;
-  available(): boolean;
   /**
-   * One-shot judge call. `purpose` is telemetry plus the stub backend's lane
-   * selector; `effort` caps the model's reasoning budget where the backend
-   * supports it (claude `--effort`; codex/stub ignore it).
+   * Whether the backend can put an image in front of the judge. Attaching an
+   * image is not the same as giving the judge a tool: an attachment is inert
+   * input material, so it does not reopen the agency problem that made the
+   * judge tool-less. A backend without it cannot judge screenshot evidence at
+   * all, and the verify flow hands those criteria to a human instead.
    */
-  run(prompt: string, model: string | null, timeoutMs: number, purpose?: string, effort?: string): Promise<BackendRunResult>;
+  attachments: boolean;
+  available(): boolean;
+  /** One-shot judge call. */
+  run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult>;
 }
 
 function binaryOnPath(binary: string): boolean {
@@ -95,12 +110,17 @@ function runProcess(
 export class ClaudeBackend implements JudgeBackend {
   readonly name: BackendName = "claude";
   readonly binary = "claude";
+  // `claude -p` has no local-image flag (--file takes remote file ids), and
+  // the only path to an image would be the Read tool, which the no-tools
+  // contract above forbids. Verified against the CLI help, 2026-08-08.
+  readonly attachments = false;
 
   available(): boolean {
     return binaryOnPath(this.binary);
   }
 
-  async run(prompt: string, model: string | null, timeoutMs: number, _purpose?: string, effort?: string): Promise<BackendRunResult> {
+  async run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
+    const { model, timeoutMs, effort } = options;
     const args = [
       "-p",
       "--output-format",
@@ -150,7 +170,7 @@ export class ClaudeBackend implements JudgeBackend {
  * and carries an explicit no-tools instruction; the residual risk is judgment
  * bias only (the sandbox stays read-only, so no writes or exfiltration).
  */
-export function codexExecArgs(model: string | null, workRoot: string, lastMessagePath: string): string[] {
+export function codexExecArgs(model: string | null, workRoot: string, lastMessagePath: string, images: string[] = []): string[] {
   const args = [
     "exec",
     "--sandbox",
@@ -163,6 +183,7 @@ export function codexExecArgs(model: string | null, workRoot: string, lastMessag
     "--output-last-message",
     lastMessagePath,
   ];
+  for (const image of images) args.push("--image", image);
   if (model) args.push("--model", model);
   return args;
 }
@@ -178,12 +199,15 @@ export const CODEX_NO_TOOLS_PREAMBLE =
 export class CodexBackend implements JudgeBackend {
   readonly name: BackendName = "codex";
   readonly binary = "codex";
+  // `codex exec -i/--image <FILE>...` attaches local images to the prompt.
+  readonly attachments = true;
 
   available(): boolean {
     return binaryOnPath(this.binary);
   }
 
-  async run(prompt: string, model: string | null, timeoutMs: number): Promise<BackendRunResult> {
+  async run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
+    const { model, timeoutMs, images = [] } = options;
     // Spike-verified (codex-cli 0.144.1): the prompt must be a positional
     // argument; stdin via `-` hangs. argv has OS limits, so oversized prompts
     // fail fast instead of hanging the gate.
@@ -192,7 +216,7 @@ export class CodexBackend implements JudgeBackend {
     }
     const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-judge-"));
     const lastMessagePath = path.join(workRoot, "last-message.txt");
-    const args = codexExecArgs(model, workRoot, lastMessagePath);
+    const args = codexExecArgs(model, workRoot, lastMessagePath, images);
     args.push(CODEX_NO_TOOLS_PREAMBLE + prompt);
     try {
       const result = await runProcess(this.binary, args, { timeoutMs });
@@ -220,12 +244,19 @@ export class CodexBackend implements JudgeBackend {
 export class StubBackend implements JudgeBackend {
   readonly name: BackendName = "stub";
   readonly binary = "stub";
+  // Tests must be able to exercise the attachment path without a real judge;
+  // SASU_JUDGE_STUB_NO_ATTACHMENTS flips it to rehearse the human-lane
+  // fallback a claude-backed run takes.
+  get attachments(): boolean {
+    return process.env["SASU_JUDGE_STUB_NO_ATTACHMENTS"] !== "1";
+  }
 
   available(): boolean {
     return Boolean(process.env["SASU_JUDGE_STUB_FILE"]);
   }
 
-  async run(_prompt: string, _model: string | null, _timeoutMs: number, purpose?: string): Promise<BackendRunResult> {
+  async run(_prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
+    const { purpose } = options;
     const stubFile = process.env["SASU_JUDGE_STUB_FILE"];
     if (!stubFile || !fs.existsSync(stubFile)) {
       throw new JudgeError("judge-binary-missing", this.name, "SASU_JUDGE_STUB_FILE is not set or missing");
