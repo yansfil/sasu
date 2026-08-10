@@ -52,10 +52,35 @@ test("validateGapVerdict rejects numeric-score-shaped output", () => {
 
 test("validateSemanticVerdict requires every expected criterion id", () => {
   const result = validateSemanticVerdict(
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] },
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/x.ts hunk" }] },
     ["AC1", "AC2"],
   );
   assert.match(String(result), /AC2/);
+});
+
+// Ouroboros import (semantic.py): an approval that cites nothing is a
+// verification failure, not a pass - the runner's retry loop gets one chance
+// to make the judge cite its sources.
+test("validateSemanticVerdict rejects a PASS criterion with empty evidence", () => {
+  const result = validateSemanticVerdict(
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] },
+    ["AC1"],
+  );
+  assert.match(String(result), /empty evidence/);
+  const blank = validateSemanticVerdict(
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "   " }] },
+    ["AC1"],
+  );
+  assert.match(String(blank), /empty evidence/);
+});
+
+test("validateSemanticVerdict lets a FAIL criterion stand on absence (no evidence to cite)", () => {
+  const result = validateSemanticVerdict(
+    { verdict: "FAIL", criteria: [{ id: "AC1", verdict: "FAIL", reason: "nothing in the diff implements it" }] },
+    ["AC1"],
+  );
+  assert.equal(typeof result, "object");
+  assert.equal(result.criteria[0].evidence, "");
 });
 
 test("validateSemanticVerdict rejects PASS verdict with FAIL criteria", () => {
@@ -63,7 +88,7 @@ test("validateSemanticVerdict rejects PASS verdict with FAIL criteria", () => {
     {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "ok" },
+        { id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/x.ts" },
         { id: "AC2", verdict: "FAIL", reason: "missing" },
       ],
     },
@@ -77,7 +102,7 @@ test("validateSemanticVerdict accepts a consistent FAIL", () => {
     {
       verdict: "FAIL",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "ok" },
+        { id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/x.ts" },
         { id: "AC2", verdict: "FAIL", reason: "not in diff" },
       ],
     },

@@ -4,7 +4,7 @@
 // no-tools preamble so a refactor cannot silently drop them.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CODEX_NO_TOOLS_PREAMBLE, codexExecArgs } from "../../dist/judge/backends.js";
+import { CODEX_NO_TOOLS_PREAMBLE, codexExecArgs, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("codex judge argv carries the full isolation set", () => {
   const args = codexExecArgs("gpt-5.2", "/tmp/work-root", "/tmp/work-root/last.txt");
@@ -26,4 +26,17 @@ test("codex no-tools preamble forbids shell, file access, and tools", () => {
   assert.match(CODEX_NO_TOOLS_PREAMBLE, /Do NOT run shell commands/);
   assert.match(CODEX_NO_TOOLS_PREAMBLE, /do NOT read or list any files/);
   assert.match(CODEX_NO_TOOLS_PREAMBLE, /already included in this prompt/);
+});
+
+// The agentic judge resolves the diff-stat's repo-relative paths against its
+// working directory, so the verify gate threads the project root through
+// BackendRunOptions.cwd - `sasu verify` from a subdirectory used to hand the
+// judge the caller's cwd and every Read/Grep missed. The stub backend never
+// spawns, so the contract is pinned at the spawn-options builder (mirrors the
+// codexExecArgs tests above).
+test("judge spawn options carry the caller-threaded cwd, and omit it when absent", () => {
+  const withCwd = processSpawnOptions({ cwd: "/repo/root" });
+  assert.equal(withCwd.cwd, "/repo/root", "the provided project root must reach the spawned judge");
+  const without = processSpawnOptions({});
+  assert.ok(!("cwd" in without), "no cwd provided must leave the inherited working directory untouched");
 });

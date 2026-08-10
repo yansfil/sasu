@@ -126,7 +126,7 @@ test("verify FAILs semantically with per-criterion reasons after mechanical pass
     stub: stubFile(dir, {
       verdict: "FAIL",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "render() added in widget.js" },
+        { id: "AC1", verdict: "PASS", reason: "render() added in widget.js", evidence: "diff hunk" },
         { id: "AC2", verdict: "FAIL", reason: "no persistence code in the diff" },
       ],
     }),
@@ -144,8 +144,8 @@ test("verify PASSes end to end and records judge usage for the receipt", () => {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "render() added" },
-        { id: "AC2", verdict: "PASS", reason: "persist() added" },
+        { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+        { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
       ],
     }),
   });
@@ -164,8 +164,8 @@ test("verify auto-detects commands from package.json and suggests pinning them",
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "ok" },
-        { id: "AC2", verdict: "PASS", reason: "ok" },
+        { id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
+        { id: "AC2", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
       ],
     }),
   });
@@ -246,8 +246,8 @@ test("verify PASS prints a per-criterion semantic summary", () => {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "render() added" },
-        { id: "AC2", verdict: "PASS", reason: "persist() added" },
+        { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+        { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
       ],
     }),
   });

@@ -218,7 +218,11 @@ function normalizeArtifact(text, projectRoot) {
     .replace(/\b\d{8}T\d{6,}Z?\b/g, "<TS>")
     .replace(/\b[0-9a-f]{12,64}\b/g, "<SHA>")
     .replace(/"evidenceHash": "[0-9a-f]+"/g, '"evidenceHash": "<SHA>"')
-    .replace(/\b\d+ms\b/g, "<MS>");
+    .replace(/\b\d+ms\b/g, "<MS>")
+    // Phase timings: measured durations vary run to run; counts stay pinned.
+    // Ordered after the ms rule so "123ms" is already collapsed.
+    .replace(/"(verificationCommandSeconds|judgeSeconds|wallClockSeconds|unattributedSeconds)": (?:[0-9.]+|null)/g, '"$1": "<DUR>"')
+    .replace(/\b\d+(?:\.\d+)?s\b/g, "<DUR>");
   return out;
 }
 

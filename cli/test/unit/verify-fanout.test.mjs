@@ -8,7 +8,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isExcludedFromDiff, partitionVerifyCriteria, runVerifyGate } from "../../dist/gates/commands.js";
+import {
+  diffStatFromText,
+  filterDiffByGlobs,
+  isExcludedFromDiff,
+  matchesScopeGlob,
+  partitionVerifyCriteria,
+  runVerifyGate,
+  scopeForLane,
+  splitDiffByFile,
+} from "../../dist/gates/commands.js";
 import { semanticVerifyPrompt, VERIFY_DIFF_MAX_CHARS } from "../../dist/gates/prompts.js";
 import { loadConfig } from "../../dist/config.js";
 
@@ -88,8 +97,13 @@ test("partitionVerifyCriteria: balanced lanes under the cap, stable order, last 
 
 // --- truncation guard ---
 
-test("an oversized diff fails the command without charging an attempt or recording an outcome", async () => {
+test("an oversized diff on a non-agentic backend fails the command without charging an attempt or recording an outcome", async () => {
   const dir = makeDir();
+  // The stub backend rehearses the codex case: no read tools, so no fallback.
+  process.env.SASU_JUDGE_BACKEND = "stub";
+  process.env.SASU_JUDGE_STUB_FILE = path.join(dir, "unused-stub.json");
+  fs.writeFileSync(process.env.SASU_JUDGE_STUB_FILE, "{}");
+  process.env.SASU_JUDGE_STUB_NO_AGENTIC = "1";
   fs.writeFileSync(path.join(dir, "big.diff"), "+x".repeat(Math.ceil((VERIFY_DIFF_MAX_CHARS + 1) / 2)));
   // Pre-seed a gate state mid fix-loop: the guard must leave it untouched.
   const stateDir = path.join(dir, "agents", "gates", "t");
@@ -118,6 +132,27 @@ test("an oversized diff fails the command without charging an attempt or recordi
   assert.equal(record.attempts, 2, "the guard must not charge a retry attempt");
   assert.equal(record.verdict, "FAIL", "the guard must not record a new outcome");
   assert.equal(gatesState(dir).judgeCalls.length, 0, "no judge call may be spent");
+  delete process.env.SASU_JUDGE_STUB_NO_AGENTIC;
+  delete process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_STUB_FILE;
+});
+
+test("an oversized diff on an agentic backend falls back to the read-only judge instead of erroring", async () => {
+  const dir = makeDir();
+  const bigDiff = `diff --git a/big.ts b/big.ts\n${"+x\n".repeat(Math.ceil(VERIFY_DIFF_MAX_CHARS / 3) + 100)}`;
+  fs.writeFileSync(path.join(dir, "big.diff"), bigDiff);
+  const contractPath = writeContract(dir, 2);
+  const result = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "read big.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "read big.ts" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "big.diff", skipMechanical: true }),
+  );
+  assert.equal(result.ok, true, "the fallback must judge, not throw");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.equal(artifact.lanes[0].agenticFallback, true, "the artifact must record that the lane went agentic");
+  assert.ok(artifact.lanes[0].diffChars > VERIFY_DIFF_MAX_CHARS, "the artifact records the oversized lane diff size");
+  assert.equal(artifact.agentCuratedDiff, true, "--diff-file use is stamped for deviation visibility");
+  assert.equal(artifact.criteria[0].evidence, "read big.ts", "the judge's read trail rides in the verdict evidence");
 });
 
 test("the semantic prompt never clamps the diff it is given", () => {
@@ -135,7 +170,7 @@ test("zero resolved mechanical commands surface a loud warning and a none-detect
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }, { id: "AC2", verdict: "PASS", reason: "ok" }] },
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x hunk" }] },
     () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff" }),
   );
   assert.equal(result.ok, true, "the warning must not block the gate");
@@ -151,7 +186,7 @@ test("--skip-mechanical is a deliberate choice and gets no zero-detection warnin
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }, { id: "AC2", verdict: "PASS", reason: "ok" }] },
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x hunk" }] },
     () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff", skipMechanical: true }),
   );
   assert.equal(result.mechanicalWarning, undefined);
@@ -162,7 +197,12 @@ test("--skip-mechanical is a deliberate choice and gets no zero-detection warnin
 
 const laneVerdicts = (ids, failId) => ({
   verdict: ids.includes(failId) ? "FAIL" : "PASS",
-  criteria: ids.map((id) => ({ id, verdict: id === failId ? "FAIL" : "PASS", reason: id === failId ? "not in the diff" : "ok" })),
+  criteria: ids.map((id) => ({
+    id,
+    verdict: id === failId ? "FAIL" : "PASS",
+    reason: id === failId ? "not in the diff" : "ok",
+    ...(id === failId ? {} : { evidence: "x hunk" }),
+  })),
 });
 
 test("fan-out: criteria split into lanes, lanes merge in document order, one round is one attempt", async () => {
@@ -204,7 +244,7 @@ test("fan-out: a single lane keeps the historical gate:verify-semantic purpose",
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }, { id: "AC2", verdict: "PASS", reason: "ok" }] },
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x hunk" }] },
     () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff", skipMechanical: true }),
   );
   assert.equal(result.ok, true);
@@ -249,7 +289,7 @@ test("fan-out: a foreign criterion id is dropped from the lane instead of failin
         "lane:1": {
           verdict: "FAIL",
           criteria: [
-            ...nine.slice(0, 5).map((c) => ({ id: c.id, verdict: "PASS", reason: "ok" })),
+            ...nine.slice(0, 5).map((c) => ({ id: c.id, verdict: "PASS", reason: "ok", evidence: "x hunk" })),
             { id: "AC6", verdict: "FAIL", reason: "not my lane" },
           ],
         },
@@ -278,4 +318,262 @@ test("fan-out: judge.fanout=false restores the exhaustive single call for any cr
   const state = gatesState(dir);
   assert.equal(state.judgeCalls.length, 1, "the escape hatch makes exactly one judge call");
   assert.equal(state.judgeCalls[0].purpose, "gate:verify-semantic");
+});
+
+// --- PRD-declared lane scoping (4a) and AC oracles (5c) ---
+
+test("matchesScopeGlob: git-pathspec-like dialect", () => {
+  assert.equal(matchesScopeGlob("cli/src/gates/commands.ts", "cli/src/**"), true);
+  assert.equal(matchesScopeGlob("cli/src/config.ts", "cli/src/*.ts"), true);
+  assert.equal(matchesScopeGlob("cli/src/gates/commands.ts", "cli/src/*.ts"), false, "* must not cross a slash");
+  assert.equal(matchesScopeGlob("cli/lib/git.js", "cli/lib"), true, "a bare path matches like a pathspec prefix");
+  assert.equal(matchesScopeGlob("cli/library/git.js", "cli/lib"), false, "prefix match is segment-aware");
+  assert.equal(matchesScopeGlob("a/b/c.ts", "**/c.ts"), true);
+  assert.equal(matchesScopeGlob("c.ts", "**/c.ts"), true, "**/ may match zero directories");
+});
+
+const TWO_FILE_DIFF = [
+  "diff --git a/src/widget.ts b/src/widget.ts",
+  "--- a/src/widget.ts",
+  "+++ b/src/widget.ts",
+  "@@ -1 +1,2 @@",
+  "+render()",
+  "diff --git a/docs/readme.md b/docs/readme.md",
+  "--- a/docs/readme.md",
+  "+++ b/docs/readme.md",
+  "@@ -1 +1 @@",
+  "-old",
+  "+new",
+  "",
+].join("\n");
+
+test("splitDiffByFile / filterDiffByGlobs / diffStatFromText read one diff grammar", () => {
+  const blocks = splitDiffByFile(TWO_FILE_DIFF);
+  assert.deepEqual(blocks.map((b) => b.path), ["src/widget.ts", "docs/readme.md"]);
+  const filtered = filterDiffByGlobs(TWO_FILE_DIFF, ["src/**"]);
+  assert.deepEqual(filtered.files, ["src/widget.ts"]);
+  assert.ok(filtered.text.includes("render()") && !filtered.text.includes("readme"));
+  const stat = diffStatFromText(TWO_FILE_DIFF);
+  assert.match(stat, /src\/widget\.ts \| \+1 -0/);
+  assert.match(stat, /docs\/readme\.md \| \+1 -1/);
+  assert.match(stat, /2 file\(s\) changed/);
+});
+
+test("scopeForLane: union of covering tasks' globs, only when every covering task declared one", () => {
+  const tasks = [
+    { id: "T1", scopeGlobs: ["src/**"], acceptanceCriteria: ["AC1"], requirements: ["R1"] },
+    { id: "T2", scopeGlobs: ["lib/**"], acceptanceCriteria: ["AC2"], requirements: [] },
+    { id: "T3", scopeGlobs: [], acceptanceCriteria: ["AC3"], requirements: [] },
+  ];
+  assert.deepEqual(scopeForLane([{ id: "AC1", text: "x" }], tasks), ["src/**"]);
+  assert.deepEqual(scopeForLane([{ id: "AC1", text: "x" }, { id: "AC2", text: "y" }], tasks), ["src/**", "lib/**"]);
+  assert.equal(scopeForLane([{ id: "AC3", text: "z" }], tasks), null, "an undeclared covering task disables scoping");
+  assert.equal(scopeForLane([{ id: "AC9", text: "global invariant" }], tasks), null, "an uncovered AC keeps the full diff");
+  assert.deepEqual(scopeForLane([{ id: "AC9", text: "references R1" }], tasks), ["src/**"], "coverage may ride the shared R# chain");
+  // The lib parser uppercases R refs, so a lowercase bullet ref must ride the
+  // same chain (the case-sensitive match silently dropped the coverage).
+  assert.deepEqual(scopeForLane([{ id: "AC9", text: "references r1" }], tasks), ["src/**"], "R-refs are case-insensitive like the lib parser");
+});
+
+// A prelint-clean PRD with an oracle-backed AC3 and a Scope-declaring task.
+function writeScopedPrd(dir) {
+  const prd = `---
+topic: "fixture"
+status: "ready"
+human_approval: "approved"
+review_profile: "standard"
+---
+
+# PRD: fixture
+
+## 1. Summary
+
+A widget that renders and persists.
+
+## 2. Problem, Goal, And Users
+
+Users need a widget.
+
+## 3. Scope And Non-Goals
+
+In scope: the widget.
+
+## 4. Pre-Work And Required Decisions
+
+None required.
+
+## 5. Major Technical Structure Changes
+
+No major technical structure change expected.
+
+## 6. Requirements
+
+- R1. the widget renders and persists its state
+
+## 7. Acceptance Criteria
+
+- AC1. the widget renders
+- AC2. the widget persists its state
+- AC3. the marker artifact exists. Artifact: out/marker.txt
+
+## 8. PRD-Level Tasks
+
+- T1. build the widget. Covers R1, AC1, AC2. Scope: src/**
+
+## 9. Verification Contract
+
+### 9.1 Test Mode Contract
+
+| Mode | Required For Done | Covers | Human Decision |
+| --- | --- | --- | --- |
+| automated behavior | yes | core behavior | none |
+
+### 9.2 Required Agent Verification
+
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
+| --- | --- | --- | --- | --- | --- |
+| V1 | automated behavior | R1, AC1, AC2 | behavior covered by automated test | yes | no |
+
+## 10. Risks And Open Decisions
+
+None.
+
+## 11. Implementation Guardrails
+
+Do not expand scope.
+
+## 12. Implementation Result Report Contract
+
+Report status and evidence.
+`;
+  fs.writeFileSync(path.join(dir, "prd.md"), prd);
+  return "prd.md";
+}
+
+test("PRD path: oracle-backed ACs settle mechanically, lanes get the Scope-filtered diff, and unscoped files warn", async () => {
+  const dir = makeDir();
+  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
+  fs.mkdirSync(path.join(dir, "out"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
+  const prdPath = writeScopedPrd(dir);
+  const result = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.judgedCriteriaIds, ["AC1", "AC2"], "the oracle-backed AC3 never reaches the judge");
+  const ac3 = result.criteria.find((c) => c.id === "AC3");
+  assert.equal(ac3.verdict, "PASS");
+  assert.match(ac3.evidence, /out\/marker\.txt/);
+  assert.deepEqual(result.unscopedFiles, ["docs/readme.md"], "changed files outside every task Scope surface as a warning");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.deepEqual(artifact.lanes[0].scope, ["src/**"], "the artifact records which paths the lane received");
+  assert.equal(artifact.oracle[0].met, true);
+  assert.deepEqual(artifact.unscopedFiles, ["docs/readme.md"]);
+});
+
+test("PRD path: partial Scope declaration suppresses the unscoped-files warning (ownership ambiguous)", async () => {
+  const dir = makeDir();
+  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
+  fs.mkdirSync(path.join(dir, "out"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
+  // T2 owns the docs work but declares no Scope: docs/readme.md may be its
+  // file, so warning on it would be noise, not a finding.
+  const prdPath = writeScopedPrd(dir);
+  fs.writeFileSync(
+    path.join(dir, prdPath),
+    fs
+      .readFileSync(path.join(dir, prdPath), "utf8")
+      .replace(
+        "- T1. build the widget. Covers R1, AC1, AC2. Scope: src/**",
+        "- T1. build the widget. Covers R1, AC1, AC2. Scope: src/**\n- T2. document the widget. Covers R1.",
+      ),
+  );
+  const result = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.unscopedFiles, undefined, "a Scope-less task makes file ownership ambiguous; no warning");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.equal(artifact.unscopedFiles, undefined);
+  assert.deepEqual(artifact.lanes[0].scope, ["src/**"], "lane scoping still applies where every covering task declared");
+});
+
+test("PRD path: an all-oracle PASS is stamped zeroJudgeCalls and spends no judge call", async () => {
+  const dir = makeDir();
+  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
+  fs.mkdirSync(path.join(dir, "out"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
+  const prdPath = writeScopedPrd(dir);
+  fs.writeFileSync(
+    path.join(dir, prdPath),
+    fs
+      .readFileSync(path.join(dir, prdPath), "utf8")
+      .replace("- AC1. the widget renders", '- AC1. the widget renders. Check: `node -e "process.exit(0)"`')
+      .replace("- AC2. the widget persists its state", '- AC2. the widget persists its state. Check: `node -e "process.exit(0)"`'),
+  );
+  // No judge backend configured at all: a truly zero-LLM path must not need one.
+  const saved = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  try {
+    const result = await runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true });
+    assert.equal(result.ok, true);
+    assert.equal(result.zeroJudgeCalls, true, "the receipt must be able to say no model saw this diff");
+    assert.equal(gatesState(dir).judgeCalls.length, 0);
+    const artifact = readArtifacts(dir).find((a) => a.stage === "oracle");
+    assert.equal(artifact.zeroJudgeCalls, true);
+    assert.equal(artifact.verdict, "PASS");
+  } finally {
+    if (saved !== undefined) process.env.SASU_JUDGE_BACKEND = saved;
+  }
+});
+
+test("PRD path: the oversized-diff hard error spends no oracle side effects", async () => {
+  const dir = makeDir();
+  const bigDiff = `diff --git a/src/widget.ts b/src/widget.ts\n${"+x\n".repeat(Math.ceil(VERIFY_DIFF_MAX_CHARS / 3) + 100)}`;
+  fs.writeFileSync(path.join(dir, "big.diff"), bigDiff);
+  const prdPath = writeScopedPrd(dir);
+  // The oracle command leaves a marker: on the no-judgment error path it must
+  // never run (it used to execute before the size check threw, side effects
+  // spent with nothing recorded).
+  fs.writeFileSync(
+    path.join(dir, prdPath),
+    fs
+      .readFileSync(path.join(dir, prdPath), "utf8")
+      .replace(
+        "- AC3. the marker artifact exists. Artifact: out/marker.txt",
+        "- AC3. the oracle ran. Check: `node -e \"require('fs').writeFileSync('oracle-ran.txt','x')\"`",
+      ),
+  );
+  process.env.SASU_JUDGE_BACKEND = "stub";
+  process.env.SASU_JUDGE_STUB_FILE = path.join(dir, "unused-stub.json");
+  fs.writeFileSync(process.env.SASU_JUDGE_STUB_FILE, "{}");
+  process.env.SASU_JUDGE_STUB_NO_AGENTIC = "1";
+  try {
+    await assert.rejects(
+      runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "big.diff", skipMechanical: true }),
+      /over the \d+-char judge input budget/,
+    );
+    assert.equal(fs.existsSync(path.join(dir, "oracle-ran.txt")), false, "no judgment ran, so no oracle may have run either");
+  } finally {
+    delete process.env.SASU_JUDGE_STUB_NO_AGENTIC;
+    delete process.env.SASU_JUDGE_BACKEND;
+    delete process.env.SASU_JUDGE_STUB_FILE;
+  }
+});
+
+test("PRD path: a failed oracle closes the gate even when the judge passes every lane", async () => {
+  const dir = makeDir();
+  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
+  const prdPath = writeScopedPrd(dir); // out/marker.txt deliberately absent
+  const result = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true }),
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.status.findings.some((f) => f.area === "oracle" && f.missing.startsWith("AC3:")));
 });

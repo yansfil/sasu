@@ -21,7 +21,7 @@ export async function runJudge<T>(
   tier: Tier,
   prompt: string,
   validate: (value: unknown) => T | string,
-  options: { effort?: string; images?: string[] } = {},
+  options: { effort?: string; images?: string[]; agentic?: boolean; cwd?: string } = {},
 ): Promise<JudgeOutcome<T>> {
   const backend = resolveBackend(config.judge.backend);
   const model = tierModelFor(config, backend.name, tier);
@@ -43,6 +43,8 @@ export async function runJudge<T>(
           purpose,
           ...(options.effort !== undefined ? { effort: options.effort } : {}),
           ...(options.images !== undefined ? { images: options.images } : {}),
+          ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
+          ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         })
       ).text;
     } catch (error) {

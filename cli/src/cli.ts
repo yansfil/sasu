@@ -127,6 +127,14 @@ function printStatusView(view: GateStatusView): void {
 }
 
 function printPrelint(prelint: NonNullable<GateCommandResult["prelint"]>): void {
+  // Non-blocking advisories print on both the ok and FAIL paths: they never
+  // gate, but the author has to see them (e.g. shell operators in a Check
+  // oracle command are NOT interpreted).
+  for (const advisory of prelint.warnings ?? []) {
+    const where = advisory.line !== null ? ` line ${advisory.line}` : "";
+    process.stdout.write(`[prelint] warning ${advisory.rule}${where}: ${advisory.missing}\n`);
+    process.stdout.write(`  fix: ${advisory.recommendation}\n`);
+  }
   if (prelint.ok) {
     process.stdout.write(`[prelint] ok\n`);
     return;

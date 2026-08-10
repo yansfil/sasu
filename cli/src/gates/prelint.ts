@@ -20,6 +20,15 @@ import { parseContract } from "./contract";
 // read the same runner list instead of keeping two copies in step by hand.
 const { RUNNER_PATTERN } = require("../../lib/runners.js") as { RUNNER_PATTERN: string };
 
+// Same single-grammar rule for the §8 `Scope:` and §7 `Check:`/`Artifact:`
+// tails: the lib parser owns the grammar, this lint only reports its defects.
+const { parseScopeGlobs, scopeGlobDefect, parseAcOracle, acOracleDefect } = require("../../lib/prd_parser.js") as {
+  parseScopeGlobs: (text: string) => string[];
+  scopeGlobDefect: (glob: string) => string | null;
+  parseAcOracle: (text: string) => { kind: "check" | "artifact"; command?: string; expect?: string | null; path?: string } | null;
+  acOracleDefect: (text: string) => string | null;
+};
+
 const ENV_ASSIGNMENT = "(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+)*";
 const RUNNER_PREFIX = new RegExp(`^${ENV_ASSIGNMENT}(?:${RUNNER_PATTERN})\\b`, "i");
 
@@ -48,10 +57,22 @@ export interface PrelintResult {
   ok: boolean;
   doc: "qa-log" | "prd" | "contract";
   findings: PrelintFinding[];
+  /**
+   * Non-blocking advisories: real smells that must not gate (an author may
+   * legitimately mean them), e.g. shell operators in a Check oracle command
+   * (they are NOT interpreted - both executors run without a shell) or a
+   * trivially-constant oracle. Never counted toward `ok`.
+   */
+  warnings?: PrelintFinding[];
 }
 
 function finding(rule: string, line: number | null, missing: string, recommendation: string): PrelintFinding {
   return { rule, line, area: "prelint", severity: "P0", missing, recommendation, requiresHuman: false };
+}
+
+/** Non-blocking advisory (PrelintResult.warnings): P2, never counted toward ok. */
+function warning(rule: string, line: number | null, missing: string, recommendation: string): PrelintFinding {
+  return { rule, line, area: "prelint", severity: "P2", missing, recommendation, requiresHuman: false };
 }
 
 interface Frontmatter {
@@ -340,9 +361,15 @@ export function prelintPrd(content: string): PrelintResult {
     }
   }
 
+  const acTexts = collectAcBulletTexts(lines);
   for (const [ac, line] of acDefinitionLines) {
     const viaRequirement = [...(acRequirementRefs.get(ac) ?? [])].some((r) => coveredRs.has(r));
-    if (!coveredAcs.has(ac) && !viaRequirement) {
+    // An AC with a declared machine oracle (Check:/Artifact: tail) is its own
+    // verification - oracle-run / the verify gate settle it mechanically - so
+    // demanding an additional V-row mapping would be ceremony the oracle
+    // replaces (mirrors the lib planner's acceptance-uncovered rule).
+    const oracleBacked = parseAcOracle(acTexts.get(ac)?.text ?? "") !== null;
+    if (!coveredAcs.has(ac) && !viaRequirement && !oracleBacked) {
       findings.push(finding("prd-uncovered-ac", line, `${ac} is not covered by any V row in 9.2 Required Agent Verification (directly or via a covered R# it references)`, `Add ${ac} (or an R# it references) to a V row's Covers.`));
     }
   }
@@ -363,8 +390,148 @@ export function prelintPrd(content: string): PrelintResult {
   }
 
   checkMethodCommands(verificationTable, vRows, findings);
+  checkTaskScopeTails(lines, findings);
+  checkAcOracleTails(lines, acDefinitionLines, findings);
+  const warnings: PrelintFinding[] = [];
+  checkAcOracleAdvisories(lines, acDefinitionLines, warnings);
 
-  return { ok: findings.length === 0, doc: "prd", findings };
+  return { ok: findings.length === 0, doc: "prd", findings, ...(warnings.length > 0 ? { warnings } : {}) };
+}
+
+function numberedSectionRange(lines: string[], sectionNumber: number): { start: number; end: number } | null {
+  const start = lines.findIndex((line) => new RegExp(`^##\\s+${sectionNumber}\\.`).test(line));
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^##\s/.test(lines[i]!)) {
+      end = i;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+/**
+ * §8 `Scope:` tails must be well-formed repo-relative globs: the verify gate
+ * scopes judge-lane diffs by them, so a malformed glob would silently widen
+ * (or empty) a lane's evidence. Line-based on purpose - the tail grammar puts
+ * Scope at the end of a bullet (or its continuation line), so a per-line scan
+ * sees every declaration.
+ */
+function checkTaskScopeTails(lines: string[], findings: PrelintFinding[]): void {
+  const section = numberedSectionRange(lines, 8);
+  if (!section) return;
+  for (let i = section.start + 1; i < section.end; i += 1) {
+    const line = lines[i]!;
+    if (!/(?:^|\s)Scope:\s*/.test(line)) continue;
+    const globs = parseScopeGlobs(line);
+    if (globs.length === 0) {
+      findings.push(
+        finding("prd-task-scope-syntax", i + 1, "Scope: tail declares no globs", "Write Scope: <glob>[, <glob>...] at the end of the task bullet, e.g. Scope: cli/src/**, cli/lib/render.js."),
+      );
+      continue;
+    }
+    for (const glob of globs) {
+      const defect = scopeGlobDefect(glob);
+      if (defect !== null) {
+        findings.push(finding("prd-task-scope-syntax", i + 1, `Scope glob ${defect}`, "Use repo-relative globs with *, ** and ? only."));
+      }
+    }
+  }
+}
+
+/**
+ * Rejoin each AC bullet with its continuation lines, document-wide: the
+ * oracle grammar is defined over the whole bullet text, the same way the lib
+ * parser reads it after normalizing whitespace.
+ */
+function collectAcBulletTexts(lines: string[]): Map<string, { line: number; text: string }> {
+  const texts = new Map<string, { line: number; text: string }>();
+  let currentId: string | null = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    const definition = line.match(/^\s*-\s*(AC\d+)[.:]\s+(.*)$/);
+    if (definition) {
+      currentId = definition[1]!;
+      if (!texts.has(currentId)) texts.set(currentId, { line: i + 1, text: definition[2]! });
+      continue;
+    }
+    if (currentId !== null && /^\s+\S/.test(line) && !/^\s*-\s/.test(line)) {
+      const entry = texts.get(currentId)!;
+      entry.text += ` ${line.trim()}`;
+    } else {
+      currentId = null;
+    }
+  }
+  return texts;
+}
+
+/**
+ * Oracle tails (`Check:` / `Artifact:`) on AC bullets must parse, because the
+ * verify gate and `oracle-run` execute them mechanically: a malformed tail
+ * would be read as prose and the AC would silently lose its declared machine
+ * proof.
+ */
+function checkAcOracleTails(lines: string[], acDefinitionLines: Map<string, number>, findings: PrelintFinding[]): void {
+  for (const [id, entry] of collectAcBulletTexts(lines)) {
+    const defect = acOracleDefect(entry.text);
+    if (defect !== null) {
+      findings.push(
+        finding("prd-ac-oracle-syntax", acDefinitionLines.get(id) ?? entry.line, `${id}: ${defect}`, "Fix the oracle tail or drop the reserved Check:/Artifact: marker."),
+      );
+    }
+  }
+}
+
+// Deliberately narrow (zero-false-positive goal): flag only the operators
+// whose non-interpretation silently changes the verdict. Quote-awareness is
+// skipped on purpose - a quoted `|` is rare in oracle commands and a spurious
+// warning here costs nothing (it never blocks).
+const ORACLE_SHELL_METACHARS = /[|&;<>$`]/;
+// Constant-true shapes an author reaches for while stubbing: exactly `true`,
+// `:`, `exit 0`, or any bare `echo ...` (exit 0 no matter what it prints).
+const ORACLE_CONSTANT_TRUE = /^(?:true|:|exit 0)$|^echo\s/;
+
+/**
+ * Non-blocking oracle advisories.
+ *
+ * Shell operators: both executors (gate stage and harness oracle-run) tokenize
+ * the Check command and spawn WITHOUT a shell, so `a && b` hands "&&" to `a`
+ * as a literal argument. Before the executors were unified the gate ran a real
+ * shell and the same command PASSED there while the harness recorded not_met -
+ * the author must be told operators are inert, not left to find out from a
+ * verdict split.
+ *
+ * Constant-true commands: an all-oracle PRD can pass the verify gate with zero
+ * judge calls, so `Check: \`true\`` would be a self-certifying PASS that
+ * proves nothing about the change.
+ */
+function checkAcOracleAdvisories(lines: string[], acDefinitionLines: Map<string, number>, warnings: PrelintFinding[]): void {
+  for (const [id, entry] of collectAcBulletTexts(lines)) {
+    const oracle = parseAcOracle(entry.text);
+    if (oracle === null || oracle.kind !== "check") continue;
+    const command = (oracle.command ?? "").trim();
+    if (ORACLE_SHELL_METACHARS.test(command)) {
+      warnings.push(
+        warning(
+          "prd-ac-oracle-shell-operators",
+          acDefinitionLines.get(id) ?? entry.line,
+          `${id}: Check command \`${command}\` contains shell operator characters, but oracle commands run without a shell - operators like | && ; > < $ are passed to the program as literal arguments, not interpreted`,
+          `Wrap the command if shell semantics are intended, e.g. Check: \`bash -c "${command}"\`.`,
+        ),
+      );
+    }
+    if (ORACLE_CONSTANT_TRUE.test(command)) {
+      warnings.push(
+        warning(
+          "prd-ac-oracle-constant-true",
+          acDefinitionLines.get(id) ?? entry.line,
+          `${id}: Check command \`${command}\` is trivially constant - a constant-true oracle proves nothing about the acceptance criterion`,
+          "Declare a command whose exit code or output actually depends on the criterion, or drop the Check: tail and map the AC to a V row.",
+        ),
+      );
+    }
+  }
 }
 
 /**

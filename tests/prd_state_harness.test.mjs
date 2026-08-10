@@ -2342,3 +2342,301 @@ test("hooks stay silent inside a judge subprocess so the judge is never derailed
   // The owning session still gets its directive afterwards.
   assert.equal(JSON.parse(quickStop(root)).decision, "block");
 });
+
+// --- workspace digest guard (5a) and AC oracles (5c) ---
+
+test("verify-run digest guard demotes an exit-0 pass whose command mutated the workspace", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "digest-guard");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  // Exit 0, but the command edits a tracked file: the classic reward-hacking
+  // shape (verifier fixes the code it judges).
+  const mutating = ["bash", "-c", "echo dirty >> README.md"];
+  const result = run(process.execPath, [harness, "verify-run", "--id", "V1", "--deviation", "guard test", "--", ...mutating], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(result.status, 2, result.stdout);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "fail");
+  assert.equal(parsed.exitCode, 0, "the command itself succeeded; the guard is what failed it");
+  assert.equal(parsed.digestGuard.violated, true);
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "digest-guard", "state.json"), "utf8"));
+  const v1 = state.verification.find(item => item.id === "V1");
+  assert.equal(v1.status, "fail");
+  assert.match(v1.evidence.at(-1).text, /MUTATED the workspace/);
+  const artifact = v1.artifacts.at(-1);
+  assert.equal(artifact.treeFingerprint, null, "a demoted pass must not pin a fresh fingerprint");
+});
+
+test("verify-run digest guard is skipped for a contract-declared side effect, on the record", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "digest-side-effect");
+  // Declare the side effect in the 9.2 matrix so the guard opt-out is the
+  // PRD's decision, not the runner's.
+  const prdText = fs.readFileSync(prdPath, "utf8")
+    .replace(
+      "| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked |",
+      "| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked | Side Effect |",
+    )
+    .replace(
+      "| --- | --- | --- | --- | --- | --- | --- | --- |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    )
+    .replace(
+      '| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no |',
+      '| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no | writes fixture data |',
+    );
+  fs.writeFileSync(prdPath, prdText);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const mutating = ["bash", "-c", "echo dirty >> README.md"];
+  const result = runJson(["verify-run", "--id", "V1", "--deviation", "side effect test", "--", ...mutating], projectRoot);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.match(result.digestGuard.skipped, /writes fixture data/);
+});
+
+test("finalize reverification digest guard fails a re-run whose command mutates the tree", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "reverify-guard");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  // A command that mutates only on the SECOND run (finalize's re-run), so the
+  // recorded pass is honest and the reverification is the mutating one. The
+  // flag lives outside the project so arming it does not trip the guard on
+  // the first run.
+  const flagPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "reverify-flag-")), "mutated.flag");
+  const flaky = ["bash", "-c", `if [ -f ${flagPath} ]; then echo dirty >> README.md; else touch ${flagPath}; fi`];
+  const first = runJson(["verify-run", "--id", "V1", "--deviation", "reverify guard test", "--", ...flaky], projectRoot);
+  assert.equal(first.ok, true, JSON.stringify(first.digestGuard));
+  run("git", ["add", "-A"], { cwd: projectRoot });
+  run("git", ["commit", "-m", "work"], { cwd: projectRoot });
+  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "done"], projectRoot);
+  const reviewDir = path.join(projectRoot, "agents", "implement", "reverify-guard", "review");
+  write(path.join(reviewDir, "requirements-fidelity-review.md"), [
+    "# Requirements Fidelity Review", "", "Status: PASS", "", "## Fidelity", "", "- ok", "",
+  ].join("\n"));
+  runJson(["requirements-review-record", "--status", "pass", "--report", path.join(reviewDir, "requirements-fidelity-review.md"), "--summary", "ok"], projectRoot);
+  const result = run(process.execPath, [harness, "finalize", "--status", "complete", "--summary", "done"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(result.status, 2, result.stdout);
+  const parsed = JSON.parse(result.stdout);
+  assert.ok(
+    parsed.violations.some(v => /digest guard/.test(v) && /mutated the workspace/.test(v)),
+    JSON.stringify(parsed.violations, null, 2),
+  );
+});
+
+test("oracle-run settles Check and Artifact oracles mechanically and records evidence", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "oracle-run");
+  const prdText = fs.readFileSync(prdPath, "utf8").replace(
+    "- AC1. V1 passes with a command-log artifact.",
+    [
+      "- AC1. V1 passes with a command-log artifact.",
+      '- AC2. The oracle marker prints. Check: \`node -e "console.log(\'MARKER OK\')"\` -> MARKER OK',
+      "- AC3. The report artifact exists. Artifact: out/report.txt",
+    ].join("\n"),
+  );
+  fs.writeFileSync(prdPath, prdText);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const state = () => JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-run", "state.json"), "utf8"));
+  assert.equal(state().acceptanceCriteria.find(ac => ac.id === "AC2").oracle.kind, "check");
+
+  // First sweep: the check passes, the artifact is missing.
+  const first = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
+  assert.equal(first.status, 2);
+  const firstParsed = JSON.parse(first.stdout);
+  assert.equal(firstParsed.ran, 2);
+  const ac2 = state().acceptanceCriteria.find(ac => ac.id === "AC2");
+  assert.equal(ac2.status, "met");
+  assert.match(ac2.evidence.at(-1).text, /harness ran/);
+  assert.ok(ac2.artifacts.length >= 1, "the check oracle records a command-log artifact");
+  assert.equal(state().acceptanceCriteria.find(ac => ac.id === "AC3").status, "not_met");
+
+  // Produce the artifact and narrow the sweep to AC3: it flips to met.
+  write(path.join(projectRoot, "out", "report.txt"), "report");
+  const second = runJson(["oracle-run", "--id", "AC3"], projectRoot);
+  assert.equal(second.ok, true);
+  assert.equal(state().acceptanceCriteria.find(ac => ac.id === "AC3").status, "met");
+});
+
+test("oracle-run digest guard records not_met when the oracle command mutates the tree", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "oracle-guard");
+  const prdText = fs.readFileSync(prdPath, "utf8").replace(
+    "- AC1. V1 passes with a command-log artifact.",
+    [
+      "- AC1. V1 passes with a command-log artifact.",
+      '- AC2. The self-fixing check passes. Check: \`bash -c "echo dirty >> README.md"\`',
+    ].join("\n"),
+  );
+  fs.writeFileSync(prdPath, prdText);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const result = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
+  assert.equal(result.status, 2);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.results[0].digestViolation, true);
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-guard", "state.json"), "utf8"));
+  const ac2 = state.acceptanceCriteria.find(ac => ac.id === "AC2");
+  assert.equal(ac2.status, "not_met");
+  assert.match(ac2.evidence.at(-1).text, /MUTATED the workspace/);
+});
+
+// --- oracle enforcement (verifier-confirmed defects, 2026-08 adversarial audit) ---
+
+function writeOraclePrd(projectRoot, slug, acLine) {
+  const prdPath = writeApprovedPrd(projectRoot, slug);
+  const prdText = fs.readFileSync(prdPath, "utf8").replace(
+    "- AC1. V1 passes with a command-log artifact.",
+    ["- AC1. V1 passes with a command-log artifact.", acLine].join("\n"),
+  );
+  fs.writeFileSync(prdPath, prdText);
+  return prdPath;
+}
+
+test("oracle-run default sweep re-observes a not_met oracle once the world is fixed (F3)", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeOraclePrd(projectRoot, "oracle-resweep", "- AC2. The report exists. Artifact: out/report.txt");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const first = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
+  assert.equal(first.status, 2);
+  // Fix the world; the documented bare sweep (no --id) must re-observe the
+  // failed oracle instead of returning {ok:true, ran:0} forever.
+  write(path.join(projectRoot, "out", "report.txt"), "report");
+  const second = runJson(["oracle-run"], projectRoot);
+  assert.equal(second.ran, 1, "the not_met oracle must be back in the default sweep");
+  assert.equal(second.ok, true);
+  const ac2 = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-resweep", "state.json"), "utf8"))
+    .acceptanceCriteria.find(ac => ac.id === "AC2");
+  assert.equal(ac2.status, "met");
+  assert.equal(ac2.oracleObservation.met, true, "the flip carries a fresh harness-recorded observation");
+});
+
+test("mark cannot met an oracle-backed AC, directly or via task co-mark (F4a)", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeOraclePrd(projectRoot, "oracle-exclusive", '- AC2. The failing check passes. Check: `node -e "process.exit(1)"`');
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
+
+  const direct = run(process.execPath, [harness, "mark", "--kind", "ac", "--id", "AC2", "--status", "met", "--evidence", "trust me"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(direct.status, 1, "a manual met must not override the oracle's not_met");
+  assert.match(direct.stderr, /oracle-run --id AC2/);
+
+  const coMark = run(process.execPath, [harness, "mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC2", "--evidence", "done"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(coMark.status, 1, "the task co-mark must not be a side door to a manual met");
+  assert.match(coMark.stderr, /oracle-run --id AC2/);
+
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-exclusive", "state.json"), "utf8"));
+  assert.equal(state.acceptanceCriteria.find(ac => ac.id === "AC2").status, "not_met");
+
+  // Pessimistic manual judgments stay allowed - closing down is never a bypass.
+  const blocked = runJson(["mark", "--kind", "ac", "--id", "AC2", "--status", "blocked", "--evidence", "blocked on infra"], projectRoot);
+  assert.equal(blocked.ok, true);
+});
+
+test("incidental V coverage does not auto-met an oracle-backed AC (F4b)", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeOraclePrd(projectRoot, "oracle-autoclose", "- AC2. The report exists. Artifact: out/report.txt");
+  // Make V1 cover the oracle AC too: the covering pass must still not close it.
+  const prdText = fs.readFileSync(prdPath, "utf8").replace("| V1 | build/static | R1, AC1, T1 |", "| V1 | build/static | R1, AC1, AC2, T1 |");
+  fs.writeFileSync(prdPath, prdText);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const result = runJson(["verify-run", "--id", "V1", "--deviation", "autoclose test", "--", "node", "-e", "process.exit(0)"], projectRoot);
+  assert.equal(result.ok, true);
+  assert.ok(result.autoMetAcceptanceCriteria.includes("AC1"), "the plain AC still auto-closes on coverage");
+  assert.ok(!result.autoMetAcceptanceCriteria.includes("AC2"), "the oracle AC must wait for oracle-run");
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-autoclose", "state.json"), "utf8"));
+  assert.equal(state.acceptanceCriteria.find(ac => ac.id === "AC2").status, "pending");
+});
+
+test("finalize accepts a met oracle AC through its recorded observation and needs no V-row coverage (F1)", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeOraclePrd(projectRoot, "oracle-finalize", '- AC2. The marker prints. Check: `node -e "console.log(\'MARKER OK\')"` -> MARKER OK');
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--deviation", "finalize test", "--", "node", "-e", "process.exit(0)"], projectRoot);
+  runJson(["oracle-run"], projectRoot);
+  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "done"], projectRoot);
+  const reviewDir = path.join(projectRoot, "agents", "implement", "oracle-finalize", "review");
+  write(path.join(reviewDir, "requirements-fidelity-review.md"), [
+    "# Requirements Fidelity Review", "", "Status: PASS", "", "## Fidelity", "", "- ok", "",
+  ].join("\n"));
+  runJson(["requirements-review-record", "--status", "pass", "--report", path.join(reviewDir, "requirements-fidelity-review.md"), "--summary", "ok"], projectRoot);
+  const finalize = runJson(["finalize", "--status", "complete", "--summary", "done"], projectRoot);
+  assert.equal(finalize.ok, true, `oracle-backed AC must not deadlock finalize: ${JSON.stringify(finalize)}`);
+});
+
+test("finalize rejects a met oracle AC whose observation trail is missing (F1 evidence)", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeOraclePrd(projectRoot, "oracle-tamper", '- AC2. The marker prints. Check: `node -e "console.log(\'MARKER OK\')"` -> MARKER OK');
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--deviation", "tamper test", "--", "node", "-e", "process.exit(0)"], projectRoot);
+  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "done"], projectRoot);
+  // Simulate the bypass the guard exists for: met status written into state
+  // without the oracle ever running (mark rejects this path, so edit directly).
+  const statePath = path.join(projectRoot, "agents", "implement", "oracle-tamper", "state.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const ac2 = state.acceptanceCriteria.find(ac => ac.id === "AC2");
+  ac2.status = "met";
+  ac2.evidence.push({ ts: new Date().toISOString(), text: "hand-written pass" });
+  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  // The guard fires everywhere completionViolations runs: the fidelity review
+  // record already rejects on the evidence-free met, and finalize stays shut.
+  const reviewDir = path.join(projectRoot, "agents", "implement", "oracle-tamper", "review");
+  write(path.join(reviewDir, "requirements-fidelity-review.md"), [
+    "# Requirements Fidelity Review", "", "Status: PASS", "", "## Fidelity", "", "- ok", "",
+  ].join("\n"));
+  const record = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", path.join(reviewDir, "requirements-fidelity-review.md"), "--summary", "ok"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(record.status, 2, "the review record must already reject the evidence-free met");
+  const finalize = run(process.execPath, [harness, "finalize", "--status", "complete", "--summary", "done"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(finalize.status, 2);
+  const parsed = JSON.parse(finalize.stdout);
+  assert.ok(
+    parsed.violations.some(v => /AC2.*no recorded passing observation.*oracle-run --id AC2/.test(v)),
+    JSON.stringify(parsed.violations, null, 2),
+  );
+});
+
+test("gate and harness oracle executors agree on an operator-bearing Check command (F2)", { skip: !fs.existsSync(path.join(repoRoot, "cli", "dist", "gates", "commands.js")) && "cli/dist not built" }, () => {
+  const projectRoot = initGitRepo();
+  // Under a real shell this prints 1 and passes (README.md contains "Test");
+  // without a shell `test` receives "&&" as a literal argument and fails.
+  // Both executors must fail it the same way - the gate used to run a shell
+  // and PASS while the harness recorded not_met for the same declared oracle.
+  const command = "test -f README.md && grep -c Test README.md";
+  const prdPath = writeOraclePrd(projectRoot, "oracle-parity", `- AC2. Marker greps. Check: \`${command}\` -> 1`);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const harnessRun = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
+  assert.equal(harnessRun.status, 2);
+  const harnessResult = JSON.parse(harnessRun.stdout).results[0];
+  assert.equal(harnessResult.met, false);
+  assert.notEqual(harnessResult.exitCode, 0);
+
+  const { runAcOracles } = requireModule(path.join(repoRoot, "cli", "dist", "gates", "commands.js"));
+  const { loadConfig } = requireModule(path.join(repoRoot, "cli", "dist", "config.js"));
+  const gateStage = runAcOracles(projectRoot, loadConfig(projectRoot), [
+    { id: "AC2", text: "Marker greps.", oracle: { kind: "check", command, expect: "1" } },
+  ]);
+  assert.equal(gateStage.outcomes[0].met, false, "gate must agree with the harness: operators are not interpreted");
+  assert.notEqual(gateStage.outcomes[0].exitCode, 0);
+
+  // Positive parity: a plain tokenizable command passes at the gate exactly
+  // like the harness ("oracle-run settles Check and Artifact oracles" above
+  // pins the harness side of this same command).
+  const plain = { id: "AC2", text: "Marker prints.", oracle: { kind: "check", command: `node -e "console.log('MARKER OK')"`, expect: "MARKER OK" } };
+  const gatePlain = runAcOracles(projectRoot, loadConfig(projectRoot), [plain]);
+  assert.equal(gatePlain.outcomes[0].met, true);
+});

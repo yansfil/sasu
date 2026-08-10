@@ -13,6 +13,23 @@ const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtif
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
+const { computePhaseTimings } = require("../phase_timings");
+
+// Gate ledger for receipt timings, tolerant on purpose: a run that never
+// touched sasu gates (or a corrupt ledger) must not break finalize - the
+// timings then simply report zero judge spend.
+function loadGatesStateForTimings(state) {
+  const projectRoot = state.projectRoot || cwd();
+  if (!state.topicSlug) return null;
+  try {
+    const fs = require("fs");
+    const gatesPath = path.join(projectRoot, "agents", "gates", state.topicSlug, "gates.json");
+    if (!fs.existsSync(gatesPath)) return null;
+    return JSON.parse(fs.readFileSync(gatesPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
 
 function cmdReviewPrompt(options) {
   const { statePath, state } = loadState(options);
@@ -193,6 +210,12 @@ function reverifyRequiredVerifications(statePath, state) {
     }
     const command = lastLog.command;
     const tokens = shellLikeTokens(command);
+    // Same workspace digest guard as verify-run: a reverification command that
+    // mutates the tree it is certifying is reward hacking, not proof, even at
+    // exit 0. Side-effectful contracts were already skipped above, so every
+    // command that reaches here promised to leave the tree alone. Recomputed
+    // per item because a violating command changes the tree for the next one.
+    const preFingerprint = reverifyFingerprint(state);
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
       cwd: projectRoot,
@@ -201,6 +224,10 @@ function reverifyRequiredVerifications(statePath, state) {
       timeout: REVERIFY_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
     });
+    const postFingerprint = reverifyFingerprint(state);
+    const digestViolation = Boolean(preFingerprint && postFingerprint
+      && (preFingerprint.headSha !== postFingerprint.headSha
+        || preFingerprint.statusHash !== postFingerprint.statusHash));
     const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
     // Not under artifacts/: reverify logs are receipt provenance, not agent
     // evidence, so they must not trip unregistered-artifact validation.
@@ -211,6 +238,7 @@ function reverifyRequiredVerifications(statePath, state) {
       `startedAt: ${startedAt}`,
       `finishedAt: ${nowIso()}`,
       `exitCode: ${exitCode}`,
+      `digestGuard: ${digestViolation ? "VIOLATED - workspace changed during reverification" : "clean"}`,
       spawned.signal ? `signal: ${spawned.signal}` : "",
       spawned.error && spawned.error.message ? `error: ${spawned.error.message}` : "",
       "",
@@ -220,12 +248,13 @@ function reverifyRequiredVerifications(statePath, state) {
       "--- stderr ---",
       spawned.stderr || "",
     ].filter(line => line !== "").join("\n"));
-    results.push({ id: item.id, command, exitCode, logPath: logRel });
+    results.push({ id: item.id, command, exitCode, digestViolation, logPath: logRel });
   }
   return {
     ranAt: nowIso(),
     results,
-    failures: results.filter(result => typeof result.exitCode === "number" && result.exitCode !== 0),
+    failures: results.filter(result =>
+      (typeof result.exitCode === "number" && result.exitCode !== 0) || result.digestViolation === true),
   };
 }
 
@@ -277,7 +306,9 @@ function cmdFinalize(options) {
   if (status === "complete" && violations.length === 0) {
     finalReverification = reverifyRequiredVerifications(statePath, state);
     for (const failure of finalReverification.failures) {
-      violations.push(`Final reverification failed: ${failure.id} exited ${failure.exitCode} re-running \`${failure.command}\` (log: ${failure.logPath})`);
+      violations.push(failure.digestViolation && failure.exitCode === 0
+        ? `Final reverification digest guard: ${failure.id} re-ran \`${failure.command}\` at exit 0 but the command mutated the workspace; a verifier that edits the tree it certifies cannot vouch for it (log: ${failure.logPath})`
+        : `Final reverification failed: ${failure.id} exited ${failure.exitCode} re-running \`${failure.command}\` (log: ${failure.logPath})`);
     }
   }
   const uniqueViolations = Array.from(new Set(violations));
@@ -304,6 +335,11 @@ function cmdFinalize(options) {
     // Visible even when NOT_RUN: a skipped verify gate must be readable from
     // the receipt, not silently absent.
     verifyGate: verifyGateStatus(state),
+    // Measured time picture: sums of what the harness actually clocked
+    // (command runs, judge calls) against the wall clock, milestones included.
+    // "Verification must not dwarf implementation" becomes checkable from the
+    // receipt alone instead of from session-transcript archaeology.
+    phaseTimings: computePhaseTimings({ state, gatesState: loadGatesStateForTimings(state), now: nowIso() }),
     // Side-door failure history per verification (rehearsals.jsonl). A check
     // that never failed anywhere never demonstrated it can fail; make that
     // legible in the completion proof.

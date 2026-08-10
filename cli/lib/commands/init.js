@@ -8,7 +8,7 @@ const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath,
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
-const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parsePreWorkChecklist, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
+const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseAcOracle, parsePreWorkChecklist, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { verificationContractHash, buildVerificationPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, writeActiveRecord, persistState } = require("../state_store");
@@ -203,6 +203,13 @@ function parsePrdContract(parsed, projectRoot) {
     "7. Acceptance Criteria",
     "Acceptance Criteria",
   ]), "AC", "AC");
+  // Machine oracle tails (Check:/Artifact:) declared on AC bullets: the
+  // harness settles these ACs mechanically via `oracle-run` instead of a
+  // judge or a manual mark, so the declaration must survive into state.
+  for (const criterion of acceptanceCriteria) {
+    const oracle = parseAcOracle(criterion.text);
+    if (oracle) criterion.oracle = oracle;
+  }
   const requirements = parseMarkdownItems(extractFirstSection(parsed.body, [
     "6. Requirements",
     "Requirements",

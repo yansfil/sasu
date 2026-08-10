@@ -185,6 +185,12 @@ function autoCloseAcceptanceCriteria(state) {
   const closed = [];
   for (const ac of state.acceptanceCriteria || []) {
     if (ac.status !== "pending") continue;
+    // Oracle-backed ACs never auto-close on V coverage: oracle-run is their
+    // only path to met. Incidental coverage (a V row that happens to name the
+    // AC) used to auto-met an oracle AC without its declared check ever
+    // running - the exact bypass the oracle grammar exists to prevent, and
+    // finalize now rejects the resulting met as evidence-free anyway.
+    if (ac.oracle && typeof ac.oracle === "object") continue;
     const coveredBy = (plan.coverage[ac.id] && plan.coverage[ac.id].coveredBy) || [];
     if (!coveredBy.length) continue;
     const covering = coveredBy.map(checkId => {

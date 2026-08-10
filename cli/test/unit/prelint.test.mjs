@@ -59,6 +59,8 @@ const PRD_CASES = [
   ["prd-mode-mismatch.md", "prd-mode-mismatch"],
   ["prd-method-runner-unknown.md", "prd-method-runner-unknown"],
   ["prd-method-parenthetical-scope.md", "prd-method-parenthetical-scope"],
+  ["prd-task-scope-syntax.md", "prd-task-scope-syntax"],
+  ["prd-ac-oracle-syntax.md", "prd-ac-oracle-syntax"],
 ];
 
 for (const [file, rule] of PRD_CASES) {
@@ -150,4 +152,56 @@ test("runPrelint fails closed on an internal crash instead of throwing (D-11)", 
   assert.equal(result.ok, false);
   assert.equal(result.findings[0].rule, "prelint-internal-error");
   assert.match(result.findings[0].missing, /prelint crashed/);
+});
+
+// An AC whose bullet declares a machine oracle is its own verification: the
+// coverage rule must not demand a V-row mapping on top of it (mirrors the lib
+// planner's acceptance-uncovered exemption).
+test("prd rule prd-uncovered-ac does not fire for an oracle-backed AC", () => {
+  const result = prelintPrd(fixture("prd-oracle-covered-ac.md"));
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+});
+
+// --- oracle advisories: non-blocking warnings, never counted toward ok ---
+
+test("a Check command with shell operators draws the operators-not-interpreted warning without blocking", () => {
+  const prd = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    "- AC3. the marker greps. Check: `test -f README.md && grep -c Test README.md` -> 1",
+  );
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, true, "advisories must never block");
+  assert.equal(result.findings.length, 0);
+  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-ac-oracle-shell-operators"]);
+  assert.match(result.warnings[0].missing, /not interpreted/);
+  assert.match(result.warnings[0].recommendation, /bash -c/);
+});
+
+test("a trivially-constant Check command draws the constant-true warning without blocking", () => {
+  for (const command of ["true", ":", "exit 0", "echo done"]) {
+    const prd = fixture("prd-oracle-covered-ac.md").replace(
+      "- AC3. the marker exists. Artifact: out/marker.txt",
+      `- AC3. the stub passes. Check: \`${command}\``,
+    );
+    const result = prelintPrd(prd);
+    assert.equal(result.ok, true, `\`${command}\` must warn, not block`);
+    assert.deepEqual(
+      result.warnings.map((w) => w.rule),
+      ["prd-ac-oracle-constant-true"],
+      `\`${command}\`: ${JSON.stringify(result.warnings)}`,
+    );
+    assert.match(result.warnings[0].missing, /proves nothing/);
+  }
+});
+
+test("a substantive Check command and an Artifact oracle draw no advisory", () => {
+  const artifactOnly = prelintPrd(fixture("prd-oracle-covered-ac.md"));
+  assert.equal(artifactOnly.warnings, undefined);
+  const check = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    '- AC3. the marker prints. Check: `node -e "console.log(1)"` -> 1',
+  );
+  const result = prelintPrd(check);
+  assert.equal(result.ok, true);
+  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
 });

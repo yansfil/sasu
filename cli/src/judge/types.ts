@@ -54,6 +54,14 @@ export interface CriterionVerdict {
   id: string;
   verdict: "PASS" | "FAIL";
   reason: string;
+  /**
+   * What the judge actually looked at for this verdict: file/hunk names or
+   * artifact paths (ouroboros semantic.py import: an empty evidence list on an
+   * approval is treated as a verification failure, not a pass). Enforced for
+   * PASS verdicts by validateSemanticVerdict; a FAIL may stand on absence,
+   * which has no artifact to cite.
+   */
+  evidence: string;
 }
 
 export interface SemanticVerdict {
@@ -115,9 +123,16 @@ export function validateSemanticVerdict(value: unknown, expectedIds: string[]): 
     const id = asString(c["id"]);
     const cv = asString(c["verdict"]);
     const reason = asString(c["reason"]) ?? "";
+    const evidence = (asString(c["evidence"]) ?? "").trim();
     if (id === null) return `criteria[${i}].id must be a string`;
     if (cv !== "PASS" && cv !== "FAIL") return `criteria[${i}].verdict must be PASS or FAIL`;
-    criteria.push({ id, verdict: cv, reason });
+    // A PASS must name what it rests on; rejecting it here routes through the
+    // runner's one-retry loop, so a judge that forgot the field gets exactly
+    // one chance to cite its sources before the call fails as invalid output.
+    if (cv === "PASS" && evidence === "") {
+      return `criteria[${i}] (${id}) is a PASS with empty evidence; cite the file/hunk or artifact the verdict rests on`;
+    }
+    criteria.push({ id, verdict: cv, reason, evidence });
   }
   const returned = new Set(criteria.map((c) => c.id));
   const missing = expectedIds.filter((id) => !returned.has(id));

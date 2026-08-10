@@ -539,8 +539,18 @@ const DB_TOUCH_PATTERN = /\b(migrat\w*|seed\w*|db|database|sql|psql|drizzle|pris
 
 function buildVerificationGaps(state, checks, coverage, signals) {
   const gaps = structuralParseGaps(state);
+  const oracleBackedAcs = new Set((state.acceptanceCriteria || [])
+    .filter(ac => ac.oracle && typeof ac.oracle === "object")
+    .map(ac => ac.id));
   for (const [acId, item] of Object.entries(coverage)) {
     if (!item.coveredBy.length) {
+      // An AC with a declared machine oracle (Check:/Artifact: tail) is its
+      // own verification: oracle-run settles it mechanically, so demanding an
+      // additional V-row mapping would force ceremony the oracle replaces.
+      if (oracleBackedAcs.has(acId)) {
+        item.status = "oracle";
+        continue;
+      }
       gaps.push({
         severity: "blocking",
         code: "acceptance-uncovered",
@@ -794,6 +804,7 @@ function nextBrief(state) {
 }
 
 module.exports = {
+  DB_TOUCH_PATTERN,
   applyExecutionPlan,
   verificationContractHash,
   buildVerificationPlan,

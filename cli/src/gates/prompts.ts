@@ -340,9 +340,67 @@ ${lines.join("\n\n")}
  * because git orders paths alphabetically the surviving head was 100%
  * documents - the judge saw zero app code, failed every criterion as "not
  * present in diff", and that false FAIL charged a retry attempt. An oversized
- * diff must fail the command up front instead (see runVerifyGate).
+ * lane diff falls back to the agentic read-only judge when the backend
+ * supports it (agenticSemanticVerifyPrompt) and fails the command up front
+ * when it does not (see runVerifyGate) - either way, never a silent clamp.
  */
 export const VERIFY_DIFF_MAX_CHARS = 160_000;
+
+/**
+ * Shared output contract for the semantic verify judge (inline-diff and
+ * agentic paths). The mandatory per-criterion `evidence` field and the
+ * reward-hacking instruction are ouroboros imports (semantic.py: an empty
+ * evidence list on an approval is a verification failure, and gaming signs are
+ * judged, not assumed away); validateSemanticVerdict enforces the PASS side.
+ */
+const SEMANTIC_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fences:
+{
+  "verdict": "PASS" | "FAIL",
+  "criteria": [
+    {
+      "id": "<criterion id>",
+      "verdict": "PASS" | "FAIL",
+      "reason": "<one sentence citing the evidence>",
+      "evidence": "<the specific file(s)/hunk(s) or artifact(s) this verdict rests on>"
+    }
+  ]
+}
+Rules:
+- Include every listed criterion id exactly once.
+- Overall verdict is FAIL if any criterion FAILs, otherwise PASS.
+- "evidence" is mandatory: name the concrete file/hunk or artifact you judged from, one line. A
+  PASS with empty evidence is rejected and retried, so never leave it blank.
+- Watch for reward hacking: if the implementation looks engineered to pass a check without solving
+  the criterion - hardcoded expected values, test-only branches, an assertion or test rewritten to
+  always succeed - FAIL that criterion and name the sign in the reason.`;
+
+function semanticJudgeIntro(mechanicalRan: boolean | undefined, laneNote: string): string {
+  const mechanicalNote =
+    mechanicalRan === false
+      ? `The project's mechanical checks were SKIPPED for this run - do not assume tests, lint, or build pass.`
+      : `The project's mechanical checks (tests/lint/build) already passed; do not re-litigate them.`;
+  return `${mechanicalNote}${laneNote}
+
+For EACH acceptance criterion, judge whether the change (and its check results and evidence, where
+provided) satisfies it.
+PASS a criterion only when there is concrete evidence for it (code, test, config, doc, a passing
+harness check, or a listed artifact).
+FAIL a criterion when the evidence is missing it, contradicts it, or only gestures at it.
+Judge only the listed criteria. Base reasons on specific files/hunks or named artifacts.
+Judge propositions, not taste: whether something renders or returns the stated value is yours to
+judge; whether it looks well-designed is not, and no criterion here should ask you for that.`;
+}
+
+// Verify fan-out mirrors the gap-audit lane preamble: each lane owns a
+// disjoint criteria slice, so a lane must never report on (or worry about)
+// criteria another lane is judging in parallel.
+function verifyLaneNote(lane: { index: number; count: number } | undefined): string {
+  return lane !== undefined && lane.count > 1
+    ? `\nLANE SCOPE: you are one of ${lane.count} parallel reviewers, each owning a disjoint slice of
+the acceptance criteria over the same change. Judge ONLY the criteria listed below; the rest are
+judged in parallel by other reviewers.`
+    : "";
+}
 
 export function semanticVerifyPrompt(
   diffContent: string,
@@ -352,42 +410,11 @@ export function semanticVerifyPrompt(
   options: { mechanicalRan?: boolean; lane?: { index: number; count: number } } = {},
 ): string {
   const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
-  const mechanicalNote =
-    options.mechanicalRan === false
-      ? `The project's mechanical checks were SKIPPED for this run - do not assume tests, lint, or build pass.`
-      : `The project's mechanical checks (tests/lint/build) already passed; do not re-litigate them.`;
-  // Verify fan-out mirrors the gap-audit lane preamble: each lane owns a
-  // disjoint criteria slice, so a lane must never report on (or worry about)
-  // criteria another lane is judging in parallel.
-  const laneNote =
-    options.lane !== undefined && options.lane.count > 1
-      ? `\nLANE SCOPE: you are one of ${options.lane.count} parallel reviewers, each owning a disjoint slice of
-the acceptance criteria over the same diff. Judge ONLY the criteria listed below; the rest are
-judged in parallel by other reviewers.`
-      : "";
   return `You are an independent implementation reviewer.
 You have no prior context beyond the acceptance criteria, the diff, and any evidence below.
-${mechanicalNote}${laneNote}
+${semanticJudgeIntro(options.mechanicalRan, verifyLaneNote(options.lane))}
 
-For EACH acceptance criterion, judge whether the diff (and its check results and evidence, where
-provided) satisfies it.
-PASS a criterion only when there is concrete evidence for it (code, test, config, doc, a passing
-harness check, or a listed artifact).
-FAIL a criterion when the evidence is missing it, contradicts it, or only gestures at it.
-Judge only the listed criteria. Base reasons on specific files/hunks or named artifacts.
-Judge propositions, not taste: whether something renders or returns the stated value is yours to
-judge; whether it looks well-designed is not, and no criterion here should ask you for that.
-
-Reply with ONLY a JSON object, no prose, no code fences:
-{
-  "verdict": "PASS" | "FAIL",
-  "criteria": [
-    { "id": "<criterion id>", "verdict": "PASS" | "FAIL", "reason": "<one sentence citing the evidence>" }
-  ]
-}
-Rules:
-- Include every listed criterion id exactly once.
-- Overall verdict is FAIL if any criterion FAILs, otherwise PASS.
+${SEMANTIC_JSON_CONTRACT}
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
@@ -395,5 +422,43 @@ ${checkSection(checks)}${evidenceSection(evidence)}
 DIFF:
 ---
 ${diffContent}
+---`;
+}
+
+/**
+ * Agentic fallback prompt for a lane whose diff exceeds VERIFY_DIFF_MAX_CHARS:
+ * the judge gets the diff-stat (file list + line counts) instead of the diff
+ * and reads the end-state files itself through its read-only tools. This is
+ * the ouroboros answer to the input-budget wall - don't shrink the answer
+ * sheet, give the grader library access - imported after a 2026-08-10
+ * remeasurement showed the current model explores without wandering (see
+ * ClaudeBackend for the numbers). The evidence field doubles as the audit
+ * trail of what the judge actually read.
+ */
+export function agenticSemanticVerifyPrompt(
+  diffStat: string,
+  criteria: { id: string; text: string }[],
+  evidence: EvidenceMaterial[] = [],
+  checks: CheckResult[] = [],
+  options: { mechanicalRan?: boolean; lane?: { index: number; count: number } } = {},
+): string {
+  const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
+  return `You are an independent implementation reviewer with read-only file access (Read/Grep/Glob).
+The change under judgment was too large to inline, so instead of the diff you get its file summary
+below. Read the current content of the files you need - prefer the files the summary names, follow
+references only when a criterion demands it, and keep exploration minimal. You cannot see the
+old version of the files; judge the end state against each criterion.
+${semanticJudgeIntro(options.mechanicalRan, verifyLaneNote(options.lane))}
+
+${SEMANTIC_JSON_CONTRACT}
+- In "evidence", list the files you ACTUALLY read for that criterion - it is the audit record of
+  your exploration.
+
+ACCEPTANCE CRITERIA:
+${criteriaBlock}
+${checkSection(checks)}${evidenceSection(evidence)}
+CHANGED FILES (diff-stat of the change under judgment; read these files for detail):
+---
+${diffStat}
 ---`;
 }

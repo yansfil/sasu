@@ -67,6 +67,13 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Report: agents/implement/standard-regression/review/requirements-fidelity-review.md
 - Summary: PASS
 
+## Timings
+
+- Wall clock (init -> receipt): <DUR>
+- Verification commands (measured): <DUR> across 1 run(s)
+- Judge calls (measured): <DUR> across 0 call(s)
+- Unattributed (agent turns + user wait + unlogged work): <DUR>
+
 ## Final Receipt
 
 ```json
@@ -184,6 +191,27 @@ Receipt: agents/implement/standard-regression/receipt.json
     "overridden": false,
     "lastRunAt": null
   },
+  "phaseTimings": {
+    "schema": "hoyeon.phase-timings.v1",
+    "milestones": {
+      "initAt": "<TS>",
+      "firstVerificationRunAt": "<TS>",
+      "lastVerificationRunAt": "<TS>",
+      "requirementsFidelityRecordedAt": "<TS>",
+      "finalReviewRecordedAt": null,
+      "finalizedAt": "<TS>"
+    },
+    "measured": {
+      "verificationCommandSeconds": "<DUR>",
+      "verificationCommandRuns": 1,
+      "judgeSeconds": "<DUR>",
+      "judgeCalls": 0,
+      "judgeSecondsByGate": {},
+      "verifyGateAttempts": null
+    },
+    "wallClockSeconds": "<DUR>",
+    "unattributedSeconds": "<DUR>"
+  },
   "rehearsals": {
     "recorded": false,
     "byVerification": {}
@@ -195,6 +223,7 @@ Receipt: agents/implement/standard-regression/receipt.json
         "id": "V1",
         "command": "bash -lc 'node -e '\\''process.exit(0)'\\'''",
         "exitCode": 0,
+        "digestViolation": false,
         "logPath": "agents/implement/standard-regression/reverify/V1-<TS>.log"
       }
     ],

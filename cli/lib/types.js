@@ -35,6 +35,8 @@
  * @property {string} status
  * @property {Evidence[]} evidence
  * @property {Artifact[]} artifacts
+ * @property {{kind: string, command?: string, expect?: string|null, path?: string}} [oracle] declared Check:/Artifact: machine oracle (ACs only, parsed at init)
+ * @property {{at: string, kind: string, met: boolean, exitCode?: number, logPath?: string, path?: string}} [oracleObservation] latest harness-recorded oracle run (ACs only, stamped by oracle-run; finalize requires a passing one for a met oracle AC)
  * @property {string[]} [dependsOn] task ids that must complete first (tasks only)
  * @property {string[]} [writeScope] repository-relative paths the task owns (tasks only)
  * @property {boolean} [parallelSafe] tasks only

@@ -85,6 +85,23 @@ Plain Bash runs of a contract command during development are fine and expected; 
 This ledger is observational and never blocks: its purpose is an honest failure history, so a required check whose recorded history never once failed is visible for what it is.
 Do not edit `rehearsals.jsonl` or cite it as passing evidence; only `verify-run` closes a verification item.
 
+`verify-run` fingerprints the tree before and after the command (workspace digest guard): a command that exits 0 but mutates the workspace is recorded as a failure, because a verifier that edits the code it certifies is reward hacking, not proof.
+A side effect declared in the 9.2 matrix's Side Effect column opts that verification out of the guard, with the skip on the record.
+The same guard runs at finalize's reverification and on oracle commands.
+
+## AC Oracles
+
+Acceptance criteria whose PRD bullet declares a machine oracle tail (`Check: \`<command>\` [-> <expected stdout substring>]` or `Artifact: <path>`) are settled by the harness, never by hand:
+
+```sh
+node ~/.codex/skills/implement/scripts/prd_state_harness.js oracle-run
+```
+
+runs every open oracle-backed AC (narrow with `--id AC2,AC3`; the default sweep covers `pending` and `not_met`, so a failed oracle is re-observed once the world is fixed), judges met/not_met from the exit code, output substring, or file existence, and records the evidence and command log automatically.
+Do not `mark --kind ac` an oracle-backed AC; the harness rejects a manual `met` outright, and `finalize` accepts a met oracle-backed AC only when its latest harness-recorded oracle observation is a pass — status without that observation is a completion violation.
+Oracle commands run in both the harness sweep (`oracle-run`) and the verify gate's oracle stage, so they must be repeatable/idempotent.
+Check commands are tokenized and run without a shell in both executors: shell operators (`|`, `&&`, `;`, `>`, …) are literal arguments, not syntax — wrap the command in `bash -c "..."` when shell semantics are intended.
+
 ## Database Safety
 
 Any verification, test, seed, or migration that writes to a database must target a disposable database: a local instance, an ephemeral container, or a provider branch (for example a Neon branch).

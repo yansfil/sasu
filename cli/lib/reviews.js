@@ -426,6 +426,19 @@ function completionViolations(statePath, state, options = {}) {
   for (const ac of state.acceptanceCriteria) {
     if (ac.status !== "met") violations.push(`Acceptance ${ac.id} is ${ac.status}`);
     if (!ac.evidence.length) violations.push(`Acceptance ${ac.id} has no evidence`);
+    // An oracle-backed AC satisfies coverage through its oracle, not a V row
+    // (the planner, prelint, and gen-prd all promise no V-row mapping is
+    // needed; demanding one here deadlocked finalize for every run that used
+    // the documented feature). But the exemption is earned only by evidence:
+    // met must rest on a harness-recorded passing oracle observation
+    // (cmdOracleRun stamps ac.oracleObservation), because met status alone
+    // can be reached by drift or a hand-edited state file.
+    if (ac.oracle && typeof ac.oracle === "object") {
+      if (ac.status === "met" && !(ac.oracleObservation && ac.oracleObservation.met === true)) {
+        violations.push(`Acceptance ${ac.id} is met but its declared oracle has no recorded passing observation; run oracle-run --id ${ac.id} so the harness observes the pass`);
+      }
+      continue;
+    }
     // Mechanical backstop for the skill's promise that every AC is provably
     // closed: prose evidence alone cannot complete an AC whose entire
     // verification coverage was skipped or blocked.

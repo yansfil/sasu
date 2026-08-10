@@ -3,11 +3,13 @@
 const path = require("path");
 const childProcess = require("child_process");
 
+const fs = require("fs");
+
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, findVerificationCommandDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
-const { commandsMatchContract } = require("../inference");
+const { commandsMatchContract, shellLikeTokens } = require("../inference");
 const { reverifyFingerprint } = require("../git");
-const { readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
+const { DB_TOUCH_PATTERN, readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertAllowedStatus } = require("../reviews");
 const { attachArtifact, loadState, syncActive, persistState } = require("../state_store");
@@ -32,6 +34,15 @@ function cmdMark(options) {
   for (const id of ids) {
     const item = list.find(entry => String(entry.id).toUpperCase() === id);
     if (!item) throw new Error(`${kind} ${id} not found`);
+    // Oracle exclusivity: an AC with a declared machine oracle can only reach
+    // `met` through the oracle's own observation. A manual met silently
+    // overrode an oracle-recorded not_met (and the sweep then never
+    // re-observed the overridden oracle), which is exactly the submission
+    // bias the oracle grammar exists to remove. not_met/blocked stay allowed
+    // as manual judgments - closing an AC pessimistically is never a bypass.
+    if (kind === "ac" && item.oracle && status === "met") {
+      throw new Error(`ac ${id} declares a machine oracle (Check:/Artifact: tail); the harness settles it mechanically - run oracle-run --id ${id} instead of marking it met by hand (manual not_met/blocked judgments stay allowed)`);
+    }
     let deviationEntry = null;
     // Completing a task whose declared dependencies are still open is an
     // audit-worthy deviation in any mode: the plan's dependsOn contract is the
@@ -56,6 +67,11 @@ function cmdMark(options) {
   for (const acId of acIds) {
     const item = state.acceptanceCriteria.find(entry => String(entry.id).toUpperCase() === acId);
     if (!item) throw new Error(`ac ${acId} not found`);
+    // Same oracle-exclusivity rule as the direct `mark --kind ac met` path:
+    // the task co-mark must not become the side door to a manual met.
+    if (item.oracle) {
+      throw new Error(`ac ${acId} declares a machine oracle (Check:/Artifact: tail); drop it from --ac and run oracle-run --id ${acId} so the harness observes the pass`);
+    }
     item.status = "met";
     if (!item.evidence) item.evidence = [];
     item.evidence.push({ ts: nowIso(), text: evidence });
@@ -228,6 +244,17 @@ function cmdVerifyRun(rawArgs) {
         actualCommand: commandText,
       });
     }
+    // Workspace digest guard (ouroboros parallel_executor import): fingerprint
+    // the tree before and after the verification command so a command that
+    // edits code to make itself pass cannot record that pass - reward hacking
+    // via the verifier itself. A contract-declared side effect opts out, with
+    // the skip on the record; runDir logs are already excluded from the
+    // fingerprint, so the harness's own log write cannot trip the guard.
+    const declaredSideEffect = match.item.matrix && typeof match.item.matrix.sideEffect === "string"
+      ? match.item.matrix.sideEffect.trim()
+      : "";
+    const sideEffectDeclared = Boolean(declaredSideEffect) && !/^(none|없음|-|n\/a)$/i.test(declaredSideEffect);
+    const preFingerprint = sideEffectDeclared ? null : reverifyFingerprint(state);
     const startedAt = nowIso();
   const result = childProcess.spawnSync(commandArgs[0], commandArgs.slice(1), {
     cwd: state.projectRoot || cwd(),
@@ -236,7 +263,21 @@ function cmdVerifyRun(rawArgs) {
     maxBuffer: 20 * 1024 * 1024,
   });
   const finishedAt = nowIso();
+  const postFingerprint = sideEffectDeclared ? null : reverifyFingerprint(state);
+  const digestGuard = sideEffectDeclared
+    ? { skipped: `declared side effect: ${declaredSideEffect}` }
+    : {
+      violated: Boolean(preFingerprint && postFingerprint
+        && (preFingerprint.headSha !== postFingerprint.headSha
+          || preFingerprint.statusHash !== postFingerprint.statusHash)),
+      before: preFingerprint,
+      after: postFingerprint,
+    };
   const exitCode = typeof result.status === "number" ? result.status : 1;
+  // A pass earned by mutating the workspace is not a pass: the guard demotes
+  // the outcome to fail so no evidence, artifact, or auto-met AC rests on it.
+  const digestViolation = Boolean(digestGuard.violated) && exitCode === 0;
+  const passed = exitCode === 0 && !digestViolation;
   const signal = result.signal || null;
   const stdout = result.stdout || "";
   const stderr = result.stderr || "";
@@ -251,6 +292,7 @@ function cmdVerifyRun(rawArgs) {
     `exitCode: ${exitCode}`,
     signal ? `signal: ${signal}` : "",
     errorMessage ? `error: ${errorMessage}` : "",
+    digestGuard.skipped ? `digestGuard: skipped (${digestGuard.skipped})` : `digestGuard: ${digestViolation ? "VIOLATED - workspace changed during the verification command" : "clean"}`,
     "",
     "--- stdout ---",
     stdout,
@@ -259,7 +301,7 @@ function cmdVerifyRun(rawArgs) {
     stderr,
   ].filter(line => line !== "").join("\n"));
 
-  const description = `verify-run ${exitCode === 0 ? "passed" : "failed"}: ${commandText}`;
+  const description = `verify-run ${passed ? "passed" : "failed"}: ${commandText}`;
     const artifact = attachArtifact(statePath, state, match, "command-log", logAbs, description, {
       command: commandText,
       contractCommand: plannedCommand || null,
@@ -267,14 +309,17 @@ function cmdVerifyRun(rawArgs) {
       exitCode,
       startedAt,
       finishedAt,
+      digestGuard,
       // The tree this result was earned on; finalize skips its reverification
       // when the fingerprint still matches (see reverifyFingerprint).
-      treeFingerprint: exitCode === 0 ? reverifyFingerprint(state) : null,
+      treeFingerprint: passed ? postFingerprint || reverifyFingerprint(state) : null,
     });
-  match.item.status = exitCode === 0 ? "pass" : "fail";
+  match.item.status = passed ? "pass" : "fail";
   match.item.evidence.push({
     ts: nowIso(),
-    text: `Command ${exitCode === 0 ? "passed" : "failed"} with exit code ${exitCode}: ${commandText}. Log: ${artifact.path}`,
+    text: digestViolation
+      ? `Command exited 0 but MUTATED the workspace during verification (digest guard): ${commandText}. Recorded as fail; a verifier must not change the code it judges. Declare the side effect in the PRD matrix if it is intentional. Log: ${artifact.path}`
+      : `Command ${passed ? "passed" : "failed"} with exit code ${exitCode}: ${commandText}. Log: ${artifact.path}`,
   });
     const autoMet = autoCloseAcceptanceCriteria(state);
     markCompletionReviewsStale(state, `Verification ${id} was run after review`);
@@ -282,17 +327,156 @@ function cmdVerifyRun(rawArgs) {
   persistState(statePath, state);
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
-    ok: exitCode === 0,
+    ok: passed,
     id,
     status: match.item.status,
     command: commandText,
     exitCode,
+    digestGuard,
     logPath: artifact.path,
     autoMetAcceptanceCriteria: autoMet,
     counts: countState(state),
     next: nextBrief(state),
   }, null, 2) + "\n");
-  if (exitCode !== 0) process.exitCode = 2;
+  if (!passed) process.exitCode = 2;
+}
+
+// A hung oracle must fail its AC, not hang the sweep (same bound as finalize
+// reverification).
+const ORACLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Mechanically settle acceptance criteria that declare an oracle tail
+ * (`Check: \`cmd\` [-> substring]` / `Artifact: <path>`, parsed at init).
+ * Scaled-down ouroboros AcceptanceCriterionSpec: the check was declared in the
+ * vetted PRD and is executed here on the harness's clock, so met/not_met is
+ * observed, never claimed. Runs during the AC sweep - default is every open
+ * oracle-backed AC; --id narrows it.
+ *
+ * Check oracles get the same workspace digest guard as verify-run ("검증 명령
+ * 자체가 코드를 고쳐 통과하는 reward hacking 차단"); artifact oracles only read
+ * the filesystem, so there is nothing to guard.
+ */
+function cmdOracleRun(options) {
+  const { statePath, state } = loadState(options);
+  const requestedIds = options.id ? parseIdList(options.id, value => value.toUpperCase()) : null;
+  const projectRoot = state.projectRoot || cwd();
+  const candidates = (state.acceptanceCriteria || []).filter(ac => {
+    if (!ac.oracle || typeof ac.oracle !== "object") return false;
+    if (requestedIds) return requestedIds.includes(String(ac.id).toUpperCase());
+    // not_met is in the default sweep on purpose: a failed oracle whose world
+    // has since been fixed must be re-observable by the documented bare
+    // `oracle-run` (pending-only made a not_met oracle unreachable - the sweep
+    // returned {ok:true, ran:0} forever and the AC could never flip to met).
+    return ac.status === "pending" || ac.status === "not_met";
+  });
+  if (requestedIds) {
+    for (const id of requestedIds) {
+      const item = (state.acceptanceCriteria || []).find(ac => String(ac.id).toUpperCase() === id);
+      if (!item) throw new Error(`ac ${id} not found`);
+      if (!item.oracle) throw new Error(`ac ${id} has no declared oracle (Check:/Artifact: tail); use mark or verify-run instead`);
+    }
+  }
+  const results = [];
+  const warnings = [];
+  for (const ac of candidates) {
+    const oracle = ac.oracle;
+    if (oracle.kind === "artifact") {
+      const abs = resolveProjectPath(oracle.path, projectRoot);
+      const exists = fs.existsSync(abs);
+      const met = exists;
+      ac.status = met ? "met" : "not_met";
+      // Structured observation record: completionViolations accepts a met
+      // oracle AC only when the latest harness-recorded observation is a pass.
+      // Status alone is not evidence - it can be reached by state drift or a
+      // hand edit without the oracle ever running.
+      ac.oracleObservation = { at: nowIso(), kind: "artifact", met, path: oracle.path };
+      const evidenceText = met
+        ? `Oracle artifact check passed: ${oracle.path} exists (harness-observed)`
+        : `Oracle artifact check failed: ${oracle.path} does not exist`;
+      ac.evidence.push({ ts: nowIso(), text: evidenceText });
+      results.push({ id: ac.id, kind: "artifact", path: oracle.path, met, evidence: evidenceText });
+      continue;
+    }
+    const command = oracle.command;
+    if (DB_TOUCH_PATTERN.test(command)) {
+      warnings.push(`${ac.id}: oracle command appears to touch a database (\`${command}\`). Confirm the connection target is a disposable local or branch database, never production data.`);
+    }
+    const tokens = shellLikeTokens(command);
+    const preFingerprint = reverifyFingerprint(state);
+    const startedAt = nowIso();
+    const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
+      cwd: projectRoot,
+      shell: false,
+      encoding: "utf8",
+      timeout: ORACLE_TIMEOUT_MS,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const postFingerprint = reverifyFingerprint(state);
+    const digestViolation = Boolean(preFingerprint && postFingerprint
+      && (preFingerprint.headSha !== postFingerprint.headSha
+        || preFingerprint.statusHash !== postFingerprint.statusHash));
+    const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
+    const stdout = spawned.stdout || "";
+    const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;
+    const met = exitCode === 0 && expectMatched && !digestViolation;
+    const logRel = path.join(state.runDir, "artifacts", "logs", `${ac.id}-oracle-${safeTimestamp()}.log`);
+    const logAbs = path.join(projectRoot, logRel);
+    writeMarkdown(logAbs, [
+      `command: ${command}`,
+      `oracle: AC ${ac.id}`,
+      oracle.expect ? `expected stdout substring: ${oracle.expect}` : "",
+      `startedAt: ${startedAt}`,
+      `finishedAt: ${nowIso()}`,
+      `exitCode: ${exitCode}`,
+      `expectMatched: ${expectMatched}`,
+      `digestGuard: ${digestViolation ? "VIOLATED - workspace changed during the oracle command" : "clean"}`,
+      spawned.signal ? `signal: ${spawned.signal}` : "",
+      "",
+      "--- stdout ---",
+      stdout,
+      "",
+      "--- stderr ---",
+      spawned.stderr || "",
+    ].filter(line => line !== "").join("\n"));
+    const evidenceText = digestViolation && exitCode === 0
+      ? `Oracle check MUTATED the workspace (digest guard): \`${command}\` exited 0 but changed the tree; recorded not_met. Log: ${logRel}`
+      : met
+        ? `Oracle check passed: harness ran \`${command}\` (exit 0${oracle.expect ? `, output contained "${oracle.expect}"` : ""}). Log: ${logRel}`
+        : `Oracle check failed: \`${command}\` exited ${exitCode}${oracle.expect && !expectMatched ? `; output did not contain "${oracle.expect}"` : ""}. Log: ${logRel}`;
+    ac.status = met ? "met" : "not_met";
+    // Same structured observation contract as the artifact branch: finalize's
+    // completionViolations demands a harness-recorded passing observation for
+    // every met oracle AC.
+    ac.oracleObservation = { at: nowIso(), kind: "check", met, exitCode, logPath: logRel };
+    attachArtifact(statePath, state, { kind: "ac", item: ac }, "command-log", logAbs, `oracle-run ${met ? "passed" : "failed"}: ${command}`, {
+      command,
+      exitCode,
+      expected: oracle.expect || null,
+      expectMatched,
+      digestGuard: { violated: digestViolation, before: preFingerprint, after: postFingerprint },
+    });
+    // Pushed after attachArtifact so the oracle verdict is the item's latest
+    // evidence line, not the artifact bookkeeping note.
+    ac.evidence.push({ ts: nowIso(), text: evidenceText });
+    results.push({ id: ac.id, kind: "check", command, exitCode, expectMatched, digestViolation, met, logPath: logRel });
+  }
+  if (results.length) {
+    markCompletionReviewsStale(state, `Oracle-backed acceptance criteria were re-settled (${results.map(item => item.id).join(", ")})`);
+    state.updatedAt = nowIso();
+    persistState(statePath, state);
+    syncActive(statePath, state);
+  }
+  const failed = results.filter(item => !item.met);
+  process.stdout.write(JSON.stringify({
+    ok: failed.length === 0,
+    ran: results.length,
+    results,
+    warnings,
+    counts: countState(state),
+    next: nextBrief(state),
+  }, null, 2) + "\n");
+  if (failed.length) process.exitCode = 2;
 }
 
 module.exports = {
@@ -301,4 +485,5 @@ module.exports = {
   cmdRecordArtifact,
   cmdRefreshArtifacts,
   cmdVerifyRun,
+  cmdOracleRun,
 };

@@ -18,6 +18,20 @@ export interface BackendRunOptions {
   effort?: string;
   /** Image paths attached to the prompt; only meaningful when `attachments` is true. */
   images?: string[];
+  /**
+   * Grant the judge read-only file tools (Read/Grep/Glob) for the oversized-
+   * diff fallback; only meaningful when the backend's `agentic` is true. Write
+   * and execute tools stay disallowed - the judge may look, never touch.
+   */
+  agentic?: boolean;
+  /**
+   * Working directory for the judge process. The verify gate threads its
+   * project root here because the agentic judge resolves the diff-stat's
+   * repo-relative paths against its cwd - inheriting the caller's cwd broke
+   * every Read/Grep when `sasu verify` ran from a subdirectory. Codex ignores
+   * this: it deliberately runs from its own empty ephemeral work root.
+   */
+  cwd?: string;
 }
 
 export interface JudgeBackend {
@@ -31,6 +45,13 @@ export interface JudgeBackend {
    * all, and the verify flow hands those criteria to a human instead.
    */
   attachments: boolean;
+  /**
+   * Whether the backend can run the read-only agentic judge (oversized-diff
+   * fallback): the judge session sees the project tree and may Read/Grep/Glob
+   * it, nothing more. Distinct from `attachments` the same way: this reopens
+   * agency only on the read side, and only when the caller asks for it.
+   */
+  agentic: boolean;
   available(): boolean;
   /** One-shot judge call. */
   run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult>;
@@ -69,13 +90,31 @@ interface ProcessOutcome {
  * mirror the previous spawnSync usage: per-call timeout (SIGTERM), bounded
  * output, and the same failure shape for interpretSpawnFailure.
  */
+/**
+ * Spawn options for a judge process, extracted so the cwd contract is unit-
+ * assertable (the stub backend bypasses spawning entirely): a caller-provided
+ * cwd must reach the spawned process, and an absent one must leave the
+ * inherited working directory untouched.
+ */
+export function processSpawnOptions(options: { env?: NodeJS.ProcessEnv; cwd?: string }): {
+  env: NodeJS.ProcessEnv;
+  stdio: ["pipe", "pipe", "pipe"];
+  cwd?: string;
+} {
+  return {
+    env: options.env ?? process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+  };
+}
+
 function runProcess(
   binary: string,
   args: string[],
-  options: { input?: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  options: { input?: string; timeoutMs: number; env?: NodeJS.ProcessEnv; cwd?: string },
 ): Promise<ProcessOutcome> {
   return new Promise((resolve) => {
-    const child = spawn(binary, args, { env: options.env ?? process.env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(binary, args, processSpawnOptions(options));
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -127,23 +166,31 @@ export class ClaudeBackend implements JudgeBackend {
   // the only path to an image would be the Read tool, which the no-tools
   // contract above forbids. Verified against the CLI help, 2026-08-08.
   readonly attachments = false;
+  // Read-only tool grants work through the same --tools flag (see run()).
+  readonly agentic = true;
 
   available(): boolean {
     return binaryOnPath(this.binary);
   }
 
   async run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
-    const { model, timeoutMs, effort } = options;
+    const { model, timeoutMs, effort, agentic, cwd } = options;
     const args = [
       "-p",
       "--output-format",
       "json",
       "--strict-mcp-config",
-      // One-shot judge: no tools at all. Without --tools "" the model keeps
-      // Read/Grep/Glob and wanders the host repo for minutes (observed: 24
+      // One-shot judge: no tools by default. Without --tools "" the model kept
+      // Read/Grep/Glob and wandered the host repo for minutes (observed: 24
       // turns, 260s) instead of judging the documents already in the prompt.
+      // Re-measured 2026-08-10 on the current model with the same judge
+      // prompt: read tools granted, no wandering (1 turn / 19s), and with
+      // exploration actually needed it found correct out-of-diff evidence in
+      // 6 turns / 37s - so the agentic fallback (options.agentic) deliberately
+      // grants Read/Grep/Glob for oversized diffs the prompt cannot carry.
+      // The inline-diff path keeps the no-tools default.
       "--tools",
-      "",
+      agentic ? "Read,Grep,Glob" : "",
       "--disallowedTools",
       "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Agent,Task,TodoWrite",
     ];
@@ -158,6 +205,9 @@ export class ClaudeBackend implements JudgeBackend {
       input: prompt,
       timeoutMs,
       env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
+      // See BackendRunOptions.cwd: the agentic judge's Read/Grep/Glob resolve
+      // repo-relative paths against this.
+      ...(cwd !== undefined ? { cwd } : {}),
     });
     interpretSpawnFailure(this.name, result);
     const envelope = safeParse(result.stdout);
@@ -214,6 +264,10 @@ export class CodexBackend implements JudgeBackend {
   readonly binary = "codex";
   // `codex exec -i/--image <FILE>...` attaches local images to the prompt.
   readonly attachments = true;
+  // The codex judge runs from an empty ephemeral work root precisely so it
+  // cannot read the project (see codexExecArgs); an agentic fallback would
+  // need the opposite, so the capability is honestly absent.
+  readonly agentic = false;
 
   available(): boolean {
     return binaryOnPath(this.binary);
@@ -265,6 +319,13 @@ export class StubBackend implements JudgeBackend {
   // fallback a claude-backed run takes.
   get attachments(): boolean {
     return process.env["SASU_JUDGE_STUB_NO_ATTACHMENTS"] !== "1";
+  }
+
+  // Same rehearsal pattern as attachments: SASU_JUDGE_STUB_NO_AGENTIC=1 lets
+  // tests exercise the hard-error path a non-agentic backend (codex) takes on
+  // an oversized diff.
+  get agentic(): boolean {
+    return process.env["SASU_JUDGE_STUB_NO_AGENTIC"] !== "1";
   }
 
   available(): boolean {

@@ -139,6 +139,17 @@ function writeImplementationReport(statePath, state) {
       lines.push("- Status: pending");
     }
   }
+  const timings = state.finalReceipt && state.finalReceipt.phaseTimings;
+  if (timings) {
+    // Human-readable budget check: is verification dwarfing implementation?
+    // Only measured sums are printed; the un-measured remainder (agent turns,
+    // user wait, browser QA) stays one honest lump.
+    lines.push("", "## Timings", "");
+    if (timings.wallClockSeconds !== null) lines.push(`- Wall clock (init -> receipt): ${timings.wallClockSeconds}s`);
+    lines.push(`- Verification commands (measured): ${timings.measured.verificationCommandSeconds}s across ${timings.measured.verificationCommandRuns} run(s)`);
+    lines.push(`- Judge calls (measured): ${timings.measured.judgeSeconds}s across ${timings.measured.judgeCalls} call(s)${timings.measured.verifyGateAttempts !== null ? `, verify gate attempts ${timings.measured.verifyGateAttempts}` : ""}`);
+    if (timings.unattributedSeconds !== null) lines.push(`- Unattributed (agent turns + user wait + unlogged work): ${timings.unattributedSeconds}s`);
+  }
   lines.push("", "## Final Receipt", "", "```json", JSON.stringify(state.finalReceipt, null, 2), "```", "");
   writeMarkdown(path.join(path.dirname(statePath), "implementation-result.md"), lines.join("\n"));
 }

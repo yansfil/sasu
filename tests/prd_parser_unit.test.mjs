@@ -188,3 +188,64 @@ test("buildIntentTrace parses the nested 4.3 decision-traceability subsection", 
   const trace = parser.buildIntentTrace(parsed, process.cwd());
   assert.equal(trace.prdDecisionCount, 2);
 });
+
+// --- AC oracle tails (5c) and task Scope globs (4a) ---
+
+test("parseAcOracle extracts Check oracles with and without an expected substring", () => {
+  assert.deepEqual(
+    parser.parseAcOracle('the endpoint answers. Check: `curl -sf localhost:3000/health` -> "status":"ok"'),
+    { kind: "check", command: "curl -sf localhost:3000/health", expect: '"status":"ok"' },
+  );
+  assert.deepEqual(
+    parser.parseAcOracle("the suite passes. Check: `npm test`"),
+    { kind: "check", command: "npm test", expect: null },
+  );
+  // A bare expectation sheds the bullet's sentence-final period; a backticked
+  // one is verbatim, and a period after a quote reads as literal content.
+  assert.equal(parser.parseAcOracle("works. Check: `run` -> ok.").expect, "ok");
+  assert.equal(parser.parseAcOracle("works. Check: `run` -> `ok.`").expect, "ok.");
+  assert.equal(parser.parseAcOracle('works. Check: `run` -> "done."').expect, '"done."');
+});
+
+test("parseAcOracle extracts Artifact oracles and ignores plain prose", () => {
+  assert.deepEqual(
+    parser.parseAcOracle("the report exists. Artifact: out/report.html"),
+    { kind: "artifact", path: "out/report.html" },
+  );
+  assert.equal(parser.parseAcOracle("the widget renders correctly"), null);
+});
+
+test("acOracleDefect flags malformed and conflicting oracle tails", () => {
+  assert.match(parser.acOracleDefect("works. Check: no backticks -> nope"), /backticks/);
+  assert.match(parser.acOracleDefect("works. Check: `a` Artifact: b"), /both/);
+  assert.match(parser.acOracleDefect("works. Artifact: /etc/passwd"), /absolute/);
+  assert.match(parser.acOracleDefect("works. Artifact: ../outside.txt"), /escapes/);
+  assert.equal(parser.acOracleDefect("works. Check: `npm test` -> ok"), null);
+  assert.equal(parser.acOracleDefect("no oracle here"), null);
+});
+
+test("parseScopeGlobs reads the Scope tail; scopeGlobDefect validates the dialect", () => {
+  assert.deepEqual(parser.parseScopeGlobs("build it. Scope: cli/src/**, cli/lib/render.js."), ["cli/src/**", "cli/lib/render.js"]);
+  assert.deepEqual(parser.parseScopeGlobs("no scope declared"), []);
+  assert.equal(parser.scopeGlobDefect("cli/src/**"), null);
+  assert.match(parser.scopeGlobDefect("/abs/**"), /absolute/);
+  assert.match(parser.scopeGlobDefect("a/../b"), /escapes/);
+  assert.match(parser.scopeGlobDefect("bad glob"), /unsupported/);
+});
+
+test("parsePrdTasksForScoping keeps a line-final recursive glob out of the bold-marker strip", () => {
+  const prd = [
+    "---",
+    'topic: "t"',
+    "---",
+    "",
+    "## 8. PRD-Level Tasks",
+    "",
+    "- T1. build the widget. Covers R1, AC1. Scope: src/**",
+    "- T2. document it. Covers AC2.",
+    "",
+  ].join("\n");
+  const tasks = parser.parsePrdTasksForScoping(prd);
+  assert.deepEqual(tasks[0], { id: "T1", scopeGlobs: ["src/**"], acceptanceCriteria: ["AC1"], requirements: ["R1"] });
+  assert.deepEqual(tasks[1].scopeGlobs, []);
+});

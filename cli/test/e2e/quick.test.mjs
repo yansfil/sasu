@@ -56,8 +56,8 @@ function stubFile(dir, response) {
   return file;
 }
 
-function runCli(cwd, args, { stub } = {}) {
-  const env = { ...process.env };
+function runCli(cwd, args, { stub, env: extraEnv } = {}) {
+  const env = { ...process.env, ...(extraEnv ?? {}) };
   if (stub) {
     env.SASU_JUDGE_BACKEND = "stub";
     env.SASU_JUDGE_STUB_FILE = stub;
@@ -72,15 +72,15 @@ function gatesState(dir) {
 const PASS_RESPONSE = {
   verdict: "PASS",
   criteria: [
-    { id: "AC1", verdict: "PASS", reason: "render() added" },
-    { id: "AC2", verdict: "PASS", reason: "persist() added" },
+    { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+    { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
   ],
 };
 
 const FAIL_RESPONSE = {
   verdict: "FAIL",
   criteria: [
-    { id: "AC1", verdict: "PASS", reason: "render() added" },
+    { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
     { id: "AC2", verdict: "FAIL", reason: "no persistence in the diff" },
   ],
 };
@@ -170,7 +170,7 @@ test("text evidence is hash-pinned as an evidence input and reaches the judge", 
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the widget renders\n  - evidence: agents/quick/demo/evidence/api.json\n");
   const { result, parsed } = verifyJson(dir, {
     verdict: "PASS",
-    criteria: [{ id: "AC1", verdict: "PASS", reason: "evidence shows 200" }],
+    criteria: [{ id: "AC1", verdict: "PASS", reason: "evidence shows 200", evidence: "diff hunk" }],
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(parsed.status.effective, "PASS");
@@ -215,7 +215,7 @@ test("a capture command produces the artifact on the harness clock and pins it",
   );
   const { result, parsed } = verifyJson(dir, {
     verdict: "PASS",
-    criteria: [{ id: "AC1", verdict: "PASS", reason: "the capture shows the widget" }],
+    criteria: [{ id: "AC1", verdict: "PASS", reason: "the capture shows the widget", evidence: "diff hunk" }],
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const captureRun = parsed.mechanical.runs.find((r) => r.kind === "capture");
@@ -248,7 +248,7 @@ test("a human criterion keeps the gate closed even when every judged criterion p
   // The stub answers for AC1 only: the human criterion must never be sent.
   const { result, parsed } = verifyJson(dir, {
     verdict: "PASS",
-    criteria: [{ id: "AC1", verdict: "PASS", reason: "render() added" }],
+    criteria: [{ id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" }],
   });
   assert.equal(result.status, 1);
   assert.equal(parsed.status.verdict, "FAIL");
@@ -336,7 +336,7 @@ test("a contract check restating a configured command runs once, but captures al
   writeContract(dir, "## Checks\n\n- `true`\n\n## Acceptance Criteria\n\n- AC1. the widget renders\n  - capture: `bash -c \"printf x > a.txt\"` -> a.txt\n");
   const { parsed } = verifyJson(dir, {
     verdict: "PASS",
-    criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }],
+    criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }],
   });
   assert.equal(parsed.mechanical.runs.filter((r) => r.command === "true").length, 1, "the duplicated command must not run twice");
   assert.equal(parsed.mechanical.runs.filter((r) => r.kind === "capture").length, 1);
@@ -351,7 +351,7 @@ test("verify --json carries everything the receipt must quote", () => {
     dir,
     "## Acceptance Criteria\n\n- AC1. the widget renders\n  - evidence: agents/quick/demo/evidence/api.json\n- AC2. matches the mock\n  - human: eyeball it\n",
   );
-  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.deepEqual(parsed.judgedCriteriaIds, ["AC1"], "the human criterion must be provably absent from the judge's view");
   assert.equal(parsed.judgedVerdict, "PASS");
   assert.equal(parsed.status.verdict, "FAIL", "an unsettled human criterion keeps the gate closed");
@@ -365,7 +365,7 @@ test("verify --json carries everything the receipt must quote", () => {
 test("gate status reports the tree fingerprint, so it cannot disagree with the Stop hook", () => {
   const dir = makeGitProject();
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the widget renders\n");
-  const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(result.status, 0);
   fs.appendFileSync(path.join(dir, "widget.js"), "// edited after the pass\n");
   const view = JSON.parse(runCli(dir, ["gate", "status", "--slug", "demo", "--json"]).stdout).verify;
@@ -382,7 +382,7 @@ test("a human-blocked gate still reports evidence drift instead of hiding it", (
     dir,
     "## Acceptance Criteria\n\n- AC1. the widget renders\n  - evidence: agents/quick/demo/evidence/api.json\n- AC2. matches the mock\n  - human: eyeball it\n",
   );
-  verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   fs.writeFileSync(path.join(evidenceDir, "api.json"), '{"status":500}\n');
   const view = JSON.parse(runCli(dir, ["gate", "status", "--slug", "demo", "--json"]).stdout).verify;
   assert.equal(view.effective, "BLOCKED", "a blocked gate must not be relabelled STALE");
@@ -421,7 +421,7 @@ test("a criterion-scoped check reaches the judge as evidence for that criterion"
   );
   const { result, parsed } = verifyJson(dir, {
     verdict: "PASS",
-    criteria: [{ id: "AC1", verdict: "PASS", reason: "the harness check exited 0" }],
+    criteria: [{ id: "AC1", verdict: "PASS", reason: "the harness check exited 0", evidence: "diff hunk" }],
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const run = parsed.mechanical.runs.find((r) => r.kind === "check");
@@ -442,7 +442,7 @@ test("a criterion-scoped check reaches the judge as evidence for that criterion"
 test("a run-wide check stays a gate signal and is not attributed to a criterion", () => {
   const dir = makeGitProject();
   writeContract(dir, "## Checks\n\n- `true`\n\n## Acceptance Criteria\n\n- AC1. the widget renders\n");
-  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(parsed.mechanical.runs.find((r) => r.kind === "check").criterionIds, undefined);
   assert.deepEqual(parsed.checks, []);
 });
@@ -453,7 +453,7 @@ test("an identical command declared as both check and capture runs once", () => 
     dir,
     '## Acceptance Criteria\n\n- AC1. the shot exists\n  - check: `bash -c "printf x > a.txt"`\n  - capture: `bash -c "printf x > a.txt"` -> a.txt\n',
   );
-  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   const matching = parsed.mechanical.runs.filter((r) => r.command === 'bash -c "printf x > a.txt"');
   assert.equal(matching.length, 1);
   assert.equal(matching[0].kind, "capture", "the capture wins: it must still produce its artifact");
@@ -486,7 +486,7 @@ test("drift on a blocked gate is visible through inputsDrifted, not just stale",
     dir,
     "## Acceptance Criteria\n\n- AC1. the widget renders\n  - evidence: agents/quick/demo/evidence/api.json\n- AC2. matches the mock\n  - human: eyeball it\n",
   );
-  verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   fs.writeFileSync(path.join(evidenceDir, "api.json"), '{"status":500}\n');
   const view = JSON.parse(runCli(dir, ["gate", "status", "--slug", "demo", "--json"]).stdout).verify;
   assert.equal(view.stale, false, "a blocked gate cannot be stale");
@@ -516,8 +516,8 @@ test("one command declared by two criteria runs once and proves both", () => {
   const { result, parsed } = verifyJson(dir, {
     verdict: "PASS",
     criteria: [
-      { id: "AC1", verdict: "PASS", reason: "check exited 0" },
-      { id: "AC2", verdict: "PASS", reason: "artifact written" },
+      { id: "AC1", verdict: "PASS", reason: "check exited 0", evidence: "diff hunk" },
+      { id: "AC2", verdict: "PASS", reason: "artifact written", evidence: "diff hunk" },
     ],
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -578,7 +578,7 @@ test("files the run created are part of the diff the judge sees", () => {
   fs.mkdirSync(path.join(dir, "scripts"), { recursive: true });
   fs.writeFileSync(path.join(dir, "scripts", "brand-new.js"), "module.exports = () => 'NEWFILE-TOKEN';\n");
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the new module exists\n");
-  const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const artifacts = path.join(dir, "agents", "gates", "demo", "artifacts");
   const payload = JSON.parse(fs.readFileSync(path.join(artifacts, fs.readdirSync(artifacts)[0]), "utf8"));
@@ -591,7 +591,7 @@ test("a run that only adds files still has something to verify", () => {
   spawnSync("git", ["checkout", "--", "widget.js"], { cwd: dir, encoding: "utf8" });
   fs.writeFileSync(path.join(dir, "added-only.js"), "module.exports = 1;\n");
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the module exists\n");
-  const { result, parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { result, parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(result.status, 0, `an add-only run must not die on an empty diff: ${result.stdout}${result.stderr}`);
   assert.equal(parsed.status.effective, "PASS");
 });
@@ -602,7 +602,7 @@ test("the harness's own run bookkeeping stays out of the diff", () => {
   fs.mkdirSync(evidenceDir, { recursive: true });
   fs.writeFileSync(path.join(evidenceDir, "api.json"), '{"status":200}\n');
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. x\n  - evidence: agents/quick/demo/evidence/api.json\n");
-  const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(result.status, 0);
   // The contract and its artifacts are pinned as inputs; replaying them as
   // diff hunks would just crowd out the code under review.
@@ -615,7 +615,7 @@ test("a criterion check that collides with a configured command keeps its attrib
   const dir = makeGitProject();
   fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify({ verify: { commands: { test: "true" } } }));
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the suite proves it\n  - check: `true`\n");
-  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] });
+  const { parsed } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(parsed.mechanical.runs.filter((r) => r.command === "true").length, 1, "still runs once");
   assert.deepEqual(
     parsed.checks.map((c) => c.criterionId),
@@ -684,11 +684,14 @@ test("lockfiles and the agents/ namespace are curated out of the judged diff on 
   assert.equal(result.status, 0, `noise must not reach the judge or trip the size guard: ${result.stdout}${result.stderr}`);
 });
 
-test("an oversized real diff fails the command up front without touching gate state", () => {
+test("an oversized real diff fails the command up front on a non-agentic backend, without touching gate state", () => {
   const dir = makeGitProject();
   fs.appendFileSync(path.join(dir, "widget.js"), `// ${"x".repeat(200_000)}\n`);
+  // SASU_JUDGE_STUB_NO_AGENTIC rehearses the codex case: no read tools means
+  // no agentic fallback, so the original fail-up-front contract must hold.
   const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, PASS_RESPONSE),
+    env: { SASU_JUDGE_STUB_NO_AGENTIC: "1" },
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /judge input budget/);
@@ -697,6 +700,27 @@ test("an oversized real diff fails the command up front without touching gate st
     !fs.existsSync(path.join(dir, "agents", "gates", "demo", "gates.json")),
     "an oversized diff must not create gate state or charge an attempt",
   );
+});
+
+test("an oversized real diff on an agentic backend falls back to the read-only judge and passes", () => {
+  const dir = makeGitProject();
+  fs.appendFileSync(path.join(dir, "widget.js"), `// ${"x".repeat(200_000)}\n`);
+  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+    stub: stubFile(dir, {
+      verdict: "PASS",
+      criteria: [
+        { id: "AC1", verdict: "PASS", reason: "render() present", evidence: "read widget.js" },
+        { id: "AC2", verdict: "PASS", reason: "persist() present", evidence: "read widget.js" },
+      ],
+    }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  const artifactsDir = path.join(dir, "agents", "gates", "demo", "artifacts");
+  const artifacts = fs.readdirSync(artifactsDir).map((f) => JSON.parse(fs.readFileSync(path.join(artifactsDir, f), "utf8")));
+  const semantic = artifacts.find((a) => a.stage === "semantic");
+  assert.equal(semantic.lanes[0].agenticFallback, true, "the artifact must record the agentic fallback");
 });
 
 test("passing both --prd and --contract is rejected", () => {

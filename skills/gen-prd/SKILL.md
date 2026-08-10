@@ -282,6 +282,53 @@ Use IDs in the text:
 - T1. ... Covers R1, AC1.
 ```
 
+#### AC Machine Oracles (Check / Artifact tails)
+
+Whenever an acceptance criterion can be confirmed by a command or a file's
+existence, declare that oracle on the bullet itself so the harness settles the
+AC mechanically (`oracle-run` / the verify gate) instead of a judge or a manual
+mark — declared at PRD time, executed on the harness clock, immune to
+implementer submission bias:
+
+```markdown
+- AC2. The health endpoint answers. Check: `curl -sf localhost:3000/health` -> "status":"ok"
+- AC3. The coverage report is generated. Artifact: coverage/index.html
+```
+
+`Check:` is a backticked command at the end of the bullet, optionally followed
+by `-> <expected stdout substring>` (exit 0 alone proves it when the arrow is
+omitted; backtick-wrap the expectation if it ends in a period). `Artifact:` is
+a project-relative path whose existence proves the AC. An oracle-backed AC
+needs no 9.2 V-row coverage — the oracle is its verification. Malformed tails
+fail the $0 prelint, and oracle commands must not modify the workspace (the
+digest guard records a mutation as a failure).
+
+Check commands are tokenized and executed **without a shell**: operators like
+`|`, `&&`, `;`, `>` are passed to the program as literal arguments, never
+interpreted (prelint warns when it sees them) — wrap the command in
+`bash -c "..."` when shell semantics are intended. The same declared oracle
+runs in two places (the harness `oracle-run` sweep and the verify gate's
+oracle stage), so the command must be repeatable/idempotent. A trivially
+constant command (`true`, `exit 0`, a bare `echo`) proves nothing and draws a
+prelint warning.
+
+#### Task Scope Globs
+
+When a task's change surface is known at PRD time, declare it as a `Scope:`
+tail of repo-relative globs — the verify gate then scopes each judge lane's
+diff to the paths the covering tasks declared (input selection by the vetted
+document, not the implementer). When **every** task declares a Scope, changed
+files outside all declared scopes surface as a warning; with a partial
+declaration the warning stays off, because a file outside the declared globs
+may simply belong to a Scope-less task:
+
+```markdown
+- T1. Build the widget renderer. Covers R1, AC1. Scope: src/widget/**, src/render.ts
+```
+
+Scoping only narrows a lane when every task covering that lane's ACs declares
+a Scope, so leave it off global-invariant work rather than guessing.
+
 #### Test Coverage Bias
 
 For implementation work, default to adding or updating automated regression tests for every newly introduced or materially changed behavior.

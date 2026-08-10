@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { SasuConfig } from "../config";
@@ -8,6 +8,7 @@ import {
   JudgeError,
   validateGapVerdict,
   validateSemanticVerdict,
+  type CriterionVerdict,
   type Finding,
   type GapVerdict,
   type JudgeCallRecord,
@@ -19,6 +20,7 @@ import {
   GAP_AUDIT_LANES,
   SPEC_LANES,
   VERIFY_DIFF_MAX_CHARS,
+  agenticSemanticVerifyPrompt,
   gapAuditPrompt,
   semanticVerifyPrompt,
   specGatePrompt,
@@ -45,7 +47,14 @@ export interface GateCommandResult {
   /** Deterministic pre-judge lint result; separate from judge findings by design (D-10). */
   prelint?: PrelintResult;
   mechanical?: MechanicalResult;
-  criteria?: { id: string; verdict: "PASS" | "FAIL"; reason: string }[];
+  /** Per-criterion verdicts: the judge's for judged criteria, the harness's for oracle-backed ones. */
+  criteria?: CriterionVerdict[];
+  /**
+   * Changed files no task's Scope glob claims (only computed when the PRD
+   * declares any Scope): the mechanized first step of the unmapped-scope
+   * hard-stop - a loud warning today, not yet a block.
+   */
+  unscopedFiles?: string[];
   /**
    * Everything the receipt has to quote, so it can be written from this output
    * alone instead of reaching into gate state: what was pinned, which criteria
@@ -57,6 +66,12 @@ export interface GateCommandResult {
   checks?: CheckResult[];
   judgedCriteriaIds?: string[];
   judgedVerdict?: "PASS" | "FAIL";
+  /**
+   * True when the verify gate passed without a single judge call (every AC
+   * oracle-backed): the record is honest, but the receipt must be able to say
+   * "no model ever read this diff" without re-deriving it from lane counts.
+   */
+  zeroJudgeCalls?: boolean;
   /**
    * Set when the verify gate resolved ZERO mechanical commands without
    * --skip-mechanical: an empty runs list looks like success, but it means the
@@ -82,6 +97,18 @@ function prelintBlock(
 ): GateCommandResult {
   const store = new GateStore(projectRoot, topic);
   return { ok: false, status: gateStatus(store.load(), gate, config.judge.retryBudget, projectRoot), prelint };
+}
+
+/**
+ * Non-blocking prelint advisories go to stderr the way the gate's other
+ * warnings do: the document may legitimately mean what it says (never a
+ * block), but the author must hear it before the verdict, not after.
+ */
+function emitPrelintWarnings(prelint: PrelintResult): void {
+  for (const advisory of prelint.warnings ?? []) {
+    const where = advisory.line !== null ? `:${advisory.line}` : "";
+    process.stderr.write(`sasu: WARNING: prelint ${advisory.rule}${where}: ${advisory.missing} ${advisory.recommendation}\n`);
+  }
 }
 
 function readTextFile(projectRoot: string, filePath: string, label: string): string {
@@ -442,6 +469,7 @@ export async function runSpecGate(
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   const prelint = runPrelint("prd", prd.content);
   if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "spec", prelint);
+  emitPrelintWarnings(prelint);
   const result = await runGapListGate(
     projectRoot,
     config,
@@ -472,6 +500,35 @@ const { quickTreeFingerprint } = require("../../lib/git.js") as {
   quickTreeFingerprint: (projectRoot: string) => { headSha: string | null; statusHash: string } | null;
 };
 
+// One §7/§8 grammar for oracle tails and Scope globs: the TS gate reads the
+// same lib parser the implement state does (runners.js precedent in prelint).
+export interface AcOracle {
+  kind: "check" | "artifact";
+  command?: string;
+  expect?: string | null;
+  path?: string;
+}
+export interface ScopedTask {
+  id: string;
+  scopeGlobs: string[];
+  acceptanceCriteria: string[];
+  requirements: string[];
+}
+const { parseAcOracle, parsePrdTasksForScoping } = require("../../lib/prd_parser.js") as {
+  parseAcOracle: (text: string) => AcOracle | null;
+  parsePrdTasksForScoping: (prdContent: string) => ScopedTask[];
+};
+// Same broad DB heuristic the implement planner warns with (db-safety gap):
+// oracle commands run on the harness clock, so the "confirm the target is
+// disposable" nudge must fire here too.
+const { DB_TOUCH_PATTERN } = require("../../lib/planning.js") as { DB_TOUCH_PATTERN: RegExp };
+// One execution semantics for oracle commands: the harness's oracle-run
+// tokenizes with shellLikeTokens and spawns WITHOUT a shell, so the gate must
+// too (same shared-lib pattern as prd_parser above). The two executors used
+// to diverge (gate: shell:true) and the same declared Check command could
+// PASS at the gate while the harness recorded not_met.
+const { shellLikeTokens } = require("../../lib/inference.js") as { shellLikeTokens: (command: string) => string[] };
+
 export async function runVerifyGate(
   projectRoot: string,
   config: SasuConfig,
@@ -501,6 +558,7 @@ export async function runVerifyGate(
   if (docFile) {
     prelint = runPrelint(docKind, docFile.content);
     if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "verify", prelint);
+    emitPrelintWarnings(prelint);
   }
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
@@ -621,16 +679,59 @@ export async function runVerifyGate(
       `empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}. Implement the change first, or point --base at the commit you started from. Note that gitignored files are invisible here even when they exist.`,
     );
   }
-  // Truncation guard: the diff is never silently clamped for the judge (see
-  // VERIFY_DIFF_MAX_CHARS for the audited false-FAIL this prevents). Throwing
-  // here - before the evidence lane, the prompt, and any recordGateResult -
-  // means a tooling-sized diff costs no judge call, no recorded outcome, and
-  // no retry-budget attempt; only genuine semantic judgments may charge those.
-  if (diff.length > VERIFY_DIFF_MAX_CHARS) {
-    throw new Error(
-      `diff is ${diff.length} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget. No judgment ran and no retry attempt was spent. Narrow the change under judgment: pass --diff-file with a diff scoped to the implementation (e.g. git diff <base> -- <paths>), point --base at the commit you started from, or split the change.`,
-    );
-  }
+  // An agent-curated diff is a submission-bias surface: verification-input
+  // selection belongs to the document/harness, so its use is stamped into the
+  // gate artifact rather than trusted silently.
+  const agentCuratedDiff = options.diffFile !== undefined;
+  // The oversized-diff guard moved to the per-lane assembly below: a lane may
+  // shrink under the budget via PRD Scope globs, and an oversized lane falls
+  // back to the agentic judge when the backend supports one.
+
+  // AC oracle stage (PRD path): criteria whose bullet declares a machine
+  // oracle (Check:/Artifact: tail) are settled by the harness right here -
+  // exit codes, output substrings, and file existence, no judge. They leave
+  // the judge lanes the same way human-lane criteria do: already decided,
+  // by a stronger authority than a model reading a diff.
+  const oracleTargets =
+    docKind === "prd"
+      ? criteria.flatMap((c) => {
+          const oracle = parseAcOracle(c.text);
+          return oracle ? [{ id: c.id, text: c.text, oracle }] : [];
+        })
+      : [];
+  const oracleCriterionIds = new Set(oracleTargets.map((c) => c.id));
+  // Parsed now, EXECUTED later: oracle commands are side effects spent on the
+  // world, so they run only after every no-judgment exit is behind us - the
+  // evidence lane block and, on the judged path, the oversized-diff hard
+  // error (which used to throw after oracles had already executed, with
+  // nothing recorded to show for them). Which criteria are oracle-backed is
+  // pure parsing and is decided here either way.
+  const settleOracles = (): { oracleOutcomes: OracleOutcome[]; oracleFindings: Finding[]; oracleCriteria: CriterionVerdict[] } => {
+    const oracleStage = oracleTargets.length > 0 ? runAcOracles(projectRoot, config, oracleTargets) : null;
+    const oracleOutcomes = oracleStage ? oracleStage.outcomes : [];
+    for (const warning of oracleStage ? oracleStage.warnings : []) {
+      process.stderr.write(`sasu: WARNING: ${warning}\n`);
+    }
+    const oracleFindings: Finding[] = oracleOutcomes
+      .filter((outcome) => !outcome.met)
+      .map((outcome) => ({
+        area: "oracle",
+        severity: "P0" as const,
+        missing: `${outcome.id}: ${outcome.reason}`,
+        recommendation:
+          outcome.digestViolation === true
+            ? "The oracle command must not modify the workspace; make it read-only or fix the declaration."
+            : "Make the PRD-declared oracle check pass and re-run sasu verify.",
+        requiresHuman: false,
+      }));
+    const oracleCriteria: CriterionVerdict[] = oracleOutcomes.map((outcome) => ({
+      id: outcome.id,
+      verdict: outcome.met ? ("PASS" as const) : ("FAIL" as const),
+      reason: outcome.reason,
+      evidence: outcome.evidence,
+    }));
+    return { oracleOutcomes, oracleFindings, oracleCriteria };
+  };
 
   // Stage 1b: collect the evidence lane. A declared artifact that is missing
   // or oversized blocks here, before the judge call, the same way a broken
@@ -669,47 +770,77 @@ export async function runVerifyGate(
   // Criteria whose proof no judge can see - declared human, or an attached
   // image on a backend that cannot attach - never reach the judge. They come
   // back as requiresHuman findings, which the Stop hook already lets the agent
-  // hand to the user.
+  // hand to the user. Oracle-backed criteria leave the lanes the same way:
+  // the harness already settled them mechanically above.
   const humanLane = lane ? lane.humanFindings : [];
-  const judgedCriteria = lane ? criteria.filter((c) => !lane.humanCriterionIds.has(c.id)) : criteria;
+  const judgedCriteria = criteria.filter(
+    (c) => !(lane !== null && lane.humanCriterionIds.has(c.id)) && !oracleCriterionIds.has(c.id),
+  );
   const evidenceInputs = lane ? lane.inputs : [];
   const allInputs = [...inputs, ...evidenceInputs];
 
   if (judgedCriteria.length === 0) {
-    // Everything is human-verified: an honest zero-LLM-call outcome.
+    // Nothing left for a judge: every criterion is human-verified or
+    // oracle-settled. All-oracle-pass is an honest zero-LLM-call PASS (the
+    // ouroboros $0 tier); any human criterion or failed oracle keeps the
+    // gate closed.
+    const { oracleOutcomes, oracleFindings, oracleCriteria } = settleOracles();
+    const zeroJudgeFindings = [...oracleFindings, ...humanLane];
+    const zeroJudgePassed = zeroJudgeFindings.length === 0 && oracleCriteria.length > 0;
+    // An all-oracle PASS is honest but easy to mistake for a judged one: say
+    // loudly, on the record and on stderr, that no model ever saw this diff.
+    if (zeroJudgePassed) {
+      process.stderr.write(
+        "sasu: NOTE: verify gate PASSED with ZERO judge calls - every AC was oracle-backed; the semantic judge never saw this diff.\n",
+      );
+    }
+    let zeroJudgeFingerprint: { headSha: string | null; statusHash: string } | null = null;
+    try {
+      zeroJudgeFingerprint = quickTreeFingerprint(projectRoot);
+    } catch {
+      zeroJudgeFingerprint = null;
+    }
     state = recordGateResult(
       store,
       state,
       "verify",
       {
         kind: "verdict",
-        verdict: "FAIL",
-        findings: humanLane,
+        verdict: zeroJudgePassed ? "PASS" : "FAIL",
+        findings: zeroJudgeFindings,
         inputs: allInputs,
+        treeFingerprint: zeroJudgeFingerprint,
         artifactPayload: {
-          stage: "human-lane",
-          findings: humanLane,
+          stage: humanLane.length > 0 ? "human-lane" : "oracle",
+          verdict: zeroJudgePassed ? "PASS" : "FAIL",
+          findings: zeroJudgeFindings,
           judgedCriteriaIds: [],
+          oracle: oracleOutcomes,
+          criteria: oracleCriteria,
           evidence: lane ? lane.artifacts : [],
           mechanical: mechanicalRecord(),
+          treeFingerprint: zeroJudgeFingerprint,
+          ...(agentCuratedDiff ? { agentCuratedDiff: true } : {}),
+          ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
           inputs: allInputs,
         },
       },
       records,
     );
     return {
-      ok: false,
+      ok: zeroJudgePassed && gateStatus(state, "verify", config.judge.retryBudget, projectRoot).effective === "PASS",
       status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
       prelint,
       mechanical,
       ...warningField,
-      // No judge ran, so there are no per-criterion verdicts to quote: the
-      // receipt for an all-human close rests on the findings and the artifacts.
-      criteria: [],
+      // No judge ran: the per-criterion verdicts are the oracle's, and the
+      // receipt for a human close rests on the findings and the artifacts.
+      criteria: oracleCriteria,
       inputs: allInputs,
       evidence: lane ? lane.artifacts : [],
       checks: collectCheckResults(),
       judgedCriteriaIds: [],
+      ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
     };
   }
 
@@ -717,23 +848,69 @@ export async function runVerifyGate(
   // a run-wide check has no criterion to name and stays a gate-only signal.
   const checkResults = collectCheckResults();
 
+  // PRD-declared lane scoping (4a): tasks' Scope globs, resolved through the
+  // AC -> Covers-task chain, decide which slice of the curated diff each lane
+  // sees. Files in the diff that no declared glob claims surface as a warning
+  // (mechanized first step of the unmapped-scope hard-stop; not blocking yet).
+  const scopedTasks = docKind === "prd" && docFile !== null ? parsePrdTasksForScoping(docFile.content) : [];
+  const anyDeclaredScope = scopedTasks.some((task) => task.scopeGlobs.length > 0);
+  const declaredGlobs = scopedTasks.flatMap((task) => task.scopeGlobs);
+  // The unscoped-files warning fires only when EVERY task declared a Scope:
+  // with a partial declaration a file outside the declared globs may simply
+  // belong to a Scope-less task (T1 `Scope: src/**` plus a docs task with no
+  // Scope warned on every docs file the docs task legitimately owned), so
+  // ownership is ambiguous and the warning would be noise.
+  const everyTaskDeclaredScope = scopedTasks.length > 0 && scopedTasks.every((task) => task.scopeGlobs.length > 0);
+  const unscopedFiles = everyTaskDeclaredScope
+    ? splitDiffByFile(diff)
+        .map((block) => block.path)
+        .filter((file) => !declaredGlobs.some((glob) => matchesScopeGlob(file, glob)))
+    : [];
+  if (unscopedFiles.length > 0) {
+    process.stderr.write(
+      `sasu: WARNING: ${unscopedFiles.length} changed file(s) fall under no task's Scope glob: ${unscopedFiles.join(", ")}. Every change should belong to a declared task scope; extend a task's Scope or explain the file.\n`,
+    );
+  }
+
   // Semantic fan-out (mirrors the gap-audit lane pattern): the exhaustive
   // single call concentrated every criterion plus the whole diff into one
   // 75-137s prompt, so criteria are partitioned into criterion-scoped lanes
-  // that run concurrently over the same curated diff. judge.fanout: false is
-  // the same escape hatch the gap-list gates honor.
+  // that run concurrently over the (per-lane scoped) curated diff.
+  // judge.fanout: false is the same escape hatch the gap-list gates honor.
   const laneCriteria = config.judge.fanout ? partitionVerifyCriteria(judgedCriteria) : [judgedCriteria];
   const laneCount = laneCriteria.length;
+  // An oversized lane diff falls back to the read-only agentic judge instead
+  // of hard-erroring - but only on a backend that can grant read tools; the
+  // capability is checked once so every lane takes the same path.
+  let backendAgentic = false;
+  try {
+    backendAgentic = resolveBackend(config.judge.backend).agentic;
+  } catch {
+    backendAgentic = false;
+  }
   const verifyLanes = laneCriteria.map((criteriaSlice, index) => {
     const ids = new Set(criteriaSlice.map((c) => c.id));
     const material = lane ? lane.material.filter((item) => ids.has(item.criterionId)) : [];
     // Image attachments are rebuilt per lane from the material that carries
     // them, so a lane ships only the screenshots its own criteria pinned.
     const images = [...new Set(material.filter((item) => item.attachedImage).map((item) => path.join(projectRoot, item.path)))];
-    const prompt = semanticVerifyPrompt(diff, criteriaSlice, material, checkResults.filter((c) => ids.has(c.criterionId)), {
+    const laneGlobs = anyDeclaredScope ? scopeForLane(criteriaSlice, scopedTasks) : null;
+    const scoped = laneGlobs !== null ? filterDiffByGlobs(diff, laneGlobs) : null;
+    // A scoped diff with zero matching files would show the judge nothing and
+    // fail every criterion as absent; fall back to the full curated diff and
+    // say so in the artifact, because empty-by-scope is far more often a glob
+    // mistake than a real no-op.
+    const scopeFellBack = scoped !== null && scoped.text.trim() === "";
+    const laneDiff = scoped !== null && !scopeFellBack ? scoped.text : diff;
+    const agentic = laneDiff.length > VERIFY_DIFF_MAX_CHARS;
+    const laneOptions = {
       mechanicalRan: options.skipMechanical !== true,
       ...(laneCount > 1 ? { lane: { index: index + 1, count: laneCount } } : {}),
-    });
+    };
+    const laneChecks = checkResults.filter((c) => ids.has(c.criterionId));
+    const prompt = agentic
+      ? agenticSemanticVerifyPrompt(diffStatFromText(laneDiff), criteriaSlice, material, laneChecks, laneOptions)
+      : semanticVerifyPrompt(laneDiff, criteriaSlice, material, laneChecks, laneOptions);
     return {
       laneId: String(index + 1),
       // A single lane IS the old exhaustive call, so it keeps the historical
@@ -742,8 +919,29 @@ export async function runVerifyGate(
       criteria: criteriaSlice,
       prompt,
       images,
+      // Audit trail: which paths this lane was scoped to (null = full diff),
+      // whether scoping fell back, and whether the lane went agentic.
+      scope: scopeFellBack ? null : laneGlobs,
+      scopeFellBack,
+      diffChars: laneDiff.length,
+      agentic,
     };
   });
+  // A backend that cannot run the agentic judge keeps the original contract
+  // for oversized input: fail the command up front, before any judge call or
+  // recorded outcome, so no retry-budget attempt is charged.
+  const oversized = verifyLanes.filter((vl) => vl.agentic);
+  if (oversized.length > 0 && !backendAgentic) {
+    const worst = Math.max(...oversized.map((vl) => vl.diffChars));
+    throw new Error(
+      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the ${config.judge.backend} judge backend cannot run the read-only agentic fallback. No judgment ran and no retry attempt was spent. Narrow the change under judgment: declare task Scope globs in the PRD, pass --diff-file with a diff scoped to the implementation (e.g. git diff <base> -- <paths>), point --base at the commit you started from, or split the change.`,
+    );
+  }
+  // Every no-judgment exit is behind us: NOW spend the oracle side effects
+  // (see settleOracles - they used to run before the oversized hard error).
+  // The agentic fallback path still reaches this line, so oversized-but-
+  // capable rounds run their oracles exactly as before.
+  const { oracleOutcomes, oracleFindings, oracleCriteria } = settleOracles();
   // One auditable hash of everything sent this round: the lane prompts joined
   // in lane order. For a single lane this is byte-identical to the old
   // single-prompt hash contract.
@@ -752,6 +950,11 @@ export async function runVerifyGate(
     laneId: vl.laneId,
     criteriaIds: vl.criteria.map((c) => c.id),
     promptSha256: sha256Of(vl.prompt),
+    // Auditability (4a/4b): what slice of the diff this lane received and how.
+    scope: vl.scope,
+    ...(vl.scopeFellBack ? { scopeFellBack: true } : {}),
+    diffChars: vl.diffChars,
+    agenticFallback: vl.agentic,
   }));
   const evidenceSummary = lane ? lane.artifacts : [];
   const judgedCriteriaIds = judgedCriteria.map((c) => c.id);
@@ -787,6 +990,15 @@ export async function runVerifyGate(
             {
               ...(vl.images.length > 0 ? { images: vl.images } : {}),
               ...(laneCount > 1 ? { effort: LANE_EFFORT } : {}),
+              // Oversized lane: the judge reads the tree itself (read-only)
+              // instead of receiving the diff inline; see the lane assembly.
+              ...(vl.agentic ? { agentic: true } : {}),
+              // Anchor the judge process to the project root, not the
+              // caller's cwd: `sasu verify` from a subdirectory otherwise
+              // hands the agentic judge a working directory where the
+              // diff-stat's repo-relative paths do not resolve. (Codex builds
+              // its own empty work root and ignores this.)
+              cwd: projectRoot,
             },
           );
           return { lane: vl, outcome, error: null as unknown };
@@ -830,6 +1042,7 @@ export async function runVerifyGate(
         recommendation: "Address the criterion and re-run sasu verify.",
         requiresHuman: false,
       }));
+    findings.push(...oracleFindings);
     findings.push(...humanLane);
     // Pin the tree the verdict was earned on; the Stop-hook quick guard
     // recomputes this to catch code edited after a PASS. Best-effort: a
@@ -842,8 +1055,20 @@ export async function runVerifyGate(
     }
     // An unjudged human criterion keeps the gate closed even when every judged
     // one passed: nobody has confirmed it yet, and the honest report of that
-    // is a blocking requiresHuman finding, not a PASS.
-    const passed = judgedVerdict === "PASS" && humanLane.length === 0;
+    // is a blocking requiresHuman finding, not a PASS. A failed oracle closes
+    // it the same way - the harness observed the criterion unmet.
+    const passed = judgedVerdict === "PASS" && humanLane.length === 0 && oracleFindings.length === 0;
+    // Document-order verdict list for the receipt: judged criteria carry the
+    // judge's verdicts, oracle-backed ones the harness's; human criteria have
+    // no verdict to quote (their findings carry the story).
+    const verdictByIdAll = new Map<string, CriterionVerdict>([
+      ...mergedCriteria.map((c) => [c.id, c] as const),
+      ...oracleCriteria.map((c) => [c.id, c] as const),
+    ]);
+    const resultCriteria = criteria.flatMap((c) => {
+      const verdict = verdictByIdAll.get(c.id);
+      return verdict !== undefined ? [verdict] : [];
+    });
     state = recordGateResult(
       store,
       state,
@@ -860,8 +1085,9 @@ export async function runVerifyGate(
           stage: "semantic",
           verdict: passed ? "PASS" : "FAIL",
           judgedVerdict,
-          criteria: mergedCriteria,
+          criteria: resultCriteria,
           humanLane,
+          ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
           // What the judge was actually shown, so "AC4 was never sent" is an
           // auditable fact rather than something you re-derive from the code.
           judgedCriteriaIds,
@@ -877,6 +1103,8 @@ export async function runVerifyGate(
           evidence: evidenceSummary,
           mechanical: mechanicalRecord(),
           treeFingerprint,
+          ...(agentCuratedDiff ? { agentCuratedDiff: true } : {}),
+          ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
           inputs: allInputs,
         },
       },
@@ -889,12 +1117,13 @@ export async function runVerifyGate(
       prelint,
       mechanical,
       ...warningField,
-      criteria: mergedCriteria,
+      criteria: resultCriteria,
       inputs: allInputs,
       evidence: evidenceSummary,
       checks: checkResults,
       judgedCriteriaIds,
       judgedVerdict,
+      ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
     };
   } catch (error) {
     // A broken judge round does not erase the run's real work: the receipt
@@ -906,6 +1135,9 @@ export async function runVerifyGate(
       checks: checkResults,
       evidence: evidenceSummary,
       mechanical: mechanicalRecord(),
+      ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
+      ...(agentCuratedDiff ? { agentCuratedDiff: true } : {}),
+      ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
       inputs: allInputs,
     };
     return {
@@ -1294,6 +1526,232 @@ const DIFF_EXCLUDE_PATHSPECS = [
   ":(exclude)agents",
   ...DIFF_EXCLUDED_LOCKFILES.map((name) => `:(glob,exclude)**/${name}`),
 ];
+
+// --- PRD-declared lane scoping (4a) ---
+//
+// The trust rule: which slice of the diff a judge lane sees is decided by the
+// vetted PRD's `Scope:` declarations and derived here by the harness - never
+// picked by the implementer at verification time (that is what --diff-file
+// does, and why its use is stamped agentCuratedDiff in the artifact).
+
+/**
+ * Minimal glob dialect for §8 Scope tails: `**` crosses directories, `*` and
+ * `?` stay within one segment, and a bare path (no wildcard) matches itself
+ * or anything under it, like a git pathspec. Deliberately no brace/negation
+ * support - prelint rejects characters outside this dialect.
+ */
+export function matchesScopeGlob(file: string, glob: string): boolean {
+  const normalized = file.replace(/\\/g, "/");
+  const cleaned = glob.replace(/\/+$/, "");
+  if (!/[*?]/.test(cleaned)) {
+    return normalized === cleaned || normalized.startsWith(`${cleaned}/`);
+  }
+  let pattern = "";
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const char = cleaned[i]!;
+    if (char === "*") {
+      if (cleaned[i + 1] === "*") {
+        // `**/` may match zero directories; bare `**` swallows anything.
+        pattern += cleaned[i + 2] === "/" ? "(?:.*/)?" : ".*";
+        i += cleaned[i + 2] === "/" ? 2 : 1;
+      } else {
+        pattern += "[^/]*";
+      }
+    } else if (char === "?") {
+      pattern += "[^/]";
+    } else {
+      pattern += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${pattern}$`).test(normalized);
+}
+
+interface DiffFileBlock {
+  /** Path of the change (b-side; a-side for deletions). */
+  path: string;
+  text: string;
+}
+
+/** Split a curated unified diff into per-file blocks on `diff --git` headers. */
+export function splitDiffByFile(diff: string): DiffFileBlock[] {
+  const blocks: DiffFileBlock[] = [];
+  const headerRe = /^diff --git (?:"?a\/(.+?)"?) (?:"?b\/(.+?)"?)$/;
+  let current: DiffFileBlock | null = null;
+  let buffer: string[] = [];
+  const flush = () => {
+    if (current) {
+      current.text = buffer.join("\n");
+      blocks.push(current);
+    }
+    buffer = [];
+  };
+  for (const line of diff.split("\n")) {
+    const header = line.match(headerRe);
+    if (header) {
+      flush();
+      const aPath = header[1]!;
+      const bPath = header[2]!;
+      current = { path: bPath === "dev/null" ? aPath : bPath, text: "" };
+    }
+    if (current) buffer.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+/** Keep only the file blocks whose path matches any of the globs. */
+export function filterDiffByGlobs(diff: string, globs: string[]): { text: string; files: string[] } {
+  const kept = splitDiffByFile(diff).filter((block) => globs.some((glob) => matchesScopeGlob(block.path, glob)));
+  return { text: kept.map((block) => block.text).join("\n"), files: kept.map((block) => block.path) };
+}
+
+/**
+ * Lane scope from the AC -> Covers-task chain: the union of Scope globs of
+ * every task covering any of the lane's criteria (directly by AC id, or via a
+ * requirement the AC references - the same chain the prelint coverage rule
+ * walks). Scoping applies ONLY when every covering task of every lane
+ * criterion declared a Scope; a single undeclared task, or a criterion no
+ * task covers (a global-invariant AC), keeps the lane on the full curated
+ * diff - narrowing on partial declarations would hide evidence the
+ * undeclared work may have touched.
+ */
+export function scopeForLane(
+  criteria: { id: string; text: string }[],
+  tasks: ScopedTask[],
+): string[] | null {
+  const globs = new Set<string>();
+  for (const criterion of criteria) {
+    // Case-insensitive + uppercased to match the lib parser, which uppercases
+    // every R ref: a bullet writing "r3" must ride the same coverage chain.
+    const referencedRequirements = new Set((criterion.text.match(/\br\d+\b/gi) ?? []).map((ref) => ref.toUpperCase()));
+    const covering = tasks.filter(
+      (task) =>
+        task.acceptanceCriteria.includes(criterion.id)
+        || task.requirements.some((requirement) => referencedRequirements.has(requirement)),
+    );
+    if (covering.length === 0) return null;
+    if (covering.some((task) => task.scopeGlobs.length === 0)) return null;
+    for (const task of covering) for (const glob of task.scopeGlobs) globs.add(glob);
+  }
+  return globs.size > 0 ? [...globs] : null;
+}
+
+/**
+ * Diff-stat for the agentic fallback prompt: file list plus added/removed line
+ * counts, computed from the diff text itself so a --diff-file diff and a
+ * git-generated one produce the same summary shape.
+ */
+export function diffStatFromText(diff: string): string {
+  const blocks = splitDiffByFile(diff);
+  const lines = blocks.map((block) => {
+    let added = 0;
+    let removed = 0;
+    for (const line of block.text.split("\n")) {
+      if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
+      else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
+    }
+    return `${block.path} | +${added} -${removed}`;
+  });
+  return `${lines.join("\n")}\n${blocks.length} file(s) changed`;
+}
+
+// --- AC oracle stage (5c) ---
+
+export interface OracleOutcome {
+  id: string;
+  kind: "check" | "artifact";
+  command?: string;
+  path?: string;
+  exitCode?: number;
+  expectMatched?: boolean;
+  digestViolation?: boolean;
+  met: boolean;
+  reason: string;
+  evidence: string;
+}
+
+/**
+ * Execute the PRD-declared AC oracles on the harness clock (ouroboros
+ * AcceptanceCriterionSpec, scaled down): exit 0 plus optional stdout substring
+ * for `Check:`, file existence for `Artifact:`. Check commands get the same
+ * workspace digest guard as verify-run - an oracle that mutates the tree to
+ * pass is recorded as a violation, not a pass.
+ *
+ * Exported so tests can pin executor parity with the harness's cmdOracleRun.
+ */
+export function runAcOracles(
+  projectRoot: string,
+  config: SasuConfig,
+  targets: { id: string; text: string; oracle: AcOracle }[],
+): { outcomes: OracleOutcome[]; warnings: string[] } {
+  const outcomes: OracleOutcome[] = [];
+  const warnings: string[] = [];
+  for (const target of targets) {
+    const oracle = target.oracle;
+    if (oracle.kind === "artifact") {
+      const artifactPath = oracle.path ?? "";
+      const exists = artifactPath !== "" && fs.existsSync(path.join(projectRoot, artifactPath));
+      outcomes.push({
+        id: target.id,
+        kind: "artifact",
+        path: artifactPath,
+        met: exists,
+        reason: exists ? `declared artifact ${artifactPath} exists (harness-observed)` : `declared artifact ${artifactPath} does not exist`,
+        evidence: `harness checked existence of ${artifactPath}`,
+      });
+      continue;
+    }
+    const command = oracle.command ?? "";
+    if (DB_TOUCH_PATTERN.test(command)) {
+      warnings.push(
+        `${target.id}: oracle command appears to touch a database (\`${command}\`). Confirm the connection target is a disposable local or branch database, never production data.`,
+      );
+    }
+    const before = quickTreeFingerprint(projectRoot);
+    // Harness semantics, verbatim: shellLikeTokens + shell:false. The PRD
+    // oracle grammar never promised shell operators, so
+    // `test -f README.md && grep -c Test README.md` hands "&&" to `test` as a
+    // literal argument (non-zero) in BOTH executors instead of passing here
+    // and failing in oracle-run. Authors who want a shell write it
+    // explicitly: `bash -c "..."` (prelint warns on bare operators).
+    const tokens = shellLikeTokens(command);
+    const result = spawnSync(tokens[0] ?? command, tokens.slice(1), {
+      cwd: projectRoot,
+      shell: false,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: config.verify.commandTimeoutMs,
+      env: process.env,
+    });
+    const after = quickTreeFingerprint(projectRoot);
+    const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
+    const exitCode = timedOut ? 124 : (result.status ?? 1);
+    const stdout = result.stdout ?? "";
+    const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;
+    const digestViolation = Boolean(
+      before && after && (before.headSha !== after.headSha || before.statusHash !== after.statusHash),
+    );
+    const met = exitCode === 0 && expectMatched && !digestViolation;
+    const reason =
+      digestViolation && exitCode === 0
+        ? `oracle command mutated the workspace during verification (digest guard): \`${command}\``
+        : met
+          ? `harness ran \`${command}\`: exit 0${oracle.expect ? `, output contained "${oracle.expect}"` : ""}`
+          : `harness ran \`${command}\`: exit ${exitCode}${oracle.expect && !expectMatched ? `, output did not contain "${oracle.expect}"` : ""}`;
+    outcomes.push({
+      id: target.id,
+      kind: "check",
+      command,
+      exitCode,
+      expectMatched,
+      digestViolation,
+      met,
+      reason,
+      evidence: `harness executed \`${command}\` (exit ${exitCode})`,
+    });
+  }
+  return { outcomes, warnings };
+}
 
 /**
  * The change under judgment, including files the run created.

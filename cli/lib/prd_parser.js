@@ -193,6 +193,17 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     current.title = firstSentence(current.text);
     current.requirements = uniqueMatches(current.text, /\bR\d+\b/gi);
     current.acceptanceCriteria = uniqueMatches(current.text, /\bAC\d+\b/gi);
+    // §8 task tail `Scope: <glob>[, <glob>...]` - the PRD's own declaration of
+    // where this task's change lives. Extracted for every item kind (only
+    // tasks use it today) so the verify gate can scope a judge lane's diff to
+    // the paths the vetted document named, instead of paths the implementer
+    // picked at verification time (submission-bias boundary, D: verify-input
+    // selection belongs to the document/harness). Parsed from the pre-strip
+    // raw text: the bold-marker strip on `text` eats a line-final `**`, which
+    // is exactly how a recursive glob ends.
+    const scopeGlobs = parseScopeGlobs(current.rawText.replace(/\s+/g, " ").trim());
+    if (scopeGlobs.length) current.scopeGlobs = scopeGlobs;
+    delete current.rawText;
     items.push(current);
     current = null;
   };
@@ -203,6 +214,7 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     if (!match) {
       if (current && /^\s{2,}\S/.test(rawLine) && !line.startsWith("|")) {
         current.text += ` ${line}`;
+        current.rawText += ` ${line}`;
       }
       continue;
     }
@@ -221,6 +233,7 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     current = {
       id,
       text,
+      rawText: match[1].trim(),
       status: "pending",
       evidence: [],
       artifacts: [],
@@ -228,6 +241,126 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
   }
   finishCurrent();
   return items;
+}
+
+/**
+ * `Scope:` tail grammar for §8 task bullets: `Scope: <glob>[, <glob>...]` at
+ * the end of the bullet. One grammar, three readers - this parser (init state),
+ * the TS prelint (syntax gate), and the verify gate's lane scoping - so the
+ * regexes live here and everyone imports them.
+ */
+const SCOPE_TAIL = /(?:^|\s)Scope:\s*(.+)$/;
+
+function parseScopeGlobs(text) {
+  const match = String(text || "").match(SCOPE_TAIL);
+  if (!match) return [];
+  return match[1]
+    .replace(/\.\s*$/, "")
+    .split(",")
+    .map(part => part.trim().replace(/^`|`$/g, "").trim())
+    .filter(Boolean);
+}
+
+// Syntax validation shared with prelint: null when the glob is acceptable,
+// otherwise the human-readable reason. Globs are repo-relative by contract -
+// the diff they scope is repo-relative - so absolute paths and `..` escapes
+// are structural defects, not style.
+function scopeGlobDefect(glob) {
+  const value = String(glob || "").trim();
+  if (!value) return "empty glob";
+  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value)) return `glob is absolute: ${value}`;
+  if (value.split("/").includes("..")) return `glob escapes the project root: ${value}`;
+  if (/\\/.test(value)) return `glob uses backslashes: ${value} (use forward slashes)`;
+  if (!/^[A-Za-z0-9_@.\-/*?]+$/.test(value)) return `glob has unsupported characters: ${value} (allowed: letters, digits, _ @ . - / * ?)`;
+  return null;
+}
+
+/**
+ * AC oracle tail grammar (§7): a machine-checkable acceptance criterion may
+ * end with one of
+ *   Check: `<command>` -> <expected stdout substring>
+ *   Check: `<command>`                (exit 0 alone proves it)
+ *   Artifact: <project-relative path> (existence proves it)
+ * Scaled-down import of ouroboros's AcceptanceCriterionSpec
+ * (verify_command/output_assertion/expected_artifacts): the oracle is declared
+ * in the vetted document at PRD time and executed by the harness, so the
+ * implementer never picks what proves the criterion. Oracle-backed ACs are
+ * settled mechanically and skip the judge lane entirely.
+ */
+const AC_ORACLE_CHECK = /(?:^|\s)Check:\s*`([^`]+)`\s*(?:(?:->|→)\s*(\S.*))?$/;
+const AC_ORACLE_ARTIFACT = /(?:^|\s)Artifact:\s*(\S+?)\s*$/;
+
+function parseAcOracle(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  const check = normalized.match(AC_ORACLE_CHECK);
+  if (check) {
+    let expect = (check[2] || "").trim();
+    // A backtick-wrapped expectation is taken verbatim (the escape hatch for
+    // expectations that literally end in a period). A bare one sheds the
+    // bullet's sentence-final period so `-> ok.` asserts "ok", not "ok." -
+    // unless the period follows a quote, which reads as literal content
+    // (e.g. a JSON snippet like -> "status":"ok").
+    const backticked = expect.match(/^`(.*)`$/);
+    if (backticked) expect = backticked[1];
+    else if (!/["'`]\.$/.test(expect)) expect = expect.replace(/\.$/, "");
+    return { kind: "check", command: check[1].trim(), expect: expect || null };
+  }
+  const artifact = normalized.match(AC_ORACLE_ARTIFACT);
+  if (artifact) {
+    const artifactPath = artifact[1].replace(/^`|`$/g, "").replace(/\.$/, "");
+    return { kind: "artifact", path: artifactPath };
+  }
+  return null;
+}
+
+// Structural defects in an oracle tail, for the $0 prelint: a bullet that
+// gestures at the reserved Check:/Artifact: markers but does not parse must
+// block before any judge or oracle run reads it as prose.
+function acOracleDefect(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  const mentionsCheck = /(?:^|\s)Check:/.test(normalized);
+  const mentionsArtifact = /(?:^|\s)Artifact:/.test(normalized);
+  if (!mentionsCheck && !mentionsArtifact) return null;
+  if (mentionsCheck && mentionsArtifact) {
+    return "AC declares both Check: and Artifact: oracles; keep exactly one (split the criterion if both proofs matter)";
+  }
+  if (mentionsCheck && !AC_ORACLE_CHECK.test(normalized)) {
+    return "Check: oracle must be `Check: \\`<command>\\` [-> <expected stdout substring>]` at the end of the bullet, command in backticks";
+  }
+  const oracle = parseAcOracle(normalized);
+  if (oracle && oracle.kind === "artifact") {
+    if (oracle.path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(oracle.path)) {
+      return `Artifact: oracle path is absolute: ${oracle.path} (use a project-relative path)`;
+    }
+    if (oracle.path.split(/[\\/]/).includes("..")) {
+      return `Artifact: oracle path escapes the project root: ${oracle.path}`;
+    }
+  }
+  if (mentionsArtifact && !oracle) {
+    return "Artifact: oracle must be `Artifact: <project-relative path>` at the end of the bullet";
+  }
+  return null;
+}
+
+/**
+ * Task scope view for the verify gate's lane scoping (TS side requires this
+ * through the same lib the state parser uses, so both read one §8 grammar).
+ * `acceptanceCriteria`/`requirements` are the task's Covers references; an AC
+ * is scope-covered by a task either directly or via a shared R# - the same
+ * chain the prelint's AC-coverage rule walks.
+ */
+function parsePrdTasksForScoping(prdContent) {
+  const parsed = stripFrontmatter(String(prdContent || ""));
+  const tasks = parseMarkdownItems(extractFirstSection(parsed.body, [
+    "8. PRD-Level Tasks",
+    "PRD-Level Tasks",
+  ]), "T", "Task");
+  return tasks.map(task => ({
+    id: task.id,
+    scopeGlobs: task.scopeGlobs || [],
+    acceptanceCriteria: task.acceptanceCriteria || [],
+    requirements: task.requirements || [],
+  }));
 }
 
 function buildIntentTrace(parsed, projectRoot) {
@@ -662,6 +795,11 @@ module.exports = {
   extractNestedSection,
   extractFirstNestedSection,
   parseMarkdownItems,
+  parseScopeGlobs,
+  scopeGlobDefect,
+  parseAcOracle,
+  acOracleDefect,
+  parsePrdTasksForScoping,
   parsePreWorkChecklist,
   classifyPreWorkSubsection,
   isPreWorkResolved,
