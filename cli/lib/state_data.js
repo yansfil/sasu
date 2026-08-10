@@ -28,6 +28,34 @@ function verificationIsClosedForAccounting(verification) {
 }
 
 /**
+ * Find an already-recorded verification_command deviation for the same
+ * (target, expected, actual) triple. Exposed so verify-run can honor an
+ * existing intentional-equivalent justification instead of demanding the
+ * agent retype the reason on every re-run.
+ * @param {State} state
+ * @param {string} targetId
+ * @param {string|null|undefined} expectedCommand
+ * @param {string} actualCommand
+ * @returns {Deviation|null}
+ */
+function findVerificationCommandDeviation(state, targetId, expectedCommand, actualCommand) {
+  return (state.deviations || []).find(entry =>
+    entry.type === "verification_command"
+    && entry.targetId === targetId
+    && entry.details
+    && entry.details.expectedCommand === expectedCommand
+    && entry.details.actualCommand === actualCommand) || null;
+}
+
+/**
+ * Record a deviation. Most types are append-only: an approval override or an
+ * out-of-order completion is an event whose each occurrence (and its timing)
+ * matters to the audit. `verification_command` is the exception: re-running
+ * the same equivalent command against the same contract is one fact, not many
+ * events - audited runs re-verified across rounds and drowned the deviation
+ * report in duplicates of a single substitution. Identical triples therefore
+ * collapse into the original entry (original id and summary kept) with an
+ * occurrence counter and last-seen timestamp instead of a new row.
  * @param {State} state
  * @param {string} type
  * @param {string} targetId
@@ -37,6 +65,15 @@ function verificationIsClosedForAccounting(verification) {
  */
 function recordDeviation(state, type, targetId, summary, details = {}) {
   if (!state.deviations) state.deviations = [];
+  if (type === "verification_command") {
+    const existing = findVerificationCommandDeviation(state, targetId, details.expectedCommand, details.actualCommand);
+    if (existing) {
+      existing.details.occurrences = (existing.details.occurrences || 1) + 1;
+      existing.details.lastSeenAt = nowIso();
+      return existing;
+    }
+    details = { ...details, occurrences: 1 };
+  }
   const entry = {
     id: `D${state.deviations.length + 1}`,
     ts: nowIso(),
@@ -321,6 +358,7 @@ function latestEvidenceTimestamp(state) {
 module.exports = {
   isVerificationRequiredForDone,
   verificationIsClosedForAccounting,
+  findVerificationCommandDeviation,
   recordDeviation,
   markFinalReviewStale,
   markRequirementsFidelityReviewStale,

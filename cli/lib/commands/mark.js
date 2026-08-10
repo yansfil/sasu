@@ -4,7 +4,7 @@ const path = require("path");
 const childProcess = require("child_process");
 
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
-const { recordDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
+const { recordDeviation, findVerificationCommandDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
 const { commandsMatchContract } = require("../inference");
 const { reverifyFingerprint } = require("../git");
 const { readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
@@ -213,10 +213,17 @@ function cmdVerifyRun(rawArgs) {
     const deviation = String(options.deviation || "").trim();
     let deviationEntry = null;
     if (!commandsMatchContract(commandCompareText, plannedCommand)) {
-      if (!deviation) {
+      // An identical (expected, actual) mismatch already justified on record
+      // means the intentional-equivalent fact exists; demanding --deviation
+      // again would only make the agent retype the same reason on every
+      // re-run. Reuse the recorded justification (recordDeviation keeps the
+      // original entry and bumps occurrences). Genuinely new mismatches still
+      // require an explicit reason.
+      const existing = findVerificationCommandDeviation(state, id, plannedCommand, commandText);
+      if (!deviation && !existing) {
         throw new Error(`Verification ${id} command differs from PRD contract. Expected: ${plannedCommand}. Actual: ${commandText}. Re-run with --deviation <reason> if this is an intentional equivalent verifier.`);
       }
-      deviationEntry = recordDeviation(state, "verification_command", id, deviation, {
+      deviationEntry = recordDeviation(state, "verification_command", id, deviation || existing.summary, {
         expectedCommand: plannedCommand,
         actualCommand: commandText,
       });

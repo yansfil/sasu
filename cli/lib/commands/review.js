@@ -9,7 +9,7 @@ const { worktreeSnapshot, reverifyFingerprint } = require("../git");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, verifyGateStatus } = require("../reviews");
+const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
@@ -227,6 +227,9 @@ function cmdFinalize(options) {
     violations.push(...completionViolations(statePath, state, { includeFinalReview: true }));
   } else {
     violations.push(...requirementsFidelityHandoffViolations(state));
+    // High-risk work handed off partial/blocked still owes the independent
+    // final review's verdict in the receipt (pass or fail both acceptable).
+    violations.push(...finalReviewHandoffViolations(state));
     const blockers = [
       ...state.tasks.filter(item => item.status === "blocked"),
       ...state.acceptanceCriteria.filter(item => item.status === "blocked" || item.status === "not_met"),

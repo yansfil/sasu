@@ -659,6 +659,46 @@ test("a failing run-wide check still collects the criterion proof that was going
   );
 });
 
+// --- diff curation + oversized-diff guard (audited run, 2026-08) ---
+
+test("lockfiles and the agents/ namespace are curated out of the judged diff on both sides", () => {
+  const dir = makeGitProject();
+  // Tracked noise: commit lockfiles and a harness doc, then bloat them far
+  // past the judge input budget. If any of it leaked into the diff, the
+  // truncation guard would fail the command instead of judging.
+  fs.writeFileSync(path.join(dir, "pnpm-lock.yaml"), "lock: 1\n");
+  fs.mkdirSync(path.join(dir, "app"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "app", "pnpm-lock.yaml"), "lock: 1\n");
+  fs.mkdirSync(path.join(dir, "agents", "prd"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "agents", "prd", "prd.md"), "# prd\n");
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-m", "add noise sources"]);
+  const noise = "x".repeat(200_000);
+  fs.writeFileSync(path.join(dir, "pnpm-lock.yaml"), noise);
+  fs.writeFileSync(path.join(dir, "app", "pnpm-lock.yaml"), noise);
+  fs.writeFileSync(path.join(dir, "agents", "prd", "prd.md"), noise);
+  // Untracked noise too: the exclusion predicate must agree on both sides.
+  fs.writeFileSync(path.join(dir, "yarn.lock"), noise);
+  fs.writeFileSync(path.join(dir, "agents", "prd", "notes.md"), noise);
+  const { result } = verifyJson(dir, PASS_RESPONSE);
+  assert.equal(result.status, 0, `noise must not reach the judge or trip the size guard: ${result.stdout}${result.stderr}`);
+});
+
+test("an oversized real diff fails the command up front without touching gate state", () => {
+  const dir = makeGitProject();
+  fs.appendFileSync(path.join(dir, "widget.js"), `// ${"x".repeat(200_000)}\n`);
+  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+    stub: stubFile(dir, PASS_RESPONSE),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /judge input budget/);
+  assert.match(result.stderr, /No judgment ran and no retry attempt was spent/);
+  assert.ok(
+    !fs.existsSync(path.join(dir, "agents", "gates", "demo", "gates.json")),
+    "an oversized diff must not create gate state or charge an attempt",
+  );
+});
+
 test("passing both --prd and --contract is rejected", () => {
   const dir = makeGitProject();
   const result = runCli(dir, [

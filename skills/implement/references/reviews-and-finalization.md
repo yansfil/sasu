@@ -104,7 +104,8 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-
 ```
 
 The fidelity review and the sasu verify gate divide the semantic lane and may run concurrently once the acceptance sweep is done and the code is frozen.
-The gate owns per-criterion code-vs-AC verdicts from the diff; the fidelity reviewer owns intent lineage, decision provenance, deviations, and whether registered evidence proves the intent - neither consumes the other's output, so launch the reviewer as a background sidecar and run `sasu verify` while it works.
+The gate owns per-criterion code-vs-AC verdicts from the diff; the fidelity reviewer owns intent lineage, decision provenance, deviations, and whether registered evidence proves the intent - neither consumes the other's output.
+Ownership and concurrency are different axes: on `standard`, launch the independent reviewer as a background sidecar and run `sasu verify` while it works; on `high-risk`, run `sasu verify` in the background and write the main-agent fidelity review while the gate runs (the independent final adversarial review is still spawned only after fidelity is recorded); on `trivial`, the main agent writes the compact review and gate concurrency is moot.
 If the gate fails and the fix changes code, the fidelity review goes stale under the normal freshness rule and must re-run; accept that risk instead of serializing the two calls.
 
 This review compares the complete canonical qa-log or conversation source, accepted decisions, rejected alternatives, PRD scope, acceptance criteria, verification evidence, and implementation result.
@@ -202,7 +203,7 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-record \
   --summary "<review verdict>"
 ```
 
-When a required final review fails, fix the findings, rerun affected verification and requirements fidelity, then record a new passing final review.
+When a required final review fails, fix the findings, re-capture any runtime evidence the fix invalidates, rerun requirements fidelity, then record a new passing final review; `finalize` re-runs required command-backed verification on the final tree, so do not re-run passed command-backed items manually.
 
 Required final reviews must be independent in both time and content.
 The report file must be authored after `requirements-review-record` succeeds.

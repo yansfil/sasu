@@ -324,21 +324,40 @@ ${lines.join("\n\n")}
 `;
 }
 
+/**
+ * Judge input budget for the verify diff. The diff is never clamped: an
+ * audited run (2026-08) lost 91k chars out of the middle of a 251k diff, and
+ * because git orders paths alphabetically the surviving head was 100%
+ * documents - the judge saw zero app code, failed every criterion as "not
+ * present in diff", and that false FAIL charged a retry attempt. An oversized
+ * diff must fail the command up front instead (see runVerifyGate).
+ */
+export const VERIFY_DIFF_MAX_CHARS = 160_000;
+
 export function semanticVerifyPrompt(
   diffContent: string,
   criteria: { id: string; text: string }[],
   evidence: EvidenceMaterial[] = [],
   checks: CheckResult[] = [],
-  options: { mechanicalRan?: boolean } = {},
+  options: { mechanicalRan?: boolean; lane?: { index: number; count: number } } = {},
 ): string {
   const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
   const mechanicalNote =
     options.mechanicalRan === false
       ? `The project's mechanical checks were SKIPPED for this run - do not assume tests, lint, or build pass.`
       : `The project's mechanical checks (tests/lint/build) already passed; do not re-litigate them.`;
+  // Verify fan-out mirrors the gap-audit lane preamble: each lane owns a
+  // disjoint criteria slice, so a lane must never report on (or worry about)
+  // criteria another lane is judging in parallel.
+  const laneNote =
+    options.lane !== undefined && options.lane.count > 1
+      ? `\nLANE SCOPE: you are one of ${options.lane.count} parallel reviewers, each owning a disjoint slice of
+the acceptance criteria over the same diff. Judge ONLY the criteria listed below; the rest are
+judged in parallel by other reviewers.`
+      : "";
   return `You are an independent implementation reviewer.
 You have no prior context beyond the acceptance criteria, the diff, and any evidence below.
-${mechanicalNote}
+${mechanicalNote}${laneNote}
 
 For EACH acceptance criterion, judge whether the diff (and its check results and evidence, where
 provided) satisfies it.
@@ -365,6 +384,6 @@ ${criteriaBlock}
 ${checkSection(checks)}${evidenceSection(evidence)}
 DIFF:
 ---
-${clampDocument(diffContent, 160_000)}
+${diffContent}
 ---`;
 }

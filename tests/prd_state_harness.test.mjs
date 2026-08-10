@@ -12,6 +12,7 @@ const requireModule = createRequire(import.meta.url);
 const { classifyReviewProfile } = requireModule(path.join(repoRoot, "cli", "lib", "config.js"));
 const { parseGitStatusZ } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
 const { normalizeWriteScopes, findDependencyCycle, writeScopesOverlap } = requireModule(path.join(repoRoot, "cli", "lib", "planning.js"));
+const { writeImplementationReport } = requireModule(path.join(repoRoot, "cli", "lib", "render.js"));
 
 test("parseGitStatusZ preserves rename source records", () => {
   assert.deepEqual(
@@ -405,6 +406,161 @@ test("verify-run preserves quoted argument whitespace when comparing commands", 
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /command differs from PRD contract/);
+});
+
+test("verify-run dedupes identical verification_command deviations and reuses the recorded justification", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "deviation-dedupe");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const statePath = path.join(projectRoot, "agents", "implement", "deviation-dedupe", "state.json");
+  const readDeviations = () => JSON.parse(fs.readFileSync(statePath, "utf8"))
+    .deviations.filter(item => item.type === "verification_command");
+  const actual = ["node", "-e", "void 0; process.exit(0)"];
+
+  // Same (target, expected, actual) triple twice: one entry, occurrences 2,
+  // and the ORIGINAL summary survives even when a new reason is typed.
+  runJson(["verify-run", "--id", "V1", "--deviation", "DATABASE_URL을 로컬로 대체한 동등 검증", "--", ...actual], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--deviation", "retyped different reason", "--", ...actual], projectRoot);
+  let deviations = readDeviations();
+  assert.equal(deviations.length, 1);
+  assert.equal(deviations[0].id, "D1");
+  assert.equal(deviations[0].summary, "DATABASE_URL을 로컬로 대체한 동등 검증");
+  assert.equal(deviations[0].details.occurrences, 2);
+  assert.ok(deviations[0].details.lastSeenAt, "deduped deviation must record lastSeenAt");
+
+  // Missing --deviation with an identical recorded mismatch must not throw:
+  // the intentional-equivalent justification is already on record.
+  const rerun = runJson(["verify-run", "--id", "V1", "--", ...actual], projectRoot);
+  assert.equal(rerun.ok, true);
+  deviations = readDeviations();
+  assert.equal(deviations.length, 1);
+  assert.equal(deviations[0].details.occurrences, 3);
+
+  // A different actual command is a genuinely new mismatch: --deviation is
+  // still required, and providing it appends a second entry.
+  const different = ["node", "-e", "void 0;; process.exit(0)"];
+  const refused = run(process.execPath, [harness, "verify-run", "--id", "V1", "--", ...different], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /command differs from PRD contract/);
+  runJson(["verify-run", "--id", "V1", "--deviation", "second distinct equivalent verifier", "--", ...different], projectRoot);
+  deviations = readDeviations();
+  assert.equal(deviations.length, 2);
+  assert.equal(deviations[1].details.occurrences, 1);
+
+  // The rendered deviation section shows the repeat count instead of rows.
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  writeImplementationReport(statePath, state);
+  const report = fs.readFileSync(path.join(path.dirname(statePath), "implementation-result.md"), "utf8");
+  assert.match(report, /D1: verification_command - DATABASE_URL을 로컬로 대체한 동등 검증 \(×3, last \d{4}-\d{2}-\d{2}T/);
+  assert.doesNotMatch(report, /second distinct equivalent verifier \(×/);
+});
+
+function failingFidelityReviewBody(logPath) {
+  return fidelityReviewBody(logPath)
+    .replace("Status: PASS", "Status: FAIL")
+    .replace("- none: no material findings", "- high: T1 is unfinished; the run is being handed off partial.")
+    .replace("## Verdict\n\nPASS.", "## Verdict\n\nFAIL.");
+}
+
+function driveToPartialHandoff(projectRoot, slug, profile) {
+  const prdPath = writeApprovedPrd(projectRoot, slug);
+  runJson(["init", "--prd", prdPath, "--review-profile", profile, "--session-id", `${slug}-session`], projectRoot);
+  runJson(["plan-execution"], projectRoot);
+  // V1 passes (completed, evidenced) while T1 stays pending (incomplete): the
+  // minimal legal shape for a partial handoff.
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
+  const logPath = state.verification[0].artifacts[0].path;
+  const reviewPath = path.join(projectRoot, "agents", "implement", slug, "review", "requirements-fidelity-review.md");
+  write(reviewPath, failingFidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "fail", "--report", reviewPath, "--summary", "FAIL - handoff"], projectRoot);
+}
+
+test("high-risk partial finalize requires a recorded final adversarial review verdict", () => {
+  const projectRoot = initGitRepo();
+  const slug = "high-risk-partial";
+  driveToPartialHandoff(projectRoot, slug, "high-risk");
+
+  // No final review recorded: the high-risk handoff must be rejected.
+  const rejected = runJson(["finalize", "--status", "partial", "--summary", "Partial handoff."], projectRoot, { allowFailure: true });
+  assert.equal(rejected.ok, false);
+  assert.ok(rejected.violations.some(item => /Final adversarial review must be recorded before blocked\/partial finalization/.test(item)),
+    `expected a final-review handoff violation, got: ${JSON.stringify(rejected.violations)}`);
+  assert.ok(rejected.violations.some(item => /review-prompt/.test(item) && /review-record/.test(item)),
+    "the violation must tell the agent which commands to run");
+
+  // A recorded FAIL final review is acceptable: the review happened and its
+  // verdict lands in the receipt; the handoff does not demand a pass.
+  const finalPath = path.join(projectRoot, "agents", "implement", slug, "review", "final-review.md");
+  write(finalPath, `# Final Adversarial Review
+
+Status: FAIL
+
+## Fidelity Review Checked
+
+- The failing fidelity review was checked; the partial handoff is honest.
+
+## Findings
+
+- high: T1 remains unfinished and must be completed by the next owner.
+
+## Artifact Audit
+
+- Harness-visible validity: the V1 command log was inspected.
+
+## Deviation Audit
+
+- Recorded deviations: none.
+
+## Verdict
+
+FAIL.
+`);
+  runJson(["review-record", "--status", "fail", "--report", finalPath, "--summary", "FAIL - unfinished work handed off"], projectRoot);
+  const finalized = runJson(["finalize", "--status", "partial", "--summary", "Partial handoff with reviewed verdict."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.status, "partial");
+  assert.equal(receipt.finalReview.status, "fail", "the partial receipt must carry the final review verdict");
+});
+
+test("non-high-risk partial finalize is unaffected by the final-review handoff gate", () => {
+  const projectRoot = initGitRepo();
+  const slug = "trivial-partial";
+  driveToPartialHandoff(projectRoot, slug, "trivial");
+  const finalized = runJson(["finalize", "--status", "partial", "--summary", "Trivial partial handoff."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.status, "partial");
+  assert.equal(receipt.finalReview, null);
+});
+
+test("fidelity Coverage Judgment accepts plain label lines and names the expected shape on rejection", () => {
+  const projectRoot = initGitRepo();
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, "coverage-plain", "coverage-plain-session");
+
+  // Plain `Label: judgment` lines (no bullet) carry the same claim and must pass.
+  const plain = fidelityReviewBody(logPath)
+    .replace("- Requirements: covered by V1.", "Requirements: R1 covered by V1.")
+    .replace("- Acceptance Criteria: AC1 is met.", "Acceptance Criteria: AC1 is met.")
+    .replace("- User-visible behavior: no user-visible behavior.", "User-visible behavior: none.")
+    .replace("- Non-goals and rejected options: none reintroduced.", "Non-goals and rejected options: none reintroduced.")
+    .replace("- Human verification: none required.", "Human verification: none required.");
+  write(reviewPath, plain);
+  const ok = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  assert.equal(ok.ok, true);
+
+  // A genuinely missing label line must be rejected with the literal expected shape.
+  write(reviewPath, fidelityReviewBody(logPath).replace("- Requirements: covered by V1.\n", ""));
+  const bad = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /Coverage Judgment must include a line 'Requirements: <judgment>' \(leading bullet '-' optional\)/);
 });
 
 test("batch task mark with a bad id does not persist partial mutation", () => {

@@ -30,8 +30,8 @@ test("installer installs canonical skills with correct substitutions and no alia
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
-  assert.equal(report.installed.codex.length, 7);
-  assert.equal(report.installed.claude.length, 7);
+  assert.equal(report.installed.codex.length, 8);
+  assert.equal(report.installed.claude.length, 8);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");

@@ -135,7 +135,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
 
   const intentSources = extractSection(text, "Intent Sources Read");
   if (reviewBulletCount(intentSources) < 1) {
-    violations.push("Requirements fidelity report must list at least one intent source read");
+    violations.push("Requirements fidelity report Intent Sources Read must list at least one bullet like '- agents/prd/<slug>/prd.md'");
   }
 
   const decisionTrace = extractSection(text, "Decision Trace");
@@ -147,13 +147,18 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
   const expectedDecisionCount = Math.min(Math.max(1, decisionCount), 3);
   const decisionTraceEntryCount = reviewEntryCount(decisionTrace);
   if (decisionTraceEntryCount < expectedDecisionCount) {
-    violations.push(`Requirements fidelity report Decision Trace must include at least ${expectedDecisionCount} traced decision/proposal entr${expectedDecisionCount === 1 ? "y" : "ies"} (bullets or table rows); found ${decisionTraceEntryCount}`);
+    violations.push(`Requirements fidelity report Decision Trace must include at least ${expectedDecisionCount} traced decision/proposal entr${expectedDecisionCount === 1 ? "y" : "ies"}; found ${decisionTraceEntryCount}. Each entry is a bullet like '- <decision>: <where it landed> | gap: none' or a markdown table row`);
   }
 
   const coverage = extractSection(text, "Coverage Judgment");
+  // The bullet is formatting, not substance: a plain `Label: judgment` line at
+  // line start carries the same claim, so rejecting it only forced reviewers
+  // to reverse-engineer the expected shape from this source file. Every
+  // rejection message below spells out a literally-passing line for the same
+  // reason.
   for (const label of ["Requirements", "Acceptance Criteria", "User-visible behavior", "Non-goals and rejected options", "Human verification"]) {
-    const re = new RegExp(`^\\s*[-*]\\s*${escapeRegExp(label)}\\s*:\\s*\\S`, "im");
-    if (!re.test(coverage)) violations.push(`Requirements fidelity report Coverage Judgment must include a non-empty '${label}:' line`);
+    const re = new RegExp(`^\\s*(?:[-*]\\s*)?${escapeRegExp(label)}\\s*:\\s*\\S`, "im");
+    if (!re.test(coverage)) violations.push(`Requirements fidelity report Coverage Judgment must include a line '${label}: <judgment>' (leading bullet '-' optional)`);
   }
 
   const verificationChecklist = extractSection(text, "Verification Intent Checklist");
@@ -161,7 +166,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     if (!isVerificationRequiredForDone(verification)) continue;
     const re = new RegExp(`\\b${escapeRegExp(verification.id)}\\b`, "i");
     if (!re.test(verificationChecklist)) {
-      violations.push(`Requirements fidelity report Verification Intent Checklist must include required verification ${verification.id}`);
+      violations.push(`Requirements fidelity report Verification Intent Checklist must mention required verification ${verification.id}, e.g. '- ${verification.id}: Pass Intent: <intent>; Artifacts checked: <path>; Judgment: PASS; Gap: none'`);
     }
   }
 
@@ -174,7 +179,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     const prose = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
     const hasLeftoverPlaceholder = /<[A-Za-z][^>\n]*[ \/#-][^>\n]*>/.test(prose);
     if (/\b(?:TODO|TBD|FIXME)\b/i.test(prose) || hasLeftoverPlaceholder) {
-      violations.push("Passing requirements fidelity report must not contain leftover <template> placeholders, TODO, TBD, or FIXME (code spans are exempt)");
+      violations.push("Passing requirements fidelity report must not contain leftover <template> placeholders, TODO, TBD, or FIXME; replace each with real content, or wrap literal angle-bracket text in backticks (code spans are exempt)");
     }
     const unresolvedGap = decisionTrace
       .split(/\r?\n/)
@@ -502,6 +507,42 @@ function requirementsFidelityHandoffViolations(state) {
   return violations;
 }
 
+// Symmetric to requirementsFidelityHandoffViolations for the final
+// adversarial review: on a high-risk profile, partial/blocked finalization is
+// still a handoff of high-risk work, so the independent final review must
+// have HAPPENED and its verdict must land in the receipt. A recorded fail is
+// acceptable - the receipt then carries the adverse verdict honestly - but a
+// missing review means a high-risk change reaches the PR with zero
+// independent scrutiny, which is exactly the hole this closes. Non-high-risk
+// profiles never require the final review, so they are untouched.
+function finalReviewHandoffViolations(state) {
+  if (!finalReviewRequiredForState(state)) return [];
+  const review = state.finalReview;
+  if (!review) {
+    return ["Final adversarial review must be recorded before blocked/partial finalization on a high-risk profile (a recorded fail is acceptable); run `review-prompt` then `review-record`"];
+  }
+  const violations = [];
+  if (!["pass", "fail"].includes(review.status)) {
+    violations.push(`Final adversarial review status must be pass or fail before blocked/partial finalization; got ${review.status || "unknown"}; run \`review-prompt\` then \`review-record\``);
+  }
+  if (!review.reportPath) violations.push("Final adversarial review has no report path");
+  if (!review.summary) violations.push("Final adversarial review has no summary");
+  if (!review.recordedAt) violations.push("Final adversarial review has no recordedAt timestamp");
+  if (review.reportPath) {
+    try {
+      const abs = resolveProjectPath(review.reportPath, state.projectRoot || cwd());
+      inspectArtifact(abs, "log");
+      if (review.reportSha256 && review.reportSha256 !== sha256File(abs)) {
+        violations.push("Final adversarial review report hash changed");
+      }
+    } catch (error) {
+      violations.push(`Final adversarial review report invalid: ${error.message}`);
+    }
+  }
+  violations.push(...finalReviewFreshnessViolations(state));
+  return violations;
+}
+
 function assertAllowedStatus(kind, status) {
   const allowed = {
     task: ["pending", "in_progress", "complete", "deferred", "blocked"],
@@ -544,6 +585,7 @@ module.exports = {
   verifyGateViolations,
   prdSnapshotViolations,
   requirementsFidelityHandoffViolations,
+  finalReviewHandoffViolations,
   assertAllowedStatus,
   prdCopyDriftWarnings,
 };

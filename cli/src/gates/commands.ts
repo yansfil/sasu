@@ -18,6 +18,7 @@ import { runPrelint, type PrelintResult } from "./prelint";
 import {
   GAP_AUDIT_LANES,
   SPEC_LANES,
+  VERIFY_DIFF_MAX_CHARS,
   gapAuditPrompt,
   semanticVerifyPrompt,
   specGatePrompt,
@@ -56,6 +57,14 @@ export interface GateCommandResult {
   checks?: CheckResult[];
   judgedCriteriaIds?: string[];
   judgedVerdict?: "PASS" | "FAIL";
+  /**
+   * Set when the verify gate resolved ZERO mechanical commands without
+   * --skip-mechanical: an empty runs list looks like success, but it means the
+   * promised $0 pre-judge filter was silently inactive (audited run 2026-08:
+   * package.json lived under app/, nothing was detected, and every failure was
+   * discovered by the paid judge instead).
+   */
+  mechanicalWarning?: string;
   error?: { code: string; message: string; recovery: string };
 }
 
@@ -102,6 +111,24 @@ function readInputFile(projectRoot: string, filePath: string, label: string): In
  * default effort. Claude-only; codex/stub backends ignore it.
  */
 const LANE_EFFORT = "low";
+
+/**
+ * Deterministic criterion partition for the verify fan-out: stable document
+ * order, lane sizes balanced under a cap of 8, last lane may be smaller
+ * (27 criteria -> 7/7/7/6). The cap exists because the audited single call
+ * concentrated 27 criteria plus the whole diff into one prompt and the judge's
+ * attention visibly ran out; 6-8 criteria is the scope one lane can hold.
+ */
+export const VERIFY_LANE_MAX_CRITERIA = 8;
+
+export function partitionVerifyCriteria<T>(criteria: T[]): T[][] {
+  if (criteria.length === 0) return [];
+  const laneCount = Math.ceil(criteria.length / VERIFY_LANE_MAX_CRITERIA);
+  const size = Math.ceil(criteria.length / laneCount);
+  const lanes: T[][] = [];
+  for (let i = 0; i < criteria.length; i += size) lanes.push(criteria.slice(i, i + size));
+  return lanes;
+}
 
 function overrideRecovery(topic: string, gate: GateId): string {
   return `To proceed anyway, the USER (never the agent) may run: sasu gate override --slug ${topic} --gate ${gate} --reason "<why>"`;
@@ -508,6 +535,14 @@ export async function runVerifyGate(
     (mechanical?.runs ?? []).flatMap((run) =>
       (run.criterionIds ?? []).map((criterionId) => ({ criterionId, command: run.command, exitCode: run.exitCode, tail: run.tail })),
     );
+  /**
+   * What the artifact records for the mechanical stage. "none-detected" is
+   * deliberately distinct from an empty runs list: zero resolved commands is
+   * not a passing stage, it is a stage that never existed, and the artifact
+   * must not let the two read the same.
+   */
+  const mechanicalRecord = (): MechanicalResult["runs"] | "skipped" | "none-detected" =>
+    mechanical === undefined ? "skipped" : mechanical.runs.length === 0 ? "none-detected" : mechanical.runs;
   // Captures are evidence production, not a project check: skipping the
   // mechanical stage must not silently leave the judge with a stale artifact,
   // so a contract with captures always runs them.
@@ -550,6 +585,19 @@ export async function runVerifyGate(
     }
   }
 
+  // The mechanical stage resolving zero commands is not a pass, it is an
+  // absence: nothing filtered the change before the paid judge. Warn loudly
+  // but do not block - a docs-only or scripts-only project legitimately has
+  // no test command, and the judge can still do its job.
+  const mechanicalWarning =
+    options.skipMechanical !== true && mechanical !== undefined && mechanical.runs.length === 0
+      ? "verify resolved ZERO mechanical commands: the $0 pre-judge filter (tests/lint/build) is INACTIVE and every failure will be discovered by the judge instead. Declare commands in agents/config.json under verify.commands (e.g. {\"verify\":{\"commands\":{\"test\":\"cd app && npm test\"}}}) - auto-detection only sees a package.json/pyproject.toml/Cargo.toml/go.mod at the project root."
+      : undefined;
+  if (mechanicalWarning !== undefined) {
+    process.stderr.write(`sasu: WARNING: ${mechanicalWarning}\n`);
+  }
+  const warningField = mechanicalWarning !== undefined ? { mechanicalWarning } : {};
+
   // Stage 2: semantic judge over the diff.
   if (!options.criteria && !docFile) {
     throw new Error("no acceptance-criteria source: pass --prd <path> or --contract <path>");
@@ -573,6 +621,16 @@ export async function runVerifyGate(
       `empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}. Implement the change first, or point --base at the commit you started from. Note that gitignored files are invisible here even when they exist.`,
     );
   }
+  // Truncation guard: the diff is never silently clamped for the judge (see
+  // VERIFY_DIFF_MAX_CHARS for the audited false-FAIL this prevents). Throwing
+  // here - before the evidence lane, the prompt, and any recordGateResult -
+  // means a tooling-sized diff costs no judge call, no recorded outcome, and
+  // no retry-budget attempt; only genuine semantic judgments may charge those.
+  if (diff.length > VERIFY_DIFF_MAX_CHARS) {
+    throw new Error(
+      `diff is ${diff.length} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget. No judgment ran and no retry attempt was spent. Narrow the change under judgment: pass --diff-file with a diff scoped to the implementation (e.g. git diff <base> -- <paths>), point --base at the commit you started from, or split the change.`,
+    );
+  }
 
   // Stage 1b: collect the evidence lane. A declared artifact that is missing
   // or oversized blocks here, before the judge call, the same way a broken
@@ -588,7 +646,7 @@ export async function runVerifyGate(
         verdict: "FAIL",
         findings: lane.findings,
         inputs,
-        artifactPayload: { stage: "evidence", findings: lane.findings, inputs, mechanical: mechanical?.runs ?? "skipped" },
+        artifactPayload: { stage: "evidence", findings: lane.findings, inputs, mechanical: mechanicalRecord() },
       },
       records,
     );
@@ -599,6 +657,7 @@ export async function runVerifyGate(
       status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
       prelint,
       mechanical,
+      ...warningField,
       criteria: [],
       inputs,
       evidence: [],
@@ -632,7 +691,7 @@ export async function runVerifyGate(
           findings: humanLane,
           judgedCriteriaIds: [],
           evidence: lane ? lane.artifacts : [],
-          mechanical: mechanical?.runs ?? "skipped",
+          mechanical: mechanicalRecord(),
           inputs: allInputs,
         },
       },
@@ -643,6 +702,7 @@ export async function runVerifyGate(
       status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
       prelint,
       mechanical,
+      ...warningField,
       // No judge ran, so there are no per-criterion verdicts to quote: the
       // receipt for an all-human close rests on the findings and the artifacts.
       criteria: [],
@@ -656,20 +716,112 @@ export async function runVerifyGate(
   // Criterion-scoped checks reach the judge as evidence for their criterion;
   // a run-wide check has no criterion to name and stays a gate-only signal.
   const checkResults = collectCheckResults();
-  const prompt = semanticVerifyPrompt(diff, judgedCriteria, lane ? lane.material : [], checkResults, {
-    mechanicalRan: options.skipMechanical !== true,
-  });
-  try {
-    const outcome = await runJudge(
-      config,
-      "gate:verify-semantic",
-      "standard",
+
+  // Semantic fan-out (mirrors the gap-audit lane pattern): the exhaustive
+  // single call concentrated every criterion plus the whole diff into one
+  // 75-137s prompt, so criteria are partitioned into criterion-scoped lanes
+  // that run concurrently over the same curated diff. judge.fanout: false is
+  // the same escape hatch the gap-list gates honor.
+  const laneCriteria = config.judge.fanout ? partitionVerifyCriteria(judgedCriteria) : [judgedCriteria];
+  const laneCount = laneCriteria.length;
+  const verifyLanes = laneCriteria.map((criteriaSlice, index) => {
+    const ids = new Set(criteriaSlice.map((c) => c.id));
+    const material = lane ? lane.material.filter((item) => ids.has(item.criterionId)) : [];
+    // Image attachments are rebuilt per lane from the material that carries
+    // them, so a lane ships only the screenshots its own criteria pinned.
+    const images = [...new Set(material.filter((item) => item.attachedImage).map((item) => path.join(projectRoot, item.path)))];
+    const prompt = semanticVerifyPrompt(diff, criteriaSlice, material, checkResults.filter((c) => ids.has(c.criterionId)), {
+      mechanicalRan: options.skipMechanical !== true,
+      ...(laneCount > 1 ? { lane: { index: index + 1, count: laneCount } } : {}),
+    });
+    return {
+      laneId: String(index + 1),
+      // A single lane IS the old exhaustive call, so it keeps the historical
+      // purpose; receipts and telemetry written against it stay comparable.
+      purpose: laneCount > 1 ? `gate:verify-semantic:lane:${index + 1}` : "gate:verify-semantic",
+      criteria: criteriaSlice,
       prompt,
-      (value) => validateSemanticVerdict(value, judgedCriteria.map((c) => c.id)),
-      lane && lane.images.length > 0 ? { images: lane.images } : {},
+      images,
+    };
+  });
+  // One auditable hash of everything sent this round: the lane prompts joined
+  // in lane order. For a single lane this is byte-identical to the old
+  // single-prompt hash contract.
+  const promptSha256 = sha256Of(verifyLanes.map((vl) => vl.prompt).join("\n"));
+  const lanesManifest = verifyLanes.map((vl) => ({
+    laneId: vl.laneId,
+    criteriaIds: vl.criteria.map((c) => c.id),
+    promptSha256: sha256Of(vl.prompt),
+  }));
+  const evidenceSummary = lane ? lane.artifacts : [];
+  const judgedCriteriaIds = judgedCriteria.map((c) => c.id);
+  try {
+    const settled = await Promise.all(
+      verifyLanes.map(async (vl) => {
+        try {
+          const outcome = await runJudge(
+            config,
+            vl.purpose,
+            // Tier stays "standard" per lane: verify caught a real production
+            // bug at this tier, and the fan-out win is latency and attention
+            // scope, not model cost. Multi-lane rounds pair the narrow scope
+            // with the low effort budget (the calibrated fan-out speed lever,
+            // see LANE_EFFORT); a single-lane round is the old exhaustive call
+            // and keeps the backend's default effort.
+            "standard",
+            vl.prompt,
+            (value) => {
+              const laneIds = vl.criteria.map((c) => c.id);
+              const validated = validateSemanticVerdict(value, laneIds);
+              if (typeof validated === "string") return validated;
+              // A lane's verdict counts for exactly its own criteria. Judges
+              // were already tolerated over-answering before the fan-out (e.g.
+              // echoing a human-lane criterion), so a foreign id is dropped
+              // rather than rejected - but it must never leak into the merge,
+              // and the lane's verdict is re-derived from its own criteria so
+              // a foreign FAIL cannot fail a lane it does not belong to.
+              const allowed = new Set(laneIds);
+              const own = validated.criteria.filter((c) => allowed.has(c.id));
+              return { verdict: own.some((c) => c.verdict === "FAIL") ? ("FAIL" as const) : ("PASS" as const), criteria: own };
+            },
+            {
+              ...(vl.images.length > 0 ? { images: vl.images } : {}),
+              ...(laneCount > 1 ? { effort: LANE_EFFORT } : {}),
+            },
+          );
+          return { lane: vl, outcome, error: null as unknown };
+        } catch (error) {
+          return { lane: vl, outcome: null, error };
+        }
+      }),
     );
-    records.push(outcome.record);
-    const findings: Finding[] = outcome.value.criteria
+    for (const settledLane of settled) {
+      if (settledLane.outcome) records.push(settledLane.outcome.record);
+      else {
+        const failureRecord = judgeCallRecordFrom(settledLane.error);
+        if (failureRecord) records.push(failureRecord);
+      }
+    }
+    const failures = settled.filter((settledLane) => settledLane.error !== null);
+    if (failures.length > 0) {
+      // A single erroring lane fails the whole round closed (same rule as the
+      // gap-audit fan-out): a partial set of lane verdicts is not a verdict.
+      const first = failures[0]!.error;
+      const code = first instanceof JudgeError ? first.code : "judge-auth-or-runtime";
+      const backend = first instanceof JudgeError ? first.backend : "claude";
+      const detail = first instanceof JudgeError ? first.detail : first instanceof Error ? first.message : String(first);
+      const laneList = failures.map((settledLane) => settledLane.lane.laneId).join(", ");
+      throw new JudgeError(code, backend, laneCount > 1 ? `lane failed [${laneList}]: ${detail}` : detail);
+    }
+    // Mechanical merge in document order: lanes own disjoint slices, so the
+    // union is exactly one verdict per judged criterion, and the overall
+    // judged verdict is PASS only when every lane passed.
+    const verdictById = new Map(settled.flatMap((settledLane) => settledLane.outcome!.value.criteria.map((c) => [c.id, c] as const)));
+    const mergedCriteria = judgedCriteria.map((c) => verdictById.get(c.id)!);
+    const judgedVerdict: "PASS" | "FAIL" = settled.every((settledLane) => settledLane.outcome!.value.verdict === "PASS")
+      ? "PASS"
+      : "FAIL";
+    const findings: Finding[] = mergedCriteria
       .filter((c) => c.verdict === "FAIL")
       .map((c) => ({
         area: "semantic",
@@ -691,9 +843,7 @@ export async function runVerifyGate(
     // An unjudged human criterion keeps the gate closed even when every judged
     // one passed: nobody has confirmed it yet, and the honest report of that
     // is a blocking requiresHuman finding, not a PASS.
-    const passed = outcome.value.verdict === "PASS" && humanLane.length === 0;
-    const evidenceSummary = lane ? lane.artifacts : [];
-    const judgedCriteriaIds = judgedCriteria.map((c) => c.id);
+    const passed = judgedVerdict === "PASS" && humanLane.length === 0;
     state = recordGateResult(
       store,
       state,
@@ -704,22 +854,30 @@ export async function runVerifyGate(
         findings,
         inputs: allInputs,
         treeFingerprint,
+        // One fan-out round is one gate attempt: recordGateResult runs once
+        // per round no matter how many lanes it took (gap-audit's rule).
         artifactPayload: {
           stage: "semantic",
           verdict: passed ? "PASS" : "FAIL",
-          judgedVerdict: outcome.value.verdict,
-          criteria: outcome.value.criteria,
+          judgedVerdict,
+          criteria: mergedCriteria,
           humanLane,
           // What the judge was actually shown, so "AC4 was never sent" is an
           // auditable fact rather than something you re-derive from the code.
           judgedCriteriaIds,
-          promptSha256: sha256Of(prompt),
+          promptSha256,
+          // Per-lane judge records replace the old top-level `judge` key, the
+          // same shape shift the gap-audit fan-out made to its artifact.
+          lanes: settled.map((settledLane, index) => ({
+            ...lanesManifest[index]!,
+            verdict: settledLane.outcome!.value.verdict,
+            judge: settledLane.outcome!.record,
+          })),
           checks: checkResults,
           evidence: evidenceSummary,
-          mechanical: mechanical?.runs ?? "skipped",
+          mechanical: mechanicalRecord(),
           treeFingerprint,
           inputs: allInputs,
-          judge: outcome.record,
         },
       },
       records,
@@ -730,34 +888,36 @@ export async function runVerifyGate(
       status,
       prelint,
       mechanical,
-      criteria: outcome.value.criteria,
+      ...warningField,
+      criteria: mergedCriteria,
       inputs: allInputs,
       evidence: evidenceSummary,
       checks: checkResults,
       judgedCriteriaIds,
-      judgedVerdict: outcome.value.verdict,
+      judgedVerdict,
     };
   } catch (error) {
-    // A broken judge call does not erase the run's real work: the receipt
+    // A broken judge round does not erase the run's real work: the receipt
     // contract holds on this path too, minus the verdicts nobody produced.
-    const evidenceSummary = lane ? lane.artifacts : [];
     const failurePayload = {
-      judgedCriteriaIds: judgedCriteria.map((c) => c.id),
-      promptSha256: sha256Of(prompt),
+      judgedCriteriaIds,
+      promptSha256,
+      lanes: lanesManifest,
       checks: checkResults,
       evidence: evidenceSummary,
-      mechanical: mechanical?.runs ?? "skipped",
+      mechanical: mechanicalRecord(),
       inputs: allInputs,
     };
     return {
       ...recordJudgeFailure(store, state, "verify", config, error, records, topic, failurePayload),
       prelint,
       mechanical,
+      ...warningField,
       criteria: [],
       inputs: allInputs,
       evidence: evidenceSummary,
       checks: checkResults,
-      judgedCriteriaIds: judgedCriteria.map((c) => c.id),
+      judgedCriteriaIds,
     };
   }
 }
@@ -1097,17 +1257,55 @@ export function extractAcceptanceCriteria(prdContent: string): { id: string; tex
 }
 
 /**
+ * Machine-generated dependency lockfiles, by basename, at any depth. They are
+ * enormous, carry no evidence for any acceptance criterion, and in the audited
+ * run (2026-08) a nested app/pnpm-lock.yaml alone was worth tens of thousands
+ * of diff chars that crowded the code out of the judge's window.
+ */
+const DIFF_EXCLUDED_LOCKFILES = [
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "bun.lockb",
+  "Cargo.lock",
+  "poetry.lock",
+  "composer.lock",
+  "Gemfile.lock",
+];
+
+/**
+ * The single exclusion predicate for the judge's diff, applied to BOTH sides
+ * (tracked pathspecs and the untracked listing - they previously disagreed,
+ * and agents/prd + agents/interview leaked into the tracked diff). The whole
+ * agents/ namespace is out: the PRD, qa-log, contract, and evidence artifacts
+ * are already pinned as gate inputs, and the gate's own past verdict JSONs
+ * sort alphabetically ahead of most app code, so replaying any of it into the
+ * diff shows the judge documents instead of the change under judgment.
+ */
+export function isExcludedFromDiff(file: string): boolean {
+  const normalized = file.replace(/\\/g, "/");
+  if (normalized === "agents" || normalized.startsWith("agents/")) return true;
+  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return DIFF_EXCLUDED_LOCKFILES.includes(base);
+}
+
+/** The same exclusions as git pathspecs, so the tracked diff is curated by git itself. */
+const DIFF_EXCLUDE_PATHSPECS = [
+  ":(exclude)agents",
+  ...DIFF_EXCLUDED_LOCKFILES.map((name) => `:(glob,exclude)**/${name}`),
+];
+
+/**
  * The change under judgment, including files the run created.
  *
  * `git diff` only knows about tracked paths, so a new module - the most common
  * shape of a small task - would be invisible to the judge, and a run that only
  * adds files would produce no diff at all. Untracked files are therefore
- * rendered as add-diffs and appended. The harness's own run bookkeeping is
- * excluded: the contract and its artifacts are already pinned as inputs, and
- * replaying them into the diff would just crowd out the code.
+ * rendered as add-diffs and appended. Both sides are curated by
+ * isExcludedFromDiff (see its comment for what is out and why).
  */
 function gitDiff(projectRoot: string, baseRef: string | undefined): string {
-  const tracked = execFileSync("git", baseRef ? ["diff", baseRef, "--", "."] : ["diff", "HEAD", "--", "."], {
+  const tracked = execFileSync("git", ["diff", baseRef ?? "HEAD", "--", ".", ...DIFF_EXCLUDE_PATHSPECS], {
     cwd: projectRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -1118,7 +1316,7 @@ function gitDiff(projectRoot: string, baseRef: string | undefined): string {
     maxBuffer: 16 * 1024 * 1024,
   })
     .split("\0")
-    .filter((file) => file !== "" && !isHarnessPath(file));
+    .filter((file) => file !== "" && !isExcludedFromDiff(file));
   const additions: string[] = [];
   for (const file of untracked) {
     try {
@@ -1134,9 +1332,4 @@ function gitDiff(projectRoot: string, baseRef: string | undefined): string {
     }
   }
   return [tracked, ...additions].filter((part) => part.trim() !== "").join("\n");
-}
-
-function isHarnessPath(file: string): boolean {
-  const normalized = file.replace(/\\/g, "/");
-  return normalized.startsWith("agents/gates/") || normalized.startsWith("agents/quick/");
 }

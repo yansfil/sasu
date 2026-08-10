@@ -295,11 +295,24 @@ sasu verify --slug <topic-slug> --prd <prd-path> --base <baseline-ref>
 ```
 
 The gate and the requirements fidelity review divide the semantic lane and
-neither consumes the other's output, so run them concurrently: launch the
-fidelity reviewer as a background sidecar, run `sasu verify` while it works,
-and record both results as they land. If the gate fails and the fix changes
-code, the fidelity review goes stale under the normal freshness rule and
-re-runs; accept that occasional cost instead of always paying a serial wait.
+neither consumes the other's output, so never serialize them. Ownership and
+concurrency are different axes: the review profile decides who writes the
+fidelity review, not whether the gate waits for it.
+
+- `trivial`: no sidecar; the main agent writes the compact fidelity review
+  (gate concurrency is moot).
+- `standard`: launch the independent read-only fidelity reviewer as a
+  background sidecar and run `sasu verify` while it works; the coordinator
+  records both results as they land.
+- `high-risk`: fidelity is main-agent-owned, but that does not force
+  serialization - run `sasu verify` in the background and write the full
+  main-agent fidelity review while the gate runs; the required independent
+  final adversarial review is spawned as a fresh read-only sidecar only
+  after fidelity is recorded (it must still follow fidelity).
+
+If the gate fails and the fix changes code, the fidelity review goes stale
+under the normal freshness rule and re-runs; accept that occasional cost
+instead of always paying a serial wait.
 
 The gate judges the diff against the PRD's complete acceptance criteria, so
 do not call it mid-run while later tasks are still unimplemented: missing ACs
@@ -354,7 +367,7 @@ When the user explicitly reduces or raises review scope mid-run (for example "ë¦
 
 For `trivial`, the main agent performs a compact fidelity review.
 For `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
-For `high-risk`, the main agent performs full fidelity before the required independent final review.
+For `high-risk`, the main agent performs full fidelity before the required independent final review; ownership does not force serialization - write it while `sasu verify` runs in the background, and spawn the final-review sidecar only after fidelity is recorded.
 Every fidelity review must compare the complete original qa-log or conversation source, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result.
 Do not use a handoff summary or the harness's parsed intent sample as a substitute for reading the canonical source.
 Fail when a material answer, accepted recommendation, objection, constraint, rejected option, non-goal, or assumption is lost or changes provenance across `qa-log -> PRD -> implementation`.

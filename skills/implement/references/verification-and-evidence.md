@@ -144,7 +144,14 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js refresh-artifacts [-
 Rerun stale reviews before finalization.
 
 Artifact-backed review freshness also depends on the final source snapshot.
-Any relevant source, plan, evidence, artifact, or deviation change after a passing completion review requires the affected verification or review to be refreshed and rerun.
+After a code edit, do not manually re-run already-passed command-backed verifications: `finalize` re-runs every required command-backed item on the final tree and skips fingerprint-fresh passes, on the harness's schedule, so a manual full-suite sweep only duplicates that audit.
+The agent's staleness duty after such an edit covers exactly three things:
+
+- the sasu verify gate PASS, which goes stale when its inputs change.
+- the completion reviews (requirements fidelity, final adversarial), which go stale under the normal freshness rule.
+- runtime-evidence artifacts (browser, API, DB captures), only when the change invalidates what a specific artifact proves - `finalize` cannot re-run non-command evidence and records those items as skipped, so a UI fix requires re-capturing the affected screenshot.
+
+A runtime artifact the change does not invalidate stays valid; re-capture only what the edit actually broke.
 
 ## Required Verification Semantics
 

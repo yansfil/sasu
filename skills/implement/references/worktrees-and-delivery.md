@@ -116,7 +116,7 @@ If the user approved merge, let `$ship merge` perform final freshness, CI, PR-he
 Record the PR URL, CI verdict, and merge commit as post-receipt delivery evidence rather than writing them back into the implementation receipt.
 
 If CI requires a source fix, return to the `implement` workflow.
-Refresh affected verification, requirements fidelity review, final review, and the receipt before shipping or merging again.
+Refresh stale reviews, any runtime evidence the fix invalidates, and the receipt before shipping or merging again; the new `finalize` re-runs required command-backed verification on the fixed tree.
 After PR creation, `$ship` cleans the matching active pointer and session-scoped active files.
 
 For local-only runs or manual cleanup, use:

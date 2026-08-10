@@ -25,7 +25,15 @@ function writeImplementationReport(statePath, state) {
   const approvalDeviation = (state.deviations || []).find(item => item.type === "prd_approval_override");
   lines.push(`- Approval: ${approvalDeviation ? `verbatim conversational override \`${approvalDeviation.summary}\`` : "approved PRD frontmatter"}`);
   if ((state.deviations || []).length) {
-    for (const deviation of state.deviations) lines.push(`- ${deviation.id}: ${deviation.type} - ${deviation.summary}`);
+    for (const deviation of state.deviations) {
+      // Deduped verification_command deviations carry an occurrence counter
+      // (see recordDeviation); surface repeats as a suffix instead of rows.
+      const details = deviation.details || {};
+      const repeats = typeof details.occurrences === "number" && details.occurrences > 1
+        ? ` (×${details.occurrences}, last ${details.lastSeenAt || deviation.ts})`
+        : "";
+      lines.push(`- ${deviation.id}: ${deviation.type} - ${deviation.summary}${repeats}`);
+    }
   } else {
     lines.push("- Recorded deviations: none");
   }
