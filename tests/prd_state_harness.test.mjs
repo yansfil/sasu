@@ -538,7 +538,7 @@ test("non-high-risk partial finalize is unaffected by the final-review handoff g
   assert.equal(receipt.finalReview, null);
 });
 
-test("fidelity Coverage Judgment accepts plain label lines and names the expected shape on rejection", () => {
+test("fidelity Coverage Judgment accepts plain label lines and demotes a missing label to a structure warning", () => {
   const projectRoot = initGitRepo();
   const { logPath, reviewPath } = driveToFidelity(projectRoot, "coverage-plain", "coverage-plain-session");
 
@@ -552,15 +552,43 @@ test("fidelity Coverage Judgment accepts plain label lines and names the expecte
   write(reviewPath, plain);
   const ok = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
   assert.equal(ok.ok, true);
+  assert.deepEqual(ok.structureWarnings, [], "a conforming report must record with zero structure warnings");
 
-  // A genuinely missing label line must be rejected with the literal expected shape.
+  // A genuinely missing label line is a structure defect, not substance:
+  // recording succeeds and the expected shape rides in structureWarnings.
   write(reviewPath, fidelityReviewBody(logPath).replace("- Requirements: covered by V1.\n", ""));
-  const bad = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], {
+  const warned = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  assert.equal(warned.ok, true);
+  assert.ok(
+    warned.structureWarnings.some(item => /Coverage Judgment should include a line 'Requirements: <judgment>' \(leading bullet '-' optional\)/.test(item)),
+    `expected a Coverage Judgment structure warning, got: ${JSON.stringify(warned.structureWarnings)}`,
+  );
+});
+
+test("review-record hard gate keeps status-line match and FAIL-needs-a-finding as rejections", () => {
+  const projectRoot = initGitRepo();
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, "hard-gate", "hard-gate-session");
+
+  // (b) Status line mismatch still rejects: a PASS report cannot be recorded as fail.
+  write(reviewPath, fidelityReviewBody(logPath));
+  const mismatch = run(process.execPath, [harness, "requirements-review-record", "--status", "fail", "--report", reviewPath, "--summary", "FAIL"], {
     cwd: projectRoot,
     allowFailure: true,
   });
-  assert.notEqual(bad.status, 0);
-  assert.match(bad.stderr, /Coverage Judgment must include a line 'Requirements: <judgment>' \(leading bullet '-' optional\)/);
+  assert.notEqual(mismatch.status, 0);
+  assert.match(mismatch.stderr, /does not match --status fail/);
+
+  // (c) A FAIL report whose Findings carry no finding line still rejects.
+  write(reviewPath, fidelityReviewBody(logPath)
+    .replace("Status: PASS", "Status: FAIL")
+    .replace("- none: no material findings", "No findings were recorded.")
+    .replace("## Verdict\n\nPASS.", "## Verdict\n\nFAIL."));
+  const noFinding = run(process.execPath, [harness, "requirements-review-record", "--status", "fail", "--report", reviewPath, "--summary", "FAIL"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(noFinding.status, 0);
+  assert.match(noFinding.stderr, /Failing requirements fidelity report must include at least one finding/);
 });
 
 test("batch task mark with a bad id does not persist partial mutation", () => {
@@ -727,7 +755,7 @@ function driveToFidelity(projectRoot, slug, sessionId) {
   return { logPath: after.verification[0].artifacts[0].path, reviewPath: path.join(projectRoot, "agents", "implement", slug, "review", "requirements-fidelity-review.md") };
 }
 
-test("fidelity review accepts code-span generics/tags but rejects leftover template placeholders", () => {
+test("fidelity review accepts code-span generics/tags and demotes leftover template placeholders to warnings", () => {
   const projectRoot = initGitRepo();
   const { logPath, reviewPath } = driveToFidelity(projectRoot, "fidelity-placeholder", "fp-session");
 
@@ -735,15 +763,17 @@ test("fidelity review accepts code-span generics/tags but rejects leftover templ
   write(reviewPath, fidelityReviewBody(logPath, "\n- The handler returns `Array<string>` and renders a `<button>` element as intended."));
   const ok = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
   assert.equal(ok.ok, true);
+  assert.deepEqual(ok.structureWarnings, []);
 
-  // A leftover <topic-slug>-style placeholder in prose must still fail.
+  // A leftover <topic-slug>-style placeholder in prose is a structure defect:
+  // recording succeeds, the warning is surfaced instead of a rejection.
   write(reviewPath, fidelityReviewBody(logPath, "\n- Implemented the <topic-slug> flow end to end."));
-  const bad = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], {
-    cwd: projectRoot,
-    allowFailure: true,
-  });
-  assert.notEqual(bad.status, 0);
-  assert.match(bad.stderr, /leftover <template> placeholders/);
+  const warned = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  assert.equal(warned.ok, true);
+  assert.ok(
+    warned.structureWarnings.some(item => /leftover <template> placeholders/.test(item)),
+    `expected a placeholder structure warning, got: ${JSON.stringify(warned.structureWarnings)}`,
+  );
 });
 
 test("a fresh fidelity review can replace stale fidelity and final reviews after remediation", () => {
@@ -1062,6 +1092,70 @@ test("policy v2 standard fidelity prompt owns conditional UI and UX judgment", (
   ]) {
     assert.match(prompt, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+test("fidelity prompt narrows the qa-log mandate only behind a fresh spec-gate PASS", () => {
+  const root = initGitRepo();
+  const slug = "spec-settled";
+  const prdAbs = writeApprovedPrd(root, slug);
+  runJson(["init", "--prd", prdAbs, "--review-profile", "standard", "--session-id", "settled-session"], root);
+  const renderPrompt = () => run(process.execPath, [harness, "requirements-review-prompt"], { cwd: root }).stdout;
+
+  // No spec gate record: the full-read mandate stands.
+  let prompt = renderPrompt();
+  assert.match(prompt, /read the complete file, including Current Understanding/);
+  assert.doesNotMatch(prompt, /qa-log→PRD leg is settled/);
+
+  // A fresh, non-overridden spec PASS hash-pinned to the on-disk documents
+  // (hashes computed with the canonical hashGateInput, as the gate records them).
+  const { hashGateInput } = requireModule(path.join(repoRoot, "cli", "lib", "gate_freshness.js"));
+  const qaLogRel = path.join("agents", "interview", slug, "qa-log.md");
+  const qaLogAbs = path.join(root, qaLogRel);
+  write(qaLogAbs, "---\ntopic: \"spec-settled\"\nstatus: \"complete\"\n---\n\n## Decision Register\n\n- D-01 resolved.\n");
+  const prdRel = path.relative(root, prdAbs);
+  const gatesJson = {
+    schema: 1,
+    topic: slug,
+    gates: {
+      spec: {
+        verdict: "PASS",
+        attempts: 0,
+        overridden: false,
+        findings: [],
+        lastRunAt: "2026-08-10T00:00:00.000Z",
+        history: [],
+        inputs: [
+          { path: prdRel, sha256: hashGateInput(prdAbs, undefined) },
+          { path: qaLogRel, sha256: hashGateInput(qaLogAbs, undefined) },
+        ],
+      },
+    },
+    deviations: [],
+    judgeCalls: [],
+  };
+  const gatesPath = path.join(root, "agents", "gates", slug, "gates.json");
+  write(gatesPath, JSON.stringify(gatesJson, null, 2));
+  prompt = renderPrompt();
+  assert.match(prompt, /qa-log→PRD leg is settled/);
+  assert.match(prompt, /last run 2026-08-10T00:00:00\.000Z/);
+  assert.match(prompt, new RegExp(qaLogRel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "settled text must cite the pinned inputs");
+  assert.match(prompt, /Decision Traceability/);
+  assert.match(prompt, /fall back to reading the canonical qa-log in full/);
+  assert.doesNotMatch(prompt, /read the complete file, including Current Understanding/);
+
+  // Body drift in a pinned input revives the full-read mandate.
+  fs.appendFileSync(qaLogAbs, "\n- D-02 added after the gate ran.\n");
+  prompt = renderPrompt();
+  assert.match(prompt, /read the complete file, including Current Understanding/);
+  assert.doesNotMatch(prompt, /qa-log→PRD leg is settled/);
+
+  // Restore freshness, then a user override (not a judged PASS) must not narrow.
+  fs.writeFileSync(qaLogAbs, "---\ntopic: \"spec-settled\"\nstatus: \"complete\"\n---\n\n## Decision Register\n\n- D-01 resolved.\n");
+  gatesJson.gates.spec.overridden = true;
+  write(gatesPath, JSON.stringify(gatesJson, null, 2));
+  prompt = renderPrompt();
+  assert.match(prompt, /read the complete file, including Current Understanding/);
+  assert.doesNotMatch(prompt, /qa-log→PRD leg is settled/);
 });
 
 test("commit-only source change makes a recorded review stale", () => {

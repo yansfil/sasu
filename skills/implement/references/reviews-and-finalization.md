@@ -108,7 +108,7 @@ The gate owns per-criterion code-vs-AC verdicts from the diff; the fidelity revi
 Ownership and concurrency are different axes: on `standard`, launch the independent reviewer as a background sidecar and run `sasu verify` while it works; on `high-risk`, run `sasu verify` in the background and write the main-agent fidelity review while the gate runs (the independent final adversarial review is still spawned only after fidelity is recorded); on `trivial`, the main agent writes the compact review and gate concurrency is moot.
 If the gate fails and the fix changes code, the fidelity review goes stale under the normal freshness rule and must re-run; accept that risk instead of serializing the two calls.
 
-This review compares the complete canonical qa-log or conversation source, accepted decisions, rejected alternatives, PRD scope, acceptance criteria, verification evidence, and implementation result.
+This review compares the canonical intent source (reading depth per the spec-gate rule below), accepted decisions, rejected alternatives, PRD scope, acceptance criteria, verification evidence, and implementation result.
 It is not a general code-quality review.
 Fail on material semantic drift, missing user-visible behavior, diluted acceptance criteria, hidden scope, unapproved decision reversal, weak evidence for the actual user goal, or an overclaimed `Done` status.
 
@@ -119,7 +119,7 @@ Judge responsive behavior and accessibility when contracted, copy and hierarchy 
 The reviewer must check:
 
 - original intake, clarify, or current-conversation sources named by PRD frontmatter or PRD sections were read when available.
-- when the source is qa-log.md, the complete Current Understanding, Decision Register, material Raw Q&A (Decision Packet content lives in each entry's `immediate_notes`), UX Scenario Cards, objections, evidence, and audit findings were read instead of relying on a summary or parsed sample.
+- when the source is qa-log.md, reading depth follows the spec-gate record (the generated prompt states which case applies). Settled case - the spec gate verdict is PASS, not overridden, and every recorded input hash still matches the qa-log and PRD on disk: the qa-log→PRD leg is already judged, so the reviewer reads the PRD's Decision Traceability section plus the implementation and registered evidence instead of the full qa-log, falling back to reading the canonical qa-log in full if anything in the PRD's decision trace looks inconsistent or truncated, the spec record looks suspicious, or a decision's provenance is unclear. Unsettled case - the spec gate is absent, stale, failed, or overridden: read the complete qa-log (Current Understanding, Decision Register, material Raw Q&A with Decision Packet content in each entry's `immediate_notes`, UX Scenario Cards, objections, evidence, and audit findings) instead of relying on a summary or parsed sample. The layering principle is that each layer sees only what only it can see: in an audited run the fidelity reviewer re-read a 37k-char qa-log behind a fresh spec-gate PASS and found zero issues the gate had not already caught.
 - every material answer, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption has the same meaning and provenance across `qa-log -> PRD -> implementation` or an explicit approved disposition.
 - silence, lack of objection, topic changes, and continued participation were not upgraded into user approval, while unambiguous affirmative responses to explicit recommendations were preserved as accepted recommendations.
 - every user decision and accepted initial proposal is represented in scope, non-goals, requirements, acceptance criteria, verification, or human verification.
@@ -136,7 +136,8 @@ Write:
 agents/implement/<topic-slug>/review/requirements-fidelity-review.md
 ```
 
-The report must include the sections `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, `Deviation Audit`, and `Verdict`; the generated prompt emits this skeleton.
+The report should follow the recommended skeleton the generated prompt emits: `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, `Deviation Audit`, and `Verdict`.
+Structure deviations (missing sections, bullet floors, label grammar, per-`V#` mentions, placeholders) are advisory: `requirements-review-record` reports them as `structureWarnings` and never rejects on them - only the standalone `Status` line (matching `--status`) and at least one finding on a `FAIL` report are enforced mechanically.
 For every required `V#`, list the PRD Pass Intent or derived pass criteria, covered `R#` and `AC#` IDs, registered artifact paths inspected, a `PASS` or `FAIL` judgment, and any gap.
 A passing review must fail when a required `V#` is missing, lacks a registered artifact path, or has an artifact that does not prove its mapped requirement or acceptance criterion.
 
@@ -209,7 +210,7 @@ Required final reviews must be independent in both time and content.
 The report file must be authored after `requirements-review-record` succeeds.
 An earlier report is rejected.
 
-The report must include these sections:
+The report should follow the recommended skeleton:
 
 - `Fidelity Review Checked`, citing the recorded fidelity report path and status.
 - `Findings`.
@@ -217,7 +218,8 @@ The report must include these sections:
 - `Deviation Audit`.
 - `Verdict`.
 
-The report must contain a standalone `Status: PASS` line when recording `--status pass`; it does not re-list every required `V#` (the fidelity review owns that checklist).
+Missing or empty skeleton sections are advisory: `review-record` reports them as `structureWarnings` without rejecting.
+The report must contain a standalone `Status: PASS` line when recording `--status pass` (a `FAIL` recording must carry at least one finding); it does not re-list every required `V#` (the fidelity review owns that checklist).
 The harness stores a git worktree snapshot and makes the review stale when source changes afterward.
 
 ## Complete Finalization

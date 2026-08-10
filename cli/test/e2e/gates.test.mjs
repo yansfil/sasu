@@ -301,7 +301,7 @@ test("fan-out: judge.fanout=false restores the single-judge path with exactly on
   assert.equal(state.judgeCalls[0].purpose, "gate:gap-audit");
 });
 
-test("fan-out: spec gate runs its three review-axis lanes", () => {
+test("fan-out: spec gate runs its two review-axis lanes", () => {
   const dir = makeProject();
   const result = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, { byPurpose: { default: { verdict: "PASS", findings: [] } } }),
@@ -312,7 +312,6 @@ test("fan-out: spec gate runs its three review-axis lanes", () => {
   assert.deepEqual(purposes, [
     "gate:spec:lane:fidelity",
     "gate:spec:lane:testability",
-    "gate:spec:lane:verification-completeness",
   ]);
 });
 

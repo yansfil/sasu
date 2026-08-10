@@ -90,6 +90,9 @@ Rules:
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - If `init` reports an existing active run for the same topic, resume it.
   Use `--force` only when the user explicitly asked for a clean restart.
+- If `init` reports unresolved `preWorkChecklist` items (human-only pre-work or open human decisions from PRD `## 4`), ask the user about ALL of them in one batched message before starting task implementation; never discover them serially mid-run.
+  This single batched ask is the exception to the no-round-trip flow: the items are things only the user can do, and asking once up front is cheaper than stalling on each mid-implementation.
+  Items the user defers become recorded blockers on the affected tasks, and implementation proceeds on unaffected tasks.
 - All verification, evidence, fidelity review, final review, and `finalize` requirements apply unchanged.
 
 ## Stage 3: Ship (Conditional)

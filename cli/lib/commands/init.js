@@ -8,7 +8,7 @@ const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath,
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
-const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
+const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parsePreWorkChecklist, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { verificationContractHash, buildVerificationPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, writeActiveRecord, persistState } = require("../state_store");
@@ -63,6 +63,9 @@ function cmdInit(options) {
     runDir: state.runDir,
     prdPath: state.prdPath,
     counts: countState(state),
+    // Surfaced in the same tool result the agent already reads so unresolved
+    // human-only pre-work is seen before implementation, not mid-run.
+    preWorkChecklist: state.preWorkChecklist,
     verificationPlan: verificationPlanSummary(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -215,12 +218,20 @@ function parsePrdContract(parsed, projectRoot) {
   ]);
   const testModeContract = parseTestModeContract(testModeSection || verificationSection);
   applyTestModeDefaults(verification, testModeContract);
+  const preWorkItems = parsePreWorkChecklist(parsed.body);
   return {
     tasks,
     acceptanceCriteria,
     requirements,
     verification,
     testModeContract,
+    // Human-only §4 items surfaced at init (not a gate: unresolved items must
+    // never fail init) so the skill can ask about all of them in one batched
+    // message instead of stalling on each serially mid-implementation.
+    preWorkChecklist: {
+      items: preWorkItems,
+      unresolvedCount: preWorkItems.filter(item => !item.resolved).length,
+    },
     intentTrace: buildIntentTrace(parsed, projectRoot),
     technicalStructure: extractFirstSection(parsed.body, [
       "5. Major Technical Structure Changes",
@@ -235,7 +246,7 @@ function parsePrdContract(parsed, projectRoot) {
 
 function buildInitialState(inputs, contract, worktreePreparation, options, runDirRel) {
   const { projectRoot, prdAbs, prdText, parsed, approvalRaw, approvalOverride } = inputs;
-  const { tasks, acceptanceCriteria, requirements, verification, testModeContract, intentTrace } = contract;
+  const { tasks, acceptanceCriteria, requirements, verification, testModeContract, intentTrace, preWorkChecklist } = contract;
   const reviewProfile = classifyReviewProfile({
     reviewProfile: parsed.frontmatter.review_profile,
     reviewRationale: parsed.frontmatter.review_rationale,
@@ -281,6 +292,9 @@ function buildInitialState(inputs, contract, worktreePreparation, options, runDi
     },
     reviewProfile,
     execution: inputs.executionConfig,
+    // Durable copy so `status` and later phases can re-surface unresolved
+    // human-only pre-work without re-parsing the PRD.
+    preWorkChecklist,
     intentTrace,
     technicalStructure: contract.technicalStructure,
     implementationNotes: contract.implementationNotes,

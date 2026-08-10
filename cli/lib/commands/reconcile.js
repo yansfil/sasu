@@ -127,6 +127,10 @@ function cmdReconcile(options) {
   state.intentTrace = contract.intentTrace;
   state.technicalStructure = contract.technicalStructure;
   state.implementationNotes = contract.implementationNotes;
+  // The checklist is a projection of §4, so a PRD edit (item resolved, item
+  // added) must refresh the durable copy or `status` keeps re-surfacing a
+  // stale ask; unlike tasks/ACs it carries no agent marks worth preserving.
+  state.preWorkChecklist = contract.preWorkChecklist;
   state.prdStatus = parsed.frontmatter.status || state.prdStatus || null;
   state.prdSnapshot = {
     path: toProjectRelative(prdAbs, projectRoot),

@@ -83,6 +83,106 @@ function extractFirstNestedSection(markdown, headings) {
   return "";
 }
 
+// Literal human-only markers PRD authors write on `### 4.1` pre-work bullets.
+// The gen-prd contract requires every pre-work item to say why it is
+// human-only, so matching the literal phrase is the honest detector; no
+// attempt is made to semantically understand what the bullet asks for.
+const PRE_WORK_HUMAN_MARKERS = /사람만\s*가능|human[\s-]*only|사용자만|소유자\s*권한|owner[\s-]*only/i;
+
+// Extract the human-action checklist from `## 4. Pre-Work And Required
+// Decisions` (`### 4.1` pre-work bullets and `### 4.2` human-decision
+// bullets).
+//
+// Why this exists: in an audited real run, 62% of wall time (57+ minutes in
+// one stretch) was spent waiting on the user because human-only prerequisites
+// the PRD had already declared up front — §4.1 items literally marked
+// "사람만 가능", an unapproved §4.2 decision — were only discovered serially
+// mid-implementation (a 42min stall plus a 15min stall). Surfacing them
+// mechanically at init lets the skill ask for all of them in one batched
+// message before implementation starts.
+//
+// This is a surfacing mechanism, not a judgment. Detection is structural
+// first (which numbered subsection the bullet lives in), heuristic second
+// (the literal marker / resolved words). A 4.1 bullet without a human-only
+// marker is simply not extracted — the skill text covers that residue — and
+// unresolved items never block init; the contract is "surface loudly".
+function parsePreWorkChecklist(body) {
+  const section = extractFirstSection(body, [
+    "4. Pre-Work And Required Decisions",
+    "Pre-Work And Required Decisions",
+  ]);
+  if (!section.trim()) return [];
+  const items = [];
+  let subsection = null;
+  let preWorkCounter = 1;
+  let humanDecisionCounter = 1;
+  // Fenced example blocks inside §4 are documentation, not checklist rows; a
+  // marker-bearing bullet inside one would otherwise surface as a spurious
+  // item in the batched user ask.
+  let inFence = false;
+  for (const rawLine of section.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (/^#{3,6}\s+/.test(line)) {
+      subsection = classifyPreWorkSubsection(line);
+      continue;
+    }
+    if (!subsection || !line) continue;
+    const bullet = line.match(/^(?:[-*]\s*(?:\[([ xX])\]\s*)?|(?:\d+[.)])\s+)(.+)$/);
+    if (!bullet) continue;
+    const text = bullet[2].replace(/^\*\*|\*\*$/g, "").replace(/\s+/g, " ").trim();
+    // \b is useless after Hangul (not ASCII word chars), so the Korean
+    // "none" forms are matched without a boundary.
+    if (!text || /^(?:none\b|n\/a\b|없음|해당\s*없음)/i.test(text)) continue;
+    const resolved = bullet[1] === "x" || bullet[1] === "X" || isPreWorkResolved(text);
+    const humanMarked = PRE_WORK_HUMAN_MARKERS.test(text);
+    // 4.1 mixes human-only and agent-doable prep, so only marker-bearing
+    // bullets are extracted there. 4.2 bullets are human decisions by
+    // definition, so every open one surfaces; a resolved unmarked 4.2 bullet
+    // is old news and stays out of the checklist.
+    if (subsection === "4.1" && !humanMarked) continue;
+    if (subsection === "4.2" && !humanMarked && resolved) continue;
+    items.push({
+      id: subsection === "4.1" ? `PW${preWorkCounter++}` : `HD${humanDecisionCounter++}`,
+      section: subsection,
+      text,
+      resolved,
+    });
+  }
+  return items;
+}
+
+// Structural-first subsection routing: the canonical numbered form wins
+// outright (so `4.3 Decision Traceability` can never masquerade as a
+// human-decision list), and unnumbered variants fall back to title keywords.
+function classifyPreWorkSubsection(headingLine) {
+  const title = headingLine.replace(/^#+\s*/, "");
+  const numbered = title.match(/^4\.(\d+)/);
+  if (numbered) {
+    if (numbered[1] === "1") return "4.1";
+    if (numbered[1] === "2") return "4.2";
+    return null;
+  }
+  if (/pre-?work|사전\s*작업/i.test(title)) return "4.1";
+  if (/human\s+decision|사람.*결정|인간.*결정/i.test(title)) return "4.2";
+  return null;
+}
+
+function isPreWorkResolved(text) {
+  // "미완료"/"not done" contain the positive marker as a substring, so the
+  // negated and future forms must be rejected before the positive scan.
+  // "완료되지 않음", "완료 안 됨", "완료 예정", "진행 중", "보류" are all
+  // standard Korean phrasings for open items; misreading any of them as
+  // resolved silently drops a genuinely open human decision from the
+  // checklist - the exact mid-run stall this feature exists to prevent.
+  if (/미완료|미해결|되지\s*않|안\s*됨|안됨|예정|진행\s*중|보류|not\s+(?:yet\s+)?(?:done|resolved|completed)|unresolved|incomplete|pending/i.test(text)) return false;
+  return /완료됨|완료|해결됨|\bdone\b|\bresolved\b|\bcompleted\b/i.test(text);
+}
+
 function parseMarkdownItems(section, prefix, fallbackLabel) {
   const items = [];
   let counter = 1;
@@ -562,6 +662,9 @@ module.exports = {
   extractNestedSection,
   extractFirstNestedSection,
   parseMarkdownItems,
+  parsePreWorkChecklist,
+  classifyPreWorkSubsection,
+  isPreWorkResolved,
   buildIntentTrace,
   intentSourceFiles,
   splitIntentSourceValue,

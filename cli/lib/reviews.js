@@ -77,13 +77,34 @@ function assertReviewReportStatus(reportAbs, status) {
   }
 }
 
+/**
+ * Review-report validation runs in two tiers.
+ *
+ * Hard rejections (throw) are only what a machine can own without judging
+ * prose: the report exists non-empty (inspectArtifact at the call sites), the
+ * standalone Status line matches --status, and a FAIL carries at least one
+ * finding line. Record-level checks outside prose structure - report
+ * path/hash recording, fidelity-precedes-final ordering, freshness - stay
+ * hard where they already live.
+ *
+ * Everything about the report's SHAPE - section presence, bullet/entry
+ * floors, Coverage Judgment label grammar, per-V# mentions, placeholder
+ * heuristics - is advisory: it is still computed but RETURNED as
+ * structureWarnings for the command to print, never a rejection. Structure
+ * validation of LLM prose is a losing arms race (this file was already a
+ * ledger of carve-outs: table traces, plain label lines, code-span
+ * placeholder exemptions), and in an audited run the format validator
+ * rejected a semantically valid report 5 times over formatting alone,
+ * costing 8 turns.
+ */
 function assertFinalReviewReport(reportAbs, status, state) {
   assertReviewReportStatus(reportAbs, status);
   const text = fs.readFileSync(reportAbs, "utf8");
   const violations = [];
+  const warnings = [];
   for (const heading of ["Fidelity Review Checked", "Findings", "Artifact Audit", "Deviation Audit", "Verdict"]) {
     if (!meaningfulReviewSection(extractSection(text, heading))) {
-      violations.push(`Final review section '${heading}' is missing or empty`);
+      warnings.push(`Final review section '${heading}' is missing or empty`);
     }
   }
   // The final review audits the requirements fidelity review as the primary
@@ -102,7 +123,7 @@ function assertFinalReviewReport(reportAbs, status, state) {
       }
     }
     if (/\b(?:TODO|TBD|FIXME)\b/i.test(text)) {
-      violations.push("Passing final review must not contain TODO, TBD, or FIXME placeholders");
+      warnings.push("Passing final review should not contain TODO, TBD, or FIXME placeholders");
     }
   }
   if (status === "fail" && reviewBulletCount(extractSection(text, "Findings")) < 1) {
@@ -111,6 +132,7 @@ function assertFinalReviewReport(reportAbs, status, state) {
   if (violations.length) {
     throw new Error(`Invalid final review report:\n- ${violations.join("\n- ")}`);
   }
+  return warnings;
 }
 
 function assertRequirementsFidelityReport(reportAbs, status, state) {
@@ -126,20 +148,21 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     "Verdict",
   ];
   const violations = [];
+  const warnings = [];
   for (const heading of requiredSections) {
     const section = extractSection(text, heading);
     if (!meaningfulReviewSection(section)) {
-      violations.push(`Requirements fidelity report section '${heading}' is missing or empty`);
+      warnings.push(`Requirements fidelity report section '${heading}' is missing or empty`);
     }
   }
 
   const intentSources = extractSection(text, "Intent Sources Read");
   if (reviewBulletCount(intentSources) < 1) {
-    violations.push("Requirements fidelity report Intent Sources Read must list at least one bullet like '- agents/prd/<slug>/prd.md'");
+    warnings.push("Requirements fidelity report Intent Sources Read should list at least one bullet like '- agents/prd/<slug>/prd.md'");
   }
 
   const decisionTrace = extractSection(text, "Decision Trace");
-  // Require a small floor of traced entries rather than one bullet per parsed
+  // Advise a small floor of traced entries rather than one bullet per parsed
   // decision: a PRD with many decisions should not force the reviewer to
   // enumerate dozens of bullets, and a table trace is valid. The reviewer owns
   // how thoroughly to group; the coverage judgment below is the real gate.
@@ -147,18 +170,16 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
   const expectedDecisionCount = Math.min(Math.max(1, decisionCount), 3);
   const decisionTraceEntryCount = reviewEntryCount(decisionTrace);
   if (decisionTraceEntryCount < expectedDecisionCount) {
-    violations.push(`Requirements fidelity report Decision Trace must include at least ${expectedDecisionCount} traced decision/proposal entr${expectedDecisionCount === 1 ? "y" : "ies"}; found ${decisionTraceEntryCount}. Each entry is a bullet like '- <decision>: <where it landed> | gap: none' or a markdown table row`);
+    warnings.push(`Requirements fidelity report Decision Trace should include at least ${expectedDecisionCount} traced decision/proposal entr${expectedDecisionCount === 1 ? "y" : "ies"}; found ${decisionTraceEntryCount}. Each entry is a bullet like '- <decision>: <where it landed> | gap: none' or a markdown table row`);
   }
 
   const coverage = extractSection(text, "Coverage Judgment");
   // The bullet is formatting, not substance: a plain `Label: judgment` line at
-  // line start carries the same claim, so rejecting it only forced reviewers
-  // to reverse-engineer the expected shape from this source file. Every
-  // rejection message below spells out a literally-passing line for the same
-  // reason.
+  // line start carries the same claim. Every warning message below spells out
+  // a literally-conforming line for the same reason.
   for (const label of ["Requirements", "Acceptance Criteria", "User-visible behavior", "Non-goals and rejected options", "Human verification"]) {
     const re = new RegExp(`^\\s*(?:[-*]\\s*)?${escapeRegExp(label)}\\s*:\\s*\\S`, "im");
-    if (!re.test(coverage)) violations.push(`Requirements fidelity report Coverage Judgment must include a line '${label}: <judgment>' (leading bullet '-' optional)`);
+    if (!re.test(coverage)) warnings.push(`Requirements fidelity report Coverage Judgment should include a line '${label}: <judgment>' (leading bullet '-' optional)`);
   }
 
   const verificationChecklist = extractSection(text, "Verification Intent Checklist");
@@ -166,7 +187,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     if (!isVerificationRequiredForDone(verification)) continue;
     const re = new RegExp(`\\b${escapeRegExp(verification.id)}\\b`, "i");
     if (!re.test(verificationChecklist)) {
-      violations.push(`Requirements fidelity report Verification Intent Checklist must mention required verification ${verification.id}, e.g. '- ${verification.id}: Pass Intent: <intent>; Artifacts checked: <path>; Judgment: PASS; Gap: none'`);
+      warnings.push(`Requirements fidelity report Verification Intent Checklist should mention required verification ${verification.id}, e.g. '- ${verification.id}: Pass Intent: <intent>; Artifacts checked: <path>; Judgment: PASS; Gap: none'`);
     }
   }
 
@@ -179,13 +200,13 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     const prose = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
     const hasLeftoverPlaceholder = /<[A-Za-z][^>\n]*[ \/#-][^>\n]*>/.test(prose);
     if (/\b(?:TODO|TBD|FIXME)\b/i.test(prose) || hasLeftoverPlaceholder) {
-      violations.push("Passing requirements fidelity report must not contain leftover <template> placeholders, TODO, TBD, or FIXME; replace each with real content, or wrap literal angle-bracket text in backticks (code spans are exempt)");
+      warnings.push("Passing requirements fidelity report should not contain leftover <template> placeholders, TODO, TBD, or FIXME; replace each with real content, or wrap literal angle-bracket text in backticks (code spans are exempt)");
     }
     const unresolvedGap = decisionTrace
       .split(/\r?\n/)
       .some(line => /\bgap\s*:\s*(?=\S)(?!none\b|no\b|n\/a\b|없음\b|-+\s*$).+/i.test(line.trim()));
     if (unresolvedGap) {
-      violations.push("Passing requirements fidelity report Decision Trace contains a non-none gap");
+      warnings.push("Passing requirements fidelity report Decision Trace contains a non-none gap");
     }
   }
 
@@ -196,6 +217,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
   if (violations.length) {
     throw new Error(`Invalid requirements fidelity report:\n- ${violations.join("\n- ")}`);
   }
+  return warnings;
 }
 
 function meaningfulReviewSection(section) {

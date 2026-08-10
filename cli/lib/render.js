@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { writeMarkdown, NAMESPACE_ROOT } = require("./util");
+const { hashGateInput } = require("./gate_freshness");
 const { executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
 const { collectArtifacts } = require("./artifacts");
 const { verifyGateStatus } = require("./reviews");
@@ -142,6 +143,51 @@ function writeImplementationReport(statePath, state) {
   writeMarkdown(path.join(path.dirname(statePath), "implementation-result.md"), lines.join("\n"));
 }
 
+// Layering principle: each layer sees only what only it can see. The spec
+// gate's fidelity lane already judged "every material decision in the
+// interview log is represented in the PRD without distortion" at PRD time,
+// and that PASS is hash-pinned to both documents. When the pin still matches
+// the files on disk, making the fidelity reviewer re-read the whole qa-log
+// re-buys a settled judgment: in an audited run the reviewer re-read a
+// 37k-char qa-log and found zero issues the gate had not already caught.
+// Returns the spec-gate record when the qa-log→PRD leg is settled (verdict
+// PASS, not overridden, every recorded input hash still matching disk via
+// the canonical hashGateInput - never a reimplemented hash), else null.
+function settledSpecGate(state) {
+  const projectRoot = state.projectRoot || process.cwd();
+  if (!state.topicSlug) return null;
+  const gatesPath = path.join(projectRoot, "agents", "gates", state.topicSlug, "gates.json");
+  if (!fs.existsSync(gatesPath)) return null;
+  let record;
+  try {
+    const gatesState = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
+    record = gatesState.gates && gatesState.gates.spec;
+  } catch {
+    return null;
+  }
+  if (!record || record.verdict !== "PASS" || record.overridden === true) return null;
+  if (!Array.isArray(record.inputs) || record.inputs.length === 0) return null;
+  // The narrowed mandate claims the qa-log→PRD leg is settled, so the qa-log
+  // itself must be among the pinned inputs. The CLI's own spec runs always
+  // pin [prd, qaLog], but the whole point of hash-checking the record is
+  // distrusting it - a hand-written PASS pinning only the PRD must not
+  // silence the full read while the qa-log drifts unpinned.
+  if (!record.inputs.some(input => input && typeof input.path === "string" && /qa-log|interview|intake/i.test(input.path))) {
+    return null;
+  }
+  for (const input of record.inputs) {
+    if (!input || !input.path || !input.sha256) return null;
+    let hash;
+    try {
+      hash = hashGateInput(path.join(projectRoot, input.path), input.kind);
+    } catch {
+      return null;
+    }
+    if (hash === null || hash !== input.sha256) return null;
+  }
+  return { lastRunAt: record.lastRunAt || null, inputs: record.inputs };
+}
+
 function renderRequirementsReviewPrompt(context) {
   const { state, statePath, reportPath } = context;
   const intentTrace = state.intentTrace || {};
@@ -159,6 +205,13 @@ function renderRequirementsReviewPrompt(context) {
     .slice(0, 40)
     .map(item => `  - ${item.source} ${item.id} [${item.stance || "unspecified"}]: ${item.text}`)
     .join("\n") || "  - No structured decision trace items were captured; treat missing traceability as a finding unless the PRD explicitly says none were needed.";
+  // Conditional qa-log depth (see settledSpecGate for the layering rationale
+  // and the 37k-read-zero-findings datum): only a fresh, non-overridden
+  // spec-gate PASS whose pinned inputs still match disk narrows the mandate.
+  const specGate = settledSpecGate(state);
+  const qaLogGuidance = specGate
+    ? `- The qa-log→PRD leg is settled: the spec gate's fidelity lane PASSed on these exact documents (last run ${specGate.lastRunAt || "unrecorded"}; pinned inputs still matching disk: ${specGate.inputs.map(input => `\`${input.path}\` sha256 ${input.sha256.slice(0, 12)}`).join(", ")}), already judging that every material decision in the interview log is represented in the PRD without distortion. Do NOT re-read the full qa-log: read the PRD's Decision Traceability section plus the implementation and registered evidence, and judge the PRD→implementation leg. Escape hatch: if anything in the PRD's decision trace looks inconsistent or truncated, the spec record looks suspicious, or a decision's provenance is unclear, fall back to reading the canonical qa-log in full.`
+    : `- When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A entries (Decision Packet content lives in each entry's immediate_notes field), UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.`;
   return `You are the requirements fidelity reviewer for a PRD implementation.
 
 ${ownershipGuidance}
@@ -180,7 +233,7 @@ Source of truth:
 - Rehearsal ledger: \`${state.runDir}/rehearsals.jsonl\` (may be absent) - side-door Bash runs of contract commands the harness observer recorded, exit codes included. A required check whose official pass shows no failure anywhere in its history is a signal worth weighing, not an automatic finding: confirm the check exercises what it claims to protect.
 - Git diff/worktree: inspect current repository state
 - Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/interview/**\` files that exist (legacy \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` paths may appear in older PRDs).
-- When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A entries (Decision Packet content lives in each entry's immediate_notes field), UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.
+${qaLogGuidance}
 - Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources). This count is not semantic coverage proof.
 ${decisionLines}
 
@@ -202,7 +255,7 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
-Keep the section headings and the Coverage Judgment label keys exactly as written below; they are machine-checked structural markers. Write all prose, findings, and values in the user's language.
+Use the section headings and the Coverage Judgment label keys exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Only the standalone Status line (and at least one finding when the status is FAIL) is enforced mechanically. Write all prose, findings, and values in the user's language.
 
 Use this format:
 
@@ -302,7 +355,7 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
-Keep the section headings exactly as written below; they are machine-checked structural markers. Write all prose in the user's language.
+Use the section headings exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Only the standalone Status line (and at least one finding when the status is FAIL) is enforced mechanically. Write all prose in the user's language.
 
 Use this format:
 

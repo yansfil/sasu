@@ -34,6 +34,16 @@ function cmdRequirementsReviewPrompt(options) {
   }));
 }
 
+// Structure defects in review reports are advisory (see the tier comment on
+// the assert functions in ../reviews.js): print them loudly on stderr so a
+// human scanning the run sees them, while stdout stays parseable JSON that
+// carries the same list as `structureWarnings`.
+function printStructureWarnings(label, warnings) {
+  for (const warning of warnings || []) {
+    process.stderr.write(`WARNING (${label} structure, advisory): ${warning}\n`);
+  }
+}
+
 function cmdRequirementsReviewRecord(options) {
   const status = String(options.status || "");
   const reportInput = String(options.report || "");
@@ -44,7 +54,8 @@ function cmdRequirementsReviewRecord(options) {
   const { statePath, state } = loadState(options);
   const reportAbs = resolveProjectPath(reportInput, state.projectRoot || cwd());
   const info = inspectArtifact(reportAbs, "log");
-  assertRequirementsFidelityReport(reportAbs, status, state);
+  const structureWarnings = assertRequirementsFidelityReport(reportAbs, status, state);
+  printStructureWarnings("requirements fidelity report", structureWarnings);
   const reportPath = toProjectRelative(reportAbs, state.projectRoot || cwd());
 
   if (status === "pass") {
@@ -74,6 +85,7 @@ function cmdRequirementsReviewRecord(options) {
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
+    structureWarnings,
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,
     counts: countState(state),
@@ -93,7 +105,8 @@ function cmdReviewRecord(options) {
   const { statePath, state } = loadState(options);
   const reportAbs = resolveProjectPath(reportInput, state.projectRoot || cwd());
   const info = inspectArtifact(reportAbs, "log");
-  assertFinalReviewReport(reportAbs, status, state);
+  const structureWarnings = assertFinalReviewReport(reportAbs, status, state);
+  printStructureWarnings("final review report", structureWarnings);
   const reportPath = toProjectRelative(reportAbs, state.projectRoot || cwd());
 
   if (status === "pass") {
@@ -119,6 +132,7 @@ function cmdReviewRecord(options) {
   syncActive(statePath, state);
   process.stdout.write(JSON.stringify({
     ok: true,
+    structureWarnings,
     finalReview: state.finalReview,
     counts: countState(state),
     executionPlan: executionPlanSummary(state),

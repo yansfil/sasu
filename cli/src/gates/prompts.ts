@@ -53,7 +53,8 @@ export interface PriorFinding {
 /**
  * A fan-out lane: one narrow parallel judge (PRD judge-fanout R1/R2, D-06).
  * Lanes are fixed in code - gap-audit splits by document area, spec by its
- * three original review axes. areaHints route prior findings on re-runs.
+ * review axes (see the SPEC_LANES comment for why there are two). areaHints
+ * route prior findings on re-runs.
  */
 export interface JudgeLane {
   id: string;
@@ -93,6 +94,19 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
   },
 ];
 
+/**
+ * Two lanes, not three: the old "verification-completeness" lane's own scope
+ * text admitted its R#/AC# coverage walk was "a mechanical cross-reference -
+ * do it exhaustively, it is cheap" - deterministic work bought at judge
+ * prices. The deterministic PRD prelint already reports uncovered ACs
+ * (prd-uncovered-ac, directly or via a covered R# the AC references) and
+ * dangling Covers references (prd-dangling-ref) at $0 before any judge runs,
+ * so the lane's mechanical half is deleted. Its semantic residue - pass-intent
+ * observability, the quality of human-verification/non-goal dispositions, and
+ * requirement-level (R#) coverage judgment, which no prelint rule checks -
+ * lives on in the testability lane below. Old "verification"/"coverage" areas
+ * from prior-round findings route there via its merged areaHints.
+ */
 export const SPEC_LANES: JudgeLane[] = [
   {
     id: "fidelity",
@@ -103,17 +117,10 @@ export const SPEC_LANES: JudgeLane[] = [
   },
   {
     id: "testability",
-    title: "testability of acceptance criteria",
+    title: "testability and verification intent",
     scope:
-      "Every acceptance criterion must be an observable, testable statement. Flag vague qualifiers (\"적절히\", \"빠르게\", \"appropriately\", \"robust\") used as acceptance language.",
-    areaHints: ["testability", "acceptance", "criteria"],
-  },
-  {
-    id: "verification-completeness",
-    title: "verification completeness",
-    scope:
-      "Every requirement and acceptance criterion must map to a verification item or an explicit human-verification/non-goal disposition, and required verification must state an observable pass intent. Method: walk the R# list and the AC# list ONE BY ONE, and for each id check whether any V row's Covers column (or a human-verification/non-goal line) names it; report every id that nothing covers. This is a mechanical cross-reference - do it exhaustively, it is cheap.",
-    areaHints: ["verification", "coverage", "proof"],
+      "Every acceptance criterion must be an observable, testable statement - flag vague qualifiers (\"적절히\", \"빠르게\", \"appropriately\", \"robust\") used as acceptance language. Required verification must state an observable pass intent, and every human-verification or non-goal disposition must be a genuine, justified disposition rather than a dumping ground for hard-to-test requirements. Judge whether each requirement (R#) has a real verification or an explicit disposition; do NOT re-walk the AC#-by-AC# Covers cross-reference - a deterministic prelint already reports uncovered ACs and dangling Covers references before any judge runs.",
+    areaHints: ["testability", "acceptance", "criteria", "verification", "coverage", "proof"],
   },
 ];
 
@@ -226,14 +233,17 @@ export function specGatePrompt(
   const axes = options.lane
     ? `Judge the PRD on exactly ONE axis - ${options.lane.title.toUpperCase()}:
 ${options.lane.scope}`
-    : `Judge the PRD on exactly three axes (D-21 contract):
+    : `Judge the PRD on exactly two axes (D-21 contract, coverage walk owned by the deterministic prelint):
 (a) FIDELITY: every material decision in the interview log's Decision Register is represented in the
     PRD without distortion. Rejected options stayed rejected. Deferred items stayed deferred with a
     revisit condition. Agent assumptions were not upgraded into user decisions.
-(b) TESTABILITY: every acceptance criterion is an observable, testable statement. Flag vague
-    qualifiers ("적절히", "빠르게", "appropriately", "robust") used as acceptance language.
-(c) VERIFICATION COMPLETENESS: every requirement and acceptance criterion maps to a verification
-    item or an explicit human-verification/non-goal disposition.`;
+(b) TESTABILITY AND VERIFICATION INTENT: every acceptance criterion is an observable, testable
+    statement - flag vague qualifiers ("적절히", "빠르게", "appropriately", "robust") used as
+    acceptance language. Required verification states an observable pass intent, every
+    human-verification/non-goal disposition is a genuine justified disposition, and every
+    requirement (R#) has a real verification or an explicit disposition. Do NOT re-walk the
+    AC#-by-AC# Covers cross-reference - a deterministic prelint already reports uncovered ACs and
+    dangling Covers references.`;
   return `You are an independent PRD spec-gate judge (fidelity + self-containment).
 You have no prior context beyond the two documents below.
 

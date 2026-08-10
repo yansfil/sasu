@@ -477,8 +477,10 @@ sasu gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log
 ```
 
 An independent judge checks fidelity (every material Decision Register entry
-represented without distortion), testability (acceptance criteria observable,
-no vague qualifiers), and verification completeness.
+represented without distortion) and testability plus verification intent
+(acceptance criteria observable with no vague qualifiers, observable pass
+intents, genuine human-verification/non-goal dispositions); the deterministic
+prelint already reports uncovered ACs and dangling Covers references at $0.
 
 - The gate is a hard block: exit 1 means the PRD is not `ready`. Fix the PRD
   per finding and re-run.

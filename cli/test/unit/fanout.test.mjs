@@ -121,9 +121,27 @@ test("lane prompts: gap-audit lane prompt scopes the judge and keeps the JSON co
 });
 
 test("lane prompts: spec lane prompt narrows to a single axis", () => {
-  const prompt = specGatePrompt("prd body", "qa body", [], { lane: SPEC_LANES[1], laneCount: 3 });
-  assert.match(prompt, /exactly ONE axis - TESTABILITY OF ACCEPTANCE CRITERIA/);
+  const prompt = specGatePrompt("prd body", "qa body", [], { lane: SPEC_LANES[1], laneCount: SPEC_LANES.length });
+  assert.match(prompt, /exactly ONE axis - TESTABILITY AND VERIFICATION INTENT/);
   assert.doesNotMatch(prompt, /\(a\) FIDELITY/);
+});
+
+// The verification-completeness lane is gone (its R#/AC# walk was
+// deterministic work the prelint does at $0), so the two survivors must keep
+// its semantic residue and absorb its re-run finding routing.
+test("spec lanes: two lanes remain and old verification/coverage findings route to testability", () => {
+  assert.deepEqual(SPEC_LANES.map((lane) => lane.id), ["fidelity", "testability"]);
+  assert.match(SPEC_LANES[1].scope, /pass intent/i);
+  assert.match(SPEC_LANES[1].scope, /human-verification or non-goal disposition/i);
+  const routed = routePriorFindings(
+    [
+      { severity: "P1", area: "verification", missing: "V2 pass intent unobservable" },
+      { severity: "P1", area: "coverage", missing: "R3 has no disposition" },
+    ],
+    SPEC_LANES,
+  );
+  assert.equal(routed.get("testability").length, 2, "old lane areas must land in the surviving lane, not broadcast");
+  assert.equal(routed.get("fidelity").length, 0);
 });
 
 test("lane prompts: fan-out rerun with no routed priors still demands origin labels", () => {

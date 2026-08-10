@@ -95,7 +95,7 @@ Then interview:
      (default 3; advisory for autonomous loops - a user-instructed re-run is
      never locked).
    - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
-     lanes) and spec (3 review-axis lanes), merged mechanically by the CLI
+     lanes) and spec (2 review-axis lanes), merged mechanically by the CLI
      (default `true`; set `false` to restore the single exhaustive judge).
    - Codex judge limitation: codex CLI cannot disable its shell, so codex
      judges get best-effort isolation only (empty ephemeral work root,

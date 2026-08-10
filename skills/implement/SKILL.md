@@ -71,7 +71,7 @@ References do not require nested reference chasing.
 - Do not add unmapped scope, hidden user flows, unapproved services, schemas, external calls, or destructive actions.
 - Only the coordinator mutates harness state, reconciles subagents, applies final edits, and records completion outcomes.
 - Every required verification item must pass with valid artifact-backed evidence from the actual run.
-- Requirements fidelity reads the complete canonical intake qa-log when the PRD references one and compares qa-log intent through the PRD to the implementation result.
+- Requirements fidelity compares qa-log intent through the PRD to the implementation result; it reads the complete canonical qa-log unless a fresh spec-gate PASS settles the qa-logâ†’PRD leg, in which case the generated prompt narrows the read to the PRD's Decision Traceability plus the implementation (see `references/reviews-and-finalization.md`).
 - Requirements fidelity review precedes final adversarial review when the effective policy requires both, and source or evidence changes make affected reviews stale.
 - `receipt.json` is the only implementation completion proof; Goal state and chat claims merely mirror it.
 - PR creation, CI, and merge are post-receipt delivery outcomes and never required implementation verification.
@@ -129,7 +129,7 @@ Before editing:
 1. Read the PRD and confirm `status: ready`.
 2. Confirm `human_approval: "approved"` or obtain the verbatim approval deviation authorized by the calling workflow.
 3. Never set human approval yourself; when the user explicitly approves in conversation, either update frontmatter with that quoted approval in the implementation notes or pass the exact approval to `init --allow-unapproved-prd`.
-4. Confirm blocking pre-work and human decisions are resolved.
+4. Confirm blocking pre-work and human decisions are resolved; `init` surfaces unresolved `## 4` human-only items as `preWorkChecklist`, and the batched-ask rule in section 3 governs them.
 5. Treat Major Technical Structure Changes as the approved structure lock.
 6. Read Implementation Guardrails and Risks.
 7. Read `agents/config.json` when it exists.
@@ -181,6 +181,9 @@ Initialization fails when PRD approval is pending and no allowed deviation is re
 Bind a session ID and handle PR delivery or worktrees according to `references/worktrees-and-delivery.md` when those conditions apply.
 
 The harness extracts PRD-level tasks, acceptance criteria, verification items, test modes, and structure locks into durable state.
+It also extracts the `## 4` human-only pre-work and open human decisions into `preWorkChecklist` (init output and `state.json`).
+When init reports unresolved `preWorkChecklist` items, ask the user about ALL of them in ONE batched message (in Claude Code, one AskUserQuestion call listing every item) BEFORE starting task implementation; never discover them serially mid-run.
+Record items the user defers as blockers on the affected tasks and proceed on unaffected tasks.
 It records the PRD's agent-declared `trivial`, `standard`, or `high-risk` profile, with `standard` as the safe missing-value fallback.
 Read `references/reviews-and-finalization.md` for the exact gate owned by each profile and override only a genuinely wrong semantic judgment.
 
@@ -368,7 +371,7 @@ When the user explicitly reduces or raises review scope mid-run (for example "ë¦
 For `trivial`, the main agent performs a compact fidelity review.
 For `standard`, a fresh independent read-only reviewer performs the single combined fidelity review when multi-agent tools are available, while the coordinator alone records it.
 For `high-risk`, the main agent performs full fidelity before the required independent final review; ownership does not force serialization - write it while `sasu verify` runs in the background, and spawn the final-review sidecar only after fidelity is recorded.
-Every fidelity review must compare the complete original qa-log or conversation source, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result.
+Every fidelity review must compare the original intent source, accepted and rejected decisions, PRD scope, acceptance criteria, registered evidence, and the claimed result; the qa-log reading depth follows the spec-gate rule above (full read unless the generated prompt states the leg is settled).
 Do not use a handoff summary or the harness's parsed intent sample as a substitute for reading the canonical source.
 Fail when a material answer, accepted recommendation, objection, constraint, rejected option, non-goal, or assumption is lost or changes provenance across `qa-log -> PRD -> implementation`.
 Harness-owned mechanical gates remain authoritative, so reviewers rerun full suites or hashes only when recorded evidence is inconsistent, missing, or suspicious.
