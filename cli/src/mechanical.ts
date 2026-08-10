@@ -32,6 +32,13 @@ export interface MechanicalRun {
   exitCode: number;
   ok: boolean;
   tail: string;
+  /**
+   * Set when the command was NOT executed because an implement verify-run
+   * already earned a pass for the same command on an identical tree
+   * fingerprint (cli/lib/fresh_pass.js rule). The skip is evidence reuse,
+   * never silence: it names the verification whose recorded pass it leans on.
+   */
+  freshPass?: { verificationId: string; logPath: string | null };
 }
 
 export interface MechanicalResult {
@@ -103,7 +110,15 @@ export function runMechanical(
   projectRoot: string,
   config: SasuConfig,
   extra: ResolvedCommand[] = [],
-  options: { skipProjectCommands?: boolean } = {},
+  options: {
+    skipProjectCommands?: boolean;
+    /**
+     * Fresh-pass lookup for project commands (never contract checks/captures:
+     * those are quick-path evidence the harness must execute itself). A non-null
+     * return skips execution and records the reused pass on the run.
+     */
+    freshPassFor?: (cmd: ResolvedCommand) => { verificationId: string; logPath?: string | null } | null;
+  } = {},
 ): MechanicalResult {
   const base = options.skipProjectCommands
     ? { resolved: [] as ResolvedCommand[], configSuggestion: null }
@@ -137,6 +152,25 @@ export function runMechanical(
   const runs: MechanicalRun[] = [];
   let ok = true;
   for (const cmd of resolved) {
+    // Evidence reuse, not laziness: the identical command already passed under
+    // the harness's own digest guard on this exact tree, so re-running it would
+    // repeat the identical experiment (same rule finalize uses for its
+    // reverification skip). Contract commands never qualify - a capture must
+    // produce a fresh artifact and a check is the quick contract's own proof.
+    const fresh = cmd.source !== "contract" ? (options.freshPassFor?.(cmd) ?? null) : null;
+    if (fresh) {
+      runs.push({
+        kind: cmd.kind,
+        command: cmd.command,
+        source: cmd.source,
+        ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
+        exitCode: 0,
+        ok: true,
+        tail: `[sasu] not executed: fresh verify-run pass ${fresh.verificationId} covers this command on an identical tree${fresh.logPath ? ` (log: ${fresh.logPath})` : ""}`,
+        freshPass: { verificationId: fresh.verificationId, logPath: fresh.logPath ?? null },
+      });
+      continue;
+    }
     const run = runOne(projectRoot, cmd, config);
     runs.push(run);
     if (!run.ok) {

@@ -6,6 +6,7 @@ const path = require("path");
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash, safeTimestamp, writeMarkdown } = require("../util");
 const { shellLikeTokens } = require("../inference");
 const { worktreeSnapshot, reverifyFingerprint } = require("../git");
+const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_pass");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
@@ -184,27 +185,24 @@ function reverifyRequiredVerifications(statePath, state) {
   for (const item of state.verification || []) {
     if (!isVerificationRequiredForDone(item)) continue;
     if (item.status !== "pass") continue; // open/blocked items are already violations elsewhere
-    const commandLogs = (item.artifacts || []).filter(artifact =>
-      artifact.kind === "command-log" && typeof artifact.command === "string" && artifact.command.trim() !== "");
-    if (!commandLogs.length) {
+    // Selection and skip rules shared with the gate's fresh-pass reuse
+    // (fresh_pass.js): one place decides what a command log is, whether a
+    // side effect disqualifies it, and when a pass is still fresh.
+    const lastLog = latestCommandLog(item);
+    if (!lastLog) {
       results.push({ id: item.id, skipped: "no recorded command (non-shell evidence)" });
       continue;
     }
-    const sideEffect = item.matrix && typeof item.matrix.sideEffect === "string" ? item.matrix.sideEffect.trim() : "";
-    if (sideEffect && !/^(none|없음|-|n\/a)$/i.test(sideEffect)) {
+    const sideEffect = declaredSideEffect(item);
+    if (sideEffect) {
       results.push({ id: item.id, skipped: `declared side effect: ${sideEffect}` });
       continue;
     }
-    const lastLog = commandLogs[commandLogs.length - 1];
     // A pass earned on the identical tree would re-run the identical
     // experiment; skip it. The common honest flow (final suite, then
     // finalize) therefore costs nothing - only stale passes re-run.
-    if (
-      lastLog.exitCode === 0 &&
-      lastLog.treeFingerprint && currentFingerprint &&
-      lastLog.treeFingerprint.headSha === currentFingerprint.headSha &&
-      lastLog.treeFingerprint.statusHash === currentFingerprint.statusHash
-    ) {
+    // Shared predicate with the verify gate's mechanical stage (fresh_pass.js).
+    if (isFreshPass(lastLog, currentFingerprint)) {
       results.push({ id: item.id, skipped: `fresh pass: worktree unchanged since the recorded pass (${currentFingerprint.statusHash})` });
       continue;
     }

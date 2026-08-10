@@ -494,6 +494,13 @@ export interface VerifyOptions {
   diffFile?: string;
   baseRef?: string;
   skipMechanical?: boolean;
+  /**
+   * Proceed (with a stderr warning) even when the slug's implement run still
+   * has pending/in_progress tasks. Without it the gate refuses a mid-run call
+   * outright: judging a diff against the COMPLETE acceptance criteria while
+   * tasks are open fails legitimately and burns the retry budget.
+   */
+  allowOpenTasks?: boolean;
 }
 
 const { quickTreeFingerprint } = require("../../lib/git.js") as {
@@ -527,7 +534,44 @@ const { DB_TOUCH_PATTERN } = require("../../lib/planning.js") as { DB_TOUCH_PATT
 // too (same shared-lib pattern as prd_parser above). The two executors used
 // to diverge (gate: shell:true) and the same declared Check command could
 // PASS at the gate while the harness recorded not_met.
-const { shellLikeTokens } = require("../../lib/inference.js") as { shellLikeTokens: (command: string) => string[] };
+const { shellLikeTokens, commandsMatchContract } = require("../../lib/inference.js") as {
+  shellLikeTokens: (command: string) => string[];
+  commandsMatchContract: (actual: string, expected: string) => boolean;
+};
+// Fresh-pass reuse shares finalize's rule (one predicate, two consumers): a
+// verify-run pass pinned to an identical tree fingerprint already proves what
+// the mechanical stage would re-prove by running the same command again.
+const { freshVerifyRunPasses } = require("../../lib/fresh_pass.js") as {
+  freshVerifyRunPasses: (
+    state: ImplementStateLite,
+    projectRoot: string,
+  ) => { verificationId: string; command: string; logPath: string | null }[];
+};
+
+/**
+ * The slice of an implement run's state.json the gate reads. The dependency is
+ * deliberately read-only, one-way, and optional: the gate layer otherwise
+ * knows nothing about implement state, and a repo that never ran implement
+ * (or a corrupt state file) must behave exactly as before.
+ */
+interface ImplementStateLite {
+  tasks?: { id?: string; title?: string; status?: string }[];
+  verification?: unknown[];
+  projectRoot?: string;
+  runDir?: string;
+}
+
+function readImplementState(projectRoot: string, topic: string): ImplementStateLite | null {
+  try {
+    const statePath = path.join(projectRoot, "agents", "implement", topic, "state.json");
+    if (!fs.existsSync(statePath)) return null;
+    const parsed: unknown = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    return parsed !== null && typeof parsed === "object" ? (parsed as ImplementStateLite) : null;
+  } catch {
+    // Unreadable implement state is doctor's problem, never the gate's.
+    return null;
+  }
+}
 
 export async function runVerifyGate(
   projectRoot: string,
@@ -559,6 +603,39 @@ export async function runVerifyGate(
     prelint = runPrelint(docKind, docFile.content);
     if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "verify", prelint);
     emitPrelintWarnings(prelint);
+  }
+
+  // Open-task guard ($0, PRD path only): the gate judges the diff against the
+  // PRD's COMPLETE acceptance criteria, so a call while implement tasks are
+  // still pending/in_progress fails legitimately and burns the retry budget.
+  // Refusal is a thrown error, same class as the empty-diff check below: no
+  // gate attempt is recorded and no budget is spent. complete/blocked/deferred
+  // tasks never block - blocked and partial handoffs legitimately run without
+  // a gate PASS, and a deferral is a recorded decision.
+  const implementState = docKind === "prd" ? readImplementState(projectRoot, topic) : null;
+  // Shape-tolerant like readImplementState itself: valid JSON with a non-array
+  // tasks field must degrade to "no guard", not crash the gate.
+  const implementTasks = Array.isArray(implementState?.tasks) ? implementState.tasks : [];
+  const openTasks = implementTasks.filter(
+    (task) => task?.status === "pending" || task?.status === "in_progress",
+  );
+  if (openTasks.length > 0) {
+    const shown = openTasks
+      .slice(0, 8)
+      .map((task) => `${task.id ?? "?"}${task.title ? ` (${task.title})` : ""}`)
+      .join(", ");
+    const suffix = openTasks.length > 8 ? `, +${openTasks.length - 8} more` : "";
+    if (!options.allowOpenTasks) {
+      throw new Error(
+        `implement run '${topic}' still has ${openTasks.length} open task(s): ${shown}${suffix}. ` +
+          `The verify gate judges the diff against the complete acceptance criteria, so a mid-run call fails legitimately and burns the retry budget. ` +
+          `Finish the tasks (or mark them blocked/deferred with evidence), then re-run. ` +
+          `Pass --allow-open-tasks only when judging an intentionally partial diff. No gate attempt was recorded.`,
+      );
+    }
+    process.stderr.write(
+      `sasu: WARNING: proceeding despite ${openTasks.length} open implement task(s) (${shown}${suffix}) because --allow-open-tasks was passed. Missing acceptance criteria will fail and spend a retry-budget attempt.\n`,
+    );
   }
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
@@ -604,9 +681,33 @@ export async function runVerifyGate(
   // Captures are evidence production, not a project check: skipping the
   // mechanical stage must not silently leave the judge with a stale artifact,
   // so a contract with captures always runs them.
+  // Fresh-pass reuse: a project command the implement harness already ran to a
+  // digest-guard-clean pass on THIS exact tree fingerprint is skipped, with
+  // the reused verification stamped on the run (never silent). Fail-open by
+  // construction - no implement state, no git, or any drift means every
+  // command runs exactly as before.
+  const freshPasses = implementState ? freshVerifyRunPasses(implementState, projectRoot) : [];
+  const freshPassFor =
+    freshPasses.length > 0
+      ? (cmd: ResolvedCommand) => {
+          const hit = freshPasses.find((entry) => commandsMatchContract(entry.command, cmd.command));
+          return hit ? { verificationId: hit.verificationId, logPath: hit.logPath } : null;
+        }
+      : undefined;
   if (!options.skipMechanical || contractCommands.some((cmd) => cmd.kind === "capture")) {
     const commandsToRun = options.skipMechanical ? contractCommands.filter((cmd) => cmd.kind === "capture") : contractCommands;
-    mechanical = runMechanical(projectRoot, config, commandsToRun, { skipProjectCommands: options.skipMechanical === true });
+    mechanical = runMechanical(projectRoot, config, commandsToRun, {
+      skipProjectCommands: options.skipMechanical === true,
+      ...(freshPassFor !== undefined ? { freshPassFor } : {}),
+    });
+    const reused = mechanical.runs.filter((run) => run.freshPass !== undefined);
+    if (reused.length > 0) {
+      process.stderr.write(
+        `sasu: mechanical: reused ${reused.length} fresh verify-run pass(es) instead of re-running: ${reused
+          .map((run) => `${run.freshPass!.verificationId} (${run.command})`)
+          .join(", ")}\n`,
+      );
+    }
     if (!mechanical.ok) {
       state = recordGateResult(
         store,

@@ -615,3 +615,128 @@ test("json contract: doctor, status, and override all emit contractVersion-tagge
   assert.equal(overrideParsed.overridden, true);
   assert.equal(overrideParsed.status.effective, "PASS");
 });
+
+// --- verify open-task guard + mechanical fresh-pass reuse -------------------
+
+const PASS_STUB = {
+  verdict: "PASS",
+  criteria: [
+    { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+    { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+  ],
+};
+
+function writeImplementState(dir, slug, state) {
+  const runDir = path.join(dir, "agents", "implement", slug);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(runDir, "state.json"),
+    typeof state === "string" ? state : JSON.stringify({ runDir: path.join("agents", "implement", slug), ...state }),
+  );
+}
+
+test("verify refuses a mid-run call while implement tasks are open, at zero cost", () => {
+  const dir = makeProject({
+    config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
+  });
+  writeImplementState(dir, "fixture", {
+    tasks: [
+      { id: "T1", title: "done already", status: "complete" },
+      { id: "T2", title: "build the widget", status: "pending" },
+    ],
+  });
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+    stub: stubFile(dir, "should never be consumed"),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /open task/);
+  assert.match(result.stderr, /T2 \(build the widget\)/);
+  assert.match(result.stderr, /--allow-open-tasks/);
+  assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "mechanical stage must not run");
+  assert.ok(!fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), "no gate attempt may be recorded");
+});
+
+test("verify open-task guard: --allow-open-tasks proceeds with a warning", () => {
+  const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } } });
+  writeImplementState(dir, "fixture", { tasks: [{ id: "T1", title: "still open", status: "in_progress" }] });
+  const result = runCli(
+    dir,
+    ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff", "--allow-open-tasks"],
+    { stub: stubFile(dir, PASS_STUB) },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /proceeding despite 1 open implement task/);
+  assert.equal(gatesState(dir, "fixture").gates.verify.verdict, "PASS");
+});
+
+test("verify open-task guard fails open: closed tasks, corrupt state, and missing state all proceed", () => {
+  for (const state of [
+    { tasks: [{ id: "T1", status: "complete" }, { id: "T2", status: "blocked" }, { id: "T3", status: "deferred" }] },
+    { tasks: "not-an-array", verification: {} },
+    "{ not json at all",
+    null,
+  ]) {
+    const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } } });
+    if (state !== null) writeImplementState(dir, "fixture", state);
+    const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+      stub: stubFile(dir, PASS_STUB),
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(gatesState(dir, "fixture").gates.verify.verdict, "PASS");
+  }
+});
+
+function gitCommitAll(dir, message) {
+  for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message]]) {
+    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  }
+}
+
+test("verify mechanical stage reuses a fresh verify-run pass and re-runs after drift", () => {
+  const command = "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"";
+  const dir = makeProject({ config: { verify: { commands: { test: command } } } });
+  fs.writeFileSync(path.join(dir, "widget.js"), "render()\n");
+  gitCommitAll(dir, "base");
+  const stub = stubFile(dir, PASS_STUB);
+  // Fingerprint the tree exactly as verify-run would have (same lib, same
+  // exclusions), then record a passing V1 log pinned to it.
+  const gitLib = path.join(path.dirname(CLI), "..", "lib", "git.js");
+  const fp = spawnSync(
+    "node",
+    ["-e", `const {reverifyFingerprint}=require(${JSON.stringify(gitLib)});process.stdout.write(JSON.stringify(reverifyFingerprint({projectRoot:${JSON.stringify(dir)},runDir:"agents/implement/fixture"})))`],
+    { encoding: "utf8" },
+  );
+  const fingerprint = JSON.parse(fp.stdout);
+  assert.ok(fingerprint && fingerprint.statusHash, fp.stderr);
+  writeImplementState(dir, "fixture", {
+    projectRoot: dir,
+    tasks: [{ id: "T1", status: "complete" }],
+    verification: [
+      {
+        id: "V1",
+        status: "pass",
+        artifacts: [
+          { kind: "command-log", command, exitCode: 0, path: "agents/implement/fixture/artifacts/logs/v1.log", treeFingerprint: fingerprint },
+        ],
+      },
+    ],
+  });
+
+  const reusedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+    stub,
+  });
+  assert.equal(reusedRun.status, 0, reusedRun.stdout + reusedRun.stderr);
+  assert.match(reusedRun.stderr, /reused 1 fresh verify-run pass/);
+  assert.match(reusedRun.stderr, /V1/);
+  assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "fresh pass must skip execution");
+
+  // Any tracked drift invalidates the recorded fingerprint: the command runs.
+  fs.appendFileSync(path.join(dir, "widget.js"), "persist()\n");
+  const driftedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+    stub: stubFile(dir, PASS_STUB),
+  });
+  assert.equal(driftedRun.status, 0, driftedRun.stdout + driftedRun.stderr);
+  assert.ok(!/reused/.test(driftedRun.stderr), "drifted tree must not reuse the pass");
+  assert.ok(fs.existsSync(path.join(dir, "mech-ran.txt")), "drifted tree must re-run the command");
+});

@@ -317,13 +317,21 @@ If the gate fails and the fix changes code, the fidelity review goes stale
 under the normal freshness rule and re-runs; accept that occasional cost
 instead of always paying a serial wait.
 
-The gate judges the diff against the PRD's complete acceptance criteria, so
-do not call it mid-run while later tasks are still unimplemented: missing ACs
-would fail legitimately and burn the retry budget. The gate first runs a
+The gate judges the diff against the PRD's complete acceptance criteria and
+enforces the timing itself: while the slug's implement state still has
+pending or in-progress tasks, `sasu verify` refuses at zero cost (no attempt
+recorded, no budget spent) - missing ACs would fail legitimately and burn the
+retry budget. Finish or mark the tasks first; pass `--allow-open-tasks` only
+when judging an intentionally partial diff is the point. The gate first runs a
 deterministic PRD prelint (structure, dangling Covers references, uncovered
 ACs, mode conformance), then the mechanical checks (config-declared commands
 win; manifest detection is the fallback), and sends the diff plus the
 acceptance criteria to an independent judge only after both pass.
+A mechanical command whose latest `verify-run` pass was earned on the
+identical tree fingerprint is not re-executed: the gate reuses that recorded
+pass (same rule as finalize's reverification skip) and stamps the reused
+verification ID on the run, so the honest flow of verify-running the suite
+and then calling the gate on frozen code pays for the suite once.
 
 - Exit 1 with a `[prelint]` failure: the PRD itself is structurally broken;
   fix the cited rule/line and re-run - no judge call, no mechanical run, no
