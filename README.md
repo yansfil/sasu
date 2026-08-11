@@ -16,6 +16,8 @@ The idea is simple but strict:
 It is agent-agnostic by design - one source of skills and one CLI drive every runtime the same way.
 Codex and Claude Code ship today; any agent that can read a skill and run a command can work under the same 사수.
 
+What the harness believes, and the lens every change to it is held against: [PRINCIPLES.md](PRINCIPLES.md).
+
 ```text
 conversation
   └─ interview-me    interview until the requirements stop being vague
