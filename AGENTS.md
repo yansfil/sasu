@@ -33,12 +33,17 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
    concept, flag, command, or escape hatch states what leaves with it and shows
    the net account.
 5. **Parallel by default.** A sequential chain needs a real data dependency.
+   Running work concurrently assumes nothing; *skipping* work assumes the
+   verdict is a pure function of the inputs compared, which here is usually
+   false. Fan out freely; before skipping, prove purity.
 6. **Verify at the semantic unit, not the text unit.** Judge per acceptance
    criterion, scoped to what that criterion needs.
 7. **The harness absorbs complexity — never the workflow user, never a doc.**
    Do not add knobs to the human's or agent's contract. A rule that lives only
    as skill-document prose is a request for discipline, not a guard: push it
-   into code, in ROI order.
+   into code, in ROI order. Push rules into code, never judgments: declare a
+   value in the document only when the harness executes or compares it, and
+   leave meaning to the agent instead of regexing prose.
 8. **The whole flow must stay explainable.** One diagram, one small concrete
    example. A wall of text means the structure is the bug.
 9. **Measure it; re-verify before relying on it.** Retest recorded constraints
@@ -48,8 +53,14 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
 10. **Records stay honest and singular.** Skipped means skipped; a pass names
     the tree it was earned on; `state.json` is the only record.
 11. **General, not overfit.** Hold across project shapes and case sizes, not
-    just the incident that motivated the change.
+    just the incident that motivated the change. Detection built from one
+    sample looks like a guard and behaves like a coin flip: key on structure,
+    not on how one document happened to phrase something.
 12. **Compare outward before inventing.** Import the idea, not the machinery.
+13. **Never loop on a stage that cannot converge.** A test suite converges; a
+    fresh adversarial reviewer does not. A generative stage paired with
+    whole-run invalidation needs a harness-owned bound: a delta contract, a
+    severity floor, or a round cap.
 
 Full text, with the reasoning and the incidents behind each item:
 [`PRINCIPLES.md`](PRINCIPLES.md). When a review cites a principle, cite it by

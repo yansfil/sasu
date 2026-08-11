@@ -2320,14 +2320,23 @@ function recordJudgeFailure(
     "judge-timeout": "Re-run; if it persists, raise judge.timeoutMs in agents/config.json.",
     "judge-invalid-output": "Re-run; if it persists, try a stronger tier model via judge.tierModels.",
   };
+  const status = gateStatus(state, gate, config.judge.retryBudget, store.projectRoot);
+  // Same rule the rerun short-circuit follows: the component that ends the loop
+  // is the one that has to say what is left. Every recovery line above says
+  // "re-run", which is the right advice for one broken judge call and the wrong
+  // advice once the backend has failed `budget` times in a row - that is the
+  // spin PRINCIPLES item 13 bounds, and the honest exit has to be named here
+  // rather than left to the agent's patience.
+  const recovery = status.judgeErrorLoop
+    ? `The judge has now failed ${status.consecutiveErrors} times in a row without returning a verdict, so this is a backend failure, not a verification failure: `
+      + `the fix budget is untouched (attempts ${status.attempts}/${status.budget}) because there were never any findings to fix. `
+      + `${recoveryByCode[error.code] ?? "Fix the cause and re-run."} If the backend cannot be fixed here, close the run out honestly as blocked - the gate counts as the blocker and the receipt records the judge-error loop as the cause. `
+      + `${overrideRecovery(topic, gate)}`
+    : `${recoveryByCode[error.code] ?? "Re-run after fixing the cause."} ${overrideRecovery(topic, gate)}`;
   return {
     ok: false,
-    status: gateStatus(state, gate, config.judge.retryBudget, store.projectRoot),
-    error: {
-      code: error.code,
-      message: error.message,
-      recovery: `${recoveryByCode[error.code] ?? "Re-run after fixing the cause."} ${overrideRecovery(topic, gate)}`,
-    },
+    status,
+    error: { code: error.code, message: error.message, recovery },
   };
 }
 

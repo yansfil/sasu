@@ -8,6 +8,7 @@ const { hashGateInput } = require("./gate_freshness");
 const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("./git");
 const { judgeRetryBudget } = require("./config");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
+const { pendingPreWork } = require("./prd_parser");
 const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
 const { completionViolations, verifyRerunRefused } = require("./reviews");
@@ -222,7 +223,15 @@ function quickStopDirective(hookCwd, sessionId) {
   // no way out but a user override). Same predicate the gate itself uses, read
   // through the single dist entry point (reviews.verifyRerunRefused).
   const rerunRefused = !budgetExhausted && verifyRerunRefused(hookCwd, marker.slug);
-  if (humanFindings.length || budgetExhausted || rerunRefused) {
+  // Third exit, same shape as the other two and derived from the record rather
+  // than re-asked of the gate: the judge backend has failed `budget` times
+  // running without producing a verdict. Without it this guard sends the agent
+  // back to `sasu verify` forever on a broken backend, and because a judge ERROR
+  // deliberately does not spend the fix budget, `budgetExhausted` can never
+  // arrive to end it (PRINCIPLES item 13 - the bound has to be the harness's).
+  const consecutiveErrors = typeof record.consecutiveErrors === "number" ? record.consecutiveErrors : 0;
+  const judgeErrorLoop = record.verdict === "ERROR" && consecutiveErrors > 0 && consecutiveErrors >= budget;
+  if (humanFindings.length || budgetExhausted || rerunRefused || judgeErrorLoop) {
     // Ending the fix loop is not the same as ending the run: the user still
     // needs the receipt and the open items, and a marker left behind becomes
     // the next session's phantom active run. Verification staleness matters
@@ -248,13 +257,21 @@ function quickStopDirective(hookCwd, sessionId) {
         ? `recorded a semantic ${record.verdict} at attempt ${record.attempts}/${budget} and an identical re-run is refused on this unchanged tree, so the remaining attempts are unspendable.\n\nIf you can still fix the findings, change the code under judgment - a tree change re-arms verification and \`${verifyCommand}\` will run again.${typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? ` The verdict was judged against base ${record.diffSource.slice(4, 16)}; if that is not the commit the work started from, re-run with a corrected \`--base\` instead.` : ""} Otherwise close the run out honestly as blocked.`
         // Same reason the refused-rerun branch names the base: attempts burned
         // against the wrong base hide a passing run just as effectively.
-        : `exhausted its ${budget}-attempt verify budget.${typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? ` Every attempt was judged against base ${record.diffSource.slice(4, 16)}; if that is not the commit the work started from, a corrected \`--base\` is a different question than the one that failed.` : ""}`;
+        : budgetExhausted
+          ? `exhausted its ${budget}-attempt verify budget.${typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? ` Every attempt was judged against base ${record.diffSource.slice(4, 16)}; if that is not the commit the work started from, a corrected \`--base\` is a different question than the one that failed.` : ""}`
+          // Names no base and claims no spent budget, because neither exists on
+          // this path: the judge never read a diff. The repair move comes first
+          // for the same reason the refused-rerun branch leads with the tree
+          // change - it is the only move that could still reach a real verdict,
+          // and the criteria here have not been judged even once.
+          : `could not get a verdict out of the judge: ${consecutiveErrors} consecutive judge failures, so no acceptance criterion was judged and the fix budget is untouched at ${record.attempts}/${budget}.\n\nThis is a backend failure, not a verification failure. The last \`sasu verify\` printed a recovery line for the specific error - fix that (a judge tier model, a timeout, credentials) and re-run \`${verifyCommand}\` to get a real verdict. Only if the judge cannot be repaired here, close the run out honestly as blocked.`;
     // A human handoff closes as the documented complete-with-open-items shape
     // (a contract with `human:` criteria can never reach PASS by design). A
     // budget-exhausted run - or one whose remaining budget is unspendable
-    // because the rerun is refused - failed verification outright, so its
-    // contract must say `blocked`. With budget left AND a rerun that would
-    // really run, this branch is unreachable and the fix loop keeps driving.
+    // because the rerun is refused, or one whose judge never answered - failed
+    // to earn a verification PASS, so its contract must say `blocked`. With
+    // budget left AND a rerun that would really run AND a judge that answers,
+    // this branch is unreachable and the fix loop keeps driving.
     return finalizeDirective(
       why,
       "Then report to the user: what passed, what is still open, and exactly what you need them to confirm. Do not call the run Done - name the open items. The guard retires the run marker itself once these are done.",
@@ -320,7 +337,7 @@ function runStopHook(payload, started) {
   // Re-inject the full step-by-step procedure only when the phase changes;
   // otherwise emit the compact State block so the loop does not burn ~1.7k
   // tokens repeating an unchanged procedure every turn.
-  const phase = directivePhase(next);
+  const phase = directivePhase(state, next);
   const verbose = state.lastStopPhase !== phase;
   if (verbose) {
     state.lastStopPhase = phase;
@@ -346,7 +363,10 @@ function runStopHook(payload, started) {
   return JSON.stringify({ decision: "block", reason: directive });
 }
 
-function directivePhase(next) {
+// Undisposed pre-work is its own phase, so the first turn that clears it gets
+// the full procedure re-injected instead of the compact "phase unchanged" form.
+function directivePhase(state, next) {
+  if (pendingPreWork(state).length) return "prework";
   return next ? next.kind : "finalize";
 }
 
@@ -511,7 +531,17 @@ function renderContinuationDirective(context) {
   const executionPlan = executionPlanSummary(state);
   const ready = readyExecutionPlan(state);
   const finalGateViolations = next ? [] : completionViolations(context.stateAbsPath, state, { includeFinalReview: true });
-  const nextLine = next
+  // Mechanical forcing function for PRD §4 (2026-08-11 incident, see
+  // parsePreWorkChecklist): the harness extracts every pre-work bullet and
+  // classifies none of them, so the run may not advance past the first task
+  // mark until the agent has disposed of every one. Ahead of `next` because
+  // the whole point is asking the user BEFORE implementation starts - the
+  // audited stall cost ~4 hours by discovering a missing Slack channel and
+  // unset Vercel env vars after the fact.
+  const preWorkPending = pendingPreWork(state);
+  const nextLine = preWorkPending.length
+    ? `PRE-WORK: ${preWorkPending.length} PRD §4 item(s) are undisposed; batch-ask the user and record every one before further task work`
+    : next
     ? `${next.kind.toUpperCase()} ${next.item.id}: ${next.item.title}`
     : requirementsReviewStatus !== "pass"
       ? `REQUIREMENTS FIDELITY REVIEW: tracked items are closed; run strict intent review before ${finalReviewRequired ? "final adversarial review" : "finalize"}`
@@ -523,12 +553,25 @@ function renderContinuationDirective(context) {
   const finalGateBlock = finalGateViolations.length
     ? `\n# Final gate gaps\n\n${finalGateViolations.map(item => `- ${item}`).join("\n")}\n`
     : "";
+  const preWorkBlock = preWorkPending.length
+    ? `
+# Undisposed pre-work (PRD §4)
+
+${preWorkPending.map(item => `- ${item.id} (${item.section}): ${item.text}`).join("\n")}
+
+You read the PRD; the harness does not judge what these sentences mean. Decide who deals with each, ask the user about every \`human\` one in ONE batched message (in Claude Code, one AskUserQuestion call listing all of them), then record EVERY item above - including the ones you will do yourself:
+
+  ${HARNESS} mark --kind prework --id <ids, comma-separated> --status human|agent|resolved --evidence "<what was asked/decided>"
+
+human = needs the user, agent = this run does it, resolved = already done. This run does not advance past the first task mark while any item is pending.
+`
+    : "";
   const proceduresBlock = context.verbose === false
     ? `# This turn
 
 The phase has not changed since the last directive, so the full procedure is not repeated. Follow the step-by-step procedure already given for this phase (also in SKILL.md sections 5-7).
 
-Drive the Next required item above to done, then record it with the matching harness command: \`mark --kind task\` for tasks, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark --kind task --ac AC1,AC2\` closes a task plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
+Drive the Next required item above to done, then record it with the matching harness command: \`mark --kind prework\` for undisposed PRD §4 items, \`mark --kind task\` for tasks, \`mark --kind ac\` for acceptance criteria, \`verify-run\` for command verification, \`record-artifact\` for browser/API/DB evidence, \`requirements-review-record\` / \`review-record\` for reviews, then \`finalize\`. Batch marks: \`--id\` accepts comma lists and \`mark --kind task --ac AC1,AC2\` closes a task plus its proven ACs in one call; every mark already returns counts and the next item, so do not poll \`status\` between marks.`
     : `# Required procedure this turn
 
 1. The State block above and \`${context.statePath}\` are the source of truth. Mirror progress in the runtime task surface at phase boundaries only; the harness, not the tracker, is the completion authority. Do not re-read unchanged plan files each turn.
@@ -570,13 +613,13 @@ Exception: if the user's latest message redirects to unrelated work or explicitl
 - Requirements fidelity review: ${requirementsReviewStatus}
 - Final review: ${finalReviewStatus}
 - Next required item: ${nextLine}
-${finalGateBlock}
+${preWorkBlock}${finalGateBlock}
 
 ${proceduresBlock}
 
 # Completion rule
 
-The turn may end only after one tracked item is marked with evidence, artifact-backed verification is recorded, a concrete blocker is marked, or the final receipt is written.
+${preWorkPending.length ? "No PRD §4 item may stay `pending`: ask about the human ones in one batched message and record every item with `mark --kind prework` before any further task work.\n" : ""}The turn may end only after one tracked item is marked with evidence, artifact-backed verification is recorded, a concrete blocker is marked, or the final receipt is written.
 If delivery mode is \`pr\`, a final completion answer also requires the ship PR URL and CI verdict.
 Do not provide a final completion answer before the receipt exists.
 

@@ -66,7 +66,12 @@ test("state machine fail-closed: judge error records ERROR and stays blocked", (
   const view = gateStatus(state, "verify", 2);
   assert.equal(view.effective, "BLOCKED");
   assert.equal(view.verdict, "ERROR");
-  assert.equal(view.attempts, 1);
+  // Fail-closed, but on the judge's own gauge: the fix budget is untouched
+  // because a broken judge produced no findings to fix.
+  assert.equal(view.attempts, 0);
+  assert.equal(view.consecutiveErrors, 1);
+  assert.equal(view.budgetExhausted, false);
+  assert.equal(view.judgeErrorLoop, false);
 });
 
 test("totalAttempts accumulates across every run while the budget gauge resets on PASS", () => {
@@ -78,10 +83,91 @@ test("totalAttempts accumulates across every run while the budget gauge resets o
   state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "PASS", findings: [], artifactPayload: {} }, []);
   assert.equal(state.gates.verify.attempts, 0, "the retry-budget gauge still resets on PASS");
   assert.equal(state.gates.verify.totalAttempts, 3, "every real run counts, the PASS included");
-  // A judge error is a run that spent real work (fail-closed D-15): it counts.
+  // A judge error is a run that spent real work (fail-closed D-15): it counts
+  // in the cumulative ledger, but never in the FIX budget - it produced nothing
+  // to fix.
   state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
-  assert.equal(state.gates.verify.attempts, 1);
-  assert.equal(state.gates.verify.totalAttempts, 4);
+  assert.equal(state.gates.verify.attempts, 0, "the fix budget is not spent by a judge malfunction");
+  assert.equal(state.gates.verify.totalAttempts, 4, "the honest run count still moves");
+  assert.equal(state.gates.verify.history.at(-1).verdict, "ERROR", "and the history row is still written");
+});
+
+// The measured incident, replayed (2026-08-11, project modakbul, slug
+// webhook-to-modakbul-server): 10 verify attempts, 4 of them
+// `judge-invalid-output (backend: claude): criteria missing verdicts for AC1,
+// AC2, AC3`, and every round that DID answer returned 13/13 criteria PASS - the
+// gate never found one real defect, yet the run went BLOCKED three times.
+// Both halves of the fix are pinned here: the errors must not spend the fix
+// budget, and they must still terminate.
+test("a judge-error loop spends no fix budget, keeps the honest record, and still terminates", () => {
+  const store = makeStore();
+  const budget = 3;
+  const judgeError = () => ({ kind: "error", message: "judge-invalid-output (backend: claude): criteria missing verdicts for: AC1, AC2, AC3" });
+  let state = store.load();
+
+  // One real FAIL first: this one DID hand the agent findings, so it is the one
+  // thing allowed to charge the budget.
+  state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {} }, []);
+  assert.equal(gateStatus(state, "verify", budget).attempts, 1);
+
+  for (let i = 1; i <= budget; i += 1) {
+    state = recordGateResult(store, state, "verify", judgeError(), []);
+    const view = gateStatus(state, "verify", budget);
+    assert.equal(view.attempts, 1, `error ${i}: the fix budget stays where the last real verdict left it`);
+    assert.equal(view.consecutiveErrors, i, `error ${i}: the error streak is the gauge that moves`);
+    assert.equal(view.effective, "BLOCKED", `error ${i}: ERROR is never a PASS`);
+    assert.equal(view.budgetExhausted, false, `error ${i}: a receipt must never claim a budget it did not spend`);
+    assert.equal(view.judgeErrorLoop, i >= budget, `error ${i}: terminal only once the streak reaches the bound`);
+  }
+
+  // Terminal, and distinguishable from the other two causes: attempts read the
+  // honest 1/3, so `budgetExhausted` stays false and only `judgeErrorLoop` is
+  // set. (`rerunRefused` lives in the gate commands layer and never arms on
+  // ERROR - a broken judge says nothing about the tree.)
+  const terminal = gateStatus(state, "verify", budget);
+  assert.equal(terminal.judgeErrorLoop, true);
+  assert.equal(terminal.attempts, 1);
+  assert.equal(terminal.budgetExhausted, false);
+  assert.equal("rerunRefused" in terminal, false);
+
+  // Every run is still in the ledger: 1 FAIL + 3 ERRORs, none of them lost.
+  const record = store.load().gates.verify;
+  assert.equal(record.totalAttempts, budget + 1);
+  assert.equal(record.history.length, budget + 1);
+  assert.equal(record.history.filter((row) => row.verdict === "ERROR").length, budget);
+  assert.ok(record.history.at(-1).error.includes("judge-invalid-output"));
+
+  // A judge that answers again clears the streak - including with a FAIL, since
+  // what the streak counts is whether the question got answered at all. The
+  // next fix round then charges the budget normally.
+  state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {} }, []);
+  const recovered = gateStatus(state, "verify", budget);
+  assert.equal(recovered.consecutiveErrors, 0);
+  assert.equal(recovered.judgeErrorLoop, false);
+  assert.equal(recovered.attempts, 2, "the fix budget resumes from where the real verdicts left it");
+});
+
+test("a legacy record with no error-streak field is never terminal on the judge-error cause", () => {
+  const store = makeStore();
+  let state = store.load();
+  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
+  delete state.gates.verify.consecutiveErrors; // a gates.json written before the field existed
+  const view = gateStatus(state, "verify", 1, store.projectRoot);
+  assert.equal(view.consecutiveErrors, 0);
+  assert.equal(view.judgeErrorLoop, false, "no streak recorded, no terminal claim");
+  assert.equal(view.effective, "BLOCKED", "still fail-closed on the ERROR verdict itself");
+});
+
+test("a stale error streak under a later real verdict cannot fake a judge-error loop", () => {
+  const store = makeStore();
+  let state = store.load();
+  state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {} }, []);
+  // Simulates a mixed-dist write: an older recordGateResult rewrote the verdict
+  // without knowing the streak field, stranding it under a verdict it does not
+  // describe. Same defensive posture as the short-circuit's stamp-consistency
+  // check - the terminal claim needs the verdict to agree.
+  state.gates.verify.consecutiveErrors = 9;
+  assert.equal(gateStatus(state, "verify", 2).judgeErrorLoop, false);
 });
 
 test("a verdict's history row names the tree it was earned on", () => {

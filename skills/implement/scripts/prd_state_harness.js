@@ -45,7 +45,7 @@ const COMMANDS = [
   },
   {
     name: "mark",
-    usageArgs: ["--kind task|ac|verification --id <id[,id...]> --status <status> [--ac <ACn[,ACn...]>] --evidence <text>"],
+    usageArgs: ["--kind task|ac|verification|prework --id <id[,id...]> --status <status> [--ac <ACn[,ACn...]>] --evidence <text>  (prework status: human|agent|resolved)"],
     run: args => cmdMark(parseArgs(args)),
   },
   { name: "verify-run", usageArgs: ["--id <Vn> -- <command...>"], run: args => cmdVerifyRun(args) },

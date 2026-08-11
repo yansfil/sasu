@@ -83,29 +83,77 @@ function extractFirstNestedSection(markdown, headings) {
   return "";
 }
 
-// Literal human-only markers PRD authors write on `### 4.1` pre-work bullets.
-// The gen-prd contract requires every pre-work item to say why it is
-// human-only, so matching the literal phrase is the honest detector; no
-// attempt is made to semantically understand what the bullet asks for.
-const PRE_WORK_HUMAN_MARKERS = /사람만\s*가능|human[\s-]*only|사용자만|소유자\s*권한|owner[\s-]*only/i;
+/**
+ * Disposition of one §4 checklist item: who deals with it.
+ * `pending` is the only value the harness ever assigns - it means nobody has
+ * decided yet. The other three are the agent's answer, recorded through
+ * `mark --kind prework`: `human` (goes into the batched user ask), `agent`
+ * (this run will do it), `resolved` (already done).
+ */
+const PRE_WORK_STATUSES = ["pending", "human", "agent", "resolved"];
 
-// Extract the human-action checklist from `## 4. Pre-Work And Required
-// Decisions` (`### 4.1` pre-work bullets and `### 4.2` human-decision
-// bullets).
-//
-// Why this exists: in an audited real run, 62% of wall time (57+ minutes in
-// one stretch) was spent waiting on the user because human-only prerequisites
-// the PRD had already declared up front — §4.1 items literally marked
-// "사람만 가능", an unapproved §4.2 decision — were only discovered serially
-// mid-implementation (a 42min stall plus a 15min stall). Surfacing them
-// mechanically at init lets the skill ask for all of them in one batched
-// message before implementation starts.
-//
-// This is a surfacing mechanism, not a judgment. Detection is structural
-// first (which numbered subsection the bullet lives in), heuristic second
-// (the literal marker / resolved words). A 4.1 bullet without a human-only
-// marker is simply not extracted — the skill text covers that residue — and
-// unresolved items never block init; the contract is "surface loudly".
+// A bullet that IS the empty list ("- None.", "- 없음") is the author writing
+// "nothing here", not a row needing a disposition. Whole-line match only: a
+// substring test would also swallow "없음을 확인한 뒤 발급", which is the exact
+// phrasing-gap failure that the deleted marker regex died of (2026-08-11).
+const PRE_WORK_EMPTY_LIST = /^(?:none|n\/a|없음|해당\s*없음)(?:\s*(?:required|needed|필요|없습니다))?[.。]?$/i;
+
+/**
+ * Extract the human-action checklist from `## 4. Pre-Work And Required
+ * Decisions` (`### 4.1` pre-work bullets and `### 4.2` human-decision
+ * bullets). Every bullet comes out, and none of them is judged.
+ *
+ * Why this exists: in an audited real run, 62% of wall time (57+ minutes in
+ * one stretch) was spent waiting on the user because human-only prerequisites
+ * the PRD had already declared up front were only discovered serially
+ * mid-implementation (a 42min stall plus a 15min stall). Surfacing §4
+ * mechanically at init lets the skill ask for all of them in one batched
+ * message before implementation starts.
+ *
+ * Why extraction is purely structural: this used to keep only §4.1 bullets
+ * matching a literal human-only marker regex (`사람만 가능|소유자 권한|...`). On
+ * 2026-08-11 that regex missed all three human-only items of a real PRD
+ * (agents/prd/webhook-to-modakbul-server) - "Slack 워크스페이스 관리 권한이
+ * 필요하다", "Vercel 프로젝트 소유자만 가능하다", "사람이 Meta 개발자 콘솔에서
+ * 바꾼다" - whose §4.1 preamble had stated the property for every bullet at
+ * once ("각 항목은 계정 소유자 신원이 필요해 에이전트가 대신할 수 없다"). The
+ * empty result read as an all-clear and overrode what the agent already knew,
+ * because the agent had authored that PRD seven minutes earlier; the user
+ * discovered the missing Slack channel and Vercel env vars ~4 hours later -
+ * the second recurrence of the stall this checklist exists to prevent.
+ *
+ * Markdown structure (which numbered subsection, is there a bullet marker, is
+ * the checkbox checked) cannot go flaky the way Korean prose does, so the
+ * harness reads only structure and leaves every disposition to the agent,
+ * which reads natural language for a living (PRINCIPLES.md items 7 and 11).
+ * An item nobody classified stays `pending`, and `pending` blocks the run -
+ * the failure being designed out is an empty/quiet result reading as "nothing
+ * to do".
+ */
+/**
+ * Drop Markdown bold delimiters from a bullet's display text.
+ *
+ * Ends-only stripping (`/^\*\*|\*\*$/`) was the whole rule at both call sites,
+ * and it strands the closing marker whenever the author bolds a lead-in rather
+ * than the entire bullet: modakbul PW1 reached the user's batched pre-work
+ * question as "Slack 채널 개설.** Slack 워크스페이스 관리 권한이 필요하다"
+ * (2026-08-11). This text is what a human reads and what a prompt quotes, so
+ * matched pairs go anywhere in the line, not just at the ends.
+ *
+ * Code spans are left byte-for-byte: inside them `**` is a real recursive glob
+ * (`src/**\/*.ts`), not emphasis. `Scope:` globs are unaffected either way -
+ * they are parsed from the pre-strip raw text precisely because this strip is
+ * lossy (see parseScopeGlobs's caller).
+ */
+function stripBoldMarkers(text) {
+  return text
+    .split(/(`[^`]*`)/)
+    .map(part => (part.startsWith("`")
+      ? part
+      : part.replace(/\*\*(.+?)\*\*/g, "$1").replace(/^\*\*|\*\*$/g, "")))
+    .join("");
+}
+
 function parsePreWorkChecklist(body) {
   const section = extractFirstSection(body, [
     "4. Pre-Work And Required Decisions",
@@ -117,8 +165,8 @@ function parsePreWorkChecklist(body) {
   let preWorkCounter = 1;
   let humanDecisionCounter = 1;
   // Fenced example blocks inside §4 are documentation, not checklist rows; a
-  // marker-bearing bullet inside one would otherwise surface as a spurious
-  // item in the batched user ask.
+  // bullet inside one would otherwise surface as a spurious item in the
+  // batched user ask.
   let inFence = false;
   for (const rawLine of section.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -134,26 +182,55 @@ function parsePreWorkChecklist(body) {
     if (!subsection || !line) continue;
     const bullet = line.match(/^(?:[-*]\s*(?:\[([ xX])\]\s*)?|(?:\d+[.)])\s+)(.+)$/);
     if (!bullet) continue;
-    const text = bullet[2].replace(/^\*\*|\*\*$/g, "").replace(/\s+/g, " ").trim();
-    // \b is useless after Hangul (not ASCII word chars), so the Korean
-    // "none" forms are matched without a boundary.
-    if (!text || /^(?:none\b|n\/a\b|없음|해당\s*없음)/i.test(text)) continue;
-    const resolved = bullet[1] === "x" || bullet[1] === "X" || isPreWorkResolved(text);
-    const humanMarked = PRE_WORK_HUMAN_MARKERS.test(text);
-    // 4.1 mixes human-only and agent-doable prep, so only marker-bearing
-    // bullets are extracted there. 4.2 bullets are human decisions by
-    // definition, so every open one surfaces; a resolved unmarked 4.2 bullet
-    // is old news and stays out of the checklist.
-    if (subsection === "4.1" && !humanMarked) continue;
-    if (subsection === "4.2" && !humanMarked && resolved) continue;
+    const text = stripBoldMarkers(bullet[2]).replace(/\s+/g, " ").trim();
+    if (!text || PRE_WORK_EMPTY_LIST.test(text)) continue;
+    // A checked box is structure, not prose: the author ticked it off in the
+    // PRD, so the item starts disposed. Everything else starts pending.
+    const checked = bullet[1] === "x" || bullet[1] === "X";
     items.push({
       id: subsection === "4.1" ? `PW${preWorkCounter++}` : `HD${humanDecisionCounter++}`,
       section: subsection,
       text,
-      resolved,
+      status: checked ? "resolved" : "pending",
+      evidence: [],
     });
   }
   return items;
+}
+
+/**
+ * The run's §4 checklist, normalized in place.
+ *
+ * Migration, not tolerance: state.json files written before 2026-08-11 carry
+ * `{id, section, text, resolved}` items with no disposition. `resolved: true`
+ * was an explicit positive signal so it maps to `resolved`; everything else -
+ * including the old `resolved: false` and any unknown value - maps to
+ * `pending`, which is the fail-safe direction (an item nobody classified must
+ * read as "ask the user", never as "nothing to do"). Normalizing in place
+ * means the next state write persists the migration.
+ */
+function preWorkItems(state) {
+  const checklist = state && state.preWorkChecklist;
+  const items = checklist && Array.isArray(checklist.items) ? checklist.items : [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    if (!PRE_WORK_STATUSES.includes(item.status)) {
+      item.status = item.resolved === true ? "resolved" : "pending";
+    }
+    delete item.resolved;
+    if (!Array.isArray(item.evidence)) item.evidence = [];
+  }
+  return items;
+}
+
+/** Items nobody has disposed of yet. These block the run. */
+function pendingPreWork(state) {
+  return preWorkItems(state).filter(item => item.status === "pending");
+}
+
+function preWorkStatusDefect(status) {
+  if (PRE_WORK_STATUSES.includes(status)) return null;
+  return `Invalid prework status '${status}'. Allowed: ${PRE_WORK_STATUSES.join(", ")} (human = needs the user, agent = this run does it, resolved = already done)`;
 }
 
 // Structural-first subsection routing: the canonical numbered form wins
@@ -172,17 +249,6 @@ function classifyPreWorkSubsection(headingLine) {
   return null;
 }
 
-function isPreWorkResolved(text) {
-  // "미완료"/"not done" contain the positive marker as a substring, so the
-  // negated and future forms must be rejected before the positive scan.
-  // "완료되지 않음", "완료 안 됨", "완료 예정", "진행 중", "보류" are all
-  // standard Korean phrasings for open items; misreading any of them as
-  // resolved silently drops a genuinely open human decision from the
-  // checklist - the exact mid-run stall this feature exists to prevent.
-  if (/미완료|미해결|되지\s*않|안\s*됨|안됨|예정|진행\s*중|보류|not\s+(?:yet\s+)?(?:done|resolved|completed)|unresolved|incomplete|pending/i.test(text)) return false;
-  return /완료됨|완료|해결됨|\bdone\b|\bresolved\b|\bcompleted\b/i.test(text);
-}
-
 function parseMarkdownItems(section, prefix, fallbackLabel) {
   const items = [];
   let counter = 1;
@@ -199,8 +265,9 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     // the paths the vetted document named, instead of paths the implementer
     // picked at verification time (submission-bias boundary, D: verify-input
     // selection belongs to the document/harness). Parsed from the pre-strip
-    // raw text: the bold-marker strip on `text` eats a line-final `**`, which
-    // is exactly how a recursive glob ends.
+    // raw text: stripBoldMarkers is lossy on an unfenced glob (a bare trailing
+    // `**` is exactly how a recursive glob ends, and two of them in one line
+    // read as an emphasis pair), so the glob grammar never reads `text`.
     const scopeGlobs = parseScopeGlobs(current.rawText.replace(/\s+/g, " ").trim());
     if (scopeGlobs.length) current.scopeGlobs = scopeGlobs;
     delete current.rawText;
@@ -219,7 +286,7 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
       continue;
     }
     finishCurrent();
-    let text = match[1].replace(/^\*\*|\*\*$/g, "").trim();
+    let text = stripBoldMarkers(match[1]).trim();
     if (!text) continue;
     const explicit = text.match(new RegExp(`^(${prefix}\\d+|${prefix}-\\d+|${fallbackLabel}\\s*\\d+)\\b[.)?:\\s-]*`, "i"));
     let id;
@@ -938,8 +1005,11 @@ module.exports = {
   acOracleDefect,
   parsePrdTasksForScoping,
   parsePreWorkChecklist,
+  preWorkItems,
+  pendingPreWork,
+  preWorkStatusDefect,
   classifyPreWorkSubsection,
-  isPreWorkResolved,
+  PRE_WORK_STATUSES,
   buildIntentTrace,
   intentSourceFiles,
   splitIntentSourceValue,

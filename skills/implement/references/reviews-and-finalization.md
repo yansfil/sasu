@@ -137,7 +137,9 @@ agents/implement/<topic-slug>/review/requirements-fidelity-review.md
 ```
 
 The report should follow the recommended skeleton the generated prompt emits: `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, `Deviation Audit`, and `Verdict`.
-Structure deviations (missing sections, bullet floors, label grammar, per-`V#` mentions, placeholders) are advisory: `requirements-review-record` reports them as `structureWarnings` and never rejects on them - only the standalone `Status` line (matching `--status`) and at least one finding on a `FAIL` report are enforced mechanically.
+Structure deviations (missing sections, bullet floors, label grammar, per-`V#` mentions, placeholders) are advisory: `requirements-review-record` reports them as `structureWarnings` and never rejects on them.
+Two things are enforced mechanically: a verdict the report *states* must not contradict `--status`, and a `FAIL` report must carry at least one finding.
+The check is a contradiction check, not a shape check - `Status: FAIL`, `**Status:** FAIL`, and `Status: FAIL - see findings` all read as a stated FAIL, and a report that states no verdict at all is accepted with an advisory warning because `--status` already carries it.
 For every required `V#`, list the PRD Pass Intent or derived pass criteria, covered `R#` and `AC#` IDs, registered artifact paths inspected, a `PASS` or `FAIL` judgment, and any gap.
 A passing review must fail when a required `V#` is missing, lacks a registered artifact path, or has an artifact that does not prove its mapped requirement or acceptance criterion.
 
@@ -152,8 +154,8 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-
   --summary "<requirements fidelity verdict>"
 ```
 
-The report must contain a standalone `Status: PASS` line when recording `--status pass`.
-A missing or mismatched status line is rejected.
+State the verdict the review actually reached; a stated `FAIL` contradicting `--status pass` is rejected.
+Never edit the report to match the flag - that is forging the evidence, and it is the reason the shape requirement was deleted.
 
 When the fidelity review fails, fix its findings or mark the implementation `Blocked` or `Partially Done` with evidence.
 Do not proceed to a final adversarial review or complete receipt until requirements fidelity passes.
@@ -219,7 +221,7 @@ The report should follow the recommended skeleton:
 - `Verdict`.
 
 Missing or empty skeleton sections are advisory: `review-record` reports them as `structureWarnings` without rejecting.
-The report must contain a standalone `Status: PASS` line when recording `--status pass` (a `FAIL` recording must carry at least one finding); it does not re-list every required `V#` (the fidelity review owns that checklist).
+A stated verdict must not contradict `--status`, and a `FAIL` recording must carry at least one finding; the report does not re-list every required `V#` (the fidelity review owns that checklist).
 The harness stores a git worktree snapshot and makes the review stale when source changes afterward.
 
 ## Complete Finalization
@@ -262,11 +264,13 @@ Legacy runs without that snapshot must provide explicit baseline provenance in r
 Do not write a blocked or partial handoff until:
 
 - a requirements fidelity report exists.
-- its standalone `Status` is `PASS` or `FAIL`, matches the recorded status, and is fresh.
+- the verdict it states does not contradict the recorded status, and the record is fresh.
 - every cited blocker or known not-done item has evidence.
 - the report status is `Blocked` or `Partially Done`, never `Done`.
 
-When the verify gate is BLOCKED with its retry budget exhausted and every tracked item is complete, the gate itself is the blocker: `finalize --status blocked` succeeds and the receipt stamps the gate snapshot (verdict, attempts, findings).
+When the verify gate is BLOCKED terminally and every tracked item is complete, the gate itself is the blocker: `finalize --status blocked` succeeds and the receipt stamps the gate snapshot (verdict, attempts, findings, terminal cause).
+Terminal means the autonomous fix loop has no move left, on any of three causes the harness names distinctly: the retry budget is spent, an identical re-run would be refused on this unchanged tree (so the remaining attempts are unspendable), or the judge backend failed repeatedly without ever returning a verdict (so the fix budget is honestly unspent and nothing was judged).
+The receipt reports the real numbers in every case and never fakes an exhausted budget.
 In that terminal state both review-record commands accept the review's honest status, including `pass`: the run is heading to a blocked receipt that requires the recorded review, so the gate no longer vetoes the record.
 While retry budget remains, a `pass` record is still rejected - fix the cited findings and re-run `sasu verify` first.
 

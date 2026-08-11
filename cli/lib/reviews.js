@@ -3,11 +3,11 @@
 const fs = require("fs");
 const path = require("path");
 
-const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, escapeRegExp } = require("./util");
+const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, escapeRegExp, harnessCommand } = require("./util");
 const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, primaryWorktreeRoot } = require("./git");
 const { judgeRetryBudget } = require("./config");
 const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
-const { extractSection, parseMarkdownTableRow, isTableSeparator } = require("./prd_parser");
+const { extractSection, parseMarkdownTableRow, isTableSeparator, pendingPreWork } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
 const { collectArtifacts, inspectArtifact, verificationEvidenceKindViolations, unregisteredArtifactViolations } = require("./artifacts");
 
@@ -66,24 +66,90 @@ function validateArtifacts(statePath, state, options = {}) {
     return violations;
   }
 
-function assertReviewReportStatus(reportAbs, status) {
+/**
+ * The verdict the reviewer stated for its OWN report, read leniently.
+ *
+ * Scoped by structure, not by phrasing (PRINCIPLES item 11): both report
+ * templates put the report's own verdict in the preamble above the first `##`
+ * heading, and restate it in the `Verdict` section. A `Status:` line anywhere
+ * else describes something else - the final-review skeleton literally asks for
+ * `- Status: <recorded status>` under `Fidelity Review Checked`, so a
+ * whole-file scan would read a FAILing final review's citation of a PASSing
+ * fidelity review as a self-contradiction and reject a valid report.
+ *
+ * Within that scope, only lines whose FIRST token is a verdict label count, so
+ * a per-item line (`- V2: Judgment: FAIL`, `| V3 | FAIL |`) is never mistaken
+ * for the verdict. Emphasis, bullets, code spans, trailing punctuation and
+ * trailing prose are stripped: `**Status:** PASS ✅` and `Status: PASS (with
+ * one advisory)` state the same verdict as `Status: PASS`.
+ *
+ * A line that names BOTH verdicts is the unfilled skeleton (`Status: PASS |
+ * FAIL`) and states nothing; it is reported as ambiguous, never read as PASS.
+ */
+const REVIEW_VERDICT_LABEL = /^\s*(?:[-*+]\s+)?[*_`]{0,2}(?:Status|Verdict)[*_`]{0,2}\s*[:：]\s*(.+)$/i;
+
+function statedReviewVerdicts(text) {
+  const body = String(text).replace(/```[\s\S]*?```/g, "");
+  const scopes = [body.split(/\r?\n#{2,}\s/)[0], extractSection(body, "Verdict")];
+  const verdicts = [];
+  const ambiguous = [];
+  for (const raw of scopes.join("\n").split(/\r?\n/)) {
+    const match = raw.match(REVIEW_VERDICT_LABEL);
+    if (!match) continue;
+    const value = match[1].replace(/[`*_~]/g, "").trim();
+    const hasPass = /\bPASS\b/i.test(value);
+    const hasFail = /\bFAIL\b/i.test(value);
+    if (hasPass && hasFail) {
+      ambiguous.push(raw.trim());
+    } else if (hasPass || hasFail) {
+      verdicts.push({ line: raw.trim(), verdict: hasPass ? "PASS" : "FAIL" });
+    }
+  }
+  return { verdicts, ambiguous };
+}
+
+/**
+ * The verdict lives in exactly one place: the recorded `--status`. The report
+ * is cross-checked against it, never required to restate it in a fixed shape.
+ *
+ * The old check demanded a standalone `^Status: PASS$` line and rejected
+ * anything else, which made the same fact a hand-maintained duplicate of the
+ * flag. In a real run (2026-08-11, modakbul/webhook-to-modakbul-server) the
+ * agent patched its own fidelity report with python heredoc string
+ * replacement four times (+66m, +85m, +97m, +129m) to satisfy that shape -
+ * editing evidence to satisfy a mechanical check, one step from forging it.
+ *
+ * What survives is the only part that was ever proof: a report that STATES a
+ * verdict contradicting the recorded one is rejected, and the lenient reader
+ * above now catches contradictions in shapes the strict regex silently missed
+ * (`**Status:** FAIL`, `Status: FAIL - see findings`). What leaves is the
+ * shape requirement: a report that states no verdict is recorded under the
+ * flag with an advisory warning, because the flag already carries it.
+ */
+function assertReviewReportVerdict(reportAbs, status) {
   const expected = status === "pass" ? "PASS" : "FAIL";
   const text = fs.readFileSync(reportAbs, "utf8");
-  const match = text.match(/^\s*Status:\s*(PASS|FAIL)\s*$/im);
-  if (!match) {
-    throw new Error(`Review report must include a standalone 'Status: ${expected}' line`);
+  const stated = statedReviewVerdicts(text);
+  const contradiction = stated.verdicts.find(entry => entry.verdict !== expected);
+  if (contradiction) {
+    throw new Error(`Review report states '${contradiction.line}' but --status ${status} was recorded. Record the verdict the report actually reached; do not edit the report to match the flag.`);
   }
-  if (match[1].toUpperCase() !== expected) {
-    throw new Error(`Review report status ${match[1].toUpperCase()} does not match --status ${status}`);
+  const warnings = [];
+  if (!stated.verdicts.length) {
+    warnings.push(stated.ambiguous.length
+      ? `Review report leaves the skeleton verdict line unfilled ('${stated.ambiguous[0]}'); --status ${status} is the recorded verdict`
+      : `Review report states no verdict line (e.g. 'Status: ${expected}'); --status ${status} is the recorded verdict`);
   }
+  return warnings;
 }
 
 /**
  * Review-report validation runs in two tiers.
  *
  * Hard rejections (throw) are only what a machine can own without judging
- * prose: the report exists non-empty (inspectArtifact at the call sites), the
- * standalone Status line matches --status, and a FAIL carries at least one
+ * prose: the report exists non-empty (inspectArtifact at the call sites), no
+ * stated verdict contradicts --status (assertReviewReportVerdict - a
+ * contradiction check, not a shape check), and a FAIL carries at least one
  * finding line. Record-level checks outside prose structure - report
  * path/hash recording, fidelity-precedes-final ordering, freshness - stay
  * hard where they already live.
@@ -99,10 +165,9 @@ function assertReviewReportStatus(reportAbs, status) {
  * costing 8 turns.
  */
 function assertFinalReviewReport(reportAbs, status, state) {
-  assertReviewReportStatus(reportAbs, status);
   const text = fs.readFileSync(reportAbs, "utf8");
   const violations = [];
-  const warnings = [];
+  const warnings = [...assertReviewReportVerdict(reportAbs, status)];
   for (const heading of ["Fidelity Review Checked", "Findings", "Artifact Audit", "Deviation Audit", "Verdict"]) {
     if (!meaningfulReviewSection(extractSection(text, heading))) {
       warnings.push(`Final review section '${heading}' is missing or empty`);
@@ -137,7 +202,6 @@ function assertFinalReviewReport(reportAbs, status, state) {
 }
 
 function assertRequirementsFidelityReport(reportAbs, status, state) {
-  assertReviewReportStatus(reportAbs, status);
   const text = fs.readFileSync(reportAbs, "utf8");
   const requiredSections = [
     "Intent Sources Read",
@@ -149,7 +213,7 @@ function assertRequirementsFidelityReport(reportAbs, status, state) {
     "Verdict",
   ];
   const violations = [];
-  const warnings = [];
+  const warnings = [...assertReviewReportVerdict(reportAbs, status)];
   for (const heading of requiredSections) {
     const section = extractSection(text, heading);
     if (!meaningfulReviewSection(section)) {
@@ -255,33 +319,43 @@ function reviewEntryCount(section) {
   return count;
 }
 
+// Every stale-review violation ends in the two commands that clear it. The
+// pair is the fix, not the diagnosis: an agent told only "the review is stale"
+// has to guess whether to re-run the reviewer or just re-record the same file.
+const RERUN_FINAL_REVIEW = `re-run the reviewer (\`${harnessCommand()} review-prompt\`) and re-record it (\`${harnessCommand()} review-record --status pass|fail --report <path> --summary "<verdict>"\`)`;
+const RERUN_FIDELITY_REVIEW = `re-run the reviewer (\`${harnessCommand()} requirements-review-prompt\`) and re-record it (\`${harnessCommand()} requirements-review-record --status pass|fail --report <path> --summary "<verdict>"\`)`;
+
+// Collect every staleness cause rather than returning on the first: a
+// rejection that names one of two reasons is a second round-trip by
+// construction (see the finalize probing incident in commands/review.js).
 function finalReviewFreshnessViolations(state) {
   const review = state.finalReview;
   if (!review || !review.recordedAt || review.status !== "pass") return [];
   const reviewedAt = Date.parse(review.recordedAt);
-  if (!Number.isFinite(reviewedAt)) return ["Final review recordedAt is invalid"];
+  if (!Number.isFinite(reviewedAt)) return [`Final review recordedAt is invalid; ${RERUN_FINAL_REVIEW}`];
+  const violations = [];
   const requirementsReview = state.requirementsFidelityReview;
   if (requirementsReview && requirementsReview.status === "pass" && requirementsReview.recordedAt) {
     const requirementsReviewedAt = Date.parse(requirementsReview.recordedAt);
     if (Number.isFinite(requirementsReviewedAt) && requirementsReviewedAt > reviewedAt) {
-      return ["Final review is stale: requirements fidelity review was recorded after final review"];
+      violations.push(`Final review is stale: requirements fidelity review was recorded after final review; ${RERUN_FINAL_REVIEW}`);
     }
   }
   const latest = latestEvidenceTimestamp(state);
   if (latest && latest.time > reviewedAt) {
-    return [`Final review is stale: ${latest.label} was recorded after final review`];
+    violations.push(`Final review is stale: ${latest.label} was recorded after final review; ${RERUN_FINAL_REVIEW}`);
   }
-  return [];
+  return violations;
 }
 
 function requirementsFidelityReviewFreshnessViolations(state) {
   const review = state.requirementsFidelityReview;
   if (!review || !review.recordedAt || !["pass", "fail"].includes(review.status)) return [];
   const reviewedAt = Date.parse(review.recordedAt);
-  if (!Number.isFinite(reviewedAt)) return ["Requirements fidelity review recordedAt is invalid"];
+  if (!Number.isFinite(reviewedAt)) return [`Requirements fidelity review recordedAt is invalid; ${RERUN_FIDELITY_REVIEW}`];
   const latest = latestEvidenceTimestamp(state);
   if (latest && latest.time > reviewedAt) {
-    return [`Requirements fidelity review is stale: ${latest.label} was recorded after requirements fidelity review`];
+    return [`Requirements fidelity review is stale: ${latest.label} was recorded after requirements fidelity review; ${RERUN_FIDELITY_REVIEW}`];
   }
   return [];
 }
@@ -303,7 +377,7 @@ function reviewWorktreeSnapshotViolations(state, options = {}) {
   const violations = [];
   let current = null;
   let currentComputed = false;
-  const check = (review, label) => {
+  const check = (review, label, rerunHint) => {
     if (!review || !["pass", "fail"].includes(review.status)) return;
     if (!review.worktreeSnapshot && !review.vouchedTreeFingerprint) return;
     if (!currentComputed) {
@@ -312,11 +386,11 @@ function reviewWorktreeSnapshotViolations(state, options = {}) {
     }
     if (!current) return; // not a git checkout: no tree signal to compare
     if (!vouchedFingerprintsMatch(review.vouchedTreeFingerprint, current)) {
-      violations.push(`${label} is stale: worktree source snapshot changed after review`);
+      violations.push(`${label} is stale: worktree source snapshot changed after review; ${rerunHint}`);
     }
   };
-  if (includeRequirementsFidelityReview) check(state.requirementsFidelityReview, "Requirements fidelity review");
-  if (includeFinalReview) check(state.finalReview, "Final review");
+  if (includeRequirementsFidelityReview) check(state.requirementsFidelityReview, "Requirements fidelity review", RERUN_FIDELITY_REVIEW);
+  if (includeFinalReview) check(state.finalReview, "Final review", RERUN_FINAL_REVIEW);
   return violations;
 }
 
@@ -366,6 +440,12 @@ function verifyGateStatus(state) {
       attempts: view.attempts,
       budget: view.budget,
       budgetExhausted: view.budgetExhausted,
+      // Third terminal cause, carried through so the receipt can name it: the
+      // judge backend never returned a verdict `budget` times running. It is
+      // NOT budgetExhausted - attempts stays the honest 0/N - so every consumer
+      // needs the flag itself, not a derivation from the numbers.
+      consecutiveErrors: view.consecutiveErrors,
+      judgeErrorLoop: view.judgeErrorLoop,
       rerunRefused: verifyRerunRefused(projectRoot, state.topicSlug),
       // The base the refused verdict was judged against, so the terminal cause
       // can name the corrected---base move instead of implying nothing is left
@@ -419,6 +499,7 @@ function verifyRerunRefused(projectRoot, topicSlug) {
 function verifyGateFallbackStatus(record, budget) {
   const passed = record.verdict === "PASS" || record.overridden === true;
   const attempts = Number.isInteger(record.attempts) ? record.attempts : 0;
+  const consecutiveErrors = Number.isInteger(record.consecutiveErrors) ? record.consecutiveErrors : 0;
   return {
     effective: passed ? "PASS" : record.verdict == null ? "NOT_RUN" : "BLOCKED",
     verdict: record.verdict || null,
@@ -427,6 +508,13 @@ function verifyGateFallbackStatus(record, budget) {
     attempts,
     budget,
     budgetExhausted: !passed && attempts >= budget && record.verdict != null,
+    // Derived here too, unlike rerunRefused: a judge-error streak is pure
+    // arithmetic over fields the record already carries, so the no-dist branch
+    // can read it exactly as gateStatus does. Leaving it out would strand a run
+    // whose only terminal cause is a broken judge backend - the one situation
+    // where the dist build being unloadable is least surprising.
+    consecutiveErrors,
+    judgeErrorLoop: !passed && record.verdict === "ERROR" && consecutiveErrors > 0 && consecutiveErrors >= budget,
     // Deliberately not derived here: "would an identical rerun be refused"
     // needs the tree fingerprint and the input pins, i.e. exactly the dist
     // code this branch exists because it cannot load. Only budgetExhausted
@@ -440,7 +528,8 @@ function verifyGateFallbackStatus(record, budget) {
 // THE terminal predicate. Terminal means the gate ran, failed, and the
 // autonomous fix loop has no move left that could change the verdict:
 //
-//   BLOCKED and (budget exhausted OR an identical rerun would be refused)
+//   BLOCKED and (budget exhausted OR an identical rerun would be refused
+//                OR the judge never returned a verdict `budget` times running)
 //
 // The retry budget means "N chances to fix and re-verify", not "N identical
 // retries". When the rerun short-circuit is armed on the current state, every
@@ -458,8 +547,17 @@ function verifyGateFallbackStatus(record, budget) {
 // incident in the review-record commands). `rerunRefused` never fabricates
 // budgetExhausted: the receipt keeps reporting attempts 1/N honestly and names
 // the refusal as the separate cause (PRINCIPLES item 10).
+//
+// `judgeErrorLoop` is the third disjunct and the only one where the gate never
+// answered the question at all: the judge backend failed `budget` times running,
+// so there are no findings to fix and attempts is honestly 0/N. Without it the
+// run has state but no exit - a broken backend cannot be fixed from inside the
+// fix loop, and charging its failures to the fix budget was the false BLOCKED
+// this pair of changes exists to stop (measured 2026-08-11, modakbul: 4 of 10
+// verify attempts lost to judge-invalid-output, 0 criterion FAILs).
 function verifyGateTerminallyBlocked(gate) {
-  return gate.effective === "BLOCKED" && (gate.budgetExhausted === true || gate.rerunRefused === true);
+  return gate.effective === "BLOCKED"
+    && (gate.budgetExhausted === true || gate.rerunRefused === true || gate.judgeErrorLoop === true);
 }
 
 // Why the gate is terminal, in the words the agent must act on. Kept next to
@@ -477,6 +575,16 @@ function verifyGateTerminalCause(gate) {
     ? `, judged against base ${gate.diffSource.slice(4, 16)}`
     : "";
   if (gate.budgetExhausted === true) return `its ${gate.budget}-attempt retry budget is exhausted${base}`;
+  // Named apart from a spent budget because the two mean opposite things to the
+  // agent (PRINCIPLES item 10): a spent budget says the findings were real and
+  // could not be closed, this says there were never any findings. No base is
+  // cited - an ERROR run has no judged diff to cite one from (recordGateResult
+  // clears diffSource on that path) - and the fix budget is reported untouched.
+  if (gate.judgeErrorLoop === true) {
+    return `the judge backend failed ${gate.consecutiveErrors} times in a row without returning a verdict, so no criterion was ever judged `
+      + `(the fix budget is untouched at attempts ${gate.attempts}/${gate.budget} because there were never any findings to fix). `
+      + `This is a backend failure, not a verification failure: fixing the judge configuration re-arms verification`;
+  }
   return `an identical re-run is refused on this unchanged tree (attempts ${gate.attempts}/${gate.budget}${base}; the remaining budget is unspendable). `
     + `Changing the code under judgment re-arms verification; so does pointing --base at the commit the work actually started from, if the verdict was judged against the wrong one`;
 }
@@ -502,9 +610,18 @@ function verifyGateViolations(state, options = {}) {
     if (!verifyGateTerminallyBlocked(gate)) {
       return [`Verify gate is BLOCKED (verdict ${gate.verdict}); fix the cited findings and re-run \`sasu verify\`, or have the user record an override`];
     }
-    return [gate.budgetExhausted
-      ? `Verify gate is BLOCKED (verdict ${gate.verdict}) and ${verifyGateTerminalCause(gate)}; completion is impossible - finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override`
-      : `Verify gate is BLOCKED (verdict ${gate.verdict}) and ${verifyGateTerminalCause(gate)}; re-running \`sasu verify\` unchanged exits with the refusal, so change the code under judgment (a tree change re-arms verification) or finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override`];
+    // The three terminal causes differ in exactly one way that matters here:
+    // which move, if any, could still reach a PASS. A spent budget has none. A
+    // refused rerun has a tree change. A judge-error loop has a judge that can
+    // be repaired - so name that, or the agent reads "terminal" as "give up" on
+    // a run whose acceptance criteria were never actually judged.
+    const exits = "finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override";
+    const preamble = `Verify gate is BLOCKED (verdict ${gate.verdict}) and ${verifyGateTerminalCause(gate)}`;
+    if (gate.budgetExhausted === true) return [`${preamble}; completion is impossible - ${exits}`];
+    if (gate.judgeErrorLoop === true) {
+      return [`${preamble}; repair the judge (see the recovery line from the last \`sasu verify\`) and re-run to get a real verdict, or ${exits}`];
+    }
+    return [`${preamble}; re-running \`sasu verify\` unchanged exits with the refusal, so change the code under judgment (a tree change re-arms verification) or ${exits}`];
   }
   if (gate.effective === "STALE") {
     return ["Verify gate PASS is stale: its input documents changed after the passing run; re-run `sasu verify` against the current diff"];
@@ -512,29 +629,50 @@ function verifyGateViolations(state, options = {}) {
   return [];
 }
 
+// Every completion blocker names the command that clears it, at the point
+// that produces it. The alternative - a mapper that pattern-matches finished
+// violation text back to a remedy - keys on phrasing and silently loses the
+// remedy the moment a message is reworded (PRINCIPLES item 11). Producing the
+// pair together also carries the remedy to every consumer for free: the Stop
+// hook and the goal guard read the same strings (hooks.js).
 function completionViolations(statePath, state, options = {}) {
   const includeFinalReview = options.includeFinalReview !== false;
   const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
+  const H = harnessCommand();
   const violations = [];
   violations.push(...prdSnapshotViolations(statePath, state));
+  // PRD §4 is the prerequisite the run was supposed to settle before touching
+  // code: an item nobody disposed of is a setup step (a created channel, a set
+  // environment variable) that may simply not exist. The Stop hook already
+  // refuses the first task mark while any item is `pending`, but a hook only
+  // guards turns that end - the receipt is the record, so the refusal has to
+  // live here too or a finalize reached another way stamps "done" over an
+  // unasked question (2026-08-11, modakbul: three human-only §4.1 items went
+  // undisposed and the missing Slack channel and Vercel variable surfaced four
+  // hours later). `human` and `agent` are dispositions, not completions: the
+  // agent owning an item is an answer, so only `pending` blocks.
+  const pending = pendingPreWork(state);
+  if (pending.length) {
+    violations.push(`${pending.length} PRD §4 pre-work item(s) are still undisposed (${pending.map(item => item.id).join(", ")}); batch-ask the user about the human ones, then record each with \`${H} mark --kind prework --id <ID> --status <human|agent|resolved> --evidence "<what settles it>"\``);
+  }
   violations.push(...verifyGateViolations(state, {
     allowTerminallyBlockedVerifyGate: options.allowTerminallyBlockedVerifyGate === true,
   }));
   const verificationPlan = verificationPlanSummary(state);
   if (verificationPlan.status === "missing") {
-    violations.push("Verification plan is missing");
+    violations.push(`Verification plan is missing; run \`${H} plan-verification\``);
   } else if (verificationPlan.blockingGapCount > 0) {
-    violations.push(`Verification plan has ${verificationPlan.blockingGapCount} blocking gap(s)`);
+    violations.push(`Verification plan has ${verificationPlan.blockingGapCount} blocking gap(s); read them in \`${H} status\`, fix the PRD verification contract, then re-run \`${H} plan-verification\``);
   }
   const executionPlan = executionPlanSummary(state);
   if (executionPlan.status === "missing") {
-    violations.push("Execution plan is missing");
+    violations.push(`Execution plan is missing; run \`${H} plan-execution\``);
   } else if (executionPlan.blockingGapCount > 0) {
-    violations.push(`Execution plan has ${executionPlan.blockingGapCount} blocking gap(s)`);
+    violations.push(`Execution plan has ${executionPlan.blockingGapCount} blocking gap(s); read them in \`${H} status\`, fix the PRD tasks or dependencies, run \`${H} reconcile\`, then \`${H} plan-execution\``);
   }
   for (const task of state.tasks) {
-    if (task.status !== "complete") violations.push(`Task ${task.id} is ${task.status}`);
-    if (!task.evidence.length) violations.push(`Task ${task.id} has no evidence`);
+    if (task.status !== "complete") violations.push(`Task ${task.id} is ${task.status}; finish it, then \`${H} mark --kind task --id ${task.id} --status complete --evidence "<what proves it>"\``);
+    if (!task.evidence.length) violations.push(`Task ${task.id} has no evidence; re-run \`${H} mark --kind task --id ${task.id} --status ${task.status} --evidence "<what proves it>"\``);
   }
   const coveragePlan = state.verificationPlan;
   const checksById = coveragePlan && Array.isArray(coveragePlan.checks)
@@ -542,8 +680,12 @@ function completionViolations(statePath, state, options = {}) {
     : new Map();
   const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
   for (const ac of state.acceptanceCriteria) {
-    if (ac.status !== "met") violations.push(`Acceptance ${ac.id} is ${ac.status}`);
-    if (!ac.evidence.length) violations.push(`Acceptance ${ac.id} has no evidence`);
+    if (ac.status !== "met") {
+      violations.push(ac.oracle && typeof ac.oracle === "object"
+        ? `Acceptance ${ac.id} is ${ac.status}; it declares an oracle, so settle it mechanically with \`${H} oracle-run --id ${ac.id}\` (never by hand)`
+        : `Acceptance ${ac.id} is ${ac.status}; satisfy it, then \`${H} mark --kind ac --id ${ac.id} --status met --evidence "<what proves it>"\``);
+    }
+    if (!ac.evidence.length) violations.push(`Acceptance ${ac.id} has no evidence; re-run \`${H} mark --kind ac --id ${ac.id} --status ${ac.status} --evidence "<what proves it>"\``);
     // An oracle-backed AC satisfies coverage through its oracle, not a V row
     // (the planner, prelint, and gen-prd all promise no V-row mapping is
     // needed; demanding one here deadlocked finalize for every run that used
@@ -561,23 +703,29 @@ function completionViolations(statePath, state, options = {}) {
     // closed: prose evidence alone cannot complete an AC whose entire
     // verification coverage was skipped or blocked.
     if (ac.status === "met" && coveragePlan && coveragePlan.coverage && coveragePlan.coverage[ac.id]) {
-      const anyCoveringPass = (coveragePlan.coverage[ac.id].coveredBy || []).some(checkId => {
+      const coveredBy = coveragePlan.coverage[ac.id].coveredBy || [];
+      const anyCoveringPass = coveredBy.some(checkId => {
         const check = checksById.get(checkId);
         const verification = check ? verificationById.get(check.verificationId) : null;
         return Boolean(verification && verification.status === "pass");
       });
-      if (!anyCoveringPass) violations.push(`Acceptance ${ac.id} is met but none of its covering verification items passed`);
+      const coveringVerificationIds = Array.from(new Set(coveredBy
+        .map(checkId => (checksById.get(checkId) || {}).verificationId)
+        .filter(Boolean)));
+      if (!anyCoveringPass) {
+        violations.push(`Acceptance ${ac.id} is met but none of its covering verification items passed; pass one of ${coveringVerificationIds.length ? coveringVerificationIds.join(", ") : coveredBy.join(", ") || "its covering checks"} with \`${H} verify-run --id <Vn> -- <command>\`, or mark ${ac.id} not_met`);
+      }
     }
   }
     for (const verification of state.verification) {
       if (isVerificationRequiredForDone(verification)) {
-        if (verification.status !== "pass") violations.push(`Required verification ${verification.id} is ${verification.status}`);
+        if (verification.status !== "pass") violations.push(`Required verification ${verification.id} is ${verification.status}; make it pass with \`${H} verify-run --id ${verification.id} -- <command>\` (non-command proof: \`${H} record-artifact --id ${verification.id} ...\` then \`${H} mark --kind verification --id ${verification.id} --status pass --evidence "<what proves it>"\`)`);
       } else if (!["pass", "skipped", "blocked"].includes(verification.status)) {
-        violations.push(`Optional verification ${verification.id} is ${verification.status}`);
+        violations.push(`Optional verification ${verification.id} is ${verification.status}; run \`${H} verify-run --id ${verification.id} -- <command>\`, or dispose of it with \`${H} mark --kind verification --id ${verification.id} --status skipped --evidence "<why it is not needed>"\``);
       }
-      if (!verification.evidence.length) violations.push(`Verification ${verification.id} has no evidence`);
+      if (!verification.evidence.length) violations.push(`Verification ${verification.id} has no evidence; run \`${H} verify-run --id ${verification.id} -- <command>\`, or \`${H} mark --kind verification --id ${verification.id} --status ${verification.status} --evidence "<what proves it>"\``);
       if (verification.status === "pass" && (!verification.artifacts || verification.artifacts.length === 0)) {
-        violations.push(`Verification ${verification.id} has no artifact-backed evidence`);
+        violations.push(`Verification ${verification.id} has no artifact-backed evidence; register one with \`${H} record-artifact --id ${verification.id} --kind screenshot|log|browser|api|db|file --path <path> --description "<what it proves>"\``);
       }
   }
   violations.push(...validateArtifacts(statePath, state, {
@@ -586,16 +734,16 @@ function completionViolations(statePath, state, options = {}) {
   }));
   if (includeRequirementsFidelityReview) {
     if (!state.requirementsFidelityReview || state.requirementsFidelityReview.status !== "pass") {
-      violations.push("Requirements fidelity review has not passed");
+      violations.push(`Requirements fidelity review has not passed (currently ${(state.requirementsFidelityReview && state.requirementsFidelityReview.status) || "not recorded"}); ${RERUN_FIDELITY_REVIEW}`);
     } else if (!state.requirementsFidelityReview.reportPath) {
-      violations.push("Requirements fidelity review has no report path");
+      violations.push(`Requirements fidelity review has no report path; re-record it with \`${H} requirements-review-record --status pass --report <path> --summary "<verdict>"\``);
     }
   }
   if (includeFinalReview && finalReviewRequiredForState(state)) {
     if (!state.finalReview || state.finalReview.status !== "pass") {
-      violations.push("Final adversarial review has not passed");
+      violations.push(`Final adversarial review has not passed (currently ${(state.finalReview && state.finalReview.status) || "not recorded"}); ${RERUN_FINAL_REVIEW}`);
     } else if (!state.finalReview.reportPath) {
-      violations.push("Final adversarial review has no report path");
+      violations.push(`Final adversarial review has no report path; re-record it with \`${H} review-record --status pass --report <path> --summary "<verdict>"\``);
     }
   }
     return violations;
@@ -636,14 +784,15 @@ function prdSnapshotViolations(statePath, state) {
 
 function requirementsFidelityHandoffViolations(state) {
   const review = state.requirementsFidelityReview;
-  if (!review) return ["Requirements fidelity review must be recorded before blocked/partial finalization"];
+  if (!review) return [`Requirements fidelity review must be recorded before blocked/partial finalization (a recorded fail is acceptable); ${RERUN_FIDELITY_REVIEW}`];
   const violations = [];
+  const rerecord = `re-record it with \`${harnessCommand()} requirements-review-record --status pass|fail --report <path> --summary "<verdict>"\``;
   if (!["pass", "fail"].includes(review.status)) {
-    violations.push(`Requirements fidelity review status must be pass or fail before blocked/partial finalization; got ${review.status || "unknown"}`);
+    violations.push(`Requirements fidelity review status must be pass or fail before blocked/partial finalization; got ${review.status || "unknown"}; ${rerecord}`);
   }
-  if (!review.reportPath) violations.push("Requirements fidelity review has no report path");
-  if (!review.summary) violations.push("Requirements fidelity review has no summary");
-  if (!review.recordedAt) violations.push("Requirements fidelity review has no recordedAt timestamp");
+  if (!review.reportPath) violations.push(`Requirements fidelity review has no report path; ${rerecord}`);
+  if (!review.summary) violations.push(`Requirements fidelity review has no summary; ${rerecord}`);
+  if (!review.recordedAt) violations.push(`Requirements fidelity review has no recordedAt timestamp; ${rerecord}`);
   if (review.reportPath) {
     try {
       const abs = resolveProjectPath(review.reportPath, state.projectRoot || cwd());
@@ -672,15 +821,16 @@ function finalReviewHandoffViolations(state) {
   if (!finalReviewRequiredForState(state)) return [];
   const review = state.finalReview;
   if (!review) {
-    return ["Final adversarial review must be recorded before blocked/partial finalization on a high-risk profile (a recorded fail is acceptable); run `review-prompt` then `review-record`"];
+    return [`Final adversarial review must be recorded before blocked/partial finalization on a high-risk profile (a recorded fail is acceptable); run \`review-prompt\` then \`review-record\`: ${RERUN_FINAL_REVIEW}`];
   }
   const violations = [];
+  const rerecord = `re-record it with \`${harnessCommand()} review-record --status pass|fail --report <path> --summary "<verdict>"\``;
   if (!["pass", "fail"].includes(review.status)) {
     violations.push(`Final adversarial review status must be pass or fail before blocked/partial finalization; got ${review.status || "unknown"}; run \`review-prompt\` then \`review-record\``);
   }
-  if (!review.reportPath) violations.push("Final adversarial review has no report path");
-  if (!review.summary) violations.push("Final adversarial review has no summary");
-  if (!review.recordedAt) violations.push("Final adversarial review has no recordedAt timestamp");
+  if (!review.reportPath) violations.push(`Final adversarial review has no report path; ${rerecord}`);
+  if (!review.summary) violations.push(`Final adversarial review has no summary; ${rerecord}`);
+  if (!review.recordedAt) violations.push(`Final adversarial review has no recordedAt timestamp; ${rerecord}`);
   if (review.reportPath) {
     try {
       const abs = resolveProjectPath(review.reportPath, state.projectRoot || cwd());
@@ -722,7 +872,8 @@ function prdCopyDriftWarnings(state) {
 
 module.exports = {
   validateArtifacts,
-  assertReviewReportStatus,
+  statedReviewVerdicts,
+  assertReviewReportVerdict,
   assertFinalReviewReport,
   assertRequirementsFidelityReport,
   meaningfulReviewSection,

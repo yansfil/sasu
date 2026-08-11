@@ -7,6 +7,7 @@ const fs = require("fs");
 
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, findVerificationCommandDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
+const { preWorkItems, pendingPreWork, preWorkStatusDefect } = require("../prd_parser");
 const { commandsMatchContract, shellLikeTokens } = require("../inference");
 const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, stripFingerprintEntries, summarizeFingerprintDiff } = require("../git");
 const { DB_TOUCH_PATTERN, readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
@@ -19,7 +20,7 @@ function cmdMark(options) {
   const status = String(options.status || "");
   const evidence = String(options.evidence || "").trim();
   const acIds = options.ac ? parseIdList(options.ac, value => value.toUpperCase()) : [];
-  if (!["task", "ac", "verification"].includes(kind)) throw new Error("--kind must be task, ac, or verification");
+  if (!["task", "ac", "verification", "prework"].includes(kind)) throw new Error("--kind must be task, ac, verification, or prework");
   if (!ids.length) throw new Error("--id is required");
   if (!status) throw new Error("--status is required");
   if (!evidence) throw new Error("--evidence is required");
@@ -27,8 +28,21 @@ function cmdMark(options) {
   if (acIds.length && status !== "complete") throw new Error("--ac requires --status complete; acceptance criteria are only co-marked with a completed task");
 
   const { statePath, state } = loadState(options);
-  const list = kind === "task" ? state.tasks : kind === "ac" ? state.acceptanceCriteria : state.verification;
-  assertAllowedStatus(kind, status);
+  // `prework` rides the existing mark machinery on purpose: disposing a §4
+  // item is the same act as closing any other tracked row (id, status,
+  // evidence), and a fifth command for it would be pure ceremony
+  // (PRINCIPLES.md item 4). preWorkItems also migrates pre-2026-08-11
+  // `{resolved}` records in place, so an in-flight run is markable.
+  const list = kind === "task" ? state.tasks
+    : kind === "ac" ? state.acceptanceCriteria
+      : kind === "prework" ? preWorkItems(state)
+        : state.verification;
+  if (kind === "prework") {
+    const defect = preWorkStatusDefect(status);
+    if (defect) throw new Error(defect);
+  } else {
+    assertAllowedStatus(kind, status);
+  }
   const marked = [];
   for (const id of ids) {
     const item = list.find(entry => String(entry.id).toUpperCase() === id);
@@ -79,15 +93,21 @@ function cmdMark(options) {
   // A verification pass may settle the whole coverage of pending ACs; derive
   // those closes instead of waiting for a manual sweep mark.
   const autoMet = autoCloseAcceptanceCriteria(state);
-  markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
+  // A pre-work disposition says who deals with a prerequisite; it changes
+  // nothing a review judged, so it must not invalidate a passed review. PRD
+  // edits that add or reword §4 items go through reconcile, which owns that
+  // staleness (PRINCIPLES.md item 13: no needless re-review round).
+  if (kind !== "prework") markCompletionReviewsStale(state, `${kind} ${ids.join(", ")} marked after review`);
   state.updatedAt = nowIso();
   persistState(statePath, state);
   syncActive(statePath, state);
+  const stillPending = pendingPreWork(state);
   process.stdout.write(JSON.stringify({
     ok: true,
     marked,
     autoMetAcceptanceCriteria: autoMet,
     counts: countState(state),
+    ...(stillPending.length ? { preWorkPending: stillPending.map(item => `${item.id} (${item.section}): ${item.text}`) } : {}),
     next: nextBrief(state),
   }, null, 2) + "\n");
 }

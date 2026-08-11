@@ -85,6 +85,20 @@ Independent checks fan out to subagents or lanes; a sequential chain must be
 justified by a real data dependency. When adding a stage, first ask what it
 can run concurrently with.
 
+Two different things hide under "make it faster", and only one of them is
+free.
+Running independent work concurrently skips nothing, so it assumes nothing
+about what the skipped work would have returned; the only cost is
+coordination.
+Skipping work a previous run already did is a different trade: it assumes the
+verdict is a pure function of the inputs you compared.
+In this harness that assumption is usually false - mechanical checks, oracles,
+captures, and agentic lanes all read state the tree fingerprint cannot see
+(2026-08-11: a rerun short-circuit trapped a run twice, once on a capture and
+once on a `check:` command, whose FAIL came from a gitignored service that had
+since been fixed).
+Fan out freely; before skipping, prove purity.
+
 ## 6. Verify at the semantic unit, not the text unit
 
 Judging happens per acceptance criterion, and each judge's input is scoped to
@@ -106,6 +120,23 @@ ordering constraint, a scope check, a required input, a refusal — belongs in
 code, and the doc shrinks to one line. Move the natural-language rules down
 into code in ROI order (the ones that burn the most time or admit the worst
 failure first), not all at once.
+
+Pushing a rule into code is not the same as pushing a *judgment* into code,
+and the line between them has one test: does the harness execute or compare
+the value?
+`Scope:` globs slice a diff, `Check:` commands run, `Covers:` references are
+matched - the value is machine input, so asking the document to declare it is
+honest work.
+A value the harness only reads in order to decide who to talk to is not: that
+belongs to the agent, which reads natural language for a living.
+The failure this prevents is the harness pattern-matching prose for meaning.
+A keyword regex over Korean pre-work bullets missed every human-only item in a
+real PRD whose author had stated the property plainly one line above, and the
+empty result actively overrode what the agent already knew, because the agent
+had written that PRD seven minutes earlier (2026-08-11, the second recurrence
+of the same stall the checklist was built to prevent).
+Extract the structure mechanically, force the disposition mechanically, and
+leave the meaning to the agent.
 
 ## 8. The whole flow must stay explainable
 
@@ -139,8 +170,42 @@ The harness must hold across many project shapes and case sizes (large diffs,
 many ACs, quick sessions), not just the case that motivated the change. A fix
 tuned to one incident gets checked against the others before it lands.
 
+Detection built from one sample is the sharpest form of this failure, because
+it looks like a guard and behaves like a coin flip.
+The pre-work checklist regex was written from bullets that literally read
+"사람만 가능" and it recognized nothing else - not "소유자만 가능하다", not
+"사람이 ... 바꾼다", not a section preamble stating the property for every
+bullet at once.
+When a mechanism keys on how one document happened to phrase something, widen
+the sample before shipping it, or key on structure instead of phrasing.
+
 ## 12. Compare outward before inventing
 
 When a design question is genuinely open, look at how peer harnesses and
 agent-OS projects solve it before inventing — and import the idea, not the
 machinery.
+
+## 13. Never loop on a stage that cannot converge
+
+A test suite converges: fix it, it goes green, it is done.
+A fresh adversarial reviewer does not - handed any codebase it will produce
+findings, so "re-run it whenever anything changed" has no fixed point.
+Pairing a generative stage with whole-run invalidation builds a loop whose
+only brake is the agent deciding to stop.
+In an audited run, five adversarial review rounds spanned 92 minutes (08:27 to
+09:59), the last two returning only LOW items, on a run whose verify gate never
+once returned a criterion FAIL in ten attempts and whose entire measured judge
+spend was 5.5 minutes (2026-08-11).
+Each round was a sidecar the agent summoned on its own judgment: nothing in
+`state.json` or the receipt records that a round happened, so the loop the
+harness cannot see is also the loop it cannot bound.
+Wall-clock alone would have overstated this by 85 minutes of user absence -
+re-derive a duration from what actually ran before resting a rule on it
+(item 9).
+
+A stage that cannot converge on its own needs a bound the harness owns: a
+delta contract so round N+1 sees only what changed since round N, a severity
+floor so advisory findings are recorded as follow-ups instead of re-triggering
+the chain, or an explicit round cap.
+Recording an open LOW finding in the receipt is more honest than a fifth round
+that pretends to close it (item 10).

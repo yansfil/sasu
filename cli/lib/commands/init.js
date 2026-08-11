@@ -4,11 +4,11 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, runCommand, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
+const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, harnessCommand, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, ensureDir, writeJson, runCommand, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
-const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseAcOracle, parsePreWorkChecklist, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
+const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseAcOracle, parsePreWorkChecklist, pendingPreWork, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { verificationContractHash, buildVerificationPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, currentSessionIdentity, writeActiveRecord, persistState } = require("../state_store");
@@ -57,20 +57,39 @@ function cmdInit(options) {
   ensureContextNotes(statePath, state);
   writeActiveRecord(inputs.projectRoot, statePath, state);
 
+  const pending = pendingPreWork(state);
   process.stdout.write(JSON.stringify({
     ok: true,
     statePath: toProjectRelative(statePath, inputs.projectRoot),
     runDir: state.runDir,
     prdPath: state.prdPath,
     counts: countState(state),
-    // Surfaced in the same tool result the agent already reads so unresolved
-    // human-only pre-work is seen before implementation, not mid-run.
+    // Surfaced in the same tool result the agent already reads so §4 pre-work
+    // is seen before implementation, not mid-run. Every bullet is here and
+    // every one of them is undisposed; the agent - not a regex over Korean
+    // prose - decides which need the user (2026-08-11 incident, see
+    // parsePreWorkChecklist).
     preWorkChecklist: state.preWorkChecklist,
+    ...(pending.length ? { preWorkAction: preWorkActionText(pending) } : {}),
     verificationPlan: verificationPlanSummary(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
     next: nextItem(state),
   }, null, 2) + "\n");
+}
+
+/**
+ * The one instruction init emits for undisposed §4 items. Same command and
+ * same three dispositions the Stop hook repeats every turn, so the agent reads
+ * one contract, not two.
+ */
+function preWorkActionText(pending) {
+  return [
+    `${pending.length} PRD §4 pre-work item(s) are undisposed: ${pending.map(item => item.id).join(", ")}.`,
+    "Decide who deals with each (you author-read the PRD; the harness does not judge Korean prose), ask the user about every `human` one in ONE batched message before the first code edit, then record ALL of them:",
+    `  ${harnessCommand()} mark --kind prework --id <ids, comma-separated> --status human|agent|resolved --evidence "<what was asked/decided>"`,
+    "human = needs the user, agent = this run does it, resolved = already done. The Stop hook does not let the run advance past the first task mark while any item is pending.",
+  ].join("\n");
 }
 
 const DELIVERY_RECEIPT_PATTERNS = [
@@ -232,20 +251,19 @@ function parsePrdContract(parsed, projectRoot) {
   ]);
   const testModeContract = parseTestModeContract(testModeSection || verificationSection);
   applyTestModeDefaults(verification, testModeContract);
-  const preWorkItems = parsePreWorkChecklist(parsed.body);
   return {
     tasks,
     acceptanceCriteria,
     requirements,
     verification,
     testModeContract,
-    // Human-only §4 items surfaced at init (not a gate: unresolved items must
-    // never fail init) so the skill can ask about all of them in one batched
-    // message instead of stalling on each serially mid-implementation.
-    preWorkChecklist: {
-      items: preWorkItems,
-      unresolvedCount: preWorkItems.filter(item => !item.resolved).length,
-    },
+    // Every §4 item, undisposed, so the skill can ask about all of them in one
+    // batched message instead of stalling on each serially mid-implementation.
+    // Init still never fails on them - the Stop hook is what refuses to
+    // advance the run while any item is `pending`. No stored pending count: it
+    // is derivable from item status and a stored copy would drift the moment
+    // the first item is marked (PRINCIPLES.md item 10).
+    preWorkChecklist: { items: parsePreWorkChecklist(parsed.body) },
     intentTrace: buildIntentTrace(parsed, projectRoot),
     technicalStructure: extractFirstSection(parsed.body, [
       "5. Major Technical Structure Changes",

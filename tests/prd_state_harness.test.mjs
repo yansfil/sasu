@@ -565,18 +565,72 @@ test("fidelity Coverage Judgment accepts plain label lines and demotes a missing
   );
 });
 
-test("review-record hard gate keeps status-line match and FAIL-needs-a-finding as rejections", () => {
+test("review-record hard gate keeps verdict contradiction and FAIL-needs-a-finding as rejections", () => {
   const projectRoot = initGitRepo();
   const { logPath, reviewPath } = driveToFidelity(projectRoot, "hard-gate", "hard-gate-session");
 
-  // (b) Status line mismatch still rejects: a PASS report cannot be recorded as fail.
+  // (b) A stated verdict that contradicts --status still rejects: a PASS
+  // report cannot be recorded as fail. This is the guard that survives the
+  // de-duplication of the report's Status line against the --status flag -
+  // the shape requirement went away, the contradiction check did not.
   write(reviewPath, fidelityReviewBody(logPath));
   const mismatch = run(process.execPath, [harness, "requirements-review-record", "--status", "fail", "--report", reviewPath, "--summary", "FAIL"], {
     cwd: projectRoot,
     allowFailure: true,
   });
   assert.notEqual(mismatch.status, 0);
-  assert.match(mismatch.stderr, /does not match --status fail/);
+  assert.match(mismatch.stderr, /states 'Status: PASS' but --status fail was recorded/);
+  assert.match(mismatch.stderr, /do not edit the report to match the flag/);
+
+  // (b2) The contradiction is caught through markdown decoration too. The old
+  // exact-shape regex saw none of these as a verdict at all and rejected them
+  // for the wrong reason ("must include a standalone Status line"), which is
+  // what pushed a real run to hand-patch its own report four times
+  // (2026-08-11, modakbul/webhook-to-modakbul-server).
+  for (const decorated of ["**Status:** PASS", "- Status: PASS ✅", "Status: PASS (one advisory note)"]) {
+    write(reviewPath, fidelityReviewBody(logPath).replace("Status: PASS", decorated));
+    const decoratedRun = run(process.execPath, [harness, "requirements-review-record", "--status", "fail", "--report", reviewPath, "--summary", "FAIL"], {
+      cwd: projectRoot,
+      allowFailure: true,
+    });
+    assert.notEqual(decoratedRun.status, 0, `a decorated PASS verdict must still contradict --status fail: ${decorated}`);
+    assert.match(decoratedRun.stderr, /but --status fail was recorded/);
+  }
+
+  // (b3) The same decorated verdicts record cleanly against the matching
+  // --status, with no structure warning: shape is no longer the gate.
+  for (const decorated of ["**Status:** PASS", "- Status: PASS ✅", "Status: PASS (one advisory note)"]) {
+    write(reviewPath, fidelityReviewBody(logPath).replace("Status: PASS", decorated));
+    const recorded = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+    assert.equal(recorded.ok, true, `a decorated matching verdict must record: ${decorated}`);
+    assert.deepEqual(
+      recorded.structureWarnings.filter(item => /verdict/i.test(item)),
+      [],
+      `a stated verdict must not warn: ${decorated}`,
+    );
+  }
+
+  // (b4) A report that states no verdict at all is recorded under the flag
+  // with an advisory warning instead of a rejection: the flag already carries
+  // the fact, so demanding the report restate it in a fixed shape was pure
+  // duplication and the source of the hand-patching pressure.
+  write(reviewPath, fidelityReviewBody(logPath).replace("Status: PASS\n", ""));
+  const silent = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  assert.equal(silent.ok, true);
+  assert.ok(
+    silent.structureWarnings.some(item => /states no verdict line/.test(item)),
+    `expected an advisory no-verdict warning, got: ${JSON.stringify(silent.structureWarnings)}`,
+  );
+
+  // (b5) The unfilled skeleton line names both verdicts, so it states none:
+  // it must never read as PASS.
+  write(reviewPath, fidelityReviewBody(logPath).replace("Status: PASS", "Status: PASS | FAIL"));
+  const skeleton = runJson(["requirements-review-record", "--status", "fail", "--report", reviewPath, "--summary", "FAIL"], projectRoot);
+  assert.equal(skeleton.ok, true);
+  assert.ok(
+    skeleton.structureWarnings.some(item => /skeleton verdict line unfilled/.test(item)),
+    `an unfilled skeleton line must not be read as a verdict: ${JSON.stringify(skeleton.structureWarnings)}`,
+  );
 
   // (c) A FAIL report whose Findings carry no finding line still rejects.
   write(reviewPath, fidelityReviewBody(logPath)
@@ -589,6 +643,61 @@ test("review-record hard gate keeps status-line match and FAIL-needs-a-finding a
   });
   assert.notEqual(noFinding.status, 0);
   assert.match(noFinding.stderr, /Failing requirements fidelity report must include at least one finding/);
+});
+
+// The verdict scan is scoped by structure, not by phrasing: the final-review
+// skeleton asks for `- Status: <recorded status>` under `Fidelity Review
+// Checked`, so a whole-file scan would read a FAILing final review's citation
+// of the PASSing fidelity review as a self-contradiction.
+test("a FAILing final review citing a PASSing fidelity review is not a self-contradiction", () => {
+  const projectRoot = initGitRepo();
+  const slug = "final-verdict-scope";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "final-verdict-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  const finalPath = path.join(projectRoot, "agents", "implement", slug, "review", "final-review.md");
+  const finalBody = (ownVerdict, verdictSection) => `# Final Adversarial Review
+
+Status: ${ownVerdict}
+
+## Fidelity Review Checked
+
+- Report: agents/implement/${slug}/review/requirements-fidelity-review.md
+- Status: PASS
+- Recorded at: now
+
+## Findings
+
+- high: the diff still misses one guard.
+
+## Artifact Audit
+
+- Harness-visible validity: the command log was inspected.
+
+## Deviation Audit
+
+- Recorded deviations: none.
+
+## Verdict
+
+${verdictSection}
+`;
+
+  write(finalPath, finalBody("FAIL", "FAIL."));
+  const recorded = runJson(["review-record", "--status", "fail", "--report", finalPath, "--summary", "FAIL - one guard missing"], projectRoot);
+  assert.equal(recorded.ok, true, `the cited fidelity status must not read as this report's verdict: ${JSON.stringify(recorded)}`);
+  assert.deepEqual(recorded.structureWarnings.filter(item => /verdict/i.test(item)), []);
+
+  // The Verdict section IS in scope: a verdict there that contradicts the
+  // recorded status still rejects.
+  write(finalPath, finalBody("FAIL", "Verdict: PASS"));
+  const contradiction = run(process.execPath, [harness, "review-record", "--status", "fail", "--report", finalPath, "--summary", "FAIL"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(contradiction.status, 0);
+  assert.match(contradiction.stderr, /states 'Verdict: PASS' but --status fail was recorded/);
 });
 
 test("batch task mark with a bad id does not persist partial mutation", () => {
@@ -2002,6 +2111,144 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
   assert.equal(stop.stdout.trim(), "");
 });
 
+// Legibility regression for the probing incident (2026-08-11, modakbul run
+// webhook-to-modakbul-server): the agent called finalize three times inside
+// two minutes - partial, complete with the dummy summary "테스트", blocked -
+// because each rejection reported only the status it was asked about. One
+// rejection must now carry every blocker of every exit, each with the command
+// that clears it.
+test("a rejected finalize reports every blocker at once, each with the command that clears it", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "finalize-legibility");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "legibility-session"], projectRoot);
+  runJson(["plan-execution"], projectRoot);
+
+  const rejected = runJson(["finalize", "--status", "complete", "--summary", "Not actually done."], projectRoot, { allowFailure: true });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.requested, "complete");
+
+  // Every open item is reported in the SAME rejection - not one per round trip.
+  for (const expected of [
+    /Task T1 is pending; .*`.*mark --kind task --id T1 --status complete --evidence/,
+    /Task T1 has no evidence; .*`.*mark --kind task --id T1/,
+    /Acceptance AC1 is pending; .*`.*mark --kind ac --id AC1 --status met --evidence/,
+    /Required verification V1 is pending; .*`.*verify-run --id V1 -- <command>`/,
+    /Verification V1 has no evidence; .*`.*verify-run --id V1/,
+    /Requirements fidelity review has not passed \(currently not recorded\); .*requirements-review-record/,
+  ]) {
+    assert.ok(
+      rejected.violations.some(item => expected.test(item)),
+      `expected a blocker matching ${expected}, got: ${JSON.stringify(rejected.violations, null, 2)}`,
+    );
+  }
+  // Every blocker names an action, never just a diagnosis.
+  for (const violation of rejected.violations) {
+    assert.match(violation, /`[^`]+`/, `blocker carries no concrete command or action: ${violation}`);
+  }
+
+  // All three exits are priced from the same state read, so no other status
+  // has to be tried to learn what it would say.
+  assert.deepEqual(rejected.exits.map(exit => exit.status), ["complete", "partial", "blocked"]);
+  assert.deepEqual(rejected.exits.map(exit => exit.eligible), [false, false, false]);
+  assert.deepEqual(rejected.exits[0].blockers, rejected.violations, "the requested exit reports exactly the violations");
+  assert.equal(rejected.exits[0].blockerCount, rejected.violations.length);
+  assert.ok(
+    rejected.exits[1].blockers.some(item => /Partial finalization requires at least one completed, evidenced/.test(item)),
+    `expected the partial exit to price itself, got: ${JSON.stringify(rejected.exits[1].blockers, null, 2)}`,
+  );
+  assert.ok(
+    rejected.exits[2].blockers.some(item => /Blocked finalization requires at least one task, acceptance, or verification item marked blocked/.test(item)),
+    `expected the blocked exit to price itself, got: ${JSON.stringify(rejected.exits[2].blockers, null, 2)}`,
+  );
+  for (const exit of rejected.exits) {
+    assert.match(exit.command, new RegExp(`finalize --status ${exit.status} `));
+  }
+
+  // With nothing open, the guidance states the mutual exclusivity instead of
+  // leaving the agent to infer it from three separate refusals.
+  assert.match(rejected.guidance, /cannot be `complete` while/);
+  assert.match(rejected.guidance, /No finalize status succeeds right now/);
+  assert.match(rejected.guidance, /mutually exclusive/);
+
+  // An exit the agent did not ask about is previewed, not dumped: the count
+  // stays exact while the list stays readable.
+  const asBlocked = runJson(["finalize", "--status", "blocked", "--summary", "Not actually blocked."], projectRoot, { allowFailure: true });
+  const completePreview = asBlocked.exits.find(exit => exit.status === "complete");
+  assert.equal(completePreview.blockerCount, rejected.violations.length);
+  assert.ok(completePreview.blockerCount > completePreview.blockers.length, "an unrequested exit's long blocker list must be previewed");
+  assert.match(completePreview.blockers[completePreview.blockers.length - 1], /^\+\d+ more; `finalize --status complete` lists all \d+$/);
+});
+
+test("a rejected complete names the exit that succeeds right now instead of leaving it to be probed", () => {
+  const projectRoot = initGitRepo();
+  const slug = "finalize-exit-naming";
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "exit-naming-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  // The incident's exact shape: every tracked item closed, the verify gate
+  // terminally BLOCKED. `complete` is impossible, `partial` is impossible
+  // (nothing is open), `blocked` is the honest exit - and the rejection says
+  // so rather than making the agent discover it by trying all three.
+  const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
+  write(path.join(projectRoot, "agents", "gates", slug, "gates.json"), JSON.stringify({
+    schema: 1,
+    topic: slug,
+    gates: {
+      "gap-audit": { ...emptyGate },
+      spec: { ...emptyGate },
+      verify: {
+        ...emptyGate,
+        verdict: "FAIL",
+        attempts: 2,
+        findings: [{ area: "semantic", severity: "P0", missing: "AC1: judge keeps rejecting the diff", recommendation: "fix it", requiresHuman: false }],
+      },
+    },
+    deviations: [],
+    judgeCalls: [],
+  }, null, 2));
+
+  const rejected = runJson(["finalize", "--status", "complete", "--summary", "Not actually complete."], projectRoot, { allowFailure: true });
+  assert.equal(rejected.ok, false);
+  const byStatus = Object.fromEntries(rejected.exits.map(exit => [exit.status, exit]));
+  assert.equal(byStatus.complete.eligible, false);
+  assert.equal(byStatus.partial.eligible, false);
+  assert.equal(byStatus.blocked.eligible, true, `blocked must be open here, got: ${JSON.stringify(rejected.exits, null, 2)}`);
+  assert.deepEqual(byStatus.blocked.blockers, []);
+  assert.match(rejected.guidance, /cannot be `complete` while: Verify gate is BLOCKED/);
+  assert.match(rejected.guidance, /`--status blocked` succeeds right now/);
+  assert.match(rejected.guidance, /finalize --status blocked/);
+  assert.match(rejected.guidance, /honestly describes this run/);
+
+  // The named exit is the one that actually works: no probing round trip.
+  const finalized = runJson(["finalize", "--status", "blocked", "--summary", "Verify gate exhausted its retry budget."], projectRoot);
+  assert.equal(finalized.ok, true);
+});
+
+// A `complete` exit priced without running it must not claim the harness-timed
+// reverification's result (PRINCIPLES item 10: records stay honest).
+test("a priced-but-unrun complete exit is marked pending final reverification", () => {
+  const projectRoot = initGitRepo();
+  const slug = "finalize-exit-honesty";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "exit-honesty-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  // `partial` is refused (nothing is open), which prices `complete` without
+  // running it: its cheap checks clear, but the re-run has not happened.
+  const rejected = runJson(["finalize", "--status", "partial", "--summary", "Half done."], projectRoot, { allowFailure: true });
+  assert.equal(rejected.ok, false);
+  const completeExit = rejected.exits.find(exit => exit.status === "complete");
+  assert.equal(completeExit.eligible, true);
+  assert.equal(completeExit.pendingFinalReverification, true);
+  assert.match(rejected.guidance, /`--status complete` succeeds right now/);
+
+  // The requested exit ran for real, so it never carries the caveat.
+  const completed = runJson(["finalize", "--status", "complete", "--summary", "Done."], projectRoot);
+  assert.equal(completed.ok, true);
+});
+
 // The second terminal cause, on the implement path. A semantic FAIL whose
 // identical rerun the gate refuses at $0 freezes `attempts` below the budget
 // forever, so a budget-only terminal predicate is unreachable and the blocked
@@ -2171,6 +2418,67 @@ test("terminally blocked gate with no recorded review: record the honest pass, t
   assert.equal(receipt.verifyGate.effective, "BLOCKED");
   assert.equal(receipt.verifyGate.budgetExhausted, true);
   assert.equal(receipt.requirementsFidelityReview.status, "pass");
+});
+
+// The judge-error loop is the third terminal cause, and the only one where the
+// gate never answered the question. Charging judge ERRORs to the fix budget
+// produced false BLOCKEDs; not charging them left the run with no exit at all
+// unless this predicate opens one (measured 2026-08-11, modakbul).
+test("judge-error loop reaches a blocked receipt without ever claiming a spent fix budget", () => {
+  const projectRoot = initGitRepo();
+  const slug = "judge-error-loop";
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "judge-error-session");
+
+  const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
+  const errorRecord = {
+    ...emptyGate,
+    verdict: "ERROR",
+    attempts: 0,
+    consecutiveErrors: 2,
+    lastRunAt: "2026-08-11T09:00:00Z",
+    history: [{ at: "2026-08-11T09:00:00Z", verdict: "ERROR", findingCount: 0, requiresHuman: false, error: "judge-invalid-output (backend: claude): criteria missing verdicts for AC1" }],
+  };
+  write(path.join(projectRoot, "agents", "gates", slug, "gates.json"), JSON.stringify({
+    schema: 1,
+    topic: slug,
+    gates: { "gap-audit": { ...emptyGate }, spec: { ...emptyGate }, verify: errorRecord },
+    deviations: [],
+    judgeCalls: [],
+  }, null, 2));
+
+  // Completion stays impossible, and the refusal must not read as a spent
+  // budget: nothing was judged, so nothing about the code has been disproved.
+  const complete = runJson(["finalize", "--status", "complete", "--summary", "Not actually complete."], projectRoot, { allowFailure: true });
+  assert.equal(complete.ok, false);
+  const gateViolation = complete.violations.find(item => /Verify gate is BLOCKED/.test(item));
+  assert.ok(gateViolation, JSON.stringify(complete.violations));
+  assert.match(gateViolation, /judge backend failed 2 times in a row without returning a verdict/);
+  assert.match(gateViolation, /fix budget is untouched at attempts 0\/2/);
+  assert.match(gateViolation, /repair the judge/, "the one move that could still reach a real verdict comes first");
+  assert.doesNotMatch(gateViolation, /retry budget is exhausted/);
+
+  // The honest review lands (the terminal gate must not veto it) and the
+  // blocked receipt is earned - the exit the state change alone did not open.
+  write(reviewPath, fidelityReviewBody(logPath));
+  const recorded = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Intent preserved; the judge backend never returned a verdict."], projectRoot);
+  assert.equal(recorded.ok, true);
+
+  const finalized = runJson(["finalize", "--status", "blocked", "--summary", "Verify gate ERROR: the judge backend failed twice running without a verdict."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.status, "blocked");
+  assert.equal(receipt.verifyGate.effective, "BLOCKED");
+  assert.equal(receipt.verifyGate.judgeErrorLoop, true, "the terminal cause is recorded distinctly");
+  assert.equal(receipt.verifyGate.consecutiveErrors, 2);
+  assert.equal(receipt.verifyGate.attempts, 0, "a judge that never answered spent no fix attempts");
+  assert.equal(receipt.verifyGate.budgetExhausted, false, "a receipt must never claim a budget it did not spend");
+
+  const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
+  assert.match(report, /Status: Blocked/);
+  assert.match(report, /Attempts: 0\/2 \(judge-error loop: 2 consecutive judge failures with no verdict returned, so no criterion was judged and the fix budget is unspent\)/,
+    "a human reads the honest cause straight off the record");
+  assert.doesNotMatch(report, /retry budget exhausted/);
 });
 
 test("readiness precheck blocks a PRD whose Tasks section failed to parse", () => {
@@ -2558,6 +2866,30 @@ test("quick guard drives the fix loop inside the budget, then switches to handof
 
   writeQuickGates(root, { verdict: "BLOCK", attempts: 1, findings: [{ ...finding, requiresHuman: true }] });
   assert.match(JSON.parse(quickStop(root)).reason, /needs human verification/);
+});
+
+// A judge that never returns a verdict is the one failure the fix loop cannot
+// fix, and it is also the one that cannot end the loop by spending the budget -
+// judge ERRORs deliberately leave `attempts` alone. Without the third exit the
+// guard demands `sasu verify` forever (measured 2026-08-11, modakbul: 4 of 10
+// verify attempts lost to judge-invalid-output, 0 criterion FAILs).
+test("quick guard ends the loop on a judge-error streak, without claiming a spent budget", () => {
+  const root = makeQuickProject();
+  // One error is not a loop: the guard still asks for the re-run that may work.
+  writeQuickGates(root, { verdict: "ERROR", attempts: 0, consecutiveErrors: 1, findings: [] });
+  const retrying = JSON.parse(quickStop(root));
+  assert.equal(retrying.decision, "block");
+  assert.match(retrying.reason, /sasu verify/, "below the bound the guard still drives a re-run");
+
+  // At the bound it stops driving and names the honest cause.
+  writeQuickGates(root, { verdict: "ERROR", attempts: 0, consecutiveErrors: 3, findings: [] });
+  const terminal = JSON.parse(quickStop(root));
+  assert.match(terminal.reason, /3 consecutive judge failures/);
+  assert.match(terminal.reason, /fix budget is untouched at 0\/3/, "a directive must never claim a budget it did not spend");
+  assert.match(terminal.reason, /backend failure, not a verification failure/);
+  assert.match(terminal.reason, /status: blocked/, "the run closes out as blocked, not as complete-with-open-items");
+  assert.ok(!/Fix the findings and re-run/.test(terminal.reason), "there are no findings to fix");
+  assert.ok(!/exhausted its 3-attempt verify budget/.test(terminal.reason));
 });
 
 test("quick guard treats a user override as passable and demands finalization", () => {

@@ -90,8 +90,10 @@ Rules:
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - If `init` reports an existing active run for the same topic, resume it.
   Use `--force` only when the user explicitly asked for a clean restart.
-- If `init` reports unresolved `preWorkChecklist` items (human-only pre-work or open human decisions from PRD `## 4`), ask the user about ALL of them in one batched message before starting task implementation; never discover them serially mid-run.
-  This single batched ask is the exception to the no-round-trip flow: the items are things only the user can do, and asking once up front is cheaper than stalling on each mid-implementation.
+- `init` lists EVERY PRD `## 4` pre-work and human-decision bullet in `preWorkChecklist`, all of them undisposed: the harness reads Markdown structure and never guesses what a bullet means, so deciding who deals with each one is yours.
+  Read them, ask the user about ALL the ones only the user can do in ONE batched message before starting task implementation, then record every item with `mark --kind prework --id <ids> --status human|agent|resolved --evidence "<what was asked/decided>"`.
+  The Stop hook refuses to advance the run past the first task mark while any item is still `pending`, and `finalize` refuses a receipt while any is.
+  This single batched ask is the exception to the no-round-trip flow: asking once up front is cheaper than stalling on each item mid-implementation.
   Items the user defers become recorded blockers on the affected tasks, and implementation proceeds on unaffected tasks.
 - All verification, evidence, fidelity review, final review, and `finalize` requirements apply unchanged.
 

@@ -29,6 +29,14 @@ test("lib fallback gate arithmetic matches dist gateStatus on identical fixtures
     { name: "never judged despite attempts >= budget", record: { ...emptyGate, verdict: null, attempts: 3 } },
     { name: "PASS", record: { ...emptyGate, verdict: "PASS", attempts: 1 } },
     { name: "overridden FAIL reads as PASS", record: { ...emptyGate, verdict: "FAIL", attempts: 2, overridden: true } },
+    // The third terminal cause, which unlike the refusal IS pure arithmetic and
+    // therefore must match: a judge-error streak at the bound, one short of it,
+    // and a streak left stale under a judged verdict (any verdict resets it, so
+    // a record that still carries the number must not read as terminal).
+    { name: "judge error streak at the bound", record: { ...emptyGate, verdict: "ERROR", attempts: 0, consecutiveErrors: 2 } },
+    { name: "judge error streak below the bound", record: { ...emptyGate, verdict: "ERROR", attempts: 0, consecutiveErrors: 1 } },
+    { name: "streak carried under a judged verdict is not terminal", record: { ...emptyGate, verdict: "FAIL", attempts: 1, consecutiveErrors: 2 } },
+    { name: "pre-field record reads as a zero streak", record: { ...emptyGate, verdict: "ERROR", attempts: 0 } },
   ];
   for (const { name, record } of fixtures) {
     const lib = verifyGateFallbackStatus(record, budget);
@@ -40,6 +48,8 @@ test("lib fallback gate arithmetic matches dist gateStatus on identical fixtures
     assert.equal(lib.attempts, dist.attempts, `${name}: attempts`);
     assert.equal(lib.budget, dist.budget, `${name}: budget`);
     assert.equal(lib.overridden, dist.overridden, `${name}: overridden`);
+    assert.equal(lib.consecutiveErrors, dist.consecutiveErrors, `${name}: consecutiveErrors`);
+    assert.equal(lib.judgeErrorLoop, dist.judgeErrorLoop, `${name}: judgeErrorLoop`);
     // Deliberate asymmetry, pinned so it stays deliberate: the second terminal
     // cause ("an identical rerun would be refused") needs the tree fingerprint
     // and the input pins, i.e. exactly the dist code this fallback exists

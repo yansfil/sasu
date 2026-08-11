@@ -114,7 +114,16 @@ function findProjectRoot(): string {
 
 function printStatusView(view: GateStatusView): void {
   const head = `[gate:${view.gate}] ${view.effective}${view.overridden ? " (overridden by user)" : ""}`;
-  const meta = `attempts ${view.attempts}/${view.budget}${view.budgetExhausted ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (a user-instructed re-run may continue)" : ""}`;
+  // A judge-error loop prints the honest 0/N, so the numbers alone read as "two
+  // attempts left" while every one of them is a broken backend call. The flag has
+  // to say so here, or `sasu gate status` is the one surface that hides the
+  // terminal cause the receipt and the Stop hook both report.
+  const terminal = view.budgetExhausted
+    ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (a user-instructed re-run may continue)"
+    : view.judgeErrorLoop
+      ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge and re-run, or close the run out blocked`
+      : "";
+  const meta = `attempts ${view.attempts}/${view.budget}${terminal}`;
   process.stdout.write(`${head} | ${meta}\n`);
   for (const input of view.staleInputs) {
     process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - re-run the gate on the current document\n`);

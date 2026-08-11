@@ -122,7 +122,11 @@ export interface LegacyTreeFingerprint {
 
 export interface GateRecord {
   verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
-  /** Retry-budget gauge: counts consecutive non-PASS runs and RESETS to 0 on PASS. */
+  /**
+   * Fix-budget gauge: counts consecutive JUDGED non-PASS runs and RESETS to 0
+   * on PASS. A judge ERROR deliberately does NOT move it - see
+   * `consecutiveErrors`.
+   */
   attempts: number;
   /**
    * Cumulative run counter: every recorded outcome - PASS, FAIL, BLOCK, and
@@ -133,6 +137,26 @@ export interface GateRecord {
    * pre-2nd-wave gates.json files; consumers report null there, never a guess.
    */
   totalAttempts?: number;
+  /**
+   * Judge ERRORs since the last real verdict; ANY judged verdict (PASS, FAIL,
+   * BLOCK) resets it to 0.
+   *
+   * The fix budget means "N chances to fix the findings and re-verify". A judge
+   * that returns malformed output gives the agent NOTHING to fix, so charging
+   * it to `attempts` pushes an honest run toward a false BLOCKED (measured
+   * 2026-08-11, project modakbul, slug webhook-to-modakbul-server: 10 verify
+   * attempts, 4 of them `judge-invalid-output (backend: claude): criteria
+   * missing verdicts for AC1..AC3`, ZERO criterion FAILs across every round
+   * that did return a verdict - and 3 spurious BLOCKEDs, with the agent then
+   * spending review time proving the failures were the backend's).
+   *
+   * Not charging it cannot mean "retry forever" though (PRINCIPLES item 13: a
+   * stage that cannot converge on its own needs a harness-owned bound), so this
+   * counter is the separate gauge for the separate failure, read against the
+   * same configured bound by `judgeErrorLoop`. Absent on pre-field files, which
+   * read as 0 and are simply never terminal on this cause.
+   */
+  consecutiveErrors?: number;
   overridden: boolean;
   findings: Finding[];
   lastRunAt: string | null;
@@ -308,6 +332,18 @@ export interface GateStatusView {
   attempts: number;
   budget: number;
   budgetExhausted: boolean;
+  /** Judge ERRORs since the last real verdict (GateRecord.consecutiveErrors). */
+  consecutiveErrors: number;
+  /**
+   * Third terminal cause, beside `budgetExhausted` and the gate-commands-owned
+   * `rerunRefused`: the judge backend has failed `budget` times in a row
+   * without ever returning a verdict. Distinct on purpose (PRINCIPLES item 10 -
+   * a record names what actually happened): a spent fix budget means the agent
+   * had N sets of findings and could not close them, while this means it never
+   * got one. Reported honestly as attempts 0/N plus this flag, never as a faked
+   * exhaustion, exactly as `rerunRefused` is.
+   */
+  judgeErrorLoop: boolean;
   requiresHuman: boolean;
   findings: Finding[];
 }
@@ -358,6 +394,13 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
   // `stale` only downgrades an otherwise-passing gate; on a blocked gate the
   // list is informational and must not turn BLOCKED into STALE.
   const stale = passed && staleInputs.length > 0;
+  // The error streak is bounded by the SAME configured number as the fix budget
+  // rather than a second knob: both answer "how many times may this gate fail
+  // the same way before the autonomous loop stops" (PRINCIPLES item 4 - an
+  // addition that ships a knob owes a deletion, and this one owes none). Two
+  // gauges, one bound; `verdict === "ERROR"` keeps a streak written by one dist
+  // from being read as terminal under a verdict written by another.
+  const consecutiveErrors = Number.isInteger(record.consecutiveErrors) ? (record.consecutiveErrors as number) : 0;
   return {
     gate,
     verdict: record.verdict,
@@ -369,6 +412,8 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
     attempts: record.attempts,
     budget,
     budgetExhausted: !passed && record.attempts >= budget && record.verdict !== null,
+    consecutiveErrors,
+    judgeErrorLoop: !passed && record.verdict === "ERROR" && consecutiveErrors > 0 && consecutiveErrors >= budget,
     requiresHuman: record.findings.some((f) => f.requiresHuman),
     findings: record.findings,
   };
@@ -436,6 +481,9 @@ export function recordGateResult(
     // Cumulative twin of the gauge above: every real run counts, PASS included,
     // and nothing resets it (see the GateRecord field comment).
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
+    // ANY judged verdict clears the error streak, FAIL and BLOCK included: the
+    // judge answered the question, which is the whole thing the streak counts.
+    record.consecutiveErrors = 0;
     summary = {
       at,
       verdict: outcome.verdict,
@@ -468,8 +516,20 @@ export function recordGateResult(
     delete record.diffSource;
     delete record.usedLiveMaterial;
     delete record.docKind;
-    record.attempts += 1;
+    // `attempts` is deliberately untouched: it is the FIX budget, and a judge
+    // that never returned a verdict handed the agent nothing to fix, so
+    // charging it there converts a backend malfunction into a false BLOCKED
+    // (measured 2026-08-11, modakbul/webhook-to-modakbul-server: 4 of 10 verify
+    // attempts lost to judge-invalid-output, 0 criterion FAILs in any round
+    // that did answer, 3 spurious BLOCKEDs). The run stays fully recorded
+    // anyway - ERROR verdict, cumulative counter, history row - because the
+    // budget is a gauge, not the ledger (PRINCIPLES item 10).
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
+    // The bound that keeps "does not spend the budget" from meaning "retries
+    // forever" (PRINCIPLES item 13): gateStatus turns a streak of `budget`
+    // errors into `judgeErrorLoop`, its own terminal cause, so the run reaches
+    // an honest blocked receipt instead of spinning on a broken backend.
+    record.consecutiveErrors = (record.consecutiveErrors ?? 0) + 1;
     summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };
   }
   record.lastRunAt = at;

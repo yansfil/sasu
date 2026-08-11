@@ -243,11 +243,52 @@ test("fail-closed: invalid judge replies surface as a blocked ERROR run naming t
   assert.ok(state.judgeCalls.every((c) => c.outcome === "judge-invalid-output"));
 });
 
+// The measured incident (2026-08-11, project modakbul, slug
+// webhook-to-modakbul-server): 4 of 10 verify attempts died as
+// `judge-invalid-output`, no round ever returned a criterion FAIL, and the run
+// still went BLOCKED three times because the broken judge was charged to the
+// fix budget. End to end, a judge that never answers must leave the budget
+// alone and must still stop the loop with its own named cause.
+test("retry budget: a judge-error loop spends no budget and terminates on its own cause", () => {
+  const dir = makeProject({ config: { judge: { retryBudget: 2 } } });
+  const broken = () =>
+    runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+      stub: stubFile(dir, "garbage that is not json"),
+    });
+
+  const first = broken();
+  assert.equal(first.status, 1, "fail-closed: a judge error is never a pass");
+  assert.match(first.stdout, /attempts 0\/2/, "the fix budget is untouched by a judge malfunction");
+  assert.doesNotMatch(first.stdout, /failed 1 times in a row/, "one broken call is still just 're-run'");
+
+  const second = broken();
+  assert.equal(second.status, 1);
+  assert.match(second.stdout, /attempts 0\/2/, "still 0/2: there were never any findings to fix");
+  assert.doesNotMatch(second.stdout, /RETRY BUDGET EXHAUSTED/, "the receipt must not claim a budget it did not spend");
+  assert.match(second.stdout, /failed 2 times in a row without returning a verdict/, "the loop is bounded and names why");
+  assert.match(second.stdout, /close the run out honestly as blocked/, "and names the exit instead of demanding another re-run");
+
+  const state = gatesState(dir, "fixture");
+  assert.equal(state.gates["gap-audit"].attempts, 0);
+  assert.equal(state.gates["gap-audit"].consecutiveErrors, 2);
+  assert.equal(state.gates["gap-audit"].totalAttempts, 2, "both runs are still in the honest ledger");
+  assert.equal(state.gates["gap-audit"].history.length, 2);
+});
+
 test("retry budget: repeated BLOCKs exhaust the configured budget and tell the agent to stop", () => {
   const dir = makeProject({ config: { judge: { retryBudget: 2 } } });
+  // `origin` is mandatory on a re-run judgment (applyRerunConvergence), so the
+  // bare BLOCK_RESPONSE makes every call after the first a judge ERROR rather
+  // than a BLOCK. This test used to pass on exactly that: the ERROR charged the
+  // retry budget, so "repeated BLOCKs" exhausted it after ONE real BLOCK. Now
+  // that a judge malfunction no longer spends the fix budget, the fixture has
+  // to produce the repeated BLOCKs the test claims to be about.
   const block = () =>
     runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
-      stub: stubFile(dir, BLOCK_RESPONSE),
+      stub: stubFile(dir, {
+        ...BLOCK_RESPONSE,
+        findings: BLOCK_RESPONSE.findings.map((finding) => ({ ...finding, origin: "prior-unresolved" })),
+      }),
     });
   block();
   const second = block();

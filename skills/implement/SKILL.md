@@ -129,7 +129,7 @@ Before editing:
 1. Read the PRD and confirm `status: ready`.
 2. Confirm `human_approval: "approved"` or obtain the verbatim approval deviation authorized by the calling workflow.
 3. Never set human approval yourself; when the user explicitly approves in conversation, either update frontmatter with that quoted approval in the implementation notes or pass the exact approval to `init --allow-unapproved-prd`.
-4. Confirm blocking pre-work and human decisions are resolved; `init` surfaces unresolved `## 4` human-only items as `preWorkChecklist`, and the batched-ask rule in section 3 governs them.
+4. Dispose of every `## 4` pre-work item; `init` lists them all in `preWorkChecklist` and the Stop hook blocks the run while any is `pending` (section 3).
 5. Treat Major Technical Structure Changes as the approved structure lock.
 6. Read Implementation Guardrails and Risks.
 7. Read `agents/config.json` when it exists.
@@ -181,8 +181,9 @@ Initialization fails when PRD approval is pending and no allowed deviation is re
 Bind a session ID and handle PR delivery or worktrees according to `references/worktrees-and-delivery.md` when those conditions apply.
 
 The harness extracts PRD-level tasks, acceptance criteria, verification items, test modes, and structure locks into durable state.
-It also extracts the `## 4` human-only pre-work and open human decisions into `preWorkChecklist` (init output and `state.json`).
-When init reports unresolved `preWorkChecklist` items, ask the user about ALL of them in ONE batched message (in Claude Code, one AskUserQuestion call listing every item) BEFORE starting task implementation; never discover them serially mid-run.
+It also extracts every `## 4` pre-work and human-decision bullet into `preWorkChecklist` (init output and `state.json`), undisposed: the harness reads Markdown structure and never guesses what a bullet means, so deciding who deals with each item is yours.
+Ask the user about ALL the `human` ones in ONE batched message (in Claude Code, one AskUserQuestion call listing every item) BEFORE starting task implementation, then record every item with `mark --kind prework --id <ids> --status human|agent|resolved --evidence "<what was asked/decided>"`.
+The Stop hook refuses to advance the run past the first task mark while any item is still `pending`.
 Record items the user defers as blockers on the affected tasks and proceed on unaffected tasks.
 It records the PRD's agent-declared `trivial`, `standard`, or `high-risk` profile, with `standard` as the safe missing-value fallback.
 Read `references/reviews-and-finalization.md` for the exact gate owned by each profile and override only a genuinely wrong semantic judgment.

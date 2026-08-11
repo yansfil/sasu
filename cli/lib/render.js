@@ -67,9 +67,15 @@ function writeImplementationReport(statePath, state) {
       : "";
     const terminalCause = verifyGate.budgetExhausted
       ? ` (retry budget exhausted${judgedBase})`
-      : verifyGate.rerunRefused
-        ? ` (rerun refused on an unchanged tree${judgedBase}; the remaining attempts are unspendable)`
-        : "";
+      // The third cause reads as 0/N on purpose. A human auditing this receipt
+      // must be able to tell "the findings were real and stayed open" from "the
+      // judge never answered", because only the first says anything about the
+      // implementation. No base is cited: an ERROR run has no judged diff.
+      : verifyGate.judgeErrorLoop
+        ? ` (judge-error loop: ${verifyGate.consecutiveErrors} consecutive judge failures with no verdict returned, so no criterion was judged and the fix budget is unspent)`
+        : verifyGate.rerunRefused
+          ? ` (rerun refused on an unchanged tree${judgedBase}; the remaining attempts are unspendable)`
+          : "";
     lines.push(`  - Attempts: ${verifyGate.attempts}/${verifyGate.budget}${terminalCause}`);
     const findings = Array.isArray(verifyGate.findings) ? verifyGate.findings : [];
     for (const finding of findings) {
@@ -295,7 +301,7 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
-Use the section headings and the Coverage Judgment label keys exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Only the standalone Status line (and at least one finding when the status is FAIL) is enforced mechanically. Write all prose, findings, and values in the user's language.
+Use the section headings and the Coverage Judgment label keys exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Two things only are enforced mechanically: a verdict the report STATES must not contradict the status recorded on the command line (state the verdict the review actually reached; never edit the report to match a flag), and a FAIL must carry at least one finding. Write all prose, findings, and values in the user's language.
 
 Use this format:
 
@@ -395,7 +401,7 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
-Use the section headings exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Only the standalone Status line (and at least one finding when the status is FAIL) is enforced mechanically. Write all prose in the user's language.
+Use the section headings exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Two things only are enforced mechanically: a verdict the report STATES must not contradict the status recorded on the command line (state the verdict the review actually reached; never edit the report to match a flag), and a FAIL must carry at least one finding. Write all prose in the user's language.
 
 Use this format:
 

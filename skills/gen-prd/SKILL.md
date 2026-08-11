@@ -199,6 +199,13 @@ If the agent can do it (creating files, seed data, config, research, scaffolding
 free-tier signup the user already approved), it is a PRD task or just gets done;
 never pre-work. Every pre-work item must say why it is human-only.
 
+Write one bullet per actionable item, because `implement` turns each `4.1` and
+`4.2` bullet into exactly one checklist entry the implementing agent has to
+dispose of before it may advance the run. It reads the bullets, not a marker
+syntax, so state the human-only reason in plain prose - there is no keyword to
+hit, and a bullet bundling three separate setup steps becomes one entry that
+can be half-answered.
+
 Typical human-only items:
 
 - API keys, credentials, test accounts, billing, permissions.
