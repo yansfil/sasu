@@ -192,9 +192,10 @@ Receipt: agents/implement/standard-regression/receipt.json
     "lastRunAt": null
   },
   "phaseTimings": {
-    "schema": "hoyeon.phase-timings.v1",
+    "schema": "hoyeon.phase-timings.v2",
     "milestones": {
       "initAt": "<TS>",
+      "allTasksFirstEvidenceAt": "<TS>",
       "firstVerificationRunAt": "<TS>",
       "lastVerificationRunAt": "<TS>",
       "requirementsFidelityRecordedAt": "<TS>",
@@ -210,6 +211,12 @@ Receipt: agents/implement/standard-regression/receipt.json
       "verifyGateAttempts": null
     },
     "wallClockSeconds": "<DUR>",
+    "taskEvidenceBoundary": {
+      "basis": "all-tasks-first-evidence",
+      "beforeSeconds": "<DUR>",
+      "afterSeconds": "<DUR>",
+      "afterOverBeforeRatio": "<DUR>"
+    },
     "unattributedSeconds": "<DUR>"
   },
   "rehearsals": {

@@ -221,7 +221,10 @@ function normalizeArtifact(text, projectRoot) {
     .replace(/\b\d+ms\b/g, "<MS>")
     // Phase timings: measured durations vary run to run; counts stay pinned.
     // Ordered after the ms rule so "123ms" is already collapsed.
-    .replace(/"(verificationCommandSeconds|judgeSeconds|wallClockSeconds|unattributedSeconds)": (?:[0-9.]+|null)/g, '"$1": "<DUR>"')
+    .replace(
+      /"(verificationCommandSeconds|judgeSeconds|wallClockSeconds|unattributedSeconds|beforeSeconds|afterSeconds|afterOverBeforeRatio)": (?:[0-9.]+|null)/g,
+      '"$1": "<DUR>"',
+    )
     .replace(/\b\d+(?:\.\d+)?s\b/g, "<DUR>");
   return out;
 }
