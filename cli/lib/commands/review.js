@@ -1,6 +1,7 @@
 "use strict";
 
 const childProcess = require("child_process");
+const fs = require("fs");
 const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash, safeTimestamp, writeMarkdown, harnessCommand } = require("../util");
@@ -10,7 +11,7 @@ const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, reviewRoundCount, reviewRoundCapNotice } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, fidelityReviewInputs, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
+const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, fidelityReviewInputs, reviewSeverityViolations, openReviewFollowUps, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
@@ -23,7 +24,6 @@ function loadGatesStateForTimings(state) {
   const projectRoot = state.projectRoot || cwd();
   if (!state.topicSlug) return null;
   try {
-    const fs = require("fs");
     const gatesPath = path.join(projectRoot, "agents", "gates", state.topicSlug, "gates.json");
     if (!fs.existsSync(gatesPath)) return null;
     return JSON.parse(fs.readFileSync(gatesPath, "utf8"));
@@ -73,6 +73,17 @@ function cmdRequirementsReviewRecord(options) {
   const reportAbs = resolveProjectPath(reportInput, state.projectRoot || cwd());
   const info = inspectArtifact(reportAbs, "log");
   const structureWarnings = assertRequirementsFidelityReport(reportAbs, status, state);
+  // A severity the report itself states is the one thing the harness holds a
+  // `pass` to (see reviewSeverityViolations): a stated BLOCKER/MAJOR contradicts
+  // it, and a stated MINOR is a claim the run may carry instead of opening
+  // another review round. Nothing here demands a label - a report that states no
+  // severity behaves exactly as before.
+  const severity = reviewSeverityViolations(fs.readFileSync(reportAbs, "utf8"), status);
+  if (severity.violations.length) {
+    process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations: severity.violations }, null, 2) + "\n");
+    process.exitCode = 2;
+    return;
+  }
   printStructureWarnings("requirements fidelity report", structureWarnings);
   const reportPath = toProjectRelative(reportAbs, state.projectRoot || cwd());
 
@@ -115,6 +126,10 @@ function cmdRequirementsReviewRecord(options) {
     // subject and that gate pins the exact diff it judged.
     worktreeSnapshot: worktreeSnapshot(state),
     inputs: fidelityReviewInputs(state),
+    // Findings the report labelled MINOR, carried instead of re-reviewed. An
+    // open finding written down is more honest than a round that pretends to
+    // close it (PRINCIPLES items 10 and 13).
+    ...(severity.followUps.length ? { followUps: severity.followUps } : {}),
     recordedAt: nowIso(),
   };
   state.finalReview = null;
@@ -132,6 +147,7 @@ function cmdRequirementsReviewRecord(options) {
     // and is about to decide whether to summon another - so the redirect rides
     // here rather than waiting for the Stop hook.
     reviewRounds: reviewRoundCount(state),
+    reviewFollowUps: openReviewFollowUps(state),
     ...(reviewRoundCapNotice(state) ? { reviewRoundCapNotice: reviewRoundCapNotice(state) } : {}),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
@@ -151,6 +167,17 @@ function cmdReviewRecord(options) {
   const reportAbs = resolveProjectPath(reportInput, state.projectRoot || cwd());
   const info = inspectArtifact(reportAbs, "log");
   const structureWarnings = assertFinalReviewReport(reportAbs, status, state);
+  // A severity the report itself states is the one thing the harness holds a
+  // `pass` to (see reviewSeverityViolations): a stated BLOCKER/MAJOR contradicts
+  // it, and a stated MINOR is a claim the run may carry instead of opening
+  // another review round. Nothing here demands a label - a report that states no
+  // severity behaves exactly as before.
+  const severity = reviewSeverityViolations(fs.readFileSync(reportAbs, "utf8"), status);
+  if (severity.violations.length) {
+    process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations: severity.violations }, null, 2) + "\n");
+    process.exitCode = 2;
+    return;
+  }
   printStructureWarnings("final review report", structureWarnings);
   const reportPath = toProjectRelative(reportAbs, state.projectRoot || cwd());
 
@@ -180,6 +207,7 @@ function cmdReviewRecord(options) {
     // vouchedTreeFingerprint is the freshness decision input.
     worktreeSnapshot: worktreeSnapshot(state),
     vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
+    ...(severity.followUps.length ? { followUps: severity.followUps } : {}),
     recordedAt: nowIso(),
   };
   state.updatedAt = nowIso();
@@ -190,6 +218,7 @@ function cmdReviewRecord(options) {
     structureWarnings,
     finalReview: state.finalReview,
     reviewRounds: reviewRoundCount(state),
+    reviewFollowUps: openReviewFollowUps(state),
     ...(reviewRoundCapNotice(state) ? { reviewRoundCapNotice: reviewRoundCapNotice(state) } : {}),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
@@ -519,6 +548,10 @@ function cmdFinalize(options) {
     // and reconstructing what happened took session-transcript archaeology
     // (2026-08-11). Derived from the round log, so it cannot drift from it.
     reviewRounds: reviewRoundCount(state),
+    // Open by design: the receipt carries what the reviews chose not to close,
+    // so "we shipped with these known minor items" is a fact a reader can see
+    // instead of something a closed round pretended away (item 10).
+    reviewFollowUps: openReviewFollowUps(state),
     // Receipt-time re-run of required command verifications on the final
     // tree, harness-timed. Skips carry their reason - never silent.
     finalReverification,

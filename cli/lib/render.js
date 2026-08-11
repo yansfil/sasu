@@ -7,7 +7,7 @@ const { writeMarkdown, NAMESPACE_ROOT } = require("./util");
 const { hashGateInput } = require("./gate_freshness");
 const { executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy, reviewRoundCount } = require("./state_data");
 const { collectArtifacts } = require("./artifacts");
-const { verifyGateStatus } = require("./reviews");
+const { verifyGateStatus, openReviewFollowUps } = require("./reviews");
 const { snapshotEntriesEqual } = require("./git");
 
 function writeImplementationReport(statePath, state) {
@@ -51,6 +51,7 @@ function writeImplementationReport(statePath, state) {
   // from "recorded the same document N times"; neither number is a verdict about
   // the run, and the harness states them without drawing one (item 10).
   const rounds = reviewRoundCount(state);
+  const followUps = openReviewFollowUps(state);
   lines.push(`- Review rounds recorded: ${rounds.total}/${rounds.cap}${rounds.capReached ? " (cap reached: further rounds were not autonomous)" : ""} (requirements fidelity ${rounds.fidelity.rounds}, ${rounds.fidelity.distinctReports} distinct report(s); final ${rounds.final.rounds}, ${rounds.final.distinctReports} distinct report(s))`);
   const verifyGate = verifyGateStatus(state);
   lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
@@ -88,6 +89,15 @@ function writeImplementationReport(statePath, state) {
       lines.push(`  - Finding (${finding.severity || "?"} ${finding.area || "unknown"}): ${finding.missing || "no description recorded"}`);
     }
     if (!findings.length) lines.push("  - Findings: none recorded");
+  }
+  // Open follow-ups are part of the honest record, not a footnote: a reviewer
+  // labelled these MINOR and the run carried them instead of opening another
+  // round, so the receipt says so rather than reading as though nothing was left.
+  if (followUps.length) {
+    lines.push(`- Open review follow-ups: ${followUps.length}`);
+    for (const item of followUps) lines.push(`  - ${item.kind} review (${item.severity}): ${item.text}`);
+  } else {
+    lines.push("- Open review follow-ups: none");
   }
   if (Array.isArray(profile.signals) && profile.signals.length) {
     lines.push("- Classification signals:");
@@ -307,7 +317,9 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
-Use the section headings and the Coverage Judgment label keys exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Two things only are enforced mechanically: a verdict the report STATES must not contradict the status recorded on the command line (state the verdict the review actually reached; never edit the report to match a flag), and a FAIL must carry at least one finding. Write all prose, findings, and values in the user's language.
+Use the section headings and the Coverage Judgment label keys exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Two things only are enforced mechanically: a verdict the report STATES must not contradict the status recorded on the command line (state the verdict the review actually reached; never edit the report to match a flag), and a FAIL must carry at least one finding.
+
+Label each finding with a severity the harness compares: \`Severity: BLOCKER\`, \`Severity: MAJOR\`, or \`Severity: MINOR\` (a leading \`- MINOR - ...\` or a Severity table column reads the same). MINOR means "worth recording, not worth another review round": those findings are carried into the receipt as open follow-up items. BLOCKER and MAJOR mean the work is not done, and a report stating either cannot be recorded as a pass. Labelling is optional and never rejected on its own - an unlabelled finding simply cannot be deferred, so label the ones you judge minor. Write all prose, findings, and values in the user's language.
 
 Use this format:
 
@@ -407,7 +419,9 @@ Write the report to:
 
 This is an absolute path inside the current run checkout. Write the file at exactly this absolute path; never use a relative path, because the editing tool may resolve it against a different checkout. If the report was accidentally created elsewhere, move the existing file with \`mv\` instead of re-authoring its content.
 
-Use the section headings exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Two things only are enforced mechanically: a verdict the report STATES must not contradict the status recorded on the command line (state the verdict the review actually reached; never edit the report to match a flag), and a FAIL must carry at least one finding. Write all prose in the user's language.
+Use the section headings exactly as written below; they are the recommended skeleton, and the harness reports deviations from it as advisory structure warnings. Two things only are enforced mechanically: a verdict the report STATES must not contradict the status recorded on the command line (state the verdict the review actually reached; never edit the report to match a flag), and a FAIL must carry at least one finding.
+
+Label each finding with a severity the harness compares: \`Severity: BLOCKER\`, \`Severity: MAJOR\`, or \`Severity: MINOR\` (a leading \`- MINOR - ...\` or a Severity table column reads the same). MINOR means "worth recording, not worth another review round": those findings are carried into the receipt as open follow-up items. BLOCKER and MAJOR mean the work is not done, and a report stating either cannot be recorded as a pass. Labelling is optional and never rejected on its own - an unlabelled finding simply cannot be deferred, so label the ones you judge minor. Write all prose in the user's language.
 
 Use this format:
 

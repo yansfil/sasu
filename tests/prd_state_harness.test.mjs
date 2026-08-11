@@ -2447,6 +2447,67 @@ test("terminally blocked gate with no recorded review: record the honest pass, t
 // gate never answered the question. Charging judge ERRORs to the fix budget
 // produced false BLOCKEDs; not charging them left the run with no exit at all
 // unless this predicate opens one (measured 2026-08-11, modakbul).
+// PRINCIPLES item 13 names a severity floor as one admissible bound on a stage
+// that cannot converge: an advisory finding recorded as a follow-up does not
+// re-trigger the chain. The floor is a value the report DECLARES and the harness
+// COMPARES, which is what makes asking for it honest work rather than a new dial
+// (item 7) - and the check is a contradiction check, never a shape check, because
+// enforcing report shape is what pushed agents into rewriting reports to satisfy
+// a formatter and was deleted for exactly that reason.
+test("a MINOR finding is carried as a receipt follow-up; a MAJOR one cannot be recorded as a pass", () => {
+  const projectRoot = initGitRepo();
+  const slug = "severity-floor";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "severity-session");
+
+  // A report that labels nothing behaves exactly as before: no new rejection, so
+  // no new pressure to edit the report. The conventional passing body writes
+  // "- none: no material findings", which must never read as a finding.
+  write(reviewPath, fidelityReviewBody(logPath));
+  const unlabelled = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+  assert.equal(unlabelled.ok, true);
+  assert.deepEqual(unlabelled.reviewFollowUps, [], "a placeholder bullet is not a finding");
+
+  // A stated MAJOR contradicts a pass: the report itself says the work is not
+  // done, so the harness holds the recording to what the report claims.
+  write(reviewPath, fidelityReviewBody(logPath).replace(
+    "- none: no material findings",
+    "- MAJOR - AC1's evidence does not actually exercise the criterion",
+  ));
+  const blocked = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Claiming a pass."], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(blocked.status, 0);
+  const rejection = JSON.parse(blocked.stdout);
+  assert.equal(rejection.ok, false);
+  assert.match(rejection.violations[0], /states 1 finding at MAJOR/);
+  assert.match(rejection.violations[0], /contradicts recording a pass/);
+  assert.match(rejection.violations[0], /--status fail/, "the honest exit is named");
+  assert.match(rejection.violations[0], /Only findings the report itself labels MINOR may be carried/);
+
+  // A stated MINOR is a claim the run may carry: recorded, not re-reviewed.
+  write(reviewPath, fidelityReviewBody(logPath).replace(
+    "- none: no material findings",
+    "- **Severity:** MINOR - the empty-state copy is terse\n- MINOR: the log filename is inconsistent",
+  ));
+  const carried = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS with two minor items."], projectRoot);
+  assert.equal(carried.ok, true, JSON.stringify(carried.violations || []));
+  assert.deepEqual(carried.reviewFollowUps, [
+    { kind: "fidelity", severity: "MINOR", text: "the empty-state copy is terse" },
+    { kind: "fidelity", severity: "MINOR", text: "the log filename is inconsistent" },
+  ]);
+
+  // And the receipt says what was shipped open, instead of reading as though a
+  // round had closed it.
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Done with two minor follow-ups."], projectRoot);
+  assert.equal(finalized.ok, true, JSON.stringify(finalized.violations || []));
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.reviewFollowUps.length, 2);
+  const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
+  assert.match(report, /- Open review follow-ups: 2/);
+  assert.match(report, /- fidelity review \(MINOR\): the empty-state copy is terse/);
+});
+
 // Every recording overwrote one field, so a run that reviewed ten times and a
 // run that reviewed once left identical state and identical receipts. Measured
 // 2026-08-11: an audited run recorded ten reviews across five adversarial rounds

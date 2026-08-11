@@ -209,6 +209,11 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-record \
 
 When a required final review fails, fix the findings, re-capture any runtime evidence the fix invalidates, rerun requirements fidelity, then record a new passing final review; `finalize` re-runs required command-backed verification on the final tree, so do not re-run passed command-backed items manually.
 
+Label each finding in either review report with a severity the harness compares: `Severity: BLOCKER`, `Severity: MAJOR`, or `Severity: MINOR` (a leading `- MINOR - ...` or a Severity table column reads the same).
+`MINOR` means "worth recording, not worth another review round": those findings are carried into the receipt as open follow-up items, and the run may finish with them open.
+`BLOCKER` and `MAJOR` mean the work is not done, so a report stating either cannot be recorded as a pass - fix them and re-review, or record the honest `fail`.
+Labelling is never rejected on its own: a report that labels nothing behaves exactly as it did before, so an unlabelled finding simply cannot be deferred.
+
 The autonomous review loop is bounded: the harness counts every accepted review recording as a round, and once the count reaches its cap it tells you to stop summoning rounds and to record the remaining advisory findings as follow-up items in the receipt instead.
 The bound redirects and never refuses - recordings still succeed and `finalize` still works - and it applies only to rounds you decide on yourself, never to a round the user asks for.
 An open finding written into the receipt is more honest than a round that pretends to close it.

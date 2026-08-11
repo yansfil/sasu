@@ -20,6 +20,7 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Final adversarial review required: no
 - Review rounds recorded: 1/4 (requirements fidelity 1, 1 distinct report(s); final 0, 0 distinct report(s))
 - Verify gate: NOT_RUN
+- Open review follow-ups: none
 - Classification signals: none
 
 ## Execution Plan And Changed Modules
@@ -242,6 +243,7 @@ Receipt: agents/implement/standard-regression/receipt.json
     "cap": 4,
     "capReached": false
   },
+  "reviewFollowUps": [],
   "finalReverification": {
     "ranAt": "<TS>",
     "results": [

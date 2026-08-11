@@ -299,6 +299,103 @@ function meaningfulReviewSection(section) {
   return true;
 }
 
+/**
+ * The severity vocabulary the harness compares, and the floor that separates a
+ * finding a run may carry from one it may not.
+ *
+ * Declaring this in the review report passes the item 7 test the way `Scope:`
+ * and `Check:` do and `Owner: human` did not: the harness EXECUTES a comparison
+ * on the value. `MINOR` is a claim the reviewer makes and the harness acts on -
+ * it becomes a recorded follow-up instead of another review round - and
+ * `BLOCKER`/`MAJOR` is a claim the harness holds the recording to.
+ *
+ * The parse is deliberately lenient about everything except the token, and the
+ * generated reviewer prompt teaches these three words, so this is a value the
+ * harness declared rather than prose it guesses at (item 11).
+ */
+const REVIEW_SEVERITIES = ["BLOCKER", "MAJOR", "MINOR"];
+
+/**
+ * Severities the report STATES for its findings, in order.
+ *
+ * What this deliberately does not do is decide which bullets are findings. A
+ * passing report conventionally writes `- none: no material findings`, and any
+ * rule that counted bullets as findings would reject it - that is the same
+ * prose-shape enforcement that pushed agents into rewriting reports to satisfy a
+ * formatter, deleted for exactly that reason. So the harness reads only what the
+ * reviewer explicitly labelled, and stays silent about the rest: an unlabelled
+ * bullet is not deferrable and not a contradiction, which is the behaviour that
+ * was already there.
+ */
+function statedFindingSeverities(text) {
+  const section = extractSection(String(text || ""), "Findings");
+  const found = [];
+  for (const raw of section.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    // A severity is read only where it is a LABEL, never wherever the word
+    // appears: either keyed (`Severity: MINOR`, `**Severity:** minor`,
+    // `(severity=Major)`) or leading the bullet or table cell (`- MINOR - the
+    // copy is terse`). Matching the bare word anywhere read "the team plans a
+    // major refactor later" as a MAJOR finding - detection built from how one
+    // sentence happens to be phrased is the coin flip item 11 names, so this
+    // keys on position instead.
+    const keyed = line.match(/severity\s*[:=]\s*\**\s*\b(BLOCKER|MAJOR|MINOR)\b/i);
+    const leading = line.match(/^(?:[-*]|\|)\s*\**\s*\b(BLOCKER|MAJOR|MINOR)\b/i);
+    const match = keyed || leading;
+    if (!match) continue;
+    const severity = match[1].toUpperCase();
+    // A label with nothing after it is a skeleton row, not a finding.
+    const rest = line.slice(match.index + match[0].length).replace(/^[\s:*_|\]).-]+/, "").trim();
+    found.push({ severity, text: rest || line });
+  }
+  return found;
+}
+
+/**
+ * Reject a `pass` recording that contradicts a severity the report itself
+ * stated, and return the findings the run may carry instead.
+ *
+ * A contradiction check, never a shape check: nothing here demands that a report
+ * label anything. Labelling is how a reviewer claims a finding is minor enough
+ * to defer, so a report that labels nothing simply has nothing to defer - the
+ * pre-existing behaviour, with no new rejection and therefore no new pressure to
+ * edit the report to satisfy the harness.
+ */
+function reviewSeverityViolations(text, status) {
+  if (status !== "pass") return { violations: [], followUps: [] };
+  const stated = statedFindingSeverities(text);
+  const blocking = stated.filter(entry => entry.severity !== "MINOR");
+  if (blocking.length) {
+    return {
+      violations: [
+        `Review report states ${blocking.length} ${blocking.length === 1 ? "finding" : "findings"} at ${[...new Set(blocking.map(entry => entry.severity))].join("/")} `
+        + `("${blocking[0].text.slice(0, 120)}"), which contradicts recording a pass. `
+        + `Fix them and re-review, or record the honest verdict with --status fail. `
+        + `Only findings the report itself labels MINOR may be carried as follow-up items.`,
+      ],
+      followUps: [],
+    };
+  }
+  return { violations: [], followUps: stated };
+}
+
+/**
+ * The follow-up items this run is carrying, derived from the live review records
+ * rather than stored again beside them (item 10: one record, no ledger that can
+ * drift). They are superseded along with their round automatically, because they
+ * live on the record the round replaced.
+ */
+function openReviewFollowUps(state) {
+  const out = [];
+  for (const [kind, review] of [["fidelity", state.requirementsFidelityReview], ["final", state.finalReview]]) {
+    for (const item of (review && review.followUps) || []) {
+      out.push({ kind, severity: item.severity, text: item.text });
+    }
+  }
+  return out;
+}
+
 function reviewBulletCount(section) {
   return String(section || "")
     .split(/\r?\n/)
@@ -957,6 +1054,10 @@ module.exports = {
   assertRequirementsFidelityReport,
   meaningfulReviewSection,
   reviewBulletCount,
+  statedFindingSeverities,
+  openReviewFollowUps,
+  reviewSeverityViolations,
+  REVIEW_SEVERITIES,
   reviewEntryCount,
   finalReviewFreshnessViolations,
   requirementsFidelityReviewFreshnessViolations,
