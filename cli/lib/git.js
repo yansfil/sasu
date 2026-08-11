@@ -4,7 +4,8 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { ACTIVE_PATH, NAMESPACE_ROOT, QUICK_ROOT_REL, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
+const { ACTIVE_PATH, NAMESPACE_ROOT, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, QUICK_ROOT_REL, QUICK_ACTIVE_PATH, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
+const { matchesScopeGlob } = require("./scope_match");
 
 function runGit(projectRoot, args, options = {}) {
   return runCommand("git", args, { ...options, cwd: projectRoot });
@@ -106,6 +107,13 @@ function parseGitStatusZ(output) {
   return entries;
 }
 
+/**
+ * Audit/attribution snapshot of the dirty worktree: which paths were already
+ * dirty, with hashes, for receipts and foreign-change disclosure (init's
+ * initialWorktreeSnapshot, review records, the finalize receipt). This is NOT
+ * a freshness input - every "is this recorded PASS/review still valid?"
+ * decision goes through vouchedTreeFingerprint below.
+ */
 function worktreeSnapshot(state) {
   const projectRoot = state.projectRoot || cwd();
   const gitDir = childProcess.spawnSync("git", ["rev-parse", "--git-dir"], {
@@ -160,105 +168,234 @@ function worktreeSnapshot(state) {
 }
 
 /**
- * Fingerprint of the tree a command-backed verification pass was earned on,
- * for receipt-time reverification freshness: when the fingerprint at finalize
- * still matches the one recorded at the pass, re-running the command would
- * repeat the identical experiment, so the re-run is skipped with that reason.
+ * THE freshness fingerprint: one content-based answer to "is this recorded
+ * PASS/review still vouching for the current tree?", shared by every consumer
+ * (gate staleness, the Stop-hook quick guard, verify-run/oracle digest
+ * guards, finalize reverification skip, fresh-pass reuse, review freshness).
+ * It replaced five divergent per-consumer fingerprints whose exclusion lists
+ * watched each other's bookkeeping and deadlocked (verify re-run staled the
+ * review, review record staled the verify pass, forever).
  *
- * worktreeSnapshot already excludes the run directory and active pointer;
- * judge-gate state (agents/gates/**) is filtered here as well because the
- * gate legitimately writes between the final pass and finalize and must not
- * defeat the comparison. Known accepted blind spot: gitignored drift (build
- * output, env files) is invisible to git status, so an ignored-only mutation
- * after the pass skips the re-run - the tracked path, which is how the agent
- * itself changes code, always triggers it.
+ * Vouched set:
+ * - Scoped mode (`scopeGlobs` non-empty): files matching the run's declared
+ *   Scope globs, plus the run's own spec docs dir `agents/prd/<slug>/` - the
+ *   PRD and qa-log are judged inputs, so editing them must invalidate.
+ * - Fallback mode (no globs): the whole repo minus harness bookkeeping.
+ *   `agents/prd/**` stays in (judged inputs); when `slug` is known, other
+ *   runs' `agents/prd/<other>/` dirs are out so a concurrent run's spec edits
+ *   cannot stale this one.
+ * - Both modes exclude all harness bookkeeping - `agents/gates/**`,
+ *   `agents/implement/**`, `agents/quick/**`, active pointers, and the run
+ *   dir - which is what makes the old circular invalidation structurally
+ *   impossible: no freshness consumer ever watches another consumer's writes.
+ *
+ * Content-based and commit-invariant: committed files are enumerated via
+ * `git ls-tree -r HEAD` (blob SHAs for free) and dirty/untracked files are
+ * hashed with `git hash-object`, which applies the same content filters as
+ * `git add` - so committing dirty work does NOT move the fingerprint (the
+ * dirty hash equals the post-commit ls-tree blob SHA). That property is what
+ * deleted the old materialized-in-head rescue machinery. Known accepted blind
+ * spots, unchanged from the legacy fingerprints: gitignored drift is
+ * invisible (git status does not list it), and a dirty submodule pointer is
+ * pinned by presence only.
+ *
+ * Returns `{ vouched, entryCount, mode, scopeGlobs? }` - deliberately a
+ * different key set from the legacy `{ headSha, statusHash }` so a recorded
+ * legacy fingerprint is detectable and always reads as stale. Returns null
+ * when the project is not a git checkout.
  */
-function reverifyFingerprint(state) {
-  const snapshot = worktreeSnapshot(state);
-  if (!snapshot) return null;
-  const gatesPrefix = normalizeRelPath(path.join(NAMESPACE_ROOT, "gates"));
-  const entries = (snapshot.entries || []).filter(entry => {
-    const rel = normalizeRelPath(entry.path || "");
-    return !(rel === gatesPrefix || rel.startsWith(`${gatesPrefix}/`));
+function vouchedTreeFingerprint(options) {
+  const opts = options || {};
+  const projectRoot = opts.projectRoot || cwd();
+  const scopeGlobs = Array.isArray(opts.scopeGlobs)
+    ? Array.from(new Set(opts.scopeGlobs.map(glob => String(glob || "").trim()).filter(Boolean)))
+    : [];
+  const scoped = scopeGlobs.length > 0;
+  const slug = typeof opts.slug === "string" && opts.slug.trim() ? opts.slug.trim() : null;
+
+  const bookkeepingPrefixes = [
+    normalizeRelPath(path.join(NAMESPACE_ROOT, "gates")),
+    normalizeRelPath(IMPLEMENT_ROOT_REL),
+    normalizeRelPath(QUICK_ROOT_REL),
+    normalizeRelPath(ACTIVE_PATH),
+    normalizeRelPath(QUICK_ACTIVE_PATH),
+    normalizeRelPath(opts.runDir || ""),
+  ].filter(Boolean);
+  const prdRoot = normalizeRelPath(PRD_ROOT_REL);
+  const specDocsPrefix = slug ? `${prdRoot}/${slug}` : null;
+  const underAny = (rel, prefixes) => prefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`));
+  const vouches = rel => {
+    if (!rel || underAny(rel, bookkeepingPrefixes)) return false;
+    if (scoped) {
+      if (specDocsPrefix && (rel === specDocsPrefix || rel.startsWith(`${specDocsPrefix}/`))) return true;
+      return scopeGlobs.some(glob => matchesScopeGlob(rel, glob));
+    }
+    if (slug && rel.startsWith(`${prdRoot}/`)) {
+      const nested = rel.slice(prdRoot.length + 1);
+      const owner = nested.includes("/") ? nested.slice(0, nested.indexOf("/")) : null;
+      if (owner && owner !== slug) return false;
+    }
+    return true;
+  };
+
+  const status = childProcess.spawnSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
   });
-  return { headSha: snapshot.headSha, statusHash: simpleHash(JSON.stringify(entries)) };
+  if (status.status !== 0) return null;
+
+  // Committed side. A failing ls-tree with a working status means an unborn
+  // HEAD (no commits yet): the committed set is simply empty.
+  const modeFlag = mode => (mode === "100755" ? "x" : mode === "120000" ? "l" : mode === "160000" ? "s" : "");
+  const entryByPath = new Map();
+  const lsTree = childProcess.spawnSync("git", ["ls-tree", "-r", "-z", "HEAD"], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (lsTree.status === 0) {
+    for (const record of String(lsTree.stdout || "").split("\0")) {
+      if (!record) continue;
+      const tab = record.indexOf("\t");
+      if (tab < 0) continue;
+      const [mode, , sha] = record.slice(0, tab).split(/\s+/);
+      const rel = normalizeRelPath(record.slice(tab + 1));
+      if (!sha || !vouches(rel)) continue;
+      entryByPath.set(rel, `${sha}${modeFlag(mode)}`);
+    }
+  }
+
+  // Dirty overlay: every status-listed vouched path is re-derived from the
+  // worktree - the ls-tree entry is dropped and, when the path still exists,
+  // its current content is hashed. Deletions simply drop out; renames list
+  // both sides, so the old path drops and the new one is hashed.
+  const dirtyPaths = new Set();
+  for (const parsed of parseGitStatusZ(status.stdout)) {
+    for (const raw of [parsed.path, parsed.originalPath]) {
+      const rel = raw ? normalizeRelPath(raw) : "";
+      if (!rel || !vouches(rel)) continue;
+      entryByPath.delete(rel);
+      dirtyPaths.add(rel);
+    }
+  }
+  const toBatchHash = [];
+  for (const rel of [...dirtyPaths].sort()) {
+    const abs = path.join(projectRoot, rel);
+    let stats;
+    try {
+      stats = fs.lstatSync(abs);
+    } catch {
+      continue; // deleted: drops out of the vouched set
+    }
+    if (stats.isFile()) {
+      toBatchHash.push({ rel, flag: stats.mode & 0o111 ? "x" : "" });
+    } else if (stats.isSymbolicLink()) {
+      // git's blob for a symlink is the link target string; hash-object on the
+      // path would follow the link, so hash the target text via --stdin.
+      let target = null;
+      try {
+        target = fs.readlinkSync(abs);
+      } catch {
+        target = null;
+      }
+      if (target === null) continue;
+      const hashed = childProcess.spawnSync("git", ["hash-object", "--stdin"], {
+        cwd: projectRoot,
+        shell: false,
+        encoding: "utf8",
+        input: target,
+      });
+      if (hashed.status === 0) entryByPath.set(rel, `${hashed.stdout.trim()}l`);
+    } else {
+      // Directory (dirty submodule) or other unhashable kind: pin presence so
+      // appearing/disappearing still registers.
+      entryByPath.set(rel, `unhashable:${stats.isDirectory() ? "dir" : "other"}`);
+    }
+  }
+  if (toBatchHash.length) {
+    // Batched for performance; --stdin-paths applies the same convert-to-git
+    // filters as `git add`, which is what makes the fingerprint survive the
+    // commit of this exact content.
+    const hashed = childProcess.spawnSync("git", ["hash-object", "--stdin-paths"], {
+      cwd: projectRoot,
+      shell: false,
+      encoding: "utf8",
+      maxBuffer: 20 * 1024 * 1024,
+      input: toBatchHash.map(file => file.rel).join("\n"),
+    });
+    const shas = hashed.status === 0 ? hashed.stdout.trim().split("\n") : [];
+    if (hashed.status === 0 && shas.length === toBatchHash.length) {
+      toBatchHash.forEach((file, index) => entryByPath.set(file.rel, `${shas[index]}${file.flag}`));
+    } else {
+      // Batch anomaly (e.g. a path git could not read): fall back per file so
+      // one odd path degrades to a presence pin instead of poisoning the set.
+      for (const file of toBatchHash) {
+        const single = childProcess.spawnSync("git", ["hash-object", "--", file.rel], {
+          cwd: projectRoot,
+          shell: false,
+          encoding: "utf8",
+        });
+        entryByPath.set(file.rel, single.status === 0 ? `${single.stdout.trim()}${file.flag}` : "unhashable:unreadable");
+      }
+    }
+  }
+
+  const pairs = [...entryByPath.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return {
+    vouched: simpleHash(JSON.stringify(pairs)),
+    entryCount: pairs.length,
+    mode: scoped ? "scoped" : "fallback",
+    ...(scoped ? { scopeGlobs } : {}),
+  };
 }
 
 /**
- * Tree fingerprint for the quick path, recorded by `sasu verify` at a verdict
- * and recomputed by the Stop-hook quick guard: a PASS earned on one tree must
- * not vouch for a tree the agent kept editing afterwards. Same contract as
- * reverifyFingerprint, but keyed on a bare projectRoot (quick has no implement
- * state) and additionally blind to agents/quick/**, where the contract,
- * receipt, and active marker legitimately change around the pass.
+ * Run-level scope for an implement run: the union of every task's declared
+ * Scope globs, but only when EVERY task declared one - a partial union would
+ * blind the fingerprint to the undeclared tasks' writes, so any Scope-less
+ * task drops the whole run to fallback mode. Mirrors the verify gate's
+ * scopeForLane rule for partial declarations.
  */
-function quickTreeFingerprint(projectRoot) {
-  const snapshot = worktreeSnapshot({ projectRoot });
-  if (!snapshot) return null;
-  const excludedPrefixes = [path.join(NAMESPACE_ROOT, "gates"), QUICK_ROOT_REL].map(normalizeRelPath);
-  const entries = (snapshot.entries || []).filter(entry => {
-    const rel = normalizeRelPath(entry.path || "");
-    return !excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`));
-  });
-  return { headSha: snapshot.headSha, statusHash: simpleHash(JSON.stringify(entries)) };
+function runScopeGlobs(state) {
+  const tasks = Array.isArray(state && state.tasks) ? state.tasks : [];
+  if (!tasks.length) return null;
+  const globs = [];
+  for (const task of tasks) {
+    const taskGlobs = Array.isArray(task && task.scopeGlobs) ? task.scopeGlobs.filter(Boolean) : [];
+    if (!taskGlobs.length) return null;
+    globs.push(...taskGlobs);
+  }
+  return globs;
 }
 
-function snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state) {
-  if (!savedSnapshot || !currentSnapshot || !savedSnapshot.headSha || !currentSnapshot.headSha) return false;
-  if (savedSnapshot.headSha === currentSnapshot.headSha) return false;
-  const projectRoot = state.projectRoot || cwd();
-  const savedByPath = new Map((savedSnapshot.entries || [])
-    .map(entry => [normalizeRelPath(entry.path || ""), entry])
-    .filter(([rel]) => Boolean(rel)));
-  const initialByPath = new Map((((state.initialWorktreeSnapshot || {}).entries) || [])
-    .map(entry => [normalizeRelPath(entry.path || ""), entry])
-    .filter(([rel]) => Boolean(rel)));
-  const preservedBaselinePaths = new Set();
-  for (const current of currentSnapshot.entries || []) {
-    const rel = normalizeRelPath(current.path || "");
-    const saved = savedByPath.get(rel);
-    const initial = initialByPath.get(rel);
-    if (!saved || !initial
-      || !snapshotEntriesEqual(saved, current)
-      || !snapshotEntriesEqual(initial, current)) return false;
-    preservedBaselinePaths.add(rel);
-  }
-  const diff = childProcess.spawnSync(
-    "git",
-    ["diff", "--no-renames", "--name-only", "-z", savedSnapshot.headSha, currentSnapshot.headSha, "--"],
-    { cwd: projectRoot, shell: false, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 },
+/** vouchedTreeFingerprint keyed off an implement state object (the lib-side callers' shape). */
+function vouchedTreeFingerprintForState(state) {
+  const source = state || {};
+  return vouchedTreeFingerprint({
+    projectRoot: source.projectRoot || cwd(),
+    runDir: source.runDir || null,
+    slug: source.topicSlug || null,
+    scopeGlobs: runScopeGlobs(source),
+  });
+}
+
+/**
+ * The one comparison rule for recorded-vs-current fingerprints: match only on
+ * an identical non-empty `vouched` hash. Anything else - a legacy
+ * `{ headSha, statusHash }` record, a missing/null/malformed value - is NOT a
+ * match, so every legacy or damaged record degrades to stale/re-run, never to
+ * a crash and never to accidentally-fresh.
+ */
+function vouchedFingerprintsMatch(recorded, current) {
+  return Boolean(
+    recorded && typeof recorded === "object"
+    && current && typeof current === "object"
+    && typeof recorded.vouched === "string" && recorded.vouched !== ""
+    && recorded.vouched === current.vouched,
   );
-  if (diff.status !== 0) return false;
-
-  const excludedPrefixes = [
-    normalizeRelPath(state.runDir || ""),
-    normalizeRelPath(ACTIVE_PATH),
-  ].filter(Boolean);
-  const allChanged = diff.stdout.split("\0").map(normalizeRelPath).filter(Boolean);
-  const sourceChanged = allChanged.filter(rel =>
-    !excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`)));
-  const expected = [];
-  for (const entry of savedSnapshot.entries || []) {
-    if (preservedBaselinePaths.has(normalizeRelPath(entry.path || ""))) continue;
-    if (entry.path) expected.push(normalizeRelPath(entry.path));
-    if (entry.originalPath) expected.push(normalizeRelPath(entry.originalPath));
-  }
-  const actualSet = new Set(sourceChanged);
-  const expectedSet = new Set(expected.filter(Boolean));
-  if (actualSet.size !== expectedSet.size || [...actualSet].some(rel => !expectedSet.has(rel))) return false;
-  if (expectedSet.size === 0 && !allChanged.some(rel =>
-    excludedPrefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`)))) return false;
-
-  for (const entry of savedSnapshot.entries || []) {
-    const rel = normalizeRelPath(entry.path || "");
-    if (!rel) return false;
-    if (preservedBaselinePaths.has(rel)) continue;
-    const abs = path.join(projectRoot, rel);
-    if (!snapshotPathMatches(entry, abs)) return false;
-    if (entry.originalPath
-      && snapshotPathMetadata(path.join(projectRoot, normalizeRelPath(entry.originalPath))).kind !== "missing") return false;
-  }
-  return true;
 }
 
 function snapshotEntriesEqual(left, right) {
@@ -318,19 +455,6 @@ function snapshotPathMetadata(abs) {
   };
 }
 
-function snapshotPathMatches(snapshotEntry, abs) {
-  const current = snapshotPathMetadata(abs);
-  if (snapshotEntry.sha256) {
-    if (current.sha256 !== snapshotEntry.sha256) return false;
-    if ((snapshotEntry.bytes ?? null) !== (current.bytes ?? null)) return false;
-  } else if (snapshotEntry.kind === undefined && current.kind !== "missing") {
-    return false;
-  }
-  return optionalSnapshotFieldEqual(snapshotEntry, current, "kind")
-    && optionalSnapshotFieldEqual(snapshotEntry, current, "executable")
-    && optionalSnapshotFieldEqual(snapshotEntry, current, "symlinkTarget");
-}
-
 function optionalSnapshotFieldEqual(left, right, field) {
   if (!left || !right || left[field] === undefined || right[field] === undefined) return true;
   return left[field] === right[field];
@@ -348,9 +472,8 @@ module.exports = {
   parseGitStatusEntry,
   parseGitStatusZ,
   worktreeSnapshot,
-  reverifyFingerprint,
-  quickTreeFingerprint,
-  snapshotMaterializedInHead,
+  vouchedTreeFingerprint,
+  vouchedTreeFingerprintForState,
+  vouchedFingerprintsMatch,
   snapshotEntriesEqual,
-  snapshotPathMatches,
 };

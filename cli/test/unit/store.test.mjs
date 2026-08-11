@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createRequire } from "node:module";
 import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
+
+const require = createRequire(import.meta.url);
+const { vouchedTreeFingerprint } = require(
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "lib", "git.js"),
+);
 
 function makeStore() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-store-"));
@@ -281,4 +288,92 @@ test("freshness: omitting projectRoot skips the staleness check (in-memory calle
   const view = gateStatus(state, "spec", 2);
   assert.equal(view.effective, "PASS");
   assert.equal(view.stale, false);
+});
+
+// --- verify-gate tree fingerprint freshness (vouchedTreeFingerprint) ---
+
+function makeGitStore() {
+  const store = makeStore();
+  const git = (...args) => {
+    const result = spawnSync("git", args, { cwd: store.projectRoot, encoding: "utf8" });
+    assert.equal(result.status, 0, `git ${args.join(" ")}: ${result.stderr}`);
+  };
+  fs.writeFileSync(path.join(store.projectRoot, "app.js"), "render()\n");
+  git("init", "-q");
+  git("add", "-A");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+  return store;
+}
+
+// Mirrors the real verdict flow: the doc input exists, then the fingerprint
+// pins the tree, then the verdict is recorded (the gate's own gates.json and
+// artifact writes land after the fingerprint, exactly as in runVerifyGate).
+function passWithTreeFingerprint(store, treeFingerprint) {
+  fs.writeFileSync(path.join(store.projectRoot, "prd.md"), "# PRD v1\n");
+  return recordGateResult(
+    store,
+    store.load(),
+    "verify",
+    {
+      kind: "verdict",
+      verdict: "PASS",
+      findings: [],
+      inputs: [{ path: "prd.md", sha256: freshnessHash("# PRD v1\n") }],
+      treeFingerprint:
+        treeFingerprint === undefined
+          ? vouchedTreeFingerprint({ projectRoot: store.projectRoot, slug: store.topic })
+          : treeFingerprint,
+      artifactPayload: {},
+    },
+    [],
+  );
+}
+
+test("tree freshness: a verify PASS stays live on the unchanged tree and survives a commit of that tree", () => {
+  const store = makeGitStore();
+  fs.writeFileSync(path.join(store.projectRoot, "app.js"), "render(); persist()\n");
+  const state = passWithTreeFingerprint(store);
+  assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
+
+  // A benign commit of the exact content the PASS was earned on must not
+  // stale it: the fingerprint is content-based, not HEAD-based.
+  const git = (...args) => spawnSync("git", args, { cwd: store.projectRoot, encoding: "utf8" });
+  git("add", "-A");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "land");
+  assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
+});
+
+test("tree freshness: editing code after the PASS turns it STALE; gate bookkeeping does not", () => {
+  const store = makeGitStore();
+  const state = passWithTreeFingerprint(store);
+
+  // The gate's own artifact/state writes (this store's dir) are bookkeeping.
+  fs.mkdirSync(path.join(store.projectRoot, "agents", "gates", store.topic), { recursive: true });
+  fs.writeFileSync(path.join(store.projectRoot, "agents", "gates", store.topic, "extra.json"), "{}");
+  assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS",
+    "gate bookkeeping must never stale the gate (circular invalidation)");
+
+  fs.writeFileSync(path.join(store.projectRoot, "app.js"), "render(); editedAfterPass()\n");
+  const view = gateStatus(state, "verify", 2, store.projectRoot);
+  assert.equal(view.effective, "STALE");
+  assert.ok(view.staleInputs.some((input) => input.path === "<worktree>" && input.reason === "changed"));
+});
+
+test("tree freshness: legacy and malformed recorded fingerprints read as STALE, never crash, never PASS", () => {
+  for (const legacy of [
+    { headSha: "abc123", statusHash: "deadbeef" }, // pre-consolidation shape
+    { headSha: null, statusHash: "deadbeef" },
+    {},
+    "garbage-string",
+  ]) {
+    const store = makeGitStore();
+    const state = passWithTreeFingerprint(store);
+    state.gates.verify.treeFingerprint = legacy; // simulate an already-written old gates.json
+    const view = gateStatus(state, "verify", 2, store.projectRoot);
+    assert.equal(view.effective, "STALE", `${JSON.stringify(legacy)} must downgrade to STALE`);
+  }
+  // A null fingerprint (non-git project at record time) still skips the check.
+  const store = makeGitStore();
+  const state = passWithTreeFingerprint(store, null);
+  assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
 });

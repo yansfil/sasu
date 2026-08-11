@@ -101,8 +101,9 @@ test("contract verify PASS records the verdict, contract hash, and tree fingerpr
   assert.equal(record.inputs.length, 1);
   assert.ok(record.inputs[0].path.endsWith("contract.md"));
   assert.ok(record.treeFingerprint, "verdict must pin the tree it was earned on");
-  assert.ok(record.treeFingerprint.headSha, "fingerprint must carry HEAD");
-  assert.ok(record.treeFingerprint.statusHash, "fingerprint must carry the status hash");
+  assert.equal(typeof record.treeFingerprint.vouched, "string", "fingerprint must carry the vouched content hash");
+  assert.ok(record.treeFingerprint.vouched.length > 0, "vouched hash must be non-empty");
+  assert.equal(typeof record.treeFingerprint.entryCount, "number", "fingerprint must carry the vouched entry count");
 });
 
 test("contract verify FAIL blocks with per-criterion findings and consumes an attempt", () => {

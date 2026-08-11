@@ -704,11 +704,11 @@ test("verify mechanical stage reuses a fresh verify-run pass and re-runs after d
   const gitLib = path.join(path.dirname(CLI), "..", "lib", "git.js");
   const fp = spawnSync(
     "node",
-    ["-e", `const {reverifyFingerprint}=require(${JSON.stringify(gitLib)});process.stdout.write(JSON.stringify(reverifyFingerprint({projectRoot:${JSON.stringify(dir)},runDir:"agents/implement/fixture"})))`],
+    ["-e", `const {vouchedTreeFingerprintForState}=require(${JSON.stringify(gitLib)});process.stdout.write(JSON.stringify(vouchedTreeFingerprintForState({projectRoot:${JSON.stringify(dir)},runDir:"agents/implement/fixture"})))`],
     { encoding: "utf8" },
   );
   const fingerprint = JSON.parse(fp.stdout);
-  assert.ok(fingerprint && fingerprint.statusHash, fp.stderr);
+  assert.ok(fingerprint && fingerprint.vouched, fp.stderr);
   writeImplementState(dir, "fixture", {
     projectRoot: dir,
     tasks: [{ id: "T1", status: "complete" }],

@@ -22,11 +22,25 @@ const { RUNNER_PATTERN } = require("../../lib/runners.js") as { RUNNER_PATTERN: 
 
 // Same single-grammar rule for the §8 `Scope:` and §7 `Check:`/`Artifact:`
 // tails: the lib parser owns the grammar, this lint only reports its defects.
-const { parseScopeGlobs, scopeGlobDefect, parseAcOracle, acOracleDefect } = require("../../lib/prd_parser.js") as {
+// Table-cell splitting also comes from the lib (code-span-aware: a `|` inside
+// backticks is command text, not a cell boundary) so this lint sees exactly
+// the cell boundaries the state parser will persist.
+const {
+  parseScopeGlobs,
+  scopeGlobDefect,
+  parseAcOracle,
+  acOracleDefect,
+  splitTableRow,
+  parseMarkdownTableRow,
+  extractCodeSpans,
+} = require("../../lib/prd_parser.js") as {
   parseScopeGlobs: (text: string) => string[];
   scopeGlobDefect: (glob: string) => string | null;
   parseAcOracle: (text: string) => { kind: "check" | "artifact"; command?: string; expect?: string | null; path?: string } | null;
   acOracleDefect: (text: string) => string | null;
+  splitTableRow: (text: string) => string[];
+  parseMarkdownTableRow: (line: string) => string[];
+  extractCodeSpans: (text: string) => { spans: string[]; unmatched: number };
 };
 
 const ENV_ASSIGNMENT = "(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+)*";
@@ -149,9 +163,14 @@ function parseTable(lines: string[], fromIndex: number, toIndex: number): Table 
   return null;
 }
 
-function splitRow(line: string): string[] {
+/** Raw cells of a table row (outer pipes stripped, code-span-aware split, no trimming). */
+function splitRawRow(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return trimmed.split("|").map((cell) => cell.trim());
+  return splitTableRow(trimmed);
+}
+
+function splitRow(line: string): string[] {
+  return splitRawRow(line).map((cell) => cell.trim());
 }
 
 function sectionRange(lines: string[], heading: string): { start: number; end: number } | null {
@@ -389,10 +408,13 @@ export function prelintPrd(content: string): PrelintResult {
     }
   }
 
-  checkMethodCommands(verificationTable, vRows, findings);
+  const warnings: PrelintFinding[] = [];
+  checkMethodCommands(verificationTable, vRows, findings, warnings);
+  checkMethodCellRoundTrip(lines, verificationTable, vRows, findings);
+  checkTableRowShape(lines, verificationTable, "9.2", findings, warnings);
+  checkTableRowShape(lines, modeTable, "9.1", findings, warnings);
   checkTaskScopeTails(lines, findings);
   checkAcOracleTails(lines, acDefinitionLines, findings);
-  const warnings: PrelintFinding[] = [];
   checkAcOracleAdvisories(lines, acDefinitionLines, warnings);
 
   return { ok: findings.length === 0, doc: "prd", findings, ...(warnings.length > 0 ? { warnings } : {}) };
@@ -531,6 +553,17 @@ function checkAcOracleAdvisories(lines: string[], acDefinitionLines: Map<string,
         ),
       );
     }
+    const directory = nodeTestDirectoryTarget(command);
+    if (directory !== null) {
+      warnings.push(
+        warning(
+          "prd-node-test-directory",
+          acDefinitionLines.get(id) ?? entry.line,
+          `${id}: Check command \`${command}\` points node --test at a directory-shaped path (${directory}); Node 22 resolves a bare directory as a module and fails with MODULE_NOT_FOUND instead of running the tests in it`,
+          `Name the test files with a glob, e.g. \`node --test "${directory.replace(/\/+$/, "")}/*.test.mjs"\`.`,
+        ),
+      );
+    }
   }
 }
 
@@ -555,7 +588,7 @@ function checkAcOracleAdvisories(lines: string[], acDefinitionLines: Map<string,
  * human-calibration rows also put names in backticks (a skill, a gate, a menu
  * item) and must not be read as shell commands.
  */
-function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line: number }[], findings: PrelintFinding[]): void {
+function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line: number }[], findings: PrelintFinding[], warnings: PrelintFinding[]): void {
   if (!table) return;
   const methodColumn = table.header.indexOf("Method");
   const artifactColumn = table.header.indexOf("Artifact");
@@ -571,6 +604,19 @@ function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line
     if (spans.length === 0) continue;
 
     const runner = spans.find((span) => RUNNER_PREFIX.test(span[1]!.trim()));
+    if (runner) {
+      const directory = nodeTestDirectoryTarget(runner[1]!.trim());
+      if (directory !== null) {
+        warnings.push(
+          warning(
+            "prd-node-test-directory",
+            row.line,
+            `${id}: Method command \`${runner[1]!.trim()}\` points node --test at a directory-shaped path (${directory}); Node 22 resolves a bare directory as a module and fails with MODULE_NOT_FOUND instead of running the tests in it`,
+            `Name the test files with a glob, e.g. \`node --test "${directory.replace(/\/+$/, "")}/*.test.mjs"\`.`,
+          ),
+        );
+      }
+    }
     if (!runner) {
       const first = spans[0]![1]!.trim();
       findings.push(
@@ -595,6 +641,150 @@ function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line
           row.line,
           `${id}: Method puts the working directory in a parenthetical "(${parenthetical[1]!.trim()})" instead of the command, but the harness runs from the repository root`,
           `Fold the directory into the command, e.g. \`bash -c "cd <dir> && ${runner[1]!.trim()}"\`.`,
+        ),
+      );
+    }
+  }
+}
+
+/**
+ * Directory-shaped `node --test` target, or null. Purely syntactic (prelint
+ * never touches the filesystem): a target with no glob character and no
+ * test-file suffix is directory-shaped. Node 22's test runner resolves a bare
+ * directory as a module and dies with MODULE_NOT_FOUND (verified empirically;
+ * Node >= 23 restored directory walking), so the command silently proves
+ * nothing on the runtime the harness pins.
+ */
+function nodeTestDirectoryTarget(command: string): string | null {
+  const tokens = command.trim().split(/\s+/);
+  if (tokens[0] !== "node") return null;
+  const testFlagIndex = tokens.indexOf("--test");
+  if (testFlagIndex === -1) return null;
+  const rest = tokens.slice(testFlagIndex + 1);
+  for (let i = 0; i < rest.length; i += 1) {
+    const token = rest[i]!.replace(/^["']|["']$/g, "");
+    if (token === "") continue;
+    if (token === "--") continue; // end-of-options: what follows is positional
+    if (token.startsWith("-")) {
+      // A space-separated flag value (`--test-reporter spec`) is not a test
+      // target; `=`-joined flags carry their value in-token. Skipping one
+      // token after a boolean flag can hide a real directory target, but for
+      // an advisory a missed warning beats naming a flag value as a
+      // directory.
+      if (!token.includes("=")) i += 1;
+      continue;
+    }
+    if (/[*?[\]]/.test(token)) continue; // glob form names files explicitly
+    if (/\.[cm]?[jt]s$/i.test(token)) continue; // explicit test file
+    return token;
+  }
+  return null;
+}
+
+/**
+ * Table row-shape guard: the harness reads cells span-aware (a `|` inside
+ * backticks is command text), but GFM rendering — what the human approved —
+ * splits on every unescaped pipe. When stray backticks in two different
+ * cells pair up, the harness silently reads FEWER cells than the rendered
+ * table shows and every later column shifts (a "yes" in Required For Done
+ * can become invisible). That direction blocks (prd-table-span-collision).
+ * A row with MORE cells than the header (an unescaped pipe outside any
+ * span) shifts columns the same way in both readers — advisory
+ * (prd-table-row-shape), since prose pipes may be intended.
+ */
+function checkTableRowShape(
+  lines: string[],
+  table: Table | null,
+  label: string,
+  findings: PrelintFinding[],
+  warnings: PrelintFinding[],
+): void {
+  if (!table) return;
+  const headerCount = table.header.length;
+  for (const row of table.rows) {
+    const rawLine = lines[row.line - 1] ?? "";
+    const spanAware = row.cells.length;
+    if (spanAware === headerCount) continue;
+    const trimmed = rawLine.trim().replace(/^\|/, "").replace(/\|$/, "");
+    const rendered = trimmed.split(/(?<!\\)\|/).length;
+    if (spanAware < headerCount && rendered >= headerCount) {
+      findings.push(
+        finding(
+          "prd-table-span-collision",
+          row.line,
+          `${label} row parses to ${spanAware} cell(s) but its rendered form shows ${rendered} (header has ${headerCount}): a backtick code span crosses a cell boundary, so a \`|\` the reader sees as a column break is swallowed as command text`,
+          "Stray backticks in two cells have paired up. Balance or remove the odd backticks so every code span opens and closes inside one cell.",
+        ),
+      );
+    } else if (spanAware > headerCount) {
+      warnings.push(
+        finding(
+          "prd-table-row-shape",
+          row.line,
+          `${label} row has ${spanAware} cells but the header has ${headerCount}; every column after the extra \`|\` shifts`,
+          "Escape literal pipes in cell text as \\| (or move them into a backtick code span).",
+        ),
+      );
+    }
+  }
+}
+
+/**
+ * Round-trip guard for 9.2 Method cells (rule prd-method-cell-mismatch): the
+ * generic tripwire against the whole family of cell-parsing bugs, in the same
+ * spirit as the finalize digest guard.
+ *
+ * A live session lost half a Method command to a naive pipe split - the
+ * truncated `bash -c "... || exit 1; done"` was still valid shell, so
+ * plan-verification passed it and the session burned two verify-run contract
+ * rejections before diagnosing. The split is fixed, but any FUTURE divergence
+ * between what the PRD author wrote inside backticks and what the parsed cell
+ * yields must block loudly at $0 instead of running a different command:
+ * whatever code spans the raw cell text contains (modulo the documented `\|`
+ * table escape) must come out of the full parse pipeline byte-identical.
+ * Unbalanced backticks make the command boundary unknowable - same family,
+ * same blocking rule.
+ */
+function checkMethodCellRoundTrip(
+  lines: string[],
+  table: Table | null,
+  vRows: { cells: string[]; line: number }[],
+  findings: PrelintFinding[],
+): void {
+  if (!table) return;
+  const methodColumn = table.header.indexOf("Method");
+  if (methodColumn === -1) return;
+
+  for (const row of vRows) {
+    const id = row.cells[0] ?? "";
+    const rawLine = lines[row.line - 1] ?? "";
+    const rawMethod = splitRawRow(rawLine)[methodColumn] ?? "";
+    const rawScan = extractCodeSpans(rawMethod);
+    if (rawScan.unmatched > 0) {
+      findings.push(
+        finding(
+          "prd-method-cell-mismatch",
+          row.line,
+          `${id}: Method cell has ${rawScan.unmatched} unbalanced backtick(s), so where the command starts and ends cannot be parsed reliably: ${rawMethod.trim()}`,
+          "Close every backtick code span in the Method cell; the executable command must sit inside one balanced `...` span.",
+        ),
+      );
+      continue;
+    }
+    if (rawScan.spans.length === 0) continue;
+    const parsedMethod = parseMarkdownTableRow(rawLine)[methodColumn] ?? "";
+    const parsedSpans = extractCodeSpans(parsedMethod).spans.map((span) => span.trim());
+    // `\|` is the one transform the table contract documents, even inside a
+    // code span; everything else must survive verbatim.
+    const rawSpans = rawScan.spans.map((span) => span.replace(/\\\|/g, "|").trim());
+    const mismatch = rawSpans.length !== parsedSpans.length || rawSpans.some((span, i) => span !== parsedSpans[i]);
+    if (mismatch) {
+      findings.push(
+        finding(
+          "prd-method-cell-mismatch",
+          row.line,
+          `${id}: Method cell does not round-trip through the table parser; the PRD cell declares \`${rawSpans.join("\` + \`")}\` but the harness would read \`${parsedSpans.join("\` + \`") || "(no command)"}\``,
+          "The harness would execute a different command than the PRD declares (a cell-parsing defect). Rewrite the Method cell as prose plus one balanced backticked command, escape literal pipes outside spans as \\|, and report a sasu bug if the two forms still differ.",
         ),
       );
     }

@@ -197,6 +197,7 @@
  * @property {string} [status]
  * @property {Object} [delivery]
  * @property {string|null} [activeSessionId]
+ * @property {{sessionId: string|null, pid: number, startedAt: string}} [owner] identity of the last pointer writer; pointer-resolved mutations from other sessions refuse
  * @property {string} updatedAt
  */
 

@@ -557,18 +557,155 @@ function looksLikeMarkdownTable(line, tableHeaders) {
   return /\b(id|covers|coverage)\b\s*\|/i.test(line) && /\|\s*(method|check|command|artifact|artifacts|pass)/i.test(line);
 }
 
-function parseMarkdownTableRow(line) {
-  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return trimmed.split("|").map(cleanTableCell);
+/**
+ * Backtick code spans inside one table-row line, by the CommonMark
+ * length-matching rule: a run of N backticks opens a span that the next run of
+ * exactly N backticks closes, and an opener with no closer is literal text. A
+ * backslash-escaped backtick never opens a span (the same escape convention as
+ * `\|` for pipes). Positions index into the input string.
+ *
+ * Why this exists: a naive `split("|")` truncated a live Verification Method
+ * cell at the `||` inside `` `bash -c "... || exit 1; done"` `` and the
+ * truncated command was still valid shell, so the mismatch surfaced only as a
+ * verify-run contract rejection. Every reader of a table cell must share one
+ * definition of where a code span begins and ends.
+ */
+function scanCodeSpans(text) {
+  const spans = [];
+  let unmatched = 0;
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char !== "`") {
+      index += 1;
+      continue;
+    }
+    let runLength = 1;
+    while (text[index + runLength] === "`") runLength += 1;
+    let cursor = index + runLength;
+    let closer = -1;
+    while (cursor < text.length) {
+      if (text[cursor] !== "`") {
+        cursor += 1;
+        continue;
+      }
+      let closeLength = 1;
+      while (text[cursor + closeLength] === "`") closeLength += 1;
+      if (closeLength === runLength) {
+        closer = cursor;
+        break;
+      }
+      cursor += closeLength;
+    }
+    if (closer < 0) {
+      unmatched += 1;
+      index += runLength;
+    } else {
+      spans.push({ start: index, end: closer + runLength, contentStart: index + runLength, contentEnd: closer });
+      index = closer + runLength;
+    }
+  }
+  return { spans, unmatched };
 }
 
-function cleanTableCell(value) {
-  return String(value || "")
+/**
+ * Code-span contents of a cell (or any single-line text), plus the count of
+ * backtick runs that never found a closer. The prelint's round-trip guard
+ * (prd-method-cell-mismatch) compares these raw contents against what the
+ * parsed cell yields, so the two sides must share this one scanner.
+ */
+function extractCodeSpans(text) {
+  const value = String(text || "");
+  const { spans, unmatched } = scanCodeSpans(value);
+  return {
+    spans: spans.map(span => value.slice(span.contentStart, span.contentEnd)),
+    unmatched,
+  };
+}
+
+/**
+ * Split a (already outer-pipe-stripped) table row into raw cell strings.
+ * A `|` is a cell delimiter only outside backtick code spans and only when not
+ * escaped as `\|`; span text is copied wholesale so commands keep their pipes.
+ * This deliberately diverges from GFM (which cuts cells at pipes even inside
+ * code spans) because the PRD contract treats a backticked Method cell as the
+ * literal command to execute - what the author wrote inside the backticks is
+ * what must run.
+ */
+function splitTableRow(text) {
+  const value = String(text || "");
+  const { spans } = scanCodeSpans(value);
+  const cells = [];
+  let current = "";
+  let index = 0;
+  let spanIndex = 0;
+  while (index < value.length) {
+    if (spanIndex < spans.length && spans[spanIndex].start === index) {
+      current += value.slice(index, spans[spanIndex].end);
+      index = spans[spanIndex].end;
+      spanIndex += 1;
+      continue;
+    }
+    const char = value[index];
+    if (char === "\\" && index + 1 < value.length) {
+      current += char + value[index + 1];
+      index += 2;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(current);
+      current = "";
+      index += 1;
+      continue;
+    }
+    current += char;
+    index += 1;
+  }
+  cells.push(current);
+  return cells;
+}
+
+function parseMarkdownTableRow(line) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return splitTableRow(trimmed).map(cleanTableCell);
+}
+
+// Cosmetic markdown-to-text transforms for the prose part of a cell. Never
+// applied inside code spans: `**` is a real glob fragment and `<br>`/`&nbsp;`
+// are real characters when they sit inside a backticked command.
+function cleanTableCellFragment(fragment) {
+  return fragment
     .replace(/<br\s*\/?>/gi, "; ")
     .replace(/\\\|/g, "|")
     .replace(/&nbsp;/gi, " ")
-    .replace(/\*\*/g, "")
-    .trim();
+    .replace(/\*\*/g, "");
+}
+
+function cleanTableCell(value) {
+  const text = String(value || "");
+  const { spans } = scanCodeSpans(text);
+  if (spans.length === 0) return cleanTableCellFragment(text).trim();
+  let cleaned = "";
+  let index = 0;
+  let spanIndex = 0;
+  while (index < text.length) {
+    if (spanIndex < spans.length && spans[spanIndex].start === index) {
+      // `\|` unescapes even inside a span: GFM requires the escape for any
+      // literal pipe in a table, so authors write it inside backticks too.
+      cleaned += text.slice(index, spans[spanIndex].end).replace(/\\\|/g, "|");
+      index = spans[spanIndex].end;
+      spanIndex += 1;
+      continue;
+    }
+    const nextStop = spanIndex < spans.length ? spans[spanIndex].start : text.length;
+    cleaned += cleanTableCellFragment(text.slice(index, nextStop));
+    index = nextStop;
+  }
+  return cleaned.trim();
 }
 
 function isTableSeparator(cells) {
@@ -810,6 +947,8 @@ module.exports = {
   inferDecisionStance,
   parseVerification,
   looksLikeMarkdownTable,
+  extractCodeSpans,
+  splitTableRow,
   parseMarkdownTableRow,
   cleanTableCell,
   isTableSeparator,

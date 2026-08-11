@@ -5,7 +5,7 @@ const path = require("path");
 
 const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, QUICK_ACTIVE_PATH, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson, appendJsonl } = require("./util");
 const { hashGateInput } = require("./gate_freshness");
-const { quickTreeFingerprint } = require("./git");
+const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("./git");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
 const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
@@ -174,14 +174,23 @@ function quickStopDirective(hookCwd, sessionId) {
       else if (hash !== input.sha256) staleReasons.push(`${input.kind === "evidence" ? "evidence" : "input"} ${input.path} changed after the pass`);
     }
     const saved = record.treeFingerprint;
-    if (saved && saved.statusHash) {
+    if (saved) {
+      // Recompute with the exact scope the record was earned under (the
+      // record carries its own scopeGlobs; absent means fallback mode), so
+      // the guard and `sasu verify` agree byte-for-byte on what the PASS
+      // vouches for. A legacy {headSha,statusHash} record never matches and
+      // honestly demands one fresh re-run.
       let current = null;
       try {
-        current = quickTreeFingerprint(hookCwd);
+        current = vouchedTreeFingerprint({
+          projectRoot: hookCwd,
+          slug: marker.slug,
+          scopeGlobs: Array.isArray(saved.scopeGlobs) ? saved.scopeGlobs : null,
+        });
       } catch {
         current = null;
       }
-      if (current && (current.statusHash !== saved.statusHash || current.headSha !== saved.headSha)) {
+      if (current && !vouchedFingerprintsMatch(saved, current)) {
         staleReasons.push("the working tree changed after the pass (code edited since verification)");
       }
     }

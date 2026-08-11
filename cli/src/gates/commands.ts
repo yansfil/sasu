@@ -39,6 +39,7 @@ import {
   type GateId,
   type GateInput,
   type GateStatusView,
+  type VouchedTreeFingerprint,
 } from "./store";
 
 export interface GateCommandResult {
@@ -503,8 +504,9 @@ export interface VerifyOptions {
   allowOpenTasks?: boolean;
 }
 
-const { quickTreeFingerprint } = require("../../lib/git.js") as {
-  quickTreeFingerprint: (projectRoot: string) => { headSha: string | null; statusHash: string } | null;
+const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("../../lib/git.js") as {
+  vouchedTreeFingerprint: (options: { projectRoot: string; slug?: string | null }) => VouchedTreeFingerprint | null;
+  vouchedFingerprintsMatch: (recorded: unknown, current: unknown) => boolean;
 };
 
 // One §7/§8 grammar for oracle tails and Scope globs: the TS gate reads the
@@ -808,7 +810,7 @@ export async function runVerifyGate(
   // nothing recorded to show for them). Which criteria are oracle-backed is
   // pure parsing and is decided here either way.
   const settleOracles = (): { oracleOutcomes: OracleOutcome[]; oracleFindings: Finding[]; oracleCriteria: CriterionVerdict[] } => {
-    const oracleStage = oracleTargets.length > 0 ? runAcOracles(projectRoot, config, oracleTargets) : null;
+    const oracleStage = oracleTargets.length > 0 ? runAcOracles(projectRoot, config, oracleTargets, topic) : null;
     const oracleOutcomes = oracleStage ? oracleStage.outcomes : [];
     for (const warning of oracleStage ? oracleStage.warnings : []) {
       process.stderr.write(`sasu: WARNING: ${warning}\n`);
@@ -895,9 +897,9 @@ export async function runVerifyGate(
         "sasu: NOTE: verify gate PASSED with ZERO judge calls - every AC was oracle-backed; the semantic judge never saw this diff.\n",
       );
     }
-    let zeroJudgeFingerprint: { headSha: string | null; statusHash: string } | null = null;
+    let zeroJudgeFingerprint: VouchedTreeFingerprint | null = null;
     try {
-      zeroJudgeFingerprint = quickTreeFingerprint(projectRoot);
+      zeroJudgeFingerprint = vouchedTreeFingerprint({ projectRoot, slug: topic });
     } catch {
       zeroJudgeFingerprint = null;
     }
@@ -1148,9 +1150,9 @@ export async function runVerifyGate(
     // Pin the tree the verdict was earned on; the Stop-hook quick guard
     // recomputes this to catch code edited after a PASS. Best-effort: a
     // non-git project records null and the guard skips the comparison.
-    let treeFingerprint: { headSha: string | null; statusHash: string } | null = null;
+    let treeFingerprint: VouchedTreeFingerprint | null = null;
     try {
-      treeFingerprint = quickTreeFingerprint(projectRoot);
+      treeFingerprint = vouchedTreeFingerprint({ projectRoot, slug: topic });
     } catch {
       treeFingerprint = null;
     }
@@ -1784,6 +1786,7 @@ export function runAcOracles(
   projectRoot: string,
   config: SasuConfig,
   targets: { id: string; text: string; oracle: AcOracle }[],
+  slug?: string,
 ): { outcomes: OracleOutcome[]; warnings: string[] } {
   const outcomes: OracleOutcome[] = [];
   const warnings: string[] = [];
@@ -1808,7 +1811,10 @@ export function runAcOracles(
         `${target.id}: oracle command appears to touch a database (\`${command}\`). Confirm the connection target is a disposable local or branch database, never production data.`,
       );
     }
-    const before = quickTreeFingerprint(projectRoot);
+    // Slug scopes the guard's vouched set so a concurrent session editing its
+    // own agents/prd/<other>/** during the oracle window cannot falsely trip
+    // this oracle's digest check (mark.js oracle-run passes the same).
+    const before = vouchedTreeFingerprint({ projectRoot, slug });
     // Harness semantics, verbatim: shellLikeTokens + shell:false. The PRD
     // oracle grammar never promised shell operators, so
     // `test -f README.md && grep -c Test README.md` hands "&&" to `test` as a
@@ -1824,14 +1830,12 @@ export function runAcOracles(
       timeout: config.verify.commandTimeoutMs,
       env: process.env,
     });
-    const after = quickTreeFingerprint(projectRoot);
+    const after = vouchedTreeFingerprint({ projectRoot, slug });
     const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
     const exitCode = timedOut ? 124 : (result.status ?? 1);
     const stdout = result.stdout ?? "";
     const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;
-    const digestViolation = Boolean(
-      before && after && (before.headSha !== after.headSha || before.statusHash !== after.statusHash),
-    );
+    const digestViolation = Boolean(before && after && !vouchedFingerprintsMatch(before, after));
     const met = exitCode === 0 && expectMatched && !digestViolation;
     const reason =
       digestViolation && exitCode === 0

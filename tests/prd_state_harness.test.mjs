@@ -1158,17 +1158,31 @@ test("fidelity prompt narrows the qa-log mandate only behind a fresh spec-gate P
   assert.doesNotMatch(prompt, /qa-log→PRD leg is settled/);
 });
 
-test("commit-only source change makes a recorded review stale", () => {
+test("committed source change makes a recorded review stale; content-identical commits do not", () => {
   const root = initGitRepo();
   const { logPath, reviewPath } = driveToFidelity(root, "commit-stale", "cs-session");
   write(reviewPath, fidelityReviewBody(logPath));
   runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
-  // Move HEAD with an empty commit; the working tree stays clean of source changes,
-  // so only the HEAD sha differs. Pre-fix this went undetected.
-  run("git", ["commit", "--allow-empty", "-m", "move head"], { cwd: root });
+  // A commit-only source change - new content lands in HEAD with a clean
+  // worktree - must stale the review: the tree the reviewer read is gone.
+  write(path.join(root, "README.md"), "# Changed after review\n");
+  run("git", ["add", "README.md"], { cwd: root });
+  run("git", ["commit", "-m", "commit-only source change"], { cwd: root });
   const fin = runJson(["finalize", "--status", "complete", "--summary", "done"], root, { allowFailure: true });
   assert.equal(fin.ok, false);
   assert(fin.violations.some(v => /stale/i.test(v)), JSON.stringify(fin.violations));
+
+  // The fingerprint is content-based: restoring the reviewed content revives
+  // the review, and a HEAD-only move (empty commit) is invisible. Benign
+  // commits of already-reviewed content no longer cost a re-review cycle -
+  // that false staleness is what the old rescue machinery existed to paper
+  // over.
+  write(path.join(root, "README.md"), "# Test Repo\n");
+  run("git", ["add", "README.md"], { cwd: root });
+  run("git", ["commit", "-m", "restore reviewed content"], { cwd: root });
+  run("git", ["commit", "--allow-empty", "-m", "move head only"], { cwd: root });
+  const revived = runJson(["finalize", "--status", "complete", "--summary", "done"], root);
+  assert.equal(revived.ok, true, JSON.stringify(revived));
 });
 
 test("delivery freshness accepts the exact reviewed worktree materialized as a commit", () => {
@@ -2111,7 +2125,7 @@ test("verification pass auto-mets covered acceptance criteria; manual judgments 
 // --- quick-path Stop guard ---
 
 const { freshnessHash } = requireModule(path.join(repoRoot, "cli", "lib", "gate_freshness.js"));
-const { quickTreeFingerprint } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
+const { vouchedTreeFingerprint } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
 
 const QUICK_CONTRACT = `---
 topic: demo
@@ -2167,7 +2181,7 @@ function passRecord(root) {
   return {
     verdict: "PASS",
     inputs: [{ path: "agents/quick/demo/contract.md", sha256: freshnessHash(contract) }],
-    treeFingerprint: quickTreeFingerprint(root),
+    treeFingerprint: vouchedTreeFingerprint({ projectRoot: root, slug: "demo" }),
   };
 }
 
@@ -2202,6 +2216,18 @@ test("quick guard re-opens a PASS when the code changed after it", () => {
   const root = makeQuickProject();
   writeQuickGates(root, passRecord(root));
   write(path.join(root, "src.txt"), "edited after the pass");
+  const directive = JSON.parse(quickStop(root));
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /working tree changed after the pass/);
+  assert.match(directive.reason, /Re-run verification/);
+});
+
+test("quick guard treats a legacy-shaped tree fingerprint as stale: one honest re-run, no crash", () => {
+  const root = makeQuickProject();
+  // gates.json written before the freshness consolidation: {headSha,
+  // statusHash} can no longer prove the tree is unchanged, so the guard must
+  // demand a re-run rather than accept the pass or throw.
+  writeQuickGates(root, { ...passRecord(root), treeFingerprint: { headSha: "abc123", statusHash: "deadbeef" } });
   const directive = JSON.parse(quickStop(root));
   assert.equal(directive.decision, "block");
   assert.match(directive.reason, /working tree changed after the pass/);
@@ -2410,6 +2436,10 @@ test("finalize reverification digest guard fails a re-run whose command mutates 
   assert.equal(first.ok, true, JSON.stringify(first.digestGuard));
   run("git", ["add", "-A"], { cwd: projectRoot });
   run("git", ["commit", "-m", "work"], { cwd: projectRoot });
+  // Real source drift after the recorded pass: the fingerprint is
+  // content-based, so the commit alone would read as fresh and skip the
+  // re-run - and the digest guard only fires on a re-run that happens.
+  fs.appendFileSync(path.join(projectRoot, "README.md"), "\ndrift after the pass\n");
   runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "done"], projectRoot);
   const reviewDir = path.join(projectRoot, "agents", "implement", "reverify-guard", "review");
   write(path.join(reviewDir, "requirements-fidelity-review.md"), [

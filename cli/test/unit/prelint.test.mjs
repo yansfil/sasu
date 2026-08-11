@@ -59,6 +59,9 @@ const PRD_CASES = [
   ["prd-mode-mismatch.md", "prd-mode-mismatch"],
   ["prd-method-runner-unknown.md", "prd-method-runner-unknown"],
   ["prd-method-parenthetical-scope.md", "prd-method-parenthetical-scope"],
+  ["prd-method-cell-mismatch.md", "prd-method-cell-mismatch"],
+  ["prd-method-cell-unbalanced.md", "prd-method-cell-mismatch"],
+  ["prd-table-span-collision.md", "prd-table-span-collision"],
   ["prd-task-scope-syntax.md", "prd-task-scope-syntax"],
   ["prd-ac-oracle-syntax.md", "prd-ac-oracle-syntax"],
 ];
@@ -192,6 +195,108 @@ test("a trivially-constant Check command draws the constant-true warning without
     );
     assert.match(result.warnings[0].missing, /proves nothing/);
   }
+});
+
+// --- Method-cell round trip: pipes in code spans, mismatch guard, node --test advisory ---
+
+// The exact live repro: the naive pipe split used to truncate this command at
+// `||`, and the truncated form was still valid shell.
+const LIVE_METHOD_COMMAND = 'bash -c "for f in $(git diff --name-only); do node --check \\"$f\\" || exit 1; done"';
+
+function withMethod(method) {
+  return fixture("prd-method-runner-unknown.md").replace("`checkshirt gate spec --slug fixture`", method);
+}
+
+test("a Method command with pipes inside its code span parses whole and passes clean", () => {
+  const result = prelintPrd(withMethod(`\`${LIVE_METHOD_COMMAND}\``));
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
+});
+
+test("an escaped \\| inside a Method code span round-trips to a literal pipe", () => {
+  const result = prelintPrd(withMethod('`bash -c "grep -c \\"a\\|b\\" README.md"`'));
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+});
+
+test("prd-method-cell-mismatch quotes both the declared and the parsed form", () => {
+  const result = prelintPrd(fixture("prd-method-cell-mismatch.md"));
+  assert.equal(result.ok, false);
+  assert.equal(result.findings[0].rule, "prd-method-cell-mismatch");
+  assert.match(result.findings[0].missing, /declares `npm test` \+ `x`/);
+  assert.match(result.findings[0].missing, /would read `npm test``x`/);
+});
+
+test("an unbalanced backtick in a Method cell blocks with the same rule family", () => {
+  const result = prelintPrd(fixture("prd-method-cell-unbalanced.md"));
+  assert.equal(result.ok, false);
+  assert.equal(result.findings[0].rule, "prd-method-cell-mismatch");
+  assert.match(result.findings[0].missing, /unbalanced backtick/);
+});
+
+test("node --test on a directory-shaped path draws the glob-form warning without blocking", () => {
+  const result = prelintPrd(withMethod("`node --test cli/test/unit`"));
+  assert.equal(result.ok, true, "advisories must never block");
+  assert.equal(result.findings.length, 0);
+  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-node-test-directory"]);
+  assert.match(result.warnings[0].missing, /directory-shaped/);
+  assert.match(result.warnings[0].recommendation, /cli\/test\/unit\/\*\.test\.mjs/);
+});
+
+test("node --test with a glob or an explicit file draws no warning", () => {
+  for (const method of [
+    '`node --test "cli/test/unit/*.test.mjs"`',
+    "`node --test cli/test/unit/quick.test.mjs`",
+    "`node --test-reporter=spec --test cli/test/unit/quick.test.mjs`",
+  ]) {
+    const result = prelintPrd(withMethod(method));
+    assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+    assert.equal(result.warnings, undefined, `${method}: ${JSON.stringify(result.warnings)}`);
+  }
+});
+
+test("space-separated flag values are not mistaken for directory targets", () => {
+  for (const method of [
+    '`node --test --test-reporter spec "cli/test/unit/*.test.mjs"`',
+    '`node --test --test-concurrency 4 "cli/test/unit/*.test.mjs"`',
+  ]) {
+    const result = prelintPrd(withMethod(method));
+    assert.equal(result.warnings, undefined, `${method}: ${JSON.stringify(result.warnings)}`);
+  }
+  // The real target after a skipped flag value, and after `--`, still warns.
+  for (const method of [
+    "`node --test --test-reporter spec cli/test/unit`",
+    "`node --test -- cli/test/unit`",
+  ]) {
+    const result = prelintPrd(withMethod(method));
+    assert.deepEqual(result.warnings?.map((w) => w.rule), ["prd-node-test-directory"], method);
+  }
+});
+
+test("cross-cell backtick pairing blocks; an extra unescaped pipe only advises", () => {
+  // Blocking direction is the fixture matrix row (prd-table-span-collision.md);
+  // here: the advisory direction and the message content.
+  const collision = prelintPrd(fixture("prd-table-span-collision.md"));
+  assert.equal(collision.ok, false);
+  assert.match(collision.findings[0].missing, /parses to 6 cell\(s\) but its rendered form shows 7/);
+  const extraPipe = prelintPrd(
+    fixture("prd-method-cell-mismatch.md").replace(
+      "| V1 | automated behavior | R1, AC1, AC2 | `npm test`**`x` | command-log | yes | no |",
+      "| V1 | automated behavior | R1, AC1, AC2 | `npm test` | command-log | yes a|b | no |",
+    ),
+  );
+  assert.equal(extraPipe.ok, true, "extra-cell direction must not block");
+  assert.deepEqual(extraPipe.warnings?.map((w) => w.rule), ["prd-table-row-shape"]);
+});
+
+test("a Check oracle pointing node --test at a directory draws the same warning", () => {
+  const prd = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    "- AC3. the tests pass. Check: `node --test cli/test/unit`",
+  );
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-node-test-directory"]);
 });
 
 test("a substantive Check command and an Artifact oracle draw no advisory", () => {

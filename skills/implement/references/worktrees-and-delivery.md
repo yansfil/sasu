@@ -104,8 +104,8 @@ In worktree mode, initialization also writes active pointers and session-scoped 
 The latest legacy pointer is informational.
 Session-scoped files are authoritative when a hook payload includes a session ID.
 
-Do not run two active PRD implementations from one checkout unless each has a distinct session ID and every command uses the correct worktree or explicit state path.
-When diagnosing a mismatch, inspect `status`, the emitted `statePath`, `activeSessionId`, and session-scoped pointer before changing anything.
+The harness stamps the pointer with its writing session and refuses cross-session pointer access; pin `--state` only when running multiple runs from one session (the refusal message lists the candidate state paths).
+When diagnosing a mismatch, inspect `status`, the emitted `statePath`, `activeSessionId`, and the pointer's `owner` stamp before changing anything.
 
 ## Post-Receipt PR Handoff
 

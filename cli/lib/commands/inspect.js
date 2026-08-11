@@ -17,7 +17,9 @@ const { activePath, activeRootsForState, removeActiveRecordForState, activeDiagn
 const { deliveryShipPending } = require("../hooks");
 
 function cmdStatus(options) {
-  const { statePath, state } = loadState(options);
+  // Read-only: a foreign-owned pointer warns on stderr instead of refusing,
+  // so a session can always see whose run the pointer names.
+  const { statePath, state } = loadState(options, cwd(), "read");
   process.stdout.write(JSON.stringify({
     ok: true,
     statePath: toProjectRelative(statePath),
@@ -45,7 +47,7 @@ function cmdStatus(options) {
 }
 
 function cmdVerifyDelivery(options) {
-  const { statePath, state } = loadState(options);
+  const { statePath, state } = loadState(options, cwd(), "read");
   const violations = [];
   if (!state.finalReceipt || state.finalReceipt.status !== "complete") {
     violations.push(`Final receipt status is '${state.finalReceipt ? state.finalReceipt.status : "missing"}'; delivery requires a complete receipt`);

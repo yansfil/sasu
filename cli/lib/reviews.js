@@ -3,8 +3,8 @@
 const fs = require("fs");
 const path = require("path");
 
-const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, normalizeRelPath, escapeRegExp } = require("./util");
-const { worktreeSnapshot, snapshotMaterializedInHead, snapshotEntriesEqual, snapshotPathMatches, primaryWorktreeRoot } = require("./git");
+const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, escapeRegExp } = require("./util");
+const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, primaryWorktreeRoot } = require("./git");
 const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
@@ -285,59 +285,38 @@ function requirementsFidelityReviewFreshnessViolations(state) {
   return [];
 }
 
+/**
+ * Review freshness against the tree: a recorded pass/fail review vouches for
+ * the vouched fingerprint pinned at record time (review-record stamps
+ * `vouchedTreeFingerprint` next to the audit-only worktreeSnapshot). The
+ * fingerprint is commit-invariant and blind to harness bookkeeping, so a
+ * benign `git commit`, a verify re-run, or another run's state writes no
+ * longer stale a review - only source or spec-doc changes do. Reviews
+ * recorded before this contract (worktreeSnapshot only, no vouched field)
+ * cannot prove freshness and read as stale; records with neither field are
+ * non-git-era records with nothing pinned, which were never checked.
+ */
 function reviewWorktreeSnapshotViolations(state, options = {}) {
   const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
   const includeFinalReview = options.includeFinalReview !== false;
   const violations = [];
-  const current = worktreeSnapshot(state);
-  if (!current) return violations;
+  let current = null;
+  let currentComputed = false;
   const check = (review, label) => {
-    if (!review || !["pass", "fail"].includes(review.status) || !review.worktreeSnapshot) return;
-    const headChanged = Boolean(review.worktreeSnapshot.headSha && current.headSha
-      && review.worktreeSnapshot.headSha !== current.headSha);
-    if ((headChanged || review.worktreeSnapshot.statusHash !== current.statusHash)
-      && !reviewSnapshotMatchesCurrent(review.worktreeSnapshot, current, state)) {
+    if (!review || !["pass", "fail"].includes(review.status)) return;
+    if (!review.worktreeSnapshot && !review.vouchedTreeFingerprint) return;
+    if (!currentComputed) {
+      current = vouchedTreeFingerprintForState(state);
+      currentComputed = true;
+    }
+    if (!current) return; // not a git checkout: no tree signal to compare
+    if (!vouchedFingerprintsMatch(review.vouchedTreeFingerprint, current)) {
       violations.push(`${label} is stale: worktree source snapshot changed after review`);
     }
   };
   if (includeRequirementsFidelityReview) check(state.requirementsFidelityReview, "Requirements fidelity review");
   if (includeFinalReview) check(state.finalReview, "Final review");
   return violations;
-}
-
-function reviewSnapshotMatchesCurrent(savedSnapshot, currentSnapshot, state) {
-  const projectRoot = state.projectRoot || cwd();
-  // A commit that leaves the working tree clean would otherwise produce an
-  // identical status snapshot; comparing HEAD catches commit-only source changes
-  // after a review. Only enforced when both snapshots recorded a HEAD (backward
-  // compatible with snapshots captured before this field existed).
-  if (savedSnapshot && currentSnapshot && savedSnapshot.headSha && currentSnapshot.headSha
-    && savedSnapshot.headSha !== currentSnapshot.headSha) {
-    return snapshotMaterializedInHead(savedSnapshot, currentSnapshot, state);
-  }
-  const savedEntries = Array.isArray(savedSnapshot && savedSnapshot.entries) ? savedSnapshot.entries : [];
-  const currentEntries = Array.isArray(currentSnapshot && currentSnapshot.entries) ? currentSnapshot.entries : [];
-  const savedByPath = new Map(savedEntries.map(entry => [normalizeRelPath(entry.path), entry]));
-  const currentByPath = new Map(currentEntries.map(entry => [normalizeRelPath(entry.path), entry]));
-
-  for (const saved of savedEntries) {
-    const rel = normalizeRelPath(saved.path);
-    const current = currentByPath.get(rel);
-    if (current) {
-      if (!snapshotEntriesEqual(saved, current)) return false;
-      continue;
-    }
-    if (!snapshotPathMatches(saved, path.join(projectRoot, rel))) return false;
-  }
-
-  for (const current of currentEntries) {
-    const rel = normalizeRelPath(current.path);
-    const saved = savedByPath.get(rel);
-    if (!saved) return false;
-    if (!snapshotEntriesEqual(saved, current)) return false;
-  }
-
-  return true;
 }
 
 function completionReadiness(statePath, state, options = {}) {
@@ -613,7 +592,6 @@ module.exports = {
   finalReviewFreshnessViolations,
   requirementsFidelityReviewFreshnessViolations,
   reviewWorktreeSnapshotViolations,
-  reviewSnapshotMatchesCurrent,
   completionReadiness,
   completionViolations,
   verifyGateStatus,

@@ -11,7 +11,7 @@ const { recordDeviation, verificationPlanSummary, executionPlanSummary, countSta
 const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseAcOracle, parsePreWorkChecklist, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
 const { verificationContractHash, buildVerificationPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
-const { activePath, normalizeSessionId, writeActiveRecord, persistState } = require("../state_store");
+const { activePath, normalizeSessionId, currentSessionIdentity, writeActiveRecord, persistState } = require("../state_store");
 const { ensureContextNotes } = require("../render");
 
 function cmdInit(options) {
@@ -177,6 +177,13 @@ function writeWorktreePointer(inputs, worktreePreparation) {
       worktreePath: worktreePreparation.path,
     },
     activeSessionId: inputs.initialSessionId || null,
+    // Ownership stamp: the initializing session is the pointer's first writer
+    // (see pointerOwnerStamp in state_store.js for the semantics).
+    owner: {
+      sessionId: currentSessionIdentity() || inputs.initialSessionId || null,
+      pid: process.pid,
+      startedAt: nowIso(),
+    },
     updatedAt: nowIso(),
   };
   writeJson(activePath(inputs.projectRoot), pointerRecord);

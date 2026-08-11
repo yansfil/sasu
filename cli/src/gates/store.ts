@@ -58,6 +58,30 @@ export interface GateRunSummary {
   artifact: string | null;
 }
 
+/**
+ * Content-based tree fingerprint (cli/lib/git.js vouchedTreeFingerprint): the
+ * files the verdict vouches for, hashed by blob content, commit-invariant,
+ * and blind to harness bookkeeping. `mode`/`scopeGlobs` describe the vouched
+ * set so a consumer can recompute the identical fingerprint later.
+ */
+export interface VouchedTreeFingerprint {
+  vouched: string;
+  entryCount: number;
+  mode?: "scoped" | "fallback";
+  scopeGlobs?: string[];
+}
+
+/**
+ * Pre-consolidation fingerprint shape still present in recorded gates.json
+ * files in the wild. Never written anymore and never matches a current
+ * fingerprint, so a PASS carrying it reads as STALE (one honest re-run)
+ * instead of crashing or passing on stale proof.
+ */
+export interface LegacyTreeFingerprint {
+  headSha: string | null;
+  statusHash: string;
+}
+
 export interface GateRecord {
   verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
   attempts: number;
@@ -73,7 +97,7 @@ export interface GateRecord {
    * guard recomputes this to detect code edited after the pass. Null when the
    * project is not a git checkout.
    */
-  treeFingerprint?: { headSha: string | null; statusHash: string } | null;
+  treeFingerprint?: VouchedTreeFingerprint | LegacyTreeFingerprint | null;
 }
 
 export interface GatesState {
@@ -142,13 +166,33 @@ export class GateStore {
   }
 }
 
-const { quickTreeFingerprint } = require("../../lib/git.js") as {
-  quickTreeFingerprint: (projectRoot: string) => { headSha: string | null; statusHash: string } | null;
+const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("../../lib/git.js") as {
+  vouchedTreeFingerprint: (options: {
+    projectRoot: string;
+    slug?: string | null;
+    scopeGlobs?: string[] | null;
+  }) => VouchedTreeFingerprint | null;
+  vouchedFingerprintsMatch: (recorded: unknown, current: unknown) => boolean;
 };
 
-function currentTreeFingerprint(projectRoot: string): { headSha: string | null; statusHash: string } | null {
+/**
+ * Recompute the tree fingerprint under the exact vouched set the record was
+ * earned with: the record's own scopeGlobs when present, fallback mode
+ * otherwise. A legacy record has no scope descriptor and recomputes in
+ * fallback mode - irrelevant to the verdict, since a legacy shape never
+ * matches anything.
+ */
+function currentTreeFingerprint(
+  projectRoot: string,
+  slug: string | undefined,
+  recorded: GateRecord["treeFingerprint"],
+): VouchedTreeFingerprint | null {
   try {
-    return quickTreeFingerprint(projectRoot);
+    const scopeGlobs =
+      recorded !== null && typeof recorded === "object" && "scopeGlobs" in recorded && Array.isArray(recorded.scopeGlobs)
+        ? recorded.scopeGlobs
+        : null;
+    return vouchedTreeFingerprint({ projectRoot, slug: slug ?? null, scopeGlobs });
   } catch {
     return null;
   }
@@ -210,9 +254,11 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
   // The tree a PASS was earned on is part of what the PASS vouches for, so the
   // same check the Stop hook makes has to be visible here too - an agent that
   // reads `gate status` must not see a live PASS the harness treats as dead.
+  // A legacy-shaped fingerprint never matches (vouchedFingerprintsMatch), so
+  // pre-consolidation PASSes surface as STALE and earn one honest re-run.
   if (passed && projectRoot !== undefined && record.verdict === "PASS" && record.treeFingerprint) {
-    const current = currentTreeFingerprint(projectRoot);
-    if (current && (current.statusHash !== record.treeFingerprint.statusHash || current.headSha !== record.treeFingerprint.headSha)) {
+    const current = currentTreeFingerprint(projectRoot, state.topic, record.treeFingerprint);
+    if (current && !vouchedFingerprintsMatch(record.treeFingerprint, current)) {
       staleInputs.push({ path: "<worktree>", reason: "changed" });
     }
   }
@@ -246,7 +292,8 @@ export function recordGateResult(
         findings: Finding[];
         artifactPayload: unknown;
         inputs?: GateInput[];
-        treeFingerprint?: { headSha: string | null; statusHash: string } | null;
+        /** New records only carry the vouched shape; legacy shapes exist solely in already-written files. */
+        treeFingerprint?: VouchedTreeFingerprint | null;
       }
     | { kind: "error"; message: string; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],

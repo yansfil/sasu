@@ -5,7 +5,7 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash, safeTimestamp, writeMarkdown } = require("../util");
 const { shellLikeTokens } = require("../inference");
-const { worktreeSnapshot, reverifyFingerprint } = require("../git");
+const { worktreeSnapshot, vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("../git");
 const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_pass");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
@@ -94,7 +94,10 @@ function cmdRequirementsReviewRecord(options) {
     reportPath,
     reportBytes: info.bytes,
     reportSha256: info.sha256,
+    // Audit/attribution record of the dirty tree at review time (kept in
+    // receipts); freshness is decided by the vouched fingerprint below.
     worktreeSnapshot: worktreeSnapshot(state),
+    vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
     recordedAt: nowIso(),
   };
   state.finalReview = null;
@@ -142,7 +145,10 @@ function cmdReviewRecord(options) {
     reportPath,
     reportBytes: info.bytes,
     reportSha256: info.sha256,
+    // Same split as the fidelity review: worktreeSnapshot is audit trail,
+    // vouchedTreeFingerprint is the freshness decision input.
     worktreeSnapshot: worktreeSnapshot(state),
+    vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
     recordedAt: nowIso(),
   };
   state.updatedAt = nowIso();
@@ -180,7 +186,7 @@ const REVERIFY_TIMEOUT_MS = 10 * 60 * 1000;
  */
 function reverifyRequiredVerifications(statePath, state) {
   const projectRoot = state.projectRoot || cwd();
-  const currentFingerprint = reverifyFingerprint(state);
+  const currentFingerprint = vouchedTreeFingerprintForState(state);
   const results = [];
   for (const item of state.verification || []) {
     if (!isVerificationRequiredForDone(item)) continue;
@@ -203,7 +209,7 @@ function reverifyRequiredVerifications(statePath, state) {
     // finalize) therefore costs nothing - only stale passes re-run.
     // Shared predicate with the verify gate's mechanical stage (fresh_pass.js).
     if (isFreshPass(lastLog, currentFingerprint)) {
-      results.push({ id: item.id, skipped: `fresh pass: worktree unchanged since the recorded pass (${currentFingerprint.statusHash})` });
+      results.push({ id: item.id, skipped: `fresh pass: worktree unchanged since the recorded pass (${currentFingerprint.vouched})` });
       continue;
     }
     const command = lastLog.command;
@@ -213,7 +219,10 @@ function reverifyRequiredVerifications(statePath, state) {
     // exit 0. Side-effectful contracts were already skipped above, so every
     // command that reaches here promised to leave the tree alone. Recomputed
     // per item because a violating command changes the tree for the next one.
-    const preFingerprint = reverifyFingerprint(state);
+    // Scoped runs share verify-run's tradeoff: only in-scope mutations are
+    // seen, which is where the code under test - and therefore reward
+    // hacking - lives.
+    const preFingerprint = vouchedTreeFingerprintForState(state);
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
       cwd: projectRoot,
@@ -222,10 +231,9 @@ function reverifyRequiredVerifications(statePath, state) {
       timeout: REVERIFY_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
     });
-    const postFingerprint = reverifyFingerprint(state);
+    const postFingerprint = vouchedTreeFingerprintForState(state);
     const digestViolation = Boolean(preFingerprint && postFingerprint
-      && (preFingerprint.headSha !== postFingerprint.headSha
-        || preFingerprint.statusHash !== postFingerprint.statusHash));
+      && !vouchedFingerprintsMatch(preFingerprint, postFingerprint));
     const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
     // Not under artifacts/: reverify logs are receipt provenance, not agent
     // evidence, so they must not trip unregistered-artifact validation.

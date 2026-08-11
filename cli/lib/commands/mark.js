@@ -8,7 +8,7 @@ const fs = require("fs");
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, findVerificationCommandDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
 const { commandsMatchContract, shellLikeTokens } = require("../inference");
-const { reverifyFingerprint } = require("../git");
+const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("../git");
 const { DB_TOUCH_PATTERN, readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertAllowedStatus } = require("../reviews");
@@ -248,13 +248,18 @@ function cmdVerifyRun(rawArgs) {
     // the tree before and after the verification command so a command that
     // edits code to make itself pass cannot record that pass - reward hacking
     // via the verifier itself. A contract-declared side effect opts out, with
-    // the skip on the record; runDir logs are already excluded from the
-    // fingerprint, so the harness's own log write cannot trip the guard.
+    // the skip on the record; harness bookkeeping (runDir, gates, quick) is
+    // excluded from the fingerprint, so the harness's own log write cannot
+    // trip the guard. When the run declares Scope globs the guard only sees
+    // in-scope mutations - an accepted tradeoff: reward hacking edits the
+    // code under test, which is in scope by definition, while whole-repo
+    // fingerprints were falsely tripped by unrelated concurrent sessions in a
+    // shared checkout (observed live).
     const declaredSideEffect = match.item.matrix && typeof match.item.matrix.sideEffect === "string"
       ? match.item.matrix.sideEffect.trim()
       : "";
     const sideEffectDeclared = Boolean(declaredSideEffect) && !/^(none|없음|-|n\/a)$/i.test(declaredSideEffect);
-    const preFingerprint = sideEffectDeclared ? null : reverifyFingerprint(state);
+    const preFingerprint = sideEffectDeclared ? null : vouchedTreeFingerprintForState(state);
     const startedAt = nowIso();
   const result = childProcess.spawnSync(commandArgs[0], commandArgs.slice(1), {
     cwd: state.projectRoot || cwd(),
@@ -263,13 +268,12 @@ function cmdVerifyRun(rawArgs) {
     maxBuffer: 20 * 1024 * 1024,
   });
   const finishedAt = nowIso();
-  const postFingerprint = sideEffectDeclared ? null : reverifyFingerprint(state);
+  const postFingerprint = sideEffectDeclared ? null : vouchedTreeFingerprintForState(state);
   const digestGuard = sideEffectDeclared
     ? { skipped: `declared side effect: ${declaredSideEffect}` }
     : {
       violated: Boolean(preFingerprint && postFingerprint
-        && (preFingerprint.headSha !== postFingerprint.headSha
-          || preFingerprint.statusHash !== postFingerprint.statusHash)),
+        && !vouchedFingerprintsMatch(preFingerprint, postFingerprint)),
       before: preFingerprint,
       after: postFingerprint,
     };
@@ -311,8 +315,8 @@ function cmdVerifyRun(rawArgs) {
       finishedAt,
       digestGuard,
       // The tree this result was earned on; finalize skips its reverification
-      // when the fingerprint still matches (see reverifyFingerprint).
-      treeFingerprint: passed ? postFingerprint || reverifyFingerprint(state) : null,
+      // when the fingerprint still matches (see vouchedTreeFingerprint).
+      treeFingerprint: passed ? postFingerprint || vouchedTreeFingerprintForState(state) : null,
     });
   match.item.status = passed ? "pass" : "fail";
   match.item.evidence.push({
@@ -403,7 +407,10 @@ function cmdOracleRun(options) {
       warnings.push(`${ac.id}: oracle command appears to touch a database (\`${command}\`). Confirm the connection target is a disposable local or branch database, never production data.`);
     }
     const tokens = shellLikeTokens(command);
-    const preFingerprint = reverifyFingerprint(state);
+    // Same digest guard and same scoped-mode tradeoff as verify-run above: an
+    // out-of-scope mutation by the oracle goes unseen, in exchange for
+    // immunity to unrelated concurrent sessions' writes.
+    const preFingerprint = vouchedTreeFingerprintForState(state);
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
       cwd: projectRoot,
@@ -412,10 +419,9 @@ function cmdOracleRun(options) {
       timeout: ORACLE_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
     });
-    const postFingerprint = reverifyFingerprint(state);
+    const postFingerprint = vouchedTreeFingerprintForState(state);
     const digestViolation = Boolean(preFingerprint && postFingerprint
-      && (preFingerprint.headSha !== postFingerprint.headSha
-        || preFingerprint.statusHash !== postFingerprint.statusHash));
+      && !vouchedFingerprintsMatch(preFingerprint, postFingerprint));
     const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
     const stdout = spawned.stdout || "";
     const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;

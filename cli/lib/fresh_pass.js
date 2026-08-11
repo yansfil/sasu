@@ -1,6 +1,6 @@
 "use strict";
 
-const { reverifyFingerprint } = require("./git");
+const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("./git");
 
 /**
  * The fresh-pass rule, shared by finalize's reverification
@@ -9,12 +9,15 @@ const { reverifyFingerprint } = require("./git");
  * the CURRENT tree only while the post-command fingerprint recorded with the
  * pass still matches it exactly. One predicate, two consumers - the two layers
  * must never disagree about what "already proven" means.
+ *
+ * Fingerprints are vouchedTreeFingerprint records; a legacy
+ * `{ headSha, statusHash }` log entry never matches, so passes recorded
+ * before the freshness consolidation simply re-run instead of crashing or
+ * reading as fresh.
  */
 
 function fingerprintsMatch(recorded, current) {
-  return Boolean(recorded && current
-    && recorded.headSha === current.headSha
-    && recorded.statusHash === current.statusHash);
+  return vouchedFingerprintsMatch(recorded, current);
 }
 
 /** Latest command-log artifact with an executed command, or null. */
@@ -62,7 +65,7 @@ function declaredSideEffect(item) {
  * recorded pass is real proof of this command on this tree.
  */
 function freshVerifyRunPasses(state, projectRoot) {
-  const current = reverifyFingerprint({ ...state, projectRoot: projectRoot || state.projectRoot });
+  const current = vouchedTreeFingerprintForState({ ...state, projectRoot: projectRoot || state.projectRoot });
   if (!current) return [];
   const entries = [];
   // Shape-tolerant on purpose: a hand-damaged state.json (valid JSON, wrong
