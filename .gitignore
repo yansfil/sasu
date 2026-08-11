@@ -1,10 +1,7 @@
 # PRD pipeline runtime state
 /.hoyeon/
 /.hoyeom/
-/agents/interview/
-/agents/intake/
-/agents/implement/
-/agents/gates/
+/agents/
 
 # sasu CLI build output (+ stray npm-prefix pollution from cli-sync)
 /cli/node_modules/
