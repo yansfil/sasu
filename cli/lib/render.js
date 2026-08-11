@@ -50,8 +50,20 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
   // A blocked receipt must say why without a trip to gates.json: attempts
   // spent against the budget, and the findings that stopped the run.
+  //
+  // The two terminal causes read differently on purpose (PRINCIPLES item 10).
+  // A spent budget says 3/3; a refused rerun says the honest 1/3 plus the
+  // reason the other two are unspendable - never a faked exhaustion. That
+  // visibility is what makes the cheap escape (give up after one FAIL without
+  // touching the tree) legible to the human reading the receipt instead of a
+  // silent loophole.
   if (verifyGate.effective === "BLOCKED") {
-    lines.push(`  - Attempts: ${verifyGate.attempts}/${verifyGate.budget}${verifyGate.budgetExhausted ? " (retry budget exhausted)" : ""}`);
+    const terminalCause = verifyGate.budgetExhausted
+      ? " (retry budget exhausted)"
+      : verifyGate.rerunRefused
+        ? " (rerun refused on an unchanged tree; the remaining attempts are unspendable)"
+        : "";
+    lines.push(`  - Attempts: ${verifyGate.attempts}/${verifyGate.budget}${terminalCause}`);
     const findings = Array.isArray(verifyGate.findings) ? verifyGate.findings : [];
     for (const finding of findings) {
       lines.push(`  - Finding (${finding.severity || "?"} ${finding.area || "unknown"}): ${finding.missing || "no description recorded"}`);

@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { ACTIVE_PATH, NAMESPACE_ROOT, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, QUICK_ROOT_REL, QUICK_ACTIVE_PATH, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
+const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
 const { matchesScopeGlob } = require("./scope_match");
 
 function runGit(projectRoot, args, options = {}) {
@@ -178,16 +178,22 @@ function worktreeSnapshot(state) {
  *
  * Vouched set:
  * - Scoped mode (`scopeGlobs` non-empty): files matching the run's declared
- *   Scope globs, plus the run's own spec docs dir `agents/prd/<slug>/` - the
- *   PRD and qa-log are judged inputs, so editing them must invalidate.
- * - Fallback mode (no globs): the whole repo minus harness bookkeeping.
- *   `agents/prd/**` stays in (judged inputs); when `slug` is known, other
- *   runs' `agents/prd/<other>/` dirs are out so a concurrent run's spec edits
- *   cannot stale this one.
- * - Both modes exclude all harness bookkeeping - `agents/gates/**`,
- *   `agents/implement/**`, `agents/quick/**`, active pointers, and the run
- *   dir - which is what makes the old circular invalidation structurally
- *   impossible: no freshness consumer ever watches another consumer's writes.
+ *   Scope globs, minus the agents/ namespace.
+ * - Fallback mode (no globs): the whole repo minus the agents/ namespace and
+ *   the run dir.
+ * - Both modes exclude the ENTIRE `agents/**` namespace (AGENTS.md invariant:
+ *   nothing under agents/** belongs in a freshness fingerprint). Spec docs
+ *   (`agents/prd/<slug>/**`) used to ride the fingerprint as "judged inputs",
+ *   and loose `agents/*` files (agents/config.json, test plumbing) rode the
+ *   fallback set too - reproduced 2026-08-11: bookkeeping-adjacent churn under
+ *   agents/ moved the fingerprint, disarming the verify rerun short-circuit
+ *   and staling PASSes that vouched for unchanged source. The judged
+ *   documents lose nothing: the gate pins the PRD/contract and every evidence
+ *   file by content hash (GateRecord.inputs), and the implement state pins the
+ *   PRD via prdSnapshot.sha256, so editing them still invalidates through
+ *   those pins. Excluding all of agents/** is also what makes the old
+ *   circular invalidation structurally impossible: no freshness consumer ever
+ *   watches another consumer's writes.
  *
  * Content-based and commit-invariant: committed files are enumerated via
  * `git ls-tree -r HEAD` (blob SHAs for free) and dirty/untracked files are
@@ -213,30 +219,24 @@ function vouchedTreeFingerprint(options) {
     ? Array.from(new Set(opts.scopeGlobs.map(glob => String(glob || "").trim()).filter(Boolean)))
     : [];
   const scoped = scopeGlobs.length > 0;
-  const slug = typeof opts.slug === "string" && opts.slug.trim() ? opts.slug.trim() : null;
 
-  const bookkeepingPrefixes = [
-    normalizeRelPath(path.join(NAMESPACE_ROOT, "gates")),
-    normalizeRelPath(IMPLEMENT_ROOT_REL),
-    normalizeRelPath(QUICK_ROOT_REL),
-    normalizeRelPath(ACTIVE_PATH),
-    normalizeRelPath(QUICK_ACTIVE_PATH),
+  // ONE exclusion: the whole agents/ namespace, in both modes (see the
+  // vouched-set comment above). Two options are now inert and kept only so no
+  // caller has to change: `slug` (the per-slug prd carve-out died with the
+  // namespace-wide rule - the same tree must never fingerprint differently
+  // depending on who asks) and `runDir`, which the harness always sets to
+  // `agents/implement/<slug>` or `agents/quick/<slug>` and is therefore already
+  // inside NAMESPACE_ROOT. runDir stays in the list as a cheap guard in case a
+  // caller ever points a run dir outside the namespace; neither option may grow
+  // new meaning without re-reading that comment.
+  const excludedPrefixes = [
+    normalizeRelPath(NAMESPACE_ROOT),
     normalizeRelPath(opts.runDir || ""),
   ].filter(Boolean);
-  const prdRoot = normalizeRelPath(PRD_ROOT_REL);
-  const specDocsPrefix = slug ? `${prdRoot}/${slug}` : null;
   const underAny = (rel, prefixes) => prefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`));
   const vouches = rel => {
-    if (!rel || underAny(rel, bookkeepingPrefixes)) return false;
-    if (scoped) {
-      if (specDocsPrefix && (rel === specDocsPrefix || rel.startsWith(`${specDocsPrefix}/`))) return true;
-      return scopeGlobs.some(glob => matchesScopeGlob(rel, glob));
-    }
-    if (slug && rel.startsWith(`${prdRoot}/`)) {
-      const nested = rel.slice(prdRoot.length + 1);
-      const owner = nested.includes("/") ? nested.slice(0, nested.indexOf("/")) : null;
-      if (owner && owner !== slug) return false;
-    }
+    if (!rel || underAny(rel, excludedPrefixes)) return false;
+    if (scoped) return scopeGlobs.some(glob => matchesScopeGlob(rel, glob));
     return true;
   };
 

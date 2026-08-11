@@ -784,7 +784,12 @@ test("verify short-circuit: an identical semantic FAIL rerun refuses; a correcte
   assert.equal(first.status, 1, first.stdout + first.stderr);
   const record = gatesState(dir, "fixture").gates.verify;
   assert.equal(record.failedStage, "semantic");
-  assert.equal(record.diffSource, "git:HEAD");
+  // The base is pinned as a resolved commit SHA, not the ref string "HEAD": a
+  // ref moves under an unchanged worktree, and a moved base is a different
+  // judged diff.
+  const headAfterCommit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" });
+  assert.equal(headAfterCommit.status, 0, headAfterCommit.stderr);
+  assert.equal(record.diffSource, `git:${headAfterCommit.stdout.trim()}`);
 
   // Identical base, identical tree: refused at $0, before any stage runs.
   const refused = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });

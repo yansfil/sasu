@@ -43,6 +43,7 @@ import {
   staleInputsFor,
   type GateId,
   type GateInput,
+  type GateRecord,
   type GateStatusView,
   type VouchedTreeFingerprint,
 } from "./store";
@@ -610,6 +611,156 @@ function readImplementState(projectRoot: string, topic: string): ImplementStateL
   }
 }
 
+/**
+ * Judged-diff identity for a git-derived diff: the base RESOLVED to a commit
+ * SHA at record time, never the ref string. A ref string names a pointer, not
+ * a diff - reproduced 2026-08-11: after a FAIL recorded at `--base start`,
+ * `git branch -f start HEAD` moved the ref with the worktree untouched, and
+ * the ref-string comparison refused a rerun whose judged diff no longer
+ * contained the failing hunk; the default base HEAD moves the same way on any
+ * WIP commit (which the commit-invariant tree fingerprint cannot see either).
+ * An unresolvable base records an `unresolved` form that never matches
+ * ARMABLE_DIFF_SOURCE, so it can never arm a refusal.
+ */
+function resolveGitDiffSource(projectRoot: string, baseRef: string | undefined): string {
+  const base = baseRef ?? "HEAD";
+  try {
+    const sha = execFileSync("git", ["rev-parse", "--verify", `${base}^{commit}`], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      // A probe must stay silent. execFileSync forwards the child's stderr to
+      // the parent by default, which printed a bare "fatal: Needed a single
+      // revision" ahead of the real gitDiff error on a bogus --base.
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (/^[0-9a-f]{40,64}$/.test(sha)) return `git:${sha}`;
+  } catch {
+    // Fall through: gitDiff below fails loudly on a truly bogus base; the
+    // identity just degrades to a form that never refuses anything.
+  }
+  return `git:unresolved:${base}`;
+}
+
+/**
+ * The only diffSource forms allowed to arm the rerun short-circuit: a base
+ * pinned to a commit SHA (40-hex sha1 / 64-hex sha256 repos). Legacy records
+ * carry ref strings ("git:HEAD", "git:start") which cannot prove the judged
+ * diff is still the same one, so they read as unmatched and never refuse -
+ * the safe default for pre-SHA-pinning files.
+ */
+const ARMABLE_DIFF_SOURCE = /^git:[0-9a-f]{40,64}$/;
+
+interface RerunRefusal {
+  currentFingerprint: VouchedTreeFingerprint;
+  mode: string;
+}
+
+/**
+ * Would re-running the recorded verify round be refused on the current state?
+ *
+ * One predicate, two consumers (implemented once by design): `runVerifyGate`
+ * asks it with THIS call's diffSource before spending anything, and the
+ * terminal-blocked exits (finalize / review-record / the Stop hooks, via
+ * verifyRerunWouldBeRefused) ask the identical-rerun form with
+ * currentDiffSource null - "would an identical rerun be refused" is the
+ * honest question those callers can answer without a caller-supplied base.
+ *
+ * Arms ONLY on a semantic-stage FAIL/BLOCK: mechanical commands, oracles, and
+ * the evidence/human lanes read state the vouched fingerprint cannot see, so
+ * their FAILs pin their tree (item 10) but never refuse a rerun; records
+ * without the stage/diff stamps (pre-field files) never refuse either.
+ * Deliberate exclusions: PASS needs no twin (a fresh PASS is already reported
+ * live by gateStatus freshness); ERROR is a fact about the judge, not the
+ * tree, so an identical-tree retry is legitimate; an overridden record is a
+ * standing user decision the harness must not re-litigate. Identical
+ * fingerprints mean identical vouched content in scoped and fallback mode
+ * alike (recomputed under the record's own scope via currentTreeFingerprint).
+ */
+function armedRerunRefusal(
+  projectRoot: string,
+  topic: string,
+  verifyRecord: GateRecord | undefined,
+  implementState: ImplementStateLite | null,
+  currentDiffSource: string | null,
+): RerunRefusal | null {
+  if (verifyRecord === undefined) return null;
+  if (verifyRecord.verdict !== "FAIL" && verifyRecord.verdict !== "BLOCK") return null;
+  if (verifyRecord.overridden) return null;
+  if (!verifyRecord.treeFingerprint) return null;
+  if (verifyRecord.failedStage !== "semantic") return null;
+  // A round that judged live material (capture output, agentic file reads)
+  // is not reproducible-by-construction; only an explicit false may arm.
+  // Records without the stamp cannot prove their material was diff-only, so
+  // the safe default is not arming (see the GateRecord field comment).
+  if (verifyRecord.usedLiveMaterial !== false) return null;
+  if (verifyRecord.diffSource === undefined || !ARMABLE_DIFF_SOURCE.test(verifyRecord.diffSource)) return null;
+  if (currentDiffSource !== null && verifyRecord.diffSource !== currentDiffSource) return null;
+  // Defensive stamp-consistency check: an older dist's recordGateResult
+  // rewrites verdict/findings/lastRunAt without knowing the stage/diff/live
+  // stamps, stranding stale stamps under a verdict they did not describe -
+  // and this reader would then trust them. The latest history row and the
+  // record are written together by a stamp-aware dist, so any disagreement
+  // (timestamp, verdict, or stamps) means mixed-dist writes: do not arm.
+  const lastRow = Array.isArray(verifyRecord.history) ? verifyRecord.history[verifyRecord.history.length - 1] : undefined;
+  if (
+    lastRow === undefined
+    || lastRow.at !== verifyRecord.lastRunAt
+    || lastRow.verdict !== verifyRecord.verdict
+    || lastRow.failedStage !== verifyRecord.failedStage
+    || lastRow.diffSource !== verifyRecord.diffSource
+    || lastRow.usedLiveMaterial !== verifyRecord.usedLiveMaterial
+  ) {
+    return null;
+  }
+  // Two legitimate rerun triggers live OUTSIDE the vouched tree (the whole
+  // agents/ namespace is excluded from it by design), so each must break the
+  // short-circuit on its own: the pinned input documents and evidence files
+  // (a quick contract lives under agents/quick/**), and the implement run's
+  // registered evidence (any new verify-run/oracle observation or mark bumps
+  // agents/implement/<slug>/state.json's updatedAt). A record without pinned
+  // inputs cannot prove its documents are unchanged and never
+  // short-circuits; an explicitly-empty pin list has nothing to drift.
+  const staleInputs =
+    verifyRecord.inputs !== undefined && verifyRecord.inputs.length > 0 ? staleInputsFor(projectRoot, verifyRecord) : [];
+  if (verifyRecord.inputs === undefined || staleInputs.length > 0) return null;
+  const evidenceUnchanged =
+    implementState === null
+    || (typeof implementState.updatedAt === "string"
+      && verifyRecord.lastRunAt !== null
+      && implementState.updatedAt <= verifyRecord.lastRunAt);
+  if (!evidenceUnchanged) return null;
+  const currentFingerprint = currentTreeFingerprint(projectRoot, topic, verifyRecord.treeFingerprint);
+  if (currentFingerprint === null || !vouchedFingerprintsMatch(verifyRecord.treeFingerprint, currentFingerprint)) return null;
+  const mode =
+    typeof verifyRecord.treeFingerprint === "object"
+    && "mode" in verifyRecord.treeFingerprint
+    && typeof verifyRecord.treeFingerprint.mode === "string"
+      ? verifyRecord.treeFingerprint.mode
+      : "fallback";
+  return { currentFingerprint, mode };
+}
+
+/**
+ * Terminal-predicate half of the disputed-FAIL livelock fix: when the refusal
+ * is armed on the current state, the remaining retry budget is unspendable by
+ * construction - an identical `sasu verify` call exits with the refusal - so
+ * the gate is terminally blocked NOW, not after N ritual reruns (reproduced
+ * 2026-08-11 on quick: semantic FAIL at attempts 1/3, identical rerun refused
+ * at $0, attempts frozen below the budget, the budget-exhausted honest exit
+ * unreachable while the Stop hook demanded "fix and re-run"). Consumed by
+ * cli/lib/reviews.js (verifyGateStatus.rerunRefused) and the quick Stop hook;
+ * conservative on any failure - false means "only budgetExhausted ends the
+ * loop", never a wrongly-opened exit.
+ */
+export function verifyRerunWouldBeRefused(projectRoot: string, topic: string): boolean {
+  try {
+    const state = new GateStore(projectRoot, topic).load();
+    return armedRerunRefusal(projectRoot, topic, state.gates.verify, readImplementState(projectRoot, topic), null) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export async function runVerifyGate(
   projectRoot: string,
   config: SasuConfig,
@@ -681,76 +832,41 @@ export async function runVerifyGate(
   // advice tells the agent to change it - reproduced 2026-08-11: a corrected
   // --base rerun that would PASS was refused as inevitable), and an injected
   // diff (the diffText test seam) has no git provenance at all, so a record
-  // carrying "injected" must never refuse anything.
-  const diffSource = options.diffText !== undefined ? "injected" : `git:${options.baseRef ?? "HEAD"}`;
+  // carrying "injected" must never refuse anything. The git form pins the
+  // base RESOLVED to a commit SHA (see resolveGitDiffSource).
+  const diffSource = options.diffText !== undefined ? "injected" : resolveGitDiffSource(projectRoot, options.baseRef);
 
   // FAIL-side rerun short-circuit ($0): re-asking the identical SEMANTIC
-  // question - the judge reading the same judged diff (same base, identical
-  // vouched tree) against identical pinned inputs with no new implement
-  // evidence - can only reproduce the recorded verdict; it would burn a
-  // retry-budget attempt and a judge round to learn nothing. Same refusal
-  // class as the open-task guard above: thrown BEFORE any spend, so no
-  // attempt is recorded, no judge call is made, and no history row appears.
-  // Armed ONLY by semantic-stage FAILs: mechanical commands and PRD oracles
-  // read state the vouched fingerprint cannot see (gitignored node_modules/,
-  // build outputs, running servers - see VerifyFailedStage), so their FAILs
-  // pin their tree (item 10) but never refuse a rerun; records without the
-  // stage/diff stamps (pre-field files) never refuse either.
-  // Deliberate exclusions: PASS needs no twin (a fresh PASS is already
-  // reported live by gateStatus freshness); ERROR is a fact about the judge,
-  // not the tree, so an identical-tree retry is legitimate; an overridden
-  // record is a standing user decision the harness must not re-litigate.
-  // Identical fingerprints mean identical vouched content in scoped and
-  // fallback mode alike (recomputed under the record's own scope via
-  // currentTreeFingerprint), so the refusal is correct in both.
-  const verifyRecord = state.gates.verify;
-  if (
-    verifyRecord !== undefined
-    && (verifyRecord.verdict === "FAIL" || verifyRecord.verdict === "BLOCK")
-    && !verifyRecord.overridden
-    && verifyRecord.treeFingerprint
-    && verifyRecord.failedStage === "semantic"
-    && verifyRecord.diffSource !== undefined
-    && verifyRecord.diffSource.startsWith("git:")
-    && verifyRecord.diffSource === diffSource
-  ) {
-    const currentFingerprint = currentTreeFingerprint(projectRoot, topic, verifyRecord.treeFingerprint);
-    const treeUnchanged =
-      currentFingerprint !== null && vouchedFingerprintsMatch(verifyRecord.treeFingerprint, currentFingerprint);
-    // Two legitimate rerun triggers live OUTSIDE the vouched tree (harness
-    // bookkeeping is excluded from it by design), so each must break the
-    // short-circuit on its own: the pinned input documents and evidence files
-    // (a quick contract lives under agents/quick/**), and the implement run's
-    // registered evidence (any new verify-run/oracle observation or mark
-    // bumps agents/implement/<slug>/state.json's updatedAt). A record without
-    // pinned inputs cannot prove its documents are unchanged and never
-    // short-circuits; an explicitly-empty pin list has nothing to drift.
-    const staleInputs =
-      verifyRecord.inputs !== undefined && verifyRecord.inputs.length > 0 ? staleInputsFor(projectRoot, verifyRecord) : [];
-    const inputsUnchanged = verifyRecord.inputs !== undefined && staleInputs.length === 0;
-    const evidenceUnchanged =
-      implementState === null
-      || (typeof implementState.updatedAt === "string"
-        && verifyRecord.lastRunAt !== null
-        && implementState.updatedAt <= verifyRecord.lastRunAt);
-    if (treeUnchanged && inputsUnchanged && evidenceUnchanged) {
-      const findingLines = verifyRecord.findings.slice(0, 5).map((f) => `  - ${f.missing}`);
-      const omitted = verifyRecord.findings.length > 5 ? `\n  (+${verifyRecord.findings.length - 5} more)` : "";
-      const mode =
-        "mode" in verifyRecord.treeFingerprint && typeof verifyRecord.treeFingerprint.mode === "string"
-          ? verifyRecord.treeFingerprint.mode
-          : "fallback";
-      throw new Error(
-        `verify gate rerun short-circuit: the last attempt (${verifyRecord.lastRunAt ?? "unknown time"}) recorded a semantic-judge ${verifyRecord.verdict} `
-          + `on this exact judged diff (${verifyRecord.diffSource}) and tree (${mode}-mode vouched fingerprint ${currentFingerprint!.vouched}, ${currentFingerprint!.entryCount} entries), `
-          + `and the pinned inputs and implement evidence are unchanged, so re-judging the identical semantic question can only reproduce that verdict. Recorded findings:\n`
-          + `${findingLines.join("\n") || "  (none recorded)"}${omitted}\n`
-          + `Change the code under judgment (or the contract/PRD/registered evidence), or point --base at the commit the work actually started from, and re-run. `
-          + `To force a re-judgment anyway, the USER (never the agent) may run: `
-          + `sasu gate override --slug ${topic} --gate verify --reason "<why>". `
-          + `No gate attempt was recorded and no judge call was made.`,
-      );
-    }
+  // question - the judge reading the same judged diff (same resolved base,
+  // identical vouched tree) against identical pinned inputs with no new
+  // implement evidence - can only reproduce the recorded verdict; it would
+  // burn a retry-budget attempt and a judge round to learn nothing. Same
+  // refusal class as the open-task guard above: thrown BEFORE any spend, so
+  // no attempt is recorded, no judge call is made, and no history row
+  // appears. The arming conditions live in armedRerunRefusal (shared with
+  // the terminal-blocked predicate the finalize/Stop-hook exits read).
+  const refusal = armedRerunRefusal(projectRoot, topic, state.gates.verify, implementState, diffSource);
+  if (refusal !== null) {
+    const verifyRecord = state.gates.verify!;
+    const findingLines = verifyRecord.findings.slice(0, 5).map((f) => `  - ${f.missing}`);
+    const omitted = verifyRecord.findings.length > 5 ? `\n  (+${verifyRecord.findings.length - 5} more)` : "";
+    throw new Error(
+      `verify gate rerun short-circuit: the last attempt (${verifyRecord.lastRunAt ?? "unknown time"}) recorded a semantic-judge ${verifyRecord.verdict} `
+        + `on this exact judged diff (${verifyRecord.diffSource}) and tree (${refusal.mode}-mode vouched fingerprint ${refusal.currentFingerprint.vouched}, ${refusal.currentFingerprint.entryCount} entries), `
+        + `and the pinned inputs and implement evidence are unchanged, so re-judging the identical semantic question can only reproduce that verdict. Recorded findings:\n`
+        + `${findingLines.join("\n") || "  (none recorded)"}${omitted}\n`
+        + `Change the code under judgment (or the contract/PRD/registered evidence), or point --base at the commit the work actually started from, and re-run. `
+        // The refusal is also the terminal signal (see verifyRerunWouldBeRefused):
+        // while it is armed the remaining retry budget is unspendable, so
+        // "keep re-running until the budget runs out" is not a path and the
+        // honest blocked close-out must be named right here - the component
+        // that refuses is the one that has to say what is left.
+        + `If you cannot fix the findings, close the run out honestly as blocked instead of re-running: `
+        + `attempts ${verifyRecord.attempts}/${config.judge.retryBudget} stay as recorded, and the gate counts as the blocker. `
+        + `To force a re-judgment anyway, the USER (never the agent) may run: `
+        + `sasu gate override --slug ${topic} --gate verify --reason "<why>". `
+        + `No gate attempt was recorded and no judge call was made.`,
+    );
   }
 
   // Every recorded verdict pins the tree it was earned on (PRINCIPLES item
@@ -1446,6 +1562,13 @@ export async function runVerifyGate(
     // is a blocking requiresHuman finding, not a PASS. A failed oracle closes
     // it the same way - the harness observed the criterion unmet.
     const passed = judgedVerdict === "PASS" && humanLane.length === 0 && oracleFindings.length === 0;
+    // Live-material stamp for the rerun short-circuit (see the GateRecord
+    // field comment): capture commands regenerate their evidence only when
+    // the gate runs, and an agentic lane Reads live files - both feed the
+    // judge state the tree fingerprint cannot see, so a FAIL earned on either
+    // must never be treated as reproducible-by-construction.
+    const usedLiveMaterial =
+      contractCommands.some((cmd) => cmd.kind === "capture") || verifyLanes.some((vl) => vl.agentic);
     // Document-order verdict list for the receipt: judged criteria carry the
     // judge's verdicts, oracle-backed ones the harness's; human criteria have
     // no verdict to quote (their findings carry the story).
@@ -1474,6 +1597,7 @@ export async function runVerifyGate(
         // deterministic "semantic" case the short-circuit may refuse.
         failedStage: oracleFindings.length > 0 ? "oracle" : judgedVerdict === "FAIL" ? "semantic" : "human",
         diffSource,
+        usedLiveMaterial,
         // One fan-out round is one gate attempt: recordGateResult runs once
         // per round no matter how many lanes it took (gap-audit's rule).
         artifactPayload: {
@@ -1481,6 +1605,7 @@ export async function runVerifyGate(
           verdict: passed ? "PASS" : "FAIL",
           judgedVerdict,
           diffSource,
+          usedLiveMaterial,
           criteria: resultCriteria,
           humanLane,
           ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
@@ -1904,12 +2029,44 @@ function collectImplementEvidence(
       ownerKind === "ac" ? [ownerId] : ownerKind === "task" ? (taskAcs.get(ownerId) ?? []) : (verificationCovers.get(ownerId) ?? []);
 
     const pinned = new Set<string>();
-    for (const entry of collectArtifacts(implementState)) {
+    const entries = collectArtifacts(implementState);
+    // Latest-log selection per (owner, command): mark.js verify-run writes one
+    // timestamped command-log path per execution, so same-path supersede never
+    // collapses them and a V row accumulated EVERY historical run - old exit-1
+    // rows rode into the judge beside the current exit-0 row with no ordering,
+    // and every one was fully read first. Only the newest run of a command is
+    // the row's current result; older runs are history, skipped before any
+    // file I/O and named in `omitted` so the selection stays auditable.
+    const isCommandLogArtifact = (artifact: ImplementArtifact | undefined): boolean =>
+      artifact !== undefined
+      && artifact.kind === "command-log"
+      && typeof artifact.command === "string"
+      && artifact.command !== ""
+      && typeof artifact.exitCode === "number";
+    const commandLogKey = (entry: { ownerKind: string; ownerId: string; artifact: ImplementArtifact }): string =>
+      `${entry.ownerKind}\0${String(entry.ownerId ?? "?")}\0${entry.artifact.command}`;
+    const latestLogIndex = new Map<string, number>();
+    entries.forEach((entry, index) => {
+      if (!isCommandLogArtifact(entry.artifact)) return;
+      const key = commandLogKey(entry);
+      const prev = latestLogIndex.get(key);
+      // createdAt is ISO-8601 (lexically ordered); a missing or equal stamp
+      // falls back to state order, where the later registration wins.
+      if (prev === undefined || String(entry.artifact.createdAt ?? "") >= String(entries[prev]!.artifact.createdAt ?? "")) {
+        latestLogIndex.set(key, index);
+      }
+    });
+
+    for (const [index, entry] of entries.entries()) {
       const artifact = entry.artifact;
       const relPath = typeof artifact?.path === "string" ? artifact.path : "";
       if (relPath === "") continue;
       const ownerId = String(entry.ownerId ?? "?");
       try {
+        if (isCommandLogArtifact(artifact) && latestLogIndex.get(commandLogKey(entry)) !== index) {
+          out.omitted.push({ ownerId, path: relPath, reason: "superseded by a newer run of the same command" });
+          continue;
+        }
         const mapped = ownerAcIds(entry.ownerKind, ownerId);
         const judgedTargets = mapped.filter((id) => judgedIds.has(id));
         // Owned by criteria a stronger authority already settled (oracle or
@@ -1919,7 +2076,16 @@ function collectImplementEvidence(
         const targets = laneWide ? [ownerId] : judgedTargets;
 
         const resolved = path.join(projectRoot, relPath);
-        if (!fs.existsSync(resolved)) {
+        // Stat before read: emptiness and the image attachment budget are
+        // byte-count decisions, so an empty file or an oversized screenshot
+        // is omitted without paying to read it (V rows accumulate large
+        // artifacts; reading megabytes just to drop them was pure waste).
+        // A skipped-without-read artifact is not pinned - the judge never saw
+        // it, and injectionOmitted names it with its reason.
+        let stat: fs.Stats;
+        try {
+          stat = fs.statSync(resolved);
+        } catch {
           out.omitted.push({ ownerId, path: relPath, reason: "file not found" });
           continue;
         }
@@ -1930,35 +2096,44 @@ function collectImplementEvidence(
           out.omitted.push({ ownerId, path: relPath, reason: containment });
           continue;
         }
-        const raw = fs.readFileSync(resolved);
-        if (raw.length === 0) {
+        if (stat.size === 0) {
           out.omitted.push({ ownerId, path: relPath, reason: "file is empty" });
           continue;
         }
+        const isImage = IMAGE_EXTENSIONS.has(path.extname(relPath).toLowerCase());
+        if (isImage && !canAttach) {
+          out.omitted.push({ ownerId, path: relPath, reason: "judge backend has no image attachment support" });
+          continue;
+        }
+        if (isImage && stat.size > IMAGE_MAX_BYTES) {
+          out.omitted.push({ ownerId, path: relPath, reason: `image is ${stat.size} bytes, over the ${IMAGE_MAX_BYTES}-byte attachment budget` });
+          continue;
+        }
+        const raw = fs.readFileSync(resolved);
         const sha256 = sha256Of(raw);
         if (!pinned.has(relPath)) {
           pinned.add(relPath);
           out.inputs.push({ path: relPath, sha256, kind: "evidence" });
         }
 
-        const isImage = IMAGE_EXTENSIONS.has(path.extname(relPath).toLowerCase());
-        const isCommandLog =
-          artifact.kind === "command-log" && typeof artifact.command === "string" && artifact.command !== "" && typeof artifact.exitCode === "number";
-        if (isCommandLog) {
+        if (isCommandLogArtifact(artifact)) {
           if (raw.includes(0)) {
             out.omitted.push({ ownerId, path: relPath, reason: "binary content" });
             continue;
           }
-          // Recorded, not "just now": the provenance says when the check ran
-          // and whether its pass is still fresh on the current tree, so the
-          // judge can weigh a possibly-stale log honestly.
+          // Recorded, not "just now": the provenance stamps WHEN the check
+          // ran (the row's recorded time, so an old pass cannot masquerade as
+          // current) and whether its pass is still fresh on the current tree,
+          // so the judge can weigh a possibly-stale log honestly.
           const freshness =
             entry.ownerKind === "verification"
               ? freshVerificationIds.has(ownerId)
                 ? "; its pass is still fresh on the current tree"
                 : "; the tree may have changed since"
               : "";
-          const provenance = `the implement harness ran \`${artifact.command}\` earlier in the run (verify-run recorded on ${ownerId}${freshness})`;
+          const recordedAt =
+            typeof artifact.createdAt === "string" && artifact.createdAt !== "" ? ` at ${artifact.createdAt}` : "";
+          const provenance = `the implement harness ran \`${artifact.command}\` earlier in the run (verify-run recorded on ${ownerId}${recordedAt}${freshness})`;
           const tail = raw.toString("utf8").split("\n").slice(-30).join("\n");
           for (const target of targets) {
             out.checks.push({
@@ -1981,14 +2156,9 @@ function collectImplementEvidence(
         // section for the same reason).
         const provenance = `registered as ${artifact.kind ?? "file"} evidence by the implementing session (owner ${ownerId}); origin not verified by the harness - weigh accordingly`;
         if (isImage) {
-          if (!canAttach) {
-            out.omitted.push({ ownerId, path: relPath, reason: "judge backend has no image attachment support" });
-            continue;
-          }
-          if (raw.length > IMAGE_MAX_BYTES) {
-            out.omitted.push({ ownerId, path: relPath, reason: `image is ${raw.length} bytes, over the ${IMAGE_MAX_BYTES}-byte attachment budget` });
-            continue;
-          }
+          // No second copy of the attachability/budget rule here: both are
+          // byte-count decisions, so they are settled from the stat above
+          // before anything is read (PRINCIPLES item 3 - one rule, one site).
           for (const target of targets) {
             out.material.push({
               criterionId: target,

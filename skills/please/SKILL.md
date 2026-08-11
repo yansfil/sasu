@@ -121,8 +121,8 @@ A sasu gate BLOCK is not a stop: it means "cannot pass until PASS".
 When a gate (gap-audit, spec, or verify) blocks during a `$please` run:
 
 1. Fix every agent-fixable finding (amend the qa-log or PRD, fix the code), then re-run the same gate.
-2. Repeat within the gate's retry budget (default 3 autonomous fix attempts).
-3. Stop and hand the findings to the user only when a finding is marked `needs human decision`, or the gate output says the retry budget is exhausted.
+2. Repeat within the gate's retry budget (default 3 autonomous fix attempts). The budget is N chances to fix and re-verify, not N identical retries: re-running with nothing changed is refused at $0 and spends no attempt.
+3. Stop and hand the findings to the user only when a finding is marked `needs human decision`, or the gate output says the retry budget is exhausted or that an identical re-run is refused.
 
 Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
 A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `sasu gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.

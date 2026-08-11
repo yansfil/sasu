@@ -366,11 +366,42 @@ function verifyGateStatus(state) {
       attempts: view.attempts,
       budget: view.budget,
       budgetExhausted: view.budgetExhausted,
+      rerunRefused: verifyRerunRefused(projectRoot, state.topicSlug),
       findings: view.findings,
     };
   } catch {
     // CLI dist not built: fall back to the recorded verdict without freshness.
     return verifyGateFallbackStatus(record, budget);
+  }
+}
+
+// Second terminal cause beside a spent budget: the gate's own rerun
+// short-circuit would refuse an identical `sasu verify` at $0, so the
+// remaining attempts are unspendable and the budget can never reach
+// exhaustion (reproduced 2026-08-11 on quick: semantic FAIL at attempts 1/3,
+// identical rerun refused, the Stop hook still demanding "fix and re-run" -
+// a livelock whose only exit was a user override the agent cannot perform).
+//
+// The predicate itself is NOT reimplemented here: cli/src/gates/commands.ts
+// owns the arming conditions the short-circuit uses, and this is the one call
+// into it (PRINCIPLES item 3 - the freshness deadlock came from three copies
+// of one rule). No dist means no predicate: false, so only budgetExhausted
+// ends the loop, which is the conservative reading (a wrongly-closed exit
+// costs a user override; a wrongly-opened one lets a run give up early).
+//
+// Cost: armedRerunRefusal exits on the cheap record fields first and only a
+// FAIL/BLOCK record with consistent semantic stamps reaches the input hashes
+// and the tree fingerprint. Measured 2026-08-11 on this repo (142 vouched
+// entries): ~50ms for the fingerprint, so at most ~100ms per status/Stop turn
+// while a FAIL stands - the same cost the Stop guard already pays on the PASS
+// path, and $0 on every other verdict.
+function verifyRerunRefused(projectRoot, topicSlug) {
+  if (!topicSlug) return false;
+  try {
+    const gateCommands = require("../dist/gates/commands.js");
+    return gateCommands.verifyRerunWouldBeRefused(projectRoot, topicSlug) === true;
+  } catch {
+    return false;
   }
 }
 
@@ -392,20 +423,46 @@ function verifyGateFallbackStatus(record, budget) {
     attempts,
     budget,
     budgetExhausted: !passed && attempts >= budget && record.verdict != null,
+    // Deliberately not derived here: "would an identical rerun be refused"
+    // needs the tree fingerprint and the input pins, i.e. exactly the dist
+    // code this branch exists because it cannot load. Only budgetExhausted
+    // ends the loop without dist (see verifyRerunRefused).
+    rerunRefused: false,
     findings: Array.isArray(record.findings) ? record.findings : [],
     freshnessUnverified: true,
   };
 }
 
-// Terminal means the gate ran, failed, and has no retry budget left: the
-// run's only honest destination is a blocked receipt. finalize --status
-// blocked accepts the gate itself as the blocker on exactly this predicate,
-// and the review-record commands stop letting the gate veto an honest review
-// on exactly this predicate too - the two exits of the deadlock must never
+// THE terminal predicate. Terminal means the gate ran, failed, and the
+// autonomous fix loop has no move left that could change the verdict:
+//
+//   BLOCKED and (budget exhausted OR an identical rerun would be refused)
+//
+// The retry budget means "N chances to fix and re-verify", not "N identical
+// retries". When the rerun short-circuit is armed on the current state, every
+// remaining attempt is unspendable by construction - `sasu verify` exits with
+// the refusal at $0 without recording an attempt - so attempts can never grow
+// to the budget and a budget-only predicate is unreachable. That was the
+// livelock (reproduced 2026-08-11 on quick, FAIL at attempts 1/3): complete
+// refused, blocked refused, rerun refused, override the only exit.
+//
+// finalize --status blocked accepts the gate itself as the blocker on exactly
+// this predicate, the review-record commands stop letting the gate veto an
+// honest review on exactly this predicate, and the Stop hooks stop demanding a
+// re-run on exactly this predicate - the exits of the deadlock must never
 // disagree about when the gate stops arguing (see the circular-rejection
-// incident in the review-record commands).
+// incident in the review-record commands). `rerunRefused` never fabricates
+// budgetExhausted: the receipt keeps reporting attempts 1/N honestly and names
+// the refusal as the separate cause (PRINCIPLES item 10).
 function verifyGateTerminallyBlocked(gate) {
-  return gate.effective === "BLOCKED" && gate.budgetExhausted === true;
+  return gate.effective === "BLOCKED" && (gate.budgetExhausted === true || gate.rerunRefused === true);
+}
+
+// Why the gate is terminal, in the words the agent must act on. Kept next to
+// the predicate so the two can never name different causes.
+function verifyGateTerminalCause(gate) {
+  if (gate.budgetExhausted === true) return `its ${gate.budget}-attempt retry budget is exhausted`;
+  return `an identical re-run is refused on this unchanged tree (attempts ${gate.attempts}/${gate.budget}; the remaining budget is unspendable)`;
 }
 
 function verifyGateViolations(state, options = {}) {
@@ -420,12 +477,18 @@ function verifyGateViolations(state, options = {}) {
     if (options.allowTerminallyBlockedVerifyGate === true && verifyGateTerminallyBlocked(gate)) {
       return [];
     }
-    // With budget spent, "fix and re-run" is a dead instruction; point at the
-    // two real exits so the deadlock names its own escape (finalize refuses
-    // --status complete either way).
+    // Once the gate is terminal, "fix and re-run" is a dead instruction; point
+    // at the real exits so the deadlock names its own escape (finalize refuses
+    // --status complete either way). A refused rerun differs from a spent
+    // budget in one way that matters to the agent: the code CAN still change,
+    // and a tree change is what re-arms verification - so name that move
+    // first, because it is the only one that could still reach a PASS.
+    if (!verifyGateTerminallyBlocked(gate)) {
+      return [`Verify gate is BLOCKED (verdict ${gate.verdict}); fix the cited findings and re-run \`sasu verify\`, or have the user record an override`];
+    }
     return [gate.budgetExhausted
-      ? `Verify gate is BLOCKED (verdict ${gate.verdict}) and its ${gate.budget}-attempt retry budget is exhausted; completion is impossible - finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override`
-      : `Verify gate is BLOCKED (verdict ${gate.verdict}); fix the cited findings and re-run \`sasu verify\`, or have the user record an override`];
+      ? `Verify gate is BLOCKED (verdict ${gate.verdict}) and ${verifyGateTerminalCause(gate)}; completion is impossible - finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override`
+      : `Verify gate is BLOCKED (verdict ${gate.verdict}) and ${verifyGateTerminalCause(gate)}; re-running \`sasu verify\` unchanged exits with the refusal, so change the code under judgment (a tree change re-arms verification) or finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override`];
   }
   if (gate.effective === "STALE") {
     return ["Verify gate PASS is stale: its input documents changed after the passing run; re-run `sasu verify` against the current diff"];
@@ -656,7 +719,9 @@ module.exports = {
   completionViolations,
   verifyGateStatus,
   verifyGateFallbackStatus,
+  verifyRerunRefused,
   verifyGateTerminallyBlocked,
+  verifyGateTerminalCause,
   verifyGateViolations,
   prdSnapshotViolations,
   requirementsFidelityHandoffViolations,

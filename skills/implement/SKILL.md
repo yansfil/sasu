@@ -342,8 +342,10 @@ and then calling the gate on frozen code pays for the suite once.
   structured object (top-level `contractVersion`, a `prelint` key separate
   from judge findings, per-criterion verdicts) instead of scraping text.
 - Exit 1 with per-criterion semantic failures: address each cited criterion
-  and re-run. When the printed retry budget is exhausted, stop and hand the
-  findings to the user.
+  and re-run. The budget is N chances to fix and re-verify, not N identical
+  retries - re-running with nothing changed is refused at $0 and spends no
+  attempt. When the printed retry budget is exhausted, or a re-run is refused,
+  stop and hand the findings to the user.
 - Fail-closed judge errors report their cause and recovery; the gate stays
   blocked until it passes or the user overrides.
 - Never run `sasu gate override` yourself: overrides are user-only, and
@@ -352,7 +354,7 @@ and then calling the gate on frozen code pays for the suite once.
   gate state lives under `agents/gates/<topic-slug>/`.
 - Enforcement: `finalize` and the completion checks refuse a gate that ran
   and is BLOCKED, or whose PASS went stale because its inputs changed.
-  A BLOCKED gate whose retry budget is exhausted counts as the blocker itself: `finalize --status blocked` is the honest exit, and the receipt stamps the gate snapshot (verdict, attempts, findings).
+  A BLOCKED gate counts as the blocker itself once it is terminal - retry budget exhausted, or an identical re-run refused on the unchanged tree so the remaining budget is unspendable: `finalize --status blocked` is the honest exit, and the receipt stamps the gate snapshot (verdict, attempts, findings, terminal cause) without ever claiming a budget it did not spend.
   A gate that never ran does not block completion, but its `NOT_RUN` status
   is stamped into `receipt.json` and `implementation-result.md`, so skipping
   it is always visible and needs the recorded reason below.

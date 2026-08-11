@@ -16,7 +16,8 @@ const {
   summarizeFingerprintDiff,
   stripFingerprintEntries,
 } = require(path.join(libDir, "git.js"));
-const { reviewWorktreeSnapshotViolations } = require(path.join(libDir, "reviews.js"));
+const { reviewWorktreeSnapshotViolations, prdSnapshotViolations } = require(path.join(libDir, "reviews.js"));
+const { sha256Text } = require(path.join(libDir, "util.js"));
 
 function git(dir, ...args) {
   const result = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
@@ -101,30 +102,78 @@ test("vouched fingerprint: harness bookkeeping never moves it, in both modes", (
     "scoped mode must exclude bookkeeping even when a glob would cover it");
 });
 
-test("vouched fingerprint: the run's own spec docs are judged inputs in both modes", () => {
+// This test replaced two that pinned the OPPOSITE rule: spec docs used to ride
+// the fingerprint as "judged inputs" (the run's own always, another run's only
+// when `slug` was passed). That carve-out made the exclusion depend on who was
+// asking, so the same tree fingerprinted differently per caller, and loose
+// `agents/*` files rode the fallback set with no carve-out at all - reproduced
+// 2026-08-11: churn under agents/ moved the fingerprint and disarmed the verify
+// rerun short-circuit. The namespace-wide rule is the AGENTS.md invariant, and
+// the judged documents lose nothing because they are pinned by content hash
+// somewhere stronger (see the compensating-pin test below).
+test("vouched fingerprint: the ENTIRE agents/ namespace is out, whoever asks and in either mode", () => {
   const dir = makeRepo();
-  const scopedOptions = { projectRoot: dir, slug: "demo", scopeGlobs: ["src/**"] };
-  const fallbackOptions = { projectRoot: dir, slug: "demo" };
-  const scopedBase = vouchedTreeFingerprint(scopedOptions);
-  const fallbackBase = vouchedTreeFingerprint(fallbackOptions);
+  const cases = {
+    "fallback, no slug": { projectRoot: dir },
+    "fallback, own slug": { projectRoot: dir, slug: "demo", runDir: "agents/implement/demo" },
+    "fallback, other slug": { projectRoot: dir, slug: "other" },
+    // A glob that explicitly names agents/** still must not pull it in: the
+    // exclusion is not a default a Scope declaration can override.
+    "scoped, glob names agents": { projectRoot: dir, slug: "demo", scopeGlobs: ["src/**", "agents/**"] },
+  };
+  const before = Object.fromEntries(Object.entries(cases).map(([name, options]) => [name, vouchedTreeFingerprint(options)]));
 
   write(dir, "agents/prd/demo/prd.md", "# PRD: demo (edited)\n");
-  assert.notEqual(vouchedTreeFingerprint(scopedOptions).vouched, scopedBase.vouched,
-    "scoped mode must still watch agents/prd/<slug>/** even though no glob names it");
-  assert.notEqual(vouchedTreeFingerprint(fallbackOptions).vouched, fallbackBase.vouched,
-    "fallback mode must watch the run's spec docs");
+  write(dir, "agents/prd/other/prd.md", "# PRD: other (concurrent session edit)\n");
+  write(dir, "agents/interview/demo/qa-log.md", "# qa-log\n");
+  write(dir, "agents/config.json", '{"judge":{"retryBudget":9}}');
+  write(dir, "agents/rules/custom.md", "# rule\n");
+  write(dir, "agents/gates/demo/gates.json", "{}");
+  write(dir, "agents/implement/demo/state.json", "{}");
+  write(dir, "agents/stray.json", "{}");
+
+  for (const [name, options] of Object.entries(cases)) {
+    assert.equal(vouchedTreeFingerprint(options).vouched, before[name].vouched, `${name}: agents/ churn must not move the fingerprint`);
+    assert.equal(vouchedTreeFingerprint(options).entryCount, before[name].entryCount, `${name}: no agents/ path may enter the vouched set`);
+  }
+
+  // Source is still watched, so the fingerprint has not simply gone blind.
+  write(dir, "src/app.js", "console.log('real change')\n");
+  for (const [name, options] of Object.entries(cases)) {
+    assert.notEqual(vouchedTreeFingerprint(options).vouched, before[name].vouched, `${name}: an in-scope source edit must still move it`);
+  }
 });
 
-test("vouched fingerprint: another run's spec docs are out when the slug is known, in when it is not", () => {
+test("vouched fingerprint: spec-doc drift is caught by content pins, not by the fingerprint", () => {
+  // The compensating proof for the exclusion above. A PRD/contract edit still
+  // invalidates every recorded verdict that depended on it, through two pins
+  // the fingerprint never owned:
+  //   - the gate's own sha256 `inputs` list (cli/src/gates/store.ts staleInputsFor,
+  //     driven end to end by cli/test/unit/store.test.mjs "editing the input
+  //     document after a PASS turns the gate STALE")
+  //   - the implement run's prdSnapshot.sha256 (reviews.js prdSnapshotViolations)
+  // Asserted here on the second one, so the two halves of the argument live in
+  // the same file as the exclusion they justify.
   const dir = makeRepo();
-  const withSlug = vouchedTreeFingerprint({ projectRoot: dir, slug: "demo" });
-  const slugless = vouchedTreeFingerprint({ projectRoot: dir });
+  const prdRel = "agents/prd/demo/prd.md";
+  const before = vouchedTreeFingerprint({ projectRoot: dir, slug: "demo" });
+  const state = {
+    projectRoot: dir,
+    prdPath: prdRel,
+    prdSnapshot: { sha256: sha256Text(fs.readFileSync(path.join(dir, prdRel), "utf8")) },
+    tasks: [],
+    acceptanceCriteria: [],
+    verification: [],
+  };
+  assert.deepEqual(prdSnapshotViolations(path.join(dir, "agents/implement/demo/state.json"), state), [],
+    "an unedited PRD is clean");
 
-  write(dir, "agents/prd/other/prd.md", "# PRD: other (concurrent session edit)\n");
-  assert.equal(vouchedTreeFingerprint({ projectRoot: dir, slug: "demo" }).vouched, withSlug.vouched,
-    "a concurrent run's PRD edit must not stale this run");
-  assert.notEqual(vouchedTreeFingerprint({ projectRoot: dir }).vouched, slugless.vouched,
-    "with no slug the whole prd tree stays vouched");
+  write(dir, prdRel, "# PRD: demo (rewritten mid-run)\n");
+  assert.equal(vouchedTreeFingerprint({ projectRoot: dir, slug: "demo" }).vouched, before.vouched,
+    "the fingerprint is deliberately blind to this");
+  const violations = prdSnapshotViolations(path.join(dir, "agents/implement/demo/state.json"), state);
+  assert.equal(violations.length, 1, "the content pin is what notices");
+  assert.match(violations[0], /PRD file changed after implementation state was initialized/);
 });
 
 test("vouched fingerprint: state derivation unions full Scope declarations and falls back on partial ones", () => {

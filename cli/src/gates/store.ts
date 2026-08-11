@@ -77,8 +77,10 @@ export interface GateRunSummary {
   treeFingerprint?: VouchedTreeFingerprint | null;
   /** Stage that produced a non-PASS verdict; absent on PASS and on pre-field rows. */
   failedStage?: VerifyFailedStage;
-  /** Judged-diff identity of the round: "git:<base>" or "injected" (test seam). */
+  /** Judged-diff identity of the round: "git:<resolved base SHA>" or "injected" (test seam). */
   diffSource?: string;
+  /** Mirror of GateRecord.usedLiveMaterial for this row (see that field's comment). */
+  usedLiveMaterial?: boolean;
 }
 
 /**
@@ -139,12 +141,32 @@ export interface GateRecord {
   failedStage?: VerifyFailedStage;
   /**
    * Verify gate only: identity of the judged diff the verdict was earned on -
-   * "git:<resolved base ref>" or "injected" (the diffText test seam). A rerun
-   * with a different base judges a DIFFERENT diff (reproduced 2026-08-11: a
-   * corrected --base rerun that would PASS was refused as inevitable), so the
-   * short-circuit requires this to match; "injected" never arms it.
+   * "git:<base resolved to a commit SHA at record time>" or "injected" (the
+   * diffText test seam). A rerun with a different base judges a DIFFERENT
+   * diff (reproduced 2026-08-11: a corrected --base rerun that would PASS was
+   * refused as inevitable), so the short-circuit requires this to match. The
+   * pinned value is the RESOLVED SHA, never the ref string: refs move under
+   * an unchanged worktree (reproduced 2026-08-11: `git branch -f start HEAD`
+   * after a FAIL at `--base start`, and any WIP commit moving HEAD - the
+   * commit-invariant fingerprint cannot see either), and a moved base means a
+   * different judged diff. "injected" and any unresolved/legacy ref-string
+   * form never arm the short-circuit.
    */
   diffSource?: string;
+  /**
+   * Verify gate only, stamped alongside failedStage on a non-PASS semantic
+   * round: true when the judged material included capture-produced evidence
+   * (a `capture:` command re-runs only when the gate runs) or any lane ran
+   * the agentic fallback (the judge Reads live files, gitignored ones
+   * included) - state the tree fingerprint cannot see. Such a FAIL is not
+   * reproducible-by-construction, so it must never arm the rerun
+   * short-circuit (reproduced 2026-08-11: a capture of gitignored
+   * service-state "BROKEN" earned a semantic FAIL; the live state was fixed
+   * out-of-tree and the rerun was refused forever on the unchanged tree and
+   * stale pinned capture bytes). Records without the field (pre-field files)
+   * cannot prove their material was diff-only and never arm either.
+   */
+  usedLiveMaterial?: boolean;
 }
 
 export interface GatesState {
@@ -343,8 +365,10 @@ export function recordGateResult(
         treeFingerprint?: VouchedTreeFingerprint | null;
         /** Verify gate only: stage behind a non-PASS verdict (ignored on PASS). */
         failedStage?: VerifyFailedStage;
-        /** Verify gate only: judged-diff identity ("git:<base>" | "injected"). */
+        /** Verify gate only: judged-diff identity ("git:<resolved SHA>" | "injected"). */
         diffSource?: string;
+        /** Verify gate only: non-PASS round judged live material (see GateRecord field). */
+        usedLiveMaterial?: boolean;
       }
     | { kind: "error"; message: string; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],
@@ -370,6 +394,12 @@ export function recordGateResult(
     else delete record.failedStage;
     if (outcome.diffSource !== undefined) record.diffSource = outcome.diffSource;
     else delete record.diffSource;
+    // Same lifecycle as failedStage: the live-material stamp describes a
+    // non-PASS round only, and must never survive under a verdict it did not
+    // describe (the short-circuit trusts it).
+    const usedLiveMaterial = outcome.verdict !== "PASS" ? outcome.usedLiveMaterial : undefined;
+    if (usedLiveMaterial !== undefined) record.usedLiveMaterial = usedLiveMaterial;
+    else delete record.usedLiveMaterial;
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
     // Cumulative twin of the gauge above: every real run counts, PASS included,
     // and nothing resets it (see the GateRecord field comment).
@@ -384,6 +414,9 @@ export function recordGateResult(
       treeFingerprint: outcome.treeFingerprint ?? null,
       ...(failedStage !== undefined ? { failedStage } : {}),
       ...(outcome.diffSource !== undefined ? { diffSource: outcome.diffSource } : {}),
+      // Mirrored onto the history row so the arming-time stamp-consistency
+      // check (commands.ts) can prove record and row came from one write.
+      ...(usedLiveMaterial !== undefined ? { usedLiveMaterial } : {}),
     };
   } else {
     // Fail-closed (D-15): a judge failure counts as a blocked run, never a pass.
@@ -400,6 +433,7 @@ export function recordGateResult(
     // ERROR never arms the short-circuit anyway.
     delete record.failedStage;
     delete record.diffSource;
+    delete record.usedLiveMaterial;
     record.attempts += 1;
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
     summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };

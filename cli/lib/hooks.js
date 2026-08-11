@@ -10,7 +10,7 @@ const { judgeRetryBudget } = require("./config");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
 const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
-const { completionViolations } = require("./reviews");
+const { completionViolations, verifyRerunRefused } = require("./reviews");
 const { sameSessionId, sessionIdFromHookPayload, readActive, syncActive } = require("./state_store");
 const { normalizeCommandForCompare } = require("./inference");
 
@@ -106,11 +106,14 @@ If delivery is genuinely blocked, report the blocker explicitly to the user inst
  * (fresh contract hash AND unchanged tree fingerprint) plus the finalize
  * steps (receipt, contract status flip, marker removal).
  *
- * Two outcomes end the autonomous fix loop rather than driving another verify:
- * a finding marked requiresHuman, and an exhausted retry budget. Both still
- * demand the finalization steps, because a run handed to a person needs its
- * receipt and its open items just as much as a passing one does - and a
- * marker left behind becomes the next session's phantom active run.
+ * Three outcomes end the autonomous fix loop rather than driving another
+ * verify: a finding marked requiresHuman, an exhausted retry budget, and an
+ * armed rerun refusal (budget left but unspendable - an identical `sasu
+ * verify` exits at $0 without recording an attempt, so the budget can never
+ * reach exhaustion). All three still demand the finalization steps, because a
+ * run handed to a person needs its receipt and its open items just as much as
+ * a passing one does - and a marker left behind becomes the next session's
+ * phantom active run.
  * Everything else about a non-PASS verify blocks with the exact command to
  * run. Same philosophy as the implement Stop guard: fail open on any read
  * error - the skill remains the source of enforcement.
@@ -206,12 +209,20 @@ function quickStopDirective(hookCwd, sessionId) {
   }
 
   // BLOCKED / FAIL / ERROR: keep fixing inside the retry budget; a
-  // human-decision finding or an exhausted budget ends the autonomous loop.
+  // human-decision finding, an exhausted budget, or an armed rerun refusal
+  // ends the autonomous loop.
   const findings = Array.isArray(record.findings) ? record.findings : [];
   const humanFindings = findings.filter(item => item && item.requiresHuman);
   const budget = judgeRetryBudget(hookCwd);
   const budgetExhausted = typeof record.attempts === "number" && record.attempts >= budget;
-  if (humanFindings.length || budgetExhausted) {
+  // Never point at a command that will exit with the refusal: when the gate's
+  // rerun short-circuit is armed, `sasu verify` costs $0 and records nothing,
+  // so the budget can never reach exhaustion and this guard would demand "fix
+  // and re-run" forever (reproduced 2026-08-11: semantic FAIL at attempts 1/3,
+  // no way out but a user override). Same predicate the gate itself uses, read
+  // through the single dist entry point (reviews.verifyRerunRefused).
+  const rerunRefused = !budgetExhausted && verifyRerunRefused(hookCwd, marker.slug);
+  if (humanFindings.length || budgetExhausted || rerunRefused) {
     // Ending the fix loop is not the same as ending the run: the user still
     // needs the receipt and the open items, and a marker left behind becomes
     // the next session's phantom active run. Verification staleness matters
@@ -227,12 +238,17 @@ function quickStopDirective(hookCwd, sessionId) {
     }
     const why = humanFindings.length
       ? `needs human verification and cannot reach PASS on its own:\n\n${humanFindings.map(item => `- ${item.missing}`).join("\n")}`
-      : `exhausted its ${budget}-attempt verify budget.`;
+      : rerunRefused
+        // Says the honest number (1/3, not 3/3) and names the one move that
+        // could still change the verdict, so "give up" is never the only read.
+        ? `recorded a semantic ${record.verdict} at attempt ${record.attempts}/${budget} and an identical re-run is refused on this unchanged tree, so the remaining attempts are unspendable.\n\nIf you can still fix the findings, change the code under judgment - a tree change re-arms verification and \`${verifyCommand}\` will run again. Otherwise close the run out honestly as blocked.`
+        : `exhausted its ${budget}-attempt verify budget.`;
     // A human handoff closes as the documented complete-with-open-items shape
     // (a contract with `human:` criteria can never reach PASS by design). A
-    // budget-exhausted run with no human lane failed verification outright,
-    // so its contract must say `blocked` - and only there: with budget
-    // remaining this branch is unreachable and the fix loop keeps driving.
+    // budget-exhausted run - or one whose remaining budget is unspendable
+    // because the rerun is refused - failed verification outright, so its
+    // contract must say `blocked`. With budget left AND a rerun that would
+    // really run, this branch is unreachable and the fix loop keeps driving.
     return finalizeDirective(
       why,
       "Then report to the user: what passed, what is still open, and exactly what you need them to confirm. Do not call the run Done - name the open items. The guard retires the run marker itself once these are done.",

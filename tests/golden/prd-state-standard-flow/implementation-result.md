@@ -254,8 +254,8 @@ Receipt: agents/implement/standard-regression/receipt.json
       ]
     },
     "vouchedTreeFingerprint": {
-      "vouched": "5b73cb93",
-      "entryCount": 2,
+      "vouched": "5dc0d647",
+      "entryCount": 1,
       "mode": "fallback"
     },
     "recordedAt": "<TS>"

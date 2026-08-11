@@ -2002,6 +2002,127 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
   assert.equal(stop.stdout.trim(), "");
 });
 
+// The second terminal cause, on the implement path. A semantic FAIL whose
+// identical rerun the gate refuses at $0 freezes `attempts` below the budget
+// forever, so a budget-only terminal predicate is unreachable and the blocked
+// exit never opens (reproduced 2026-08-11 on the quick path at attempts 1/3).
+// The receipt must stay honest about which cause it was: 1/3, not a faked 3/3.
+test("a refused rerun is itself terminal: finalize --status blocked opens at attempts 1/N without faking exhaustion", () => {
+  const projectRoot = initGitRepo();
+  const slug = "gate-rerun-refused";
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 3 } }));
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "gate-rerun-refused-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  const store = requireModule(path.join(repoRoot, "cli", "dist", "gates", "store.js"));
+  const { vouchedTreeFingerprint } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
+  const prdRel = path.join("agents", "prd", slug, "prd.md");
+  const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
+  const finding = { area: "semantic", severity: "P0", missing: "AC1: the diff still has no persistence", recommendation: "add it", requiresHuman: false };
+  const headSha = run("git", ["rev-parse", "HEAD"], { cwd: projectRoot }).stdout.trim();
+
+  // A record shaped exactly as runVerifyGate writes an armed semantic FAIL:
+  // stage stamp, live-material stamp false, base pinned to a resolved SHA, the
+  // PRD pinned by content hash, the tree pinned, and a latest history row that
+  // agrees with all of it. Written LAST, so state.json's updatedAt (bumped by
+  // every mark and by the review record) is older than lastRunAt - a newer
+  // updatedAt means new evidence and would legitimately break the refusal.
+  const writeGates = (overrides = {}) => {
+    const lastRunAt = new Date(Date.now() + 1000).toISOString();
+    const verify = {
+      ...emptyGate,
+      verdict: "FAIL",
+      attempts: 1,
+      totalAttempts: 1,
+      findings: [finding],
+      lastRunAt,
+      failedStage: "semantic",
+      diffSource: `git:${headSha}`,
+      usedLiveMaterial: false,
+      inputs: [{ path: prdRel, sha256: store.freshnessHash(fs.readFileSync(path.join(projectRoot, prdRel), "utf8")), kind: "prd" }],
+      treeFingerprint: vouchedTreeFingerprint({ projectRoot, slug, scopeGlobs: null }),
+      ...overrides,
+    };
+    verify.history = [{
+      at: verify.lastRunAt,
+      verdict: verify.verdict,
+      findingCount: verify.findings.length,
+      requiresHuman: false,
+      treeFingerprint: verify.treeFingerprint,
+      failedStage: verify.failedStage,
+      diffSource: verify.diffSource,
+      usedLiveMaterial: verify.usedLiveMaterial,
+      ...(overrides.history ? overrides.history[0] : {}),
+    }];
+    write(path.join(projectRoot, "agents", "gates", slug, "gates.json"), JSON.stringify({
+      schema: 1,
+      topic: slug,
+      gates: { "gap-audit": { ...emptyGate }, spec: { ...emptyGate }, verify },
+      deviations: [],
+      judgeCalls: [],
+    }, null, 2));
+  };
+
+  // Control: the SAME record with an unmatchable base is a gate whose rerun
+  // would really run, so the cheap early "blocked" stays shut. Without this the
+  // test could not tell "the refusal opened the exit" from "the exit was open".
+  writeGates({ diffSource: "git:HEAD" });
+  const wouldRun = runJson(["finalize", "--status", "blocked", "--summary", "Giving up early."], projectRoot, { allowFailure: true });
+  assert.equal(wouldRun.ok, false);
+  assert.ok(
+    wouldRun.violations.some(item => /an identical re-run would still run/.test(item)),
+    `expected a rerun-would-run refusal, got: ${JSON.stringify(wouldRun.violations)}`,
+  );
+
+  // Armed: complete is still impossible, and the rejection must name the code
+  // change as the live option rather than a re-run that would only be refused.
+  writeGates();
+  const complete = runJson(["finalize", "--status", "complete", "--summary", "Not actually complete."], projectRoot, { allowFailure: true });
+  assert.equal(complete.ok, false);
+  const gateViolation = complete.violations.find(item => /Verify gate is BLOCKED/.test(item));
+  assert.ok(gateViolation, JSON.stringify(complete.violations));
+  assert.match(gateViolation, /identical re-run is refused on this unchanged tree \(attempts 1\/3/);
+  assert.match(gateViolation, /change the code under judgment/);
+  assert.match(gateViolation, /--status blocked/, "the rejection must name the honest exit");
+  assert.doesNotMatch(gateViolation, /retry budget is exhausted/, "the budget was not spent; the receipt may not claim it was");
+
+  // The Stop hook carries the same directive verbatim, so the continuation loop
+  // cannot keep demanding a re-run the gate will refuse.
+  const stuck = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: projectRoot,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "gate-rerun-refused-session" }),
+  });
+  const stuckReason = JSON.parse(stuck.stdout).reason;
+  assert.match(stuckReason, /identical re-run is refused on this unchanged tree/);
+  assert.ok(!/fix the cited findings and re-run/.test(stuckReason),
+    "a Stop hook must never point at a command that will exit with the refusal");
+
+  // The honest exit opens with zero blocked tracked items and budget remaining.
+  const finalized = runJson(["finalize", "--status", "blocked", "--summary", "Verify gate FAIL; an identical re-run is refused on the unchanged tree."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.status, "blocked");
+  assert.equal(receipt.verifyGate.effective, "BLOCKED");
+  assert.equal(receipt.verifyGate.attempts, 1, "the receipt reports the attempts actually spent");
+  assert.equal(receipt.verifyGate.budget, 3);
+  assert.equal(receipt.verifyGate.budgetExhausted, false, "a receipt must never claim a budget it did not spend");
+  assert.equal(receipt.verifyGate.rerunRefused, true, "the terminal cause is recorded distinctly");
+
+  const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
+  assert.match(report, /Status: Blocked/);
+  assert.match(report, /Attempts: 1\/3 \(rerun refused on an unchanged tree; the remaining attempts are unspendable\)/,
+    "a human reads the honest cause straight off the record");
+  assert.doesNotMatch(report, /retry budget exhausted/);
+
+  // The blocked receipt releases the Stop hook: the livelock has an exit.
+  const stop = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: projectRoot,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "gate-rerun-refused-session" }),
+  });
+  assert.equal(stop.stdout.trim(), "");
+});
+
 // Regression for the circular deadlock: the gate FAIL landed before the
 // concurrent fidelity review was recorded, so finalize --status blocked
 // demanded the review while review-record pass was vetoed by the BLOCKED

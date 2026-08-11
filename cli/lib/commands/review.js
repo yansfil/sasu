@@ -309,17 +309,19 @@ function cmdFinalize(options) {
       ...state.verification.filter(item => item.status === "blocked" || item.status === "fail"),
     ];
     // The verify gate itself qualifies as the blocker, but only when it is
-    // terminal: verdict recorded AND retry budget spent. Two live sessions
+    // terminal (verifyGateTerminallyBlocked: verdict recorded AND either the
+    // retry budget spent or an identical rerun refused). Two live sessions
     // deadlocked here with every task/AC complete - complete was refused
     // (gate BLOCKED), blocked was refused (zero blocked items), and override
-    // was the only exit. With budget remaining the refusal stands: the agent
-    // still has attempts to spend, so a cheap early "blocked" stays closed.
-    // Shared predicate with the review-record scoping (reviews.js): the
-    // blocked exit and the review record it requires must open together.
+    // was the only exit. With budget remaining AND a rerun that would really
+    // run, the refusal stands: the agent still has attempts to spend, so a
+    // cheap early "blocked" stays closed. Shared predicate with the
+    // review-record scoping (reviews.js): the blocked exit and the review
+    // record it requires must open together.
     const gateTerminallyBlocked = verifyGateTerminallyBlocked(verifyGate);
     if (status === "blocked" && blockers.length === 0 && !gateTerminallyBlocked) {
       violations.push(verifyGate.effective === "BLOCKED"
-        ? `Blocked finalization with no blocked tracked item: the verify gate is BLOCKED but its retry budget is not exhausted (attempts ${verifyGate.attempts}/${verifyGate.budget}); fix the cited findings and re-run \`sasu verify\``
+        ? `Blocked finalization with no blocked tracked item: the verify gate is BLOCKED, its retry budget is not exhausted (attempts ${verifyGate.attempts}/${verifyGate.budget}), and an identical re-run would still run; fix the cited findings and re-run \`sasu verify\``
         : "Blocked finalization requires at least one task, acceptance, or verification item marked blocked/fail/not_met");
     }
     for (const blocker of blockers) {

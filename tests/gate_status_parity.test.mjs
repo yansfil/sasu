@@ -40,6 +40,14 @@ test("lib fallback gate arithmetic matches dist gateStatus on identical fixtures
     assert.equal(lib.attempts, dist.attempts, `${name}: attempts`);
     assert.equal(lib.budget, dist.budget, `${name}: budget`);
     assert.equal(lib.overridden, dist.overridden, `${name}: overridden`);
+    // Deliberate asymmetry, pinned so it stays deliberate: the second terminal
+    // cause ("an identical rerun would be refused") needs the tree fingerprint
+    // and the input pins, i.e. exactly the dist code this fallback exists
+    // because it could not load. Without dist only budgetExhausted ends the fix
+    // loop - the conservative reading, since a wrongly-closed exit costs a user
+    // override while a wrongly-opened one lets a run give up early.
+    assert.equal(lib.rerunRefused, false, `${name}: the no-dist fallback never claims a refusal it cannot evaluate`);
+    assert.equal("rerunRefused" in dist, false, `${name}: gateStatus stays pure arithmetic; the refusal lives in the gate commands layer`);
   }
 });
 

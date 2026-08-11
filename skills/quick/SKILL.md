@@ -118,12 +118,12 @@ sasu verify --slug <slug> --contract agents/quick/<slug>/contract.md --base <bas
 
 The JSON carries everything the receipt needs, on every settled path: `criteria` (per-AC judge verdicts; empty when no judge ran), `judgedCriteriaIds` (the criteria sent to the judge), `judgedVerdict` (its verdict before the human lane was folded in; absent when no judge ran), `checks` (criterion-scoped command results), `mechanical.runs`, `evidence` (artifact paths with hashes, including artifacts no judge could read), `inputs` (everything pinned), and `status.findings`.
 
-The judge sees the diff against your base ref, including files the run created. It does not see gitignored files - if something only exists there, prove it with a check command instead. The harness's own `agents/gates/` and `agents/quick/` trees are excluded from both the diff and the tree fingerprint, so your contract prose never crowds out the code and writing the receipt never stales a PASS.
+The judge sees the diff against your base ref, including files the run created. It does not see gitignored files - if something only exists there, prove it with a check command instead. The whole `agents/` namespace is excluded from both the diff and the tree fingerprint, so your contract prose never crowds out the code and writing the receipt never stales a PASS (the contract is still pinned by content hash, so editing it does re-open the gate).
 
 A failing project check stops the run, but criterion-scoped `check:` commands still execute, so a blocked receipt can still say which criteria were already satisfied. `mechanical.resolved` lists every command the run planned, which is where a genuinely skipped one shows up.
 
 - Mechanical commands come from `agents/config.json` `verify.commands` or manifest detection, then the contract's own `## Checks` and `capture:` commands. When the CLI suggests pinning detected commands, relay the suggestion once in the final report.
-- On BLOCK/FAIL: fix and re-run, within the judge retry budget (default 3). Prelint findings never consume an attempt; every other blocked run does, including a mechanical or evidence failure that costs no judge call. Three typo'd evidence paths exhaust the budget just as three failing test runs would. The CLI reports exhaustion rather than refusing to run, so honour it: the Stop guard treats it as the end of the fix loop and moves you to the handoff close.
+- On BLOCK/FAIL: fix and re-run, within the judge retry budget (default 3). The budget is N chances to fix and re-verify, not N identical retries: re-running with nothing changed is refused at $0 and spends no attempt, so the fix has to be real. Prelint findings never consume an attempt; every other blocked run does, including a mechanical or evidence failure that costs no judge call. Three typo'd evidence paths exhaust the budget just as three failing test runs would. The CLI reports exhaustion (or the refusal) rather than refusing to run, so honour it: the Stop guard treats either as the end of the fix loop and moves you to the handoff close.
 - An `evidence` finding means a declared artifact is missing, empty, binary, oversized, or resolves outside the project - fix the declaration or the command that produces it. It blocks before the judge call, so it costs nothing but the attempt.
 - A `human-verification` finding is not a failure to fix: check it yourself, then carry it into the receipt and the report as an open item. The gate stays non-PASS by design, and the run closes through the handoff path below.
 - Never run `sasu gate override`; it is user-only.
@@ -135,12 +135,12 @@ A quick run closes in one of two ways. Both write the same three artifacts; only
 
 **Closing on a live PASS** - every criterion was judged and passed.
 
-**Closing on a handoff** - the fix loop ended without a PASS because a finding needs a person (`requiresHuman`) or the retry budget is exhausted. This is a legitimate ending, not an abandoned run: a contract with any `human:` criterion can never reach PASS by construction, and it still has to be closed out properly.
+**Closing on a handoff** - the fix loop ended without a PASS because a finding needs a person (`requiresHuman`), the retry budget is exhausted, or a re-run is refused on the unchanged tree (budget left but unspendable, so the gate is terminal now). This is a legitimate ending, not an abandoned run: a contract with any `human:` criterion can never reach PASS by construction, and it still has to be closed out properly.
 
 In both cases:
 
 1. Write `agents/quick/<slug>/receipt.md`: goal, one-line outcome, then the verify `--json` per-AC verdicts, check results, mechanical runs, and evidence artifacts (path + hash) embedded verbatim - never restate verification results by hand (derived bookkeeping is how ledgers rot). On a handoff, add an "Open items" section listing every unsettled criterion and what a person must check. When no judge ran (an all-human contract), `criteria` is empty and the receipt rests on `status.findings`, `checks`, and `evidence` instead.
-2. Flip the contract frontmatter to `status: complete` - or `status: blocked` on a budget-exhausted handoff with no `human:` criteria, because that run failed verification and the record must say so (freshness hashing ignores frontmatter, so this does not stale the verdict).
+2. Flip the contract frontmatter to `status: complete` - or `status: blocked` on a budget-exhausted or rerun-refused handoff with no `human:` criteria, because that run failed verification and the record must say so (freshness hashing ignores frontmatter, so this does not stale the verdict).
 3. Report: what changed, AC verdicts, assumptions made, anything deferred, and an explicit human-review section for every `human:` criterion plus any visual or taste judgment the judge did not make. On a handoff, say plainly that the run did not reach a full PASS and name what is open - never call it Done. Do not commit or push unless the conversation agreed to it.
 
 Do not delete `agents/quick/.quick-active.json` yourself. The Stop guard checks steps 1 and 2 and retires the marker once both are done; deleting it by hand only skips the check.
@@ -150,5 +150,5 @@ Do not delete `agents/quick/.quick-active.json` yourself. The Stop guard checks 
 Never stop for stage transitions, and never stop before Stage 4 has run. Stop and ask only when:
 
 - a contract-breaking ambiguity has no defensible assumption.
-- a verify finding is marked `requiresHuman`, or the retry budget is exhausted - after closing the run through the handoff path.
+- a verify finding is marked `requiresHuman`, the retry budget is exhausted, or a re-run is refused on the unchanged tree - after closing the run through the handoff path.
 - the work touches an implement-pipeline hard stop (real-data migrations, auth/security decisions, payments, production data, credentials, destructive actions, external spend).
