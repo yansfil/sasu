@@ -824,6 +824,36 @@ test("the project config is a judged input: declaring a new mechanical check sta
   assert.deepEqual(status.staleInputs, [{ path: path.join("agents", "config.json"), reason: "changed" }]);
 });
 
+test("the config pin covers absence: a config CREATED after a PASS stales it too", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 1);
+  // "No config" declares "run the detected defaults", so the absence is part
+  // of what the verdict rests on. Pinning only the present case left the hole
+  // this harness exists to close: a config written after the PASS was compared
+  // against nothing, so a freshly declared verify.commands.test rode to
+  // completion having never run once.
+  assert.equal(fs.existsSync(path.join(dir, "agents", "config.json")), false, "the fixture starts with no config");
+  const pass = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "widget.js" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }),
+  );
+  assert.equal(pass.ok, true, JSON.stringify(pass.status?.findings));
+  const configRel = path.join("agents", "config.json");
+  assert.ok(verifyGates(dir).inputs.some((i) => i.path === configRel && i.kind === "config"),
+    "absence is pinned, not skipped");
+  assert.equal(readGateStatus(dir, loadConfig(dir), "t").verify.effective, "PASS",
+    "absent-then-still-absent must stay fresh, or every no-config project would read STALE");
+
+  fs.writeFileSync(
+    path.join(dir, configRel),
+    JSON.stringify({ verify: { commands: { test: "node -e \"process.exit(1)\"" } } }),
+  );
+  const status = readGateStatus(dir, loadConfig(dir), "t").verify;
+  assert.equal(status.effective, "STALE", "a check declared after the PASS must force re-verification");
+  assert.deepEqual(status.staleInputs, [{ path: configRel, reason: "changed" }]);
+});
+
 test("image evidence: attachability and the byte budget are decided from the stat, once, before any read", async () => {
   const dir = makeDir();
   // 5MB+ of PNG-named bytes. Reading it just to drop it was pure waste (V rows

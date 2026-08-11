@@ -30,17 +30,29 @@ function freshnessHash(content) {
   return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
 }
 
+// The one input whose ABSENCE is a fact worth pinning: agents/config.json
+// declares the mechanical commands a gate runs, so "no config" is a real
+// declaration ("run the detected defaults"), not a missing file. Pinning only
+// the present case left a hole of exactly the kind this harness exists to
+// close: a config CREATED after a PASS was never compared against anything, so
+// a freshly declared verify.commands.test rode to completion without ever
+// running. A sentinel makes absent-vs-absent fresh and absent-vs-created
+// stale, in both directions.
+const ABSENT_INPUT = `sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}:absent`;
+
 /**
  * Hash a recorded gate input as it sits on disk now, by its declared kind.
  * Evidence artifacts hash raw bytes (a screenshot has no markdown body to
- * strip, and every byte of a log is substance); documents hash their body.
- * Returns null when the file is gone, which the caller reports as stale.
+ * strip, and every byte of a log is substance); documents hash their body;
+ * config hashes raw bytes (JSON has no markdown body) and has a sentinel for
+ * absence. Returns null when a file that must exist is gone, which the caller
+ * reports as stale.
  */
 function hashGateInput(absPath, kind) {
   const fs = require("fs");
-  if (!fs.existsSync(absPath)) return null;
-  if (kind === "evidence") return sha256Of(fs.readFileSync(absPath));
+  if (!fs.existsSync(absPath)) return kind === "config" ? ABSENT_INPUT : null;
+  if (kind === "evidence" || kind === "config") return sha256Of(fs.readFileSync(absPath));
   return freshnessHash(fs.readFileSync(absPath, "utf8"));
 }
 
-module.exports = { FRESHNESS_CONTRACT_VERSION, freshnessHash, hashGateInput, sha256Of };
+module.exports = { ABSENT_INPUT, FRESHNESS_CONTRACT_VERSION, freshnessHash, hashGateInput, sha256Of };

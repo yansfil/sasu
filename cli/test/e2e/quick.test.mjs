@@ -98,8 +98,14 @@ test("contract verify PASS records the verdict, contract hash, and tree fingerpr
 
   const record = gatesState(dir).gates.verify;
   assert.equal(record.verdict, "PASS");
-  assert.equal(record.inputs.length, 1);
-  assert.ok(record.inputs[0].path.endsWith("contract.md"));
+  // The judged document plus the project config, which declares the mechanical
+  // commands the gate runs and is pinned whether or not it exists.
+  assert.equal(record.inputs.length, 2);
+  assert.ok(record.inputs.some(input => input.path.endsWith("contract.md")));
+  assert.deepEqual(
+    record.inputs.filter(input => input.kind === "config").map(input => input.path),
+    [path.join("agents", "config.json")],
+  );
   assert.ok(record.treeFingerprint, "verdict must pin the tree it was earned on");
   assert.equal(typeof record.treeFingerprint.vouched, "string", "fingerprint must carry the vouched content hash");
   assert.ok(record.treeFingerprint.vouched.length > 0, "vouched hash must be non-empty");

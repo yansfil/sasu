@@ -37,6 +37,7 @@ import {
   freshnessHash,
   GateStore,
   gateStatus,
+  hashGateInput,
   overrideGate,
   recordGateResult,
   sha256Of,
@@ -800,15 +801,18 @@ export async function runVerifyGate(
   // than as a verify-only slice because staleInputsFor recomputes hashes from
   // the file on disk - a slice hash could never match - so unrelated config
   // edits stale the gate too. That is the honest direction, and config edits
-  // are rare and deliberate. Residual gap, stated rather than papered over: a
-  // config CREATED after a PASS cannot be pinned by that PASS (a
-  // recorded-missing input would read stale immediately), so it does not stale
-  // it either.
+  // are rare and deliberate.
+  //
+  // Pinned ALWAYS, present or not: "no config" declares "run the detected
+  // defaults", so its absence is a fact the verdict rests on. The `config`
+  // kind's absent sentinel (cli/lib/gate_freshness.js) is what lets an absent
+  // pin stay fresh while a config created after the PASS reads stale.
   const configRel = path.join("agents", "config.json");
-  const configAbs = path.join(projectRoot, configRel);
-  if (fs.existsSync(configAbs)) {
-    inputs.push({ path: configRel, sha256: freshnessHash(fs.readFileSync(configAbs, "utf8")), kind: "document" });
-  }
+  inputs.push({
+    path: configRel,
+    sha256: hashGateInput(path.join(projectRoot, configRel), "config")!,
+    kind: "config",
+  });
 
   // Stage 0: document prelint ($0, D-06). The judge reads this document's
   // acceptance criteria, so a structurally broken document blocks before the

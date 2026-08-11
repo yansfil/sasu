@@ -16,7 +16,13 @@ export type GateId = "gap-audit" | "spec" | "verify";
 export interface GateInput {
   path: string;
   sha256: string;
-  kind?: "document" | "evidence";
+  /**
+   * How the pin is recomputed (cli/lib/gate_freshness.js hashGateInput):
+   * `document` strips lifecycle bookkeeping, `evidence` hashes raw bytes, and
+   * `config` hashes raw bytes AND pins absence with a sentinel, because "no
+   * agents/config.json" is itself a declaration about which checks run.
+   */
+  kind?: "document" | "evidence" | "config";
 }
 
 export interface StaleInput {
@@ -40,6 +46,11 @@ export const FRESHNESS_CONTRACT_VERSION = freshnessLib.FRESHNESS_CONTRACT_VERSIO
 
 export function freshnessHash(content: string): string {
   return freshnessLib.freshnessHash(content);
+}
+
+/** Re-exported so the gate pins an input exactly the way staleness recomputes it. */
+export function hashGateInput(absPath: string, kind: string | undefined): string | null {
+  return freshnessLib.hashGateInput(absPath, kind);
 }
 
 export interface GateDeviation {
