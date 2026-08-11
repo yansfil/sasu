@@ -5,7 +5,7 @@ const path = require("path");
 
 const { writeMarkdown, NAMESPACE_ROOT } = require("./util");
 const { hashGateInput } = require("./gate_freshness");
-const { executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("./state_data");
+const { executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy, reviewRoundCount } = require("./state_data");
 const { collectArtifacts } = require("./artifacts");
 const { verifyGateStatus } = require("./reviews");
 const { snapshotEntriesEqual } = require("./git");
@@ -46,6 +46,12 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Requirements fidelity owner: ${policy.fidelityOwner}`);
   lines.push(`- Requirements fidelity depth: ${policy.fidelityDepth}`);
   lines.push(`- Final adversarial review required: ${policy.finalReviewRequired ? "yes" : "no"}`);
+  // A human auditing the report has to be able to see the review loop this run
+  // ran, not just its last lap. `distinct reports` separates "reviewed N times"
+  // from "recorded the same document N times"; neither number is a verdict about
+  // the run, and the harness states them without drawing one (item 10).
+  const rounds = reviewRoundCount(state);
+  lines.push(`- Review rounds recorded: ${rounds.total} (requirements fidelity ${rounds.fidelity.rounds}, ${rounds.fidelity.distinctReports} distinct report(s); final ${rounds.final.rounds}, ${rounds.final.distinctReports} distinct report(s))`);
   const verifyGate = verifyGateStatus(state);
   lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
   // A blocked receipt must say why without a trip to gates.json: attempts

@@ -2424,6 +2424,65 @@ test("terminally blocked gate with no recorded review: record the honest pass, t
 // gate never answered the question. Charging judge ERRORs to the fix budget
 // produced false BLOCKEDs; not charging them left the run with no exit at all
 // unless this predicate opens one (measured 2026-08-11, modakbul).
+// Every recording overwrote one field, so a run that reviewed ten times and a
+// run that reviewed once left identical state and identical receipts. Measured
+// 2026-08-11: an audited run recorded ten reviews across five adversarial rounds
+// and neither state.json nor the receipt held any trace - reconstructing it took
+// session-transcript archaeology. PRINCIPLES item 13 wants a harness-owned bound
+// on a stage that cannot converge, and a loop the harness cannot count is a loop
+// it cannot bound.
+test("every accepted review recording is counted as a round; a rejected one is not", () => {
+  const projectRoot = initGitRepo();
+  const slug = "review-rounds";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "review-rounds-session");
+  const statePath = path.join(projectRoot, "agents", "implement", slug, "state.json");
+  const readState = () => JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const record = () => runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Intent preserved."], projectRoot);
+
+  write(reviewPath, fidelityReviewBody(logPath));
+  const first = record();
+  assert.deepEqual(first.reviewRounds.fidelity, { rounds: 1, distinctReports: 1 });
+  assert.equal(readState().supersededReviews.length, 0, "the live round is not duplicated into the log");
+
+  // Re-recording the SAME document is still a round the run spent - the harness
+  // counts what it observed and does not decide whether it was worth it.
+  const second = record();
+  assert.deepEqual(second.reviewRounds.fidelity, { rounds: 2, distinctReports: 1 },
+    "two rounds, one document: the distinct-report count is what separates them");
+
+  // A different report is a second distinct document.
+  write(reviewPath, fidelityReviewBody(logPath, " (revised after the reviewer's note)"));
+  const third = record();
+  assert.deepEqual(third.reviewRounds.fidelity, { rounds: 3, distinctReports: 2 });
+  assert.equal(third.reviewRounds.total, 3);
+
+  // The superseded rounds are recorded once each, in order, with what they were.
+  const superseded = readState().supersededReviews;
+  assert.equal(superseded.length, 2);
+  assert.deepEqual(superseded.map(entry => [entry.kind, entry.status]), [["fidelity", "pass"], ["fidelity", "pass"]]);
+  assert.ok(superseded.every(entry => /^[0-9a-f]{64}$/.test(entry.reportSha256) && entry.recordedAt && entry.supersededAt));
+
+  // A REJECTED recording is not a round: it never touches state. Here the report
+  // states a verdict contradicting --status, which the harness refuses outright.
+  write(reviewPath, fidelityReviewBody(logPath).replace("Status: PASS", "Status: FAIL"));
+  const rejected = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Claiming a pass."], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.equal(readState().supersededReviews.length, 2, "a refused recording must not be counted as a round");
+
+  // And the finished run reports its own loop instead of hiding it.
+  write(reviewPath, fidelityReviewBody(logPath, " (revised after the reviewer's note)"));
+  record();
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Done."], projectRoot);
+  assert.equal(finalized.ok, true, JSON.stringify(finalized.violations || []));
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.reviewRounds.fidelity.rounds, 4);
+  const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
+  assert.match(report, /Review rounds recorded: 4 \(requirements fidelity 4, 2 distinct report\(s\); final 0, 0 distinct report\(s\)\)/);
+});
+
 test("judge-error loop reaches a blocked receipt without ever claiming a spent fix budget", () => {
   const projectRoot = initGitRepo();
   const slug = "judge-error-loop";

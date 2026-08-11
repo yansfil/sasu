@@ -113,6 +113,95 @@ function markRequirementsFidelityReviewStale(state, reason) {
 }
 
 /**
+ * Move the review record a new recording is about to replace into the run's
+ * round log, and return the entry (null when there was nothing to supersede).
+ *
+ * The failure this closes: every `requirements-review-record` and
+ * `review-record` call overwrote a single field, so a run that reviewed five
+ * times left exactly one record and the harness could not tell it from a run
+ * that reviewed once. In an audited run the agent summoned five adversarial
+ * review rounds over 92 minutes and recorded a review ten times, and neither
+ * `state.json` nor the receipt held any trace of it (2026-08-11). PRINCIPLES
+ * item 13 says a stage that cannot converge on its own needs a bound the
+ * harness owns, and a loop the harness cannot see is a loop it cannot bound -
+ * so being able to count the rounds is the prerequisite for every bound.
+ *
+ * Only SUPERSEDED rounds go here; the live round stays in its own field. That
+ * keeps item 10 intact: each round is recorded exactly once, in one place, so
+ * there is no second ledger to drift from `state.json`. Callers that need the
+ * total ask reviewRoundCount, which derives it and stores nothing.
+ *
+ * A REJECTED recording is not a round and never reaches here: it returns before
+ * touching state, which is right - the audited run's ten records included
+ * several rejections, one of them for a report-shape rule that no longer exists.
+ *
+ * What this log deliberately does NOT decide is where one round ends and the
+ * next begins. Measured on the same run, the ten records form five clusters
+ * whose boundaries line up exactly with the five adversarial reviewer spawns,
+ * but two accepted records 23 seconds apart carried different report content
+ * inside ONE cluster - so neither the timestamps nor `reportSha256` separate "a
+ * new round" from "the same round's report, corrected". Splitting them needs the
+ * question "did anything other than the report change since the last accepted
+ * record", whose material is the review's pinned input set. Until that pin
+ * exists, this records every accepted round with its time and hash and leaves
+ * the grouping to the reader (item 7: the harness records what it can observe
+ * and does not guess meaning).
+ *
+ * @param {State} state
+ * @param {"fidelity"|"final"} kind
+ */
+function supersedeReviewRound(state, kind) {
+  const field = kind === "fidelity" ? "requirementsFidelityReview" : "finalReview";
+  const current = state[field];
+  if (!current) return null;
+  if (!Array.isArray(state.supersededReviews)) state.supersededReviews = [];
+  const entry = {
+    kind,
+    status: current.status,
+    reportPath: current.reportPath || null,
+    reportSha256: current.reportSha256 || null,
+    recordedAt: current.recordedAt || null,
+    supersededAt: nowIso(),
+    ...(current.staleReason ? { staleReason: current.staleReason } : {}),
+  };
+  state.supersededReviews.push(entry);
+  return entry;
+}
+
+/**
+ * How many review rounds this run has spent, derived - never stored, so it
+ * cannot drift from the record it counts (item 10). A round is one recorded
+ * review: the superseded ones plus the live one, per axis.
+ *
+ * `distinctReports` counts unique report hashes, which separates "reviewed five
+ * times" from "recorded the same document five times" and nothing more. It is
+ * NOT a round-boundary signal: measured, one review round produced two
+ * different reports within 23 seconds.
+ *
+ * @param {State} state
+ */
+function reviewRoundCount(state) {
+  const superseded = Array.isArray(state.supersededReviews) ? state.supersededReviews : [];
+  const count = kind => {
+    const field = kind === "fidelity" ? "requirementsFidelityReview" : "finalReview";
+    const past = superseded.filter(entry => entry && entry.kind === kind);
+    const live = state[field] ? 1 : 0;
+    const hashes = new Set([
+      ...past.map(entry => entry.reportSha256).filter(Boolean),
+      ...(state[field] && state[field].reportSha256 ? [state[field].reportSha256] : []),
+    ]);
+    return { rounds: past.length + live, distinctReports: hashes.size };
+  };
+  const fidelity = count("fidelity");
+  const final = count("final");
+  return {
+    fidelity,
+    final,
+    total: fidelity.rounds + final.rounds,
+  };
+}
+
+/**
  * @param {State} state
  * @param {string} reason
  */
@@ -369,6 +458,8 @@ module.exports = {
   markFinalReviewStale,
   markRequirementsFidelityReviewStale,
   markCompletionReviewsStale,
+  supersedeReviewRound,
+  reviewRoundCount,
   findTrackedItem,
   countState,
   autoCloseAcceptanceCriteria,

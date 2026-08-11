@@ -343,6 +343,10 @@ function buildInitialState(inputs, contract, worktreePreparation, options, runDi
     deviations: [],
     requirementsFidelityReview: null,
     finalReview: null,
+    // Append-only log of review rounds this run has already replaced. Seeded
+    // here so a fresh run's shape is complete; a pre-field state.json reads as
+    // an empty log, which is honest - those rounds were never recorded.
+    supersededReviews: [],
     finalReceipt: null,
   };
 }

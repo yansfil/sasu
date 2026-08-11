@@ -7,7 +7,7 @@ const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHas
 const { shellLikeTokens } = require("../inference");
 const { worktreeSnapshot, vouchedTreeFingerprintForState, vouchedFingerprintsMatch, summarizeFingerprintDiff } = require("../git");
 const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_pass");
-const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
+const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, reviewRoundCount } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
@@ -95,6 +95,11 @@ function cmdRequirementsReviewRecord(options) {
     }
   }
 
+  // Both axes are superseded here, in this order: recording a fidelity review
+  // discards the final review below (it audited a fidelity record that no longer
+  // stands), and a discarded round is still a round the run spent.
+  supersedeReviewRound(state, "fidelity");
+  supersedeReviewRound(state, "final");
   state.requirementsFidelityReview = {
     status,
     summary,
@@ -116,6 +121,9 @@ function cmdRequirementsReviewRecord(options) {
     structureWarnings,
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,
+    // Derived, never stored: the round the agent just spent is visible in the
+    // reply, so a loop that re-reviews has to see its own count grow.
+    reviewRounds: reviewRoundCount(state),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -152,6 +160,7 @@ function cmdReviewRecord(options) {
     }
   }
 
+  supersedeReviewRound(state, "final");
   state.finalReview = {
     status,
     summary,
@@ -171,6 +180,7 @@ function cmdReviewRecord(options) {
     ok: true,
     structureWarnings,
     finalReview: state.finalReview,
+    reviewRounds: reviewRoundCount(state),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -486,6 +496,12 @@ function cmdFinalize(options) {
     // that never failed anywhere never demonstrated it can fail; make that
     // legible in the completion proof.
     rehearsals: rehearsalSummary(statePath),
+    // How many review rounds this run actually spent. Without it a finished run
+    // hid its own loop: every recording overwrote one field, so a run that
+    // reviewed ten times and a run that reviewed once left identical receipts,
+    // and reconstructing what happened took session-transcript archaeology
+    // (2026-08-11). Derived from the round log, so it cannot drift from it.
+    reviewRounds: reviewRoundCount(state),
     // Receipt-time re-run of required command verifications on the final
     // tree, harness-timed. Skips carry their reason - never silent.
     finalReverification,

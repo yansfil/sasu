@@ -18,6 +18,7 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Requirements fidelity owner: independent
 - Requirements fidelity depth: full
 - Final adversarial review required: no
+- Review rounds recorded: 1 (requirements fidelity 1, 1 distinct report(s); final 0, 0 distinct report(s))
 - Verify gate: NOT_RUN
 - Classification signals: none
 
@@ -222,6 +223,17 @@ Receipt: agents/implement/standard-regression/receipt.json
   "rehearsals": {
     "recorded": false,
     "byVerification": {}
+  },
+  "reviewRounds": {
+    "fidelity": {
+      "rounds": 1,
+      "distinctReports": 1
+    },
+    "final": {
+      "rounds": 0,
+      "distinctReports": 0
+    },
+    "total": 1
   },
   "finalReverification": {
     "ranAt": "<TS>",
