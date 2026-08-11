@@ -758,3 +758,48 @@ test("verify mechanical stage reuses a fresh verify-run pass and re-runs after d
   assert.ok(!/reused/.test(driftedRun.stderr), "drifted tree must not reuse the pass");
   assert.ok(fs.existsSync(path.join(dir, "mech-ran.txt")), "drifted tree must re-run the command");
 });
+
+// --- FAIL-side rerun short-circuit through the CLI --------------------------
+
+test("verify short-circuit: an identical semantic FAIL rerun refuses; a corrected --base reruns and may pass", () => {
+  const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
+  const baseShaRun = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" });
+  assert.equal(baseShaRun.status, 0, baseShaRun.stderr);
+  const baseSha = baseShaRun.stdout.trim();
+  // Commit the implementation and leave only unrelated noise in the working
+  // tree: the default base (HEAD) judges a diff MISSING the implementation -
+  // the reproduced trap where the harness's own recovery advice ("point
+  // --base at the commit you started from") used to walk into the refusal.
+  gitCommitAll(dir, "implementation", ["widget.js"]);
+  fs.writeFileSync(path.join(dir, "notes.js"), "// unrelated noise\n");
+
+  const failStub = {
+    verdict: "FAIL",
+    criteria: [
+      { id: "AC1", verdict: "PASS", reason: "render() present", evidence: "notes.js hunk" },
+      { id: "AC2", verdict: "FAIL", reason: "no persistence code in the diff" },
+    ],
+  };
+  const first = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
+  assert.equal(first.status, 1, first.stdout + first.stderr);
+  const record = gatesState(dir, "fixture").gates.verify;
+  assert.equal(record.failedStage, "semantic");
+  assert.equal(record.diffSource, "git:HEAD");
+
+  // Identical base, identical tree: refused at $0, before any stage runs.
+  const refused = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /rerun short-circuit/);
+  assert.match(refused.stderr, /--base/, "the refusal names the corrected-base escape");
+  assert.equal(gatesState(dir, "fixture").gates.verify.history.length, 1, "a refusal records nothing");
+
+  // Corrected base: a different judged diff (now containing the
+  // implementation), so the gate must run it.
+  const corrected = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--base", baseSha], {
+    stub: stubFile(dir, PASS_STUB),
+  });
+  assert.equal(corrected.status, 0, corrected.stdout + corrected.stderr);
+  const passed = gatesState(dir, "fixture").gates.verify;
+  assert.equal(passed.verdict, "PASS");
+  assert.equal(passed.diffSource, `git:${baseSha}`);
+});

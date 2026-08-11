@@ -194,6 +194,35 @@ test("the recommended bash -c wrapper shape is exempt from the shell-operators w
   assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
 });
 
+test("the bash -l -c wrapper variant consuming the whole command is exempt too", () => {
+  const prd = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    '- AC3. the marker greps. Check: `bash -l -c "test -f README.md && grep -c Test README.md"` -> 1',
+  );
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
+});
+
+// Reproduced 2026-08-11: `bash -c "true" && test -f missing.txt` starts with
+// the wrapper shape, so the any-prefix exemption silenced the warning - but
+// under shellLikeTokens + shell:false the `&& test -f missing.txt` tail is
+// inert $0/$1 arguments to the script, making the oracle constant-true. The
+// exemption must cover only a wrapper that consumes the entire command.
+test("a bash -c wrapper with a trailing operator tail outside the script still warns", () => {
+  const prd = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    '- AC3. the file exists. Check: `bash -c "true" && test -f missing.txt`',
+  );
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, true, "advisories must never block");
+  assert.equal(result.findings.length, 0);
+  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-ac-oracle-shell-operators"], JSON.stringify(result.warnings));
+  assert.match(result.warnings[0].missing, /not interpreted/);
+  assert.match(result.warnings[0].recommendation, /inert positional arguments/, "the fix names the wrapper-residue mechanics");
+  assert.match(result.warnings[0].recommendation, /ONE -c string/);
+});
+
 // Reproduced false positive #2 (2026-08-11): a metacharacter inside a quoted
 // argument is a literal token to both executors (shellLikeTokens + shell:false),
 // so nothing is silently reinterpreted and the warning was pure noise.

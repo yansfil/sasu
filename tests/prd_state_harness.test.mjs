@@ -1938,8 +1938,9 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
     judgeCalls: [],
   }, null, 2));
 
-  // Budget remaining: the cheap escape stays shut - attempts are left to
-  // spend, so an empty blocker list still refuses the blocked handoff.
+  // Budget remaining: the cheap escapes stay shut - attempts are left to
+  // spend, so an empty blocker list still refuses the blocked handoff and
+  // the gate still vetoes a passing review record (fix and re-verify first).
   writeGates({ ...emptyGate, verdict: "FAIL", attempts: 1, findings: [finding] });
   const early = runJson(["finalize", "--status", "blocked", "--summary", "Giving up early."], projectRoot, { allowFailure: true });
   assert.equal(early.ok, false);
@@ -1947,17 +1948,20 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
     early.violations.some(item => /retry budget is not exhausted \(attempts 1\/2\)/.test(item)),
     `expected a budget-remaining refusal, got: ${JSON.stringify(early.violations)}`,
   );
+  const earlyRecord = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS again"], projectRoot, { allowFailure: true });
+  assert.equal(earlyRecord.ok, false);
+  assert.ok(earlyRecord.violations.some(item => /Verify gate is BLOCKED/.test(item)), JSON.stringify(earlyRecord.violations));
 
-  // Budget exhausted: complete and review passes keep rejecting exactly as
-  // before - only the blocked handoff opens.
+  // Budget exhausted: complete keeps rejecting, but the honest review record
+  // opens together with the blocked handoff - the gate is terminal, so it no
+  // longer vetoes the review the blocked receipt requires.
   writeGates({ ...emptyGate, verdict: "FAIL", attempts: 2, findings: [finding] });
   const complete = runJson(["finalize", "--status", "complete", "--summary", "Not actually complete."], projectRoot, { allowFailure: true });
   assert.equal(complete.ok, false);
   assert.ok(complete.violations.some(item => /Verify gate is BLOCKED/.test(item)), JSON.stringify(complete.violations));
   assert.ok(complete.violations.some(item => /--status blocked/.test(item)), "the rejection must name the honest exit");
-  const rerecord = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS again"], projectRoot, { allowFailure: true });
-  assert.equal(rerecord.ok, false);
-  assert.ok(rerecord.violations.some(item => /Verify gate is BLOCKED/.test(item)));
+  const rerecord = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS again"], projectRoot);
+  assert.equal(rerecord.ok, true, "a terminally blocked gate must not veto an honest review record");
 
   // During the deadlock the goal guard still refuses update_goal complete.
   const preTool = run(process.execPath, [harness, "hook", "pretool-use"], {
@@ -1996,6 +2000,54 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
     input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "gate-deadlock-session" }),
   });
   assert.equal(stop.stdout.trim(), "");
+});
+
+// Regression for the circular deadlock: the gate FAIL landed before the
+// concurrent fidelity review was recorded, so finalize --status blocked
+// demanded the review while review-record pass was vetoed by the BLOCKED
+// gate - each error pointed at the other and the only observed escape was
+// recording a truthful-PASS review as --status fail (reproduced 2026-08-11).
+// A terminally blocked gate must let the honest review land so the blocked
+// receipt can be earned without lying.
+test("terminally blocked gate with no recorded review: record the honest pass, then finalize blocked", () => {
+  const projectRoot = initGitRepo();
+  const slug = "gate-circle";
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "gate-circle-session");
+
+  // The gate exhausts its budget BEFORE any fidelity review is recorded -
+  // the concurrent-lane ordering that produced the circle.
+  const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
+  const finding = { area: "semantic", severity: "P0", missing: "AC1: judge keeps rejecting the diff", recommendation: "fix it", requiresHuman: false };
+  write(path.join(projectRoot, "agents", "gates", slug, "gates.json"), JSON.stringify({
+    schema: 1,
+    topic: slug,
+    gates: { "gap-audit": { ...emptyGate }, spec: { ...emptyGate }, verify: { ...emptyGate, verdict: "FAIL", attempts: 2, findings: [finding] } },
+    deviations: [],
+    judgeCalls: [],
+  }, null, 2));
+
+  // One side of the old circle: the blocked handoff still demands the review.
+  const withoutReview = runJson(["finalize", "--status", "blocked", "--summary", "Verify gate exhausted its retry budget."], projectRoot, { allowFailure: true });
+  assert.equal(withoutReview.ok, false);
+  assert.ok(
+    withoutReview.violations.some(item => /Requirements fidelity review must be recorded/.test(item)),
+    `expected the missing-review refusal, got: ${JSON.stringify(withoutReview.violations)}`,
+  );
+
+  // The other side no longer rejects: the honest PASS review records cleanly.
+  write(reviewPath, fidelityReviewBody(logPath));
+  const recorded = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Intent preserved; blocked only by the verify gate."], projectRoot);
+  assert.equal(recorded.ok, true, "the terminal gate must not veto the honest review record");
+
+  // The circle is broken: the blocked receipt lands and stays honest.
+  const finalized = runJson(["finalize", "--status", "blocked", "--summary", "Verify gate exhausted its retry budget."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.status, "blocked");
+  assert.equal(receipt.verifyGate.effective, "BLOCKED");
+  assert.equal(receipt.verifyGate.budgetExhausted, true);
+  assert.equal(receipt.requirementsFidelityReview.status, "pass");
 });
 
 test("readiness precheck blocks a PRD whose Tasks section failed to parse", () => {

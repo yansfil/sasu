@@ -49,6 +49,18 @@ export interface GateDeviation {
   by: "user";
 }
 
+/**
+ * Which verify stage produced a non-PASS verdict. The rerun short-circuit may
+ * arm ONLY on "semantic": the "identical tree ⇒ identical verdict" premise
+ * holds for a judge reading a pinned diff, but mechanical commands and PRD
+ * oracles read state the vouched fingerprint cannot see (gitignored
+ * node_modules/, build outputs, running servers - reproduced 2026-08-11: a
+ * mechanical FAIL on a missing gitignored marker refused the rerun after the
+ * legitimate out-of-tree fix). "human" covers a round closed only by
+ * requiresHuman criteria; it is the user's to resolve, never refusable.
+ */
+export type VerifyFailedStage = "mechanical" | "evidence" | "oracle" | "human" | "semantic";
+
 export interface GateRunSummary {
   at: string;
   verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR";
@@ -63,6 +75,10 @@ export interface GateRunSummary {
    * (pre-2nd-wave files) simply never short-circuit.
    */
   treeFingerprint?: VouchedTreeFingerprint | null;
+  /** Stage that produced a non-PASS verdict; absent on PASS and on pre-field rows. */
+  failedStage?: VerifyFailedStage;
+  /** Judged-diff identity of the round: "git:<base>" or "injected" (test seam). */
+  diffSource?: string;
 }
 
 /**
@@ -115,6 +131,20 @@ export interface GateRecord {
    * project is not a git checkout.
    */
   treeFingerprint?: VouchedTreeFingerprint | LegacyTreeFingerprint | null;
+  /**
+   * Verify gate only: the stage that produced the last non-PASS verdict. The
+   * rerun short-circuit arms only on "semantic" (see VerifyFailedStage);
+   * records without the field - other gates, pre-field files - never refuse.
+   */
+  failedStage?: VerifyFailedStage;
+  /**
+   * Verify gate only: identity of the judged diff the verdict was earned on -
+   * "git:<resolved base ref>" or "injected" (the diffText test seam). A rerun
+   * with a different base judges a DIFFERENT diff (reproduced 2026-08-11: a
+   * corrected --base rerun that would PASS was refused as inevitable), so the
+   * short-circuit requires this to match; "injected" never arms it.
+   */
+  diffSource?: string;
 }
 
 export interface GatesState {
@@ -311,6 +341,10 @@ export function recordGateResult(
         inputs?: GateInput[];
         /** New records only carry the vouched shape; legacy shapes exist solely in already-written files. */
         treeFingerprint?: VouchedTreeFingerprint | null;
+        /** Verify gate only: stage behind a non-PASS verdict (ignored on PASS). */
+        failedStage?: VerifyFailedStage;
+        /** Verify gate only: judged-diff identity ("git:<base>" | "injected"). */
+        diffSource?: string;
       }
     | { kind: "error"; message: string; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],
@@ -328,6 +362,14 @@ export function recordGateResult(
     record.findings = outcome.findings;
     record.inputs = outcome.inputs ?? [];
     record.treeFingerprint = outcome.treeFingerprint ?? null;
+    // Stamped only when the caller says so, and a failedStage never survives a
+    // PASS: a lingering "semantic" under a later verdict would let the rerun
+    // short-circuit refuse on a stage that did not produce this record.
+    const failedStage = outcome.verdict !== "PASS" ? outcome.failedStage : undefined;
+    if (failedStage !== undefined) record.failedStage = failedStage;
+    else delete record.failedStage;
+    if (outcome.diffSource !== undefined) record.diffSource = outcome.diffSource;
+    else delete record.diffSource;
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
     // Cumulative twin of the gauge above: every real run counts, PASS included,
     // and nothing resets it (see the GateRecord field comment).
@@ -340,6 +382,8 @@ export function recordGateResult(
       error: null,
       artifact,
       treeFingerprint: outcome.treeFingerprint ?? null,
+      ...(failedStage !== undefined ? { failedStage } : {}),
+      ...(outcome.diffSource !== undefined ? { diffSource: outcome.diffSource } : {}),
     };
   } else {
     // Fail-closed (D-15): a judge failure counts as a blocked run, never a pass.
@@ -351,6 +395,11 @@ export function recordGateResult(
         ? store.writeArtifact(gate, { at, gate, stage: "judge-error", error: outcome.message, ...(outcome.artifactPayload as object) })
         : null;
     record.verdict = "ERROR";
+    // ERROR is a fact about the judge, not the tree or a stage: stale
+    // stage/diff stamps under it would misdescribe this record (item 10), and
+    // ERROR never arms the short-circuit anyway.
+    delete record.failedStage;
+    delete record.diffSource;
     record.attempts += 1;
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
     summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };

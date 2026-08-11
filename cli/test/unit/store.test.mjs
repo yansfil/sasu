@@ -98,6 +98,43 @@ test("a verdict's history row names the tree it was earned on", () => {
   assert.deepEqual(state.gates.verify.history.at(-1).treeFingerprint, fingerprint);
 });
 
+test("failedStage and diffSource ride the record and history row; PASS and ERROR clear the stage", () => {
+  const store = makeStore();
+  let state = store.load();
+  const fail = { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {}, failedStage: "semantic", diffSource: "git:HEAD" };
+  state = recordGateResult(store, state, "verify", fail, []);
+  assert.equal(state.gates.verify.failedStage, "semantic");
+  assert.equal(state.gates.verify.diffSource, "git:HEAD");
+  assert.equal(state.gates.verify.history.at(-1).failedStage, "semantic");
+  assert.equal(state.gates.verify.history.at(-1).diffSource, "git:HEAD");
+
+  // A PASS never carries a failedStage, even if a caller passes one: a
+  // lingering "semantic" under a later record would let the rerun
+  // short-circuit refuse on a stage that did not produce it.
+  state = recordGateResult(
+    store,
+    state,
+    "verify",
+    { kind: "verdict", verdict: "PASS", findings: [], artifactPayload: {}, failedStage: "semantic", diffSource: "git:HEAD" },
+    [],
+  );
+  assert.equal(state.gates.verify.failedStage, undefined);
+  assert.equal(state.gates.verify.diffSource, "git:HEAD", "diffSource is provenance, kept on PASS too");
+  assert.equal(state.gates.verify.history.at(-1).failedStage, undefined);
+
+  // ERROR is a fact about the judge, not a stage or a diff: both stamps clear.
+  state = recordGateResult(store, state, "verify", fail, []);
+  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
+  assert.equal(state.gates.verify.failedStage, undefined);
+  assert.equal(state.gates.verify.diffSource, undefined);
+
+  // Round-trip through disk: a rerun in a later process reads the same stamps.
+  state = recordGateResult(store, state, "verify", fail, []);
+  const reloaded = store.load();
+  assert.equal(reloaded.gates.verify.failedStage, "semantic");
+  assert.equal(reloaded.gates.verify.diffSource, "git:HEAD");
+});
+
 test("override requires a non-empty reason", () => {
   const store = makeStore();
   const state = store.load();

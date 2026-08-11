@@ -53,7 +53,11 @@ function writeContract(dir, n) {
 }
 
 function withStub(dir, response, fn) {
-  const stubFile = path.join(dir, "stub.json");
+  // Under agents/ so the stub plumbing rides neither the judged git diff nor
+  // the vouched tree fingerprint (the short-circuit tests swap stub responses
+  // between runs, which must not read as tree drift).
+  const stubFile = path.join(dir, "agents", "stub.json");
+  fs.mkdirSync(path.dirname(stubFile), { recursive: true });
   fs.writeFileSync(stubFile, JSON.stringify(response));
   const saved = { backend: process.env.SASU_JUDGE_BACKEND, file: process.env.SASU_JUDGE_STUB_FILE };
   process.env.SASU_JUDGE_BACKEND = "stub";
@@ -757,21 +761,141 @@ test("evidence owned by settled or unknown criteria is skipped; unreadable artif
   assert.ok(!artifact.inputs.some((i) => i.path === ac3Log), "a skipped artifact is not pinned - the judge never saw it");
 });
 
-// --- FAIL-side rerun short-circuit (2nd wave, phase 2) ----------------------
-// A judged FAIL re-run on the identical vouched tree, identical pinned inputs,
-// and unchanged implement evidence can only reproduce itself; the gate refuses
-// at $0 (no attempt, no judge call, no history row). Everything that CAN
-// legitimately change the verdict - tree drift, a contract edit outside the
-// vouched tree, new implement evidence, a user override - must break the
-// refusal.
+test("one artifact covering several of a lane's criteria rides once with every criterion label merged", async () => {
+  const dir = makeDir();
+  const shared = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/shared.log", "shared proof body\n");
+  // The same file registered under AC1 and AC2: the per-lane path dedupe used
+  // to keep only the first entry's label, so the judge read AC2's proof as
+  // absent (reproduced: an artifact covering AC2+AC4 rendered as [AC2] only).
+  writeImplementState(dir, {
+    acceptanceCriteria: [
+      { id: "AC1", artifacts: [{ kind: "log", path: shared }] },
+      { id: "AC2", artifacts: [{ kind: "log", path: shared }] },
+    ],
+  });
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: criteria(2), diffText: SMALL_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const prompt = capturedPrompt(dir, "gate_verify-semantic");
+  assert.match(prompt, /\[AC1, AC2\] agents\/implement\/t\/artifacts\/logs\/shared\.log/, "the retained entry carries BOTH criterion labels");
+  assert.equal(prompt.split("shared proof body").length - 1, 1, "the artifact body rides exactly once");
+  // Registered (not harness-collected) framing covers it (F1/R1 split).
+  assert.match(prompt, /REGISTERED EVIDENCE \(registered by the implementing session; origin NOT verified by the harness/);
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.deepEqual(artifact.lanes[0].injected.evidence.map((e) => e.criterionId), ["AC1, AC2"]);
+});
 
-/** A temp project that is a real git checkout, so tree fingerprints exist. */
+test("injected check tails are charged against the per-lane evidence budget and drop whole past it", async () => {
+  const dir = makeDir();
+  // Nine ~8.5KB verify-run log tails at an 8KB rendered cost each: the first
+  // eight fill the 64KB lane budget (8 x 8000 = 64000 <= 65536), the ninth
+  // must drop its TAIL only - the command/exit-code row always rides.
+  const verification = [];
+  for (let i = 1; i <= 9; i += 1) {
+    const rel = writeRunArtifact(dir, `agents/implement/t/artifacts/logs/v${i}.log`, `TAIL-V${i} ${"x".repeat(8_500)}\n`);
+    verification.push({
+      id: `V${i}`,
+      matrix: { covers: "AC1" },
+      artifacts: [{ kind: "command-log", path: rel, command: `node check-${i}.js`, exitCode: 0 }],
+    });
+  }
+  writeImplementState(dir, { verification });
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: criteria(2), diffText: SMALL_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const prompt = capturedPrompt(dir, "gate_verify-semantic");
+  assert.match(prompt, /TAIL-V1 /, "tails inside the budget ride");
+  assert.match(prompt, /TAIL-V8 /);
+  assert.doesNotMatch(prompt, /TAIL-V9 /, "the over-budget tail is dropped whole");
+  assert.match(prompt, /the implement harness ran `node check-9\.js`/, "the dropped tail's check row still rides");
+  assert.match(prompt, /\[output tail omitted for the judge input budget/, "the drop is explicit, never silent");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.equal(artifact.lanes[0].injected.omittedTailCount, 1);
+  const dropped = artifact.lanes[0].injected.checks.filter((c) => c.tailOmitted === true);
+  assert.deepEqual(dropped.map((c) => c.command), ["node check-9.js"]);
+});
+
+test("settled oracle tails share the per-lane budget; the settled note always rides", async () => {
+  const dir = makeDir();
+  const prdPath = writeScopedPrd(dir);
+  // Four ~9KB oracle outputs after a 60KB registered artifact (40KB excerpt
+  // cost): AC3-AC5 tails fit (40000 + 3 x 8000 = 64000), AC6's must drop -
+  // but its settled NOTE still rides, because the judge must know the
+  // criterion is decided.
+  fs.writeFileSync(
+    path.join(dir, prdPath),
+    fs
+      .readFileSync(path.join(dir, prdPath), "utf8")
+      .replace(
+        "- AC3. the marker artifact exists. Artifact: out/marker.txt",
+        [
+          '- AC3. oracle A. Check: `node -e "console.log(\'A\'.repeat(9000))"`',
+          '- AC4. oracle B. Check: `node -e "console.log(\'B\'.repeat(9000))"`',
+          '- AC5. oracle C. Check: `node -e "console.log(\'C\'.repeat(9000))"`',
+          '- AC6. oracle D. Check: `node -e "console.log(\'D\'.repeat(9000))"`',
+        ].join("\n"),
+      ),
+  );
+  const bigLog = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/big.log", "x".repeat(60_000));
+  writeImplementState(dir, { acceptanceCriteria: [{ id: "AC1", artifacts: [{ kind: "log", path: bigLog }] }] });
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const prompt = capturedPrompt(dir, "gate_verify-semantic");
+  assert.match(prompt, /A{100}/, "in-budget settled tails ride");
+  assert.match(prompt, /C{100}/);
+  assert.doesNotMatch(prompt, /D{100}/, "the over-budget settled tail is dropped whole");
+  assert.match(prompt, /\[AC6 - settled by harness oracle\]/, "the settled note always rides");
+  assert.match(prompt, /\[output tail omitted for the judge input budget; the settled verdict above stands\]/);
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.equal(artifact.lanes[0].injected.omittedTailCount, 1);
+});
+
+// --- FAIL-side rerun short-circuit (2nd wave, phase 2) ----------------------
+// A SEMANTIC-judge FAIL re-run on the identical judged diff (same base),
+// identical vouched tree, identical pinned inputs, and unchanged implement
+// evidence can only reproduce itself; the gate refuses at $0 (no attempt, no
+// judge call, no history row). Everything that CAN legitimately change the
+// verdict - tree drift, a different --base, a contract edit outside the
+// vouched tree, new implement evidence, a user override - must break the
+// refusal, and mechanical/oracle FAILs (whose causes live outside the
+// fingerprint) never refuse at all. These tests judge REAL git diffs: the
+// diffText seam records diffSource "injected" and never arms the refusal.
+
+/** A temp project that is a real git checkout with a base commit, so tree fingerprints and `git diff HEAD` exist. */
 function makeGitDir() {
   const dir = makeDir();
-  const init = spawnSync("git", ["init", "-q"], { cwd: dir, encoding: "utf8" });
-  assert.equal(init.status, 0, init.stderr);
   fs.writeFileSync(path.join(dir, "widget.js"), "module.exports = () => null;\n");
+  for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]]) {
+    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  }
+  // The change under judgment: a tracked modification, so the git-derived
+  // diff at the default base (HEAD) is non-empty.
+  fs.appendFileSync(path.join(dir, "widget.js"), "render();\n");
   return dir;
+}
+
+function gitHead(dir) {
+  const r = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim();
+}
+
+function gitCommitAll(dir, message) {
+  for (const args of [["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message]]) {
+    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  }
 }
 
 const FAIL_TWO = {
@@ -790,18 +914,23 @@ test("short-circuit: an identical tree after a semantic FAIL refuses at zero cos
   const dir = makeGitDir();
   const contractPath = writeContract(dir, 2);
   const run = () =>
-    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }));
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
 
   const first = await run();
   assert.equal(first.ok, false);
   const afterFirst = verifyGates(dir);
   assert.equal(afterFirst.attempts, 1);
   assert.ok(afterFirst.treeFingerprint, "the FAIL must pin the tree it was earned on");
+  assert.equal(afterFirst.failedStage, "semantic", "a judge FAIL records its stage");
+  assert.equal(afterFirst.diffSource, "git:HEAD", "the record names the judged-diff identity");
 
   await assert.rejects(run(), (error) => {
     assert.match(error.message, /rerun short-circuit/);
+    assert.match(error.message, /semantic-judge FAIL/, "the refusal claims inevitability only for the semantic case");
+    assert.match(error.message, /git:HEAD/, "the refusal names the judged-diff identity");
     assert.match(error.message, /fallback-mode vouched fingerprint/, "the refusal names the fingerprint mode");
     assert.match(error.message, /no persistence in the diff/, "the recorded findings are replayed");
+    assert.match(error.message, /--base/, "the refusal points at the corrected-base escape");
     assert.match(error.message, /gate override/, "the user escape hatch is named");
     assert.match(error.message, /No gate attempt was recorded and no judge call was made/);
     return true;
@@ -820,11 +949,67 @@ test("short-circuit: an identical tree after a semantic FAIL refuses at zero cos
   assert.equal(gatesState(dir).judgeCalls.length, 2);
 });
 
-test("short-circuit: a contract edit outside the vouched tree breaks the refusal via the input pins", async () => {
+test("short-circuit: a corrected --base rerun judges a different diff and must run", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const baseSha = gitHead(dir);
+  // Commit the implementation, then leave only unrelated noise in the working
+  // tree: the default base (HEAD) judges a diff MISSING the implementation -
+  // the exact reproduced trap, where the harness's own empty-diff/oversized
+  // recovery advice says "point --base at the commit you started from" and the
+  // old refusal predicate then swallowed that corrected rerun.
+  gitCommitAll(dir, "implementation");
+  fs.writeFileSync(path.join(dir, "notes.js"), "// unrelated noise\n");
+
+  const first = await withStub(dir, FAIL_TWO, () =>
+    runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
+  assert.equal(first.ok, false);
+  assert.equal(verifyGates(dir).failedStage, "semantic");
+  assert.equal(verifyGates(dir).diffSource, "git:HEAD");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.equal(artifact.diffSource, "git:HEAD", "the gate artifact stamps the git provenance of the judged diff");
+
+  // Same base, same tree: still refused.
+  await assert.rejects(
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true })),
+    /rerun short-circuit/,
+  );
+
+  // Corrected base: a DIFFERENT judged diff (now containing the
+  // implementation) - a different question, so the gate must run it.
+  const rerun = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "widget.js" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "widget.js" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, baseRef: baseSha, skipMechanical: true }),
+  );
+  assert.equal(rerun.ok, true, "the corrected-base rerun executes and may PASS");
+  assert.equal(verifyGates(dir).verdict, "PASS");
+  assert.equal(verifyGates(dir).diffSource, `git:${baseSha}`, "the new record names the base it judged");
+});
+
+test("short-circuit: an injected diff (test seam) records diffSource=injected and never arms the refusal", async () => {
   const dir = makeGitDir();
   const contractPath = writeContract(dir, 2);
   const run = () =>
     withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }));
+  const first = await run();
+  assert.equal(first.ok, false);
+  const record = verifyGates(dir);
+  assert.equal(record.failedStage, "semantic");
+  assert.equal(record.diffSource, "injected", "a diffText round is stamped as injected, indistinguishable no more");
+  assert.equal(readArtifacts(dir).find((a) => a.stage === "semantic").diffSource, "injected");
+  // Identical tree, identical injected bytes: still a real run - an injected
+  // diff has no git provenance, so the refusal may never rest on it.
+  const second = await run();
+  assert.equal(second.ok, false);
+  assert.equal(verifyGates(dir).attempts, 2, "an injected-diff FAIL must not refuse the rerun");
+});
+
+test("short-circuit: a contract edit outside the vouched tree breaks the refusal via the input pins", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const run = () =>
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
   await run();
   await assert.rejects(run(), /rerun short-circuit/);
   // agents/quick/** is harness bookkeeping the fingerprint is blind to, so
@@ -839,7 +1024,7 @@ test("short-circuit: gate override and a user-driven rerun are never swallowed",
   const dir = makeGitDir();
   const contractPath = writeContract(dir, 2);
   const run = () =>
-    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }));
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
   await run();
   await assert.rejects(run(), /rerun short-circuit/);
   const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
@@ -851,31 +1036,38 @@ test("short-circuit: gate override and a user-driven rerun are never swallowed",
   assert.equal(verifyGates(dir).attempts, 2);
 });
 
-test("short-circuit: a mechanical FAIL pins its tree and the refusal fires before the mechanical stage", async () => {
+test("short-circuit: a mechanical FAIL pins its tree but never refuses - its fix may live outside the fingerprint", async () => {
   const dir = makeGitDir();
   const contractPath = writeContract(dir, 2);
-  // The marker lives OUTSIDE the project so counting executions cannot itself
-  // move the fingerprint.
-  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-mech-marker-")), "ran.log");
+  // The reproduced 2026-08-11 case: the mechanical command reads a gitignored
+  // marker the vouched fingerprint cannot see. Creating it is the legitimate
+  // fix, leaves the fingerprint byte-identical, and the old predicate then
+  // refused the rerun with a false "can only reproduce that verdict".
+  fs.writeFileSync(path.join(dir, ".gitignore"), "marker.txt\n");
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   fs.writeFileSync(
     path.join(dir, "agents", "config.json"),
-    JSON.stringify({ verify: { commands: { test: `node -e "require('fs').appendFileSync('${marker}','x');process.exit(2)"` } } }),
+    JSON.stringify({ verify: { commands: { test: `node -e "process.exit(require('fs').existsSync('marker.txt')?0:2)"` } } }),
   );
-  const run = () =>
-    withStub(dir, "poison - the judge must never be consulted", () =>
-      runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF }));
 
-  const first = await run();
+  const first = await withStub(dir, "poison - the judge must never be consulted", () =>
+    runVerifyGate(dir, loadConfig(dir), "t", { contractPath }));
   assert.equal(first.ok, false);
   const record = verifyGates(dir);
   assert.equal(record.verdict, "FAIL");
-  assert.ok(record.treeFingerprint, "a mechanical FAIL must pin the tree too (item 10), or it could never short-circuit");
-  assert.equal(fs.readFileSync(marker, "utf8"), "x");
+  assert.equal(record.failedStage, "mechanical", "the record names the stage that failed");
+  assert.ok(record.treeFingerprint, "a mechanical FAIL still pins the tree it was earned on (item 10)");
 
-  await assert.rejects(run(), /rerun short-circuit/);
-  assert.equal(fs.readFileSync(marker, "utf8"), "x", "the refusal must fire before the mechanical stage re-runs anything");
-  assert.equal(verifyGates(dir).attempts, 1);
+  // The out-of-tree fix: gitignored, so the vouched fingerprint is identical.
+  fs.writeFileSync(path.join(dir, "marker.txt"), "present\n");
+  const rerun = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "widget.js" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "widget.js" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath }),
+  );
+  assert.equal(rerun.ok, true, "the identical-fingerprint rerun after the out-of-tree fix must execute and may PASS");
+  assert.equal(verifyGates(dir).verdict, "PASS");
+  assert.equal(verifyGates(dir).history.length, 2, "the rerun is a real recorded run");
 });
 
 test("short-circuit: new implement evidence (state.json updatedAt) breaks the refusal on the PRD path", async () => {
@@ -887,7 +1079,7 @@ test("short-circuit: new implement evidence (state.json updatedAt) breaks the re
     writeImplementState(dir, { tasks: [{ id: "T1", status: "complete" }], updatedAt });
   seedImplement("2020-01-01T00:00:00.000Z");
   const run = () =>
-    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }));
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, skipMechanical: true }));
 
   const first = await run();
   assert.equal(first.ok, false);

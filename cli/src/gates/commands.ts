@@ -17,6 +17,7 @@ import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../m
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { runPrelint, type PrelintResult } from "./prelint";
 import {
+  CHECK_TAIL_RENDER_MAX_CHARS,
   EVIDENCE_RENDER_MAX_CHARS,
   GAP_AUDIT_LANES,
   SPEC_LANES,
@@ -674,12 +675,27 @@ export async function runVerifyGate(
     );
   }
 
-  // FAIL-side rerun short-circuit ($0): re-running a judged FAIL on the
-  // identical vouched tree, with identical pinned inputs and no new implement
-  // evidence, can only reproduce the recorded verdict - it would burn a
+  // Judged-diff identity of THIS call, stamped on every recorded round below
+  // and required to match by the rerun short-circuit: --base changes which
+  // diff is judged (the harness's own empty-diff/oversized-diff recovery
+  // advice tells the agent to change it - reproduced 2026-08-11: a corrected
+  // --base rerun that would PASS was refused as inevitable), and an injected
+  // diff (the diffText test seam) has no git provenance at all, so a record
+  // carrying "injected" must never refuse anything.
+  const diffSource = options.diffText !== undefined ? "injected" : `git:${options.baseRef ?? "HEAD"}`;
+
+  // FAIL-side rerun short-circuit ($0): re-asking the identical SEMANTIC
+  // question - the judge reading the same judged diff (same base, identical
+  // vouched tree) against identical pinned inputs with no new implement
+  // evidence - can only reproduce the recorded verdict; it would burn a
   // retry-budget attempt and a judge round to learn nothing. Same refusal
   // class as the open-task guard above: thrown BEFORE any spend, so no
   // attempt is recorded, no judge call is made, and no history row appears.
+  // Armed ONLY by semantic-stage FAILs: mechanical commands and PRD oracles
+  // read state the vouched fingerprint cannot see (gitignored node_modules/,
+  // build outputs, running servers - see VerifyFailedStage), so their FAILs
+  // pin their tree (item 10) but never refuse a rerun; records without the
+  // stage/diff stamps (pre-field files) never refuse either.
   // Deliberate exclusions: PASS needs no twin (a fresh PASS is already
   // reported live by gateStatus freshness); ERROR is a fact about the judge,
   // not the tree, so an identical-tree retry is legitimate; an overridden
@@ -693,6 +709,10 @@ export async function runVerifyGate(
     && (verifyRecord.verdict === "FAIL" || verifyRecord.verdict === "BLOCK")
     && !verifyRecord.overridden
     && verifyRecord.treeFingerprint
+    && verifyRecord.failedStage === "semantic"
+    && verifyRecord.diffSource !== undefined
+    && verifyRecord.diffSource.startsWith("git:")
+    && verifyRecord.diffSource === diffSource
   ) {
     const currentFingerprint = currentTreeFingerprint(projectRoot, topic, verifyRecord.treeFingerprint);
     const treeUnchanged =
@@ -721,12 +741,12 @@ export async function runVerifyGate(
           ? verifyRecord.treeFingerprint.mode
           : "fallback";
       throw new Error(
-        `verify gate rerun short-circuit: the last attempt (${verifyRecord.lastRunAt ?? "unknown time"}) recorded ${verifyRecord.verdict} `
-          + `on this exact tree (${mode}-mode vouched fingerprint ${currentFingerprint!.vouched}, ${currentFingerprint!.entryCount} entries), `
-          + `and the pinned inputs and implement evidence are unchanged, so a re-run can only reproduce that verdict. Recorded findings:\n`
+        `verify gate rerun short-circuit: the last attempt (${verifyRecord.lastRunAt ?? "unknown time"}) recorded a semantic-judge ${verifyRecord.verdict} `
+          + `on this exact judged diff (${verifyRecord.diffSource}) and tree (${mode}-mode vouched fingerprint ${currentFingerprint!.vouched}, ${currentFingerprint!.entryCount} entries), `
+          + `and the pinned inputs and implement evidence are unchanged, so re-judging the identical semantic question can only reproduce that verdict. Recorded findings:\n`
           + `${findingLines.join("\n") || "  (none recorded)"}${omitted}\n`
-          + `Change the code under judgment (or the contract/PRD/registered evidence) and re-run. `
-          + `If the failure depends on state outside the tree, the USER (never the agent) may run: `
+          + `Change the code under judgment (or the contract/PRD/registered evidence), or point --base at the commit the work actually started from, and re-run. `
+          + `To force a re-judgment anyway, the USER (never the agent) may run: `
           + `sasu gate override --slug ${topic} --gate verify --reason "<why>". `
           + `No gate attempt was recorded and no judge call was made.`,
       );
@@ -834,10 +854,11 @@ export async function runVerifyGate(
               requiresHuman: false,
             })),
           inputs,
-          // Pinned even on this early FAIL: without the tree the verdict was
-          // earned on, the rerun short-circuit cannot refuse an identical
-          // re-run (and item 10 wants every outcome to name its tree anyway).
+          // Pinned even on this early FAIL (item 10: every outcome names its
+          // tree) - but the stage stamp keeps it from ever refusing a rerun:
+          // mechanical commands read state the fingerprint cannot see.
           treeFingerprint: treeFingerprintNow(),
+          failedStage: "mechanical",
           artifactPayload: { stage: "mechanical", runs: mechanical.runs },
         },
         records,
@@ -958,7 +979,9 @@ export async function runVerifyGate(
         // oversized evidence artifact may live under agents/** - bookkeeping
         // the vouched fingerprint is blind to - so pinning here would let the
         // rerun short-circuit swallow the very fix its findings ask for. An
-        // evidence-lane FAIL therefore never short-circuits.
+        // evidence-lane FAIL therefore never short-circuits (the stage stamp
+        // says the same thing explicitly).
+        failedStage: "evidence",
         artifactPayload: { stage: "evidence", findings: lane.findings, inputs, mechanical: mechanicalRecord() },
       },
       records,
@@ -1017,6 +1040,11 @@ export async function runVerifyGate(
         findings: zeroJudgeFindings,
         inputs: allInputs,
         treeFingerprint: zeroJudgeFingerprint,
+        // Oracle and human-lane FAILs both resolve outside what the semantic
+        // judge sees (an oracle reads live out-of-tree state; a human criterion
+        // waits on the user), so neither stage may ever refuse a rerun.
+        failedStage: oracleFindings.length > 0 ? "oracle" : "human",
+        diffSource,
         artifactPayload: {
           stage: humanLane.length > 0 ? "human-lane" : "oracle",
           verdict: zeroJudgePassed ? "PASS" : "FAIL",
@@ -1027,6 +1055,7 @@ export async function runVerifyGate(
           evidence: lane ? lane.artifacts : [],
           mechanical: mechanicalRecord(),
           treeFingerprint: zeroJudgeFingerprint,
+          diffSource,
           ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
           inputs: allInputs,
         },
@@ -1125,15 +1154,21 @@ export async function runVerifyGate(
     const quickMaterial = lane ? lane.material.filter((item) => ids.has(item.criterionId)) : [];
     // Injected implement evidence: items routed to this lane's criteria plus
     // lane-wide (ambiguously-owned) items, deduped by path so one artifact
-    // covering several of the lane's criteria rides once.
-    const lanePaths = new Set<string>();
-    const laneInjectedAll: InjectedMaterial[] = [];
+    // covering several of the lane's criteria rides once - but keeping EVERY
+    // criterion label. The dedupe used to keep only the first entry's id, so
+    // an artifact proving AC2+AC4 rendered as [AC2] alone and the judge read
+    // AC4's proof as absent.
+    const laneEntryByPath = new Map<string, InjectedMaterial>();
     for (const item of injected.material) {
       if (!(item.laneWide === true || ids.has(item.criterionId))) continue;
-      if (lanePaths.has(item.path)) continue;
-      lanePaths.add(item.path);
-      laneInjectedAll.push(item);
+      const existing = laneEntryByPath.get(item.path);
+      if (existing === undefined) {
+        laneEntryByPath.set(item.path, item);
+      } else if (!existing.criterionId.split(", ").includes(item.criterionId)) {
+        laneEntryByPath.set(item.path, { ...existing, criterionId: `${existing.criterionId}, ${item.criterionId}` });
+      }
     }
+    const laneInjectedAll = [...laneEntryByPath.values()];
     // Scale guard: injected text past the per-lane budget is dropped whole and
     // counted; the prompt announces the count (never a silent absence). Images
     // ride as attachments under their own per-file budget, not prompt bytes.
@@ -1167,7 +1202,26 @@ export async function runVerifyGate(
     const scopeFellBack = scoped !== null && scoped.text.trim() === "";
     const laneDiff = scoped !== null && !scopeFellBack ? scoped.text : diff;
     const agentic = laneDiff.length > VERIFY_DIFF_MAX_CHARS;
-    const laneInjectedChecks = injected.checks.filter((c) => c.laneWide === true || ids.has(c.criterionId));
+    // Injected check TAILS ride the same per-lane budget as material text:
+    // dozens of V-row command logs used to render up to 8KB each with no cap,
+    // adding unmeasured hundreds of KB past the budget the material obeys. A
+    // tail past the budget is dropped whole and flagged (tailOmitted) - the
+    // check row itself (command, exit code, provenance) is small, bounded, and
+    // is the part the judge rests a verdict on, so it always rides.
+    const laneInjectedChecks: InjectedCheck[] = [];
+    let omittedTailCount = 0;
+    for (const check of injected.checks.filter((c) => c.laneWide === true || ids.has(c.criterionId))) {
+      // Cost is what actually renders: checkSection clamps every tail to
+      // CHECK_TAIL_RENDER_MAX_CHARS, so charging raw bytes would over-drop.
+      const cost = Math.min(check.tail.length, CHECK_TAIL_RENDER_MAX_CHARS);
+      if (cost > 0 && injectedTextBytes + cost > INJECTED_EVIDENCE_LANE_MAX_BYTES) {
+        omittedTailCount += 1;
+        laneInjectedChecks.push({ ...check, tail: "", tailOmitted: true });
+      } else {
+        injectedTextBytes += cost;
+        laneInjectedChecks.push(check);
+      }
+    }
     const laneChecks = [...checkResults.filter((c) => ids.has(c.criterionId)), ...laneInjectedChecks];
     return {
       laneId: String(index + 1),
@@ -1180,6 +1234,11 @@ export async function runVerifyGate(
       laneInjected,
       laneInjectedChecks,
       omittedEvidenceCount,
+      // Budget accounting handed to the prompt-assembly pass below, where the
+      // settled oracle tails (built only after the oracles run) are charged
+      // against the remainder of the same per-lane budget.
+      injectedTextBytes,
+      omittedTailCount,
       laneChecks,
       laneDiff,
       images,
@@ -1217,16 +1276,32 @@ export async function runVerifyGate(
     ...(outcome.tail !== undefined && outcome.tail !== "" ? { tail: outcome.tail } : {}),
   }));
   const verifyLanes = assembledLanes.map((vl) => {
+    // Settled oracle TAILS are charged against the remainder of the lane's
+    // injected-evidence budget (same rule as check tails above): the settled
+    // note line always rides - the judge must know the criterion is decided -
+    // and only the unbounded tail is droppable, whole and flagged.
+    let injectedTextBytes = vl.injectedTextBytes;
+    let omittedTailCount = vl.omittedTailCount;
+    const laneSettled: SettledCriterion[] = settledContext.map((item) => {
+      if (item.tail === undefined) return item;
+      const cost = Math.min(item.tail.length, CHECK_TAIL_RENDER_MAX_CHARS);
+      if (injectedTextBytes + cost > INJECTED_EVIDENCE_LANE_MAX_BYTES) {
+        omittedTailCount += 1;
+        return { criterionId: item.criterionId, note: item.note, tailOmitted: true };
+      }
+      injectedTextBytes += cost;
+      return item;
+    });
     const laneOptions = {
       mechanicalRan: options.skipMechanical !== true,
       ...(laneCount > 1 ? { lane: { index: vl.index + 1, count: laneCount } } : {}),
-      ...(settledContext.length > 0 ? { settled: settledContext } : {}),
+      ...(laneSettled.length > 0 ? { settled: laneSettled } : {}),
       ...(vl.omittedEvidenceCount > 0 ? { omittedEvidenceCount: vl.omittedEvidenceCount } : {}),
     };
     const prompt = vl.agentic
       ? agenticSemanticVerifyPrompt(diffStatFromText(vl.laneDiff), vl.criteria, vl.material, vl.laneChecks, laneOptions)
       : semanticVerifyPrompt(vl.laneDiff, vl.criteria, vl.material, vl.laneChecks, laneOptions);
-    return { ...vl, prompt };
+    return { ...vl, omittedTailCount, prompt };
   });
   // One auditable hash of everything sent this round: the lane prompts joined
   // in lane order. For a single lane this is byte-identical to the old
@@ -1244,7 +1319,7 @@ export async function runVerifyGate(
     // What the judge saw beyond the diff (paths + hashes + owner, never
     // content): the artifact answers "was AC4's screenshot ever shown" the
     // same way judgedCriteriaIds answers "was AC4 ever sent".
-    ...(vl.laneInjected.length > 0 || vl.laneInjectedChecks.length > 0 || vl.omittedEvidenceCount > 0
+    ...(vl.laneInjected.length > 0 || vl.laneInjectedChecks.length > 0 || vl.omittedEvidenceCount > 0 || vl.omittedTailCount > 0
       ? {
           injected: {
             evidence: vl.laneInjected.map((item) => ({
@@ -1260,8 +1335,11 @@ export async function runVerifyGate(
               command: c.command,
               exitCode: c.exitCode,
               ...(c.path !== undefined ? { path: c.path } : {}),
+              ...(c.tailOmitted === true ? { tailOmitted: true } : {}),
             })),
             ...(vl.omittedEvidenceCount > 0 ? { omittedCount: vl.omittedEvidenceCount } : {}),
+            // Check/settled tails dropped by the per-lane budget (entries kept).
+            ...(vl.omittedTailCount > 0 ? { omittedTailCount: vl.omittedTailCount } : {}),
           },
         }
       : {}),
@@ -1389,12 +1467,20 @@ export async function runVerifyGate(
         findings,
         inputs: judgeInputs,
         treeFingerprint,
+        // The stage that closed the gate, most-out-of-tree first: any failed
+        // oracle means live state the fingerprint cannot see, so the record
+        // must never refuse a rerun; an open human criterion is the user's to
+        // resolve; only a pure judge FAIL over this pinned diff is the
+        // deterministic "semantic" case the short-circuit may refuse.
+        failedStage: oracleFindings.length > 0 ? "oracle" : judgedVerdict === "FAIL" ? "semantic" : "human",
+        diffSource,
         // One fan-out round is one gate attempt: recordGateResult runs once
         // per round no matter how many lanes it took (gap-audit's rule).
         artifactPayload: {
           stage: "semantic",
           verdict: passed ? "PASS" : "FAIL",
           judgedVerdict,
+          diffSource,
           criteria: resultCriteria,
           humanLane,
           ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
@@ -1444,6 +1530,7 @@ export async function runVerifyGate(
     const failurePayload = {
       judgedCriteriaIds,
       promptSha256,
+      diffSource,
       lanes: lanesManifest,
       checks: checkResults,
       evidence: evidenceSummary,
@@ -1887,7 +1974,12 @@ function collectImplementEvidence(
           continue;
         }
 
-        const provenance = `registered as ${artifact.kind ?? "file"} evidence by the implement run (owner ${ownerId})`;
+        // Honest authority split: the harness hashed this file, it did not
+        // collect it - a plain record-artifact registration is the implementing
+        // session's own bytes and must never wear harness-collected framing
+        // (evidenceSection routes producedBy-less items to the REGISTERED
+        // section for the same reason).
+        const provenance = `registered as ${artifact.kind ?? "file"} evidence by the implementing session (owner ${ownerId}); origin not verified by the harness - weigh accordingly`;
         if (isImage) {
           if (!canAttach) {
             out.omitted.push({ ownerId, path: relPath, reason: "judge backend has no image attachment support" });

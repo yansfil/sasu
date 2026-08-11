@@ -127,15 +127,23 @@ function scriptCommand(packageManager, script) {
   return `${packageManager} ${script}`;
 }
 
-function shellLikeTokens(command) {
-  const tokens = [];
-  let current = "";
+/**
+ * The one quote/escape state machine behind shellLikeTokens and
+ * unquotedShellMetachars. Emits every content character with the quoting
+ * context it reaches the executor in ({ quote, escaped }); structural
+ * characters - the escaping backslash and the quote delimiters themselves -
+ * are consumed here and never emitted. Both consumers used to carry a private
+ * copy of this machine synchronized by comment only (the drift class that
+ * already bit matchesScopeGlob), so "unquoted to the tokenizer" and "unquoted
+ * to the metachar predicate" are now the same fact by construction.
+ */
+function scanShellChars(command, onChar) {
   let quote = null;
   let escaped = false;
   for (const char of String(command || "")) {
     if (escaped) {
-      current += char;
       escaped = false;
+      onChar(char, { quote, escaped: true });
       continue;
     }
     if (char === "\\") {
@@ -144,23 +152,33 @@ function shellLikeTokens(command) {
     }
     if (quote) {
       if (char === quote) quote = null;
-      else current += char;
+      else onChar(char, { quote, escaped: false });
       continue;
     }
     if (char === "'" || char === '"') {
       quote = char;
       continue;
     }
-    if (/\s/.test(char)) {
+    onChar(char, { quote: null, escaped: false });
+  }
+  // A trailing backslash escapes nothing: surface it as a literal, matching
+  // the tokenizer's historical behavior.
+  if (escaped) onChar("\\", { quote, escaped: true });
+}
+
+function shellLikeTokens(command) {
+  const tokens = [];
+  let current = "";
+  scanShellChars(command, (char, context) => {
+    if (!context.quote && !context.escaped && /\s/.test(char)) {
       if (current) {
         tokens.push(current);
         current = "";
       }
-      continue;
+      return;
     }
     current += char;
-  }
-  if (escaped) current += "\\";
+  });
   if (current) tokens.push(current);
   return tokens;
 }
@@ -196,32 +214,16 @@ function isShellWrapperCommand(command) {
  * both executors tokenize with shellLikeTokens above and spawn WITHOUT a
  * shell, so a metacharacter inside a quoted token (`--grep "a|b"`) is a
  * literal argument by construction and flagging it is a false positive
- * (reproduced live, 2026-08-11). The quote/escape state machine here mirrors
- * shellLikeTokens exactly so "unquoted" means "unquoted to the executor".
+ * (reproduced live, 2026-08-11). The quote state comes from the same
+ * scanShellChars scanner the tokenizer consumes, so "unquoted" means
+ * "unquoted to the executor" without a second state machine to keep in sync.
  */
 function unquotedShellMetachars(command) {
   const found = [];
-  let quote = null;
-  let escaped = false;
-  for (const char of String(command || "")) {
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
+  scanShellChars(command, (char, context) => {
+    if (context.quote || context.escaped) return;
     if ("|&;<>$`".includes(char) && !found.includes(char)) found.push(char);
-  }
+  });
   return found;
 }
 

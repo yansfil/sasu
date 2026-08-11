@@ -267,6 +267,8 @@ Do not write a blocked or partial handoff until:
 - the report status is `Blocked` or `Partially Done`, never `Done`.
 
 When the verify gate is BLOCKED with its retry budget exhausted and every tracked item is complete, the gate itself is the blocker: `finalize --status blocked` succeeds and the receipt stamps the gate snapshot (verdict, attempts, findings).
+In that terminal state both review-record commands accept the review's honest status, including `pass`: the run is heading to a blocked receipt that requires the recorded review, so the gate no longer vetoes the record.
+While retry budget remains, a `pass` record is still rejected - fix the cited findings and re-run `sasu verify` first.
 
 Use:
 

@@ -354,7 +354,6 @@ function verifyGateStatus(state) {
   }
   const budget = judgeRetryBudget(projectRoot);
   const record = (gatesState.gates && gatesState.gates.verify) || {};
-  const findings = Array.isArray(record.findings) ? record.findings : [];
   try {
     const store = require("../dist/gates/store.js");
     const view = store.gateStatus(gatesState, "verify", budget, projectRoot);
@@ -371,28 +370,56 @@ function verifyGateStatus(state) {
     };
   } catch {
     // CLI dist not built: fall back to the recorded verdict without freshness.
-    // The budget arithmetic mirrors gateStatus in cli/src/gates/store.ts
-    // exactly (!passed && attempts >= budget && verdict !== null) so the two
-    // derivations cannot disagree on whether the gate is terminally blocked.
-    const passed = record.verdict === "PASS" || record.overridden === true;
-    const attempts = Number.isInteger(record.attempts) ? record.attempts : 0;
-    return {
-      effective: passed ? "PASS" : record.verdict == null ? "NOT_RUN" : "BLOCKED",
-      verdict: record.verdict || null,
-      overridden: record.overridden === true,
-      lastRunAt: record.lastRunAt || null,
-      attempts,
-      budget,
-      budgetExhausted: !passed && attempts >= budget && record.verdict != null,
-      findings,
-      freshnessUnverified: true,
-    };
+    return verifyGateFallbackStatus(record, budget);
   }
 }
 
-function verifyGateViolations(state) {
+// No-dist twin of gateStatus in cli/src/gates/store.ts, minus freshness (no
+// dist means no fingerprint code to call): same verdict/attempt arithmetic,
+// including budgetExhausted = !passed && attempts >= budget && verdict != null.
+// Kept as its own pure function so tests/gate_status_parity.test.mjs can
+// drive both derivations over identical fixtures - a comment was the only
+// thing pinning the twins together before, and this predicate now decides
+// when the blocked-receipt exit opens (verifyGateTerminallyBlocked).
+function verifyGateFallbackStatus(record, budget) {
+  const passed = record.verdict === "PASS" || record.overridden === true;
+  const attempts = Number.isInteger(record.attempts) ? record.attempts : 0;
+  return {
+    effective: passed ? "PASS" : record.verdict == null ? "NOT_RUN" : "BLOCKED",
+    verdict: record.verdict || null,
+    overridden: record.overridden === true,
+    lastRunAt: record.lastRunAt || null,
+    attempts,
+    budget,
+    budgetExhausted: !passed && attempts >= budget && record.verdict != null,
+    findings: Array.isArray(record.findings) ? record.findings : [],
+    freshnessUnverified: true,
+  };
+}
+
+// Terminal means the gate ran, failed, and has no retry budget left: the
+// run's only honest destination is a blocked receipt. finalize --status
+// blocked accepts the gate itself as the blocker on exactly this predicate,
+// and the review-record commands stop letting the gate veto an honest review
+// on exactly this predicate too - the two exits of the deadlock must never
+// disagree about when the gate stops arguing (see the circular-rejection
+// incident in the review-record commands).
+function verifyGateTerminallyBlocked(gate) {
+  return gate.effective === "BLOCKED" && gate.budgetExhausted === true;
+}
+
+function verifyGateViolations(state, options = {}) {
   const gate = verifyGateStatus(state);
   if (gate.effective === "BLOCKED") {
+    // Recording an honest review is a prerequisite of the blocked receipt,
+    // not a completion claim: once the gate is terminal the callers that opt
+    // in (the review-record commands) are heading to `finalize --status
+    // blocked`, which itself demands the recorded review - so the gate must
+    // not veto the record. With budget remaining the veto stands: attempts
+    // are left to spend, fix and re-verify first.
+    if (options.allowTerminallyBlockedVerifyGate === true && verifyGateTerminallyBlocked(gate)) {
+      return [];
+    }
     // With budget spent, "fix and re-run" is a dead instruction; point at the
     // two real exits so the deadlock names its own escape (finalize refuses
     // --status complete either way).
@@ -411,7 +438,9 @@ function completionViolations(statePath, state, options = {}) {
   const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
   const violations = [];
   violations.push(...prdSnapshotViolations(statePath, state));
-  violations.push(...verifyGateViolations(state));
+  violations.push(...verifyGateViolations(state, {
+    allowTerminallyBlockedVerifyGate: options.allowTerminallyBlockedVerifyGate === true,
+  }));
   const verificationPlan = verificationPlanSummary(state);
   if (verificationPlan.status === "missing") {
     violations.push("Verification plan is missing");
@@ -626,6 +655,8 @@ module.exports = {
   completionReadiness,
   completionViolations,
   verifyGateStatus,
+  verifyGateFallbackStatus,
+  verifyGateTerminallyBlocked,
   verifyGateViolations,
   prdSnapshotViolations,
   requirementsFidelityHandoffViolations,

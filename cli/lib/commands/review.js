@@ -10,7 +10,7 @@ const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus } = require("../reviews");
+const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
@@ -80,6 +80,13 @@ function cmdRequirementsReviewRecord(options) {
     const violations = completionViolations(statePath, state, {
       includeRequirementsFidelityReview: false,
       includeFinalReview: false,
+      // A terminally blocked gate (BLOCKED, budget spent) must not veto the
+      // record: this run's only exit is `finalize --status blocked`, which
+      // itself requires the recorded review - vetoing here made the two
+      // errors point at each other with no escape but a dishonest --status
+      // fail (reproduced 2026-08-11). With budget remaining the gate still
+      // rejects a pass: fix the findings and re-run `sasu verify` first.
+      allowTerminallyBlockedVerifyGate: true,
     }).filter(violation => violation !== "Requirements fidelity review report hash changed");
     if (violations.length) {
       process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations }, null, 2) + "\n");
@@ -131,7 +138,13 @@ function cmdReviewRecord(options) {
   const reportPath = toProjectRelative(reportAbs, state.projectRoot || cwd());
 
   if (status === "pass") {
-    const violations = completionViolations(statePath, state, { includeFinalReview: false });
+    const violations = completionViolations(statePath, state, {
+      includeFinalReview: false,
+      // Same scoping as requirements-review-record above: a terminally
+      // blocked gate means a blocked handoff, and on a high-risk profile
+      // that handoff requires this review's honest verdict in the receipt.
+      allowTerminallyBlockedVerifyGate: true,
+    });
     if (violations.length) {
       process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations }, null, 2) + "\n");
       process.exitCode = 2;
@@ -301,7 +314,9 @@ function cmdFinalize(options) {
     // (gate BLOCKED), blocked was refused (zero blocked items), and override
     // was the only exit. With budget remaining the refusal stands: the agent
     // still has attempts to spend, so a cheap early "blocked" stays closed.
-    const gateTerminallyBlocked = verifyGate.effective === "BLOCKED" && verifyGate.budgetExhausted === true;
+    // Shared predicate with the review-record scoping (reviews.js): the
+    // blocked exit and the review record it requires must open together.
+    const gateTerminallyBlocked = verifyGateTerminallyBlocked(verifyGate);
     if (status === "blocked" && blockers.length === 0 && !gateTerminallyBlocked) {
       violations.push(verifyGate.effective === "BLOCKED"
         ? `Blocked finalization with no blocked tracked item: the verify gate is BLOCKED but its retry budget is not exhausted (attempts ${verifyGate.attempts}/${verifyGate.budget}); fix the cited findings and re-run \`sasu verify\``

@@ -510,11 +510,34 @@ function checkAcOracleTails(lines: string[], acDefinitionLines: Map<string, numb
 // so a metacharacter inside a quoted token is a literal argument by
 // construction and must not warn - `npm test -- --grep "a|b"` was a reproduced
 // false positive, and so was the rule's own recommended `bash -c "..."` shape
-// (exempted below via the same wrapper grammar unwrapShellCommandTokens uses).
-const { isShellWrapperCommand, unquotedShellMetachars } = require("../../lib/inference.js") as {
+// (exempted below via the same wrapper grammar unwrapShellCommandTokens uses,
+// but ONLY when the wrapper consumes the whole command - see
+// isFullShellWrapperCommand).
+const { isShellWrapperCommand, shellLikeTokens, unquotedShellMetachars } = require("../../lib/inference.js") as {
   isShellWrapperCommand: (command: string) => boolean;
+  shellLikeTokens: (command: string) => string[];
   unquotedShellMetachars: (command: string) => string[];
 };
+
+/**
+ * True only when the bash/sh/zsh -c wrapper consumes the ENTIRE command: the
+ * script is the last token. Under shellLikeTokens + spawn(shell:false),
+ * anything after the script token reaches the script as inert $0/$1
+ * positional arguments, so `bash -c "true" && test -f missing.txt` is a
+ * constant-true oracle wearing a wrapper (reproduced 2026-08-11: the `&&`
+ * tail never executes in either executor, and the old any-prefix exemption
+ * drew no warning for it). A wrapper with residue is scanned like any bare
+ * command.
+ */
+function isFullShellWrapperCommand(command: string): boolean {
+  if (!isShellWrapperCommand(command)) return false;
+  const tokens = shellLikeTokens(command);
+  // Wrapper grammar (inference.js unwrapShellCommandTokens): `bash -c <script>`
+  // and `bash -lc <script>` put the script at index 2, `bash -l -c <script>`
+  // at index 3.
+  const scriptIndex = tokens[1] === "-l" ? 3 : 2;
+  return tokens.length === scriptIndex + 1;
+}
 // Constant-true shapes an author reaches for while stubbing: exactly `true`,
 // `:`, `exit 0`, or any bare `echo ...` (exit 0 no matter what it prints).
 const ORACLE_CONSTANT_TRUE = /^(?:true|:|exit 0)$|^echo\s/;
@@ -528,9 +551,11 @@ const ORACLE_CONSTANT_TRUE = /^(?:true|:|exit 0)$|^echo\s/;
  * gate ran a real shell and the same command PASSED there while the harness
  * recorded not_met - the author must be told operators are inert, not left to
  * find out from a verdict split. Two shapes are clean on purpose: an explicit
- * bash/sh/zsh -c wrapper (shell semantics ARE provided - it is this rule's own
- * recommendation) and operators inside quoted arguments (literal to the
- * program in both executors, so nothing is silently reinterpreted).
+ * bash/sh/zsh -c wrapper that consumes the whole command (shell semantics ARE
+ * provided - it is this rule's own recommendation) and operators inside quoted
+ * arguments (literal to the program in both executors, so nothing is silently
+ * reinterpreted). A wrapper with trailing tokens is NOT clean: the tail is
+ * inert positional arguments, not executed shell.
  *
  * Constant-true commands: an all-oracle PRD can pass the verify gate with zero
  * judge calls, so `Check: \`true\`` would be a self-certifying PASS that
@@ -541,14 +566,17 @@ function checkAcOracleAdvisories(lines: string[], acDefinitionLines: Map<string,
     const oracle = parseAcOracle(entry.text);
     if (oracle === null || oracle.kind !== "check") continue;
     const command = (oracle.command ?? "").trim();
-    const inertOperators = isShellWrapperCommand(command) ? [] : unquotedShellMetachars(command);
+    const inertOperators = isFullShellWrapperCommand(command) ? [] : unquotedShellMetachars(command);
     if (inertOperators.length > 0) {
+      const recommendation = isShellWrapperCommand(command)
+        ? `Everything after the -c script token is inert positional arguments, never executed; move the whole pipeline inside ONE -c string, e.g. Check: \`bash -c "<script> && <rest>"\`.`
+        : `Wrap the command if shell semantics are intended, e.g. Check: \`bash -c "${command}"\`.`;
       warnings.push(
         warning(
           "prd-ac-oracle-shell-operators",
           acDefinitionLines.get(id) ?? entry.line,
           `${id}: Check command \`${command}\` contains unquoted shell operator characters (${inertOperators.join(" ")}), but oracle commands run without a shell - operators like | && ; > < $ are passed to the program as literal arguments, not interpreted`,
-          `Wrap the command if shell semantics are intended, e.g. Check: \`bash -c "${command}"\`.`,
+          recommendation,
         ),
       );
     }
