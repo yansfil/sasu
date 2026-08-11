@@ -246,7 +246,9 @@ function quickStopDirective(hookCwd, sessionId) {
         // omitting that made the hook advise the cheap blocked exit on a run
         // that would have passed (reproduced 2026-08-11).
         ? `recorded a semantic ${record.verdict} at attempt ${record.attempts}/${budget} and an identical re-run is refused on this unchanged tree, so the remaining attempts are unspendable.\n\nIf you can still fix the findings, change the code under judgment - a tree change re-arms verification and \`${verifyCommand}\` will run again.${typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? ` The verdict was judged against base ${record.diffSource.slice(4, 16)}; if that is not the commit the work started from, re-run with a corrected \`--base\` instead.` : ""} Otherwise close the run out honestly as blocked.`
-        : `exhausted its ${budget}-attempt verify budget.`;
+        // Same reason the refused-rerun branch names the base: attempts burned
+        // against the wrong base hide a passing run just as effectively.
+        : `exhausted its ${budget}-attempt verify budget.${typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? ` Every attempt was judged against base ${record.diffSource.slice(4, 16)}; if that is not the commit the work started from, a corrected \`--base\` is a different question than the one that failed.` : ""}`;
     // A human handoff closes as the documented complete-with-open-items shape
     // (a contract with `human:` criteria can never reach PASS by design). A
     // budget-exhausted run - or one whose remaining budget is unspendable

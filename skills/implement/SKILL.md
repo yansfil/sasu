@@ -344,8 +344,11 @@ and then calling the gate on frozen code pays for the suite once.
 - Exit 1 with per-criterion semantic failures: address each cited criterion
   and re-run. The budget is N chances to fix and re-verify, not N identical
   retries - re-running with nothing changed is refused at $0 and spends no
-  attempt. When the printed retry budget is exhausted, or a re-run is refused,
-  stop and hand the findings to the user.
+  attempt. A refusal settles the identical question only: it names the base the
+  verdict was judged against, so if that is not the commit the work started
+  from, re-run with a corrected `--base` instead of closing out. When the
+  printed retry budget is exhausted, or a re-run is refused and the base is
+  right, stop and hand the findings to the user.
 - Fail-closed judge errors report their cause and recovery; the gate stays
   blocked until it passes or the user overrides.
 - Never run `sasu gate override` yourself: overrides are user-only, and

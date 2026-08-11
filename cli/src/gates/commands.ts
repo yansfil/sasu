@@ -1619,7 +1619,14 @@ export async function runVerifyGate(
     // verdict is the merge of every lane, so it is reproducible-by-construction
     // only if all of them are. Each lane decides this from its own assembled
     // payload (see `liveMaterial` at lane assembly).
-    const usedLiveMaterial = verifyLanes.some((vl) => vl.liveMaterial);
+    //
+    // A capture counts even when its material reached no judged lane: an image
+    // capture on a backend without attachments is routed to the human lane, so
+    // the lane-derived flag misses it, yet the command re-runs every round and
+    // regenerating it (after fixing whatever it captures out of tree) is a
+    // legitimate reason to re-run the gate.
+    const usedLiveMaterial =
+      verifyLanes.some((vl) => vl.liveMaterial) || contractCommands.some((cmd) => cmd.kind === "capture");
     // Document-order verdict list for the receipt: judged criteria carry the
     // judge's verdicts, oracle-backed ones the harness's; human criteria have
     // no verdict to quote (their findings carry the story).
@@ -2098,16 +2105,30 @@ function collectImplementEvidence(
     const commandLogKey = (entry: { ownerKind: string; ownerId: string; artifact: ImplementArtifact }): string =>
       `${entry.ownerKind}\0${String(entry.ownerId ?? "?")}\0${entry.artifact.command}`;
     const latestLogIndex = new Map<string, number>();
-    // Only a log still on disk can supersede another, and only such a log can
-    // BE superseded: ranking a missing newest run first dropped BOTH rows (the
-    // older one as "superseded", the newer as "file not found") and the judge
-    // silently lost a check it had seen. The newest SURVIVING run wins, and a
-    // vanished log is reported as missing on its own account.
+    // Rank on "will actually be injected", not merely "is newest": a log that
+    // the loop below rejects must not take its command's row down with it. The
+    // first version of this ranked on recency alone, so a missing newest run
+    // dropped BOTH rows (the older as "superseded", the newer as "file not
+    // found") and the judge silently lost a check it had seen; ranking on
+    // existence alone moved the same harm one step over (a 0-byte newest log -
+    // what `tsc --noEmit` writes on success - beat a log with real output, then
+    // lost to the empty check). Every byte-count rejection is decided here from
+    // one stat, so the winner is a log that can be shown. Content rejections
+    // (binary, unreadable) still need the read and stay in the loop; a log file
+    // holding NUL bytes is not a shape this harness produces.
     const survivingLogs = new Set<number>();
     entries.forEach((entry, index) => {
       if (!isCommandLogArtifact(entry.artifact)) return;
       const relPath = typeof entry.artifact.path === "string" ? entry.artifact.path : "";
-      if (relPath === "" || !fs.existsSync(path.join(projectRoot, relPath))) return;
+      if (relPath === "") return;
+      const resolved = path.join(projectRoot, relPath);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(resolved);
+      } catch {
+        return;
+      }
+      if (stat.size === 0 || containmentProblem(projectRoot, resolved) !== null) return;
       survivingLogs.add(index);
       const key = commandLogKey(entry);
       const prev = latestLogIndex.get(key);

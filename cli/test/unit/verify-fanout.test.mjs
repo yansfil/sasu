@@ -1388,6 +1388,28 @@ test("short-circuit: a pre-field record (no live-material stamp) never refuses",
   assert.equal(verifyGates(dir).attempts, 2, "an unstamped record must re-run, not refuse");
 });
 
+test("short-circuit: a record with no doc-kind stamp never refuses", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const run = () =>
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
+  await run();
+  // Without the stamp the gate and the terminal predicate cannot agree on
+  // whether the implement run's evidence counts as judged material, and a
+  // predicate that disagrees with the gate IS the livelock. So an unstamped
+  // record must re-run rather than refuse - and the terminal predicate must
+  // not call the run over either.
+  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const state = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
+  delete state.gates.verify.docKind;
+  delete state.gates.verify.history[state.gates.verify.history.length - 1].docKind;
+  fs.writeFileSync(gatesPath, JSON.stringify(state, null, 2));
+  assert.equal(verifyRerunWouldBeRefused(dir, "t"), false, "an unstamped record is not terminal");
+  const rerun = await run();
+  assert.equal(rerun.ok, false);
+  assert.equal(verifyGates(dir).attempts, 2, "an unstamped record must re-run, not refuse");
+});
+
 test("short-circuit: a record whose stamps disagree with its latest history row never arms", async () => {
   const dir = makeGitDir();
   const contractPath = writeContract(dir, 2);
@@ -1409,6 +1431,8 @@ test("short-circuit: a record whose stamps disagree with its latest history row 
     "a dropped row diffSource": (record) => { delete record.history[record.history.length - 1].diffSource; },
     "a dropped row failedStage": (record) => { delete record.history[record.history.length - 1].failedStage; },
     "a row-only live-material stamp": (record) => { record.history[record.history.length - 1].usedLiveMaterial = true; },
+    "a dropped row docKind": (record) => { delete record.history[record.history.length - 1].docKind; },
+    "a row docKind the record contradicts": (record) => { record.history[record.history.length - 1].docKind = "prd"; },
     "an emptied history": (record) => { record.history = []; },
   };
   for (const [name, mutate] of Object.entries(mutations)) {

@@ -473,10 +473,10 @@ function verifyGateTerminallyBlocked(gate) {
 // `--base HEAD` hid a committed half of the work, the judge FAILed, and the
 // terminal predicate reported the loop over while `--base <start>` PASSed).
 function verifyGateTerminalCause(gate) {
-  if (gate.budgetExhausted === true) return `its ${gate.budget}-attempt retry budget is exhausted`;
   const base = typeof gate.diffSource === "string" && gate.diffSource.startsWith("git:")
     ? `, judged against base ${gate.diffSource.slice(4, 16)}`
     : "";
+  if (gate.budgetExhausted === true) return `its ${gate.budget}-attempt retry budget is exhausted${base}`;
   return `an identical re-run is refused on this unchanged tree (attempts ${gate.attempts}/${gate.budget}${base}; the remaining budget is unspendable). `
     + `Changing the code under judgment re-arms verification; so does pointing --base at the commit the work actually started from, if the verdict was judged against the wrong one`;
 }
