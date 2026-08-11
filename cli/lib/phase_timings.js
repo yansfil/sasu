@@ -98,7 +98,11 @@ function computePhaseTimings({ state, gatesState = null, now }) {
       judgeSeconds: round(judge.totalSeconds),
       judgeCalls: judge.calls,
       judgeSecondsByGate: Object.fromEntries(Object.entries(judge.byPurpose).map(([key, value]) => [key, round(value)])),
-      verifyGateAttempts: verifyGate ? verifyGate.attempts ?? null : null,
+      // Cumulative runs, not the retry-budget gauge: `attempts` resets to 0 on
+      // PASS, so quoting it here made three live-session receipts all report 0
+      // verify attempts on gates that had really run. Old gates.json files
+      // without totalAttempts report null - the capped history is not a count.
+      verifyGateAttempts: verifyGate && typeof verifyGate.totalAttempts === "number" ? verifyGate.totalAttempts : null,
     },
     wallClockSeconds: round(wallClockSeconds),
     // The remainder is agent turns + user wait + un-logged work (browser QA

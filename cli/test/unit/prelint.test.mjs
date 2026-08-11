@@ -180,6 +180,34 @@ test("a Check command with shell operators draws the operators-not-interpreted w
   assert.match(result.warnings[0].recommendation, /bash -c/);
 });
 
+// Reproduced false positive #1 (2026-08-11): the rule's own recommendation is
+// `bash -c "..."`, yet that exact shape still warned. A declared shell wrapper
+// provides the shell semantics the warning exists to flag as absent.
+test("the recommended bash -c wrapper shape is exempt from the shell-operators warning", () => {
+  const prd = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    '- AC3. the marker greps. Check: `bash -c "test -f README.md && grep -c Test README.md"` -> 1',
+  );
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
+});
+
+// Reproduced false positive #2 (2026-08-11): a metacharacter inside a quoted
+// argument is a literal token to both executors (shellLikeTokens + shell:false),
+// so nothing is silently reinterpreted and the warning was pure noise.
+test("a quoted metacharacter argument is exempt from the shell-operators warning", () => {
+  const prd = fixture("prd-oracle-covered-ac.md").replace(
+    "- AC3. the marker exists. Artifact: out/marker.txt",
+    '- AC3. the grep filter runs. Check: `npm test -- --grep "a|b"`',
+  );
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
+});
+
 test("a trivially-constant Check command draws the constant-true warning without blocking", () => {
   for (const command of ["true", ":", "exit 0", "echo done"]) {
     const prd = fixture("prd-oracle-covered-ac.md").replace(

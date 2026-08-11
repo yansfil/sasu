@@ -118,15 +118,52 @@ test("contract verify FAIL blocks with per-criterion findings and consumes an at
   assert.equal(gatesState(dir).gates.verify.attempts, 1);
 });
 
+test("a FAIL rerun on the identical tree is refused at zero cost until the tree moves", () => {
+  const dir = makeGitProject();
+  const first = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+    stub: stubFile(dir, FAIL_RESPONSE),
+  });
+  assert.equal(first.status, 1, first.stdout + first.stderr);
+  assert.equal(gatesState(dir).gates.verify.attempts, 1);
+
+  // Nothing changed: the rerun is refused before any spend.
+  const refused = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+    stub: stubFile(dir, FAIL_RESPONSE),
+  });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /rerun short-circuit/);
+  assert.match(refused.stderr, /fallback-mode vouched fingerprint/, "the refusal names the fingerprint mode");
+  assert.match(refused.stderr, /no persistence in the diff/, "the recorded findings are replayed");
+  assert.match(refused.stderr, /gate override/, "the user escape hatch is named");
+  const afterRefusal = gatesState(dir).gates.verify;
+  assert.equal(afterRefusal.attempts, 1, "a refusal must not charge an attempt");
+  assert.equal(afterRefusal.totalAttempts, 1, "a refusal is not a run");
+  assert.equal(afterRefusal.history.length, 1, "a refusal must not append a history row");
+  assert.equal(gatesState(dir).judgeCalls.length, 1, "a refusal must not spend a judge call");
+
+  // The tree moved: the rerun is a real attempt again.
+  fs.appendFileSync(path.join(dir, "widget.js"), "persistHarder();\n");
+  const rerun = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+    stub: stubFile(dir, FAIL_RESPONSE),
+  });
+  assert.equal(rerun.status, 1, rerun.stdout + rerun.stderr);
+  assert.equal(gatesState(dir).gates.verify.attempts, 2);
+  assert.equal(gatesState(dir).gates.verify.totalAttempts, 2);
+});
+
 test("an exhausted retry budget hands off as an honest blocked close-out, not a fake complete", () => {
   const dir = makeGitProject();
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    // Real fix-loop shape: the tree moves between attempts. An unchanged tree
+    // would hit the rerun short-circuit instead of spending the budget.
+    if (attempt > 0) fs.appendFileSync(path.join(dir, "widget.js"), `attempt${attempt}();\n`);
     const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
       stub: stubFile(dir, FAIL_RESPONSE),
     });
     assert.equal(result.status, 1, result.stdout + result.stderr);
   }
   assert.equal(gatesState(dir).gates.verify.attempts, 3);
+  assert.equal(gatesState(dir).gates.verify.totalAttempts, 3, "the cumulative counter tracks every real run");
 
   // The Stop-hook quick guard consumes the very gates.json the CLI just
   // wrote: with the default 3-attempt budget spent, the directive must

@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
   diffStatFromText,
   filterDiffByGlobs,
@@ -16,6 +17,7 @@ import {
   matchesScopeGlob,
   partitionVerifyCriteria,
   readGateStatus,
+  runAcOracles,
   runVerifyGate,
   scopeForLane,
   splitDiffByFile,
@@ -753,4 +755,165 @@ test("evidence owned by settled or unknown criteria is skipped; unreadable artif
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
   assert.deepEqual(artifact.injectionOmitted, [{ ownerId: "AC1", path: "agents/implement/t/artifacts/logs/gone.log", reason: "file not found" }]);
   assert.ok(!artifact.inputs.some((i) => i.path === ac3Log), "a skipped artifact is not pinned - the judge never saw it");
+});
+
+// --- FAIL-side rerun short-circuit (2nd wave, phase 2) ----------------------
+// A judged FAIL re-run on the identical vouched tree, identical pinned inputs,
+// and unchanged implement evidence can only reproduce itself; the gate refuses
+// at $0 (no attempt, no judge call, no history row). Everything that CAN
+// legitimately change the verdict - tree drift, a contract edit outside the
+// vouched tree, new implement evidence, a user override - must break the
+// refusal.
+
+/** A temp project that is a real git checkout, so tree fingerprints exist. */
+function makeGitDir() {
+  const dir = makeDir();
+  const init = spawnSync("git", ["init", "-q"], { cwd: dir, encoding: "utf8" });
+  assert.equal(init.status, 0, init.stderr);
+  fs.writeFileSync(path.join(dir, "widget.js"), "module.exports = () => null;\n");
+  return dir;
+}
+
+const FAIL_TWO = {
+  verdict: "FAIL",
+  criteria: [
+    { id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" },
+    { id: "AC2", verdict: "FAIL", reason: "no persistence in the diff" },
+  ],
+};
+
+function verifyGates(dir) {
+  return gatesState(dir).gates.verify;
+}
+
+test("short-circuit: an identical tree after a semantic FAIL refuses at zero cost; drift re-runs", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const run = () =>
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }));
+
+  const first = await run();
+  assert.equal(first.ok, false);
+  const afterFirst = verifyGates(dir);
+  assert.equal(afterFirst.attempts, 1);
+  assert.ok(afterFirst.treeFingerprint, "the FAIL must pin the tree it was earned on");
+
+  await assert.rejects(run(), (error) => {
+    assert.match(error.message, /rerun short-circuit/);
+    assert.match(error.message, /fallback-mode vouched fingerprint/, "the refusal names the fingerprint mode");
+    assert.match(error.message, /no persistence in the diff/, "the recorded findings are replayed");
+    assert.match(error.message, /gate override/, "the user escape hatch is named");
+    assert.match(error.message, /No gate attempt was recorded and no judge call was made/);
+    return true;
+  });
+  const afterRefusal = verifyGates(dir);
+  assert.equal(afterRefusal.attempts, 1, "a refusal must not charge an attempt");
+  assert.equal(afterRefusal.totalAttempts, 1, "a refusal is not a run");
+  assert.equal(afterRefusal.history.length, 1, "a refusal must not append a history row");
+  assert.equal(gatesState(dir).judgeCalls.length, 1, "a refusal must not spend a judge call");
+
+  // Tree drift is the honest fix-loop shape: the rerun is a real attempt again.
+  fs.appendFileSync(path.join(dir, "widget.js"), "persistHarder();\n");
+  const rerun = await run();
+  assert.equal(rerun.ok, false);
+  assert.equal(verifyGates(dir).attempts, 2);
+  assert.equal(gatesState(dir).judgeCalls.length, 2);
+});
+
+test("short-circuit: a contract edit outside the vouched tree breaks the refusal via the input pins", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const run = () =>
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }));
+  await run();
+  await assert.rejects(run(), /rerun short-circuit/);
+  // agents/quick/** is harness bookkeeping the fingerprint is blind to, so
+  // only the recorded input hash can notice this edit.
+  fs.appendFileSync(path.join(dir, contractPath), "\nThe goal grew a clarification.\n");
+  const rerun = await run();
+  assert.equal(rerun.ok, false, "an edited contract is a changed judgment input and must re-run");
+  assert.equal(verifyGates(dir).attempts, 2);
+});
+
+test("short-circuit: gate override and a user-driven rerun are never swallowed", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const run = () =>
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }));
+  await run();
+  await assert.rejects(run(), /rerun short-circuit/);
+  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const state = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
+  state.gates.verify.overridden = true;
+  fs.writeFileSync(gatesPath, JSON.stringify(state, null, 2));
+  const rerun = await run();
+  assert.equal(rerun.ok, false, "an overridden record is a user decision; a re-run must execute");
+  assert.equal(verifyGates(dir).attempts, 2);
+});
+
+test("short-circuit: a mechanical FAIL pins its tree and the refusal fires before the mechanical stage", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  // The marker lives OUTSIDE the project so counting executions cannot itself
+  // move the fingerprint.
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-mech-marker-")), "ran.log");
+  fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "agents", "config.json"),
+    JSON.stringify({ verify: { commands: { test: `node -e "require('fs').appendFileSync('${marker}','x');process.exit(2)"` } } }),
+  );
+  const run = () =>
+    withStub(dir, "poison - the judge must never be consulted", () =>
+      runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF }));
+
+  const first = await run();
+  assert.equal(first.ok, false);
+  const record = verifyGates(dir);
+  assert.equal(record.verdict, "FAIL");
+  assert.ok(record.treeFingerprint, "a mechanical FAIL must pin the tree too (item 10), or it could never short-circuit");
+  assert.equal(fs.readFileSync(marker, "utf8"), "x");
+
+  await assert.rejects(run(), /rerun short-circuit/);
+  assert.equal(fs.readFileSync(marker, "utf8"), "x", "the refusal must fire before the mechanical stage re-runs anything");
+  assert.equal(verifyGates(dir).attempts, 1);
+});
+
+test("short-circuit: new implement evidence (state.json updatedAt) breaks the refusal on the PRD path", async () => {
+  const dir = makeGitDir();
+  fs.mkdirSync(path.join(dir, "out"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
+  const prdPath = writeScopedPrd(dir);
+  const seedImplement = (updatedAt) =>
+    writeImplementState(dir, { tasks: [{ id: "T1", status: "complete" }], updatedAt });
+  seedImplement("2020-01-01T00:00:00.000Z");
+  const run = () =>
+    withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }));
+
+  const first = await run();
+  assert.equal(first.ok, false);
+  await assert.rejects(run(), /rerun short-circuit/, "stale evidence and an identical tree can only reproduce the FAIL");
+
+  // Registered evidence moved after the attempt: the rerun may now see more
+  // than the recorded round did, so it must execute.
+  seedImplement(new Date(Date.now() + 60_000).toISOString());
+  const rerun = await run();
+  assert.equal(rerun.ok, false);
+  assert.equal(verifyGates(dir).attempts, 2);
+});
+
+// --- digest-guard path naming (gate-side oracle executor) -------------------
+
+test("oracle digest guard names the paths the command moved, not just a boolean", () => {
+  const dir = makeGitDir();
+  const { outcomes } = runAcOracles(dir, loadConfig(dir), [
+    {
+      id: "AC1",
+      text: "mutates",
+      oracle: { kind: "check", command: `node -e "require('fs').writeFileSync('dirty.txt','x')"` },
+    },
+  ]);
+  assert.equal(outcomes[0].digestViolation, true);
+  assert.equal(outcomes[0].met, false);
+  assert.deepEqual(outcomes[0].changedPaths, ["+dirty.txt"], "the outcome records the moved paths");
+  assert.match(outcomes[0].reason, /digest guard: \+dirty\.txt/, "the finding text names the path");
 });

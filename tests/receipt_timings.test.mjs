@@ -44,7 +44,9 @@ const gatesState = {
     { purpose: "gate:gap-audit:lane:goal-scope", durationMs: 4000 },
     { purpose: "gate:verify-semantic", durationMs: "broken" },
   ],
-  gates: { verify: { attempts: 1 } },
+  // attempts is the retry-budget gauge (reset to 0 by the final PASS);
+  // totalAttempts is the cumulative run counter the receipt must quote.
+  gates: { verify: { attempts: 0, totalAttempts: 3 } },
 };
 
 test("sums command-log durations and judge calls, bucketed by gate", () => {
@@ -55,7 +57,11 @@ test("sums command-log durations and judge calls, bucketed by gate", () => {
   assert.equal(timings.measured.judgeSeconds, 38);
   assert.equal(timings.measured.judgeCalls, 4);
   assert.deepEqual(timings.measured.judgeSecondsByGate, { verify: 29, spec: 5, "gap-audit": 4 });
-  assert.equal(timings.measured.verifyGateAttempts, 1);
+  assert.equal(
+    timings.measured.verifyGateAttempts,
+    3,
+    "the receipt reports the cumulative counter, not the PASS-reset budget gauge",
+  );
   assert.equal(timings.wallClockSeconds, 3600);
   // 3600 - 90 - 38: the un-measured remainder stays one honest lump.
   assert.equal(timings.unattributedSeconds, 3472);
@@ -77,5 +83,14 @@ test("degrades to nulls without gates state or timestamps instead of guessing", 
   assert.equal(timings.unattributedSeconds, null);
   assert.equal(timings.measured.verificationCommandSeconds, 0);
   assert.equal(timings.measured.judgeSeconds, 0);
+  assert.equal(timings.measured.verifyGateAttempts, null);
+});
+
+test("an old gates.json without totalAttempts reports null, never the reset gauge or a history-derived guess", () => {
+  const timings = computePhaseTimings({
+    state: { createdAt: null, verification: [] },
+    gatesState: { judgeCalls: [], gates: { verify: { attempts: 2, history: [{}, {}, {}] } } },
+    now: "2026-08-10T11:00:00.000Z",
+  });
   assert.equal(timings.measured.verifyGateAttempts, null);
 });

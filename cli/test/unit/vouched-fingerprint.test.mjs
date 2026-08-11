@@ -8,7 +8,14 @@ import test from "node:test";
 
 const require = createRequire(import.meta.url);
 const libDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "lib");
-const { vouchedTreeFingerprint, vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require(path.join(libDir, "git.js"));
+const {
+  vouchedTreeFingerprint,
+  vouchedTreeFingerprintForState,
+  vouchedFingerprintsMatch,
+  vouchedFingerprintDiff,
+  summarizeFingerprintDiff,
+  stripFingerprintEntries,
+} = require(path.join(libDir, "git.js"));
 const { reviewWorktreeSnapshotViolations } = require(path.join(libDir, "reviews.js"));
 
 function git(dir, ...args) {
@@ -169,6 +176,52 @@ test("vouched fingerprint: unborn HEAD and non-git directories degrade cleanly",
 
   const plain = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-vouched-plain-"));
   assert.equal(vouchedTreeFingerprint({ projectRoot: plain }), null, "a non-git directory has no fingerprint");
+});
+
+test("fingerprint entries are opt-in, hash-neutral, and diffable into named paths", () => {
+  const dir = makeRepo();
+  const plain = vouchedTreeFingerprint({ projectRoot: dir });
+  assert.ok(!("entries" in plain), "the default return shape must stay entry-free (byte-identical to before)");
+  const before = vouchedTreeFingerprint({ projectRoot: dir, includeEntries: true });
+  assert.ok(Array.isArray(before.entries) && before.entries.length === before.entryCount);
+  assert.equal(before.vouched, plain.vouched, "retaining entries must not move the hash");
+
+  write(dir, "src/app.js", "console.log('edited')\n"); // change
+  write(dir, "src/new.js", "export {}\n"); // add
+  fs.rmSync(path.join(dir, "docs/readme.md")); // remove
+  const after = vouchedTreeFingerprint({ projectRoot: dir, includeEntries: true });
+  assert.deepEqual(vouchedFingerprintDiff(before, after), {
+    added: ["src/new.js"],
+    removed: ["docs/readme.md"],
+    changed: ["src/app.js"],
+  });
+  const summary = summarizeFingerprintDiff(before, after);
+  assert.equal(summary.total, 3);
+  assert.deepEqual(summary.paths, ["~src/app.js", "+src/new.js", "-docs/readme.md"]);
+  assert.equal(summary.text, "~src/app.js, +src/new.js, -docs/readme.md");
+
+  // Unknown must stay distinguishable from clean: an entry-free side yields
+  // null, never an empty diff a guard could mistake for "nothing moved".
+  assert.equal(vouchedFingerprintDiff(plain, after), null);
+  assert.equal(summarizeFingerprintDiff(plain, after), null);
+
+  // The persistable shape drops entries and nothing else.
+  const stripped = stripFingerprintEntries(before);
+  assert.ok(!("entries" in stripped));
+  assert.equal(stripped.vouched, before.vouched);
+  assert.equal(stripped.entryCount, before.entryCount);
+  assert.equal(stripFingerprintEntries(null), null, "null passes through for non-git projects");
+});
+
+test("summarizeFingerprintDiff bounds its message and its persistable path list", () => {
+  const dir = makeRepo();
+  const before = vouchedTreeFingerprint({ projectRoot: dir, includeEntries: true });
+  for (let i = 0; i < 7; i += 1) write(dir, `src/gen-${i}.js`, `// ${i}\n`);
+  const after = vouchedTreeFingerprint({ projectRoot: dir, includeEntries: true });
+  const summary = summarizeFingerprintDiff(before, after);
+  assert.equal(summary.total, 7);
+  assert.match(summary.text, /\(\+2 more\)$/, "the message shows 5 paths and counts the rest");
+  assert.equal(summary.paths.length, 7, "the stored list keeps up to 20 paths");
 });
 
 test("vouchedFingerprintsMatch: legacy, missing, and malformed shapes never match and never throw", () => {

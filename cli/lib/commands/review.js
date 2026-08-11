@@ -5,7 +5,7 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHash, safeTimestamp, writeMarkdown } = require("../util");
 const { shellLikeTokens } = require("../inference");
-const { worktreeSnapshot, vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("../git");
+const { worktreeSnapshot, vouchedTreeFingerprintForState, vouchedFingerprintsMatch, summarizeFingerprintDiff } = require("../git");
 const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_pass");
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
@@ -222,7 +222,10 @@ function reverifyRequiredVerifications(statePath, state) {
     // Scoped runs share verify-run's tradeoff: only in-scope mutations are
     // seen, which is where the code under test - and therefore reward
     // hacking - lives.
-    const preFingerprint = vouchedTreeFingerprintForState(state);
+    // Entries ride along (free - computed inside the fingerprint either way)
+    // so a violation names the moved paths; nothing here is persisted beyond
+    // the bounded changedPaths list.
+    const preFingerprint = vouchedTreeFingerprintForState(state, { includeEntries: true });
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
       cwd: projectRoot,
@@ -231,9 +234,10 @@ function reverifyRequiredVerifications(statePath, state) {
       timeout: REVERIFY_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
     });
-    const postFingerprint = vouchedTreeFingerprintForState(state);
+    const postFingerprint = vouchedTreeFingerprintForState(state, { includeEntries: true });
     const digestViolation = Boolean(preFingerprint && postFingerprint
       && !vouchedFingerprintsMatch(preFingerprint, postFingerprint));
+    const digestDiff = digestViolation ? summarizeFingerprintDiff(preFingerprint, postFingerprint) : null;
     const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
     // Not under artifacts/: reverify logs are receipt provenance, not agent
     // evidence, so they must not trip unregistered-artifact validation.
@@ -244,7 +248,7 @@ function reverifyRequiredVerifications(statePath, state) {
       `startedAt: ${startedAt}`,
       `finishedAt: ${nowIso()}`,
       `exitCode: ${exitCode}`,
-      `digestGuard: ${digestViolation ? "VIOLATED - workspace changed during reverification" : "clean"}`,
+      `digestGuard: ${digestViolation ? `VIOLATED - workspace changed during reverification (${digestDiff ? digestDiff.text : "changed paths unavailable"})` : "clean"}`,
       spawned.signal ? `signal: ${spawned.signal}` : "",
       spawned.error && spawned.error.message ? `error: ${spawned.error.message}` : "",
       "",
@@ -254,7 +258,11 @@ function reverifyRequiredVerifications(statePath, state) {
       "--- stderr ---",
       spawned.stderr || "",
     ].filter(line => line !== "").join("\n"));
-    results.push({ id: item.id, command, exitCode, digestViolation, logPath: logRel });
+    results.push({
+      id: item.id, command, exitCode, digestViolation,
+      ...(digestDiff ? { changedPaths: digestDiff.paths } : {}),
+      logPath: logRel,
+    });
   }
   return {
     ranAt: nowIso(),
@@ -325,7 +333,7 @@ function cmdFinalize(options) {
     finalReverification = reverifyRequiredVerifications(statePath, state);
     for (const failure of finalReverification.failures) {
       violations.push(failure.digestViolation && failure.exitCode === 0
-        ? `Final reverification digest guard: ${failure.id} re-ran \`${failure.command}\` at exit 0 but the command mutated the workspace; a verifier that edits the tree it certifies cannot vouch for it (log: ${failure.logPath})`
+        ? `Final reverification digest guard: ${failure.id} re-ran \`${failure.command}\` at exit 0 but the command mutated the workspace (${failure.changedPaths && failure.changedPaths.length ? `changed: ${failure.changedPaths.slice(0, 5).join(", ")}${failure.changedPaths.length > 5 ? ` (+${failure.changedPaths.length - 5} more)` : ""}` : "changed paths unavailable"}); a verifier that edits the tree it certifies cannot vouch for it (log: ${failure.logPath})`
         : `Final reverification failed: ${failure.id} exited ${failure.exitCode} re-running \`${failure.command}\` (log: ${failure.logPath})`);
     }
   }

@@ -178,6 +178,53 @@ function unwrapShellCommandTokens(tokens) {
   return tokens;
 }
 
+/**
+ * True when the command is an explicit shell wrapper (`bash -c "..."` and the
+ * sh/zsh/-l variants). Detected via unwrapShellCommandTokens - which returns
+ * the SAME array when no wrapper shape matched - so the wrapper grammar lives
+ * in exactly one place and this predicate can never drift from it.
+ */
+function isShellWrapperCommand(command) {
+  const tokens = shellLikeTokens(command);
+  return unwrapShellCommandTokens(tokens) !== tokens;
+}
+
+/**
+ * Shell metacharacters that would be inert when this command runs through
+ * shellLikeTokens + spawn(shell:false) - i.e. the ones the author probably
+ * expected a shell to interpret. Only unquoted, unescaped occurrences count:
+ * both executors tokenize with shellLikeTokens above and spawn WITHOUT a
+ * shell, so a metacharacter inside a quoted token (`--grep "a|b"`) is a
+ * literal argument by construction and flagging it is a false positive
+ * (reproduced live, 2026-08-11). The quote/escape state machine here mirrors
+ * shellLikeTokens exactly so "unquoted" means "unquoted to the executor".
+ */
+function unquotedShellMetachars(command) {
+  const found = [];
+  let quote = null;
+  let escaped = false;
+  for (const char of String(command || "")) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if ("|&;<>$`".includes(char) && !found.includes(char)) found.push(char);
+  }
+  return found;
+}
+
 function normalizeCommandForCompare(command) {
   return unwrapShellCommandTokens(shellLikeTokens(command)).join(" ").trim();
 }
@@ -320,6 +367,8 @@ module.exports = {
   scriptCommand,
   shellLikeTokens,
   unwrapShellCommandTokens,
+  isShellWrapperCommand,
+  unquotedShellMetachars,
   normalizeCommandForCompare,
   commandsMatchContract,
   coverageFromText,

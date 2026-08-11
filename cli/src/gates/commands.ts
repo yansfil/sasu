@@ -32,12 +32,14 @@ import {
   type SettledCriterion,
 } from "./prompts";
 import {
+  currentTreeFingerprint,
   freshnessHash,
   GateStore,
   gateStatus,
   overrideGate,
   recordGateResult,
   sha256Of,
+  staleInputsFor,
   type GateId,
   type GateInput,
   type GateStatusView,
@@ -511,9 +513,14 @@ export interface VerifyOptions {
   allowOpenTasks?: boolean;
 }
 
-const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("../../lib/git.js") as {
-  vouchedTreeFingerprint: (options: { projectRoot: string; slug?: string | null }) => VouchedTreeFingerprint | null;
+const { vouchedTreeFingerprint, vouchedFingerprintsMatch, summarizeFingerprintDiff } = require("../../lib/git.js") as {
+  vouchedTreeFingerprint: (options: {
+    projectRoot: string;
+    slug?: string | null;
+    includeEntries?: boolean;
+  }) => (VouchedTreeFingerprint & { entries?: [string, string][] }) | null;
   vouchedFingerprintsMatch: (recorded: unknown, current: unknown) => boolean;
+  summarizeFingerprintDiff: (before: unknown, after: unknown) => { total: number; paths: string[]; text: string } | null;
 };
 
 // One §7/§8 grammar for oracle tails and Scope globs: the TS gate reads the
@@ -586,6 +593,8 @@ interface ImplementStateLite {
   verification?: { id?: string; text?: string; matrix?: { covers?: string }; artifacts?: ImplementArtifact[] }[];
   projectRoot?: string;
   runDir?: string;
+  /** Bumped by every harness write (marks, verify-run, registered artifacts); the rerun short-circuit reads it as "any new evidence since the last attempt?". */
+  updatedAt?: string;
 }
 
 function readImplementState(projectRoot: string, topic: string): ImplementStateLite | null {
@@ -664,6 +673,78 @@ export async function runVerifyGate(
       `sasu: WARNING: proceeding despite ${openTasks.length} open implement task(s) (${shown}${suffix}) because --allow-open-tasks was passed. Missing acceptance criteria will fail and spend a retry-budget attempt.\n`,
     );
   }
+
+  // FAIL-side rerun short-circuit ($0): re-running a judged FAIL on the
+  // identical vouched tree, with identical pinned inputs and no new implement
+  // evidence, can only reproduce the recorded verdict - it would burn a
+  // retry-budget attempt and a judge round to learn nothing. Same refusal
+  // class as the open-task guard above: thrown BEFORE any spend, so no
+  // attempt is recorded, no judge call is made, and no history row appears.
+  // Deliberate exclusions: PASS needs no twin (a fresh PASS is already
+  // reported live by gateStatus freshness); ERROR is a fact about the judge,
+  // not the tree, so an identical-tree retry is legitimate; an overridden
+  // record is a standing user decision the harness must not re-litigate.
+  // Identical fingerprints mean identical vouched content in scoped and
+  // fallback mode alike (recomputed under the record's own scope via
+  // currentTreeFingerprint), so the refusal is correct in both.
+  const verifyRecord = state.gates.verify;
+  if (
+    verifyRecord !== undefined
+    && (verifyRecord.verdict === "FAIL" || verifyRecord.verdict === "BLOCK")
+    && !verifyRecord.overridden
+    && verifyRecord.treeFingerprint
+  ) {
+    const currentFingerprint = currentTreeFingerprint(projectRoot, topic, verifyRecord.treeFingerprint);
+    const treeUnchanged =
+      currentFingerprint !== null && vouchedFingerprintsMatch(verifyRecord.treeFingerprint, currentFingerprint);
+    // Two legitimate rerun triggers live OUTSIDE the vouched tree (harness
+    // bookkeeping is excluded from it by design), so each must break the
+    // short-circuit on its own: the pinned input documents and evidence files
+    // (a quick contract lives under agents/quick/**), and the implement run's
+    // registered evidence (any new verify-run/oracle observation or mark
+    // bumps agents/implement/<slug>/state.json's updatedAt). A record without
+    // pinned inputs cannot prove its documents are unchanged and never
+    // short-circuits; an explicitly-empty pin list has nothing to drift.
+    const staleInputs =
+      verifyRecord.inputs !== undefined && verifyRecord.inputs.length > 0 ? staleInputsFor(projectRoot, verifyRecord) : [];
+    const inputsUnchanged = verifyRecord.inputs !== undefined && staleInputs.length === 0;
+    const evidenceUnchanged =
+      implementState === null
+      || (typeof implementState.updatedAt === "string"
+        && verifyRecord.lastRunAt !== null
+        && implementState.updatedAt <= verifyRecord.lastRunAt);
+    if (treeUnchanged && inputsUnchanged && evidenceUnchanged) {
+      const findingLines = verifyRecord.findings.slice(0, 5).map((f) => `  - ${f.missing}`);
+      const omitted = verifyRecord.findings.length > 5 ? `\n  (+${verifyRecord.findings.length - 5} more)` : "";
+      const mode =
+        "mode" in verifyRecord.treeFingerprint && typeof verifyRecord.treeFingerprint.mode === "string"
+          ? verifyRecord.treeFingerprint.mode
+          : "fallback";
+      throw new Error(
+        `verify gate rerun short-circuit: the last attempt (${verifyRecord.lastRunAt ?? "unknown time"}) recorded ${verifyRecord.verdict} `
+          + `on this exact tree (${mode}-mode vouched fingerprint ${currentFingerprint!.vouched}, ${currentFingerprint!.entryCount} entries), `
+          + `and the pinned inputs and implement evidence are unchanged, so a re-run can only reproduce that verdict. Recorded findings:\n`
+          + `${findingLines.join("\n") || "  (none recorded)"}${omitted}\n`
+          + `Change the code under judgment (or the contract/PRD/registered evidence) and re-run. `
+          + `If the failure depends on state outside the tree, the USER (never the agent) may run: `
+          + `sasu gate override --slug ${topic} --gate verify --reason "<why>". `
+          + `No gate attempt was recorded and no judge call was made.`,
+      );
+    }
+  }
+
+  // Every recorded verdict pins the tree it was earned on (PRINCIPLES item
+  // 10): the short-circuit above compares against this pin, so a FAIL that
+  // skipped it would make the next identical re-run unrefusable. Best-effort
+  // by design - a non-git project records null and every guard skips the
+  // comparison.
+  const treeFingerprintNow = (): VouchedTreeFingerprint | null => {
+    try {
+      return vouchedTreeFingerprint({ projectRoot, slug: topic });
+    } catch {
+      return null;
+    }
+  };
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
   // The quick contract's own check and capture commands join this stage: the
@@ -753,6 +834,10 @@ export async function runVerifyGate(
               requiresHuman: false,
             })),
           inputs,
+          // Pinned even on this early FAIL: without the tree the verdict was
+          // earned on, the rerun short-circuit cannot refuse an identical
+          // re-run (and item 10 wants every outcome to name its tree anyway).
+          treeFingerprint: treeFingerprintNow(),
           artifactPayload: { stage: "mechanical", runs: mechanical.runs },
         },
         records,
@@ -869,6 +954,11 @@ export async function runVerifyGate(
         verdict: "FAIL",
         findings: lane.findings,
         inputs,
+        // Deliberately NO treeFingerprint pin: the fix for a missing or
+        // oversized evidence artifact may live under agents/** - bookkeeping
+        // the vouched fingerprint is blind to - so pinning here would let the
+        // rerun short-circuit swallow the very fix its findings ask for. An
+        // evidence-lane FAIL therefore never short-circuits.
         artifactPayload: { stage: "evidence", findings: lane.findings, inputs, mechanical: mechanicalRecord() },
       },
       records,
@@ -916,12 +1006,7 @@ export async function runVerifyGate(
         "sasu: NOTE: verify gate PASSED with ZERO judge calls - every AC was oracle-backed; the semantic judge never saw this diff.\n",
       );
     }
-    let zeroJudgeFingerprint: VouchedTreeFingerprint | null = null;
-    try {
-      zeroJudgeFingerprint = vouchedTreeFingerprint({ projectRoot, slug: topic });
-    } catch {
-      zeroJudgeFingerprint = null;
-    }
+    const zeroJudgeFingerprint = treeFingerprintNow();
     state = recordGateResult(
       store,
       state,
@@ -1275,14 +1360,9 @@ export async function runVerifyGate(
     findings.push(...oracleFindings);
     findings.push(...humanLane);
     // Pin the tree the verdict was earned on; the Stop-hook quick guard
-    // recomputes this to catch code edited after a PASS. Best-effort: a
-    // non-git project records null and the guard skips the comparison.
-    let treeFingerprint: VouchedTreeFingerprint | null = null;
-    try {
-      treeFingerprint = vouchedTreeFingerprint({ projectRoot, slug: topic });
-    } catch {
-      treeFingerprint = null;
-    }
+    // recomputes this to catch code edited after a PASS, and the rerun
+    // short-circuit compares a FAIL's pin against the next call's tree.
+    const treeFingerprint = treeFingerprintNow();
     // An unjudged human criterion keeps the gate closed even when every judged
     // one passed: nobody has confirmed it yet, and the honest report of that
     // is a blocking requiresHuman finding, not a PASS. A failed oracle closes
@@ -2108,6 +2188,8 @@ export interface OracleOutcome {
   exitCode?: number;
   expectMatched?: boolean;
   digestViolation?: boolean;
+  /** Bounded, prefixed (~changed/+added/-removed) vouched paths the digest guard saw move; only present on a violation. */
+  changedPaths?: string[];
   met: boolean;
   reason: string;
   evidence: string;
@@ -2161,7 +2243,9 @@ export function runAcOracles(
     // Slug scopes the guard's vouched set so a concurrent session editing its
     // own agents/prd/<other>/** during the oracle window cannot falsely trip
     // this oracle's digest check (mark.js oracle-run passes the same).
-    const before = vouchedTreeFingerprint({ projectRoot, slug });
+    // Entries ride along (free - already computed internally) so a violation
+    // can name WHICH paths moved instead of reporting a bare boolean.
+    const before = vouchedTreeFingerprint({ projectRoot, slug, includeEntries: true });
     // Harness semantics, verbatim: shellLikeTokens + shell:false. The PRD
     // oracle grammar never promised shell operators, so
     // `test -f README.md && grep -c Test README.md` hands "&&" to `test` as a
@@ -2177,7 +2261,7 @@ export function runAcOracles(
       timeout: config.verify.commandTimeoutMs,
       env: process.env,
     });
-    const after = vouchedTreeFingerprint({ projectRoot, slug });
+    const after = vouchedTreeFingerprint({ projectRoot, slug, includeEntries: true });
     const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
     const exitCode = timedOut ? 124 : (result.status ?? 1);
     const stdout = result.stdout ?? "";
@@ -2188,10 +2272,11 @@ export function runAcOracles(
     const combinedOutput = [stdout, result.stderr ?? ""].filter((part) => part !== "").join("\n");
     const tail = combinedOutput === "" ? "" : combinedOutput.split("\n").slice(-30).join("\n");
     const digestViolation = Boolean(before && after && !vouchedFingerprintsMatch(before, after));
+    const digestDiff = digestViolation ? summarizeFingerprintDiff(before, after) : null;
     const met = exitCode === 0 && expectMatched && !digestViolation;
     const reason =
       digestViolation && exitCode === 0
-        ? `oracle command mutated the workspace during verification (digest guard): \`${command}\``
+        ? `oracle command mutated the workspace during verification (digest guard: ${digestDiff !== null ? digestDiff.text : "changed paths unavailable"}): \`${command}\``
         : met
           ? `harness ran \`${command}\`: exit 0${oracle.expect ? `, output contained "${oracle.expect}"` : ""}`
           : `harness ran \`${command}\`: exit ${exitCode}${oracle.expect && !expectMatched ? `, output did not contain "${oracle.expect}"` : ""}`;
@@ -2202,6 +2287,7 @@ export function runAcOracles(
       exitCode,
       expectMatched,
       digestViolation,
+      ...(digestDiff !== null ? { changedPaths: digestDiff.paths } : {}),
       met,
       reason,
       evidence: `harness executed \`${command}\` (exit ${exitCode})`,

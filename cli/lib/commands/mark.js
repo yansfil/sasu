@@ -8,7 +8,7 @@ const fs = require("fs");
 const { parseArgs, parseIdList, nowIso, cwd, resolveProjectPath, safeTimestamp, formatCommandArgs, commandArgsForCompare, writeMarkdown } = require("../util");
 const { recordDeviation, findVerificationCommandDeviation, markCompletionReviewsStale, findTrackedItem, countState, autoCloseAcceptanceCriteria } = require("../state_data");
 const { commandsMatchContract, shellLikeTokens } = require("../inference");
-const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("../git");
+const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, stripFingerprintEntries, summarizeFingerprintDiff } = require("../git");
 const { DB_TOUCH_PATTERN, readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
 const { assertAllowedStatus } = require("../reviews");
 const { attachArtifact, loadState, syncActive, persistState } = require("../state_store");
@@ -187,7 +187,11 @@ function cmdVerifyRun(rawArgs) {
       ? match.item.matrix.sideEffect.trim()
       : "";
     const sideEffectDeclared = Boolean(declaredSideEffect) && !/^(none|없음|-|n\/a)$/i.test(declaredSideEffect);
-    const preFingerprint = sideEffectDeclared ? null : vouchedTreeFingerprintForState(state);
+    // includeEntries: the per-path pairs are computed inside the fingerprint
+    // either way (only their hash was kept), so retaining them is free - and
+    // they let a violation name WHICH paths moved instead of a bare boolean.
+    // Entries are stripped before anything is persisted.
+    const preFingerprint = sideEffectDeclared ? null : vouchedTreeFingerprintForState(state, { includeEntries: true });
     const startedAt = nowIso();
   const result = childProcess.spawnSync(commandArgs[0], commandArgs.slice(1), {
     cwd: state.projectRoot || cwd(),
@@ -196,14 +200,18 @@ function cmdVerifyRun(rawArgs) {
     maxBuffer: 20 * 1024 * 1024,
   });
   const finishedAt = nowIso();
-  const postFingerprint = sideEffectDeclared ? null : vouchedTreeFingerprintForState(state);
+  const postFingerprint = sideEffectDeclared ? null : vouchedTreeFingerprintForState(state, { includeEntries: true });
+  const digestDiff = preFingerprint && postFingerprint && !vouchedFingerprintsMatch(preFingerprint, postFingerprint)
+    ? summarizeFingerprintDiff(preFingerprint, postFingerprint)
+    : null;
   const digestGuard = sideEffectDeclared
     ? { skipped: `declared side effect: ${declaredSideEffect}` }
     : {
       violated: Boolean(preFingerprint && postFingerprint
         && !vouchedFingerprintsMatch(preFingerprint, postFingerprint)),
-      before: preFingerprint,
-      after: postFingerprint,
+      before: stripFingerprintEntries(preFingerprint),
+      after: stripFingerprintEntries(postFingerprint),
+      ...(digestDiff ? { changedPaths: digestDiff.paths } : {}),
     };
   const exitCode = typeof result.status === "number" ? result.status : 1;
   // A pass earned by mutating the workspace is not a pass: the guard demotes
@@ -224,7 +232,7 @@ function cmdVerifyRun(rawArgs) {
     `exitCode: ${exitCode}`,
     signal ? `signal: ${signal}` : "",
     errorMessage ? `error: ${errorMessage}` : "",
-    digestGuard.skipped ? `digestGuard: skipped (${digestGuard.skipped})` : `digestGuard: ${digestViolation ? "VIOLATED - workspace changed during the verification command" : "clean"}`,
+    digestGuard.skipped ? `digestGuard: skipped (${digestGuard.skipped})` : `digestGuard: ${digestViolation ? `VIOLATED - workspace changed during the verification command (${digestDiff ? digestDiff.text : "changed paths unavailable"})` : "clean"}`,
     "",
     "--- stdout ---",
     stdout,
@@ -244,13 +252,13 @@ function cmdVerifyRun(rawArgs) {
       digestGuard,
       // The tree this result was earned on; finalize skips its reverification
       // when the fingerprint still matches (see vouchedTreeFingerprint).
-      treeFingerprint: passed ? postFingerprint || vouchedTreeFingerprintForState(state) : null,
+      treeFingerprint: passed ? stripFingerprintEntries(postFingerprint) || vouchedTreeFingerprintForState(state) : null,
     });
   match.item.status = passed ? "pass" : "fail";
   match.item.evidence.push({
     ts: nowIso(),
     text: digestViolation
-      ? `Command exited 0 but MUTATED the workspace during verification (digest guard): ${commandText}. Recorded as fail; a verifier must not change the code it judges. Declare the side effect in the PRD matrix if it is intentional. Log: ${artifact.path}`
+      ? `Command exited 0 but MUTATED the workspace during verification (digest guard: ${digestDiff ? digestDiff.text : "changed paths unavailable"}): ${commandText}. Recorded as fail; a verifier must not change the code it judges. Declare the side effect in the PRD matrix if it is intentional. Log: ${artifact.path}`
       : `Command ${passed ? "passed" : "failed"} with exit code ${exitCode}: ${commandText}. Log: ${artifact.path}`,
   });
     const autoMet = autoCloseAcceptanceCriteria(state);
@@ -337,8 +345,9 @@ function cmdOracleRun(options) {
     const tokens = shellLikeTokens(command);
     // Same digest guard and same scoped-mode tradeoff as verify-run above: an
     // out-of-scope mutation by the oracle goes unseen, in exchange for
-    // immunity to unrelated concurrent sessions' writes.
-    const preFingerprint = vouchedTreeFingerprintForState(state);
+    // immunity to unrelated concurrent sessions' writes. Entries ride along
+    // (free, see verify-run) so a violation names the moved paths.
+    const preFingerprint = vouchedTreeFingerprintForState(state, { includeEntries: true });
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
       cwd: projectRoot,
@@ -347,9 +356,10 @@ function cmdOracleRun(options) {
       timeout: ORACLE_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
     });
-    const postFingerprint = vouchedTreeFingerprintForState(state);
+    const postFingerprint = vouchedTreeFingerprintForState(state, { includeEntries: true });
     const digestViolation = Boolean(preFingerprint && postFingerprint
       && !vouchedFingerprintsMatch(preFingerprint, postFingerprint));
+    const digestDiff = digestViolation ? summarizeFingerprintDiff(preFingerprint, postFingerprint) : null;
     const exitCode = typeof spawned.status === "number" ? spawned.status : 1;
     const stdout = spawned.stdout || "";
     const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;
@@ -364,7 +374,7 @@ function cmdOracleRun(options) {
       `finishedAt: ${nowIso()}`,
       `exitCode: ${exitCode}`,
       `expectMatched: ${expectMatched}`,
-      `digestGuard: ${digestViolation ? "VIOLATED - workspace changed during the oracle command" : "clean"}`,
+      `digestGuard: ${digestViolation ? `VIOLATED - workspace changed during the oracle command (${digestDiff ? digestDiff.text : "changed paths unavailable"})` : "clean"}`,
       spawned.signal ? `signal: ${spawned.signal}` : "",
       "",
       "--- stdout ---",
@@ -374,7 +384,7 @@ function cmdOracleRun(options) {
       spawned.stderr || "",
     ].filter(line => line !== "").join("\n"));
     const evidenceText = digestViolation && exitCode === 0
-      ? `Oracle check MUTATED the workspace (digest guard): \`${command}\` exited 0 but changed the tree; recorded not_met. Log: ${logRel}`
+      ? `Oracle check MUTATED the workspace (digest guard: ${digestDiff ? digestDiff.text : "changed paths unavailable"}): \`${command}\` exited 0 but changed the tree; recorded not_met. Log: ${logRel}`
       : met
         ? `Oracle check passed: harness ran \`${command}\` (exit 0${oracle.expect ? `, output contained "${oracle.expect}"` : ""}). Log: ${logRel}`
         : `Oracle check failed: \`${command}\` exited ${exitCode}${oracle.expect && !expectMatched ? `; output did not contain "${oracle.expect}"` : ""}. Log: ${logRel}`;
@@ -388,12 +398,21 @@ function cmdOracleRun(options) {
       exitCode,
       expected: oracle.expect || null,
       expectMatched,
-      digestGuard: { violated: digestViolation, before: preFingerprint, after: postFingerprint },
+      digestGuard: {
+        violated: digestViolation,
+        before: stripFingerprintEntries(preFingerprint),
+        after: stripFingerprintEntries(postFingerprint),
+        ...(digestDiff ? { changedPaths: digestDiff.paths } : {}),
+      },
     });
     // Pushed after attachArtifact so the oracle verdict is the item's latest
     // evidence line, not the artifact bookkeeping note.
     ac.evidence.push({ ts: nowIso(), text: evidenceText });
-    results.push({ id: ac.id, kind: "check", command, exitCode, expectMatched, digestViolation, met, logPath: logRel });
+    results.push({
+      id: ac.id, kind: "check", command, exitCode, expectMatched, digestViolation,
+      ...(digestDiff ? { changedPaths: digestDiff.paths } : {}),
+      met, logPath: logRel,
+    });
   }
   if (results.length) {
     markCompletionReviewsStale(state, `Oracle-backed acceptance criteria were re-settled (${results.map(item => item.id).join(", ")})`);

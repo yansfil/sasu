@@ -56,6 +56,13 @@ export interface GateRunSummary {
   requiresHuman: boolean;
   error: string | null;
   artifact: string | null;
+  /**
+   * The vouched tree this attempt's verdict was earned on (item 10: a verdict
+   * names its tree). Lets the FAIL-side rerun short-circuit compare against
+   * the latest attempt even across PASS-reset cycles; entries without it
+   * (pre-2nd-wave files) simply never short-circuit.
+   */
+  treeFingerprint?: VouchedTreeFingerprint | null;
 }
 
 /**
@@ -84,7 +91,17 @@ export interface LegacyTreeFingerprint {
 
 export interface GateRecord {
   verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
+  /** Retry-budget gauge: counts consecutive non-PASS runs and RESETS to 0 on PASS. */
   attempts: number;
+  /**
+   * Cumulative run counter: every recorded outcome - PASS, FAIL, BLOCK, and
+   * judge ERROR alike - increments it, and nothing ever resets it. Exists
+   * because receipts reported the budget gauge as if it were cumulative and
+   * three live-session receipts all showed 0 attempts on gates that had
+   * actually run (the gauge had just been reset by the final PASS). Absent on
+   * pre-2nd-wave gates.json files; consumers report null there, never a guess.
+   */
+  totalAttempts?: number;
   overridden: boolean;
   findings: Finding[];
   lastRunAt: string | null;
@@ -182,7 +199,7 @@ const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("../../lib/
  * fallback mode - irrelevant to the verdict, since a legacy shape never
  * matches anything.
  */
-function currentTreeFingerprint(
+export function currentTreeFingerprint(
   projectRoot: string,
   slug: string | undefined,
   recorded: GateRecord["treeFingerprint"],
@@ -224,7 +241,7 @@ export interface GateStatusView {
  * is not a live PASS. Compares the current file content against the hashes
  * recorded at the passing run.
  */
-function staleInputsFor(projectRoot: string, record: GateRecord): StaleInput[] {
+export function staleInputsFor(projectRoot: string, record: GateRecord): StaleInput[] {
   if (!record.inputs || record.inputs.length === 0) {
     return [{ path: "<unrecorded>", reason: "unverifiable" }];
   }
@@ -312,6 +329,9 @@ export function recordGateResult(
     record.inputs = outcome.inputs ?? [];
     record.treeFingerprint = outcome.treeFingerprint ?? null;
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
+    // Cumulative twin of the gauge above: every real run counts, PASS included,
+    // and nothing resets it (see the GateRecord field comment).
+    record.totalAttempts = (record.totalAttempts ?? 0) + 1;
     summary = {
       at,
       verdict: outcome.verdict,
@@ -319,6 +339,7 @@ export function recordGateResult(
       requiresHuman: outcome.findings.some((f) => f.requiresHuman),
       error: null,
       artifact,
+      treeFingerprint: outcome.treeFingerprint ?? null,
     };
   } else {
     // Fail-closed (D-15): a judge failure counts as a blocked run, never a pass.
@@ -331,6 +352,7 @@ export function recordGateResult(
         : null;
     record.verdict = "ERROR";
     record.attempts += 1;
+    record.totalAttempts = (record.totalAttempts ?? 0) + 1;
     summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };
   }
   record.lastRunAt = at;

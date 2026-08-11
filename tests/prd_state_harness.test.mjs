@@ -2527,10 +2527,13 @@ test("verify-run digest guard demotes an exit-0 pass whose command mutated the w
   assert.equal(parsed.status, "fail");
   assert.equal(parsed.exitCode, 0, "the command itself succeeded; the guard is what failed it");
   assert.equal(parsed.digestGuard.violated, true);
+  assert.deepEqual(parsed.digestGuard.changedPaths, ["~README.md"], "the guard names the moved paths, not just a boolean");
+  assert.ok(!("entries" in (parsed.digestGuard.before || {})), "per-path entries must never be persisted");
   const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "digest-guard", "state.json"), "utf8"));
   const v1 = state.verification.find(item => item.id === "V1");
   assert.equal(v1.status, "fail");
   assert.match(v1.evidence.at(-1).text, /MUTATED the workspace/);
+  assert.match(v1.evidence.at(-1).text, /~README\.md/, "the evidence line names the violating path");
   const artifact = v1.artifacts.at(-1);
   assert.equal(artifact.treeFingerprint, null, "a demoted pass must not pin a fresh fingerprint");
 });
@@ -2595,6 +2598,10 @@ test("finalize reverification digest guard fails a re-run whose command mutates 
     parsed.violations.some(v => /digest guard/.test(v) && /mutated the workspace/.test(v)),
     JSON.stringify(parsed.violations, null, 2),
   );
+  assert.ok(
+    parsed.violations.some(v => /changed: ~README\.md/.test(v)),
+    `the finalize violation must name the moved paths: ${JSON.stringify(parsed.violations, null, 2)}`,
+  );
 });
 
 test("oracle-run settles Check and Artifact oracles mechanically and records evidence", () => {
@@ -2647,10 +2654,12 @@ test("oracle-run digest guard records not_met when the oracle command mutates th
   assert.equal(result.status, 2);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.results[0].digestViolation, true);
+  assert.deepEqual(parsed.results[0].changedPaths, ["~README.md"], "the oracle guard names the moved paths");
   const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-guard", "state.json"), "utf8"));
   const ac2 = state.acceptanceCriteria.find(ac => ac.id === "AC2");
   assert.equal(ac2.status, "not_met");
   assert.match(ac2.evidence.at(-1).text, /MUTATED the workspace/);
+  assert.match(ac2.evidence.at(-1).text, /~README\.md/, "the evidence line names the violating path");
 });
 
 // --- oracle enforcement (verifier-confirmed defects, 2026-08 adversarial audit) ---

@@ -69,6 +69,35 @@ test("state machine fail-closed: judge error records ERROR and stays blocked", (
   assert.equal(view.attempts, 1);
 });
 
+test("totalAttempts accumulates across every run while the budget gauge resets on PASS", () => {
+  const store = makeStore();
+  let state = store.load();
+  const fail = () => ({ kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {} });
+  state = recordGateResult(store, state, "verify", fail(), []);
+  state = recordGateResult(store, state, "verify", fail(), []);
+  state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "PASS", findings: [], artifactPayload: {} }, []);
+  assert.equal(state.gates.verify.attempts, 0, "the retry-budget gauge still resets on PASS");
+  assert.equal(state.gates.verify.totalAttempts, 3, "every real run counts, the PASS included");
+  // A judge error is a run that spent real work (fail-closed D-15): it counts.
+  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
+  assert.equal(state.gates.verify.attempts, 1);
+  assert.equal(state.gates.verify.totalAttempts, 4);
+});
+
+test("a verdict's history row names the tree it was earned on", () => {
+  const store = makeStore();
+  let state = store.load();
+  const fingerprint = { vouched: "abc123", entryCount: 2, mode: "fallback" };
+  state = recordGateResult(
+    store,
+    state,
+    "verify",
+    { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {}, treeFingerprint: fingerprint },
+    [],
+  );
+  assert.deepEqual(state.gates.verify.history.at(-1).treeFingerprint, fingerprint);
+});
+
 test("override requires a non-empty reason", () => {
   const store = makeStore();
   const state = store.load();

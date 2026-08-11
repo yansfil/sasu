@@ -505,11 +505,16 @@ function checkAcOracleTails(lines: string[], acDefinitionLines: Map<string, numb
   }
 }
 
-// Deliberately narrow (zero-false-positive goal): flag only the operators
-// whose non-interpretation silently changes the verdict. Quote-awareness is
-// skipped on purpose - a quoted `|` is rare in oracle commands and a spurious
-// warning here costs nothing (it never blocks).
-const ORACLE_SHELL_METACHARS = /[|&;<>$`]/;
+// Shell-operator scan shares the executors' own quoting semantics (D-04
+// zero-false-positive goal): both executors run shellLikeTokens + shell:false,
+// so a metacharacter inside a quoted token is a literal argument by
+// construction and must not warn - `npm test -- --grep "a|b"` was a reproduced
+// false positive, and so was the rule's own recommended `bash -c "..."` shape
+// (exempted below via the same wrapper grammar unwrapShellCommandTokens uses).
+const { isShellWrapperCommand, unquotedShellMetachars } = require("../../lib/inference.js") as {
+  isShellWrapperCommand: (command: string) => boolean;
+  unquotedShellMetachars: (command: string) => string[];
+};
 // Constant-true shapes an author reaches for while stubbing: exactly `true`,
 // `:`, `exit 0`, or any bare `echo ...` (exit 0 no matter what it prints).
 const ORACLE_CONSTANT_TRUE = /^(?:true|:|exit 0)$|^echo\s/;
@@ -518,11 +523,14 @@ const ORACLE_CONSTANT_TRUE = /^(?:true|:|exit 0)$|^echo\s/;
  * Non-blocking oracle advisories.
  *
  * Shell operators: both executors (gate stage and harness oracle-run) tokenize
- * the Check command and spawn WITHOUT a shell, so `a && b` hands "&&" to `a`
- * as a literal argument. Before the executors were unified the gate ran a real
- * shell and the same command PASSED there while the harness recorded not_met -
- * the author must be told operators are inert, not left to find out from a
- * verdict split.
+ * the Check command and spawn WITHOUT a shell, so an unquoted `a && b` hands
+ * "&&" to `a` as a literal argument. Before the executors were unified the
+ * gate ran a real shell and the same command PASSED there while the harness
+ * recorded not_met - the author must be told operators are inert, not left to
+ * find out from a verdict split. Two shapes are clean on purpose: an explicit
+ * bash/sh/zsh -c wrapper (shell semantics ARE provided - it is this rule's own
+ * recommendation) and operators inside quoted arguments (literal to the
+ * program in both executors, so nothing is silently reinterpreted).
  *
  * Constant-true commands: an all-oracle PRD can pass the verify gate with zero
  * judge calls, so `Check: \`true\`` would be a self-certifying PASS that
@@ -533,12 +541,13 @@ function checkAcOracleAdvisories(lines: string[], acDefinitionLines: Map<string,
     const oracle = parseAcOracle(entry.text);
     if (oracle === null || oracle.kind !== "check") continue;
     const command = (oracle.command ?? "").trim();
-    if (ORACLE_SHELL_METACHARS.test(command)) {
+    const inertOperators = isShellWrapperCommand(command) ? [] : unquotedShellMetachars(command);
+    if (inertOperators.length > 0) {
       warnings.push(
         warning(
           "prd-ac-oracle-shell-operators",
           acDefinitionLines.get(id) ?? entry.line,
-          `${id}: Check command \`${command}\` contains shell operator characters, but oracle commands run without a shell - operators like | && ; > < $ are passed to the program as literal arguments, not interpreted`,
+          `${id}: Check command \`${command}\` contains unquoted shell operator characters (${inertOperators.join(" ")}), but oracle commands run without a shell - operators like | && ; > < $ are passed to the program as literal arguments, not interpreted`,
           `Wrap the command if shell semantics are intended, e.g. Check: \`bash -c "${command}"\`.`,
         ),
       );

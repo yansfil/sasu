@@ -202,7 +202,9 @@ function worktreeSnapshot(state) {
  * Returns `{ vouched, entryCount, mode, scopeGlobs? }` - deliberately a
  * different key set from the legacy `{ headSha, statusHash }` so a recorded
  * legacy fingerprint is detectable and always reads as stale. Returns null
- * when the project is not a git checkout.
+ * when the project is not a git checkout. With `includeEntries: true` the
+ * per-path pairs ride along for digest-guard diffs (see stripFingerprintEntries
+ * before persisting).
  */
 function vouchedTreeFingerprint(options) {
   const opts = options || {};
@@ -349,6 +351,73 @@ function vouchedTreeFingerprint(options) {
     entryCount: pairs.length,
     mode: scoped ? "scoped" : "fallback",
     ...(scoped ? { scopeGlobs } : {}),
+    // Per-path evidence for digest-guard diffs, opt-in only: the [path, blob]
+    // pairs are computed above either way (only their JSON hash was kept), so
+    // retaining them costs nothing at capture time - but they are large, so
+    // the default return shape stays byte-identical and callers that persist
+    // a fingerprint strip them first (stripFingerprintEntries).
+    ...(opts.includeEntries ? { entries: pairs } : {}),
+  };
+}
+
+/**
+ * A fingerprint safe to persist: identical to the input minus the opt-in
+ * `entries` payload, which exists to be diffed at violation time, never to be
+ * written into state files or artifacts (thousands of paths per snapshot).
+ */
+function stripFingerprintEntries(fingerprint) {
+  if (!fingerprint || typeof fingerprint !== "object" || !("entries" in fingerprint)) return fingerprint;
+  const { entries, ...rest } = fingerprint;
+  return rest;
+}
+
+/**
+ * Which vouched paths moved between two fingerprints captured with
+ * `includeEntries: true`. Returns null when either side carries no entries
+ * (legacy or default-shape fingerprints): "unknown" must stay distinguishable
+ * from "no differences" so a guard never reports a clean diff it cannot see.
+ */
+function vouchedFingerprintDiff(before, after) {
+  if (!before || !Array.isArray(before.entries) || !after || !Array.isArray(after.entries)) return null;
+  const beforeByPath = new Map(before.entries);
+  const afterByPath = new Map(after.entries);
+  const added = [];
+  const removed = [];
+  const changed = [];
+  for (const [rel, blob] of afterByPath) {
+    if (!beforeByPath.has(rel)) added.push(rel);
+    else if (beforeByPath.get(rel) !== blob) changed.push(rel);
+  }
+  for (const rel of beforeByPath.keys()) {
+    if (!afterByPath.has(rel)) removed.push(rel);
+  }
+  return { added: added.sort(), removed: removed.sort(), changed: changed.sort() };
+}
+
+/**
+ * One bounded rendering of a fingerprint diff for every digest-guard consumer
+ * (verify-run, oracle-run, gate oracles, finalize reverification), so the
+ * "name the violating paths" contract cannot drift per site. `paths` is capped
+ * for persistence (fallback-mode churn can touch thousands of files), `text`
+ * is capped tighter for messages; both carry the true total.
+ */
+function summarizeFingerprintDiff(before, after, options = {}) {
+  const diff = vouchedFingerprintDiff(before, after);
+  if (diff === null) return null;
+  const labeled = [
+    ...diff.changed.map(rel => `~${rel}`),
+    ...diff.added.map(rel => `+${rel}`),
+    ...diff.removed.map(rel => `-${rel}`),
+  ];
+  const textLimit = options.textLimit || 5;
+  const pathsLimit = options.pathsLimit || 20;
+  const shown = labeled.slice(0, textLimit);
+  return {
+    total: labeled.length,
+    paths: labeled.slice(0, pathsLimit),
+    text: labeled.length === 0
+      ? "no vouched-path difference recorded"
+      : `${shown.join(", ")}${labeled.length > shown.length ? ` (+${labeled.length - shown.length} more)` : ""}`,
   };
 }
 
@@ -372,13 +441,14 @@ function runScopeGlobs(state) {
 }
 
 /** vouchedTreeFingerprint keyed off an implement state object (the lib-side callers' shape). */
-function vouchedTreeFingerprintForState(state) {
+function vouchedTreeFingerprintForState(state, options) {
   const source = state || {};
   return vouchedTreeFingerprint({
     projectRoot: source.projectRoot || cwd(),
     runDir: source.runDir || null,
     slug: source.topicSlug || null,
     scopeGlobs: runScopeGlobs(source),
+    includeEntries: Boolean(options && options.includeEntries),
   });
 }
 
@@ -475,5 +545,8 @@ module.exports = {
   vouchedTreeFingerprint,
   vouchedTreeFingerprintForState,
   vouchedFingerprintsMatch,
+  stripFingerprintEntries,
+  vouchedFingerprintDiff,
+  summarizeFingerprintDiff,
   snapshotEntriesEqual,
 };
