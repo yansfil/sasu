@@ -693,6 +693,10 @@ function armedRerunRefusal(
   // Records without the stamp cannot prove their material was diff-only, so
   // the safe default is not arming (see the GateRecord field comment).
   if (verifyRecord.usedLiveMaterial !== false) return null;
+  // Without the doc-kind stamp the two callers cannot agree on whether the
+  // implement run's evidence is part of the judged material, and a predicate
+  // that disagrees with the gate is the livelock. No stamp, no refusal.
+  if (verifyRecord.docKind === undefined) return null;
   if (verifyRecord.diffSource === undefined || !ARMABLE_DIFF_SOURCE.test(verifyRecord.diffSource)) return null;
   if (currentDiffSource !== null && verifyRecord.diffSource !== currentDiffSource) return null;
   // Defensive stamp-consistency check: an older dist's recordGateResult
@@ -709,6 +713,7 @@ function armedRerunRefusal(
     || lastRow.failedStage !== verifyRecord.failedStage
     || lastRow.diffSource !== verifyRecord.diffSource
     || lastRow.usedLiveMaterial !== verifyRecord.usedLiveMaterial
+    || lastRow.docKind !== verifyRecord.docKind
   ) {
     return null;
   }
@@ -755,7 +760,13 @@ function armedRerunRefusal(
 export function verifyRerunWouldBeRefused(projectRoot: string, topic: string): boolean {
   try {
     const state = new GateStore(projectRoot, topic).load();
-    return armedRerunRefusal(projectRoot, topic, state.gates.verify, readImplementState(projectRoot, topic), null) !== null;
+    const record = state.gates.verify;
+    // Feed the predicate the evidence the recorded round itself judged: only
+    // the PRD path injects the implement run's registered evidence, so reading
+    // it for a contract round would answer "not terminal" about a rerun the
+    // gate refuses (the original livelock - see the docKind field comment).
+    const implementState = record?.docKind === "prd" ? readImplementState(projectRoot, topic) : null;
+    return armedRerunRefusal(projectRoot, topic, record, implementState, null) !== null;
   } catch {
     return false;
   }
@@ -781,6 +792,23 @@ export async function runVerifyGate(
   const docPath = options.contractPath ?? options.prdPath;
   const docFile = docPath !== undefined ? readInputFile(projectRoot, docPath, docKind) : null;
   const inputs = docFile ? [docFile.input] : [];
+  // The project config DECLARES the mechanical checks this gate runs, so it is
+  // a judged input, not bookkeeping: after agents/** left the vouched
+  // fingerprint entirely, adding a failing verify.commands.test to
+  // agents/config.json no longer staled a PASS, and the newly declared check
+  // never ran before completion (reproduced 2026-08-11). Pinned whole rather
+  // than as a verify-only slice because staleInputsFor recomputes hashes from
+  // the file on disk - a slice hash could never match - so unrelated config
+  // edits stale the gate too. That is the honest direction, and config edits
+  // are rare and deliberate. Residual gap, stated rather than papered over: a
+  // config CREATED after a PASS cannot be pinned by that PASS (a
+  // recorded-missing input would read stale immediately), so it does not stale
+  // it either.
+  const configRel = path.join("agents", "config.json");
+  const configAbs = path.join(projectRoot, configRel);
+  if (fs.existsSync(configAbs)) {
+    inputs.push({ path: configRel, sha256: freshnessHash(fs.readFileSync(configAbs, "utf8")), kind: "document" });
+  }
 
   // Stage 0: document prelint ($0, D-06). The judge reads this document's
   // acceptance criteria, so a structurally broken document blocks before the
@@ -1338,7 +1366,25 @@ export async function runVerifyGate(
         laneInjectedChecks.push(check);
       }
     }
-    const laneChecks = [...checkResults.filter((c) => ids.has(c.criterionId)), ...laneInjectedChecks];
+    const laneLiveChecks = checkResults.filter((c) => ids.has(c.criterionId));
+    const laneChecks = [...laneLiveChecks, ...laneInjectedChecks];
+    // Does this lane's prompt rest on anything the tree fingerprint cannot
+    // see? Derived from the assembled payload rather than from a list of
+    // producers, because the enumeration went stale the moment it was written:
+    // it named capture commands and agentic lanes, and missed criterion
+    // `check:` commands, whose live output rides into the lane under prompt
+    // text saying the harness "observed the running system". A FAIL earned on
+    // a gitignored service reading BROKEN then armed the rerun refusal, so
+    // fixing the service could never be observed (reproduced 2026-08-11).
+    // Live sources, one per prompt input: a lane the agentic judge reads live
+    // files for; a harness-run check (executed this round, or reused from a
+    // fresh pass whose original run read live state); capture-produced
+    // evidence; and settled oracle tails, OR-ed in below once the oracles have
+    // run. Injected implement logs are NOT live: they are files, hash-pinned
+    // into judgeInputs, so a changed log stales the record instead.
+    // Adding a new prompt input means deciding here whether it is live.
+    const liveMaterial =
+      agentic || laneLiveChecks.length > 0 || material.some((item) => item.producedBy !== undefined);
     return {
       laneId: String(index + 1),
       // A single lane IS the old exhaustive call, so it keeps the historical
@@ -1356,6 +1402,7 @@ export async function runVerifyGate(
       injectedTextBytes,
       omittedTailCount,
       laneChecks,
+      liveMaterial,
       laneDiff,
       images,
       // Audit trail: which paths this lane was scoped to (null = full diff),
@@ -1417,7 +1464,12 @@ export async function runVerifyGate(
     const prompt = vl.agentic
       ? agenticSemanticVerifyPrompt(diffStatFromText(vl.laneDiff), vl.criteria, vl.material, vl.laneChecks, laneOptions)
       : semanticVerifyPrompt(vl.laneDiff, vl.criteria, vl.material, vl.laneChecks, laneOptions);
-    return { ...vl, omittedTailCount, prompt };
+    // An oracle tail is arbitrary live output: it can differ on the next round
+    // while the outcome stays met, so it makes the lane's prompt live. A
+    // tail-less settled note cannot - if the outcome itself flipped, the round
+    // would be an oracle FAIL, which never arms.
+    const liveMaterial = vl.liveMaterial || laneSettled.some((item) => item.tail !== undefined);
+    return { ...vl, omittedTailCount, prompt, liveMaterial };
   });
   // One auditable hash of everything sent this round: the lane prompts joined
   // in lane order. For a single lane this is byte-identical to the old
@@ -1563,12 +1615,11 @@ export async function runVerifyGate(
     // it the same way - the harness observed the criterion unmet.
     const passed = judgedVerdict === "PASS" && humanLane.length === 0 && oracleFindings.length === 0;
     // Live-material stamp for the rerun short-circuit (see the GateRecord
-    // field comment): capture commands regenerate their evidence only when
-    // the gate runs, and an agentic lane Reads live files - both feed the
-    // judge state the tree fingerprint cannot see, so a FAIL earned on either
-    // must never be treated as reproducible-by-construction.
-    const usedLiveMaterial =
-      contractCommands.some((cmd) => cmd.kind === "capture") || verifyLanes.some((vl) => vl.agentic);
+    // field comment). One lane resting on live material is enough: the round's
+    // verdict is the merge of every lane, so it is reproducible-by-construction
+    // only if all of them are. Each lane decides this from its own assembled
+    // payload (see `liveMaterial` at lane assembly).
+    const usedLiveMaterial = verifyLanes.some((vl) => vl.liveMaterial);
     // Document-order verdict list for the receipt: judged criteria carry the
     // judge's verdicts, oracle-backed ones the harness's; human criteria have
     // no verdict to quote (their findings carry the story).
@@ -1598,6 +1649,7 @@ export async function runVerifyGate(
         failedStage: oracleFindings.length > 0 ? "oracle" : judgedVerdict === "FAIL" ? "semantic" : "human",
         diffSource,
         usedLiveMaterial,
+        docKind,
         // One fan-out round is one gate attempt: recordGateResult runs once
         // per round no matter how many lanes it took (gap-audit's rule).
         artifactPayload: {
@@ -2046,8 +2098,17 @@ function collectImplementEvidence(
     const commandLogKey = (entry: { ownerKind: string; ownerId: string; artifact: ImplementArtifact }): string =>
       `${entry.ownerKind}\0${String(entry.ownerId ?? "?")}\0${entry.artifact.command}`;
     const latestLogIndex = new Map<string, number>();
+    // Only a log still on disk can supersede another, and only such a log can
+    // BE superseded: ranking a missing newest run first dropped BOTH rows (the
+    // older one as "superseded", the newer as "file not found") and the judge
+    // silently lost a check it had seen. The newest SURVIVING run wins, and a
+    // vanished log is reported as missing on its own account.
+    const survivingLogs = new Set<number>();
     entries.forEach((entry, index) => {
       if (!isCommandLogArtifact(entry.artifact)) return;
+      const relPath = typeof entry.artifact.path === "string" ? entry.artifact.path : "";
+      if (relPath === "" || !fs.existsSync(path.join(projectRoot, relPath))) return;
+      survivingLogs.add(index);
       const key = commandLogKey(entry);
       const prev = latestLogIndex.get(key);
       // createdAt is ISO-8601 (lexically ordered); a missing or equal stamp
@@ -2063,7 +2124,9 @@ function collectImplementEvidence(
       if (relPath === "") continue;
       const ownerId = String(entry.ownerId ?? "?");
       try {
-        if (isCommandLogArtifact(artifact) && latestLogIndex.get(commandLogKey(entry)) !== index) {
+        // A log whose file is gone was never ranked, so it falls through to the
+        // stat below and is reported as missing rather than as superseded.
+        if (isCommandLogArtifact(artifact) && survivingLogs.has(index) && latestLogIndex.get(commandLogKey(entry)) !== index) {
           out.omitted.push({ ownerId, path: relPath, reason: "superseded by a newer run of the same command" });
           continue;
         }

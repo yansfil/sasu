@@ -2040,6 +2040,7 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
       failedStage: "semantic",
       diffSource: `git:${headSha}`,
       usedLiveMaterial: false,
+      docKind: "prd",
       inputs: [{ path: prdRel, sha256: store.freshnessHash(fs.readFileSync(path.join(projectRoot, prdRel), "utf8")), kind: "prd" }],
       treeFingerprint: vouchedTreeFingerprint({ projectRoot, slug, scopeGlobs: null }),
       ...overrides,
@@ -2053,6 +2054,7 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
       failedStage: verify.failedStage,
       diffSource: verify.diffSource,
       usedLiveMaterial: verify.usedLiveMaterial,
+      docKind: verify.docKind,
       ...(overrides.history ? overrides.history[0] : {}),
     }];
     write(path.join(projectRoot, "agents", "gates", slug, "gates.json"), JSON.stringify({
@@ -2111,8 +2113,8 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
 
   const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
   assert.match(report, /Status: Blocked/);
-  assert.match(report, /Attempts: 1\/3 \(rerun refused on an unchanged tree; the remaining attempts are unspendable\)/,
-    "a human reads the honest cause straight off the record");
+  assert.match(report, /Attempts: 1\/3 \(rerun refused on an unchanged tree, judged against base [0-9a-f]{12}; the remaining attempts are unspendable\)/,
+    "a human reads the honest cause - and the base it was judged against - straight off the record");
   assert.doesNotMatch(report, /retry budget exhausted/);
 
   // The blocked receipt releases the Stop hook: the livelock has an exit.

@@ -239,9 +239,13 @@ function quickStopDirective(hookCwd, sessionId) {
     const why = humanFindings.length
       ? `needs human verification and cannot reach PASS on its own:\n\n${humanFindings.map(item => `- ${item.missing}`).join("\n")}`
       : rerunRefused
-        // Says the honest number (1/3, not 3/3) and names the one move that
-        // could still change the verdict, so "give up" is never the only read.
-        ? `recorded a semantic ${record.verdict} at attempt ${record.attempts}/${budget} and an identical re-run is refused on this unchanged tree, so the remaining attempts are unspendable.\n\nIf you can still fix the findings, change the code under judgment - a tree change re-arms verification and \`${verifyCommand}\` will run again. Otherwise close the run out honestly as blocked.`
+        // Says the honest number (1/3, not 3/3) and names EVERY move that could
+        // still change the verdict, so "give up" is never the only read. The
+        // base matters as much as the code: a FAIL judged against a WIP commit
+        // or a moved branch ref is one corrected re-run from PASSing, and
+        // omitting that made the hook advise the cheap blocked exit on a run
+        // that would have passed (reproduced 2026-08-11).
+        ? `recorded a semantic ${record.verdict} at attempt ${record.attempts}/${budget} and an identical re-run is refused on this unchanged tree, so the remaining attempts are unspendable.\n\nIf you can still fix the findings, change the code under judgment - a tree change re-arms verification and \`${verifyCommand}\` will run again.${typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? ` The verdict was judged against base ${record.diffSource.slice(4, 16)}; if that is not the commit the work started from, re-run with a corrected \`--base\` instead.` : ""} Otherwise close the run out honestly as blocked.`
         : `exhausted its ${budget}-attempt verify budget.`;
     // A human handoff closes as the documented complete-with-open-items shape
     // (a contract with `human:` criteria can never reach PASS by design). A

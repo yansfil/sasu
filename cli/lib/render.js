@@ -58,10 +58,16 @@ function writeImplementationReport(statePath, state) {
   // touching the tree) legible to the human reading the receipt instead of a
   // silent loophole.
   if (verifyGate.effective === "BLOCKED") {
+    // The refused-rerun line names the judged base too: a human auditing a
+    // blocked receipt needs to see whether the verdict was earned against the
+    // commit the work actually started from.
+    const judgedBase = typeof verifyGate.diffSource === "string" && verifyGate.diffSource.startsWith("git:")
+      ? `, judged against base ${verifyGate.diffSource.slice(4, 16)}`
+      : "";
     const terminalCause = verifyGate.budgetExhausted
       ? " (retry budget exhausted)"
       : verifyGate.rerunRefused
-        ? " (rerun refused on an unchanged tree; the remaining attempts are unspendable)"
+        ? ` (rerun refused on an unchanged tree${judgedBase}; the remaining attempts are unspendable)`
         : "";
     lines.push(`  - Attempts: ${verifyGate.attempts}/${verifyGate.budget}${terminalCause}`);
     const findings = Array.isArray(verifyGate.findings) ? verifyGate.findings : [];

@@ -367,6 +367,10 @@ function verifyGateStatus(state) {
       budget: view.budget,
       budgetExhausted: view.budgetExhausted,
       rerunRefused: verifyRerunRefused(projectRoot, state.topicSlug),
+      // The base the refused verdict was judged against, so the terminal cause
+      // can name the corrected---base move instead of implying nothing is left
+      // to try (see verifyGateTerminalCause).
+      diffSource: record.diffSource || null,
       findings: view.findings,
     };
   } catch {
@@ -460,9 +464,21 @@ function verifyGateTerminallyBlocked(gate) {
 
 // Why the gate is terminal, in the words the agent must act on. Kept next to
 // the predicate so the two can never name different causes.
+//
+// "Terminal" means an IDENTICAL re-run is refused - never that no move remains.
+// The cause therefore names the base the verdict was judged against: a FAIL
+// earned at the wrong --base (a WIP commit, a moved branch ref) is one
+// corrected re-run away from PASSing, and telling the agent to close out
+// blocked instead would be the cheap unearned exit (reproduced 2026-08-11:
+// `--base HEAD` hid a committed half of the work, the judge FAILed, and the
+// terminal predicate reported the loop over while `--base <start>` PASSed).
 function verifyGateTerminalCause(gate) {
   if (gate.budgetExhausted === true) return `its ${gate.budget}-attempt retry budget is exhausted`;
-  return `an identical re-run is refused on this unchanged tree (attempts ${gate.attempts}/${gate.budget}; the remaining budget is unspendable)`;
+  const base = typeof gate.diffSource === "string" && gate.diffSource.startsWith("git:")
+    ? `, judged against base ${gate.diffSource.slice(4, 16)}`
+    : "";
+  return `an identical re-run is refused on this unchanged tree (attempts ${gate.attempts}/${gate.budget}${base}; the remaining budget is unspendable). `
+    + `Changing the code under judgment re-arms verification; so does pointing --base at the commit the work actually started from, if the verdict was judged against the wrong one`;
 }
 
 function verifyGateViolations(state, options = {}) {

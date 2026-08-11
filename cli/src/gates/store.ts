@@ -81,6 +81,8 @@ export interface GateRunSummary {
   diffSource?: string;
   /** Mirror of GateRecord.usedLiveMaterial for this row (see that field's comment). */
   usedLiveMaterial?: boolean;
+  /** Mirror of GateRecord.docKind for this row (see that field's comment). */
+  docKind?: "prd" | "contract";
 }
 
 /**
@@ -155,18 +157,29 @@ export interface GateRecord {
   diffSource?: string;
   /**
    * Verify gate only, stamped alongside failedStage on a non-PASS semantic
-   * round: true when the judged material included capture-produced evidence
-   * (a `capture:` command re-runs only when the gate runs) or any lane ran
-   * the agentic fallback (the judge Reads live files, gitignored ones
-   * included) - state the tree fingerprint cannot see. Such a FAIL is not
-   * reproducible-by-construction, so it must never arm the rerun
-   * short-circuit (reproduced 2026-08-11: a capture of gitignored
-   * service-state "BROKEN" earned a semantic FAIL; the live state was fixed
-   * out-of-tree and the rerun was refused forever on the unchanged tree and
-   * stale pinned capture bytes). Records without the field (pre-field files)
-   * cannot prove their material was diff-only and never arm either.
+   * round: true when any judged lane rested on material the tree fingerprint
+   * cannot see - a harness-run criterion `check:`, capture-produced evidence,
+   * a settled oracle tail, or an agentic lane Reading live files (gitignored
+   * ones included). Such a FAIL is not reproducible-by-construction, so it
+   * must never arm the rerun short-circuit (reproduced 2026-08-11 twice: a
+   * capture, then a `check:`, of gitignored service-state "BROKEN" earned a
+   * semantic FAIL; the live state was fixed out-of-tree and the rerun was
+   * refused forever on the unchanged tree and stale pinned bytes). Records
+   * without the field (pre-field files) cannot prove their material was
+   * diff-only and never arm either.
    */
   usedLiveMaterial?: boolean;
+  /**
+   * Verify gate only: which document the round judged. The rerun short-circuit
+   * reads the implement run's registered evidence only on the PRD path (that
+   * is the only path that injects it), so both callers of the shared arming
+   * predicate must agree on the doc kind or they disagree about whether a
+   * rerun would be refused - reproduced 2026-08-11 on a quick run whose
+   * same-slug implement state was touched after the FAIL: the gate refused the
+   * rerun at $0 while the terminal predicate said "not terminal", which is the
+   * original livelock verbatim (hook demanding a re-run the gate refuses).
+   */
+  docKind?: "prd" | "contract";
 }
 
 export interface GatesState {
@@ -369,6 +382,8 @@ export function recordGateResult(
         diffSource?: string;
         /** Verify gate only: non-PASS round judged live material (see GateRecord field). */
         usedLiveMaterial?: boolean;
+        /** Verify gate only: which document the round judged (see GateRecord field). */
+        docKind?: "prd" | "contract";
       }
     | { kind: "error"; message: string; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],
@@ -400,6 +415,12 @@ export function recordGateResult(
     const usedLiveMaterial = outcome.verdict !== "PASS" ? outcome.usedLiveMaterial : undefined;
     if (usedLiveMaterial !== undefined) record.usedLiveMaterial = usedLiveMaterial;
     else delete record.usedLiveMaterial;
+    // Same lifecycle again: the doc kind describes the round the stamps came
+    // from, so the terminal predicate reads implement evidence on exactly the
+    // path the gate itself did.
+    const docKind = outcome.verdict !== "PASS" ? outcome.docKind : undefined;
+    if (docKind !== undefined) record.docKind = docKind;
+    else delete record.docKind;
     record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
     // Cumulative twin of the gauge above: every real run counts, PASS included,
     // and nothing resets it (see the GateRecord field comment).
@@ -417,6 +438,7 @@ export function recordGateResult(
       // Mirrored onto the history row so the arming-time stamp-consistency
       // check (commands.ts) can prove record and row came from one write.
       ...(usedLiveMaterial !== undefined ? { usedLiveMaterial } : {}),
+      ...(docKind !== undefined ? { docKind } : {}),
     };
   } else {
     // Fail-closed (D-15): a judge failure counts as a blocked run, never a pass.
@@ -434,6 +456,7 @@ export function recordGateResult(
     delete record.failedStage;
     delete record.diffSource;
     delete record.usedLiveMaterial;
+    delete record.docKind;
     record.attempts += 1;
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
     summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };

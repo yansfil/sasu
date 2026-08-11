@@ -21,6 +21,7 @@ import {
   runVerifyGate,
   scopeForLane,
   splitDiffByFile,
+  verifyRerunWouldBeRefused,
 } from "../../dist/gates/commands.js";
 import { semanticVerifyPrompt, VERIFY_DIFF_MAX_CHARS } from "../../dist/gates/prompts.js";
 import { loadConfig } from "../../dist/config.js";
@@ -757,6 +758,72 @@ test("only the newest run of a command is injected; older runs are skipped witho
     "editing a superseded log the judge never read must not stale the PASS");
 });
 
+test("a missing newest log falls back to the newest surviving run, not to nothing", async () => {
+  const dir = makeDir();
+  // Ranking a log that is gone from disk used to drop BOTH rows: the older one
+  // as "superseded", the newer as "file not found", so the judge silently lost
+  // a check it had seen before. Recency must be decided among the logs that
+  // still exist.
+  const oldLog = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/v1-2020.log", "SURVIVING RUN OUTPUT: all green\n");
+  const goneLog = "agents/implement/t/artifacts/logs/v1-2026.log";
+  writeImplementState(dir, {
+    tasks: [{ id: "T1", status: "complete" }],
+    verification: [
+      {
+        id: "V1",
+        matrix: { covers: "AC1" },
+        artifacts: [
+          { kind: "command-log", path: goneLog, command: "node test.js", exitCode: 0, createdAt: "2026-08-11T00:00:00.000Z" },
+          { kind: "command-log", path: oldLog, command: "node test.js", exitCode: 0, createdAt: "2020-01-01T00:00:00.000Z" },
+        ],
+      },
+    ],
+  });
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "the surviving run is green" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: criteria(1), diffText: SMALL_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true, JSON.stringify(result.status?.findings));
+  assert.match(capturedPrompt(dir, "gate_verify-semantic"), /SURVIVING RUN OUTPUT: all green/,
+    "the surviving log still reaches the judge");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.deepEqual(
+    artifact.injectionOmitted.filter((o) => o.path === goneLog),
+    [{ ownerId: "V1", path: goneLog, reason: "file not found" }],
+    "the vanished log is reported as missing, never as superseded by itself",
+  );
+  assert.ok(artifact.inputs.some((i) => i.path === oldLog), "the log the judge read is pinned");
+});
+
+test("the project config is a judged input: declaring a new mechanical check stales a PASS", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 1);
+  // agents/config.json DECLARES the mechanical commands this gate runs, so it
+  // cannot be bookkeeping. After agents/** left the vouched fingerprint,
+  // nothing else pinned it: adding a failing test command left the PASS intact
+  // and the newly declared check never ran before completion.
+  fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify({ verify: { commands: {} } }));
+  const pass = await withStub(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "widget.js" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }),
+  );
+  assert.equal(pass.ok, true, JSON.stringify(pass.status?.findings));
+  assert.ok(verifyGates(dir).inputs.some((i) => i.path === path.join("agents", "config.json")),
+    "the config is pinned alongside the judged document");
+  assert.equal(readGateStatus(dir, loadConfig(dir), "t").verify.effective, "PASS");
+
+  fs.writeFileSync(
+    path.join(dir, "agents", "config.json"),
+    JSON.stringify({ verify: { commands: { test: "node -e \"process.exit(1)\"" } } }),
+  );
+  const status = readGateStatus(dir, loadConfig(dir), "t").verify;
+  assert.equal(status.effective, "STALE", "a newly declared check must force re-verification");
+  assert.deepEqual(status.staleInputs, [{ path: path.join("agents", "config.json"), reason: "changed" }]);
+});
+
 test("image evidence: attachability and the byte budget are decided from the stat, once, before any read", async () => {
   const dir = makeDir();
   // 5MB+ of PNG-named bytes. Reading it just to drop it was pure waste (V rows
@@ -1245,6 +1312,62 @@ test("short-circuit: an agentic-lane semantic FAIL never refuses - the judge rea
   const rerun = await run(FAIL_TWO);
   assert.equal(rerun.ok, false);
   assert.equal(verifyGates(dir).attempts, 2, "an agentic-lane FAIL must re-run, not refuse");
+});
+
+test("short-circuit: a check-fed semantic FAIL never refuses - the harness ran it against live state", async () => {
+  const dir = makeGitDir();
+  // The producer the first live-material stamp missed: a criterion `check:`
+  // runs every round and its output tail rides into the judging lane under
+  // prompt text saying the harness observed the running system. The `curl`
+  // shape - a probe that exits 0 while REPORTING failure - is what makes this
+  // a semantic FAIL rather than an oracle/mechanical one, so failedStage is
+  // "semantic" and only usedLiveMaterial can break the refusal.
+  fs.writeFileSync(path.join(dir, ".gitignore"), "live-state.txt\n");
+  fs.writeFileSync(path.join(dir, "live-state.txt"), "BROKEN\n");
+  fs.mkdirSync(path.join(dir, "agents", "quick", "t"), { recursive: true });
+  const contractPath = "agents/quick/t/contract.md";
+  const check = "node -e \"process.stdout.write('service state: '+require('fs').readFileSync('live-state.txt','utf8'))\"";
+  fs.writeFileSync(
+    path.join(dir, contractPath),
+    `---\ntopic: t\nstatus: active\n---\n\n## Goal\n\nExercise the verify gate.\n\n## Acceptance Criteria\n\n- AC1. renders\n- AC2. persists\n  - check: \`${check}\`\n`,
+  );
+  const run = (response) => withStub(dir, response, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath }));
+
+  const first = await run(FAIL_TWO);
+  assert.equal(first.ok, false);
+  const record = verifyGates(dir);
+  assert.equal(record.failedStage, "semantic", "the check exited 0, so no oracle/mechanical stage closed the gate");
+  assert.equal(record.usedLiveMaterial, true, "a round whose lane carries a live check tail is not reproducible-by-construction");
+  const pinnedFingerprint = record.treeFingerprint.vouched;
+
+  fs.writeFileSync(path.join(dir, "live-state.txt"), "READY\n");
+  const rerun = await run(FAIL_TWO);
+  assert.equal(rerun.ok, false);
+  assert.equal(verifyGates(dir).attempts, 2, "the rerun must execute: the check re-reads state the fingerprint is blind to");
+  assert.equal(verifyGates(dir).treeFingerprint.vouched, pinnedFingerprint,
+    "the fingerprint really is identical - only usedLiveMaterial could have broken this refusal");
+});
+
+test("short-circuit: a contract FAIL and the terminal predicate agree when implement state moves", async () => {
+  const dir = makeGitDir();
+  const contractPath = writeContract(dir, 2);
+  const run = () => withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
+
+  assert.equal((await run()).ok, false);
+  assert.equal(verifyGates(dir).docKind, "contract", "the round stamps which document it judged");
+
+  // A same-slug implement state, touched after the FAIL. It is not part of a
+  // contract round's judged material (only the PRD path injects it), so the
+  // gate refuses the rerun - and the terminal predicate must say the same, or
+  // the Stop hook demands a re-run the gate refuses: the original livelock.
+  fs.mkdirSync(path.join(dir, "agents", "implement", "t"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "agents", "implement", "t", "state.json"),
+    JSON.stringify({ updatedAt: new Date(Date.now() + 60_000).toISOString(), tasks: [] }),
+  );
+  await assert.rejects(run(), /rerun short-circuit/, "the gate ignores implement state on a contract round");
+  assert.equal(verifyRerunWouldBeRefused(dir, "t"), true, "the terminal predicate must read the same evidence the gate did");
+  assert.equal(verifyGates(dir).attempts, 1, "the refusal spent nothing");
 });
 
 test("short-circuit: a pre-field record (no live-material stamp) never refuses", async () => {
