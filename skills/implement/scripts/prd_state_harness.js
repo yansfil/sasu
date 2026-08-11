@@ -6,7 +6,7 @@ const { cmdHook } = require("../../../cli/lib/hooks");
 const { cmdInit } = require("../../../cli/lib/commands/init");
 const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
 const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
-const { cmdMark, cmdAssign, cmdRecordArtifact, cmdRefreshArtifacts, cmdVerifyRun, cmdOracleRun } = require("../../../cli/lib/commands/mark");
+const { cmdMark, cmdAssign, cmdRecordArtifact, cmdVerifyRun, cmdOracleRun } = require("../../../cli/lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
 const { cmdReconcile } = require("../../../cli/lib/commands/reconcile");
 const { cmdPause, cmdReviewPolicy } = require("../../../cli/lib/commands/lifecycle");
@@ -59,7 +59,6 @@ const COMMANDS = [
     usageArgs: ["--id <id> --kind screenshot|log|browser|api|db|file --path <path> --description <text>"],
     run: args => cmdRecordArtifact(parseArgs(args)),
   },
-  { name: "refresh-artifacts", usageArgs: ["[--id <id>] [--state <path>]"], run: args => cmdRefreshArtifacts(parseArgs(args)) },
   { name: "requirements-review-prompt", usageArgs: ["[--state <path>]"], run: args => cmdRequirementsReviewPrompt(parseArgs(args)) },
   {
     name: "requirements-review-record",

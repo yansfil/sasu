@@ -1840,6 +1840,47 @@ test("required command verification only closes through verify-run execution met
   assert.ok(!after.completion.violations.some(item => /verify-run so the command log carries execution metadata/.test(item)));
 });
 
+test("re-recording the same artifact path supersedes the entry and clears the hash-changed violation", () => {
+  const root = initGitRepo();
+  const prd = writeApprovedPrd(root, "recapture");
+  runJson(["init", "--prd", prd, "--review-profile", "trivial"], root);
+  runJson(["plan-execution"], root);
+  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "implementation done"], root);
+
+  const capture = path.join(root, "agents", "implement", "recapture", "artifacts", "capture.log");
+  write(capture, "first capture");
+  runJson(["record-artifact", "--id", "V1", "--kind", "log", "--path", capture, "--description", "runtime capture"], root);
+  const statePath = path.join(root, "agents", "implement", "recapture", "state.json");
+  const first = JSON.parse(fs.readFileSync(statePath, "utf8")).verification
+    .find(item => item.id === "V1").artifacts.at(-1);
+
+  // Overwriting the registered file in place raises the hash-changed violation.
+  write(capture, "second capture with new bytes");
+  const stale = runJson(["status"], root);
+  assert.ok(
+    stale.completion.violations.some(item => /artifact .+ hash changed/.test(item)),
+    `expected hash-changed violation, got: ${JSON.stringify(stale.completion.violations)}`,
+  );
+
+  // Re-registering the same owner+path replaces the entry instead of appending
+  // a duplicate whose stale hash could never be cleared (refresh-artifacts,
+  // the old manual re-blessing command, no longer exists).
+  runJson(["record-artifact", "--id", "V1", "--kind", "log", "--path", capture, "--description", "re-captured in place"], root);
+  const v1 = JSON.parse(fs.readFileSync(statePath, "utf8")).verification.find(item => item.id === "V1");
+  const entries = v1.artifacts.filter(entry => entry.path === first.path);
+  assert.equal(entries.length, 1, "same owner+path re-registration must supersede, not append");
+  assert.equal(entries[0].artifactId, first.artifactId, "the superseding entry keeps the original identity");
+  assert.equal(entries[0].createdAt, first.createdAt, "the superseding entry keeps the original registration time");
+  assert.notEqual(entries[0].sha256, first.sha256, "the superseding entry carries the fresh hash");
+  assert.ok(entries[0].refreshedAt, "the superseding entry records when the bytes were re-inspected");
+
+  const fresh = runJson(["status"], root);
+  assert.ok(
+    !fresh.completion.violations.some(item => /artifact .+ hash changed/.test(item)),
+    `hash-changed violation should clear after re-registration, got: ${JSON.stringify(fresh.completion.violations)}`,
+  );
+});
+
 test("a BLOCKED or stale verify gate blocks completion; PASS and NOT_RUN do not", () => {
   const root = initGitRepo();
   const prd = writeApprovedPrd(root, "gate-wire");

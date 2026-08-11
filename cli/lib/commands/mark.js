@@ -10,7 +10,6 @@ const { recordDeviation, findVerificationCommandDeviation, markCompletionReviews
 const { commandsMatchContract, shellLikeTokens } = require("../inference");
 const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("../git");
 const { DB_TOUCH_PATTERN, readyExecutionPlan, plannedCommandForVerification, nextBrief } = require("../planning");
-const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertAllowedStatus } = require("../reviews");
 const { attachArtifact, loadState, syncActive, persistState } = require("../state_store");
 
@@ -138,77 +137,6 @@ function cmdRecordArtifact(options) {
     counts: countState(state),
     next: nextBrief(state),
   }, null, 2) + "\n");
-}
-
-function cmdRefreshArtifacts(options) {
-  const filterId = options.id ? String(options.id).toUpperCase() : null;
-  const { statePath, state } = loadState(options);
-  const projectRoot = state.projectRoot || cwd();
-  const refreshed = [];
-  const missing = [];
-  let unchanged = 0;
-  let matched = 0;
-
-  for (const entry of collectArtifacts(state)) {
-    if (filterId && String(entry.ownerId).toUpperCase() !== filterId) continue;
-    matched += 1;
-    const artifact = entry.artifact || {};
-    if (!artifact.path) continue;
-    const abs = resolveProjectPath(artifact.path, projectRoot);
-    let info;
-    try {
-      info = inspectArtifact(abs, artifact.kind || "file");
-    } catch (error) {
-      missing.push({ owner: entry.ownerId, path: artifact.path, error: error.message });
-      continue;
-    }
-    if (artifact.sha256 === info.sha256 && artifact.bytes === info.bytes) {
-      unchanged += 1;
-      continue;
-    }
-    const previousSha = artifact.sha256 || null;
-    artifact.bytes = info.bytes;
-    artifact.sha256 = info.sha256;
-    artifact.mimeHint = info.mimeHint;
-    if (info.width) artifact.width = info.width;
-    if (info.height) artifact.height = info.height;
-    artifact.refreshedAt = nowIso();
-    const owner = findTrackedItem(state, entry.ownerId);
-    if (owner && owner.item) {
-      if (!owner.item.evidence) owner.item.evidence = [];
-      owner.item.evidence.push({
-        ts: nowIso(),
-        text: `Artifact refreshed after in-place overwrite: ${artifact.kind} ${artifact.path} (${String(previousSha).slice(0, 12)} -> ${info.sha256.slice(0, 12)})`,
-      });
-    }
-    refreshed.push({
-      owner: entry.ownerId,
-      path: artifact.path,
-      previousSha256: previousSha,
-      sha256: info.sha256,
-    });
-  }
-
-  if (filterId && !matched) throw new Error(`Tracked item ${filterId} not found or has no artifacts`);
-
-  if (refreshed.length) {
-    markCompletionReviewsStale(state, "Registered artifacts were refreshed after review");
-    state.updatedAt = nowIso();
-    persistState(statePath, state);
-    syncActive(statePath, state);
-  }
-
-  process.stdout.write(JSON.stringify({
-    ok: missing.length === 0,
-    refreshedCount: refreshed.length,
-    unchangedCount: unchanged,
-    refreshed,
-    missing,
-    note: refreshed.length
-      ? "Completion reviews were marked stale; rerun requirements fidelity review and final review before finalize."
-      : "No registered artifact hashes changed.",
-  }, null, 2) + "\n");
-  if (missing.length) process.exitCode = 2;
 }
 
 function cmdVerifyRun(rawArgs) {
@@ -489,7 +417,6 @@ module.exports = {
   cmdMark,
   cmdAssign,
   cmdRecordArtifact,
-  cmdRefreshArtifacts,
   cmdVerifyRun,
   cmdOracleRun,
 };

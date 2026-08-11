@@ -306,10 +306,29 @@ function attachArtifact(statePath, state, match, kind, inputPath, description, e
   if (info.height) artifact.height = info.height;
   if (!match.item.artifacts) match.item.artifacts = [];
   if (!match.item.evidence) match.item.evidence = [];
-  match.item.artifacts.push(artifact);
+  // Re-registering the same path on the same owner supersedes the old entry
+  // instead of appending a duplicate. The manual refresh-artifacts re-blessing
+  // command was deleted as a self-certification surface, so re-running
+  // record-artifact is the only supported way to clear the "hash changed"
+  // completion violation after a legitimate in-place re-capture; an appended
+  // duplicate would strand the stale entry's hash as a permanent violation.
+  const supersededIndex = match.item.artifacts.findIndex(entry => entry && entry.path === relPath);
+  const superseded = supersededIndex >= 0 ? match.item.artifacts[supersededIndex] : null;
+  if (superseded) {
+    // Keep the original identity and registration time; the refresh timestamp
+    // records that the bytes were honestly re-inspected, not re-blessed.
+    if (superseded.artifactId) artifact.artifactId = superseded.artifactId;
+    if (superseded.createdAt) artifact.createdAt = superseded.createdAt;
+    artifact.refreshedAt = nowIso();
+    match.item.artifacts[supersededIndex] = artifact;
+  } else {
+    match.item.artifacts.push(artifact);
+  }
   match.item.evidence.push({
     ts: nowIso(),
-    text: `Artifact recorded: ${artifact.kind} ${artifact.path} (${artifact.sha256.slice(0, 12)}) - ${cleanDescription}`,
+    text: superseded
+      ? `Artifact re-recorded in place: ${artifact.kind} ${artifact.path} (${String(superseded.sha256).slice(0, 12)} -> ${artifact.sha256.slice(0, 12)}) - ${cleanDescription}`
+      : `Artifact recorded: ${artifact.kind} ${artifact.path} (${artifact.sha256.slice(0, 12)}) - ${cleanDescription}`,
   });
   appendJsonl(artifactManifestPath(statePath), {
     ts: nowIso(),

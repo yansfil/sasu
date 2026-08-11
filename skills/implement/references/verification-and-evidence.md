@@ -151,13 +151,7 @@ Register valid evidence or remove only unregistered artifacts created by the cur
 Never remove unrelated user artifacts to make the audit pass.
 
 If a rerun overwrites an already registered file at the same path, do not edit `state.json` and do not write an ad hoc rehash script.
-Run:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js refresh-artifacts [--id V3]
-```
-
-`refresh-artifacts` re-hashes registered files and marks completion reviews stale.
+Re-run `record-artifact` for the same owner and path: it supersedes the old registration with the fresh hash and marks completion reviews stale.
 Rerun stale reviews before finalization.
 
 Artifact-backed review freshness also depends on the final source snapshot.
