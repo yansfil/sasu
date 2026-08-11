@@ -928,8 +928,14 @@ FAIL.
   const recorded = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "Remediated PASS"], projectRoot);
 
   assert.equal(recorded.ok, true);
-  assert.equal(recorded.finalReview, null);
   assert.equal(recorded.requirementsFidelityReview.status, "pass");
+  // The failed final review is NOT erased. Recording a fidelity review used to
+  // null it outright, which destroyed the record of what that reviewer actually
+  // found; keeping it is the honest ledger (item 10) and costs nothing, because a
+  // recorded fail cannot carry the run - a new final review has to be recorded,
+  // and recording one supersedes this round then.
+  assert.equal(recorded.finalReview.status, "fail");
+  assert.equal(recorded.finalReview.summary, "FAIL - remediation required");
 });
 
 test("browser verification without a dev script is a warning, not a blocking gap", () => {
@@ -2447,6 +2453,89 @@ test("terminally blocked gate with no recorded review: record the honest pass, t
 // gate never answered the question. Charging judge ERRORs to the fix budget
 // produced false BLOCKEDs; not charging them left the run with no exit at all
 // unless this predicate opens one (measured 2026-08-11, modakbul).
+// The chain E-2 broke, and it was not the rule it looked like. Recording a
+// fidelity review used to set `state.finalReview = null`, so ANY re-record -
+// including one reaching the same verdict from the same report - destroyed a
+// valid final review and forced a fresh adversarial round. The "fidelity
+// recorded after final" staleness rule beside it was unreachable through these
+// commands for exactly that reason: the record it would have judged was already
+// deleted. Measured 2026-08-11 on project modakbul: ten fidelity recordings.
+test("re-recording the same fidelity verdict keeps a passing final review; changing it stales one", () => {
+  const projectRoot = initGitRepo();
+  const slug = "final-audit-pin";
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({ review: { profile: "high-risk" } }));
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "final-audit-session");
+  const finalPath = path.join(projectRoot, "agents", "implement", slug, "review", "final-review.md");
+  const recordFidelity = summary => runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", summary], projectRoot);
+
+  write(reviewPath, fidelityReviewBody(logPath));
+  recordFidelity("Initial PASS");
+  write(finalPath, `# Final Adversarial Review
+
+Status: PASS
+
+## Fidelity Review Checked
+
+- Report: agents/implement/${slug}/review/requirements-fidelity-review.md
+- Status: PASS
+
+## Findings
+
+- none: no material findings.
+
+## Artifact Audit
+
+- Harness-visible validity: the command log was inspected.
+
+## Deviation Audit
+
+- Recorded deviations: none.
+
+## Verdict
+
+PASS.
+`);
+  const final = runJson(["review-record", "--status", "pass", "--report", finalPath, "--summary", "Independent PASS"], projectRoot);
+  assert.equal(final.ok, true, JSON.stringify(final.violations || []));
+
+  // What the final review audited is pinned, so freshness can ask whether THAT
+  // moved rather than whether a clock did.
+  const statePath = path.join(projectRoot, "agents", "implement", slug, "state.json");
+  const audited = JSON.parse(fs.readFileSync(statePath, "utf8")).finalReview.auditedFidelity;
+  assert.equal(audited.status, "pass");
+  assert.match(audited.reportSha256, /^[0-9a-f]{64}$/);
+
+  // Re-recording the SAME fidelity verdict from the SAME report changes nothing
+  // the final review audited, so it survives - and the run can still finalize.
+  const same = recordFidelity("Same verdict, re-recorded");
+  assert.equal(same.ok, true);
+  assert.equal(same.finalReview.status, "pass", "a re-record must not erase a valid final review");
+  const finalized = runJson(["finalize", "--status", "complete", "--summary", "Done."], projectRoot);
+  assert.equal(finalized.ok, true, JSON.stringify(finalized.violations || []));
+
+  // Changing the fidelity report is a different audited subject: the final review
+  // is stale and says which part moved.
+  write(reviewPath, fidelityReviewBody(logPath, "\n- The remediation now matches the approved intent."));
+  recordFidelity("Revised PASS");
+  const blocked = runJson(["finalize", "--status", "complete", "--summary", "Done."], projectRoot, { allowFailure: true });
+  assert.equal(blocked.ok, false);
+  assert.ok(
+    blocked.violations.some(item => /Final review is stale: the requirements fidelity review it audited is not the one on record - its report changed/.test(item)),
+    JSON.stringify(blocked.violations),
+  );
+
+  // A pre-pin final review cannot say what it audited, so it earns one honest
+  // re-record instead of being trusted - the reading every unverifiable pin gets.
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  delete state.finalReview.auditedFidelity;
+  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  const legacy = runJson(["finalize", "--status", "complete", "--summary", "Done."], projectRoot, { allowFailure: true });
+  assert.ok(
+    legacy.violations.some(item => /does not record which requirements fidelity verdict it audited/.test(item)),
+    JSON.stringify(legacy.violations),
+  );
+});
+
 // PRINCIPLES item 13 names a severity floor as one admissible bound on a stage
 // that cannot converge: an advisory finding recorded as a follow-up does not
 // re-trigger the chain. The floor is a value the report DECLARES and the harness

@@ -106,11 +106,7 @@ function cmdRequirementsReviewRecord(options) {
     }
   }
 
-  // Both axes are superseded here, in this order: recording a fidelity review
-  // discards the final review below (it audited a fidelity record that no longer
-  // stands), and a discarded round is still a round the run spent.
   supersedeReviewRound(state, "fidelity");
-  supersedeReviewRound(state, "final");
   state.requirementsFidelityReview = {
     status,
     summary,
@@ -132,7 +128,19 @@ function cmdRequirementsReviewRecord(options) {
     ...(severity.followUps.length ? { followUps: severity.followUps } : {}),
     recordedAt: nowIso(),
   };
-  state.finalReview = null;
+  // The final review is deliberately NOT erased here any more. Recording a
+  // fidelity review used to null it outright, so every re-record - including one
+  // that reached the same verdict from the same report - destroyed a valid final
+  // review and forced a fresh adversarial round. That erasure, not the clock
+  // comparison beside it, was the chain: the "fidelity recorded after final"
+  // staleness rule was unreachable through these commands precisely because the
+  // record it would have judged had already been deleted.
+  //
+  // Whether the final review still stands is now decided where it is read, from
+  // the fidelity verdict it pinned at record time (finalReviewFreshnessViolations
+  // against `auditedFidelity`): same verdict and same report body means nothing it
+  // audited moved, and anything else means it is stale and says so. One rule, one
+  // implementation, no stored judgment that can drift from the record.
   state.updatedAt = nowIso();
   persistState(statePath, state);
   syncActive(statePath, state);
@@ -208,6 +216,14 @@ function cmdReviewRecord(options) {
     worktreeSnapshot: worktreeSnapshot(state),
     vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
     ...(severity.followUps.length ? { followUps: severity.followUps } : {}),
+    // The fidelity verdict this review audited, pinned so freshness can ask
+    // whether THAT changed instead of whether a clock moved. Status and report
+    // hash are the whole substance: carried follow-ups are derived from the same
+    // report body, and a change to what fidelity itself read stales fidelity
+    // through its own input pin, which this review already refuses to pass over.
+    auditedFidelity: state.requirementsFidelityReview
+      ? { status: state.requirementsFidelityReview.status, reportSha256: state.requirementsFidelityReview.reportSha256 || null }
+      : null,
     recordedAt: nowIso(),
   };
   state.updatedAt = nowIso();

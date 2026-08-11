@@ -435,11 +435,36 @@ function finalReviewFreshnessViolations(state) {
   const reviewedAt = Date.parse(review.recordedAt);
   if (!Number.isFinite(reviewedAt)) return [`Final review recordedAt is invalid; ${RERUN_FINAL_REVIEW}`];
   const violations = [];
-  const requirementsReview = state.requirementsFidelityReview;
-  if (requirementsReview && requirementsReview.status === "pass" && requirementsReview.recordedAt) {
-    const requirementsReviewedAt = Date.parse(requirementsReview.recordedAt);
-    if (Number.isFinite(requirementsReviewedAt) && requirementsReviewedAt > reviewedAt) {
-      violations.push(`Final review is stale: requirements fidelity review was recorded after final review; ${RERUN_FINAL_REVIEW}`);
+  // The final review's first job is auditing the requirements fidelity review, so
+  // it goes stale when the record it audited changes - and only then.
+  //
+  // This used to be a pure clock comparison: fidelity recorded later than final
+  // meant final was stale, without looking at content or tree. The tree is
+  // already checked separately (reviewWorktreeSnapshotViolations still pins the
+  // final review's source fingerprint), so the only case the clock uniquely
+  // caught was fidelity being RE-RECORDED on the same tree - and when that
+  // re-record reaches the same conclusion from the same report, nothing final
+  // audited moved. Measured 2026-08-11 on project modakbul: ten fidelity
+  // recordings, one survivor, and every one of the nine was a condition that
+  // could kill a final review for no change at all.
+  //
+  // Same shape as the gate pinning its inputs and (after the fidelity review's
+  // own input pin) one level up: record what you audited, compare that. A record
+  // written before the pin existed cannot say what it audited, so it earns one
+  // honest re-record rather than being trusted - the reading every other
+  // unverifiable pin in this harness gets.
+  const audited = review.auditedFidelity;
+  const fidelity = state.requirementsFidelityReview;
+  if (!audited || typeof audited !== "object") {
+    violations.push(`Final review does not record which requirements fidelity verdict it audited, so its freshness cannot be checked; ${RERUN_FINAL_REVIEW}`);
+  } else if (!fidelity) {
+    violations.push(`Final review audited a requirements fidelity review that is no longer recorded; ${RERUN_FINAL_REVIEW}`);
+  } else {
+    const changed = [];
+    if (fidelity.status !== audited.status) changed.push(`its verdict is now ${fidelity.status} (was ${audited.status})`);
+    if ((fidelity.reportSha256 || null) !== (audited.reportSha256 || null)) changed.push("its report changed");
+    if (changed.length) {
+      violations.push(`Final review is stale: the requirements fidelity review it audited is not the one on record - ${changed.join(" and ")}; ${RERUN_FINAL_REVIEW}`);
     }
   }
   const latest = latestEvidenceTimestamp(state);

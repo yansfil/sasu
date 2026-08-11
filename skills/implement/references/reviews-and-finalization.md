@@ -209,6 +209,11 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-record \
 
 When a required final review fails, fix the findings, re-capture any runtime evidence the fix invalidates, rerun requirements fidelity, then record a new passing final review; `finalize` re-runs required command-backed verification on the final tree, so do not re-run passed command-backed items manually.
 
+A recorded final review pins the requirements fidelity verdict it audited - that verdict's status and report hash - and goes stale only when THAT changes.
+Re-recording the same fidelity verdict from the same report therefore keeps a passing final review alive: nothing it audited moved.
+Recording a different fidelity verdict, or a changed fidelity report, stales it and the rejection says which of the two moved.
+A source change still stales it separately, because reading the code is this review's mandate.
+
 Label each finding in either review report with a severity the harness compares: `Severity: BLOCKER`, `Severity: MAJOR`, or `Severity: MINOR` (a leading `- MINOR - ...` or a Severity table column reads the same).
 `MINOR` means "worth recording, not worth another review round": those findings are carried into the receipt as open follow-up items, and the run may finish with them open.
 `BLOCKER` and `MAJOR` mean the work is not done, so a report stating either cannot be recorded as a pass - fix them and re-review, or record the honest `fail`.
