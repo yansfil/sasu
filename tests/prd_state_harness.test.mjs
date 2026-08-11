@@ -1918,6 +1918,86 @@ test("a BLOCKED or stale verify gate blocks completion; PASS and NOT_RUN do not"
   assert.ok(stale.completion.violations.some(item => /Verify gate PASS is stale/.test(item)));
 });
 
+test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --status blocked exits the deadlock honestly", () => {
+  const projectRoot = initGitRepo();
+  const slug = "gate-deadlock";
+  // A non-default budget proves the snapshot reads the configured
+  // judge.retryBudget instead of a hardcoded value (or the old 0).
+  write(path.join(projectRoot, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "gate-deadlock-session");
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
+  const finding = { area: "semantic", severity: "P0", missing: "AC1: judge keeps rejecting the diff", recommendation: "fix it", requiresHuman: false };
+  const writeGates = verify => write(path.join(projectRoot, "agents", "gates", slug, "gates.json"), JSON.stringify({
+    schema: 1,
+    topic: slug,
+    gates: { "gap-audit": { ...emptyGate }, spec: { ...emptyGate }, verify },
+    deviations: [],
+    judgeCalls: [],
+  }, null, 2));
+
+  // Budget remaining: the cheap escape stays shut - attempts are left to
+  // spend, so an empty blocker list still refuses the blocked handoff.
+  writeGates({ ...emptyGate, verdict: "FAIL", attempts: 1, findings: [finding] });
+  const early = runJson(["finalize", "--status", "blocked", "--summary", "Giving up early."], projectRoot, { allowFailure: true });
+  assert.equal(early.ok, false);
+  assert.ok(
+    early.violations.some(item => /retry budget is not exhausted \(attempts 1\/2\)/.test(item)),
+    `expected a budget-remaining refusal, got: ${JSON.stringify(early.violations)}`,
+  );
+
+  // Budget exhausted: complete and review passes keep rejecting exactly as
+  // before - only the blocked handoff opens.
+  writeGates({ ...emptyGate, verdict: "FAIL", attempts: 2, findings: [finding] });
+  const complete = runJson(["finalize", "--status", "complete", "--summary", "Not actually complete."], projectRoot, { allowFailure: true });
+  assert.equal(complete.ok, false);
+  assert.ok(complete.violations.some(item => /Verify gate is BLOCKED/.test(item)), JSON.stringify(complete.violations));
+  assert.ok(complete.violations.some(item => /--status blocked/.test(item)), "the rejection must name the honest exit");
+  const rerecord = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS again"], projectRoot, { allowFailure: true });
+  assert.equal(rerecord.ok, false);
+  assert.ok(rerecord.violations.some(item => /Verify gate is BLOCKED/.test(item)));
+
+  // During the deadlock the goal guard still refuses update_goal complete.
+  const preTool = run(process.execPath, [harness, "hook", "pretool-use"], {
+    cwd: projectRoot,
+    input: JSON.stringify({
+      hook_event_name: "PreToolUse",
+      cwd: projectRoot,
+      session_id: "gate-deadlock-session",
+      tool_name: "update_goal",
+      tool_input: { status: "complete" },
+    }),
+  });
+  assert.equal(JSON.parse(preTool.stdout).decision, "block");
+
+  // The honest exit: zero blocked tracked items, the terminal gate qualifies.
+  const finalized = runJson(["finalize", "--status", "blocked", "--summary", "Verify gate exhausted its retry budget."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.status, "blocked");
+  assert.equal(receipt.verifyGate.effective, "BLOCKED");
+  assert.equal(receipt.verifyGate.attempts, 2);
+  assert.equal(receipt.verifyGate.budget, 2);
+  assert.equal(receipt.verifyGate.budgetExhausted, true);
+  assert.equal(receipt.verifyGate.findings.length, 1);
+  assert.match(receipt.verifyGate.findings[0].missing, /judge keeps rejecting the diff/);
+
+  const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
+  assert.match(report, /Status: Blocked/);
+  assert.match(report, /Verify gate: BLOCKED/);
+  assert.match(report, /Attempts: 2\/2 \(retry budget exhausted\)/);
+  assert.match(report, /judge keeps rejecting the diff/);
+
+  // The blocked receipt releases the Stop hook: the deadlock has an exit.
+  const stop = run(process.execPath, [harness, "hook", "stop"], {
+    cwd: projectRoot,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: projectRoot, session_id: "gate-deadlock-session" }),
+  });
+  assert.equal(stop.stdout.trim(), "");
+});
+
 test("readiness precheck blocks a PRD whose Tasks section failed to parse", () => {
   const root = initGitRepo();
   const prdPath = writeApprovedPrd(root, "no-tasks");
@@ -2351,7 +2431,7 @@ test("quick guard closes out a human-verification run instead of letting it vani
   );
 });
 
-test("quick guard closes out an exhausted budget the same way", () => {
+test("quick guard closes out an exhausted budget as an honest blocked run", () => {
   const root = makeQuickProject();
   writeQuickGates(root, {
     verdict: "FAIL",
@@ -2363,6 +2443,24 @@ test("quick guard closes out an exhausted budget the same way", () => {
   assert.equal(directive.decision, "block");
   assert.match(directive.reason, /exhausted its 3-attempt verify budget/);
   assert.match(directive.reason, /receipt\.md/);
+  // A run that failed verification must not be told to record itself
+  // complete; only the exhausted budget (never budget remaining, which stays
+  // in the fix loop above) unlocks the blocked contract status.
+  assert.match(directive.reason, /status: blocked/);
+  assert.ok(!/status: complete/.test(directive.reason), "an exhausted budget must not demand a lying `complete`");
+
+  // Doing the honest close-out - receipt plus a `blocked` contract - is what
+  // ends the run; frontmatter is outside the freshness hash, so the flip
+  // cannot stale the recorded verdict's evidence pins.
+  write(path.join(root, "agents", "quick", "demo", "receipt.md"), "# receipt\n");
+  const contractPath = path.join(root, "agents", "quick", "demo", "contract.md");
+  write(contractPath, fs.readFileSync(contractPath, "utf8").replace("status: active", "status: blocked"));
+  assert.equal(quickStop(root), "", "an honest blocked close-out releases the guard");
+  assert.equal(
+    fs.existsSync(path.join(root, "agents", "quick", ".quick-active.json")),
+    false,
+    "the guard retires the marker on the blocked close-out too",
+  );
 });
 
 test("quick guard refuses to close out a handoff whose evidence drifted", () => {

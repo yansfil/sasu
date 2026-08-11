@@ -352,6 +352,7 @@ and then calling the gate on frozen code pays for the suite once.
   gate state lives under `agents/gates/<topic-slug>/`.
 - Enforcement: `finalize` and the completion checks refuse a gate that ran
   and is BLOCKED, or whose PASS went stale because its inputs changed.
+  A BLOCKED gate whose retry budget is exhausted counts as the blocker itself: `finalize --status blocked` is the honest exit, and the receipt stamps the gate snapshot (verdict, attempts, findings).
   A gate that never ran does not block completion, but its `NOT_RUN` status
   is stamped into `receipt.json` and `implementation-result.md`, so skipping
   it is always visible and needs the recorded reason below.

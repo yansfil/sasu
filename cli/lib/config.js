@@ -89,6 +89,23 @@ function normalizeExecutionConfig(projectConfig, options) {
   return { schema: "hoyeon.execution.v1", parallel };
 }
 
+// Lib-side read of judge.retryBudget with the CLI's default (3, measured as
+// the observed floor for good-faith fix loops - see DEFAULT_JUDGE in
+// cli/src/config.ts). The Stop-hook quick guard and finalize's gate snapshot
+// must agree with `sasu verify` on when a budget is exhausted, and neither may
+// depend on the dist build, so the one lib-side derivation lives here.
+function judgeRetryBudget(projectRoot) {
+  try {
+    const config = readProjectConfig(projectRoot);
+    const budget = config && typeof config.judge === "object" && config.judge ? config.judge.retryBudget : undefined;
+    if (Number.isInteger(budget) && budget >= 0) return budget;
+  } catch {
+    // Malformed config falls back to the CLI default; loadConfig in
+    // cli/src/config.ts is where a bad value fails loudly.
+  }
+  return 3;
+}
+
 function reviewProfileResult(profile, source, reason, signals = []) {
   return {
     profile,
@@ -151,5 +168,6 @@ module.exports = {
   readProjectConfig,
   normalizeDeliveryConfig,
   normalizeExecutionConfig,
+  judgeRetryBudget,
   classifyReviewProfile,
 };

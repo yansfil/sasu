@@ -271,6 +271,9 @@ function cmdFinalize(options) {
   if (!summary) throw new Error("--summary is required");
   const { statePath, state } = loadState(options);
   const counts = countState(state);
+  // Computed once and stamped into the receipt below: the blocker predicate
+  // and the receipt must describe the same gate reading.
+  const verifyGate = verifyGateStatus(state);
   const violations = [];
   if (status === "complete") {
     violations.push(...completionViolations(statePath, state, { includeFinalReview: true }));
@@ -284,8 +287,17 @@ function cmdFinalize(options) {
       ...state.acceptanceCriteria.filter(item => item.status === "blocked" || item.status === "not_met"),
       ...state.verification.filter(item => item.status === "blocked" || item.status === "fail"),
     ];
-    if (status === "blocked" && blockers.length === 0) {
-      violations.push("Blocked finalization requires at least one task, acceptance, or verification item marked blocked/fail/not_met");
+    // The verify gate itself qualifies as the blocker, but only when it is
+    // terminal: verdict recorded AND retry budget spent. Two live sessions
+    // deadlocked here with every task/AC complete - complete was refused
+    // (gate BLOCKED), blocked was refused (zero blocked items), and override
+    // was the only exit. With budget remaining the refusal stands: the agent
+    // still has attempts to spend, so a cheap early "blocked" stays closed.
+    const gateTerminallyBlocked = verifyGate.effective === "BLOCKED" && verifyGate.budgetExhausted === true;
+    if (status === "blocked" && blockers.length === 0 && !gateTerminallyBlocked) {
+      violations.push(verifyGate.effective === "BLOCKED"
+        ? `Blocked finalization with no blocked tracked item: the verify gate is BLOCKED but its retry budget is not exhausted (attempts ${verifyGate.attempts}/${verifyGate.budget}); fix the cited findings and re-run \`sasu verify\``
+        : "Blocked finalization requires at least one task, acceptance, or verification item marked blocked/fail/not_met");
     }
     for (const blocker of blockers) {
       if (!blocker.evidence.length) violations.push(`Blocked item ${blocker.id} has no evidence`);
@@ -339,8 +351,10 @@ function cmdFinalize(options) {
     worktreeSnapshot: worktreeSnapshot(state),
     executionPlan: executionPlanSummary(state),
     // Visible even when NOT_RUN: a skipped verify gate must be readable from
-    // the receipt, not silently absent.
-    verifyGate: verifyGateStatus(state),
+    // the receipt, not silently absent. On a blocked handoff this snapshot
+    // (attempts/budget/findings) is the receipt's why; gates.json stays the
+    // source of record.
+    verifyGate,
     // Measured time picture: sums of what the harness actually clocked
     // (command runs, judge calls) against the wall clock, milestones included.
     // "Verification must not dwarf implementation" becomes checkable from the

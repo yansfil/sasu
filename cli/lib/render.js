@@ -48,6 +48,16 @@ function writeImplementationReport(statePath, state) {
   lines.push(`- Final adversarial review required: ${policy.finalReviewRequired ? "yes" : "no"}`);
   const verifyGate = verifyGateStatus(state);
   lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
+  // A blocked receipt must say why without a trip to gates.json: attempts
+  // spent against the budget, and the findings that stopped the run.
+  if (verifyGate.effective === "BLOCKED") {
+    lines.push(`  - Attempts: ${verifyGate.attempts}/${verifyGate.budget}${verifyGate.budgetExhausted ? " (retry budget exhausted)" : ""}`);
+    const findings = Array.isArray(verifyGate.findings) ? verifyGate.findings : [];
+    for (const finding of findings) {
+      lines.push(`  - Finding (${finding.severity || "?"} ${finding.area || "unknown"}): ${finding.missing || "no description recorded"}`);
+    }
+    if (!findings.length) lines.push("  - Findings: none recorded");
+  }
   if (Array.isArray(profile.signals) && profile.signals.length) {
     lines.push("- Classification signals:");
     for (const signal of profile.signals) lines.push(`  - ${signal}`);

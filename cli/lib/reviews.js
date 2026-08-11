@@ -5,6 +5,7 @@ const path = require("path");
 
 const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, escapeRegExp } = require("./util");
 const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, primaryWorktreeRoot } = require("./git");
+const { judgeRetryBudget } = require("./config");
 const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
@@ -334,6 +335,12 @@ function completionReadiness(statePath, state, options = {}) {
 // passing inputs changed afterward (STALE). A gate that never ran does not
 // block - offline and test runs stay possible - but its status is stamped
 // into the receipt so a skipped gate is visible, never silent.
+//
+// The snapshot carries attempts/budget/budgetExhausted/findings so a blocked
+// receipt can say WHY it is blocked without a second record: gates.json stays
+// the source, the receipt stamps what it said at finalize time. The budget is
+// the real configured one (judgeRetryBudget), never 0 - passing 0 made
+// budgetExhausted true for every blocked gate and therefore meaningless.
 function verifyGateStatus(state) {
   const projectRoot = state.projectRoot || cwd();
   if (!state.topicSlug) return { effective: "NOT_RUN", verdict: null, overridden: false, lastRunAt: null };
@@ -345,20 +352,39 @@ function verifyGateStatus(state) {
   } catch {
     return { effective: "NOT_RUN", verdict: null, overridden: false, lastRunAt: null, unreadable: true };
   }
+  const budget = judgeRetryBudget(projectRoot);
+  const record = (gatesState.gates && gatesState.gates.verify) || {};
+  const findings = Array.isArray(record.findings) ? record.findings : [];
   try {
     const store = require("../dist/gates/store.js");
-    const view = store.gateStatus(gatesState, "verify", 0, projectRoot);
-    const record = (gatesState.gates && gatesState.gates.verify) || {};
-    return { effective: view.effective, verdict: view.verdict, overridden: view.overridden, staleInputs: view.staleInputs, lastRunAt: record.lastRunAt || null };
+    const view = store.gateStatus(gatesState, "verify", budget, projectRoot);
+    return {
+      effective: view.effective,
+      verdict: view.verdict,
+      overridden: view.overridden,
+      staleInputs: view.staleInputs,
+      lastRunAt: record.lastRunAt || null,
+      attempts: view.attempts,
+      budget: view.budget,
+      budgetExhausted: view.budgetExhausted,
+      findings: view.findings,
+    };
   } catch {
     // CLI dist not built: fall back to the recorded verdict without freshness.
-    const record = (gatesState.gates && gatesState.gates.verify) || {};
+    // The budget arithmetic mirrors gateStatus in cli/src/gates/store.ts
+    // exactly (!passed && attempts >= budget && verdict !== null) so the two
+    // derivations cannot disagree on whether the gate is terminally blocked.
     const passed = record.verdict === "PASS" || record.overridden === true;
+    const attempts = Number.isInteger(record.attempts) ? record.attempts : 0;
     return {
       effective: passed ? "PASS" : record.verdict == null ? "NOT_RUN" : "BLOCKED",
       verdict: record.verdict || null,
       overridden: record.overridden === true,
       lastRunAt: record.lastRunAt || null,
+      attempts,
+      budget,
+      budgetExhausted: !passed && attempts >= budget && record.verdict != null,
+      findings,
       freshnessUnverified: true,
     };
   }
@@ -367,7 +393,12 @@ function verifyGateStatus(state) {
 function verifyGateViolations(state) {
   const gate = verifyGateStatus(state);
   if (gate.effective === "BLOCKED") {
-    return [`Verify gate is BLOCKED (verdict ${gate.verdict}); fix the cited findings and re-run \`sasu verify\`, or have the user record an override`];
+    // With budget spent, "fix and re-run" is a dead instruction; point at the
+    // two real exits so the deadlock names its own escape (finalize refuses
+    // --status complete either way).
+    return [gate.budgetExhausted
+      ? `Verify gate is BLOCKED (verdict ${gate.verdict}) and its ${gate.budget}-attempt retry budget is exhausted; completion is impossible - finalize honestly with --status blocked (the receipt stamps the gate snapshot), or have the user record an override`
+      : `Verify gate is BLOCKED (verdict ${gate.verdict}); fix the cited findings and re-run \`sasu verify\`, or have the user record an override`];
   }
   if (gate.effective === "STALE") {
     return ["Verify gate PASS is stale: its input documents changed after the passing run; re-run `sasu verify` against the current diff"];

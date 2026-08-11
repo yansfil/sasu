@@ -140,7 +140,7 @@ A quick run closes in one of two ways. Both write the same three artifacts; only
 In both cases:
 
 1. Write `agents/quick/<slug>/receipt.md`: goal, one-line outcome, then the verify `--json` per-AC verdicts, check results, mechanical runs, and evidence artifacts (path + hash) embedded verbatim - never restate verification results by hand (derived bookkeeping is how ledgers rot). On a handoff, add an "Open items" section listing every unsettled criterion and what a person must check. When no judge ran (an all-human contract), `criteria` is empty and the receipt rests on `status.findings`, `checks`, and `evidence` instead.
-2. Flip the contract frontmatter to `status: complete` (freshness hashing ignores frontmatter, so this does not stale the verdict).
+2. Flip the contract frontmatter to `status: complete` - or `status: blocked` on a budget-exhausted handoff with no `human:` criteria, because that run failed verification and the record must say so (freshness hashing ignores frontmatter, so this does not stale the verdict).
 3. Report: what changed, AC verdicts, assumptions made, anything deferred, and an explicit human-review section for every `human:` criterion plus any visual or taste judgment the judge did not make. On a handoff, say plainly that the run did not reach a full PASS and name what is open - never call it Done. Do not commit or push unless the conversation agreed to it.
 
 Do not delete `agents/quick/.quick-active.json` yourself. The Stop guard checks steps 1 and 2 and retires the marker once both are done; deleting it by hand only skips the check.

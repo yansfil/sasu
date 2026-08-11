@@ -6,6 +6,7 @@ const path = require("path");
 const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, QUICK_ACTIVE_PATH, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson, appendJsonl } = require("./util");
 const { hashGateInput } = require("./gate_freshness");
 const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("./git");
+const { judgeRetryBudget } = require("./config");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
 const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
@@ -145,14 +146,18 @@ function quickStopDirective(hookCwd, sessionId) {
   // The guard checks the finalize steps it can see rather than trusting a
   // deleted marker as proof of a finished run, and retires the marker itself
   // once they are done - so "delete the file" is never the way out.
-  const finalizeDirective = (opening, closing) => {
+  // `contractStatus` is what the frontmatter must honestly say: `complete` for
+  // a live PASS or a documented human handoff, `blocked` for a run whose
+  // retry budget ran out without a PASS - demanding `complete` there told an
+  // honest run to lie (PRINCIPLES.md item 10).
+  const finalizeDirective = (opening, closing, contractStatus = "complete") => {
     const receiptRel = path.join(path.dirname(marker.contractPath), "receipt.md");
     const remaining = [];
     if (!fs.existsSync(path.join(hookCwd, receiptRel))) {
       remaining.push(`Write \`${receiptRel}\` from the verify --json output (embed the per-AC verdicts, check results, evidence artifacts, and mechanical runs verbatim; do not restate them by hand).`);
     }
-    if (!/^status:\s*complete\s*$/m.test(readTextOrEmpty(path.join(hookCwd, marker.contractPath)))) {
-      remaining.push(`Set \`status: complete\` in \`${marker.contractPath}\` frontmatter.`);
+    if (!new RegExp(`^status:\\s*${contractStatus}\\s*$`, "m").test(readTextOrEmpty(path.join(hookCwd, marker.contractPath)))) {
+      remaining.push(`Set \`status: ${contractStatus}\` in \`${marker.contractPath}\` frontmatter.`);
     }
     if (remaining.length === 0) {
       fs.rmSync(markerPath, { force: true });
@@ -204,7 +209,7 @@ function quickStopDirective(hookCwd, sessionId) {
   // human-decision finding or an exhausted budget ends the autonomous loop.
   const findings = Array.isArray(record.findings) ? record.findings : [];
   const humanFindings = findings.filter(item => item && item.requiresHuman);
-  const budget = quickRetryBudget(hookCwd);
+  const budget = judgeRetryBudget(hookCwd);
   const budgetExhausted = typeof record.attempts === "number" && record.attempts >= budget;
   if (humanFindings.length || budgetExhausted) {
     // Ending the fix loop is not the same as ending the run: the user still
@@ -223,9 +228,15 @@ function quickStopDirective(hookCwd, sessionId) {
     const why = humanFindings.length
       ? `needs human verification and cannot reach PASS on its own:\n\n${humanFindings.map(item => `- ${item.missing}`).join("\n")}`
       : `exhausted its ${budget}-attempt verify budget.`;
+    // A human handoff closes as the documented complete-with-open-items shape
+    // (a contract with `human:` criteria can never reach PASS by design). A
+    // budget-exhausted run with no human lane failed verification outright,
+    // so its contract must say `blocked` - and only there: with budget
+    // remaining this branch is unreachable and the fix loop keeps driving.
     return finalizeDirective(
       why,
       "Then report to the user: what passed, what is still open, and exactly what you need them to confirm. Do not call the run Done - name the open items. The guard retires the run marker itself once these are done.",
+      humanFindings.length ? "complete" : "blocked",
     );
   }
   const findingLines = findings
@@ -241,17 +252,6 @@ function readTextOrEmpty(file) {
   } catch {
     return "";
   }
-}
-
-function quickRetryBudget(hookCwd) {
-  try {
-    const config = readJson(path.join(hookCwd, "agents", "config.json"));
-    const budget = config && config.judge ? config.judge.retryBudget : undefined;
-    if (Number.isInteger(budget) && budget >= 0) return budget;
-  } catch {
-    // Missing or malformed config falls back to the CLI default below.
-  }
-  return 3;
 }
 
 function runStopHook(payload, started) {

@@ -118,6 +118,36 @@ test("contract verify FAIL blocks with per-criterion findings and consumes an at
   assert.equal(gatesState(dir).gates.verify.attempts, 1);
 });
 
+test("an exhausted retry budget hands off as an honest blocked close-out, not a fake complete", () => {
+  const dir = makeGitProject();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+      stub: stubFile(dir, FAIL_RESPONSE),
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+  }
+  assert.equal(gatesState(dir).gates.verify.attempts, 3);
+
+  // The Stop-hook quick guard consumes the very gates.json the CLI just
+  // wrote: with the default 3-attempt budget spent, the directive must
+  // demand a `blocked` contract, never tell the failed run to say complete.
+  fs.writeFileSync(
+    path.join(dir, "agents", "quick", ".quick-active.json"),
+    JSON.stringify({ slug: "demo", contractPath: "agents/quick/demo/contract.md", startedAt: new Date().toISOString() }),
+  );
+  const HARNESS = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..", "skills", "implement", "scripts", "prd_state_harness.js");
+  const hook = spawnSync("node", [HARNESS, "hook", "stop"], {
+    cwd: dir,
+    encoding: "utf8",
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: dir, session_id: "quick-e2e-blocked" }),
+  });
+  const directive = JSON.parse(hook.stdout);
+  assert.equal(directive.decision, "block");
+  assert.match(directive.reason, /exhausted its 3-attempt verify budget/);
+  assert.match(directive.reason, /status: blocked/);
+  assert.ok(!/status: complete/.test(directive.reason), "a failed run must not be told to record itself complete");
+});
+
 test("a structurally broken contract blocks at prelint without a judge call", () => {
   const dir = makeGitProject();
   fs.writeFileSync(

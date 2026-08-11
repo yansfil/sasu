@@ -266,6 +266,8 @@ Do not write a blocked or partial handoff until:
 - every cited blocker or known not-done item has evidence.
 - the report status is `Blocked` or `Partially Done`, never `Done`.
 
+When the verify gate is BLOCKED with its retry budget exhausted and every tracked item is complete, the gate itself is the blocker: `finalize --status blocked` succeeds and the receipt stamps the gate snapshot (verdict, attempts, findings).
+
 Use:
 
 ```sh
