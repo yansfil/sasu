@@ -2263,7 +2263,7 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
   runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
 
   const store = requireModule(path.join(repoRoot, "cli", "dist", "gates", "store.js"));
-  const { vouchedTreeFingerprint } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
+  const { judgedDiffSha256 } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
   const prdRel = path.join("agents", "prd", slug, "prd.md");
   const emptyGate = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
   const finding = { area: "semantic", severity: "P0", missing: "AC1: the diff still has no persistence", recommendation: "add it", requiresHuman: false };
@@ -2271,7 +2271,7 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
 
   // A record shaped exactly as runVerifyGate writes an armed semantic FAIL:
   // stage stamp, live-material stamp false, base pinned to a resolved SHA, the
-  // PRD pinned by content hash, the tree pinned, and a latest history row that
+  // PRD pinned by content hash, the judged diff pinned, and a history row that
   // agrees with all of it. Written LAST, so state.json's updatedAt (bumped by
   // every mark and by the review record) is older than lastRunAt - a newer
   // updatedAt means new evidence and would legitimately break the refusal.
@@ -2289,7 +2289,7 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
       usedLiveMaterial: false,
       docKind: "prd",
       inputs: [{ path: prdRel, sha256: store.freshnessHash(fs.readFileSync(path.join(projectRoot, prdRel), "utf8")), kind: "prd" }],
-      treeFingerprint: vouchedTreeFingerprint({ projectRoot, slug, scopeGlobs: null }),
+      judgedDiffSha256: judgedDiffSha256(projectRoot, headSha),
       ...overrides,
     };
     verify.history = [{
@@ -2297,7 +2297,7 @@ test("a refused rerun is itself terminal: finalize --status blocked opens at att
       verdict: verify.verdict,
       findingCount: verify.findings.length,
       requiresHuman: false,
-      treeFingerprint: verify.treeFingerprint,
+      judgedDiffSha256: verify.judgedDiffSha256,
       failedStage: verify.failedStage,
       diffSource: verify.diffSource,
       usedLiveMaterial: verify.usedLiveMaterial,
@@ -2729,7 +2729,7 @@ test("verification pass auto-mets covered acceptance criteria; manual judgments 
 // --- quick-path Stop guard ---
 
 const { freshnessHash } = requireModule(path.join(repoRoot, "cli", "lib", "gate_freshness.js"));
-const { vouchedTreeFingerprint } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
+const { judgedDiffSha256 } = requireModule(path.join(repoRoot, "cli", "lib", "git.js"));
 
 const QUICK_CONTRACT = `---
 topic: demo
@@ -2782,10 +2782,12 @@ function writeQuickGates(root, verifyRecord) {
 
 function passRecord(root) {
   const contract = fs.readFileSync(path.join(root, "agents", "quick", "demo", "contract.md"), "utf8");
+  const base = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
   return {
     verdict: "PASS",
     inputs: [{ path: "agents/quick/demo/contract.md", sha256: freshnessHash(contract) }],
-    treeFingerprint: vouchedTreeFingerprint({ projectRoot: root, slug: "demo" }),
+    diffSource: `git:${base}`,
+    judgedDiffSha256: judgedDiffSha256(root, base),
   };
 }
 
@@ -2822,20 +2824,29 @@ test("quick guard re-opens a PASS when the code changed after it", () => {
   write(path.join(root, "src.txt"), "edited after the pass");
   const directive = JSON.parse(quickStop(root));
   assert.equal(directive.decision, "block");
-  assert.match(directive.reason, /working tree changed after the pass/);
+  assert.match(directive.reason, /change under judgment is no longer the one that passed/);
   assert.match(directive.reason, /Re-run verification/);
 });
 
-test("quick guard treats a legacy-shaped tree fingerprint as stale: one honest re-run, no crash", () => {
+test("quick guard demands a re-run when the recorded pin cannot be compared, and never crashes", () => {
   const root = makeQuickProject();
-  // gates.json written before the freshness consolidation: {headSha,
-  // statusHash} can no longer prove the tree is unchanged, so the guard must
-  // demand a re-run rather than accept the pass or throw.
-  writeQuickGates(root, { ...passRecord(root), treeFingerprint: { headSha: "abc123", statusHash: "deadbeef" } });
-  const directive = JSON.parse(quickStop(root));
-  assert.equal(directive.decision, "block");
-  assert.match(directive.reason, /working tree changed after the pass/);
-  assert.match(directive.reason, /Re-run verification/);
+  // A pin that does not match what the tree produces now - the shape a
+  // pre-field gates.json has, where the retired tree fingerprint object sits
+  // where a sha256 belongs. The guard must demand one honest re-run rather than
+  // accept the pass or throw.
+  for (const unusable of ["deadbeef".repeat(8), { headSha: "abc123", statusHash: "deadbeef" }]) {
+    writeQuickGates(root, { ...passRecord(root), judgedDiffSha256: unusable });
+    const directive = JSON.parse(quickStop(root));
+    assert.equal(directive.decision, "block", JSON.stringify(unusable));
+    assert.match(directive.reason, /Re-run verification/, JSON.stringify(unusable));
+  }
+
+  // And with no pin at all the guard makes no claim either way: it cannot
+  // compare, so it must not invent drift.
+  const noPin = passRecord(root);
+  delete noPin.judgedDiffSha256;
+  writeQuickGates(root, noPin);
+  assert.doesNotMatch(JSON.parse(quickStop(root)).reason, /no longer the one that passed/);
 });
 
 test("quick guard re-opens a PASS when the contract changed after it", () => {

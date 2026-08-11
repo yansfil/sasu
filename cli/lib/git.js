@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, normalizeRelPath, simpleHash } = require("./util");
+const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, sha256Text, normalizeRelPath, simpleHash } = require("./util");
 const { matchesScopeGlob } = require("./scope_match");
 
 function runGit(projectRoot, args, options = {}) {
@@ -525,6 +525,158 @@ function snapshotPathMetadata(abs) {
   };
 }
 
+/**
+ * Machine-generated dependency lockfiles, by basename, at any depth. They are
+ * enormous, carry no evidence for any acceptance criterion, and in the audited
+ * run (2026-08) a nested app/pnpm-lock.yaml alone was worth tens of thousands
+ * of diff chars that crowded the code out of the judge's window.
+ */
+const DIFF_EXCLUDED_LOCKFILES = [
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "bun.lockb",
+  "Cargo.lock",
+  "poetry.lock",
+  "composer.lock",
+  "Gemfile.lock",
+];
+
+/**
+ * The single exclusion predicate for the judge's diff, applied to BOTH sides
+ * (tracked pathspecs and the untracked listing - they previously disagreed,
+ * and agents/prd + agents/interview leaked into the tracked diff). The whole
+ * agents/ namespace is out: the PRD, qa-log, contract, and evidence artifacts
+ * are already pinned as gate inputs, and the gate's own past verdict JSONs
+ * sort alphabetically ahead of most app code, so replaying any of it into the
+ * diff shows the judge documents instead of the change under judgment.
+ */
+function isExcludedFromDiff(file) {
+  const normalized = String(file || "").replace(/\\/g, "/");
+  if (normalized === "agents" || normalized.startsWith("agents/")) return true;
+  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return DIFF_EXCLUDED_LOCKFILES.includes(base);
+}
+
+/** The same exclusions as git pathspecs, so the tracked diff is curated by git itself. */
+const DIFF_EXCLUDE_PATHSPECS = [
+  ":(exclude)agents",
+  ...DIFF_EXCLUDED_LOCKFILES.map(name => `:(glob,exclude)**/${name}`),
+];
+
+/**
+ * The change under judgment, including files the run created.
+ *
+ * `git diff` only knows about tracked paths, so a new module - the most common
+ * shape of a small task - would be invisible to the judge, and a run that only
+ * adds files would produce no diff at all. Untracked files are therefore
+ * rendered as add-diffs and appended. Both sides are curated by
+ * isExcludedFromDiff (see its comment for what is out and why).
+ *
+ * Lives in lib rather than in the gate's TypeScript because it is now read
+ * twice: the gate produces the diff it judges, and the freshness consumers
+ * reproduce it to ask whether that judgment still describes the tree. Two
+ * copies of this rule would be the freshness deadlock again (PRINCIPLES item
+ * 3), and the Stop hook must be able to ask without a dist build.
+ */
+function judgedDiff(projectRoot, baseRef) {
+  const tracked = childProcess.spawnSync("git", ["diff", baseRef || "HEAD", "--", ".", ...DIFF_EXCLUDE_PATHSPECS], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (tracked.status !== 0) return null;
+  const listed = childProcess.spawnSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+    cwd: projectRoot,
+    shell: false,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (listed.status !== 0) return null;
+  const additions = [];
+  for (const file of String(listed.stdout || "").split("\0")) {
+    if (file === "" || isExcludedFromDiff(file)) continue;
+    // --no-index exits 1 when the files differ, which is always here, so the
+    // payload is on stdout either way.
+    const added = childProcess.spawnSync("git", ["diff", "--no-index", "--", "/dev/null", file], {
+      cwd: projectRoot,
+      shell: false,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const stdout = String(added.stdout || "");
+    if (stdout.trim() !== "") additions.push(stdout);
+  }
+  return [String(tracked.stdout || ""), ...additions].filter(part => part.trim() !== "").join("\n");
+}
+
+/**
+ * What a verify verdict vouches for: the sha256 of the exact diff the judge was
+ * shown, against the base the verdict recorded.
+ *
+ * This replaced the gate's vouched tree fingerprint. The fingerprint answered
+ * "did any file in the run's scope change", which is a different question from
+ * the one the verdict actually answered, and it answered it differently
+ * depending on who asked: the gate recorded it in fallback mode (whole repo)
+ * while the reviews recorded it scoped, so unrelated churn killed a gate PASS
+ * that vouched for untouched code - the exact thing cli/lib/git.js already
+ * claims cannot happen ("the same tree must never fingerprint differently
+ * depending on who asks", see vouchedTreeFingerprint). Measured 2026-08-11 on
+ * project modakbul: gate {vouched 45644585, 535 entries, fallback} against
+ * reviews {vouched bd743ad6, 57 entries, scoped} on one tree.
+ *
+ * Pinning the diff body instead covers exactly what was judged, no more and no
+ * less: untracked files ride along as add-diffs, files that declare no `Scope:`
+ * are included (a scope pin structurally cannot see those - the reason
+ * unscopedFiles warnings exist), and a per-lane slice of an identical diff is
+ * itself identical, so lane scoping needs no separate pin.
+ *
+ * Accepted blind spot, named because it is a real narrowing: a change confined
+ * to files isExcludedFromDiff filters out - the agents/** namespace and
+ * dependency lockfiles - no longer stales a PASS. The namespace is bookkeeping
+ * that must never be a freshness input (AGENTS.md), and a lockfile the judge
+ * never saw cannot change a semantic verdict; command-backed verification gets
+ * its own re-run on the final tree at finalize, which is where a lockfile
+ * change would actually show up. Gitignored drift stays invisible, unchanged
+ * from the fingerprint it replaces.
+ */
+function judgedDiffSha256(projectRoot, baseRef) {
+  const diff = judgedDiff(projectRoot, baseRef);
+  return diff === null ? null : judgedDiffHash(diff);
+}
+
+/**
+ * Hash a diff the caller already has. The gate records the pin from the exact
+ * string it handed the judge (which may be the injected test seam, with no git
+ * provenance to reproduce), while the freshness consumers reproduce the diff
+ * first - so both must reach this one function or the pin and its comparison
+ * can drift while looking identical.
+ *
+ * Hashes a canonical form rather than the string itself, to keep the property
+ * the vouched tree fingerprint had and must not lose: committing the dirty work
+ * does not move the pin. Measured 2026-08-11 - committing an untracked file
+ * changes the assembled diff by exactly one character, the "\n" that joins the
+ * add-diff section onto the tracked section, because git then emits both from
+ * one `git diff`; a commit can also reorder the two sections, since untracked
+ * add-diffs are appended while git sorts its own output by path. Both are
+ * presentation, not content, so the canonical form is the file blocks trimmed
+ * and sorted. Losing commit-invariance here would resurrect the
+ * materialize-in-HEAD rescue machinery that property deleted.
+ *
+ * A body line that literally reads `diff --git ...` splits a block spuriously,
+ * which costs nothing: the same text splits the same way on both sides of the
+ * comparison, so identity - the only thing being asked - still holds.
+ */
+function judgedDiffHash(diffText) {
+  const blocks = String(diffText || "")
+    .split(/(?=^diff --git )/m)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .sort();
+  return sha256Text(blocks.join("\n"));
+}
+
 function optionalSnapshotFieldEqual(left, right, field) {
   if (!left || !right || left[field] === undefined || right[field] === undefined) return true;
   return left[field] === right[field];
@@ -542,6 +694,10 @@ module.exports = {
   parseGitStatusEntry,
   parseGitStatusZ,
   worktreeSnapshot,
+  isExcludedFromDiff,
+  judgedDiff,
+  judgedDiffHash,
+  judgedDiffSha256,
   vouchedTreeFingerprint,
   vouchedTreeFingerprintForState,
   vouchedFingerprintsMatch,

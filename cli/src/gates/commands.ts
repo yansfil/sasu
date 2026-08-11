@@ -34,7 +34,6 @@ import {
   type SettledCriterion,
 } from "./prompts";
 import {
-  currentTreeFingerprint,
   freshnessHash,
   GateStore,
   gateStatus,
@@ -653,8 +652,8 @@ function resolveGitDiffSource(projectRoot: string, baseRef: string | undefined):
 const ARMABLE_DIFF_SOURCE = /^git:[0-9a-f]{40,64}$/;
 
 interface RerunRefusal {
-  currentFingerprint: VouchedTreeFingerprint;
-  mode: string;
+  /** The pin both the recorded verdict and the current tree agree on. */
+  judgedDiffSha256: string;
 }
 
 /**
@@ -676,7 +675,7 @@ interface RerunRefusal {
  * tree, so an identical-tree retry is legitimate; an overridden record is a
  * standing user decision the harness must not re-litigate. Identical
  * fingerprints mean identical vouched content in scoped and fallback mode
- * alike (recomputed under the record's own scope via currentTreeFingerprint).
+ * alike (reproduced against the record's own pinned base via judgedDiffSha256).
  */
 function armedRerunRefusal(
   projectRoot: string,
@@ -688,7 +687,7 @@ function armedRerunRefusal(
   if (verifyRecord === undefined) return null;
   if (verifyRecord.verdict !== "FAIL" && verifyRecord.verdict !== "BLOCK") return null;
   if (verifyRecord.overridden) return null;
-  if (!verifyRecord.treeFingerprint) return null;
+  if (typeof verifyRecord.judgedDiffSha256 !== "string" || verifyRecord.judgedDiffSha256 === "") return null;
   if (verifyRecord.failedStage !== "semantic") return null;
   // A round that judged live material (capture output, agentic file reads)
   // is not reproducible-by-construction; only an explicit false may arm.
@@ -736,15 +735,14 @@ function armedRerunRefusal(
       && verifyRecord.lastRunAt !== null
       && implementState.updatedAt <= verifyRecord.lastRunAt);
   if (!evidenceUnchanged) return null;
-  const currentFingerprint = currentTreeFingerprint(projectRoot, topic, verifyRecord.treeFingerprint);
-  if (currentFingerprint === null || !vouchedFingerprintsMatch(verifyRecord.treeFingerprint, currentFingerprint)) return null;
-  const mode =
-    typeof verifyRecord.treeFingerprint === "object"
-    && "mode" in verifyRecord.treeFingerprint
-    && typeof verifyRecord.treeFingerprint.mode === "string"
-      ? verifyRecord.treeFingerprint.mode
-      : "fallback";
-  return { currentFingerprint, mode };
+  // The question the verdict actually answered: would the judge be handed the
+  // identical diff? ARMABLE_DIFF_SOURCE has already proved the base is pinned to
+  // a resolved SHA, so reproducing the diff against it and comparing the hash
+  // covers every file the judge saw and nothing it did not. A null answer means
+  // git refused (a base that has since left the checkout): no proof, no refusal.
+  const currentJudgedDiffSha256 = gitLib.judgedDiffSha256(projectRoot, verifyRecord.diffSource.slice(4));
+  if (currentJudgedDiffSha256 === null || currentJudgedDiffSha256 !== verifyRecord.judgedDiffSha256) return null;
+  return { judgedDiffSha256: currentJudgedDiffSha256 };
 }
 
 /**
@@ -885,7 +883,7 @@ export async function runVerifyGate(
     const omitted = verifyRecord.findings.length > 5 ? `\n  (+${verifyRecord.findings.length - 5} more)` : "";
     throw new Error(
       `verify gate rerun short-circuit: the last attempt (${verifyRecord.lastRunAt ?? "unknown time"}) recorded a semantic-judge ${verifyRecord.verdict} `
-        + `on this exact judged diff (${verifyRecord.diffSource}) and tree (${refusal.mode}-mode vouched fingerprint ${refusal.currentFingerprint.vouched}, ${refusal.currentFingerprint.entryCount} entries), `
+        + `on this exact judged diff (base ${verifyRecord.diffSource}, diff sha256 ${refusal.judgedDiffSha256.slice(0, 12)}), `
         + `and the pinned inputs and implement evidence are unchanged, so re-judging the identical semantic question can only reproduce that verdict. Recorded findings:\n`
         + `${findingLines.join("\n") || "  (none recorded)"}${omitted}\n`
         + `Change the code under judgment (or the contract/PRD/registered evidence), or point --base at the commit the work actually started from, and re-run. `
@@ -901,19 +899,6 @@ export async function runVerifyGate(
         + `No gate attempt was recorded and no judge call was made.`,
     );
   }
-
-  // Every recorded verdict pins the tree it was earned on (PRINCIPLES item
-  // 10): the short-circuit above compares against this pin, so a FAIL that
-  // skipped it would make the next identical re-run unrefusable. Best-effort
-  // by design - a non-git project records null and every guard skips the
-  // comparison.
-  const treeFingerprintNow = (): VouchedTreeFingerprint | null => {
-    try {
-      return vouchedTreeFingerprint({ projectRoot, slug: topic });
-    } catch {
-      return null;
-    }
-  };
 
   // Stage 1: mechanical ($0). A failure here never reaches the judge (UX-02).
   // The quick contract's own check and capture commands join this stage: the
@@ -1003,10 +988,11 @@ export async function runVerifyGate(
               requiresHuman: false,
             })),
           inputs,
-          // Pinned even on this early FAIL (item 10: every outcome names its
-          // tree) - but the stage stamp keeps it from ever refusing a rerun:
-          // mechanical commands read state the fingerprint cannot see.
-          treeFingerprint: treeFingerprintNow(),
+          // No judged-diff pin: this FAIL happened before the diff was even
+          // produced, so there is nothing a pin could vouch for. That is the
+          // honest record (item 10) - the base is still stamped in diffSource,
+          // and the stage stamp already keeps a mechanical FAIL from ever
+          // refusing a rerun, since those commands read state no pin can see.
           failedStage: "mechanical",
           artifactPayload: { stage: "mechanical", runs: mechanical.runs },
         },
@@ -1054,7 +1040,16 @@ export async function runVerifyGate(
         : "no acceptance criteria found (expected '## 7. Acceptance Criteria' with '- AC#.' items)",
     );
   }
-  const diff = options.diffText ?? gitDiff(projectRoot, options.baseRef);
+  // judgedDiff answers null when git itself refuses (a bogus base, a non-git
+  // directory), which used to surface as a raw execFileSync throw; the message
+  // has to name the base because that is the argument the caller controls.
+  const producedDiff = options.diffText ?? gitLib.judgedDiff(projectRoot, options.baseRef);
+  if (producedDiff === null) {
+    throw new Error(
+      `could not read the diff against ${options.baseRef ?? "HEAD"}: git refused. Point --base at a commit that exists in this checkout.`,
+    );
+  }
+  const diff = producedDiff;
   if (diff.trim() === "") {
     throw new Error(
       `empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}. Implement the change first, or point --base at the commit you started from. Note that gitignored files are invisible here even when they exist.`,
@@ -1189,7 +1184,10 @@ export async function runVerifyGate(
         "sasu: NOTE: verify gate PASSED with ZERO judge calls - every AC was oracle-backed; the semantic judge never saw this diff.\n",
       );
     }
-    const zeroJudgeFingerprint = treeFingerprintNow();
+    // Every recorded verdict pins the diff it was earned on (PRINCIPLES item
+    // 10): the rerun short-circuit compares against this pin, so a FAIL that
+    // skipped it would make the next identical re-run unrefusable.
+    const judgedDiffSha256 = gitLib.judgedDiffHash(diff);
     state = recordGateResult(
       store,
       state,
@@ -1199,7 +1197,7 @@ export async function runVerifyGate(
         verdict: zeroJudgePassed ? "PASS" : "FAIL",
         findings: zeroJudgeFindings,
         inputs: allInputs,
-        treeFingerprint: zeroJudgeFingerprint,
+        judgedDiffSha256,
         // Oracle and human-lane FAILs both resolve outside what the semantic
         // judge sees (an oracle reads live out-of-tree state; a human criterion
         // waits on the user), so neither stage may ever refuse a rerun.
@@ -1214,7 +1212,7 @@ export async function runVerifyGate(
           criteria: oracleCriteria,
           evidence: lane ? lane.artifacts : [],
           mechanical: mechanicalRecord(),
-          treeFingerprint: zeroJudgeFingerprint,
+          judgedDiffSha256,
           diffSource,
           ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
           inputs: allInputs,
@@ -1624,7 +1622,7 @@ export async function runVerifyGate(
     // Pin the tree the verdict was earned on; the Stop-hook quick guard
     // recomputes this to catch code edited after a PASS, and the rerun
     // short-circuit compares a FAIL's pin against the next call's tree.
-    const treeFingerprint = treeFingerprintNow();
+    const judgedDiffSha256 = gitLib.judgedDiffHash(diff);
     // An unjudged human criterion keeps the gate closed even when every judged
     // one passed: nobody has confirmed it yet, and the honest report of that
     // is a blocking requiresHuman finding, not a PASS. A failed oracle closes
@@ -1663,7 +1661,7 @@ export async function runVerifyGate(
         verdict: passed ? "PASS" : "FAIL",
         findings,
         inputs: judgeInputs,
-        treeFingerprint,
+        judgedDiffSha256,
         // The stage that closed the gate, most-out-of-tree first: any failed
         // oracle means live state the fingerprint cannot see, so the record
         // must never refuse a rerun; an open human criterion is the user's to
@@ -1702,7 +1700,7 @@ export async function runVerifyGate(
           // but unshowable" (missing, binary, uncontained, unattachable).
           ...(injected.omitted.length > 0 ? { injectionOmitted: injected.omitted } : {}),
           mechanical: mechanicalRecord(),
-          treeFingerprint,
+          judgedDiffSha256,
           ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
           inputs: judgeInputs,
         },
@@ -2404,43 +2402,20 @@ export function extractAcceptanceCriteria(prdContent: string): { id: string; tex
 }
 
 /**
- * Machine-generated dependency lockfiles, by basename, at any depth. They are
- * enormous, carry no evidence for any acceptance criterion, and in the audited
- * run (2026-08) a nested app/pnpm-lock.yaml alone was worth tens of thousands
- * of diff chars that crowded the code out of the judge's window.
+ * The diff-exclusion rule and the diff itself now live in cli/lib/git.js: the
+ * gate produces the diff it judges and the freshness consumers reproduce it to
+ * ask whether that judgment still describes the tree, and one rule with two
+ * implementations is the freshness deadlock (PRINCIPLES item 3). Re-exported
+ * here because this is where callers already import it from.
  */
-const DIFF_EXCLUDED_LOCKFILES = [
-  "pnpm-lock.yaml",
-  "package-lock.json",
-  "yarn.lock",
-  "bun.lockb",
-  "Cargo.lock",
-  "poetry.lock",
-  "composer.lock",
-  "Gemfile.lock",
-];
+const gitLib = require("../../lib/git.js") as {
+  isExcludedFromDiff: (file: string) => boolean;
+  judgedDiff: (projectRoot: string, baseRef: string | undefined) => string | null;
+  judgedDiffSha256: (projectRoot: string, baseRef: string | undefined) => string | null;
+  judgedDiffHash: (diffText: string) => string;
+};
 
-/**
- * The single exclusion predicate for the judge's diff, applied to BOTH sides
- * (tracked pathspecs and the untracked listing - they previously disagreed,
- * and agents/prd + agents/interview leaked into the tracked diff). The whole
- * agents/ namespace is out: the PRD, qa-log, contract, and evidence artifacts
- * are already pinned as gate inputs, and the gate's own past verdict JSONs
- * sort alphabetically ahead of most app code, so replaying any of it into the
- * diff shows the judge documents instead of the change under judgment.
- */
-export function isExcludedFromDiff(file: string): boolean {
-  const normalized = file.replace(/\\/g, "/");
-  if (normalized === "agents" || normalized.startsWith("agents/")) return true;
-  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
-  return DIFF_EXCLUDED_LOCKFILES.includes(base);
-}
-
-/** The same exclusions as git pathspecs, so the tracked diff is curated by git itself. */
-const DIFF_EXCLUDE_PATHSPECS = [
-  ":(exclude)agents",
-  ...DIFF_EXCLUDED_LOCKFILES.map((name) => `:(glob,exclude)**/${name}`),
-];
+export const isExcludedFromDiff = gitLib.isExcludedFromDiff;
 
 // --- PRD-declared lane scoping (4a) ---
 //
@@ -2668,41 +2643,3 @@ export function runAcOracles(
   return { outcomes, warnings };
 }
 
-/**
- * The change under judgment, including files the run created.
- *
- * `git diff` only knows about tracked paths, so a new module - the most common
- * shape of a small task - would be invisible to the judge, and a run that only
- * adds files would produce no diff at all. Untracked files are therefore
- * rendered as add-diffs and appended. Both sides are curated by
- * isExcludedFromDiff (see its comment for what is out and why).
- */
-function gitDiff(projectRoot: string, baseRef: string | undefined): string {
-  const tracked = execFileSync("git", ["diff", baseRef ?? "HEAD", "--", ".", ...DIFF_EXCLUDE_PATHSPECS], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-  })
-    .split("\0")
-    .filter((file) => file !== "" && !isExcludedFromDiff(file));
-  const additions: string[] = [];
-  for (const file of untracked) {
-    try {
-      // --no-index exits 1 when the files differ, which is always here.
-      execFileSync("git", ["diff", "--no-index", "--", "/dev/null", file], {
-        cwd: projectRoot,
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
-      });
-    } catch (error) {
-      const stdout = (error as { stdout?: string }).stdout;
-      if (typeof stdout === "string" && stdout.trim() !== "") additions.push(stdout);
-    }
-  }
-  return [tracked, ...additions].filter((part) => part.trim() !== "").join("\n");
-}

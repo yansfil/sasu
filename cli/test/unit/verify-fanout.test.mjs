@@ -1181,7 +1181,7 @@ test("short-circuit: an identical tree after a semantic FAIL refuses at zero cos
   assert.equal(first.ok, false);
   const afterFirst = verifyGates(dir);
   assert.equal(afterFirst.attempts, 1);
-  assert.ok(afterFirst.treeFingerprint, "the FAIL must pin the tree it was earned on");
+  assert.match(afterFirst.judgedDiffSha256, /^[0-9a-f]{64}$/, "the FAIL must pin the diff it was earned on");
   assert.equal(afterFirst.failedStage, "semantic", "a judge FAIL records its stage");
   assert.equal(afterFirst.diffSource, `git:${gitHead(dir)}`,
     "the record pins the base RESOLVED to a commit SHA, never the ref string");
@@ -1194,7 +1194,7 @@ test("short-circuit: an identical tree after a semantic FAIL refuses at zero cos
     assert.match(error.message, new RegExp(`git:${gitHead(dir)}`), "the refusal names the judged-diff identity");
     assert.match(error.message, /close the run out honestly as blocked/,
       "the component that refuses names the terminal exit it creates, not just the re-run advice");
-    assert.match(error.message, /fallback-mode vouched fingerprint/, "the refusal names the fingerprint mode");
+    assert.match(error.message, /diff sha256 [0-9a-f]{12}/, "the refusal names the pin it compared");
     assert.match(error.message, /no persistence in the diff/, "the recorded findings are replayed");
     assert.match(error.message, /--base/, "the refusal points at the corrected-base escape");
     assert.match(error.message, /gate override/, "the user escape hatch is named");
@@ -1235,7 +1235,7 @@ test("short-circuit: a corrected --base rerun judges a different diff and must r
   assert.equal(verifyGates(dir).diffSource, `git:${headSha}`);
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
   assert.equal(artifact.diffSource, `git:${headSha}`, "the gate artifact stamps the git provenance of the judged diff");
-  const pinnedFingerprint = verifyGates(dir).treeFingerprint.vouched;
+  const pinnedDiff = verifyGates(dir).judgedDiffSha256;
 
   // Same base, same tree: still refused.
   await assert.rejects(
@@ -1253,13 +1253,12 @@ test("short-circuit: a corrected --base rerun judges a different diff and must r
   assert.equal(rerun.ok, true, "the corrected-base rerun executes and may PASS");
   assert.equal(verifyGates(dir).verdict, "PASS");
   assert.equal(verifyGates(dir).diffSource, `git:${baseSha}`, "the new record names the base it judged");
-  // The disarm must rest on diffSource ALONE. Only the base moved: the stub
-  // response swap (FAIL -> PASS) writes agents/stub.json, which the vouched set
-  // excluded only after the namespace-wide exclusion landed - before that this
-  // assertion failed and the "corrected base re-runs" claim was confounded by
-  // tree drift.
-  assert.equal(verifyGates(dir).treeFingerprint.vouched, pinnedFingerprint,
-    "nothing but the base changed: the vouched fingerprint must be byte-identical across the swap");
+  // The worktree never moved - the stub response swap (FAIL -> PASS) writes
+  // agents/stub.json, which the diff excludes - so the pin moved for exactly one
+  // reason: a different base produces a different diff. That is the pin
+  // subsuming the question diffSource used to answer alone.
+  assert.notEqual(verifyGates(dir).judgedDiffSha256, pinnedDiff,
+    "a corrected base is a different diff, and the pin says so on its own");
 });
 
 test("short-circuit: a moved base ref re-runs even though the worktree never moved", async () => {
@@ -1294,13 +1293,14 @@ test("short-circuit: a moved base ref re-runs even though the worktree never mov
   const first = await run(FAIL_TWO);
   assert.equal(first.ok, false);
   assert.equal(verifyGates(dir).diffSource, `git:${c0}`, "the ref is resolved at record time, never stored as 'git:start'");
-  const pinnedFingerprint = verifyGates(dir).treeFingerprint.vouched;
+  const pinnedDiff = verifyGates(dir).judgedDiffSha256;
   await assert.rejects(run(FAIL_TWO), /rerun short-circuit/, "an unmoved ref on an unchanged tree is the same question");
 
   // The trap: re-point `start` at C1 with the worktree untouched. `git diff
   // start` no longer contains the extra.js hunk, so it is a genuinely different
-  // judged diff - and the commit-invariant fingerprint cannot see the move at
-  // all, so a ref-string comparison refused this rerun forever.
+  // judged diff - and the commit-invariant TREE fingerprint could not see the
+  // move at all, which is how a ref-string comparison refused this rerun
+  // forever. A diff-body pin sees it directly.
   git("branch", "-f", "start", c1);
   const rerun = await run({
     verdict: "PASS",
@@ -1308,8 +1308,8 @@ test("short-circuit: a moved base ref re-runs even though the worktree never mov
   });
   assert.equal(rerun.ok, true, "a moved base is a different judged diff and must run");
   assert.equal(verifyGates(dir).diffSource, `git:${c1}`);
-  assert.equal(verifyGates(dir).treeFingerprint.vouched, pinnedFingerprint,
-    "the worktree never moved: only diffSource could have broken this refusal");
+  assert.notEqual(verifyGates(dir).judgedDiffSha256, pinnedDiff,
+    "the worktree never moved, yet the judged diff really is different - the pin catches the moved base itself");
 });
 
 test("short-circuit: an unresolvable base fails on the diff, never on a refusal", async () => {
@@ -1358,17 +1358,17 @@ test("short-circuit: a capture-fed semantic FAIL never refuses - its material is
   assert.equal(record.usedLiveMaterial, true, "a round fed by a capture is stamped as non-reproducible");
   assert.equal(record.history[record.history.length - 1].usedLiveMaterial, true,
     "the history row mirrors the stamp so the arming-time consistency check can compare them");
-  const pinnedFingerprint = record.treeFingerprint.vouched;
+  const pinnedDiff = record.judgedDiffSha256;
 
-  // The out-of-tree fix: gitignored, so the vouched fingerprint cannot move.
+  // The out-of-tree fix: gitignored, so the judged diff cannot move.
   fs.writeFileSync(path.join(dir, "live-state.txt"), "OK\n");
   const rerun = await run({
     verdict: "PASS",
     criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "widget.js" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "out/state.txt says OK" }],
   });
-  assert.equal(rerun.ok, true, "the rerun must execute: the capture re-reads live state the fingerprint is blind to");
-  assert.equal(verifyGates(dir).treeFingerprint.vouched, pinnedFingerprint,
-    "the fingerprint really is identical - only usedLiveMaterial could have broken this refusal");
+  assert.equal(rerun.ok, true, "the rerun must execute: the capture re-reads live state the diff is blind to");
+  assert.equal(verifyGates(dir).judgedDiffSha256, pinnedDiff,
+    "the judged diff really is identical - only usedLiveMaterial could have broken this refusal");
 });
 
 test("short-circuit: an agentic-lane semantic FAIL never refuses - the judge read live files", async () => {
@@ -1416,14 +1416,14 @@ test("short-circuit: a check-fed semantic FAIL never refuses - the harness ran i
   const record = verifyGates(dir);
   assert.equal(record.failedStage, "semantic", "the check exited 0, so no oracle/mechanical stage closed the gate");
   assert.equal(record.usedLiveMaterial, true, "a round whose lane carries a live check tail is not reproducible-by-construction");
-  const pinnedFingerprint = record.treeFingerprint.vouched;
+  const pinnedDiff = record.judgedDiffSha256;
 
   fs.writeFileSync(path.join(dir, "live-state.txt"), "READY\n");
   const rerun = await run(FAIL_TWO);
   assert.equal(rerun.ok, false);
-  assert.equal(verifyGates(dir).attempts, 2, "the rerun must execute: the check re-reads state the fingerprint is blind to");
-  assert.equal(verifyGates(dir).treeFingerprint.vouched, pinnedFingerprint,
-    "the fingerprint really is identical - only usedLiveMaterial could have broken this refusal");
+  assert.equal(verifyGates(dir).attempts, 2, "the rerun must execute: the check re-reads state the diff is blind to");
+  assert.equal(verifyGates(dir).judgedDiffSha256, pinnedDiff,
+    "the judged diff really is identical - only usedLiveMaterial could have broken this refusal");
 });
 
 test("short-circuit: a contract FAIL and the terminal predicate agree when implement state moves", async () => {
@@ -1591,13 +1591,13 @@ test("short-circuit: gate override and a user-driven rerun are never swallowed",
   assert.equal(verifyGates(dir).attempts, 2);
 });
 
-test("short-circuit: a mechanical FAIL pins its tree but never refuses - its fix may live outside the fingerprint", async () => {
+test("short-circuit: a mechanical FAIL pins nothing and never refuses - it failed before a diff existed", async () => {
   const dir = makeGitDir();
   const contractPath = writeContract(dir, 2);
   // The reproduced 2026-08-11 case: the mechanical command reads a gitignored
-  // marker the vouched fingerprint cannot see. Creating it is the legitimate
-  // fix, leaves the fingerprint byte-identical, and the old predicate then
-  // refused the rerun with a false "can only reproduce that verdict".
+  // marker no pin can see. Creating it is the legitimate fix, leaves the judged
+  // diff byte-identical, and the old predicate then refused the rerun with a
+  // false "can only reproduce that verdict".
   fs.writeFileSync(path.join(dir, ".gitignore"), "marker.txt\n");
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   fs.writeFileSync(
@@ -1611,16 +1611,19 @@ test("short-circuit: a mechanical FAIL pins its tree but never refuses - its fix
   const record = verifyGates(dir);
   assert.equal(record.verdict, "FAIL");
   assert.equal(record.failedStage, "mechanical", "the record names the stage that failed");
-  assert.ok(record.treeFingerprint, "a mechanical FAIL still pins the tree it was earned on (item 10)");
+  // This FAIL happened before the diff was produced, so there is nothing for a
+  // pin to vouch for and the honest record says so (item 10) - the base is still
+  // stamped, and the stage stamp is what keeps it from ever refusing a rerun.
+  assert.equal(record.judgedDiffSha256, null, "nothing was judged, so nothing is pinned");
 
-  // The out-of-tree fix: gitignored, so the vouched fingerprint is identical.
+  // The out-of-tree fix: gitignored, so the judged diff is identical.
   fs.writeFileSync(path.join(dir, "marker.txt"), "present\n");
   const rerun = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "widget.js" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "widget.js" }] },
     () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath }),
   );
-  assert.equal(rerun.ok, true, "the identical-fingerprint rerun after the out-of-tree fix must execute and may PASS");
+  assert.equal(rerun.ok, true, "the identical-diff rerun after the out-of-tree fix must execute and may PASS");
   assert.equal(verifyGates(dir).verdict, "PASS");
   assert.equal(verifyGates(dir).history.length, 2, "the rerun is a real recorded run");
 });

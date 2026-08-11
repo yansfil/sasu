@@ -85,7 +85,7 @@ const FAIL_RESPONSE = {
   ],
 };
 
-test("contract verify PASS records the verdict, contract hash, and tree fingerprint", () => {
+test("contract verify PASS records the verdict, contract hash, and judged-diff pin", () => {
   const dir = makeGitProject();
   const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, PASS_RESPONSE),
@@ -106,10 +106,8 @@ test("contract verify PASS records the verdict, contract hash, and tree fingerpr
     record.inputs.filter(input => input.kind === "config").map(input => input.path),
     [path.join("agents", "config.json")],
   );
-  assert.ok(record.treeFingerprint, "verdict must pin the tree it was earned on");
-  assert.equal(typeof record.treeFingerprint.vouched, "string", "fingerprint must carry the vouched content hash");
-  assert.ok(record.treeFingerprint.vouched.length > 0, "vouched hash must be non-empty");
-  assert.equal(typeof record.treeFingerprint.entryCount, "number", "fingerprint must carry the vouched entry count");
+  assert.match(record.judgedDiffSha256, /^[0-9a-f]{64}$/, "verdict must pin the diff it was earned on");
+  assert.match(record.diffSource, /^git:[0-9a-f]{40,64}$/, "and the base that diff was taken against, resolved to a SHA");
 });
 
 test("contract verify FAIL blocks with per-criterion findings and consumes an attempt", () => {
@@ -124,7 +122,7 @@ test("contract verify FAIL blocks with per-criterion findings and consumes an at
   assert.equal(gatesState(dir).gates.verify.attempts, 1);
 });
 
-test("a FAIL rerun on the identical tree is refused at zero cost until the tree moves", () => {
+test("a FAIL rerun on the identical diff is refused at zero cost until the code moves", () => {
   const dir = makeGitProject();
   const first = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, FAIL_RESPONSE),
@@ -138,7 +136,7 @@ test("a FAIL rerun on the identical tree is refused at zero cost until the tree 
   });
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /rerun short-circuit/);
-  assert.match(refused.stderr, /fallback-mode vouched fingerprint/, "the refusal names the fingerprint mode");
+  assert.match(refused.stderr, /diff sha256 [0-9a-f]{12}/, "the refusal names the pin it compared");
   assert.match(refused.stderr, /no persistence in the diff/, "the recorded findings are replayed");
   assert.match(refused.stderr, /gate override/, "the user escape hatch is named");
   const afterRefusal = gatesState(dir).gates.verify;
@@ -147,7 +145,7 @@ test("a FAIL rerun on the identical tree is refused at zero cost until the tree 
   assert.equal(afterRefusal.history.length, 1, "a refusal must not append a history row");
   assert.equal(gatesState(dir).judgeCalls.length, 1, "a refusal must not spend a judge call");
 
-  // The tree moved: the rerun is a real attempt again.
+  // The code under judgment moved: the rerun is a real attempt again.
   fs.appendFileSync(path.join(dir, "widget.js"), "persistHarder();\n");
   const rerun = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, FAIL_RESPONSE),
@@ -502,7 +500,7 @@ test("verify --json carries everything the receipt must quote", () => {
   assert.ok(!("text" in evidence), "the receipt summary must not re-embed the whole artifact");
 });
 
-test("gate status reports the tree fingerprint, so it cannot disagree with the Stop hook", () => {
+test("gate status reports judged-diff drift, so it cannot disagree with the Stop hook", () => {
   const dir = makeGitProject();
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the widget renders\n");
   const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
@@ -510,7 +508,7 @@ test("gate status reports the tree fingerprint, so it cannot disagree with the S
   fs.appendFileSync(path.join(dir, "widget.js"), "// edited after the pass\n");
   const view = JSON.parse(runCli(dir, ["gate", "status", "--slug", "demo", "--json"]).stdout).verify;
   assert.equal(view.effective, "STALE");
-  assert.ok(view.staleInputs.some((i) => i.path === "<worktree>"));
+  assert.ok(view.staleInputs.some((i) => i.path === "<judged-diff>" && i.reason === "changed"));
 });
 
 test("a human-blocked gate still reports evidence drift instead of hiding it", () => {

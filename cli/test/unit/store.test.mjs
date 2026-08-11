@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
 
 const require = createRequire(import.meta.url);
-const { vouchedTreeFingerprint } = require(
+const { judgedDiffSha256 } = require(
   path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "lib", "git.js"),
 );
 
@@ -170,18 +170,26 @@ test("a stale error streak under a later real verdict cannot fake a judge-error 
   assert.equal(gateStatus(state, "verify", 2).judgeErrorLoop, false);
 });
 
-test("a verdict's history row names the tree it was earned on", () => {
+test("a verdict's history row names the diff it was earned on", () => {
   const store = makeStore();
   let state = store.load();
-  const fingerprint = { vouched: "abc123", entryCount: 2, mode: "fallback" };
+  const judged = "b7f1c0de".repeat(8);
   state = recordGateResult(
     store,
     state,
     "verify",
-    { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {}, treeFingerprint: fingerprint },
+    { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {}, judgedDiffSha256: judged },
     [],
   );
-  assert.deepEqual(state.gates.verify.history.at(-1).treeFingerprint, fingerprint);
+  assert.equal(state.gates.verify.judgedDiffSha256, judged);
+  // On the row too, so the FAIL-side short-circuit can compare against the
+  // latest attempt across PASS-reset cycles.
+  assert.equal(state.gates.verify.history.at(-1).judgedDiffSha256, judged);
+
+  // A round that produced no diff records null rather than a stale neighbour's
+  // pin: no pin means no comparison, which means one honest re-run.
+  state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {} }, []);
+  assert.equal(state.gates.verify.judgedDiffSha256, null);
 });
 
 test("failedStage and diffSource ride the record and history row; PASS and ERROR clear the stage", () => {
@@ -442,7 +450,7 @@ test("freshness: omitting projectRoot skips the staleness check (in-memory calle
   assert.equal(view.stale, false);
 });
 
-// --- verify-gate tree fingerprint freshness (vouchedTreeFingerprint) ---
+// --- verify-gate judged-diff freshness (cli/lib/git.js judgedDiffSha256) ---
 
 function makeGitStore() {
   const store = makeStore();
@@ -457,11 +465,12 @@ function makeGitStore() {
   return store;
 }
 
-// Mirrors the real verdict flow: the doc input exists, then the fingerprint
-// pins the tree, then the verdict is recorded (the gate's own gates.json and
-// artifact writes land after the fingerprint, exactly as in runVerifyGate).
-function passWithTreeFingerprint(store, treeFingerprint) {
+// Mirrors the real verdict flow: the doc input exists, then the diff the judge
+// was shown is pinned, then the verdict is recorded (the gate's own gates.json
+// and artifact writes land after the pin, exactly as in runVerifyGate).
+function passWithJudgedDiff(store, judgedDiffSha256Override) {
   fs.writeFileSync(path.join(store.projectRoot, "prd.md"), "# PRD v1\n");
+  const base = spawnSync("git", ["rev-parse", "HEAD"], { cwd: store.projectRoot, encoding: "utf8" }).stdout.trim();
   return recordGateResult(
     store,
     store.load(),
@@ -471,33 +480,39 @@ function passWithTreeFingerprint(store, treeFingerprint) {
       verdict: "PASS",
       findings: [],
       inputs: [{ path: "prd.md", sha256: freshnessHash("# PRD v1\n") }],
-      treeFingerprint:
-        treeFingerprint === undefined
-          ? vouchedTreeFingerprint({ projectRoot: store.projectRoot, slug: store.topic })
-          : treeFingerprint,
+      diffSource: `git:${base}`,
+      judgedDiffSha256:
+        judgedDiffSha256Override === undefined ? judgedDiffSha256(store.projectRoot, base) : judgedDiffSha256Override,
       artifactPayload: {},
     },
     [],
   );
 }
 
-test("tree freshness: a verify PASS stays live on the unchanged tree and survives a commit of that tree", () => {
+test("judged-diff freshness: a verify PASS stays live on the unchanged tree and survives a commit of that tree", () => {
   const store = makeGitStore();
+  // An untracked file plus an edit to a tracked one, so the commit below has to
+  // survive BOTH things a commit does to the assembled diff: it folds the
+  // untracked add-diff into git's own output (dropping the joining newline) and
+  // it re-sorts the sections by path. `new-module.js` sorts before `app.js`, so
+  // the pre-commit order is the reverse of the post-commit order.
   fs.writeFileSync(path.join(store.projectRoot, "app.js"), "render(); persist()\n");
-  const state = passWithTreeFingerprint(store);
+  fs.writeFileSync(path.join(store.projectRoot, "Zmodule.js"), "export const z = 1\n");
+  const state = passWithJudgedDiff(store);
   assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
 
-  // A benign commit of the exact content the PASS was earned on must not
-  // stale it: the fingerprint is content-based, not HEAD-based.
+  // Committing the exact content the PASS was earned on must not stale it. This
+  // is the property the vouched fingerprint had and the pin must keep: losing it
+  // resurrects the materialize-in-HEAD rescue machinery it deleted.
   const git = (...args) => spawnSync("git", args, { cwd: store.projectRoot, encoding: "utf8" });
   git("add", "-A");
   git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "land");
   assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
 });
 
-test("tree freshness: editing code after the PASS turns it STALE; gate bookkeeping does not", () => {
+test("judged-diff freshness: editing code after the PASS turns it STALE; gate bookkeeping does not", () => {
   const store = makeGitStore();
-  const state = passWithTreeFingerprint(store);
+  const state = passWithJudgedDiff(store);
 
   // The gate's own artifact/state writes (this store's dir) are bookkeeping.
   fs.mkdirSync(path.join(store.projectRoot, "agents", "gates", store.topic), { recursive: true });
@@ -505,27 +520,60 @@ test("tree freshness: editing code after the PASS turns it STALE; gate bookkeepi
   assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS",
     "gate bookkeeping must never stale the gate (circular invalidation)");
 
+  // A lockfile is the pin's one accepted blind spot, named in judgedDiffSha256:
+  // the judge never saw it, and finalize re-runs command-backed verification on
+  // the final tree, which is where a lockfile change would actually surface.
+  fs.writeFileSync(path.join(store.projectRoot, "package-lock.json"), '{"lockfileVersion":3}');
+  assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
+
   fs.writeFileSync(path.join(store.projectRoot, "app.js"), "render(); editedAfterPass()\n");
   const view = gateStatus(state, "verify", 2, store.projectRoot);
   assert.equal(view.effective, "STALE");
-  assert.ok(view.staleInputs.some((input) => input.path === "<worktree>" && input.reason === "changed"));
+  assert.ok(view.staleInputs.some((input) => input.path === "<judged-diff>" && input.reason === "changed"));
 });
 
-test("tree freshness: legacy and malformed recorded fingerprints read as STALE, never crash, never PASS", () => {
-  for (const legacy of [
+test("judged-diff freshness: a pin that cannot be compared never silently passes or crashes", () => {
+  // A pin that does not match what the tree produces now reads as STALE. That
+  // covers the legacy case by construction: a pre-field gates.json carries a
+  // tree-fingerprint OBJECT where a sha256 string belongs, and any shape that is
+  // not the current diff's hash earns one honest re-run.
+  for (const stale of [
+    "deadbeef".repeat(8),
     { headSha: "abc123", statusHash: "deadbeef" }, // pre-consolidation shape
-    { headSha: null, statusHash: "deadbeef" },
     {},
-    "garbage-string",
   ]) {
     const store = makeGitStore();
-    const state = passWithTreeFingerprint(store);
-    state.gates.verify.treeFingerprint = legacy; // simulate an already-written old gates.json
+    const state = passWithJudgedDiff(store, stale);
     const view = gateStatus(state, "verify", 2, store.projectRoot);
-    assert.equal(view.effective, "STALE", `${JSON.stringify(legacy)} must downgrade to STALE`);
+    assert.equal(view.effective, "STALE", `${JSON.stringify(stale)} must downgrade to STALE`);
   }
-  // A null fingerprint (non-git project at record time) still skips the check.
+
+  // No pin at all (non-git project at record time, or a round that never
+  // produced a diff) skips the comparison rather than inventing a verdict.
+  for (const absent of [null, undefined, ""]) {
+    const store = makeGitStore();
+    const state = passWithJudgedDiff(store, absent);
+    assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
+  }
+
+  // A pin with no git base cannot be reproduced either: the injected-diff test
+  // seam has no provenance, so it must not be treated as drift.
   const store = makeGitStore();
-  const state = passWithTreeFingerprint(store, null);
+  const state = passWithJudgedDiff(store, "deadbeef".repeat(8));
+  state.gates.verify.diffSource = "injected";
   assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
+
+  // The real pre-migration shape, which no fixture above covers: a PASS with the
+  // retired tree fingerprint and NO diffSource at all. Gating the migration read
+  // on a git base let exactly these records read as live (found 2026-08-11 by
+  // running gateStatus over this repo's own agents/gates/tetris-game and
+  // saju-reading, both of which reported PASS on a legacy pin).
+  const legacyStore = makeGitStore();
+  const legacy = passWithJudgedDiff(legacyStore, undefined);
+  delete legacy.gates.verify.judgedDiffSha256;
+  delete legacy.gates.verify.diffSource;
+  legacy.gates.verify.treeFingerprint = { vouched: "45644585", entryCount: 535, mode: "fallback" };
+  const legacyView = gateStatus(legacy, "verify", 2, legacyStore.projectRoot);
+  assert.equal(legacyView.effective, "STALE", "a pre-migration PASS earns one honest re-run");
+  assert.ok(legacyView.staleInputs.some((input) => input.path === "<judged-diff>" && input.reason === "unverifiable"));
 });

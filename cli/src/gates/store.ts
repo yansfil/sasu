@@ -80,12 +80,13 @@ export interface GateRunSummary {
   error: string | null;
   artifact: string | null;
   /**
-   * The vouched tree this attempt's verdict was earned on (item 10: a verdict
-   * names its tree). Lets the FAIL-side rerun short-circuit compare against
-   * the latest attempt even across PASS-reset cycles; entries without it
-   * (pre-2nd-wave files) simply never short-circuit.
+   * The diff this attempt's verdict was earned on, by sha256 (item 10: a
+   * verdict names what it judged). Lets the FAIL-side rerun short-circuit
+   * compare against the latest attempt even across PASS-reset cycles; rows
+   * without it - other gates, a mechanical FAIL that never reached a diff,
+   * pre-field files - simply never short-circuit.
    */
-  treeFingerprint?: VouchedTreeFingerprint | null;
+  judgedDiffSha256?: string | null;
   /** Stage that produced a non-PASS verdict; absent on PASS and on pre-field rows. */
   failedStage?: VerifyFailedStage;
   /** Judged-diff identity of the round: "git:<resolved base SHA>" or "injected" (test seam). */
@@ -109,16 +110,6 @@ export interface VouchedTreeFingerprint {
   scopeGlobs?: string[];
 }
 
-/**
- * Pre-consolidation fingerprint shape still present in recorded gates.json
- * files in the wild. Never written anymore and never matches a current
- * fingerprint, so a PASS carrying it reads as STALE (one honest re-run)
- * instead of crashing or passing on stale proof.
- */
-export interface LegacyTreeFingerprint {
-  headSha: string | null;
-  statusHash: string;
-}
 
 export interface GateRecord {
   verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
@@ -164,12 +155,24 @@ export interface GateRecord {
   /** Input documents hashed at the last verdict run; absent on pre-0.2 state files. */
   inputs?: GateInput[];
   /**
-   * Worktree fingerprint captured at the last verdict run (verify gate only):
-   * a PASS vouches for the tree it was earned on, and the Stop-hook quick
-   * guard recomputes this to detect code edited after the pass. Null when the
-   * project is not a git checkout.
+   * sha256 of the exact diff the judge was shown at the last verdict run
+   * (verify gate only). A PASS vouches for the change it judged, and both the
+   * rerun short-circuit and the Stop-hook quick guard reproduce that diff
+   * against the recorded base to detect code edited after the verdict.
+   *
+   * Replaced a vouched tree fingerprint, which answered a different question
+   * ("did any file in the run's scope change") and answered it differently
+   * depending on who asked - the gate recorded it whole-repo while the reviews
+   * recorded it scoped, so unrelated churn staled a PASS that vouched for
+   * untouched code (measured 2026-08-11 on project modakbul: gate 535 entries
+   * fallback vs reviews 57 entries scoped, on one tree). See judgedDiffSha256
+   * in cli/lib/git.js for what the pin covers and the one blind spot it accepts.
+   *
+   * Absent on pre-field files and on any record whose round never produced a
+   * diff; null when git refused. Either way no consumer can compare, so those
+   * records honestly earn one fresh re-run.
    */
-  treeFingerprint?: VouchedTreeFingerprint | LegacyTreeFingerprint | null;
+  judgedDiffSha256?: string | null;
   /**
    * Verify gate only: the stage that produced the last non-PASS verdict. The
    * rerun short-circuit arms only on "semantic" (see VerifyFailedStage);
@@ -283,37 +286,10 @@ export class GateStore {
   }
 }
 
-const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("../../lib/git.js") as {
-  vouchedTreeFingerprint: (options: {
-    projectRoot: string;
-    slug?: string | null;
-    scopeGlobs?: string[] | null;
-  }) => VouchedTreeFingerprint | null;
-  vouchedFingerprintsMatch: (recorded: unknown, current: unknown) => boolean;
+const gitLib = require("../../lib/git.js") as {
+  judgedDiffSha256: (projectRoot: string, baseRef: string | undefined) => string | null;
 };
 
-/**
- * Recompute the tree fingerprint under the exact vouched set the record was
- * earned with: the record's own scopeGlobs when present, fallback mode
- * otherwise. A legacy record has no scope descriptor and recomputes in
- * fallback mode - irrelevant to the verdict, since a legacy shape never
- * matches anything.
- */
-export function currentTreeFingerprint(
-  projectRoot: string,
-  slug: string | undefined,
-  recorded: GateRecord["treeFingerprint"],
-): VouchedTreeFingerprint | null {
-  try {
-    const scopeGlobs =
-      recorded !== null && typeof recorded === "object" && "scopeGlobs" in recorded && Array.isArray(recorded.scopeGlobs)
-        ? recorded.scopeGlobs
-        : null;
-    return vouchedTreeFingerprint({ projectRoot, slug: slug ?? null, scopeGlobs });
-  } catch {
-    return null;
-  }
-}
 
 export interface GateStatusView {
   gate: GateId;
@@ -380,15 +356,38 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
         // inputs; on a blocked gate it is noise, not a warning.
         staleInputsFor(projectRoot, record).filter((input) => passed || input.reason !== "unverifiable")
       : [];
-  // The tree a PASS was earned on is part of what the PASS vouches for, so the
+  // The diff a PASS was earned on is part of what the PASS vouches for, so the
   // same check the Stop hook makes has to be visible here too - an agent that
   // reads `gate status` must not see a live PASS the harness treats as dead.
-  // A legacy-shaped fingerprint never matches (vouchedFingerprintsMatch), so
-  // pre-consolidation PASSes surface as STALE and earn one honest re-run.
-  if (passed && projectRoot !== undefined && record.verdict === "PASS" && record.treeFingerprint) {
-    const current = currentTreeFingerprint(projectRoot, state.topic, record.treeFingerprint);
-    if (current && !vouchedFingerprintsMatch(record.treeFingerprint, current)) {
-      staleInputs.push({ path: "<worktree>", reason: "changed" });
+  // Both readers derive it from cli/lib/git.js, so they cannot disagree.
+  if (passed && projectRoot !== undefined && record.verdict === "PASS") {
+    const raw = record.judgedDiffSha256;
+    const pin = typeof raw === "string" && raw !== "" ? raw : null;
+    // No git base, no reproduction: the injected-diff test seam has no
+    // provenance to re-derive, so it makes no claim either way - the same
+    // reading ARMABLE_DIFF_SOURCE takes when it refuses to arm.
+    const base = typeof record.diffSource === "string" && record.diffSource.startsWith("git:") ? record.diffSource.slice(4) : null;
+    if (pin !== null) {
+      // A pin with no git base cannot be reproduced (the injected-diff test
+      // seam has no provenance), so it makes no claim either way - the same
+      // reading ARMABLE_DIFF_SOURCE takes when it refuses to arm.
+      if (base !== null) {
+        const current = gitLib.judgedDiffSha256(projectRoot, base);
+        if (current !== null && current !== pin) staleInputs.push({ path: "<judged-diff>", reason: "changed" });
+      }
+    } else if ((raw !== undefined && raw !== null && raw !== "") || "treeFingerprint" in record) {
+      // Something was pinned that this reader cannot compare: a malformed
+      // value, or a pre-field gates.json carrying the retired tree fingerprint.
+      // Either way the PASS was earned under a rule we can no longer evaluate,
+      // so it earns one honest re-run instead of being trusted silently (item
+      // 10). Deliberately NOT gated on a git base: measured on real
+      // pre-migration files (agents/gates/tetris-game, saju-reading,
+      // 2026-08-11) the legacy records carry no diffSource at all, so requiring
+      // one let exactly the records this branch exists for read as live.
+      // `treeFingerprint` is read positionally rather than declared, because
+      // declaring it would keep the retired concept alive in the type for one
+      // migration read.
+      staleInputs.push({ path: "<judged-diff>", reason: "unverifiable" });
     }
   }
   // `stale` only downgrades an otherwise-passing gate; on a blocked gate the
@@ -431,7 +430,7 @@ export function recordGateResult(
         artifactPayload: unknown;
         inputs?: GateInput[];
         /** New records only carry the vouched shape; legacy shapes exist solely in already-written files. */
-        treeFingerprint?: VouchedTreeFingerprint | null;
+        judgedDiffSha256?: string | null;
         /** Verify gate only: stage behind a non-PASS verdict (ignored on PASS). */
         failedStage?: VerifyFailedStage;
         /** Verify gate only: judged-diff identity ("git:<resolved SHA>" | "injected"). */
@@ -456,7 +455,7 @@ export function recordGateResult(
     record.verdict = outcome.verdict;
     record.findings = outcome.findings;
     record.inputs = outcome.inputs ?? [];
-    record.treeFingerprint = outcome.treeFingerprint ?? null;
+    record.judgedDiffSha256 = outcome.judgedDiffSha256 ?? null;
     // Stamped only when the caller says so, and a failedStage never survives a
     // PASS: a lingering "semantic" under a later verdict would let the rerun
     // short-circuit refuse on a stage that did not produce this record.
@@ -491,7 +490,7 @@ export function recordGateResult(
       requiresHuman: outcome.findings.some((f) => f.requiresHuman),
       error: null,
       artifact,
-      treeFingerprint: outcome.treeFingerprint ?? null,
+      judgedDiffSha256: outcome.judgedDiffSha256 ?? null,
       ...(failedStage !== undefined ? { failedStage } : {}),
       ...(outcome.diffSource !== undefined ? { diffSource: outcome.diffSource } : {}),
       // Mirrored onto the history row so the arming-time stamp-consistency

@@ -15,7 +15,7 @@ description: |
 
 Run a small implementation from the current conversation to a verified receipt with the minimum ceremony that still proves the result.
 
-What this path keeps from the PRD pipeline: acceptance criteria pinned by content hash, mechanical checks before the judge, an independent judge verdict over the diff and any harness-collected runtime evidence, a retry budget, user-only override, a tree fingerprint that invalidates a PASS when code changes afterwards, and a Stop hook that blocks "done" without all of the above.
+What this path keeps from the PRD pipeline: acceptance criteria pinned by content hash, mechanical checks before the judge, an independent judge verdict over the diff and any harness-collected runtime evidence, a retry budget, user-only override, a pin on the exact diff that was judged so a PASS is invalidated when the code changes afterwards, and a Stop hook that blocks "done" without all of the above.
 
 What it drops: the interview, the 12-section PRD, gap-audit/spec gates, the implement state harness, profile reviews, and ship delivery.
 
@@ -118,7 +118,7 @@ sasu verify --slug <slug> --contract agents/quick/<slug>/contract.md --base <bas
 
 The JSON carries everything the receipt needs, on every settled path: `criteria` (per-AC judge verdicts; empty when no judge ran), `judgedCriteriaIds` (the criteria sent to the judge), `judgedVerdict` (its verdict before the human lane was folded in; absent when no judge ran), `checks` (criterion-scoped command results), `mechanical.runs`, `evidence` (artifact paths with hashes, including artifacts no judge could read), `inputs` (everything pinned), and `status.findings`.
 
-The judge sees the diff against your base ref, including files the run created. It does not see gitignored files - if something only exists there, prove it with a check command instead. The whole `agents/` namespace is excluded from both the diff and the tree fingerprint, so your contract prose never crowds out the code and writing the receipt never stales a PASS (the contract is still pinned by content hash, so editing it does re-open the gate).
+The judge sees the diff against your base ref, including files the run created. It does not see gitignored files - if something only exists there, prove it with a check command instead. The whole `agents/` namespace is excluded from the diff, so your contract prose never crowds out the code and writing the receipt never stales a PASS (the contract is still pinned by content hash, so editing it does re-open the gate). Dependency lockfiles are excluded too, for the same window-budget reason.
 
 A failing project check stops the run, but criterion-scoped `check:` commands still execute, so a blocked receipt can still say which criteria were already satisfied. `mechanical.resolved` lists every command the run planned, which is where a genuinely skipped one shows up.
 
@@ -127,7 +127,7 @@ A failing project check stops the run, but criterion-scoped `check:` commands st
 - An `evidence` finding means a declared artifact is missing, empty, binary, oversized, or resolves outside the project - fix the declaration or the command that produces it. It blocks before the judge call, so it costs nothing but the attempt.
 - A `human-verification` finding is not a failure to fix: check it yourself, then carry it into the receipt and the report as an open item. The gate stays non-PASS by design, and the run closes through the handoff path below.
 - Never run `sasu gate override`; it is user-only.
-- A verdict is pinned to the contract hash, every evidence artifact's hash, and (for a PASS) the tree fingerprint. Editing any of them re-opens the gate; re-run verify on the current state instead of arguing with the hook.
+- A verdict is pinned to the contract hash, every evidence artifact's hash, and the sha256 of the diff the judge was shown. Changing the code under judgment re-opens the gate; so does editing a pinned document. Re-run verify on the current state instead of arguing with the hook. Committing the exact work that passed does NOT re-open it - the pin is content-based, not commit-based.
 
 ## Stage 4: Finalize
 

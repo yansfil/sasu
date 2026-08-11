@@ -5,7 +5,7 @@ const path = require("path");
 
 const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, QUICK_ACTIVE_PATH, displayPath, harnessCommand, shipScriptPath, nowIso, cwd, resolveProjectPath, toProjectRelative, readJson, writeJson, appendJsonl } = require("./util");
 const { hashGateInput } = require("./gate_freshness");
-const { vouchedTreeFingerprint, vouchedFingerprintsMatch } = require("./git");
+const { judgedDiffSha256 } = require("./git");
 const { judgeRetryBudget } = require("./config");
 const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
 const { pendingPreWork } = require("./prd_parser");
@@ -182,26 +182,38 @@ function quickStopDirective(hookCwd, sessionId) {
       if (hash === null) staleReasons.push(`${input.kind === "evidence" ? "evidence" : "input"} ${input.path} is missing`);
       else if (hash !== input.sha256) staleReasons.push(`${input.kind === "evidence" ? "evidence" : "input"} ${input.path} changed after the pass`);
     }
-    const saved = record.treeFingerprint;
-    if (saved) {
-      // Recompute with the exact scope the record was earned under (the
-      // record carries its own scopeGlobs; absent means fallback mode), so
-      // the guard and `sasu verify` agree byte-for-byte on what the PASS
-      // vouches for. A legacy {headSha,statusHash} record never matches and
-      // honestly demands one fresh re-run.
-      let current = null;
-      try {
-        current = vouchedTreeFingerprint({
-          projectRoot: hookCwd,
-          slug: marker.slug,
-          scopeGlobs: Array.isArray(saved.scopeGlobs) ? saved.scopeGlobs : null,
-        });
-      } catch {
-        current = null;
+    // Reproduce the diff the judge was shown, against the base the PASS
+    // recorded, and compare hashes: the guard and `sasu verify` read the same
+    // one implementation (cli/lib/git.js judgedDiffSha256), so they can never
+    // disagree byte-for-byte about what the PASS vouches for. A record with no
+    // pin, no git base, or a base git no longer has cannot be compared and
+    // honestly earns one fresh re-run rather than a silent pass.
+    const savedDiff = record.judgedDiffSha256;
+    const savedBase = typeof record.diffSource === "string" && record.diffSource.startsWith("git:")
+      ? record.diffSource.slice(4)
+      : null;
+    const pin = typeof savedDiff === "string" && savedDiff !== "" ? savedDiff : null;
+    if (pin !== null) {
+      // No git base means no reproduction (the injected-diff seam), so the pin
+      // makes no claim either way rather than inventing drift.
+      if (savedBase !== null) {
+        let current = null;
+        try {
+          current = judgedDiffSha256(hookCwd, savedBase);
+        } catch {
+          current = null;
+        }
+        if (current !== null && current !== pin) {
+          staleReasons.push("the change under judgment is no longer the one that passed (code edited since verification)");
+        }
       }
-      if (current && !vouchedFingerprintsMatch(saved, current)) {
-        staleReasons.push("the working tree changed after the pass (code edited since verification)");
-      }
+    } else if ((savedDiff !== undefined && savedDiff !== null && savedDiff !== "") || "treeFingerprint" in record) {
+      // Same reading gateStatus takes, and it has to be the same or the guard
+      // and `sasu gate status` disagree about a live PASS: a pin this reader
+      // cannot compare - malformed, or a pre-field gates.json still carrying the
+      // retired tree fingerprint - earns one honest re-run. Not gated on a base,
+      // because the real pre-migration files carry no diffSource at all.
+      staleReasons.push("the recorded pass cannot be checked against the current tree (it predates the judged-diff pin)");
     }
     if (staleReasons.length) {
       return block(`Quick run '${marker.slug}' has a verify PASS that is no longer live:\n\n${staleReasons.map(item => `- ${item}`).join("\n")}\n\nRe-run verification on the current state:\n\n  ${verifyCommand}`);
