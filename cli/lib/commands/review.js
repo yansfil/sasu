@@ -7,7 +7,7 @@ const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHas
 const { shellLikeTokens } = require("../inference");
 const { worktreeSnapshot, vouchedTreeFingerprintForState, vouchedFingerprintsMatch, summarizeFingerprintDiff } = require("../git");
 const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_pass");
-const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, reviewRoundCount } = require("../state_data");
+const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, reviewRoundCount, reviewRoundCapNotice } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
 const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
@@ -122,8 +122,12 @@ function cmdRequirementsReviewRecord(options) {
     requirementsFidelityReview: state.requirementsFidelityReview,
     finalReview: state.finalReview,
     // Derived, never stored: the round the agent just spent is visible in the
-    // reply, so a loop that re-reviews has to see its own count grow.
+    // reply, so a loop that re-reviews has to see its own count grow. This is
+    // the decisive moment for the bound - the agent has just recorded a round
+    // and is about to decide whether to summon another - so the redirect rides
+    // here rather than waiting for the Stop hook.
     reviewRounds: reviewRoundCount(state),
+    ...(reviewRoundCapNotice(state) ? { reviewRoundCapNotice: reviewRoundCapNotice(state) } : {}),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -181,6 +185,7 @@ function cmdReviewRecord(options) {
     structureWarnings,
     finalReview: state.finalReview,
     reviewRounds: reviewRoundCount(state),
+    ...(reviewRoundCapNotice(state) ? { reviewRoundCapNotice: reviewRoundCapNotice(state) } : {}),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),

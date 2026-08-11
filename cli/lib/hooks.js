@@ -7,7 +7,7 @@ const { SCHEMA, DEFAULT_HOOK_TIMEOUT_MS, QUICK_ACTIVE_PATH, displayPath, harness
 const { hashGateInput } = require("./gate_freshness");
 const { judgedDiffSha256 } = require("./git");
 const { judgeRetryBudget } = require("./config");
-const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy } = require("./state_data");
+const { verificationPlanSummary, executionPlanSummary, countState, effectiveReviewPolicy, reviewRoundCount, reviewRoundCapNotice } = require("./state_data");
 const { pendingPreWork } = require("./prd_parser");
 const { readyExecutionPlan, nextItem, plannedCommandForVerification } = require("./planning");
 const { collectArtifacts } = require("./artifacts");
@@ -562,6 +562,13 @@ function renderContinuationDirective(context) {
       : finalReviewRequired
         ? "FINALIZE: final review passed; write receipt"
         : "FINALIZE: effective review-policy gates passed; write receipt";
+  // The loop's other decision point: the turn is ending and the agent is choosing
+  // what to do next. Advisory by construction - it is appended to the directive,
+  // never added to finalGateViolations, because the bound redirects the loop and
+  // must never be able to strand a run (see reviewRoundCapReached).
+  const reviewRounds = reviewRoundCount(state);
+  const capNotice = reviewRoundCapNotice(state);
+  const reviewCapBlock = capNotice ? `\n# Review loop bound\n\n${capNotice}\n` : "";
   const finalGateBlock = finalGateViolations.length
     ? `\n# Final gate gaps\n\n${finalGateViolations.map(item => `- ${item}`).join("\n")}\n`
     : "";
@@ -624,8 +631,9 @@ Exception: if the user's latest message redirects to unrelated work or explicitl
 - Artifact count: ${collectArtifacts(state).length}
 - Requirements fidelity review: ${requirementsReviewStatus}
 - Final review: ${finalReviewStatus}
+- Review rounds recorded: ${reviewRounds.total}/${reviewRounds.cap}
 - Next required item: ${nextLine}
-${preWorkBlock}${finalGateBlock}
+${preWorkBlock}${reviewCapBlock}${finalGateBlock}
 
 ${proceduresBlock}
 

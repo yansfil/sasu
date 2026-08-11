@@ -180,6 +180,75 @@ function supersedeReviewRound(state, kind) {
  *
  * @param {State} state
  */
+/**
+ * The bound PRINCIPLES item 13 requires on the review loop, in rounds.
+ *
+ * A test suite converges; a fresh adversarial reviewer does not - handed any
+ * codebase it produces findings - so "re-review whenever anything changed" has
+ * no fixed point and the only brake was the agent deciding to stop. Item 13
+ * names three admissible bounds (a delta contract, a severity floor, an explicit
+ * round cap); this is the third, and it is the one that needs nothing from the
+ * documents the human and the reviewer write.
+ *
+ * Four, from the arithmetic of an honest run: a high-risk profile records two
+ * rounds for one clean pass (fidelity, then final), and four leaves room for one
+ * complete redo after a reviewer finds something real. The audited run recorded
+ * ten across five reviewer rounds and its last two rounds returned only LOW
+ * items, so a cap here would have ended it after the second cluster and saved
+ * roughly 70 of those 92 minutes (2026-08-11).
+ *
+ * Not a config knob on purpose (item 7: the harness absorbs complexity, it does
+ * not hand the workflow user another dial), and deliberately NOT a refusal - see
+ * reviewRoundCapReached.
+ */
+const REVIEW_ROUND_CAP = 4;
+
+/**
+ * Has the autonomous review loop reached its bound?
+ *
+ * This redirects; it never blocks. Reaching the cap does not fail a command, add
+ * a completion blocker, or suppress a staleness rule - a review that is
+ * genuinely stale still has to be re-recorded, because the cap bounds a loop, it
+ * does not license a receipt built on a dead review. What it does is tell the
+ * agent, at the moment it just recorded a round, that further adversarial rounds
+ * are not part of the autonomous flow: carry what is left into the receipt as
+ * follow-up items instead. Recording an open LOW finding is more honest than a
+ * fifth round that pretends to close it (item 10).
+ *
+ * A refusal here would be the wrong shape twice over: it would trap a run whose
+ * review really must be re-recorded, and a cap that can strand a run is a worse
+ * failure than the loop it bounds. A user who asks for another round always gets
+ * one - same rule as the verify retry budget, where the bound stops the
+ * autonomous loop and never the human.
+ *
+ * @param {State} state
+ */
+function reviewRoundCapReached(state) {
+  return reviewRoundCount(state).total >= REVIEW_ROUND_CAP;
+}
+
+/**
+ * The redirect to hand the agent once the bound is reached, or null before it.
+ *
+ * Lives next to the cap so the wording and the number cannot disagree, and says
+ * the two things the agent has to act on: stop summoning rounds, and put what is
+ * left in the receipt rather than dropping it. It names the user escape for the
+ * same reason the retry budget does - the bound stops the autonomous loop, never
+ * a human who asks for one more round.
+ *
+ * @param {State} state
+ */
+function reviewRoundCapNotice(state) {
+  const rounds = reviewRoundCount(state);
+  if (!rounds.capReached) return null;
+  return `Review round cap reached: ${rounds.total} of ${rounds.cap} recorded rounds `
+    + `(requirements fidelity ${rounds.fidelity.rounds}, final ${rounds.final.rounds}). `
+    + `Do not summon another adversarial review round on your own - a fresh reviewer produces findings on any codebase, so this loop has no fixed point of its own. `
+    + `Finish the findings you already have: fix what blocks the acceptance criteria, and record every remaining advisory finding as a follow-up item in the receipt instead of opening a round to close it. `
+    + `An open finding written down is more honest than a round that pretends to close it. `
+    + `If the USER asks for another review round, run it - this bounds the autonomous loop, not them.`;
+}
+
 function reviewRoundCount(state) {
   const superseded = Array.isArray(state.supersededReviews) ? state.supersededReviews : [];
   const count = kind => {
@@ -194,10 +263,16 @@ function reviewRoundCount(state) {
   };
   const fidelity = count("fidelity");
   const final = count("final");
+  const total = fidelity.rounds + final.rounds;
   return {
     fidelity,
     final,
-    total: fidelity.rounds + final.rounds,
+    total,
+    cap: REVIEW_ROUND_CAP,
+    // Reported with the counts so no consumer re-derives the comparison and
+    // drifts from it; see reviewRoundCapReached for why this redirects and
+    // never blocks.
+    capReached: total >= REVIEW_ROUND_CAP,
   };
 }
 
@@ -460,6 +535,9 @@ module.exports = {
   markCompletionReviewsStale,
   supersedeReviewRound,
   reviewRoundCount,
+  reviewRoundCapReached,
+  reviewRoundCapNotice,
+  REVIEW_ROUND_CAP,
   findTrackedItem,
   countState,
   autoCloseAcceptanceCriteria,

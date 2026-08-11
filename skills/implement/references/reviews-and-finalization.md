@@ -208,6 +208,10 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-record \
 
 When a required final review fails, fix the findings, re-capture any runtime evidence the fix invalidates, rerun requirements fidelity, then record a new passing final review; `finalize` re-runs required command-backed verification on the final tree, so do not re-run passed command-backed items manually.
 
+The autonomous review loop is bounded: the harness counts every accepted review recording as a round, and once the count reaches its cap it tells you to stop summoning rounds and to record the remaining advisory findings as follow-up items in the receipt instead.
+The bound redirects and never refuses - recordings still succeed and `finalize` still works - and it applies only to rounds you decide on yourself, never to a round the user asks for.
+An open finding written into the receipt is more honest than a round that pretends to close it.
+
 Required final reviews must be independent in both time and content.
 The report file must be authored after `requirements-review-record` succeeds.
 An earlier report is rejected.

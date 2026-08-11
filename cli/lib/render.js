@@ -51,7 +51,7 @@ function writeImplementationReport(statePath, state) {
   // from "recorded the same document N times"; neither number is a verdict about
   // the run, and the harness states them without drawing one (item 10).
   const rounds = reviewRoundCount(state);
-  lines.push(`- Review rounds recorded: ${rounds.total} (requirements fidelity ${rounds.fidelity.rounds}, ${rounds.fidelity.distinctReports} distinct report(s); final ${rounds.final.rounds}, ${rounds.final.distinctReports} distinct report(s))`);
+  lines.push(`- Review rounds recorded: ${rounds.total}/${rounds.cap}${rounds.capReached ? " (cap reached: further rounds were not autonomous)" : ""} (requirements fidelity ${rounds.fidelity.rounds}, ${rounds.fidelity.distinctReports} distinct report(s); final ${rounds.final.rounds}, ${rounds.final.distinctReports} distinct report(s))`);
   const verifyGate = verifyGateStatus(state);
   lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
   // A blocked receipt must say why without a trip to gates.json: attempts

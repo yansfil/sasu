@@ -2443,6 +2443,7 @@ test("every accepted review recording is counted as a round; a rejected one is n
   const first = record();
   assert.deepEqual(first.reviewRounds.fidelity, { rounds: 1, distinctReports: 1 });
   assert.equal(readState().supersededReviews.length, 0, "the live round is not duplicated into the log");
+  assert.equal(first.reviewRoundCapNotice, undefined, "inside the bound the harness says nothing");
 
   // Re-recording the SAME document is still a round the run spent - the harness
   // counts what it observed and does not decide whether it was worth it.
@@ -2472,15 +2473,35 @@ test("every accepted review recording is counted as a round; a rejected one is n
   assert.notEqual(rejected.status, 0);
   assert.equal(readState().supersededReviews.length, 2, "a refused recording must not be counted as a round");
 
-  // And the finished run reports its own loop instead of hiding it.
+  // The bound: a fresh adversarial reviewer produces findings on any codebase, so
+  // the loop has no fixed point of its own (PRINCIPLES item 13). At the cap the
+  // harness redirects - record what is left as follow-ups - and it does so at the
+  // moment the agent has just finished a round and is choosing what to do next.
   write(reviewPath, fidelityReviewBody(logPath, " (revised after the reviewer's note)"));
-  record();
+  const fourth = record();
+  assert.equal(fourth.reviewRounds.total, 4);
+  assert.equal(fourth.reviewRounds.cap, 4);
+  assert.equal(fourth.reviewRounds.capReached, true);
+  assert.match(fourth.reviewRoundCapNotice, /Review round cap reached: 4 of 4 recorded rounds/);
+  assert.match(fourth.reviewRoundCapNotice, /Do not summon another adversarial review round on your own/);
+  assert.match(fourth.reviewRoundCapNotice, /record every remaining advisory finding as a follow-up item in the receipt/);
+  assert.match(fourth.reviewRoundCapNotice, /If the USER asks for another review round, run it/,
+    "the bound stops the autonomous loop, never the human");
+
+  // It redirects and never blocks: a run at the cap must still be able to finish,
+  // because a bound that can strand a run is worse than the loop it bounds.
   const finalized = runJson(["finalize", "--status", "complete", "--summary", "Done."], projectRoot);
   assert.equal(finalized.ok, true, JSON.stringify(finalized.violations || []));
   const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
   assert.equal(receipt.reviewRounds.fidelity.rounds, 4);
+  assert.equal(receipt.reviewRounds.capReached, true, "the receipt records that the loop hit its bound");
   const report = fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "implementation-result.md"), "utf8");
-  assert.match(report, /Review rounds recorded: 4 \(requirements fidelity 4, 2 distinct report\(s\); final 0, 0 distinct report\(s\)\)/);
+  assert.match(report, /Review rounds recorded: 4\/4 \(cap reached: further rounds were not autonomous\) \(requirements fidelity 4, 2 distinct report\(s\); final 0, 0 distinct report\(s\)\)/);
+
+  // And a fifth round is still recordable - the cap is not a refusal.
+  const fifth = record();
+  assert.equal(fifth.ok, true, "the cap must never reject a recording");
+  assert.equal(fifth.reviewRounds.total, 5);
 });
 
 test("judge-error loop reaches a blocked receipt without ever claiming a spent fix budget", () => {
