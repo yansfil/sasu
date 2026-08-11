@@ -15,6 +15,7 @@ import {
 } from "../judge/types";
 import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../mechanical";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
+import { oracleHistory, oracleRepeatFailureNote } from "./oracle_history";
 import { runPrelint, type PrelintResult } from "./prelint";
 import {
   CHECK_TAIL_RENDER_MAX_CHARS,
@@ -1088,18 +1089,29 @@ export async function runVerifyGate(
     for (const warning of oracleStage ? oracleStage.warnings : []) {
       process.stderr.write(`sasu: WARNING: ${warning}\n`);
     }
+    // Read BEFORE this round is recorded, so the sequence is strictly the prior
+    // rounds - the agent needs to know whether the failure in front of it has
+    // happened before, not that it is happening now (see oracle_history.ts).
+    const priorOracleRounds = oracleHistory(projectRoot, state.gates.verify);
     const oracleFindings: Finding[] = oracleOutcomes
       .filter((outcome) => !outcome.met)
-      .map((outcome) => ({
-        area: "oracle",
-        severity: "P0" as const,
-        missing: `${outcome.id}: ${outcome.reason}`,
-        recommendation:
+      .map((outcome) => {
+        const base =
           outcome.digestViolation === true
             ? "The oracle command must not modify the workspace; make it read-only or fix the declaration."
-            : "Make the PRD-declared oracle check pass and re-run sasu verify.",
-        requiresHuman: false,
-      }));
+            : "Make the PRD-declared oracle check pass and re-run sasu verify.";
+        // One surface, three readers for free: the recommendation is printed to
+        // the agent now, stored in gates.json, and stamped into a blocked
+        // receipt's finding list for whoever audits it later.
+        const repeat = oracleRepeatFailureNote(priorOracleRounds.get(outcome.id));
+        return {
+          area: "oracle",
+          severity: "P0" as const,
+          missing: `${outcome.id}: ${outcome.reason}`,
+          recommendation: repeat === null ? base : `${base} ${repeat}`,
+          requiresHuman: false,
+        };
+      });
     const oracleCriteria: CriterionVerdict[] = oracleOutcomes.map((outcome) => ({
       id: outcome.id,
       verdict: outcome.met ? ("PASS" as const) : ("FAIL" as const),

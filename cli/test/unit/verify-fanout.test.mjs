@@ -586,6 +586,54 @@ test("PRD path: a failed oracle closes the gate even when the judge passes every
   assert.ok(result.status.findings.some((f) => f.area === "oracle" && f.missing.startsWith("AC3:")));
 });
 
+// An oracle that answers both ways across rounds is invisible today: each new
+// FAIL reads as a fresh regression. In an audited tetris run AC1's oracle went
+// PASS/FAIL/PASS/.../FAIL/PASS over 16 rounds and the agent spent ~4 hours
+// chasing a regression that had already come and gone twice (2026-08-11). Driven
+// through real gate rounds rather than a hand-written gates.json, because half
+// the claim is that the recorded artifact layout is readable at all.
+test("PRD path: a repeat oracle failure carries its recorded history, and a first failure does not", async () => {
+  const dir = makeDir();
+  const prdPath = writeScopedPrd(dir); // AC3's oracle is `Artifact: out/marker.txt`
+  const markerDir = path.join(dir, "out");
+  const marker = path.join(markerDir, "marker.txt");
+  fs.mkdirSync(markerDir, { recursive: true });
+  const judgePass = {
+    verdict: "PASS",
+    criteria: [
+      { id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" },
+      { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" },
+    ],
+  };
+  const round = (present) => {
+    if (present) fs.writeFileSync(marker, "made it");
+    else fs.rmSync(marker, { force: true });
+    return withStub(dir, judgePass, () =>
+      runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }));
+  };
+  const oracleFinding = (result) => result.status.findings.find((f) => f.area === "oracle" && f.missing.startsWith("AC3:"));
+
+  // Round 1 fails with no history behind it: an ordinary open failure, and a
+  // note here would be pure noise.
+  const first = await round(false);
+  assert.ok(oracleFinding(first), "the failing oracle still closes the gate");
+  assert.doesNotMatch(oracleFinding(first).recommendation, /Recorded history/,
+    "a first failure has nothing to compare against");
+
+  // It comes back green, then goes red again. THAT is the reading the agent
+  // never had: this failure is not the first of its kind.
+  await round(true);
+  const again = await round(false);
+  const repeat = oracleFinding(again);
+  assert.ok(repeat, "the repeat failure still closes the gate - this is advisory, never a bypass");
+  assert.match(repeat.recommendation, /Make the PRD-declared oracle check pass/,
+    "the original remedy stays first; the observation is appended to it");
+  assert.match(repeat.recommendation, /Recorded history for AC3: it failed in 1 of the last 2 gate rounds and returned to passing 1 time\(s\) \(oldest first: FP\)/,
+    "the sequence covers the PRIOR rounds only - this round is not recorded yet");
+  assert.match(repeat.recommendation, /compare the evidence from this round against the last round where it passed/);
+  assert.doesNotMatch(repeat.recommendation, /flaky/i, "the harness reports the observation and judges nothing");
+});
+
 // --- PRD-path evidence injection (2nd wave, phase 1 track T) ---
 
 function writeImplementState(dir, state) {
