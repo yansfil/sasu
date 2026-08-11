@@ -7,7 +7,7 @@ const childProcess = require("child_process");
 
 const { PROJECT_CONFIG_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, RULES_ROOT_REL, NAMESPACE_ROOT, displayPath, shipScriptPath, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson } = require("../util");
 const { readLedger, loadInvariants, loadPending, globLiteralPrefix } = require("../rules");
-const { gitTracked, gitIgnored } = require("../git");
+const { gitTracked, gitIgnored, vouchedTreeFingerprintForState, vouchedFingerprintsMatch } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig } = require("../config");
 const { verificationPlanSummary, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
@@ -60,6 +60,19 @@ function cmdVerifyDelivery(options) {
   requirePass(state.requirementsFidelityReview, "Requirements fidelity review");
   if (finalReviewRequiredForState(state)) requirePass(state.finalReview, "Final review");
   violations.push(...reviewWorktreeSnapshotViolations(state));
+  // Delivery's own source-tree question, answered by the receipt's pin instead
+  // of a review's: the fidelity review is pinned to the intent axis now
+  // (fidelityReviewInputs), and on a profile with no required final review that
+  // left nothing watching the tree between finalize and push. A run completed
+  // before this pin existed has no fingerprint to compare and is not called
+  // stale on that basis; its receipt says which tree it finished on.
+  const receiptFingerprint = state.finalReceipt && state.finalReceipt.vouchedTreeFingerprint;
+  if (receiptFingerprint) {
+    const current = vouchedTreeFingerprintForState(state);
+    if (current && !vouchedFingerprintsMatch(receiptFingerprint, current)) {
+      violations.push("Delivery is stale: the worktree changed after the receipt was written; re-verify and re-finalize on the current tree before shipping");
+    }
+  }
   violations.push(...prdSnapshotViolations(statePath, state));
   process.stdout.write(JSON.stringify({
     ok: violations.length === 0,

@@ -9,6 +9,7 @@ const { judgeRetryBudget } = require("./config");
 const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator, pendingPreWork } = require("./prd_parser");
 const { verificationContractHash } = require("./planning");
+const { hashGateInput } = require("./gate_freshness");
 const { collectArtifacts, inspectArtifact, verificationEvidenceKindViolations, unregisteredArtifactViolations } = require("./artifacts");
 
 function validateArtifacts(statePath, state, options = {}) {
@@ -57,7 +58,10 @@ function validateArtifacts(statePath, state, options = {}) {
     }
     violations.push(...unregisteredArtifactViolations(statePath, state));
     violations.push(...verificationEvidenceKindViolations(state));
-    if (includeRequirementsFidelityReview) violations.push(...requirementsFidelityReviewFreshnessViolations(state));
+    if (includeRequirementsFidelityReview) {
+      violations.push(...requirementsFidelityReviewFreshnessViolations(state));
+      violations.push(...requirementsFidelityReviewInputViolations(state));
+    }
     if (includeFinalReview) violations.push(...finalReviewFreshnessViolations(state));
     violations.push(...reviewWorktreeSnapshotViolations(state, {
       includeRequirementsFidelityReview,
@@ -361,6 +365,79 @@ function requirementsFidelityReviewFreshnessViolations(state) {
 }
 
 /**
+ * What the requirements fidelity review actually reads, pinned by content hash
+ * the same way the verify gate pins its inputs (hashGateInput, the one canonical
+ * hash - never a reimplementation).
+ *
+ * The division of labour this restores was already written down:
+ * reviews-and-finalization.md says the gate owns the per-criterion code-vs-AC
+ * judgment from the diff while the fidelity review owns intent lineage, decision
+ * provenance, deviations, and whether the REGISTERED EVIDENCE proves the intent -
+ * and that the two never consume each other's results. The freshness rule did not
+ * know that: it pinned the fidelity review to the whole source tree, so every bug
+ * fix invalidated a review whose subject had not moved. Measured 2026-08-11 on
+ * project modakbul, a run recorded ten fidelity reviews where one survived.
+ *
+ * So the pin covers the documents and artifacts on that axis: the PRD, the
+ * interview log(s) the intent trace was built from, and every registered evidence
+ * artifact. Source files are deliberately NOT in the list - they are the verify
+ * gate's subject, and that gate pins the exact diff it judged.
+ *
+ * This narrows what can invalidate a fidelity review; it does not remove a
+ * check. The change under judgment is still pinned, by the gate. The known hole
+ * is unchanged and worth naming: a fix that quietly adds scope the PRD never
+ * described is caught only if the agent records the deviation (a deviation moves
+ * `latestEvidenceTimestamp`, which re-stales the review) or the gate's
+ * unscoped-file warning is read. An agent that neither records nor is asked slips
+ * through - that was already true before this change, and closing it needs a
+ * different instrument than a tree fingerprint that fired on everything.
+ */
+function fidelityReviewInputs(state) {
+  const projectRoot = state.projectRoot || cwd();
+  const inputs = [];
+  const seen = new Set();
+  const pin = (rel, kind) => {
+    if (!rel || seen.has(rel)) return;
+    seen.add(rel);
+    const sha256 = hashGateInput(path.join(projectRoot, rel), kind);
+    inputs.push({ path: rel, kind, sha256 });
+  };
+  pin(state.prdPath, "prd");
+  for (const source of (state.intentTrace && state.intentTrace.sources) || []) {
+    if (source && typeof source.path === "string") pin(source.path, "intent-source");
+  }
+  for (const entry of collectArtifacts(state)) {
+    if (entry.artifact && typeof entry.artifact.path === "string") pin(entry.artifact.path, "evidence");
+  }
+  return inputs;
+}
+
+/**
+ * Re-hash a fidelity review's pinned inputs and report the ones that moved.
+ *
+ * A review recorded before the pin existed has no `inputs` and cannot be checked
+ * this way; it is not treated as stale here, because the time-based rule
+ * (`requirementsFidelityReviewFreshnessViolations`) still covers new evidence and
+ * new deviations for those records. An input the harness cannot read now (deleted
+ * artifact) is drift, not an excuse.
+ */
+function requirementsFidelityReviewInputViolations(state) {
+  const review = state.requirementsFidelityReview;
+  if (!review || !["pass", "fail"].includes(review.status)) return [];
+  if (!Array.isArray(review.inputs) || review.inputs.length === 0) return [];
+  const projectRoot = state.projectRoot || cwd();
+  const drifted = [];
+  for (const input of review.inputs) {
+    if (!input || typeof input.path !== "string") continue;
+    const current = hashGateInput(path.join(projectRoot, input.path), input.kind);
+    if (current === null) drifted.push(`${input.path} is missing`);
+    else if (current !== input.sha256) drifted.push(`${input.path} changed`);
+  }
+  if (!drifted.length) return [];
+  return [`Requirements fidelity review is stale: ${drifted.join(", ")} after the review; ${RERUN_FIDELITY_REVIEW}`];
+}
+
+/**
  * Review freshness against the tree: a recorded pass/fail review vouches for
  * the vouched fingerprint pinned at record time (review-record stamps
  * `vouchedTreeFingerprint` next to the audit-only worktreeSnapshot). The
@@ -372,7 +449,6 @@ function requirementsFidelityReviewFreshnessViolations(state) {
  * non-git-era records with nothing pinned, which were never checked.
  */
 function reviewWorktreeSnapshotViolations(state, options = {}) {
-  const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;
   const includeFinalReview = options.includeFinalReview !== false;
   const violations = [];
   let current = null;
@@ -389,7 +465,9 @@ function reviewWorktreeSnapshotViolations(state, options = {}) {
       violations.push(`${label} is stale: worktree source snapshot changed after review; ${rerunHint}`);
     }
   };
-  if (includeRequirementsFidelityReview) check(state.requirementsFidelityReview, "Requirements fidelity review", RERUN_FIDELITY_REVIEW);
+  // The fidelity review is deliberately absent: its subject is the intent axis,
+  // pinned by fidelityReviewInputs. The final adversarial review stays, because
+  // reading the code IS its mandate.
   if (includeFinalReview) check(state.finalReview, "Final review", RERUN_FINAL_REVIEW);
   return violations;
 }
@@ -805,6 +883,7 @@ function requirementsFidelityHandoffViolations(state) {
     }
   }
   violations.push(...requirementsFidelityReviewFreshnessViolations(state));
+  violations.push(...requirementsFidelityReviewInputViolations(state));
   violations.push(...reviewWorktreeSnapshotViolations(state));
   return violations;
 }
@@ -881,6 +960,8 @@ module.exports = {
   reviewEntryCount,
   finalReviewFreshnessViolations,
   requirementsFidelityReviewFreshnessViolations,
+  requirementsFidelityReviewInputViolations,
+  fidelityReviewInputs,
   reviewWorktreeSnapshotViolations,
   completionReadiness,
   completionViolations,

@@ -178,6 +178,11 @@ Receipt: agents/implement/standard-regression/receipt.json
       }
     ]
   },
+  "vouchedTreeFingerprint": {
+    "vouched": "5dc0d647",
+    "entryCount": 1,
+    "mode": "fallback"
+  },
   "executionPlan": {
     "status": "ready",
     "taskCount": 1,
@@ -274,11 +279,18 @@ Receipt: agents/implement/standard-regression/receipt.json
         }
       ]
     },
-    "vouchedTreeFingerprint": {
-      "vouched": "5dc0d647",
-      "entryCount": 1,
-      "mode": "fallback"
-    },
+    "inputs": [
+      {
+        "path": "agents/prd/standard-regression/prd.md",
+        "kind": "prd",
+        "sha256": "<SHA>"
+      },
+      {
+        "path": "agents/implement/standard-regression/artifacts/logs/V1-<TS>.log",
+        "kind": "evidence",
+        "sha256": "<SHA>"
+      }
+    ],
     "recordedAt": "<TS>"
   },
   "finalReview": null,

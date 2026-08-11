@@ -1267,31 +1267,54 @@ test("fidelity prompt narrows the qa-log mandate only behind a fresh spec-gate P
   assert.doesNotMatch(prompt, /qa-log→PRD leg is settled/);
 });
 
-test("committed source change makes a recorded review stale; content-identical commits do not", () => {
+// The axis division, which the freshness rules used to ignore. The verify gate
+// owns the code (it pins the exact diff it judged); the requirements fidelity
+// review owns intent lineage, decisions, deviations, and registered evidence, so
+// it is pinned to what it actually reads. Pinning it to the source tree made
+// every bug fix invalidate a review whose subject had not moved - measured
+// 2026-08-11 on project modakbul, ten fidelity recordings where one survived.
+test("a source change does not stale the fidelity review; a change to what it read does", () => {
   const root = initGitRepo();
-  const { logPath, reviewPath } = driveToFidelity(root, "commit-stale", "cs-session");
+  const { logPath, reviewPath } = driveToFidelity(root, "fidelity-axis", "fa-session");
   write(reviewPath, fidelityReviewBody(logPath));
   runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], root);
-  // A commit-only source change - new content lands in HEAD with a clean
-  // worktree - must stale the review: the tree the reviewer read is gone.
+
+  const statePath = path.join(root, "agents", "implement", "fidelity-axis", "state.json");
+  const inputs = JSON.parse(fs.readFileSync(statePath, "utf8")).requirementsFidelityReview.inputs;
+  assert.ok(inputs.length >= 2, `the review must pin what it read: ${JSON.stringify(inputs)}`);
+  assert.ok(inputs.some(input => input.path === "agents/prd/fidelity-axis/prd.md" && /^[0-9a-f]{64}$/.test(input.sha256)),
+    `the PRD is pinned: ${JSON.stringify(inputs)}`);
+  assert.ok(inputs.every(input => !/^src\//.test(input.path)), `no source file is pinned: ${JSON.stringify(inputs)}`);
+
+  // A source change - committed, so the worktree is clean - no longer touches
+  // this review. The code under judgment is the verify gate's subject, and that
+  // gate pins the diff it judged; this fixture deliberately has no gate run, so
+  // nothing else objects either. That narrowing is the point and the cost: a run
+  // that never verified has no code judgment at all, which its receipt says with
+  // "Verify gate: NOT_RUN" rather than by borrowing this review's pin.
   write(path.join(root, "README.md"), "# Changed after review\n");
   run("git", ["add", "README.md"], { cwd: root });
   run("git", ["commit", "-m", "commit-only source change"], { cwd: root });
-  const fin = runJson(["finalize", "--status", "complete", "--summary", "done"], root, { allowFailure: true });
-  assert.equal(fin.ok, false);
-  assert(fin.violations.some(v => /stale/i.test(v)), JSON.stringify(fin.violations));
+  const afterSourceChange = runJson(["finalize", "--status", "complete", "--summary", "done"], root);
+  assert.equal(afterSourceChange.ok, true, JSON.stringify(afterSourceChange.violations || []));
 
-  // The fingerprint is content-based: restoring the reviewed content revives
-  // the review, and a HEAD-only move (empty commit) is invisible. Benign
-  // commits of already-reviewed content no longer cost a re-review cycle -
-  // that false staleness is what the old rescue machinery existed to paper
-  // over.
-  write(path.join(root, "README.md"), "# Test Repo\n");
-  run("git", ["add", "README.md"], { cwd: root });
-  run("git", ["commit", "-m", "restore reviewed content"], { cwd: root });
-  run("git", ["commit", "--allow-empty", "-m", "move head only"], { cwd: root });
+  // Changing what the review DID read stales it. The registered evidence
+  // artifact is the cleanest case: it is a fidelity input and nothing else.
+  const logAbs = path.join(root, logPath);
+  const reviewedLog = fs.readFileSync(logAbs, "utf8");
+  write(logAbs, "$ npm test\nrewritten after the review\n");
+  const afterEvidenceChange = runJson(["finalize", "--status", "complete", "--summary", "done"], root, { allowFailure: true });
+  assert.equal(afterEvidenceChange.ok, false);
+  assert.ok(
+    afterEvidenceChange.violations.some(item => /Requirements fidelity review is stale: .*changed after the review/.test(item)),
+    JSON.stringify(afterEvidenceChange.violations),
+  );
+
+  // Restoring the reviewed content revives it: the pin is content-based, so a
+  // benign round trip costs no re-review cycle.
+  write(logAbs, reviewedLog);
   const revived = runJson(["finalize", "--status", "complete", "--summary", "done"], root);
-  assert.equal(revived.ok, true, JSON.stringify(revived));
+  assert.equal(revived.ok, true, JSON.stringify(revived.violations || []));
 });
 
 test("delivery freshness accepts the exact reviewed worktree materialized as a commit", () => {

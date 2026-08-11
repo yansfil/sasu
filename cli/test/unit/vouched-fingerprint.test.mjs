@@ -298,17 +298,22 @@ test("vouchedFingerprintsMatch: legacy, missing, and malformed shapes never matc
 
 test("review freshness: bookkeeping writes no longer stale a recorded review (deadlock killer), source writes do", () => {
   const dir = makeRepo();
+  // The FINAL adversarial review is the axis that still watches the source tree:
+  // reading the code is its mandate. The requirements fidelity review left this
+  // check on purpose - it is pinned to what it actually reads (the PRD, the
+  // interview log, registered evidence), because pinning it to the tree made
+  // every bug fix invalidate a review whose subject had not moved.
   const state = {
     projectRoot: dir,
     runDir: "agents/implement/demo",
     topicSlug: "demo",
     tasks: [{ id: "T1" }],
-    requirementsFidelityReview: {
+    requirementsFidelityReview: null,
+    finalReview: {
       status: "pass",
       worktreeSnapshot: { statusHash: "audit-only", entries: [] },
       vouchedTreeFingerprint: vouchedTreeFingerprintForState({ projectRoot: dir, runDir: "agents/implement/demo", topicSlug: "demo", tasks: [{ id: "T1" }] }),
     },
-    finalReview: null,
   };
   assert.deepEqual(reviewWorktreeSnapshotViolations(state), [], "an unchanged tree is fresh");
 
@@ -322,7 +327,16 @@ test("review freshness: bookkeeping writes no longer stale a recorded review (de
   write(dir, "src/app.js", "console.log('changed after review')\n");
   const violations = reviewWorktreeSnapshotViolations(state);
   assert.equal(violations.length, 1);
-  assert.match(violations[0], /Requirements fidelity review is stale/);
+  assert.match(violations[0], /Final review is stale/);
+
+  // And the fidelity axis is untouched by all of it - no source pin to move.
+  const fidelityState = {
+    ...state,
+    finalReview: null,
+    requirementsFidelityReview: { status: "pass", inputs: [] },
+  };
+  assert.deepEqual(reviewWorktreeSnapshotViolations(fidelityState), [],
+    "the fidelity review carries no source pin for this rule to compare");
 });
 
 test("review freshness: legacy review records (snapshot only, no vouched fingerprint) read as stale, not fresh, not a crash", () => {
@@ -331,12 +345,12 @@ test("review freshness: legacy review records (snapshot only, no vouched fingerp
     status: "pass",
     worktreeSnapshot: { headSha: "deadbeef", statusHash: "h1", entries: [] },
   };
-  const state = { projectRoot: dir, tasks: [], requirementsFidelityReview: legacyReview, finalReview: null };
+  const state = { projectRoot: dir, tasks: [], requirementsFidelityReview: null, finalReview: legacyReview };
   const violations = reviewWorktreeSnapshotViolations(state);
   assert.equal(violations.length, 1, "a legacy record cannot prove freshness and must re-review");
   assert.match(violations[0], /stale/);
 
   // A record that never pinned anything (non-git era) was never checked.
-  const unpinned = { projectRoot: dir, tasks: [], requirementsFidelityReview: { status: "pass" }, finalReview: null };
+  const unpinned = { projectRoot: dir, tasks: [], requirementsFidelityReview: null, finalReview: { status: "pass" } };
   assert.deepEqual(reviewWorktreeSnapshotViolations(unpinned), []);
 });

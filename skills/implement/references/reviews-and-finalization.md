@@ -160,8 +160,9 @@ Never edit the report to match the flag - that is forging the evidence, and it i
 When the fidelity review fails, fix its findings or mark the implementation `Blocked` or `Partially Done` with evidence.
 Do not proceed to a final adversarial review or complete receipt until requirements fidelity passes.
 
-Any implementation, evidence, verification, plan, artifact, or deviation change after a passing fidelity review makes it stale.
-The harness also stores a git worktree snapshot that excludes the current implementation artifact directory, so source changes after review require a rerun.
+New evidence, a new verification result, or a new deviation after a passing fidelity review makes it stale, and so does a change to anything the review actually read: the PRD, the interview log, or any registered evidence artifact, each pinned by content hash at record time.
+A source change does not, because the code is the verify gate's subject and that gate pins the exact diff it judged - the two axes do not consume each other's results, which is what the split above already said.
+The final adversarial review still goes stale on a source change: reading the code is its mandate.
 
 For a blocked or partial handoff, still run and record requirements fidelity.
 That report may contain `Status: FAIL`, but it must compare original intent, decisions, PRD scope, acceptance criteria, verification evidence, and implementation result.

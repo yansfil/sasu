@@ -10,7 +10,7 @@ const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_
 const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, reviewRoundCount, reviewRoundCapNotice } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
+const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, fidelityReviewInputs, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
@@ -107,9 +107,14 @@ function cmdRequirementsReviewRecord(options) {
     reportBytes: info.bytes,
     reportSha256: info.sha256,
     // Audit/attribution record of the dirty tree at review time (kept in
-    // receipts); freshness is decided by the vouched fingerprint below.
+    // receipts). It is NOT the freshness input for this axis: the fidelity
+    // review's subject is intent lineage, decisions, deviations, and registered
+    // evidence, so what it reads is what gets pinned (fidelityReviewInputs).
+    // Pinning the source tree here made every bug fix invalidate a review whose
+    // subject had not moved; the code under judgment is the verify gate's
+    // subject and that gate pins the exact diff it judged.
     worktreeSnapshot: worktreeSnapshot(state),
-    vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
+    inputs: fidelityReviewInputs(state),
     recordedAt: nowIso(),
   };
   state.finalReview = null;
@@ -486,6 +491,13 @@ function cmdFinalize(options) {
     delivery: state.delivery || null,
     initialWorktreeSnapshot: state.initialWorktreeSnapshot || null,
     worktreeSnapshot: worktreeSnapshot(state),
+    // The tree the run FINISHED on, pinned content-based so a benign commit of
+    // that exact content does not move it. Delivery freshness rests here rather
+    // than on a review's pin: "is what I am about to push the tree this run
+    // completed on" is the receipt's question, and borrowing the fidelity
+    // review's pin to answer it was what tied that review to the source tree in
+    // the first place (see fidelityReviewInputs).
+    vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
     executionPlan: executionPlanSummary(state),
     // Visible even when NOT_RUN: a skipped verify gate must be readable from
     // the receipt, not silently absent. On a blocked handoff this snapshot
