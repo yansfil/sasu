@@ -332,11 +332,23 @@ export class StubBackend implements JudgeBackend {
     return Boolean(process.env["SASU_JUDGE_STUB_FILE"]);
   }
 
-  async run(_prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
+  async run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
     const { purpose } = options;
     const stubFile = process.env["SASU_JUDGE_STUB_FILE"];
     if (!stubFile || !fs.existsSync(stubFile)) {
       throw new JudgeError("judge-binary-missing", this.name, "SASU_JUDGE_STUB_FILE is not set or missing");
+    }
+    // Optional capture seam: evidence-injection tests must assert what a lane's
+    // judge was ACTUALLY shown (prompt text, attached image list), and the stub
+    // is the only backend tests run. One file per call, keyed by purpose.
+    const captureDir = process.env["SASU_JUDGE_STUB_CAPTURE_DIR"];
+    if (captureDir) {
+      fs.mkdirSync(captureDir, { recursive: true });
+      const name = (purpose ?? "call").replace(/[^A-Za-z0-9-]+/g, "_");
+      fs.writeFileSync(path.join(captureDir, `${name}.prompt.txt`), prompt);
+      if (options.images !== undefined && options.images.length > 0) {
+        fs.writeFileSync(path.join(captureDir, `${name}.images.json`), JSON.stringify(options.images));
+      }
     }
     const raw = JSON.parse(fs.readFileSync(stubFile, "utf8")) as unknown;
     if (raw && typeof raw === "object" && !Array.isArray(raw) && "byPurpose" in (raw as Record<string, unknown>)) {

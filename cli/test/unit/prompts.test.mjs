@@ -48,3 +48,62 @@ test("clampDocument truncates the middle with a notice", () => {
   assert.match(clamped, /TRUNCATED 200 chars/);
   assert.ok(clamped.length < 300);
 });
+
+// --- semantic verify prompt: injected evidence, recorded checks, settled oracles ---
+
+test("both verify prompt builders render settled oracles, check provenance, evidence provenance, and the omitted notice identically", async () => {
+  const { semanticVerifyPrompt, agenticSemanticVerifyPrompt } = await import("../../dist/gates/prompts.js");
+  const criteria = [{ id: "AC1", text: "renders" }];
+  const evidence = [
+    {
+      criterionId: "AC1",
+      path: "agents/implement/t/artifacts/logs/run.log",
+      sha256: "ab".repeat(32),
+      bytes: 999,
+      text: "captured body",
+      provenance: "registered as log evidence by the implement run (owner AC1)",
+      truncated: true,
+    },
+  ];
+  const checks = [
+    {
+      criterionId: "AC1",
+      command: "node check.js",
+      exitCode: 0,
+      tail: "recorded tail",
+      provenance: "the implement harness ran `node check.js` earlier in the run (verify-run recorded on V1; the tree may have changed since)",
+    },
+  ];
+  const options = {
+    settled: [{ criterionId: "AC9", note: "harness ran `x`: exit 0", tail: "oracle tail" }],
+    omittedEvidenceCount: 2,
+  };
+  for (const prompt of [
+    semanticVerifyPrompt("diff", criteria, evidence, checks, options),
+    agenticSemanticVerifyPrompt("stat", criteria, evidence, checks, options),
+  ]) {
+    assert.match(prompt, /\[AC9 - settled by harness oracle\] harness ran `x`: exit 0/);
+    assert.match(prompt, /NOT yours to judge/);
+    assert.match(prompt, /oracle tail/);
+    assert.match(prompt, /verify-run recorded on V1; the tree may have changed since\); it exited 0\./, "provenance replaces the 'just now' wording");
+    assert.doesNotMatch(prompt, /`node check\.js` just now/);
+    assert.match(prompt, /registered as log evidence by the implement run/);
+    assert.match(prompt, /bounded excerpt of a larger file/);
+    assert.match(prompt, /2 more artifact\(s\) omitted for the judge input budget/);
+    assert.match(prompt, /Do not treat their absence here as absence of evidence/);
+  }
+});
+
+test("quick-path prompt wording is unchanged when nothing is injected", async () => {
+  const { semanticVerifyPrompt } = await import("../../dist/gates/prompts.js");
+  const prompt = semanticVerifyPrompt(
+    "diff",
+    [{ id: "AC1", text: "renders" }],
+    [{ criterionId: "AC1", path: "out.log", sha256: "cd".repeat(32), bytes: 10, text: "body", producedBy: "node cap.js" }],
+    [{ criterionId: "AC1", command: "node t.js", exitCode: 0, tail: "ok" }],
+  );
+  assert.match(prompt, /produced by the harness running `node cap\.js` just now/);
+  assert.match(prompt, /the harness ran `node t\.js` just now and it exited 0/);
+  assert.doesNotMatch(prompt, /ALREADY SETTLED/);
+  assert.doesNotMatch(prompt, /artifact\(s\) omitted/);
+});

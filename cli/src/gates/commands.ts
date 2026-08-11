@@ -17,6 +17,7 @@ import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../m
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { runPrelint, type PrelintResult } from "./prelint";
 import {
+  EVIDENCE_RENDER_MAX_CHARS,
   GAP_AUDIT_LANES,
   SPEC_LANES,
   VERIFY_DIFF_MAX_CHARS,
@@ -28,6 +29,7 @@ import {
   type EvidenceMaterial,
   type JudgeLane,
   type PriorFinding,
+  type SettledCriterion,
 } from "./prompts";
 import {
   freshnessHash,
@@ -541,9 +543,16 @@ const { DB_TOUCH_PATTERN } = require("../../lib/planning.js") as { DB_TOUCH_PATT
 // too (same shared-lib pattern as prd_parser above). The two executors used
 // to diverge (gate: shell:true) and the same declared Check command could
 // PASS at the gate while the harness recorded not_met.
-const { shellLikeTokens, commandsMatchContract } = require("../../lib/inference.js") as {
+const { shellLikeTokens, commandsMatchContract, coverageFromText } = require("../../lib/inference.js") as {
   shellLikeTokens: (command: string) => string[];
   commandsMatchContract: (actual: string, expected: string) => boolean;
+  coverageFromText: (text: string) => { requirements: string[]; acceptanceCriteria: string[]; tasks: string[] };
+};
+// One walk over the implement run's registered evidence (tasks, ACs, V rows):
+// the same collector finalize's artifact validation reads, so the gate and the
+// implement layer can never disagree about what "registered" means.
+const { collectArtifacts } = require("../../lib/artifacts.js") as {
+  collectArtifacts: (state: ImplementStateLite) => { ownerKind: "task" | "ac" | "verification"; ownerId: string; artifact: ImplementArtifact }[];
 };
 // Fresh-pass reuse shares finalize's rule (one predicate, two consumers): a
 // verify-run pass pinned to an identical tree fingerprint already proves what
@@ -555,6 +564,16 @@ const { freshVerifyRunPasses } = require("../../lib/fresh_pass.js") as {
   ) => { verificationId: string; command: string; logPath: string | null }[];
 };
 
+/** A registered artifact entry as state_store.attachArtifact writes it; verify-run adds command/exitCode. */
+interface ImplementArtifact {
+  kind?: string;
+  path?: string;
+  command?: string;
+  exitCode?: number;
+  description?: string;
+  createdAt?: string;
+}
+
 /**
  * The slice of an implement run's state.json the gate reads. The dependency is
  * deliberately read-only, one-way, and optional: the gate layer otherwise
@@ -562,8 +581,9 @@ const { freshVerifyRunPasses } = require("../../lib/fresh_pass.js") as {
  * (or a corrupt state file) must behave exactly as before.
  */
 interface ImplementStateLite {
-  tasks?: { id?: string; title?: string; status?: string }[];
-  verification?: unknown[];
+  tasks?: { id?: string; title?: string; status?: string; acceptanceCriteria?: string[]; artifacts?: ImplementArtifact[] }[];
+  acceptanceCriteria?: { id?: string; requirements?: string[]; artifacts?: ImplementArtifact[] }[];
+  verification?: { id?: string; text?: string; matrix?: { covers?: string }; artifacts?: ImplementArtifact[] }[];
   projectRoot?: string;
   runDir?: string;
 }
@@ -949,6 +969,32 @@ export async function runVerifyGate(
   // a run-wide check has no criterion to name and stays a gate-only signal.
   const checkResults = collectCheckResults();
 
+  // PRD-path evidence injection: the implement run's registered artifacts and
+  // verify-run logs reach the judge through the same structure the quick path
+  // uses (collectEvidence material/checks). Evidence enters as PROMPT MATERIAL
+  // only - the judged diff's agents/** exclusion is untouched - and every
+  // injected file is hash-pinned below so changing it stales the PASS.
+  let backendAttachments = false;
+  try {
+    backendAttachments = resolveBackend(config.judge.backend).attachments;
+  } catch {
+    backendAttachments = false;
+  }
+  const judgedIdSet = new Set(judgedCriteria.map((c) => c.id));
+  const injected =
+    docKind === "prd" && implementState !== null
+      ? collectImplementEvidence(
+          projectRoot,
+          implementState,
+          judgedIdSet,
+          new Set(freshPasses.map((entry) => entry.verificationId)),
+          backendAttachments,
+        )
+      : EMPTY_INJECTED;
+  // Contract-evidence precedent (collectEvidence pins into lane.inputs): every
+  // file the judge saw joins the input pins, so freshness stays honest.
+  const judgeInputs = [...allInputs, ...injected.inputs];
+
   // PRD-declared lane scoping (4a): tasks' Scope globs, resolved through the
   // AC -> Covers-task chain, decide which slice of the curated diff each lane
   // sees. Files in the diff that no declared glob claims surface as a warning
@@ -989,12 +1035,44 @@ export async function runVerifyGate(
   } catch {
     backendAgentic = false;
   }
-  const verifyLanes = laneCriteria.map((criteriaSlice, index) => {
+  const assembledLanes = laneCriteria.map((criteriaSlice, index) => {
     const ids = new Set(criteriaSlice.map((c) => c.id));
-    const material = lane ? lane.material.filter((item) => ids.has(item.criterionId)) : [];
+    const quickMaterial = lane ? lane.material.filter((item) => ids.has(item.criterionId)) : [];
+    // Injected implement evidence: items routed to this lane's criteria plus
+    // lane-wide (ambiguously-owned) items, deduped by path so one artifact
+    // covering several of the lane's criteria rides once.
+    const lanePaths = new Set<string>();
+    const laneInjectedAll: InjectedMaterial[] = [];
+    for (const item of injected.material) {
+      if (!(item.laneWide === true || ids.has(item.criterionId))) continue;
+      if (lanePaths.has(item.path)) continue;
+      lanePaths.add(item.path);
+      laneInjectedAll.push(item);
+    }
+    // Scale guard: injected text past the per-lane budget is dropped whole and
+    // counted; the prompt announces the count (never a silent absence). Images
+    // ride as attachments under their own per-file budget, not prompt bytes.
+    const laneInjected: InjectedMaterial[] = [];
+    let injectedTextBytes = 0;
+    let omittedEvidenceCount = 0;
+    for (const item of laneInjectedAll) {
+      const cost = item.text !== undefined ? item.text.length : 0;
+      if (cost > 0 && injectedTextBytes + cost > INJECTED_EVIDENCE_LANE_MAX_BYTES) {
+        omittedEvidenceCount += 1;
+        continue;
+      }
+      injectedTextBytes += cost;
+      laneInjected.push(item);
+    }
+    const material = [...quickMaterial, ...laneInjected];
     // Image attachments are rebuilt per lane from the material that carries
     // them, so a lane ships only the screenshots its own criteria pinned.
-    const images = [...new Set(material.filter((item) => item.attachedImage).map((item) => path.join(projectRoot, item.path)))];
+    const images = [
+      ...new Set([
+        ...quickMaterial.filter((item) => item.attachedImage).map((item) => path.join(projectRoot, item.path)),
+        ...laneInjected.flatMap((item) => (item.imagePath !== undefined ? [item.imagePath] : [])),
+      ]),
+    ];
     const laneGlobs = anyDeclaredScope ? scopeForLane(criteriaSlice, scopedTasks) : null;
     const scoped = laneGlobs !== null ? filterDiffByGlobs(diff, laneGlobs) : null;
     // A scoped diff with zero matching files would show the judge nothing and
@@ -1004,21 +1082,21 @@ export async function runVerifyGate(
     const scopeFellBack = scoped !== null && scoped.text.trim() === "";
     const laneDiff = scoped !== null && !scopeFellBack ? scoped.text : diff;
     const agentic = laneDiff.length > VERIFY_DIFF_MAX_CHARS;
-    const laneOptions = {
-      mechanicalRan: options.skipMechanical !== true,
-      ...(laneCount > 1 ? { lane: { index: index + 1, count: laneCount } } : {}),
-    };
-    const laneChecks = checkResults.filter((c) => ids.has(c.criterionId));
-    const prompt = agentic
-      ? agenticSemanticVerifyPrompt(diffStatFromText(laneDiff), criteriaSlice, material, laneChecks, laneOptions)
-      : semanticVerifyPrompt(laneDiff, criteriaSlice, material, laneChecks, laneOptions);
+    const laneInjectedChecks = injected.checks.filter((c) => c.laneWide === true || ids.has(c.criterionId));
+    const laneChecks = [...checkResults.filter((c) => ids.has(c.criterionId)), ...laneInjectedChecks];
     return {
       laneId: String(index + 1),
       // A single lane IS the old exhaustive call, so it keeps the historical
       // purpose; receipts and telemetry written against it stay comparable.
       purpose: laneCount > 1 ? `gate:verify-semantic:lane:${index + 1}` : "gate:verify-semantic",
       criteria: criteriaSlice,
-      prompt,
+      index,
+      material,
+      laneInjected,
+      laneInjectedChecks,
+      omittedEvidenceCount,
+      laneChecks,
+      laneDiff,
       images,
       // Audit trail: which paths this lane was scoped to (null = full diff),
       // whether scoping fell back, and whether the lane went agentic.
@@ -1031,7 +1109,7 @@ export async function runVerifyGate(
   // A backend that cannot run the agentic judge keeps the original contract
   // for oversized input: fail the command up front, before any judge call or
   // recorded outcome, so no retry-budget attempt is charged.
-  const oversized = verifyLanes.filter((vl) => vl.agentic);
+  const oversized = assembledLanes.filter((vl) => vl.agentic);
   if (oversized.length > 0 && !backendAgentic) {
     const worst = Math.max(...oversized.map((vl) => vl.diffChars));
     throw new Error(
@@ -1043,6 +1121,28 @@ export async function runVerifyGate(
   // The agentic fallback path still reaches this line, so oversized-but-
   // capable rounds run their oracles exactly as before.
   const { oracleOutcomes, oracleFindings, oracleCriteria } = settleOracles();
+  // Oracle outcomes ride into every lane as settled context: the harness
+  // already decided those criteria with a stronger instrument, and the judge
+  // must see what it proved instead of doubting it from the diff. Prompts are
+  // therefore built HERE, after the oracles ran - the only data dependency
+  // that moved prompt assembly below the no-judgment exits.
+  const settledContext: SettledCriterion[] = oracleOutcomes.map((outcome) => ({
+    criterionId: outcome.id,
+    note: outcome.reason,
+    ...(outcome.tail !== undefined && outcome.tail !== "" ? { tail: outcome.tail } : {}),
+  }));
+  const verifyLanes = assembledLanes.map((vl) => {
+    const laneOptions = {
+      mechanicalRan: options.skipMechanical !== true,
+      ...(laneCount > 1 ? { lane: { index: vl.index + 1, count: laneCount } } : {}),
+      ...(settledContext.length > 0 ? { settled: settledContext } : {}),
+      ...(vl.omittedEvidenceCount > 0 ? { omittedEvidenceCount: vl.omittedEvidenceCount } : {}),
+    };
+    const prompt = vl.agentic
+      ? agenticSemanticVerifyPrompt(diffStatFromText(vl.laneDiff), vl.criteria, vl.material, vl.laneChecks, laneOptions)
+      : semanticVerifyPrompt(vl.laneDiff, vl.criteria, vl.material, vl.laneChecks, laneOptions);
+    return { ...vl, prompt };
+  });
   // One auditable hash of everything sent this round: the lane prompts joined
   // in lane order. For a single lane this is byte-identical to the old
   // single-prompt hash contract.
@@ -1056,8 +1156,37 @@ export async function runVerifyGate(
     ...(vl.scopeFellBack ? { scopeFellBack: true } : {}),
     diffChars: vl.diffChars,
     agenticFallback: vl.agentic,
+    // What the judge saw beyond the diff (paths + hashes + owner, never
+    // content): the artifact answers "was AC4's screenshot ever shown" the
+    // same way judgedCriteriaIds answers "was AC4 ever sent".
+    ...(vl.laneInjected.length > 0 || vl.laneInjectedChecks.length > 0 || vl.omittedEvidenceCount > 0
+      ? {
+          injected: {
+            evidence: vl.laneInjected.map((item) => ({
+              criterionId: item.criterionId,
+              path: item.path,
+              sha256: item.sha256,
+              bytes: item.bytes,
+              ...(item.attachedImage === true ? { attachedImage: true } : {}),
+              ...(item.truncated === true ? { truncated: true } : {}),
+            })),
+            checks: vl.laneInjectedChecks.map((c) => ({
+              criterionId: c.criterionId,
+              command: c.command,
+              exitCode: c.exitCode,
+              ...(c.path !== undefined ? { path: c.path } : {}),
+            })),
+            ...(vl.omittedEvidenceCount > 0 ? { omittedCount: vl.omittedEvidenceCount } : {}),
+          },
+        }
+      : {}),
   }));
-  const evidenceSummary = lane ? lane.artifacts : [];
+  // Receipt/artifact evidence roster: the quick lane's pins plus every
+  // injected artifact summary (content stripped, hashes kept).
+  const evidenceSummary: Omit<EvidenceMaterial, "text">[] = [
+    ...(lane ? lane.artifacts : []),
+    ...injected.material.map(({ text: _text, imagePath: _imagePath, laneWide: _laneWide, ...summary }) => summary),
+  ];
   const judgedCriteriaIds = judgedCriteria.map((c) => c.id);
   try {
     const settled = await Promise.all(
@@ -1178,7 +1307,7 @@ export async function runVerifyGate(
         kind: "verdict",
         verdict: passed ? "PASS" : "FAIL",
         findings,
-        inputs: allInputs,
+        inputs: judgeInputs,
         treeFingerprint,
         // One fan-out round is one gate attempt: recordGateResult runs once
         // per round no matter how many lanes it took (gap-audit's rule).
@@ -1202,10 +1331,14 @@ export async function runVerifyGate(
           })),
           checks: checkResults,
           evidence: evidenceSummary,
+          // Artifacts the injection could NOT show the judge, with reasons:
+          // the record must distinguish "never registered" from "registered
+          // but unshowable" (missing, binary, uncontained, unattachable).
+          ...(injected.omitted.length > 0 ? { injectionOmitted: injected.omitted } : {}),
           mechanical: mechanicalRecord(),
           treeFingerprint,
           ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
-          inputs: allInputs,
+          inputs: judgeInputs,
         },
       },
       records,
@@ -1218,7 +1351,7 @@ export async function runVerifyGate(
       mechanical,
       ...warningField,
       criteria: resultCriteria,
-      inputs: allInputs,
+      inputs: judgeInputs,
       evidence: evidenceSummary,
       checks: checkResults,
       judgedCriteriaIds,
@@ -1234,10 +1367,11 @@ export async function runVerifyGate(
       lanes: lanesManifest,
       checks: checkResults,
       evidence: evidenceSummary,
+      ...(injected.omitted.length > 0 ? { injectionOmitted: injected.omitted } : {}),
       mechanical: mechanicalRecord(),
       ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
       ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
-      inputs: allInputs,
+      inputs: judgeInputs,
     };
     return {
       ...recordJudgeFailure(store, state, "verify", config, error, records, topic, failurePayload),
@@ -1245,7 +1379,7 @@ export async function runVerifyGate(
       mechanical,
       ...warningField,
       criteria: [],
-      inputs: allInputs,
+      inputs: judgeInputs,
       evidence: evidenceSummary,
       checks: checkResults,
       judgedCriteriaIds,
@@ -1499,6 +1633,237 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
   return lane;
 }
 
+// --- PRD-path evidence injection (implement-run artifacts -> judge lanes) ---
+
+/**
+ * Per-lane budget for injected implement-run evidence text. Deliberately the
+ * same number as the quick path's per-file cap (EVIDENCE_MAX_BYTES, 64KB): one
+ * budget concept governs how much proof text a judge reads on either path, and
+ * it stays well under the 160k-char diff budget so evidence never crowds the
+ * change out of the judge's attention (the audited 2026-08 run showed
+ * documents ahead of code doing exactly that). Past the budget, whole
+ * artifacts are omitted with an explicit count in the prompt - never silently.
+ */
+const INJECTED_EVIDENCE_LANE_MAX_BYTES = EVIDENCE_MAX_BYTES;
+
+/** Injected prompt material with routing metadata the lane assembly needs. */
+type InjectedMaterial = EvidenceMaterial & {
+  /** Absolute path for image attachments (EvidenceMaterial.path stays project-relative). */
+  imagePath?: string;
+  /** Owner maps to no criterion at all: shown to every lane rather than dropped. */
+  laneWide?: boolean;
+};
+type InjectedCheck = CheckResult & { path?: string; laneWide?: boolean };
+
+interface InjectedEvidence {
+  material: InjectedMaterial[];
+  checks: InjectedCheck[];
+  /** Hash pins for every injected file: a changed evidence file stales the PASS. */
+  inputs: GateInput[];
+  /** Artifacts the gate could not show the judge, named with the reason - honesty for the payload. */
+  omitted: { ownerId: string; path: string; reason: string }[];
+}
+
+const EMPTY_INJECTED: InjectedEvidence = { material: [], checks: [], inputs: [], omitted: [] };
+
+/**
+ * Head+tail excerpt whose TOTAL length (marker included) stays <= cap -
+ * clampDocument semantics on raw bytes. The marker room is reserved up front
+ * so a max-size excerpt still fits a budget of the same number; without the
+ * reservation, an excerpt cut "to the cap" overflowed the per-lane budget by
+ * its own marker and the whole artifact was dropped instead of shown.
+ */
+function boundedTextExcerpt(raw: Buffer, cap: number): { text: string; truncated: boolean } {
+  if (raw.length <= cap) return { text: raw.toString("utf8"), truncated: false };
+  const marker = (omitted: number) =>
+    `\n\n[... TRUNCATED ${omitted} bytes for judge input budget; the full file's hash is pinned in the gate record ...]\n\n`;
+  const half = Math.max(1, Math.floor((cap - marker(raw.length).length) / 2));
+  const head = raw.subarray(0, half).toString("utf8");
+  const tailText = raw.subarray(raw.length - half).toString("utf8");
+  return { text: `${head}${marker(raw.length - 2 * half)}${tailText}`, truncated: true };
+}
+
+/**
+ * Gather the implement run's registered evidence for the PRD-path judge lanes.
+ *
+ * The quick path already injects per-AC harness evidence; on the PRD path the
+ * same proof exists - registered artifacts and verify-run logs in
+ * agents/implement/<slug>/state.json - but the judge never saw it, so live
+ * reruns showed lanes BLOCKing runtime criteria and sessions rebuilding ad-hoc
+ * verification. This wires the recorded evidence into the existing injection
+ * structure instead of adding any new PRD grammar.
+ *
+ * Routing: an artifact reaches the lanes owning its criterion ids. Owner -> AC
+ * mapping mirrors the planner's own coverage rule (planning.js
+ * buildCoverageMatrix): an AC owns its artifacts directly, a task's artifacts
+ * follow its Covers ACs, and a V row's follow its Covers ACs plus any AC that
+ * shares a covered R#. An owner that maps to SOME criterion but none that is
+ * judged (oracle-settled or human-lane) is skipped - those criteria are
+ * decided by a stronger authority. An owner that maps to NO criterion at all
+ * is ambiguous and goes to every lane rather than being dropped.
+ *
+ * Fail-open like readImplementState: a damaged entry is skipped (recorded in
+ * `omitted`), and a collector-level failure degrades to no injection - the
+ * gate must behave exactly as before on repos without usable implement state.
+ */
+function collectImplementEvidence(
+  projectRoot: string,
+  implementState: ImplementStateLite,
+  judgedIds: Set<string>,
+  freshVerificationIds: Set<string>,
+  canAttach: boolean,
+): InjectedEvidence {
+  const out: InjectedEvidence = { material: [], checks: [], inputs: [], omitted: [] };
+  try {
+    const acRequirements = new Map<string, string[]>();
+    for (const ac of implementState.acceptanceCriteria ?? []) {
+      if (typeof ac?.id === "string") acRequirements.set(ac.id, Array.isArray(ac.requirements) ? ac.requirements : []);
+    }
+    const taskAcs = new Map<string, string[]>();
+    for (const task of implementState.tasks ?? []) {
+      if (typeof task?.id === "string") taskAcs.set(task.id, Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : []);
+    }
+    const verificationCovers = new Map<string, string[]>();
+    for (const item of implementState.verification ?? []) {
+      if (typeof item?.id !== "string") continue;
+      const covers = coverageFromText(item.matrix?.covers ?? item.text ?? "");
+      const acIds = new Set(covers.acceptanceCriteria);
+      for (const [acId, requirements] of acRequirements) {
+        if (requirements.some((requirement) => covers.requirements.includes(requirement))) acIds.add(acId);
+      }
+      verificationCovers.set(item.id, [...acIds]);
+    }
+    const ownerAcIds = (ownerKind: string, ownerId: string): string[] =>
+      ownerKind === "ac" ? [ownerId] : ownerKind === "task" ? (taskAcs.get(ownerId) ?? []) : (verificationCovers.get(ownerId) ?? []);
+
+    const pinned = new Set<string>();
+    for (const entry of collectArtifacts(implementState)) {
+      const artifact = entry.artifact;
+      const relPath = typeof artifact?.path === "string" ? artifact.path : "";
+      if (relPath === "") continue;
+      const ownerId = String(entry.ownerId ?? "?");
+      try {
+        const mapped = ownerAcIds(entry.ownerKind, ownerId);
+        const judgedTargets = mapped.filter((id) => judgedIds.has(id));
+        // Owned by criteria a stronger authority already settled (oracle or
+        // human lane): the artifact would only duplicate a decided verdict.
+        if (mapped.length > 0 && judgedTargets.length === 0) continue;
+        const laneWide = mapped.length === 0;
+        const targets = laneWide ? [ownerId] : judgedTargets;
+
+        const resolved = path.join(projectRoot, relPath);
+        if (!fs.existsSync(resolved)) {
+          out.omitted.push({ ownerId, path: relPath, reason: "file not found" });
+          continue;
+        }
+        // Same containment rule as the quick evidence lane: whatever the gate
+        // ships to an external judge must really live inside the project.
+        const containment = containmentProblem(projectRoot, resolved);
+        if (containment !== null) {
+          out.omitted.push({ ownerId, path: relPath, reason: containment });
+          continue;
+        }
+        const raw = fs.readFileSync(resolved);
+        if (raw.length === 0) {
+          out.omitted.push({ ownerId, path: relPath, reason: "file is empty" });
+          continue;
+        }
+        const sha256 = sha256Of(raw);
+        if (!pinned.has(relPath)) {
+          pinned.add(relPath);
+          out.inputs.push({ path: relPath, sha256, kind: "evidence" });
+        }
+
+        const isImage = IMAGE_EXTENSIONS.has(path.extname(relPath).toLowerCase());
+        const isCommandLog =
+          artifact.kind === "command-log" && typeof artifact.command === "string" && artifact.command !== "" && typeof artifact.exitCode === "number";
+        if (isCommandLog) {
+          if (raw.includes(0)) {
+            out.omitted.push({ ownerId, path: relPath, reason: "binary content" });
+            continue;
+          }
+          // Recorded, not "just now": the provenance says when the check ran
+          // and whether its pass is still fresh on the current tree, so the
+          // judge can weigh a possibly-stale log honestly.
+          const freshness =
+            entry.ownerKind === "verification"
+              ? freshVerificationIds.has(ownerId)
+                ? "; its pass is still fresh on the current tree"
+                : "; the tree may have changed since"
+              : "";
+          const provenance = `the implement harness ran \`${artifact.command}\` earlier in the run (verify-run recorded on ${ownerId}${freshness})`;
+          const tail = raw.toString("utf8").split("\n").slice(-30).join("\n");
+          for (const target of targets) {
+            out.checks.push({
+              criterionId: target,
+              command: artifact.command!,
+              exitCode: artifact.exitCode!,
+              tail,
+              provenance,
+              path: relPath,
+              ...(laneWide ? { laneWide: true } : {}),
+            });
+          }
+          continue;
+        }
+
+        const provenance = `registered as ${artifact.kind ?? "file"} evidence by the implement run (owner ${ownerId})`;
+        if (isImage) {
+          if (!canAttach) {
+            out.omitted.push({ ownerId, path: relPath, reason: "judge backend has no image attachment support" });
+            continue;
+          }
+          if (raw.length > IMAGE_MAX_BYTES) {
+            out.omitted.push({ ownerId, path: relPath, reason: `image is ${raw.length} bytes, over the ${IMAGE_MAX_BYTES}-byte attachment budget` });
+            continue;
+          }
+          for (const target of targets) {
+            out.material.push({
+              criterionId: target,
+              path: relPath,
+              sha256,
+              bytes: raw.length,
+              attachedImage: true,
+              provenance,
+              imagePath: resolved,
+              ...(laneWide ? { laneWide: true } : {}),
+            });
+          }
+          continue;
+        }
+        if (raw.includes(0)) {
+          out.omitted.push({ ownerId, path: relPath, reason: "binary content" });
+          continue;
+        }
+        // Oversized text is excerpted, not blocked: the quick path blocks so
+        // its AUTHOR shrinks the file, but implement bookkeeping has no author
+        // in this loop to push back on (PRINCIPLES item 7) - the honest move
+        // is a marked excerpt plus the full-file hash pin. The excerpt is cut
+        // to the render clamp exactly, so evidenceSection never re-truncates
+        // it and its explicit byte marker survives into the prompt.
+        const { text, truncated } = boundedTextExcerpt(raw, EVIDENCE_RENDER_MAX_CHARS);
+        for (const target of targets) {
+          out.material.push({
+            criterionId: target,
+            path: relPath,
+            sha256,
+            bytes: raw.length,
+            text,
+            provenance,
+            ...(truncated ? { truncated: true } : {}),
+            ...(laneWide ? { laneWide: true } : {}),
+          });
+        }
+      } catch {
+        out.omitted.push({ ownerId, path: relPath, reason: "unreadable" });
+      }
+    }
+  } catch {
+    return EMPTY_INJECTED;
+  }
+  return out;
+}
+
 function recordJudgeFailure(
   store: GateStore,
   state: ReturnType<GateStore["load"]>,
@@ -1746,6 +2111,13 @@ export interface OracleOutcome {
   met: boolean;
   reason: string;
   evidence: string;
+  /**
+   * Bounded stdout/stderr tail of the oracle command. Kept (not discarded
+   * after the substring test) so judge lanes can see WHAT the oracle observed,
+   * not just that it passed - the missing context that made judges BLOCK
+   * runtime criteria in live reruns.
+   */
+  tail?: string;
 }
 
 /**
@@ -1810,6 +2182,11 @@ export function runAcOracles(
     const exitCode = timedOut ? 124 : (result.status ?? 1);
     const stdout = result.stdout ?? "";
     const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;
+    // Same bounded-tail convention as the mechanical stage (runMechanical):
+    // last 30 lines of combined output, enough for a judge to see what the
+    // oracle observed without unbounded prompt growth.
+    const combinedOutput = [stdout, result.stderr ?? ""].filter((part) => part !== "").join("\n");
+    const tail = combinedOutput === "" ? "" : combinedOutput.split("\n").slice(-30).join("\n");
     const digestViolation = Boolean(before && after && !vouchedFingerprintsMatch(before, after));
     const met = exitCode === 0 && expectMatched && !digestViolation;
     const reason =
@@ -1828,6 +2205,7 @@ export function runAcOracles(
       met,
       reason,
       evidence: `harness executed \`${command}\` (exit ${exitCode})`,
+      ...(tail !== "" ? { tail } : {}),
     });
   }
   return { outcomes, warnings };

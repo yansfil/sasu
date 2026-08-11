@@ -8,12 +8,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import crypto from "node:crypto";
 import {
   diffStatFromText,
   filterDiffByGlobs,
   isExcludedFromDiff,
   matchesScopeGlob,
   partitionVerifyCriteria,
+  readGateStatus,
   runVerifyGate,
   scopeForLane,
   splitDiffByFile,
@@ -568,4 +570,187 @@ test("PRD path: a failed oracle closes the gate even when the judge passes every
   );
   assert.equal(result.ok, false);
   assert.ok(result.status.findings.some((f) => f.area === "oracle" && f.missing.startsWith("AC3:")));
+});
+
+// --- PRD-path evidence injection (2nd wave, phase 1 track T) ---
+
+function writeImplementState(dir, state) {
+  const stateDir = path.join(dir, "agents", "implement", "t");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "state.json"), JSON.stringify(state, null, 2));
+}
+
+function writeRunArtifact(dir, rel, content) {
+  const abs = path.join(dir, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content);
+  return rel;
+}
+
+function sha256OfFile(dir, rel) {
+  return crypto.createHash("sha256").update(fs.readFileSync(path.join(dir, rel))).digest("hex");
+}
+
+/** Run the gate with the stub judge AND the prompt-capture seam active. */
+function withCapture(dir, response, fn) {
+  const captureDir = path.join(dir, "capture");
+  process.env.SASU_JUDGE_STUB_CAPTURE_DIR = captureDir;
+  return withStub(dir, response, fn).finally(() => {
+    delete process.env.SASU_JUDGE_STUB_CAPTURE_DIR;
+  });
+}
+
+function capturedPrompt(dir, name) {
+  return fs.readFileSync(path.join(dir, "capture", `${name}.prompt.txt`), "utf8");
+}
+
+test("oracle outcomes ride into the lane prompt as settled context, with tail and provenance", async () => {
+  const dir = makeDir();
+  const prdPath = writeScopedPrd(dir);
+  fs.writeFileSync(
+    path.join(dir, prdPath),
+    fs
+      .readFileSync(path.join(dir, prdPath), "utf8")
+      .replace(
+        "- AC3. the marker artifact exists. Artifact: out/marker.txt",
+        "- AC3. the oracle passes. Check: `node -e \"console.log('oracle says 42')\"`",
+      ),
+  );
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const prompt = capturedPrompt(dir, "gate_verify-semantic");
+  assert.match(prompt, /CRITERIA ALREADY SETTLED BY THE HARNESS/, "the settled section must exist");
+  assert.match(prompt, /\[AC3 - settled by harness oracle\]/, "provenance names the oracle, so the judge does not re-prove it");
+  assert.match(prompt, /oracle says 42/, "the retained stdout tail is shown, not discarded after the substring test");
+  assert.doesNotMatch(prompt, /- AC3:/, "the settled criterion never appears in the judged criteria list");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.match(artifact.oracle[0].tail, /oracle says 42/, "the oracle outcome records its bounded tail");
+});
+
+test("registered per-AC evidence reaches only the owning lane; ambiguous V-row evidence goes lane-wide", async () => {
+  const dir = makeDir();
+  const nine = criteria(9); // two lanes: AC1-AC5 / AC6-AC9
+  const ac2Log = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/ac2.log", "runtime proof for AC2 only\n");
+  const v1Log = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/v1.log", "v1 command log tail line\n");
+  const v2Log = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/v2.log", "ambiguous evidence body\n");
+  writeImplementState(dir, {
+    tasks: [{ id: "T1", status: "complete" }],
+    acceptanceCriteria: [{ id: "AC2", requirements: [], artifacts: [{ kind: "log", path: ac2Log, description: "runtime capture" }] }],
+    verification: [
+      // Covers names AC7 -> routed to lane 2 as a recorded verify-run check.
+      { id: "V1", matrix: { covers: "AC7" }, artifacts: [{ kind: "command-log", path: v1Log, command: "node run-check.js", exitCode: 0 }] },
+      // Covers names nothing -> ambiguous mapping must inject lane-wide, not drop.
+      { id: "V2", matrix: { covers: "" }, artifacts: [{ kind: "log", path: v2Log, description: "who owns this" }] },
+    ],
+  });
+  const result = await withCapture(
+    dir,
+    {
+      byPurpose: {
+        "lane:1": laneVerdicts(nine.slice(0, 5).map((c) => c.id), null),
+        "lane:2": laneVerdicts(nine.slice(5).map((c) => c.id), null),
+      },
+    },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: nine, diffText: SMALL_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const lane1 = capturedPrompt(dir, "gate_verify-semantic_lane_1");
+  const lane2 = capturedPrompt(dir, "gate_verify-semantic_lane_2");
+  assert.match(lane1, /runtime proof for AC2 only/, "the owning lane sees the artifact content");
+  assert.doesNotMatch(lane2, /runtime proof for AC2 only/, "a foreign lane never sees another criterion's artifact");
+  assert.match(lane2, /v1 command log tail line/, "the V-row command log reaches the lane owning its covered AC");
+  assert.doesNotMatch(lane1, /v1 command log tail line/);
+  assert.match(lane2, /verify-run recorded on V1/, "the recorded check states its provenance, not 'just now'");
+  assert.match(lane2, /the tree may have changed since/, "a non-fresh recorded pass says so honestly");
+  assert.match(lane1, /ambiguous evidence body/, "unmappable V-row evidence goes to every lane");
+  assert.match(lane2, /ambiguous evidence body/);
+  assert.match(lane1, /\[V2\]/, "lane-wide material is labeled by its owner id");
+
+  // Freshness honesty: every injected file is hash-pinned into the inputs.
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  for (const rel of [ac2Log, v1Log, v2Log]) {
+    const pin = artifact.inputs.find((i) => i.path === rel);
+    assert.ok(pin, `${rel} must be pinned in the artifact inputs`);
+    assert.equal(pin.sha256, sha256OfFile(dir, rel), `${rel} pin must hash the raw bytes`);
+    assert.equal(pin.kind, "evidence");
+  }
+  // The manifest records what each lane saw: paths + hashes + owner, no content.
+  assert.deepEqual(artifact.lanes[0].injected.evidence.map((e) => [e.criterionId, e.path]).sort(), [["AC2", ac2Log], ["V2", v2Log]].sort());
+  assert.deepEqual(artifact.lanes[1].injected.checks, [{ criterionId: "AC7", command: "node run-check.js", exitCode: 0, path: v1Log }]);
+
+  // Changing an injected evidence file after the PASS makes it stale.
+  assert.equal(readGateStatus(dir, loadConfig(dir), "t").verify.effective, "PASS");
+  fs.appendFileSync(path.join(dir, ac2Log), "tampered\n");
+  const status = readGateStatus(dir, loadConfig(dir), "t").verify;
+  assert.equal(status.effective, "STALE", "a changed evidence file must stale the PASS");
+  assert.deepEqual(status.staleInputs, [{ path: ac2Log, reason: "changed" }]);
+});
+
+test("oversized injected artifacts are excerpted with an explicit marker; past the lane budget they are omitted with a count", async () => {
+  const dir = makeDir();
+  const big = `HEAD-MARKER\n${"x".repeat(70_000)}\nTAIL-MARKER\n`;
+  const bigLog = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/big.log", big);
+  // ~30KB: the ~40k-char excerpt of big.log plus this file exceeds the 64KB
+  // per-lane injected-evidence budget, so this one must be omitted (loudly).
+  const secondLog = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/second.log", `second artifact body\n${"s".repeat(30_000)}\n`);
+  writeImplementState(dir, {
+    acceptanceCriteria: [
+      { id: "AC1", artifacts: [{ kind: "log", path: bigLog, description: "big" }] },
+      { id: "AC2", artifacts: [{ kind: "log", path: secondLog, description: "small but over budget" }] },
+    ],
+  });
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: criteria(2), diffText: SMALL_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const prompt = capturedPrompt(dir, "gate_verify-semantic");
+  assert.match(prompt, /HEAD-MARKER/, "the excerpt keeps the head");
+  assert.match(prompt, /TAIL-MARKER/, "the excerpt keeps the tail");
+  assert.match(prompt, /TRUNCATED \d+ bytes for judge input budget/, "truncation is explicit inside the excerpt");
+  assert.match(prompt, /bounded excerpt of a larger file/, "the head line names the excerpt as bounded");
+  // The full-cap excerpt consumes the lane budget, so the second artifact is
+  // omitted - loudly, in the prompt and in the manifest.
+  assert.doesNotMatch(prompt, /second artifact body/);
+  assert.match(prompt, /1 more artifact\(s\) omitted for the judge input budget/);
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.equal(artifact.lanes[0].injected.omittedCount, 1);
+  const bigEntry = artifact.lanes[0].injected.evidence.find((e) => e.path === bigLog);
+  assert.equal(bigEntry.truncated, true);
+  assert.equal(bigEntry.bytes, Buffer.byteLength(big), "the manifest records the FULL file size");
+  const pin = artifact.inputs.find((i) => i.path === bigLog);
+  assert.equal(pin.sha256, sha256OfFile(dir, bigLog), "the pin hashes the full file, not the excerpt");
+  // The omitted artifact is still pinned: the judge was told it exists, and a
+  // later change to it must stale the record like any other injected input.
+  assert.ok(artifact.inputs.some((i) => i.path === secondLog));
+});
+
+test("evidence owned by settled or unknown criteria is skipped; unreadable artifacts land in injectionOmitted", async () => {
+  const dir = makeDir();
+  fs.mkdirSync(path.join(dir, "out"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
+  const prdPath = writeScopedPrd(dir); // AC3 is oracle-backed -> never judged
+  const ac3Log = writeRunArtifact(dir, "agents/implement/t/artifacts/logs/ac3.log", "oracle-owned artifact body\n");
+  writeImplementState(dir, {
+    acceptanceCriteria: [
+      { id: "AC3", artifacts: [{ kind: "log", path: ac3Log, description: "oracle AC evidence" }] },
+      { id: "AC1", artifacts: [{ kind: "log", path: "agents/implement/t/artifacts/logs/gone.log", description: "missing file" }] },
+    ],
+  });
+  const result = await withCapture(
+    dir,
+    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
+  );
+  assert.equal(result.ok, true);
+  const prompt = capturedPrompt(dir, "gate_verify-semantic");
+  assert.doesNotMatch(prompt, /oracle-owned artifact body/, "an oracle-settled criterion's artifact would only duplicate a decided verdict");
+  const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
+  assert.deepEqual(artifact.injectionOmitted, [{ ownerId: "AC1", path: "agents/implement/t/artifacts/logs/gone.log", reason: "file not found" }]);
+  assert.ok(!artifact.inputs.some((i) => i.path === ac3Log), "a skipped artifact is not pinned - the judge never saw it");
 });

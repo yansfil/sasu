@@ -276,6 +276,14 @@ export interface EvidenceMaterial {
   /** Command the harness ran to produce this artifact, for capture evidence. */
   producedBy?: string;
   attachedImage?: boolean;
+  /**
+   * Overrides the default provenance sentence. The quick path's default wording
+   * ("produced by the harness just now") would overclaim for artifacts the
+   * implement run registered earlier; injected evidence states its real origin.
+   */
+  provenance?: string;
+  /** The inlined text is a bounded head+tail excerpt; the full file's hash is still pinned. */
+  truncated?: boolean;
 }
 
 /** A criterion-scoped check the harness ran, with the result the judge must weigh. */
@@ -284,25 +292,65 @@ export interface CheckResult {
   command: string;
   exitCode: number;
   tail: string;
+  /**
+   * Overrides the default "ran just now" sentence for checks that were
+   * recorded earlier (implement verify-run logs): honesty about WHEN a check
+   * ran is what lets the judge weigh a possibly-stale pass correctly.
+   */
+  provenance?: string;
 }
+
+/**
+ * A criterion the harness already settled with its own oracle before any judge
+ * ran (PRD `Check:`/`Artifact:` tails). Injected into every lane as context:
+ * without it, live reruns showed judges BLOCKing runtime criteria they could
+ * not see evidence for and sessions rebuilding ad-hoc verification to satisfy
+ * them.
+ */
+export interface SettledCriterion {
+  criterionId: string;
+  /** The oracle's own reason line, e.g. "harness ran `cmd`: exit 0". */
+  note: string;
+  /** Bounded stdout/stderr tail of the oracle command, when one ran. */
+  tail?: string;
+}
+
+/**
+ * Per-item render clamp for inlined evidence text. Exported because the
+ * PRD-path injection excerpts oversized artifacts to exactly this size BEFORE
+ * rendering: an excerpt cut larger than the render clamp would be re-truncated
+ * by clampDocument below and lose its own explicit byte marker mid-cut.
+ */
+export const EVIDENCE_RENDER_MAX_CHARS = 40_000;
 
 /**
  * Evidence block: material the harness collected on its own clock, never
  * fetched by the judge. Provenance is stated inline so the judge weighs a
  * harness-run capture differently from a file that was merely present.
  */
-function evidenceSection(evidence: EvidenceMaterial[]): string {
-  if (evidence.length === 0) return "";
+function evidenceSection(evidence: EvidenceMaterial[], omittedCount = 0): string {
+  if (evidence.length === 0 && omittedCount === 0) return "";
   const blocks = evidence.map((item) => {
-    const provenance = item.producedBy
-      ? `produced by the harness running \`${item.producedBy}\` just now`
-      : "file recorded as evidence by the contract";
+    const provenance =
+      item.provenance
+      ?? (item.producedBy
+        ? `produced by the harness running \`${item.producedBy}\` just now`
+        : "file recorded as evidence by the contract");
     const head = `[${item.criterionId}] ${item.path} (${item.bytes} bytes, sha256 ${item.sha256.slice(0, 12)}, ${provenance})`;
     if (item.attachedImage) {
       return `${head}\nThis image is attached to this prompt. Judge its criterion from what you can see in it.`;
     }
-    return `${head}\n---\n${clampDocument(item.text ?? "", 40_000)}\n---`;
+    const excerptNote = item.truncated === true ? " [bounded excerpt of a larger file; the marker inside shows what was cut]" : "";
+    return `${head}${excerptNote}\n---\n${clampDocument(item.text ?? "", EVIDENCE_RENDER_MAX_CHARS)}\n---`;
   });
+  // Truncation is never silent (the scale guard drops whole artifacts past the
+  // per-lane budget): the judge must know evidence exists that it was not
+  // shown, so absence reads as "omitted", not "unproven".
+  if (omittedCount > 0) {
+    blocks.push(
+      `[${omittedCount} more artifact(s) omitted for the judge input budget; their paths and hashes are recorded in the gate artifact. Do not treat their absence here as absence of evidence.]`,
+    );
+  }
   return `
 RUNTIME EVIDENCE (collected by the harness, not by you):
 Some criteria are proven by runtime artifacts rather than by the diff alone. Judge those criteria
@@ -320,17 +368,44 @@ ${blocks.join("\n\n")}
  */
 function checkSection(checks: CheckResult[]): string {
   if (checks.length === 0) return "";
-  const lines = checks.map(
-    (check) =>
-      `[${check.criterionId}] the harness ran \`${check.command}\` just now and it exited ${check.exitCode}.\nOutput tail:\n---\n${clampDocument(check.tail, 8_000)}\n---`,
-  );
+  const lines = checks.map((check) => {
+    const head = check.provenance
+      ? `[${check.criterionId}] ${check.provenance}; it exited ${check.exitCode}.`
+      : `[${check.criterionId}] the harness ran \`${check.command}\` just now and it exited ${check.exitCode}.`;
+    return `${head}\nOutput tail:\n---\n${clampDocument(check.tail, 8_000)}\n---`;
+  });
   return `
-HARNESS CHECK RESULTS (run by the harness on its own clock, one per criterion):
+HARNESS CHECK RESULTS (run by the harness on its own clock, criterion-scoped):
 A check that exits 0 is direct evidence for its criterion - stronger than anything you can read off
 the diff, because it observed the running system. Weigh it accordingly, but still FAIL a criterion
 whose check clearly tests something other than what the criterion states.
 
 ${lines.join("\n\n")}
+`;
+}
+
+/**
+ * Oracle-settled criteria ride into every lane as context, never as work: the
+ * harness already decided them by a stronger instrument than a model reading a
+ * diff. Shown so the judge sees what the runtime already proved (live reruns:
+ * judges BLOCKed runtime criteria whose evidence they were never shown)
+ * instead of doubting or re-deriving it.
+ */
+function settledSection(settled: SettledCriterion[]): string {
+  if (settled.length === 0) return "";
+  const blocks = settled.map((item) => {
+    const head = `[${item.criterionId} - settled by harness oracle] ${item.note}`;
+    return item.tail !== undefined && item.tail !== ""
+      ? `${head}\nOutput tail:\n---\n${clampDocument(item.tail, 8_000)}\n---`
+      : head;
+  });
+  return `
+CRITERIA ALREADY SETTLED BY THE HARNESS (context only - NOT yours to judge):
+The harness executed these criteria's declared oracles at runtime and recorded their verdicts; they
+are not in your criteria list and need no re-proving. They are shown so you can rest related
+judgments on what the runtime already demonstrated.
+
+${blocks.join("\n\n")}
 `;
 }
 
@@ -402,12 +477,22 @@ judged in parallel by other reviewers.`
     : "";
 }
 
+/** Options shared by the inline-diff and agentic verify prompt builders. */
+export interface SemanticVerifyOptions {
+  mechanicalRan?: boolean;
+  lane?: { index: number; count: number };
+  /** Oracle-settled criteria, injected as context in every lane. */
+  settled?: SettledCriterion[];
+  /** Artifacts dropped by the per-lane evidence budget; announced, never silent. */
+  omittedEvidenceCount?: number;
+}
+
 export function semanticVerifyPrompt(
   diffContent: string,
   criteria: { id: string; text: string }[],
   evidence: EvidenceMaterial[] = [],
   checks: CheckResult[] = [],
-  options: { mechanicalRan?: boolean; lane?: { index: number; count: number } } = {},
+  options: SemanticVerifyOptions = {},
 ): string {
   const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
   return `You are an independent implementation reviewer.
@@ -418,7 +503,7 @@ ${SEMANTIC_JSON_CONTRACT}
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
-${checkSection(checks)}${evidenceSection(evidence)}
+${checkSection(checks)}${settledSection(options.settled ?? [])}${evidenceSection(evidence, options.omittedEvidenceCount ?? 0)}
 DIFF:
 ---
 ${diffContent}
@@ -440,7 +525,7 @@ export function agenticSemanticVerifyPrompt(
   criteria: { id: string; text: string }[],
   evidence: EvidenceMaterial[] = [],
   checks: CheckResult[] = [],
-  options: { mechanicalRan?: boolean; lane?: { index: number; count: number } } = {},
+  options: SemanticVerifyOptions = {},
 ): string {
   const criteriaBlock = criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n");
   return `You are an independent implementation reviewer with read-only file access (Read/Grep/Glob).
@@ -456,7 +541,7 @@ ${SEMANTIC_JSON_CONTRACT}
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
-${checkSection(checks)}${evidenceSection(evidence)}
+${checkSection(checks)}${settledSection(options.settled ?? [])}${evidenceSection(evidence, options.omittedEvidenceCount ?? 0)}
 CHANGED FILES (diff-stat of the change under judgment; read these files for detail):
 ---
 ${diffStat}
