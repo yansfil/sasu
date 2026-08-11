@@ -488,6 +488,17 @@ function requirementsFidelityReviewFreshnessViolations(state) {
  * unscoped-file warning is read. An agent that neither records nor is asked slips
  * through - that was already true before this change, and closing it needs a
  * different instrument than a tree fingerprint that fired on everything.
+ *
+ * Thinnest-watched combination in the system, stated here so the next person does
+ * not have to re-derive it: a run whose verify gate NEVER RAN, on a profile that
+ * does not require the final adversarial review. Nothing then pins that run's
+ * source tree at finalize - the gate's judged-diff pin does not exist, the final
+ * review's tree pin does not exist, and this review is on the intent axis. That
+ * is honest rather than a regression (such a run has no code judgment at all, and
+ * its receipt says so with a NOT_RUN gate; what was removed is a trigger that hid
+ * the absence by making a reviewer who never reads code re-read it). But it is
+ * the combination to reach for first if this ever needs another instrument, and
+ * the instrument belongs on the gate or on delivery, not back on this review.
  */
 function fidelityReviewInputs(state) {
   const projectRoot = state.projectRoot || cwd();
