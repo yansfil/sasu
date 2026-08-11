@@ -1,17 +1,13 @@
 "use strict";
 
 /**
- * Minimal glob dialect for §8 `Scope:` tails, shared by the lib-side freshness
- * scoping (git.js vouchedTreeFingerprint). Semantics are identical to the TS
- * gate's matchesScopeGlob (cli/src/gates/commands.ts): `**` crosses
- * directories, `*` and `?` stay within one path segment, and a bare path with
- * no wildcard matches itself or anything under it, like a git pathspec.
- * Deliberately no brace/negation support - prelint rejects characters outside
- * this dialect.
- *
- * The duplication is one-way and temporary: commands.ts is owned by a later
- * consolidation wave and will migrate onto this module; until then the two
- * copies must not drift.
+ * Minimal glob dialect for §8 `Scope:` tails - the single implementation,
+ * shared by the lib-side freshness scoping (git.js vouchedTreeFingerprint)
+ * and the TS gate (cli/src/gates/commands.ts requires and re-exports it):
+ * `**` crosses directories, `*` and `?` stay within one path segment, and a
+ * bare path with no wildcard matches itself or anything under it, like a git
+ * pathspec. Deliberately no brace/negation support - prelint rejects
+ * characters outside this dialect.
  */
 function matchesScopeGlob(file, glob) {
   const normalized = String(file || "").replace(/\\/g, "/");

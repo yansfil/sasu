@@ -492,7 +492,12 @@ export interface VerifyOptions {
    */
   contractPath?: string;
   criteria?: { id: string; text: string }[];
-  diffFile?: string;
+  /**
+   * Internal diff-injection seam for tests, deliberately never exposed as a
+   * CLI flag: the judged diff must come from git, so the implementing agent
+   * cannot curate what the judge sees (the old --diff-file escape hatch).
+   */
+  diffText?: string;
   baseRef?: string;
   skipMechanical?: boolean;
   /**
@@ -774,18 +779,12 @@ export async function runVerifyGate(
         : "no acceptance criteria found (expected '## 7. Acceptance Criteria' with '- AC#.' items)",
     );
   }
-  const diff = options.diffFile
-    ? readTextFile(projectRoot, options.diffFile, "diff file")
-    : gitDiff(projectRoot, options.baseRef);
+  const diff = options.diffText ?? gitDiff(projectRoot, options.baseRef);
   if (diff.trim() === "") {
     throw new Error(
       `empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}. Implement the change first, or point --base at the commit you started from. Note that gitignored files are invisible here even when they exist.`,
     );
   }
-  // An agent-curated diff is a submission-bias surface: verification-input
-  // selection belongs to the document/harness, so its use is stamped into the
-  // gate artifact rather than trusted silently.
-  const agentCuratedDiff = options.diffFile !== undefined;
   // The oversized-diff guard moved to the per-lane assembly below: a lane may
   // shrink under the budget via PRD Scope globs, and an oversized lane falls
   // back to the agentic judge when the backend supports one.
@@ -923,7 +922,6 @@ export async function runVerifyGate(
           evidence: lane ? lane.artifacts : [],
           mechanical: mechanicalRecord(),
           treeFingerprint: zeroJudgeFingerprint,
-          ...(agentCuratedDiff ? { agentCuratedDiff: true } : {}),
           ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
           inputs: allInputs,
         },
@@ -1037,7 +1035,7 @@ export async function runVerifyGate(
   if (oversized.length > 0 && !backendAgentic) {
     const worst = Math.max(...oversized.map((vl) => vl.diffChars));
     throw new Error(
-      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the ${config.judge.backend} judge backend cannot run the read-only agentic fallback. No judgment ran and no retry attempt was spent. Narrow the change under judgment: declare task Scope globs in the PRD, pass --diff-file with a diff scoped to the implementation (e.g. git diff <base> -- <paths>), point --base at the commit you started from, or split the change.`,
+      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the ${config.judge.backend} judge backend cannot run the read-only agentic fallback. No judgment ran and no retry attempt was spent. Narrow the change under judgment: declare task Scope globs in the PRD so each lane judges only its own files, point --base at the commit you started from, or split the change.`,
     );
   }
   // Every no-judgment exit is behind us: NOW spend the oracle side effects
@@ -1206,7 +1204,6 @@ export async function runVerifyGate(
           evidence: evidenceSummary,
           mechanical: mechanicalRecord(),
           treeFingerprint,
-          ...(agentCuratedDiff ? { agentCuratedDiff: true } : {}),
           ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
           inputs: allInputs,
         },
@@ -1239,7 +1236,6 @@ export async function runVerifyGate(
       evidence: evidenceSummary,
       mechanical: mechanicalRecord(),
       ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
-      ...(agentCuratedDiff ? { agentCuratedDiff: true } : {}),
       ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
       inputs: allInputs,
     };
@@ -1634,40 +1630,19 @@ const DIFF_EXCLUDE_PATHSPECS = [
 //
 // The trust rule: which slice of the diff a judge lane sees is decided by the
 // vetted PRD's `Scope:` declarations and derived here by the harness - never
-// picked by the implementer at verification time (that is what --diff-file
-// does, and why its use is stamped agentCuratedDiff in the artifact).
+// picked by the implementer at verification time (the reason the --diff-file
+// flag no longer exists; diffText remains as a test-only seam the CLI never
+// exposes).
 
 /**
- * Minimal glob dialect for §8 Scope tails: `**` crosses directories, `*` and
- * `?` stay within one segment, and a bare path (no wildcard) matches itself
- * or anything under it, like a git pathspec. Deliberately no brace/negation
- * support - prelint rejects characters outside this dialect.
+ * Minimal glob dialect for §8 Scope tails, owned by cli/lib/scope_match.js
+ * (the lib-side freshness scoping in git.js reads the same module, so the two
+ * consumers can never drift). Re-exported here so gate-internal callers and
+ * the dist/gates/commands.js test imports keep their path.
  */
-export function matchesScopeGlob(file: string, glob: string): boolean {
-  const normalized = file.replace(/\\/g, "/");
-  const cleaned = glob.replace(/\/+$/, "");
-  if (!/[*?]/.test(cleaned)) {
-    return normalized === cleaned || normalized.startsWith(`${cleaned}/`);
-  }
-  let pattern = "";
-  for (let i = 0; i < cleaned.length; i += 1) {
-    const char = cleaned[i]!;
-    if (char === "*") {
-      if (cleaned[i + 1] === "*") {
-        // `**/` may match zero directories; bare `**` swallows anything.
-        pattern += cleaned[i + 2] === "/" ? "(?:.*/)?" : ".*";
-        i += cleaned[i + 2] === "/" ? 2 : 1;
-      } else {
-        pattern += "[^/]*";
-      }
-    } else if (char === "?") {
-      pattern += "[^/]";
-    } else {
-      pattern += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    }
-  }
-  return new RegExp(`^${pattern}$`).test(normalized);
-}
+export const { matchesScopeGlob } = require("../../lib/scope_match.js") as {
+  matchesScopeGlob: (file: string, glob: string) => boolean;
+};
 
 interface DiffFileBlock {
   /** Path of the change (b-side; a-side for deletions). */
@@ -1741,7 +1716,7 @@ export function scopeForLane(
 
 /**
  * Diff-stat for the agentic fallback prompt: file list plus added/removed line
- * counts, computed from the diff text itself so a --diff-file diff and a
+ * counts, computed from the diff text itself so an injected test diff and a
  * git-generated one produce the same summary shape.
  */
 export function diffStatFromText(diff: string): string {

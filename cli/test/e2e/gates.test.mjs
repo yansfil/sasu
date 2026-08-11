@@ -14,18 +14,34 @@ const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).path
 const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "utf8");
 const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8");
 
-function makeProject({ config } = {}) {
+function gitCommitAll(dir, message, paths = ["-A"]) {
+  for (const args of [["init", "-q"], ["add", ...paths], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message]]) {
+    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  }
+}
+
+// Verify reads the change under judgment from git itself (the --diff-file
+// injection flag was removed as an agent-curated escape hatch), so verify
+// fixtures are real repos: the documents are the base commit and widget.js is
+// the untracked working change - the same +render()/+persist() content the
+// old changes.diff fixture used to inject.
+function makeProject({ config, git = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-e2e-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   if (config) fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify(config));
   fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE);
   fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE);
-  fs.writeFileSync(path.join(dir, "changes.diff"), "diff --git a/widget.js b/widget.js\n+render()\n+persist()\n");
+  if (git) {
+    gitCommitAll(dir, "base");
+    fs.writeFileSync(path.join(dir, "widget.js"), "render()\npersist()\n");
+  }
   return dir;
 }
 
 function stubFile(dir, responses) {
-  const file = path.join(dir, "stub.json");
+  // Under agents/ so the stub plumbing never rides the judged git diff.
+  const file = path.join(dir, "agents", "stub.json");
   fs.writeFileSync(file, JSON.stringify(responses));
   fs.rmSync(`${file}.cursor`, { force: true });
   return file;
@@ -105,9 +121,10 @@ test("gate spec BLOCKs on a fidelity gap and records the artifact", () => {
 test("verify FAILs mechanically without calling the judge", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"console.error('unit exploded'); process.exit(2)\"" } } },
+    git: true,
   });
   // Poison stub: any judge call would return an invalid reply and surface as ERROR.
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "should never be consumed"),
   });
   assert.equal(result.status, 1);
@@ -121,8 +138,9 @@ test("verify FAILs mechanically without calling the judge", () => {
 test("verify FAILs semantically with per-criterion reasons after mechanical passes", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
+    git: true,
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "FAIL",
       criteria: [
@@ -139,8 +157,9 @@ test("verify FAILs semantically with per-criterion reasons after mechanical pass
 test("verify PASSes end to end and records judge usage for the receipt", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
+    git: true,
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -158,9 +177,11 @@ test("verify PASSes end to end and records judge usage for the receipt", () => {
 });
 
 test("verify auto-detects commands from package.json and suggests pinning them", () => {
-  const dir = makeProject();
+  const dir = makeProject({ git: true });
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ scripts: { test: "node -e \"process.exit(0)\"" } }));
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  // Committed so the judged diff stays the widget.js change alone.
+  gitCommitAll(dir, "declare test script", ["package.json"]);
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -241,8 +262,9 @@ test("retry budget: repeated BLOCKs exhaust the configured budget and tell the a
 test("verify PASS prints a per-criterion semantic summary", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
+    git: true,
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -530,9 +552,10 @@ test("prelint: a blocked judge attempt count survives a later prelint failure un
 test("prelint: verify blocks on a broken PRD before the mechanical commands run (D-06 order)", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mechanical-ran.marker','x')\"" } } },
+    git: true,
   });
   fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE.replace("Covers R1, AC1, AC2.", "Covers R9, AC1, AC2."));
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "poison"),
   });
   assert.equal(result.status, 1);
@@ -638,6 +661,7 @@ function writeImplementState(dir, slug, state) {
 test("verify refuses a mid-run call while implement tasks are open, at zero cost", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
+    git: true,
   });
   writeImplementState(dir, "fixture", {
     tasks: [
@@ -645,7 +669,7 @@ test("verify refuses a mid-run call while implement tasks are open, at zero cost
       { id: "T2", title: "build the widget", status: "pending" },
     ],
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "should never be consumed"),
   });
   assert.equal(result.status, 1);
@@ -657,11 +681,11 @@ test("verify refuses a mid-run call while implement tasks are open, at zero cost
 });
 
 test("verify open-task guard: --allow-open-tasks proceeds with a warning", () => {
-  const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } } });
+  const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
   writeImplementState(dir, "fixture", { tasks: [{ id: "T1", title: "still open", status: "in_progress" }] });
   const result = runCli(
     dir,
-    ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff", "--allow-open-tasks"],
+    ["verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-tasks"],
     { stub: stubFile(dir, PASS_STUB) },
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -676,9 +700,9 @@ test("verify open-task guard fails open: closed tasks, corrupt state, and missin
     "{ not json at all",
     null,
   ]) {
-    const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } } });
+    const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
     if (state !== null) writeImplementState(dir, "fixture", state);
-    const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+    const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
       stub: stubFile(dir, PASS_STUB),
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -686,21 +710,14 @@ test("verify open-task guard fails open: closed tasks, corrupt state, and missin
   }
 });
 
-function gitCommitAll(dir, message) {
-  for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message]]) {
-    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
-    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
-  }
-}
-
 test("verify mechanical stage reuses a fresh verify-run pass and re-runs after drift", () => {
   const command = "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"";
-  const dir = makeProject({ config: { verify: { commands: { test: command } } } });
-  fs.writeFileSync(path.join(dir, "widget.js"), "render()\n");
-  gitCommitAll(dir, "base");
+  const dir = makeProject({ config: { verify: { commands: { test: command } } }, git: true });
   const stub = stubFile(dir, PASS_STUB);
   // Fingerprint the tree exactly as verify-run would have (same lib, same
-  // exclusions), then record a passing V1 log pinned to it.
+  // exclusions), then record a passing V1 log pinned to it. The untracked
+  // widget.js change is part of the fingerprinted tree, so verify's own
+  // recompute sees the identical state and reuses the pass.
   const gitLib = path.join(path.dirname(CLI), "..", "lib", "git.js");
   const fp = spawnSync(
     "node",
@@ -723,7 +740,7 @@ test("verify mechanical stage reuses a fresh verify-run pass and re-runs after d
     ],
   });
 
-  const reusedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  const reusedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub,
   });
   assert.equal(reusedRun.status, 0, reusedRun.stdout + reusedRun.stderr);
@@ -731,9 +748,10 @@ test("verify mechanical stage reuses a fresh verify-run pass and re-runs after d
   assert.match(reusedRun.stderr, /V1/);
   assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "fresh pass must skip execution");
 
-  // Any tracked drift invalidates the recorded fingerprint: the command runs.
-  fs.appendFileSync(path.join(dir, "widget.js"), "persist()\n");
-  const driftedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--diff-file", "changes.diff"], {
+  // Any vouched drift invalidates the recorded fingerprint (untracked files
+  // are hashed like tracked ones): the command runs again.
+  fs.appendFileSync(path.join(dir, "widget.js"), "log()\n");
+  const driftedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, PASS_STUB),
   });
   assert.equal(driftedRun.status, 0, driftedRun.stdout + driftedRun.stderr);

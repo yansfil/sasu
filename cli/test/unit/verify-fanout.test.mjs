@@ -29,6 +29,11 @@ function criteria(n) {
   return Array.from({ length: n }, (_, i) => ({ id: `AC${i + 1}`, text: `criterion ${i + 1}` }));
 }
 
+// Diff injection rides the diffText test seam (the --diff-file CLI flag was
+// removed: an agent-curated diff is a pointer-hijack surface), so fixtures
+// are plain strings rather than files on disk.
+const SMALL_DIFF = "diff --git a/x b/x\n+render()\n";
+
 // A prelint-clean quick contract: PASS verdicts pin their inputs, so tests
 // that assert an effective PASS need a real AC-source document on disk.
 function writeContract(dir, n) {
@@ -104,7 +109,7 @@ test("an oversized diff on a non-agentic backend fails the command without charg
   process.env.SASU_JUDGE_STUB_FILE = path.join(dir, "unused-stub.json");
   fs.writeFileSync(process.env.SASU_JUDGE_STUB_FILE, "{}");
   process.env.SASU_JUDGE_STUB_NO_AGENTIC = "1";
-  fs.writeFileSync(path.join(dir, "big.diff"), "+x".repeat(Math.ceil((VERIFY_DIFF_MAX_CHARS + 1) / 2)));
+  const bigDiff = "+x".repeat(Math.ceil((VERIFY_DIFF_MAX_CHARS + 1) / 2));
   // Pre-seed a gate state mid fix-loop: the guard must leave it untouched.
   const stateDir = path.join(dir, "agents", "gates", "t");
   fs.mkdirSync(stateDir, { recursive: true });
@@ -120,11 +125,11 @@ test("an oversized diff on a non-agentic backend fails the command without charg
     }),
   );
   await assert.rejects(
-    runVerifyGate(dir, loadConfig(dir), "t", { criteria: criteria(2), diffFile: "big.diff", skipMechanical: true }),
+    runVerifyGate(dir, loadConfig(dir), "t", { criteria: criteria(2), diffText: bigDiff, skipMechanical: true }),
     (error) => {
       assert.match(error.message, new RegExp(`over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget`));
       assert.match(error.message, /No judgment ran and no retry attempt was spent/);
-      assert.match(error.message, /--diff-file/);
+      assert.match(error.message, /declare task Scope globs/, "the recovery advice must point at PRD Scope globs, not a curated diff");
       return true;
     },
   );
@@ -140,18 +145,17 @@ test("an oversized diff on a non-agentic backend fails the command without charg
 test("an oversized diff on an agentic backend falls back to the read-only judge instead of erroring", async () => {
   const dir = makeDir();
   const bigDiff = `diff --git a/big.ts b/big.ts\n${"+x\n".repeat(Math.ceil(VERIFY_DIFF_MAX_CHARS / 3) + 100)}`;
-  fs.writeFileSync(path.join(dir, "big.diff"), bigDiff);
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "read big.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "read big.ts" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "big.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: bigDiff, skipMechanical: true }),
   );
   assert.equal(result.ok, true, "the fallback must judge, not throw");
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
   assert.equal(artifact.lanes[0].agenticFallback, true, "the artifact must record that the lane went agentic");
   assert.ok(artifact.lanes[0].diffChars > VERIFY_DIFF_MAX_CHARS, "the artifact records the oversized lane diff size");
-  assert.equal(artifact.agentCuratedDiff, true, "--diff-file use is stamped for deviation visibility");
+  assert.ok(!("agentCuratedDiff" in artifact), "the agent-curated stamp left with the --diff-file flag");
   assert.equal(artifact.criteria[0].evidence, "read big.ts", "the judge's read trail rides in the verdict evidence");
 });
 
@@ -166,12 +170,11 @@ test("the semantic prompt never clamps the diff it is given", () => {
 
 test("zero resolved mechanical commands surface a loud warning and a none-detected artifact stage", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x hunk" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff" }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF }),
   );
   assert.equal(result.ok, true, "the warning must not block the gate");
   assert.match(result.mechanicalWarning, /ZERO mechanical commands/);
@@ -182,12 +185,11 @@ test("zero resolved mechanical commands surface a loud warning and a none-detect
 
 test("--skip-mechanical is a deliberate choice and gets no zero-detection warning", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x hunk" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }),
   );
   assert.equal(result.mechanicalWarning, undefined);
   assert.equal(readArtifacts(dir).find((a) => a.stage === "semantic").mechanical, "skipped");
@@ -207,7 +209,6 @@ const laneVerdicts = (ids, failId) => ({
 
 test("fan-out: criteria split into lanes, lanes merge in document order, one round is one attempt", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const nine = criteria(9);
   const result = await withStub(
     dir,
@@ -217,7 +218,7 @@ test("fan-out: criteria split into lanes, lanes merge in document order, one rou
         "lane:2": laneVerdicts(nine.slice(5).map((c) => c.id), "AC6"),
       },
     },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: nine, diffFile: "small.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: nine, diffText: SMALL_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, false);
   assert.equal(result.judgedVerdict, "FAIL", "one failing lane fails the merged verdict");
@@ -240,12 +241,11 @@ test("fan-out: criteria split into lanes, lanes merge in document order, one rou
 
 test("fan-out: a single lane keeps the historical gate:verify-semantic purpose", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const contractPath = writeContract(dir, 2);
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "x hunk" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "x hunk" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, true);
   const state = gatesState(dir);
@@ -255,7 +255,6 @@ test("fan-out: a single lane keeps the historical gate:verify-semantic purpose",
 
 test("fan-out: one erroring lane fails the whole round closed and names the lane", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const nine = criteria(9);
   const result = await withStub(
     dir,
@@ -265,7 +264,7 @@ test("fan-out: one erroring lane fails the whole round closed and names the lane
         "lane:2": "garbage that is not a verdict",
       },
     },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: nine, diffFile: "small.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { criteria: nine, diffText: SMALL_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "judge-invalid-output");
@@ -277,7 +276,6 @@ test("fan-out: one erroring lane fails the whole round closed and names the lane
 
 test("fan-out: a foreign criterion id is dropped from the lane instead of failing it", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const contractPath = writeContract(dir, 9);
   const nine = criteria(9);
   const lane2Ids = nine.slice(5).map((c) => c.id);
@@ -296,7 +294,7 @@ test("fan-out: a foreign criterion id is dropped from the lane instead of failin
         "lane:2": laneVerdicts(lane2Ids, null),
       },
     },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, true, "the owning lane's PASS must be authoritative for AC6");
   assert.equal(result.criteria.find((c) => c.id === "AC6").verdict, "PASS");
@@ -306,13 +304,12 @@ test("fan-out: judge.fanout=false restores the exhaustive single call for any cr
   const dir = makeDir();
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
   fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify({ judge: { fanout: false } }));
-  fs.writeFileSync(path.join(dir, "small.diff"), "diff --git a/x b/x\n+render()\n");
   const contractPath = writeContract(dir, 9);
   const nine = criteria(9);
   const result = await withStub(
     dir,
     laneVerdicts(nine.map((c) => c.id), null),
-    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffFile: "small.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: SMALL_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, true);
   const state = gatesState(dir);
@@ -452,14 +449,13 @@ Report status and evidence.
 
 test("PRD path: oracle-backed ACs settle mechanically, lanes get the Scope-filtered diff, and unscoped files warn", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
   fs.mkdirSync(path.join(dir, "out"), { recursive: true });
   fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
   const prdPath = writeScopedPrd(dir);
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, true);
   assert.deepEqual(result.judgedCriteriaIds, ["AC1", "AC2"], "the oracle-backed AC3 never reaches the judge");
@@ -475,7 +471,6 @@ test("PRD path: oracle-backed ACs settle mechanically, lanes get the Scope-filte
 
 test("PRD path: partial Scope declaration suppresses the unscoped-files warning (ownership ambiguous)", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
   fs.mkdirSync(path.join(dir, "out"), { recursive: true });
   fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
   // T2 owns the docs work but declares no Scope: docs/readme.md may be its
@@ -493,7 +488,7 @@ test("PRD path: partial Scope declaration suppresses the unscoped-files warning 
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, true);
   assert.equal(result.unscopedFiles, undefined, "a Scope-less task makes file ownership ambiguous; no warning");
@@ -504,7 +499,6 @@ test("PRD path: partial Scope declaration suppresses the unscoped-files warning 
 
 test("PRD path: an all-oracle PASS is stamped zeroJudgeCalls and spends no judge call", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
   fs.mkdirSync(path.join(dir, "out"), { recursive: true });
   fs.writeFileSync(path.join(dir, "out", "marker.txt"), "made it");
   const prdPath = writeScopedPrd(dir);
@@ -519,7 +513,7 @@ test("PRD path: an all-oracle PASS is stamped zeroJudgeCalls and spends no judge
   const saved = process.env.SASU_JUDGE_BACKEND;
   delete process.env.SASU_JUDGE_BACKEND;
   try {
-    const result = await runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true });
+    const result = await runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true });
     assert.equal(result.ok, true);
     assert.equal(result.zeroJudgeCalls, true, "the receipt must be able to say no model saw this diff");
     assert.equal(gatesState(dir).judgeCalls.length, 0);
@@ -534,7 +528,6 @@ test("PRD path: an all-oracle PASS is stamped zeroJudgeCalls and spends no judge
 test("PRD path: the oversized-diff hard error spends no oracle side effects", async () => {
   const dir = makeDir();
   const bigDiff = `diff --git a/src/widget.ts b/src/widget.ts\n${"+x\n".repeat(Math.ceil(VERIFY_DIFF_MAX_CHARS / 3) + 100)}`;
-  fs.writeFileSync(path.join(dir, "big.diff"), bigDiff);
   const prdPath = writeScopedPrd(dir);
   // The oracle command leaves a marker: on the no-judgment error path it must
   // never run (it used to execute before the size check threw, side effects
@@ -554,7 +547,7 @@ test("PRD path: the oversized-diff hard error spends no oracle side effects", as
   process.env.SASU_JUDGE_STUB_NO_AGENTIC = "1";
   try {
     await assert.rejects(
-      runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "big.diff", skipMechanical: true }),
+      runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: bigDiff, skipMechanical: true }),
       /over the \d+-char judge input budget/,
     );
     assert.equal(fs.existsSync(path.join(dir, "oracle-ran.txt")), false, "no judgment ran, so no oracle may have run either");
@@ -567,12 +560,11 @@ test("PRD path: the oversized-diff hard error spends no oracle side effects", as
 
 test("PRD path: a failed oracle closes the gate even when the judge passes every lane", async () => {
   const dir = makeDir();
-  fs.writeFileSync(path.join(dir, "changes.diff"), TWO_FILE_DIFF);
   const prdPath = writeScopedPrd(dir); // out/marker.txt deliberately absent
   const result = await withStub(
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
-    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffFile: "changes.diff", skipMechanical: true }),
+    () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
   );
   assert.equal(result.ok, false);
   assert.ok(result.status.findings.some((f) => f.area === "oracle" && f.missing.startsWith("AC3:")));
