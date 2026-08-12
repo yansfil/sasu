@@ -1,12 +1,13 @@
 ---
 topic: "pokemon-rpg"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"
+human_approval_note: "2026-08-12 대화에서 승인. 유저 지시: 'a9f24efe 이 세션에 implement 스킬을 호출(그전에 install 다시 하고)해서 benchmarks/pokemon-rpg/prd.md 를 구현하라고 시켜. 이제 얘한테 독립적으로 구현하게 시킬 거고 나중에 이 세션을 분석해서 검증부터 implement 플로우가 합리적인지 확인해볼거야'. 승인 방식은 '승인 이탈로 진행'과 'PRD를 approved로 고침' 중 후자를 유저가 선택."
 review_profile: "standard"
 review_rationale: "새로운 사용자 대면 브라우저 게임을 저장소에 추가할 뿐 인증·결제·서버 데이터·외부 호출·되돌릴 수 없는 부수효과가 없고, 영속 범위는 브라우저 localStorage의 단일 세이브 슬롯 하나뿐이다."
 source_intake: "agents/interview/pokemon-rpg/qa-log.md"
 created_at: "2026-08-11"
-updated_at: "2026-08-11"
+updated_at: "2026-08-12"
 ---
 
 # PRD: pokemon-rpg
