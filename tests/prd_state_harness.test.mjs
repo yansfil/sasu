@@ -2614,20 +2614,21 @@ test("every accepted review recording is counted as a round; a rejected one is n
 
   write(reviewPath, fidelityReviewBody(logPath));
   const first = record();
-  assert.deepEqual(first.reviewRounds.fidelity, { rounds: 1, distinctReports: 1 });
+  assert.deepEqual(first.reviewRounds.fidelity, { rounds: 1, distinctReports: 1, scopes: ["unrecorded"] },
+    "recorded without rendering a prompt, so the harness cannot say what scope the reviewer worked from and says exactly that");
   assert.equal(readState().supersededReviews.length, 0, "the live round is not duplicated into the log");
   assert.equal(first.reviewRoundCapNotice, undefined, "inside the bound the harness says nothing");
 
   // Re-recording the SAME document is still a round the run spent - the harness
   // counts what it observed and does not decide whether it was worth it.
   const second = record();
-  assert.deepEqual(second.reviewRounds.fidelity, { rounds: 2, distinctReports: 1 },
+  assert.deepEqual(second.reviewRounds.fidelity, { rounds: 2, distinctReports: 1, scopes: ["unrecorded", "unrecorded"] },
     "two rounds, one document: the distinct-report count is what separates them");
 
   // A different report is a second distinct document.
   write(reviewPath, fidelityReviewBody(logPath, " (revised after the reviewer's note)"));
   const third = record();
-  assert.deepEqual(third.reviewRounds.fidelity, { rounds: 3, distinctReports: 2 });
+  assert.deepEqual(third.reviewRounds.fidelity, { rounds: 3, distinctReports: 2, scopes: ["unrecorded", "unrecorded", "unrecorded"] });
   assert.equal(third.reviewRounds.total, 3);
 
   // The superseded rounds are recorded once each, in order, with what they were.
@@ -2675,6 +2676,157 @@ test("every accepted review recording is counted as a round; a rejected one is n
   const fifth = record();
   assert.equal(fifth.ok, true, "the cap must never reject a recording");
   assert.equal(fifth.reviewRounds.total, 5);
+});
+
+// The two rules that make a narrowed round safe, and the only two worth a test:
+// a delta the harness cannot prove must render FULL and say why, and a round that
+// WAS narrowed must be recorded as narrowed. Pinning the prompt's wording instead
+// would cost maintenance on every rewording and prove nothing about either.
+test("round 2 is rendered from the delta; a delta that cannot be proven renders full and says why", () => {
+  const projectRoot = initGitRepo();
+  const slug = "review-delta";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "review-delta-session");
+  const statePath = path.join(projectRoot, "agents", "implement", slug, "state.json");
+  const readState = () => JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const fidelityPrompt = () => run(process.execPath, [harness, "requirements-review-prompt"], { cwd: projectRoot }).stdout;
+  const recordFidelity = summary => runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", summary], projectRoot);
+
+  // Round 1 is always full: a delta needs something to be a delta from.
+  const first = fidelityPrompt();
+  assert.match(first, /Required checks:/);
+  assert.match(first, /read the complete file/, "round 1 carries the full intake mandate");
+  assert.doesNotMatch(first, /DELTA round/);
+  write(reviewPath, fidelityReviewBody(logPath));
+  recordFidelity("Round 1 PASS");
+  assert.deepEqual(readState().requirementsFidelityReview.scope, { kind: "full", axis: "fidelity", round: 1 });
+
+  // Round 2 with nothing moved: still a delta round, and it says the delta is
+  // empty rather than implying there is work to redo.
+  const second = fidelityPrompt();
+  assert.match(second, /This is review round 2 on this axis and it is a DELTA round/);
+  assert.match(second, /Changed since that baseline: NOTHING/);
+  assert.match(second, /still on disk unchanged/, "the baseline report is readable, so this round amends it");
+  assert.doesNotMatch(second, /Required checks:\n1\. Every material answer/, "the full re-derivation mandate is gone from the prompt, not merely discouraged");
+  assert.doesNotMatch(second, /read the complete file/, "a delta round must not carry the full interview-log mandate");
+  // Rendering the same state twice must produce the same prompt: a scope that
+  // depended on a clock or on map ordering would make a delta unreproducible.
+  assert.equal(fidelityPrompt(), second);
+
+  // A new registered artifact is a new pinned input, so the delta names it.
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  const newLog = readState().verification[0].artifacts.map(artifact => artifact.path).find(item => item !== logPath);
+  assert.ok(newLog, "the second verify-run registered another log");
+  const third = fidelityPrompt();
+  assert.match(third, new RegExp(`\\+${newLog.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}`), "the changed input is IN the prompt, not described to it");
+  assert.match(third, /1 of \d+ intent inputs \(PRD, interview log, registered evidence\) it pinned/);
+
+  const recorded = recordFidelity("Round 2 PASS");
+  assert.equal(recorded.requirementsFidelityReview.scope.kind, "delta");
+  assert.equal(recorded.requirementsFidelityReview.scope.round, 2);
+  assert.deepEqual(recorded.requirementsFidelityReview.scope.changed, [`+${newLog}`]);
+  // The baseline is a STALE record, which is the normal case: V1 running after the
+  // review is what staled it and what summoned this round, and the prompt hands the
+  // reviewer that reason verbatim.
+  assert.equal(recorded.requirementsFidelityReview.scope.baseline.status, "stale");
+  assert.match(recorded.requirementsFidelityReview.scope.baseline.staleReason, /Verification V1 was run after review/);
+  assert.match(third, /Baseline - round 1: PASSED, then marked STALE - Verification V1 was run after review/);
+  // The ledger keeps the round-by-round scope, so a reader can see which verdicts
+  // were reached on the whole contract and which on a delta.
+  assert.deepEqual(recorded.reviewRounds.fidelity.scopes, ["full", "delta"]);
+
+  // A record with no matching prompt render cannot claim either scope. Measured on
+  // the audited run, this is the COMMON case: one prompt render, eleven records,
+  // and five reviewer spawns that each got a hand-written brief - narrowing every
+  // round invisibly. So the reply also says how to get the narrowed prompt.
+  const unrendered = recordFidelity("Round 3, no prompt rendered");
+  assert.equal(unrendered.requirementsFidelityReview.scope.kind, "unrecorded");
+  assert.match(unrendered.requirementsFidelityReview.scope.reason, /no prompt render for this round is on record/);
+  assert.match(unrendered.reviewScopeNotice, /Round 3 was recorded without a generated prompt/);
+  assert.match(unrendered.reviewScopeNotice, /run `requirements-review-prompt`/);
+  // And it stays quiet when the round WAS rendered: a notice on every round is a
+  // notice nobody reads.
+  assert.equal(recorded.reviewScopeNotice, undefined);
+
+  // A baseline with no input pin cannot prove a delta, so the round goes back to
+  // the full mandate and the prompt states which fallback fired. Silently
+  // narrowing on an unprovable baseline is the dangerous failure here.
+  const state = readState();
+  delete state.requirementsFidelityReview.inputs;
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  const unpinned = fidelityPrompt();
+  assert.match(unpinned, /Required checks:/);
+  assert.match(unpinned, /read the complete file/);
+  assert.doesNotMatch(unpinned, /DELTA round/);
+});
+
+test("the final review's delta is the source that moved, and a moved HEAD drops it to full", () => {
+  const projectRoot = initGitRepo();
+  const slug = "final-delta";
+  const { logPath, reviewPath } = driveToFidelity(projectRoot, slug, "final-delta-session");
+  const finalPath = path.join(projectRoot, "agents", "implement", slug, "review", "final-review.md");
+  const finalPrompt = () => run(process.execPath, [harness, "review-prompt"], { cwd: projectRoot }).stdout;
+  write(reviewPath, fidelityReviewBody(logPath));
+  runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS"], projectRoot);
+
+  const finalBody = extra => `# Final Adversarial Review
+
+Status: PASS
+
+## Fidelity Review Checked
+
+- Report: ${path.posix.join("agents", "implement", slug, "review", "requirements-fidelity-review.md")}
+- Status: pass
+- Recorded at: recorded
+- Findings resolved or reflected: none outstanding
+
+## Findings
+
+- none: nothing outstanding${extra}
+
+## Artifact Audit
+
+- Harness-visible validity: the command log was inspected.
+- Spot-checks performed: the fidelity checklist was sufficient.
+- Missing or weak artifacts: none.
+
+## Deviation Audit
+
+- Recorded deviations: none.
+- Accepted deviations: none.
+- Rejected deviations: none.
+
+## Verdict
+
+PASS.
+`;
+
+  assert.doesNotMatch(finalPrompt(), /DELTA round/, "round 1 on this axis is full too");
+  write(finalPath, finalBody(""));
+  runJson(["review-record", "--status", "pass", "--report", finalPath, "--summary", "Round 1 PASS"], projectRoot);
+
+  // A source fix is what summons round 2 here, and the prompt names the file.
+  write(path.join(projectRoot, "README.md"), "# Remediated source\n");
+  const second = finalPrompt();
+  assert.match(second, /This is review round 2 on this axis and it is a DELTA round/);
+  // `+`: README.md was clean at the baseline and now differs from the committed
+  // tree, so it JOINED the changed set. The legend says exactly that, because
+  // reading it as "a new file" would send the reviewer looking for the wrong thing.
+  assert.match(second, /\+README\.md/, "the changed source path is in the prompt");
+  assert.match(second, /has not moved: same verdict, same report bytes/, "the fidelity audit carries forward when its pin did not move");
+  assert.doesNotMatch(second, /Required checks \(delta review, not a re-derivation\):/, "the full mandate is replaced, not appended to");
+  write(finalPath, finalBody("\n- The remediation was checked against the approved intent."));
+  const recorded = runJson(["review-record", "--status", "pass", "--report", finalPath, "--summary", "Round 2 PASS"], projectRoot);
+  assert.equal(recorded.finalReview.scope.kind, "delta");
+  assert.deepEqual(recorded.finalReview.scope.changed, ["+README.md"]);
+  assert.deepEqual(recorded.reviewRounds.final.scopes, ["full", "delta"]);
+
+  // Committing empties the dirty set without reverting anything, so the path list
+  // would be a fiction. The round drops to the full mandate and says why.
+  run("git", ["add", "-A"], { cwd: projectRoot });
+  run("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "commit the reviewed work"], { cwd: projectRoot });
+  const afterCommit = finalPrompt();
+  assert.doesNotMatch(afterCommit, /DELTA round/);
+  assert.match(afterCommit, /Required checks \(delta review, not a re-derivation\):/);
 });
 
 test("judge-error loop reaches a blocked receipt without ever claiming a spent fix budget", () => {

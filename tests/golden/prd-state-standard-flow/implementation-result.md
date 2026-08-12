@@ -19,6 +19,7 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Requirements fidelity depth: full
 - Final adversarial review required: no
 - Review rounds recorded: 1/4 (requirements fidelity 1, 1 distinct report(s); final 0, 0 distinct report(s))
+- Review scopes: requirements fidelity full; final none
 - Verify gate: NOT_RUN
 - Open review follow-ups: none
 - Classification signals: none
@@ -233,11 +234,15 @@ Receipt: agents/implement/standard-regression/receipt.json
   "reviewRounds": {
     "fidelity": {
       "rounds": 1,
-      "distinctReports": 1
+      "distinctReports": 1,
+      "scopes": [
+        "full"
+      ]
     },
     "final": {
       "rounds": 0,
-      "distinctReports": 0
+      "distinctReports": 0,
+      "scopes": []
     },
     "total": 1,
     "cap": 4,
@@ -293,6 +298,11 @@ Receipt: agents/implement/standard-regression/receipt.json
         "sha256": "<SHA>"
       }
     ],
+    "scope": {
+      "kind": "full",
+      "axis": "fidelity",
+      "round": 1
+    },
     "recordedAt": "<TS>"
   },
   "finalReview": null,

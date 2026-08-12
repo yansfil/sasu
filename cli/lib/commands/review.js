@@ -8,10 +8,10 @@ const { nowIso, cwd, resolveProjectPath, toProjectRelative, writeJson, simpleHas
 const { shellLikeTokens } = require("../inference");
 const { worktreeSnapshot, vouchedTreeFingerprintForState, vouchedFingerprintsMatch, summarizeFingerprintDiff } = require("../git");
 const { isFreshPass, latestCommandLog, declaredSideEffect } = require("../fresh_pass");
-const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, reviewRoundCount, reviewRoundCapNotice } = require("../state_data");
+const { isVerificationRequiredForDone, executionPlanSummary, countState, rehearsalSummary, reviewProfileName, effectiveReviewPolicy, supersedeReviewRound, nextReviewRound, rememberReviewHandout, consumeReviewHandout, reviewRoundCount, reviewRoundCapNotice, reviewScopeNotice } = require("../state_data");
 const { readyExecutionPlan, nextItem } = require("../planning");
 const { collectArtifacts, inspectArtifact } = require("../artifacts");
-const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, fidelityReviewInputs, reviewSeverityViolations, openReviewFollowUps, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
+const { assertFinalReviewReport, assertRequirementsFidelityReport, validateArtifacts, completionViolations, fidelityReviewInputs, reviewRoundScope, reviewSeverityViolations, openReviewFollowUps, requirementsFidelityHandoffViolations, finalReviewHandoffViolations, verifyGateStatus, verifyGateTerminallyBlocked } = require("../reviews");
 const { writeImplementationReport, renderRequirementsReviewPrompt, renderReviewPrompt } = require("../render");
 const { loadState, syncActive, persistState } = require("../state_store");
 const { loadPending } = require("../rules");
@@ -32,24 +32,37 @@ function loadGatesStateForTimings(state) {
   }
 }
 
+// Rendering a review prompt is the only moment the harness knows what scope the
+// reviewer was actually given, so it writes that down here instead of trying to
+// reconstruct it at record time (see rememberReviewHandout for why a
+// reconstruction can silently overstate coverage). The prompt itself stays a pure
+// function of state and disk: the same state renders the same prompt.
 function cmdReviewPrompt(options) {
   const { statePath, state } = loadState(options);
   const reportPath = path.join(state.projectRoot || cwd(), state.runDir, "review", "final-review.md");
+  const scope = reviewRoundScope(state, "final");
   process.stdout.write(renderReviewPrompt({
     state,
+    scope,
     statePath: toProjectRelative(statePath, state.projectRoot || cwd()),
     reportPath,
   }));
+  rememberReviewHandout(state, scope);
+  persistState(statePath, state);
 }
 
 function cmdRequirementsReviewPrompt(options) {
   const { statePath, state } = loadState(options);
   const reportPath = path.join(state.projectRoot || cwd(), state.runDir, "review", "requirements-fidelity-review.md");
+  const scope = reviewRoundScope(state, "fidelity");
   process.stdout.write(renderRequirementsReviewPrompt({
     state,
+    scope,
     statePath: toProjectRelative(statePath, state.projectRoot || cwd()),
     reportPath,
   }));
+  rememberReviewHandout(state, scope);
+  persistState(statePath, state);
 }
 
 // Structure defects in review reports are advisory (see the tier comment on
@@ -106,6 +119,8 @@ function cmdRequirementsReviewRecord(options) {
     }
   }
 
+  // Consumed before superseding, because the round number counts the live record.
+  const scope = consumeReviewHandout(state, "fidelity", nextReviewRound(state, "fidelity"));
   supersedeReviewRound(state, "fidelity");
   state.requirementsFidelityReview = {
     status,
@@ -122,6 +137,10 @@ function cmdRequirementsReviewRecord(options) {
     // subject and that gate pins the exact diff it judged.
     worktreeSnapshot: worktreeSnapshot(state),
     inputs: fidelityReviewInputs(state),
+    // What this round was given to look at: the whole contract, or only the delta
+    // since the previous round. Recorded on the review itself so the verdict and
+    // the scope it was reached under can never be read apart (item 10).
+    scope,
     // Findings the report labelled MINOR, carried instead of re-reviewed. An
     // open finding written down is more honest than a round that pretends to
     // close it (PRINCIPLES items 10 and 13).
@@ -157,6 +176,7 @@ function cmdRequirementsReviewRecord(options) {
     reviewRounds: reviewRoundCount(state),
     reviewFollowUps: openReviewFollowUps(state),
     ...(reviewRoundCapNotice(state) ? { reviewRoundCapNotice: reviewRoundCapNotice(state) } : {}),
+    ...(reviewScopeNotice(scope) ? { reviewScopeNotice: reviewScopeNotice(scope) } : {}),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),
@@ -204,6 +224,7 @@ function cmdReviewRecord(options) {
     }
   }
 
+  const scope = consumeReviewHandout(state, "final", nextReviewRound(state, "final"));
   supersedeReviewRound(state, "final");
   state.finalReview = {
     status,
@@ -215,6 +236,8 @@ function cmdReviewRecord(options) {
     // vouchedTreeFingerprint is the freshness decision input.
     worktreeSnapshot: worktreeSnapshot(state),
     vouchedTreeFingerprint: vouchedTreeFingerprintForState(state),
+    // See the fidelity record above: the scope is part of the verdict.
+    scope,
     ...(severity.followUps.length ? { followUps: severity.followUps } : {}),
     // The fidelity verdict this review audited, pinned so freshness can ask
     // whether THAT changed instead of whether a clock moved. Status and report
@@ -236,6 +259,7 @@ function cmdReviewRecord(options) {
     reviewRounds: reviewRoundCount(state),
     reviewFollowUps: openReviewFollowUps(state),
     ...(reviewRoundCapNotice(state) ? { reviewRoundCapNotice: reviewRoundCapNotice(state) } : {}),
+    ...(reviewScopeNotice(scope) ? { reviewScopeNotice: reviewScopeNotice(scope) } : {}),
     counts: countState(state),
     executionPlan: executionPlanSummary(state),
     ready: readyExecutionPlan(state),

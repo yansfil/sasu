@@ -142,10 +142,15 @@ function markRequirementsFidelityReviewStale(state, reason) {
  * inside ONE cluster - so neither the timestamps nor `reportSha256` separate "a
  * new round" from "the same round's report, corrected". Splitting them needs the
  * question "did anything other than the report change since the last accepted
- * record", whose material is the review's pinned input set. Until that pin
- * exists, this records every accepted round with its time and hash and leaves
- * the grouping to the reader (item 7: the harness records what it can observe
- * and does not guess meaning).
+ * record", whose material is the review's pinned input set.
+ *
+ * That pin now exists, and reviewRoundScope asks exactly that question - but it
+ * asks it to decide what the NEXT round may look at, not to relabel this ledger.
+ * The distinction is deliberate: a round is still every accepted recording, and
+ * this log still records each with its time and hash without guessing which ones
+ * "really" formed a round (item 7 - the harness records what it can observe and
+ * leaves meaning to the reader). What it now also carries is each round's scope,
+ * which is the fact a reader was actually missing.
  *
  * @param {State} state
  * @param {"fidelity"|"final"} kind
@@ -163,9 +168,59 @@ function supersedeReviewRound(state, kind) {
     recordedAt: current.recordedAt || null,
     supersededAt: nowIso(),
     ...(current.staleReason ? { staleReason: current.staleReason } : {}),
+    // What the round was allowed to look at, carried into the ledger so the
+    // receipt can say which rounds were narrowed. A round whose prompt held only
+    // the delta is a weaker instrument than a full round, and a ledger that hides
+    // that difference reports a narrowed judgment as a whole one (item 10).
+    ...(current.scope ? { scope: current.scope } : {}),
   };
   state.supersededReviews.push(entry);
   return entry;
+}
+
+/**
+ * Which round this axis is about to record: superseded rounds plus the live one,
+ * plus one. Derived like every other count here, so it cannot drift.
+ *
+ * @param {State} state
+ * @param {"fidelity"|"final"} axis
+ */
+function nextReviewRound(state, axis) {
+  const superseded = Array.isArray(state.supersededReviews) ? state.supersededReviews : [];
+  const field = axis === "fidelity" ? "requirementsFidelityReview" : "finalReview";
+  return superseded.filter(entry => entry && entry.kind === axis).length + (state[field] ? 1 : 0) + 1;
+}
+
+/**
+ * The scope the harness actually handed the reviewer, remembered from the moment
+ * it rendered the prompt until the round is recorded.
+ *
+ * Recomputing the scope at record time instead looks simpler and is wrong: the
+ * final axis can only enumerate its delta while HEAD has not moved, so a commit
+ * landing between the prompt and the recording would flip a delta round to
+ * "full" and stamp full coverage on a narrowed judgment. The harness knows
+ * exactly what it emitted, so it writes that down rather than reconstructing it
+ * (item 10 - one record, made where the fact becomes true).
+ *
+ * One slot per axis, overwritten by each render: only the latest prompt can be
+ * the one the reviewer holds. The record consumes it, so a second recording
+ * cannot inherit the first round's scope.
+ */
+function rememberReviewHandout(state, scope) {
+  if (!scope || !scope.axis) return;
+  if (!state.reviewHandouts || typeof state.reviewHandouts !== "object") state.reviewHandouts = {};
+  state.reviewHandouts[scope.axis] = scope;
+}
+
+function consumeReviewHandout(state, axis, round) {
+  const handouts = state.reviewHandouts && typeof state.reviewHandouts === "object" ? state.reviewHandouts : null;
+  const handout = handouts ? handouts[axis] : null;
+  if (handouts) delete handouts[axis];
+  if (handout && handout.round === round) return handout;
+  // A review recorded without a matching prompt render (hand-written report,
+  // a prompt from an earlier round, a resumed session): the harness cannot say
+  // what the reviewer was given, and saying so beats guessing either way.
+  return { kind: "unrecorded", axis, round, reason: "no prompt render for this round is on record, so the scope the reviewer worked from is unknown" };
 }
 
 /**
@@ -249,6 +304,30 @@ function reviewRoundCapNotice(state) {
     + `If the USER asks for another review round, run it - this bounds the autonomous loop, not them.`;
 }
 
+/**
+ * The redirect for a round the harness never handed a prompt to, or null.
+ *
+ * Measured on the audited run (2026-08-11, project modakbul): the agent rendered
+ * the fidelity prompt ONCE and then recorded ten more fidelity rounds, and all
+ * five reviewer spawns received a hand-written ~3.3k briefing instead of the
+ * generated prompt. So the agent was already narrowing every round after the
+ * first - just invisibly, by improvising a shorter brief, with no record of what
+ * it left out. That is the failure PRINCIPLES item 10 names, and it is worse than
+ * the cost the delta contract exists to cut.
+ *
+ * This is why the contract needs a nudge at all: a prompt the harness narrows is
+ * worth nothing if nobody asks for it. It redirects and never refuses - a
+ * hand-authored review is legitimate, and a bound that strands a run is worse
+ * than the loop it bounds - and it rides the record reply for the same reason the
+ * cap notice does: that is the moment the agent decides what to do next.
+ */
+function reviewScopeNotice(scope) {
+  if (!scope || scope.kind !== "unrecorded" || scope.round < 2) return null;
+  const command = scope.axis === "fidelity" ? "requirements-review-prompt" : "review-prompt";
+  return `Round ${scope.round} was recorded without a generated prompt, so the harness cannot say what this reviewer was given and the receipt records the scope as unknown. `
+    + `From round 2 the harness narrows the prompt itself: run \`${command}\` and hand the reviewer that text, and it will contain the baseline verdict, the findings it deferred, and exactly what changed since - instead of a brief you compose, which narrows the review without recording what it left out.`;
+}
+
 function reviewRoundCount(state) {
   const superseded = Array.isArray(state.supersededReviews) ? state.supersededReviews : [];
   const count = kind => {
@@ -259,7 +338,15 @@ function reviewRoundCount(state) {
       ...past.map(entry => entry.reportSha256).filter(Boolean),
       ...(state[field] && state[field].reportSha256 ? [state[field].reportSha256] : []),
     ]);
-    return { rounds: past.length + live, distinctReports: hashes.size };
+    // Round-by-round, oldest first: "full" | "delta" | "unrecorded", and
+    // "unpinned" for rounds recorded before scopes were tracked at all. A reader
+    // asking "was this verdict reached on the whole contract or on a delta?"
+    // gets the answer per round instead of a total that averages the two.
+    const scopes = [
+      ...past.map(entry => (entry.scope && entry.scope.kind) || "unpinned"),
+      ...(state[field] ? [(state[field].scope && state[field].scope.kind) || "unpinned"] : []),
+    ];
+    return { rounds: past.length + live, distinctReports: hashes.size, scopes };
   };
   const fidelity = count("fidelity");
   const final = count("final");
@@ -534,9 +621,13 @@ module.exports = {
   markRequirementsFidelityReviewStale,
   markCompletionReviewsStale,
   supersedeReviewRound,
+  nextReviewRound,
+  rememberReviewHandout,
+  consumeReviewHandout,
   reviewRoundCount,
   reviewRoundCapReached,
   reviewRoundCapNotice,
+  reviewScopeNotice,
   REVIEW_ROUND_CAP,
   findTrackedItem,
   countState,

@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { cwd, resolveProjectPath, toProjectRelative, canonicalPath, sha256File, sha256Text, escapeRegExp, harnessCommand } = require("./util");
-const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, primaryWorktreeRoot } = require("./git");
+const { vouchedTreeFingerprintForState, vouchedFingerprintsMatch, primaryWorktreeRoot, worktreeSnapshot } = require("./git");
 const { judgeRetryBudget } = require("./config");
 const { isVerificationRequiredForDone, verificationPlanSummary, executionPlanSummary, latestEvidenceTimestamp, finalReviewRequiredForState } = require("./state_data");
 const { extractSection, parseMarkdownTableRow, isTableSeparator, pendingPreWork } = require("./prd_parser");
@@ -543,6 +543,163 @@ function fidelityReviewInputs(state) {
     if (entry.artifact && typeof entry.artifact.path === "string") pin(entry.artifact.path, "evidence");
   }
   return inputs;
+}
+
+/**
+ * How many paths a delta scope names before it summarizes the rest. The list is
+ * for a reader, not a checksum: the count is always exact (`changedTotal`), and
+ * the prompt says how many it left out so a truncated list can never read as a
+ * complete one.
+ */
+const REVIEW_DELTA_PATH_LIMIT = 20;
+
+function reviewDeltaLabels(before, after) {
+  const labels = [];
+  let unchanged = 0;
+  for (const [rel, signature] of after) {
+    if (!before.has(rel)) labels.push(`+${rel}`);
+    else if (before.get(rel) !== signature) labels.push(`~${rel}`);
+    else unchanged += 1;
+  }
+  for (const rel of before.keys()) if (!after.has(rel)) labels.push(`-${rel}`);
+  // Sorted, not insertion-ordered: rendering the same scope twice has to produce
+  // the same prompt, and the input sets come from a Map and a git status walk.
+  labels.sort();
+  return { labels, unchanged };
+}
+
+// Everything snapshotEntriesEqual compares except the path, which is the key.
+function snapshotEntrySignature(entry) {
+  return JSON.stringify([
+    entry.status || "",
+    entry.sha256 || null,
+    entry.bytes ?? null,
+    entry.kind ?? null,
+    entry.executable ?? null,
+    entry.symlinkTarget ?? null,
+  ]);
+}
+
+/**
+ * What a review round is entitled to look at: the whole contract (round 1, or
+ * any round whose narrowing cannot be proven), or only what moved since the
+ * previous round on the same axis.
+ *
+ * PRINCIPLES item 13 names a delta contract as one of the three admissible
+ * bounds on a loop that cannot converge, and this is it. The reason it belongs
+ * in code rather than in the reviewer's instructions is item 7: the harness
+ * WRITES these prompts, so "look only at the delta" as prose is a request the
+ * reviewer may ignore, while handing it a prompt that contains only the delta is
+ * a bound. The verify gate already works this way (`priorFindingsFor`, the delta
+ * re-judgment contract); reviews were the stage still re-deriving from scratch
+ * every round (item 12: import the idea, not the machinery).
+ *
+ * Two rules keep the narrowing honest, and they matter more than the saving:
+ *
+ * - A delta exists only when the harness can prove one. No baseline, no pin on
+ *   the baseline, or a comparison the harness cannot compute means the round is
+ *   FULL and the prompt says which of those it was. Silently narrowing is the
+ *   dangerous failure here, so every fallback carries its reason outward.
+ * - The narrowing is the harness's default, never a ceiling. The prompt tells the
+ *   reviewer what it is not being shown and how to widen; a reviewer that widens
+ *   and says so in its report is behaving correctly.
+ *
+ * The axes narrow against their own pins, the same ones their freshness rules
+ * use - a delta measured against anything else would let a review pass over a
+ * change its own staleness rule would catch:
+ *
+ * - fidelity: the pinned input set (PRD, intent sources, registered evidence).
+ *   Content-hashed, so this is exact and survives a commit.
+ * - final: the dirty-tree snapshot it recorded, which names paths - but only
+ *   while HEAD has not moved. A commit empties the dirty set without reverting
+ *   anything, so a moved HEAD means the path list would be a fiction and the
+ *   round drops to full. The vouched fingerprint stays the freshness authority;
+ *   the snapshot only names paths for the prompt.
+ *
+ * @param {State} state
+ * @param {"fidelity"|"final"} axis
+ */
+function reviewRoundScope(state, axis) {
+  const field = axis === "fidelity" ? "requirementsFidelityReview" : "finalReview";
+  const superseded = Array.isArray(state.supersededReviews) ? state.supersededReviews : [];
+  const priorRounds = superseded.filter(entry => entry && entry.kind === axis).length;
+  const baseline = state[field];
+  const round = priorRounds + (baseline ? 1 : 0) + 1;
+  const full = reason => ({ kind: "full", axis, round, ...(reason ? { reason } : {}) });
+
+  // `stale` belongs here as much as pass and fail do - it is the COMMON baseline.
+  // A review goes stale exactly when something it vouched for moved, which is the
+  // usual reason a second round exists at all, and the record keeps its report,
+  // its pins, and the reason it went stale. Excluding it would have left the
+  // delta contract unreachable on the one path that needs it most.
+  if (!baseline || !["pass", "fail", "stale"].includes(baseline.status)) {
+    return full(round === 1 ? null : "no previous round on this axis is on record to compare against");
+  }
+  const baselineSummary = {
+    status: baseline.status,
+    reportPath: baseline.reportPath || null,
+    reportSha256: baseline.reportSha256 || null,
+    recordedAt: baseline.recordedAt || null,
+    ...(baseline.staleReason ? { staleReason: baseline.staleReason } : {}),
+  };
+
+  let delta;
+  let extra = {};
+  if (axis === "fidelity") {
+    if (!Array.isArray(baseline.inputs) || baseline.inputs.length === 0) {
+      return full("the previous round pinned no inputs, so what changed since it cannot be proven");
+    }
+    const before = new Map(baseline.inputs
+      .filter(input => input && typeof input.path === "string")
+      .map(input => [input.path, input.sha256 || null]));
+    const after = new Map(fidelityReviewInputs(state).map(input => [input.path, input.sha256 || null]));
+    delta = reviewDeltaLabels(before, after);
+  } else {
+    const recorded = baseline.worktreeSnapshot;
+    if (!recorded || !Array.isArray(recorded.entries)) {
+      return full("the previous round recorded no source snapshot, so what changed since it cannot be proven");
+    }
+    const current = worktreeSnapshot(state);
+    if (!current) return full("the project is not a git checkout, so the source delta cannot be enumerated");
+    if ((recorded.headSha || null) !== (current.headSha || null)) {
+      return full("HEAD moved since the previous round, so the dirty-tree comparison cannot enumerate what changed");
+    }
+    const before = new Map(recorded.entries.map(entry => [entry.path, snapshotEntrySignature(entry)]));
+    const after = new Map(current.entries.map(entry => [entry.path, snapshotEntrySignature(entry)]));
+    delta = reviewDeltaLabels(before, after);
+    const audited = baseline.auditedFidelity;
+    const fidelity = state.requirementsFidelityReview;
+    extra = {
+      auditedFidelityMoved: audited && typeof audited === "object" && fidelity
+        ? fidelity.status !== audited.status || (fidelity.reportSha256 || null) !== (audited.reportSha256 || null)
+        : null,
+    };
+  }
+
+  // Deviations recorded since the baseline, on both axes: a deviation is the one
+  // intent-axis change no content pin can see (see fidelityReviewInputs' named
+  // hole - a fix that adds unrecorded scope is caught only through the deviation
+  // it records), so a delta that dropped them would narrow past its own guard.
+  // `null` means the baseline carries no timestamp to compare against, and the
+  // prompt then puts every deviation back in scope rather than guessing.
+  const deviations = Array.isArray(state.deviations) ? state.deviations : [];
+  const newDeviations = baselineSummary.recordedAt === null
+    ? null
+    : deviations
+      .filter(entry => entry && typeof entry.ts === "string" && entry.ts > baselineSummary.recordedAt)
+      .map(entry => `${entry.id} ${entry.type}: ${entry.summary}`);
+
+  return {
+    kind: "delta",
+    axis,
+    round,
+    baseline: baselineSummary,
+    changed: delta.labels.slice(0, REVIEW_DELTA_PATH_LIMIT),
+    changedTotal: delta.labels.length,
+    unchanged: delta.unchanged,
+    newDeviations,
+    ...extra,
+  };
 }
 
 /**
@@ -1099,6 +1256,8 @@ module.exports = {
   requirementsFidelityReviewFreshnessViolations,
   requirementsFidelityReviewInputViolations,
   fidelityReviewInputs,
+  reviewRoundScope,
+  REVIEW_DELTA_PATH_LIMIT,
   reviewWorktreeSnapshotViolations,
   completionReadiness,
   completionViolations,

@@ -3,11 +3,11 @@
 const fs = require("fs");
 const path = require("path");
 
-const { writeMarkdown, NAMESPACE_ROOT } = require("./util");
+const { writeMarkdown, sha256File, NAMESPACE_ROOT } = require("./util");
 const { hashGateInput } = require("./gate_freshness");
 const { executionPlanSummary, reviewProfileName, finalReviewRequiredForState, effectiveReviewPolicy, reviewRoundCount } = require("./state_data");
 const { collectArtifacts } = require("./artifacts");
-const { verifyGateStatus, openReviewFollowUps } = require("./reviews");
+const { verifyGateStatus, openReviewFollowUps, reviewRoundScope } = require("./reviews");
 const { snapshotEntriesEqual } = require("./git");
 
 function writeImplementationReport(statePath, state) {
@@ -53,6 +53,11 @@ function writeImplementationReport(statePath, state) {
   const rounds = reviewRoundCount(state);
   const followUps = openReviewFollowUps(state);
   lines.push(`- Review rounds recorded: ${rounds.total}/${rounds.cap}${rounds.capReached ? " (cap reached: further rounds were not autonomous)" : ""} (requirements fidelity ${rounds.fidelity.rounds}, ${rounds.fidelity.distinctReports} distinct report(s); final ${rounds.final.rounds}, ${rounds.final.distinctReports} distinct report(s))`);
+  // What each round was allowed to look at, in order. A delta round is a weaker
+  // instrument than a full one - it was handed only what moved since the previous
+  // round - so a reader weighing this report has to be able to see which rounds
+  // were narrowed instead of inferring full coverage from a count (item 10).
+  lines.push(`- Review scopes: requirements fidelity ${rounds.fidelity.scopes.join(", ") || "none"}; final ${rounds.final.scopes.join(", ") || "none"}`);
   const verifyGate = verifyGateStatus(state);
   lines.push(`- Verify gate: ${verifyGate.effective}${verifyGate.overridden ? " (user override)" : ""}`);
   // A blocked receipt must say why without a trip to gates.json: attempts
@@ -250,6 +255,69 @@ function settledSpecGate(state) {
   return { lastRunAt: record.lastRunAt || null, inputs: record.inputs };
 }
 
+/**
+ * The baseline report, only when this round can actually read it: the path is
+ * returned when the file on disk still hashes to what the baseline round was
+ * recorded under. An edited or replaced report is NOT offered as the prior
+ * findings, because "the reviewer read the previous round" has to be true.
+ */
+function readableBaselineReport(scope, state) {
+  const rel = scope.baseline && scope.baseline.reportPath;
+  const pinned = scope.baseline && scope.baseline.reportSha256;
+  if (!rel || !pinned) return null;
+  return sha256File(path.join(state.projectRoot || process.cwd(), rel)) === pinned ? rel : null;
+}
+
+/**
+ * The delta briefing that REPLACES a full mandate on round 2 and later.
+ *
+ * Four facts the reviewer needs, in the order it needs them (a reviewer that
+ * cannot tell it is on a narrowed round will either re-derive everything - the
+ * cost this exists to remove - or, worse, report delta-scoped confidence as full
+ * coverage): which round this is, what the baseline verdict was, what that
+ * baseline left open, and exactly what has moved since.
+ *
+ * The widen clause is not politeness. The harness narrows by default because it
+ * can prove the delta; it cannot prove the delta is SUFFICIENT, and only the
+ * reviewer can judge that. A round that widens and says so is the contract
+ * working, not a violation of it.
+ */
+function renderReviewDeltaBriefing(scope, state, options) {
+  const { unit, legend, widenHint } = options;
+  const baseline = scope.baseline || {};
+  const prior = scope.round - 1;
+  const readable = readableBaselineReport(scope, state);
+  const followUps = options.followUps || [];
+  const pinnedTotal = scope.changedTotal + scope.unchanged;
+  const listed = scope.changed.map(label => `  ${label}`).join("\n");
+  const omitted = scope.changedTotal - scope.changed.length;
+  return [
+    `This is review round ${scope.round} on this axis and it is a DELTA round: what follows is only what moved since round ${prior}, which already judged the full contract. Do not re-derive that round's work.`,
+    "",
+    // A stale baseline states why it went stale: that reason is the most direct
+    // statement of what this round exists to judge, and it is the usual case.
+    `Baseline - round ${prior}: ${baseline.status === "stale" ? `PASSED, then marked STALE - ${baseline.staleReason || "reason unrecorded"}` : String(baseline.status || "unknown").toUpperCase()}, recorded ${baseline.recordedAt || "at an unrecorded time"}, report \`${baseline.reportPath || "unrecorded"}\`${baseline.reportSha256 ? ` sha256 ${baseline.reportSha256.slice(0, 12)}` : ""}.`,
+    readable
+      ? `That report is still on disk unchanged at \`${readable}\`. Read it first: this round amends it, it does not replace it from scratch.`
+      : `That report is NOT on disk under the hash it was recorded with, so its reasoning is not readable this round. Treat the baseline as an unverified claim and widen the scope wherever you would have relied on it.`,
+    followUps.length
+      ? `Findings it deferred rather than closed (MINOR, carried into the receipt):\n${followUps.map(item => `  - ${item}`).join("\n")}`
+      : `It deferred no findings; anything it found was either resolved or is reflected in its verdict.`,
+    "",
+    scope.newDeviations === null
+      ? `Deviations: the baseline carries no recorded time, so the harness cannot tell which deviations postdate it. Audit every entry in \`state.deviations\` this round.`
+      : scope.newDeviations.length
+        ? `Deviations recorded since the baseline (a deviation is the one thing no content pin can see, so it is always in a delta's scope):\n${scope.newDeviations.map(item => `  - ${item}`).join("\n")}`
+        : `Deviations: none recorded since the baseline.`,
+    "",
+    scope.changedTotal === 0
+      ? `Changed since that baseline: NOTHING. All ${pinnedTotal} ${unit} it pinned are byte-identical. If you were summoned to reverse or extend the baseline verdict on unchanged material, say exactly that in your report - a second verdict on identical inputs needs a reason a reader can check.`
+      : `Changed since that baseline - ${scope.changedTotal} of ${pinnedTotal} ${unit} it pinned (${legend}):\n${listed}${omitted > 0 ? `\n  (+${omitted} more not listed; ${scope.changedTotal} changed in total)` : ""}`,
+    "",
+    `If this delta is not enough to reach a verdict - the baseline reasoning is missing, generic, or inconsistent with state, or ${widenHint} - then widen the scope, read what you need, and SAY SO in your report. The narrowing is this harness's default, not a ceiling on your judgment, and a report that states it widened is correct behavior. What you must not do is report a delta-scoped verdict as full coverage.`,
+  ].join("\n");
+}
+
 function renderRequirementsReviewPrompt(context) {
   const { state, statePath, reportPath } = context;
   const intentTrace = state.intentTrace || {};
@@ -271,9 +339,47 @@ function renderRequirementsReviewPrompt(context) {
   // and the 37k-read-zero-findings datum): only a fresh, non-overridden
   // spec-gate PASS whose pinned inputs still match disk narrows the mandate.
   const specGate = settledSpecGate(state);
+  const scope = context.scope || reviewRoundScope(state, "fidelity");
   const qaLogGuidance = specGate
     ? `- The qa-log→PRD leg is settled: the spec gate's fidelity lane PASSed on these exact documents (last run ${specGate.lastRunAt || "unrecorded"}; pinned inputs still matching disk: ${specGate.inputs.map(input => `\`${input.path}\` sha256 ${input.sha256.slice(0, 12)}`).join(", ")}), already judging that every material decision in the interview log is represented in the PRD without distortion. Do NOT re-read the full qa-log: read the PRD's Decision Traceability section plus the implementation and registered evidence, and judge the PRD→implementation leg. Escape hatch: if anything in the PRD's decision trace looks inconsistent or truncated, the spec record looks suspicious, or a decision's provenance is unclear, fall back to reading the canonical qa-log in full.`
     : `- When an intake source is \`qa-log.md\`, read the complete file, including Current Understanding, Decision Register, material Raw Q&A entries (Decision Packet content lives in each entry's immediate_notes field), UX Scenario Cards, objections, evidence, and audit findings. Do not rely on a summary or parsed decision sample.`;
+  // Round 1 carries the full mandate; round 2 and later carry only what moved
+  // (reviewRoundScope). Both branches end in the same report skeleton on purpose:
+  // a delta round produces a COMPLETE report - unchanged sections carried forward
+  // from the baseline - so nothing downstream has to special-case a short one,
+  // and the harness never has two report contracts to keep in step.
+  const fullMandate = `${qaLogGuidance}
+- Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources). This count is not semantic coverage proof.
+${decisionLines}
+
+Required checks:
+1. Every material answer, explicit user decision, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption from intake/clarify/current conversation has the same meaning and provenance in the PRD and implementation, or an explicit approved disposition.
+2. Silence, lack of objection, a topic change, or continued participation was not treated as user approval. An unambiguous affirmative response to an explicit recommendation remains an accepted recommendation rather than an agent default.
+3. Every accepted initial proposal is implemented and evidenced or explicitly deferred/non-goal with user approval, and every rejected option, non-goal, and guardrail stayed rejected.
+4. PRD Requirements and ACs did not dilute the user's intended outcome into easier proxy checks.
+5. User-visible flows, copy, data behavior, runtime behavior, and external/live proof expectations match the user's goal, not only the executor's tasks.
+6. Each AC has evidence that proves the user intent behind the AC, not just a superficial DOM/file/test condition.
+7. Every required Verification item has a Verification Intent Checklist entry that maps Pass Intent and covered R#/AC# to concrete registered artifact paths.
+8. Any missing source artifact, ambiguous decision, or human taste judgment is called out as blocking unless the PRD explicitly made it non-required.
+9. No hidden scope, architecture, storage, API, auth, billing, production-data, or external-service decision was added without approval.
+10. The implementation result report does not overclaim Done when user intent is partially met, blocked, or still needs human judgment.
+11. Every recorded deviation in \`state.deviations\` (approval overrides, equivalent-command substitutions, out-of-order completions, write-scope drift, review-policy changes) is acceptable against the user's intent; on trivial and standard profiles this review is the only place a deviation is ever judged.`;
+  const deltaMandate = () => `- Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init. Round 1 already walked it; this round does not.
+
+${renderReviewDeltaBriefing(scope, state, {
+    unit: "intent inputs (PRD, interview log, registered evidence)",
+    legend: "\`~\` content changed, \`+\` newly pinned, \`-\` no longer pinned",
+    widenHint: "a changed input is broad enough that the intent lineage has to be re-read end to end",
+    followUps: ((state.requirementsFidelityReview || {}).followUps) || [],
+  })}
+
+Required checks this round - the delta only:
+1. For each changed input above, judge what its change did to the intent axis: does the PRD still carry every material decision with its original meaning and provenance, and does the changed evidence still prove the intent behind the criteria it covers rather than a weaker proxy?
+2. Re-judge every finding the baseline deferred or left open. A finding the baseline recorded as MINOR stays MINOR unless the delta made it worse; say which it is.
+3. Judge every deviation listed above against the user's intent. On trivial and standard profiles this review is still the only place a deviation is ever judged.
+4. Carry the baseline's unchanged sections into your report - Decision Trace, Verification Intent Checklist, Coverage Judgment - marking carried entries as unchanged from round ${scope.round - 1}. Do not re-derive them, and do not drop them: the report you write is the run's complete fidelity record, not a diff of one.
+5. Do NOT re-read the interview log or re-derive the decision trace for an input that did not change. Round ${scope.round - 1} judged those on the same bytes.`;
+  const mandate = scope.kind === "delta" ? deltaMandate() : fullMandate;
   return `You are the requirements fidelity reviewer for a PRD implementation.
 
 ${ownershipGuidance}
@@ -295,22 +401,7 @@ Source of truth:
 - Rehearsal ledger: \`${state.runDir}/rehearsals.jsonl\` (may be absent) - side-door Bash runs of contract commands the harness observer recorded, exit codes included. A required check whose official pass shows no failure anywhere in its history is a signal worth weighing, not an automatic finding: confirm the check exercises what it claims to protect.
 - Git diff/worktree: inspect current repository state
 - Original intent sources: read the PRD frontmatter and sections for \`source_intake\`, \`source_clarity\`, Pre-Work, Human Decisions, Scope, Non-Goals, Requirements, Acceptance Criteria, Risks, Guardrails, and any referenced \`${NAMESPACE_ROOT}/interview/**\` files that exist (legacy \`${NAMESPACE_ROOT}/intake/**\` or \`${NAMESPACE_ROOT}/clarify/**\` paths may appear in older PRDs).
-${qaLogGuidance}
-- Intent trace snapshot for navigation only: ${intentTrace.decisionCount || 0} decision/proposal item(s) captured at init (${intentTrace.prdDecisionCount || 0} from PRD, ${intentTrace.sourceDecisionCount || 0} from intake/clarity sources). This count is not semantic coverage proof.
-${decisionLines}
-
-Required checks:
-1. Every material answer, explicit user decision, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption from intake/clarify/current conversation has the same meaning and provenance in the PRD and implementation, or an explicit approved disposition.
-2. Silence, lack of objection, a topic change, or continued participation was not treated as user approval. An unambiguous affirmative response to an explicit recommendation remains an accepted recommendation rather than an agent default.
-3. Every accepted initial proposal is implemented and evidenced or explicitly deferred/non-goal with user approval, and every rejected option, non-goal, and guardrail stayed rejected.
-4. PRD Requirements and ACs did not dilute the user's intended outcome into easier proxy checks.
-5. User-visible flows, copy, data behavior, runtime behavior, and external/live proof expectations match the user's goal, not only the executor's tasks.
-6. Each AC has evidence that proves the user intent behind the AC, not just a superficial DOM/file/test condition.
-7. Every required Verification item has a Verification Intent Checklist entry that maps Pass Intent and covered R#/AC# to concrete registered artifact paths.
-8. Any missing source artifact, ambiguous decision, or human taste judgment is called out as blocking unless the PRD explicitly made it non-required.
-9. No hidden scope, architecture, storage, API, auth, billing, production-data, or external-service decision was added without approval.
-10. The implementation result report does not overclaim Done when user intent is partially met, blocked, or still needs human judgment.
-11. Every recorded deviation in \`state.deviations\` (approval overrides, equivalent-command substitutions, out-of-order completions, write-scope drift, review-policy changes) is acceptable against the user's intent; on trivial and standard profiles this review is the only place a deviation is ever judged.
+${mandate}
 
 Write the report to:
 \`${reportPath}\`
@@ -385,6 +476,40 @@ function renderReviewPrompt(context) {
   const fidelityLine = fidelity.reportSha256
     ? `Recorded fidelity review: status ${fidelity.status}, report \`${fidelity.reportPath}\`, sha256 \`${fidelity.reportSha256}\`, recorded at ${fidelity.recordedAt}.`
     : "No requirements fidelity review is recorded yet; a passing final review is impossible until one is recorded.";
+  const scope = context.scope || reviewRoundScope(state, "final");
+  // Same two-branch shape as the fidelity prompt. Note that the FULL branch is
+  // already a delta - against the gates and the fidelity review, the axis split
+  // this stage was always built on. What the delta branch adds is the second,
+  // orthogonal narrowing this stage never had: against its own previous round.
+  const fullMandate = `Required checks (delta review, not a re-derivation):
+1. Requirements fidelity review exists, passed, is fresh, and its findings are either resolved or explicitly reflected in the final verdict. It is the primary semantic artifact proof; reopen its V-by-V reasoning only where it is missing, generic, inconsistent with state, or suspicious.
+2. Trust the harness's mechanical gates (artifact registration/hash/kind validity, required-verification pass status) unless a signal is inconsistent, missing, or suspicious; do not re-derive them item by item.
+3. Task status is a coordinator self-report with no mechanical precondition: spot-check each completed task's evidence against its mapped acceptance criteria and diff instead of trusting the status alone.
+4. Open and spot-check the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the fidelity checklist.
+5. Audit every recorded deviation in \`state.deviations\` for acceptability, and treat unrecorded drift between the diff and the plan or structure lock as a finding.
+6. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and adds no unmapped scope.
+7. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, and artifacts.`;
+  const deltaMandate = () => `${renderReviewDeltaBriefing(scope, state, {
+    unit: "paths in the working tree's changed set",
+    legend: "\`+\` newly differs from the committed tree, \`~\` differs differently than at the baseline, \`-\` no longer differs",
+    widenHint: "a changed path touches something the baseline never examined, such as auth, data migration, or an external service",
+    followUps: ((state.finalReview || {}).followUps) || [],
+  })}
+
+${scope.auditedFidelityMoved === true
+    ? `The requirements fidelity review you audited in round ${scope.round - 1} has MOVED: it is now ${(state.requirementsFidelityReview || {}).status || "unrecorded"} with report sha256 ${(((state.requirementsFidelityReview || {}).reportSha256) || "unrecorded").slice(0, 12)}. Re-audit it - that is this round's first job, and the baseline's judgment of it no longer applies.`
+    : scope.auditedFidelityMoved === false
+      ? `The requirements fidelity review you audited in round ${scope.round - 1} has not moved: same verdict, same report bytes. Its audit carries forward; do not redo it.`
+      : `Whether the fidelity review moved since round ${scope.round - 1} cannot be determined from the record, so audit it again this round.`}
+
+Required checks this round - the delta only:
+1. Judge each changed path above: does it do what the coordinator claims, and does it break, weaken, or silently widen anything the baseline round passed on?
+2. Re-judge every finding the baseline deferred or left open, and say for each whether the delta resolved it, left it standing, or made it worse.
+3. Judge every deviation listed above, and treat drift between the changed paths and the plan or structure lock that no deviation records as a finding. Unrecorded scope is exactly what a delta round is best positioned to catch.
+4. Spot-check the artifacts the changed paths touch. Do not re-open the ones the baseline already audited on bytes that have not moved.
+5. Carry the baseline's unchanged sections into your report, marking carried entries as unchanged from round ${scope.round - 1}. The report you write is the run's complete final-review record, not a diff of one.
+6. Do NOT re-derive the V-by-V proof, the task spot-checks, or the mechanical gate audit for anything the delta did not touch. Round ${scope.round - 1} judged those on the same bytes.`;
+  const mandate = scope.kind === "delta" ? deltaMandate() : fullMandate;
   return `You are the adversarial final reviewer for a PRD implementation.
 
 ${profileGuidance}
@@ -405,14 +530,7 @@ Source of truth:
 - Requirements fidelity review: \`${state.runDir}/review/requirements-fidelity-review.md\`
 - Git diff/worktree: inspect current repository state
 
-Required checks (delta review, not a re-derivation):
-1. Requirements fidelity review exists, passed, is fresh, and its findings are either resolved or explicitly reflected in the final verdict. It is the primary semantic artifact proof; reopen its V-by-V reasoning only where it is missing, generic, inconsistent with state, or suspicious.
-2. Trust the harness's mechanical gates (artifact registration/hash/kind validity, required-verification pass status) unless a signal is inconsistent, missing, or suspicious; do not re-derive them item by item.
-3. Task status is a coordinator self-report with no mechanical precondition: spot-check each completed task's evidence against its mapped acceptance criteria and diff instead of trusting the status alone.
-4. Open and spot-check the underlying artifacts for risky, user-critical, or suspicious items instead of duplicating the fidelity checklist.
-5. Audit every recorded deviation in \`state.deviations\` for acceptability, and treat unrecorded drift between the diff and the plan or structure lock as a finding.
-6. The implementation follows the PRD's Major Technical Structure Changes or documented structure lock and adds no unmapped scope.
-7. Nothing was recorded after the reviews (staleness), ready parallel groups (if used) had disjoint write scopes, and the final report does not overclaim beyond what a human could verify from the PRD, state, and artifacts.
+${mandate}
 
 Write the report to:
 \`${reportPath}\`

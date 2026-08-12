@@ -12,6 +12,7 @@ Read this reference before acceptance sweeping, generating either completion rev
 - [Fidelity Review Recording And Freshness](#fidelity-review-recording-and-freshness)
 - [Final Adversarial Review](#final-adversarial-review)
 - [Final Review Recording And Freshness](#final-review-recording-and-freshness)
+- [Review Round Scope](#review-round-scope)
 - [Complete Finalization](#complete-finalization)
 - [Blocked Or Partial Finalization](#blocked-or-partial-finalization)
 - [Completion Authority](#completion-authority)
@@ -116,19 +117,10 @@ When the verification contract or artifacts contain a user-visible surface, trea
 Judge primary flows and relevant loading, empty, and error states.
 Judge responsive behavior and accessibility when contracted, copy and hierarchy where applicable, and explicitly separate evidence-backed findings from remaining human taste.
 
-The reviewer must check:
+The generated prompt carries the checks themselves; pass it to the reviewer verbatim rather than restating them.
+One policy inside it is worth knowing before you read a report, because it decides how much the reviewer read:
 
-- original intake, clarify, or current-conversation sources named by PRD frontmatter or PRD sections were read when available.
 - when the source is qa-log.md, reading depth follows the spec-gate record (the generated prompt states which case applies). Settled case - the spec gate verdict is PASS, not overridden, and every recorded input hash still matches the qa-log and PRD on disk: the qa-log→PRD leg is already judged, so the reviewer reads the PRD's Decision Traceability section plus the implementation and registered evidence instead of the full qa-log, falling back to reading the canonical qa-log in full if anything in the PRD's decision trace looks inconsistent or truncated, the spec record looks suspicious, or a decision's provenance is unclear. Unsettled case - the spec gate is absent, stale, failed, or overridden: read the complete qa-log (Current Understanding, Decision Register, material Raw Q&A with Decision Packet content in each entry's `immediate_notes`, UX Scenario Cards, objections, evidence, and audit findings) instead of relying on a summary or parsed sample. The layering principle is that each layer sees only what only it can see: in an audited run the fidelity reviewer re-read a 37k-char qa-log behind a fresh spec-gate PASS and found zero issues the gate had not already caught.
-- every material answer, accepted recommendation, objection, constraint, rejected option, non-goal, and assumption has the same meaning and provenance across `qa-log -> PRD -> implementation` or an explicit approved disposition.
-- silence, lack of objection, topic changes, and continued participation were not upgraded into user approval, while unambiguous affirmative responses to explicit recommendations were preserved as accepted recommendations.
-- every user decision and accepted initial proposal is represented in scope, non-goals, requirements, acceptance criteria, verification, or human verification.
-- rejected options, non-goals, and guardrails stayed rejected.
-- implementation evidence proves the intent behind each acceptance criterion rather than only a shallow proxy.
-- every required `V#` has a Verification Intent Checklist entry mapping Pass Intent to concrete registered artifacts.
-- every mapped `R#` and `AC#` is actually proven by those artifacts.
-- remaining human judgment is not reported as complete.
-- every recorded deviation is judged acceptable or called out; on `trivial` and `standard` profiles the fidelity review is the only reviewer that ever sees deviations.
 
 Write:
 
@@ -179,16 +171,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js review-prompt
 Before this review, stop verification-only runtime servers, browser sessions, tunnels, and background processes unless there is an explicit reason to leave one running.
 Record shutdown evidence or the intentional left-running exception.
 
-For `high-risk`, perform a delta review on top of the recorded gates, not a re-derivation.
-The reviewer must check:
-
-- the requirements fidelity report exists, passed, is fresh, and has no unresolved finding hidden from the final verdict; it is the primary semantic artifact proof, and its V-by-V reasoning is reopened only where missing, generic, inconsistent, or suspicious.
-- harness-owned mechanical gates (artifact registration and hashes, required-verification status) are trusted unless a signal is inconsistent, missing, or suspicious.
-- task status is a coordinator self-report with no mechanical precondition; completed tasks are spot-checked against their mapped acceptance criteria and the diff.
-- risky or user-critical artifacts are spot-checked by opening them, without duplicating an already sound fidelity checklist.
-- every deviation is recorded and acceptable, and unrecorded drift between the diff and the plan or structure lock is a finding.
-- implementation follows the PRD structure lock and guardrails with no unmapped scope.
-- nothing was recorded after the reviews, and `implementation-result.md`, state, and the planned final user report agree without overclaiming.
+This review is a delta on top of the recorded gates and the fidelity review, never a re-derivation of them.
+The generated prompt carries the checks themselves, so pass it to the reviewer verbatim and do not restate them here or in the handoff.
+On round 2 and later the prompt narrows again, against the previous round - see [Review Round Scope](#review-round-scope).
 
 Write:
 
@@ -222,6 +207,26 @@ Labelling is never rejected on its own: a report that labels nothing behaves exa
 The autonomous review loop is bounded: the harness counts every accepted review recording as a round, and once the count reaches its cap it tells you to stop summoning rounds and to record the remaining advisory findings as follow-up items in the receipt instead.
 The bound redirects and never refuses - recordings still succeed and `finalize` still works - and it applies only to rounds you decide on yourself, never to a round the user asks for.
 An open finding written into the receipt is more honest than a round that pretends to close it.
+
+## Review Round Scope
+
+Round 1 on either axis judges the whole contract.
+Round 2 and later are narrowed by the harness, not by you: the generated prompt contains only what moved since the previous round on that axis, so there is nothing to remember and nothing to ask for.
+
+Each axis narrows against its own pin.
+The fidelity prompt names the pinned intent inputs whose content changed - PRD, interview log, registered evidence - plus any deviation recorded since the baseline.
+The final prompt names the source paths whose state changed, says whether the fidelity verdict it audited moved, and carries the same deviation list.
+Both restate the baseline round's verdict, why it went stale when it did, and the findings it deferred, and both point at the previous report when that file is still on disk under the hash it was recorded with.
+
+The narrowing is a default, never a ceiling.
+If the delta is not enough - the baseline reasoning is thin, or a changed input is broad enough that the lineage has to be re-read - widen the scope, read what you need, and say so in the report.
+A round that states it widened is behaving correctly; a round that reports a delta-scoped verdict as full coverage is not.
+
+The harness will not narrow what it cannot prove.
+No baseline, a baseline with no pin, or a comparison it cannot compute (a commit between rounds moves HEAD, so the changed-path list would be a fiction) all render the full prompt with the reason stated in it.
+Recording a round carries the scope it was handed - `full`, `delta`, or `unrecorded` when no prompt was generated for that round - onto the review record, the round ledger, and the receipt.
+So generate the prompt once per round and hand the reviewer that text.
+Composing your own shorter brief narrows the review without recording what you left out, which is the one thing this contract exists to prevent.
 
 Required final reviews must be independent in both time and content.
 The report file must be authored after `requirements-review-record` succeeds.
