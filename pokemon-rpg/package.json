@@ -1,0 +1,18 @@
+{
+  "name": "pokemon-rpg",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "ac": "node tools/ac.mjs",
+    "e2e": "playwright test",
+    "serve": "node tools/serve.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@playwright/test": "^1.48.2"
+  }
+}

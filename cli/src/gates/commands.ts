@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { SasuConfig } from "../config";
@@ -15,7 +15,6 @@ import {
 } from "../judge/types";
 import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../mechanical";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
-import { oracleHistory, oracleRepeatFailureNote } from "./oracle_history";
 import { runPrelint, type PrelintResult } from "./prelint";
 import {
   CHECK_TAIL_RENDER_MAX_CHARS,
@@ -31,7 +30,6 @@ import {
   type EvidenceMaterial,
   type JudgeLane,
   type PriorFinding,
-  type SettledCriterion,
 } from "./prompts";
 import {
   freshnessHash,
@@ -55,14 +53,8 @@ export interface GateCommandResult {
   /** Deterministic pre-judge lint result; separate from judge findings by design (D-10). */
   prelint?: PrelintResult;
   mechanical?: MechanicalResult;
-  /** Per-criterion verdicts: the judge's for judged criteria, the harness's for oracle-backed ones. */
+  /** Per-criterion semantic verdicts returned by the judge. */
   criteria?: CriterionVerdict[];
-  /**
-   * Changed files no task's Scope glob claims (only computed when the PRD
-   * declares any Scope): the mechanized first step of the unmapped-scope
-   * hard-stop - a loud warning today, not yet a block.
-   */
-  unscopedFiles?: string[];
   /**
    * Everything the receipt has to quote, so it can be written from this output
    * alone instead of reaching into gate state: what was pinned, which criteria
@@ -73,11 +65,12 @@ export interface GateCommandResult {
   evidence?: Omit<EvidenceMaterial, "text">[];
   checks?: CheckResult[];
   judgedCriteriaIds?: string[];
+  declaredGaps?: DeclaredGap[];
   judgedVerdict?: "PASS" | "FAIL";
   /**
-   * True when the verify gate passed without a single judge call (every AC
-   * oracle-backed): the record is honest, but the receipt must be able to say
-   * "no model ever read this diff" without re-deriving it from lane counts.
+   * True when no semantic judge call was possible, such as a human-only or
+   * declared-gap result. The receipt can report that fact without re-deriving
+   * it from lane counts.
    */
   zeroJudgeCalls?: boolean;
   /**
@@ -516,45 +509,14 @@ export interface VerifyOptions {
   allowOpenTasks?: boolean;
 }
 
-const { vouchedTreeFingerprint, vouchedFingerprintsMatch, summarizeFingerprintDiff } = require("../../lib/git.js") as {
+const { vouchedTreeFingerprint } = require("../../lib/git.js") as {
   vouchedTreeFingerprint: (options: {
     projectRoot: string;
     slug?: string | null;
     includeEntries?: boolean;
   }) => (VouchedTreeFingerprint & { entries?: [string, string][] }) | null;
-  vouchedFingerprintsMatch: (recorded: unknown, current: unknown) => boolean;
-  summarizeFingerprintDiff: (before: unknown, after: unknown) => { total: number; paths: string[]; text: string } | null;
 };
-
-// One §7/§8 grammar for oracle tails and Scope globs: the TS gate reads the
-// same lib parser the implement state does (runners.js precedent in prelint).
-export interface AcOracle {
-  kind: "check" | "artifact";
-  command?: string;
-  expect?: string | null;
-  path?: string;
-}
-export interface ScopedTask {
-  id: string;
-  scopeGlobs: string[];
-  acceptanceCriteria: string[];
-  requirements: string[];
-}
-const { parseAcOracle, parsePrdTasksForScoping } = require("../../lib/prd_parser.js") as {
-  parseAcOracle: (text: string) => AcOracle | null;
-  parsePrdTasksForScoping: (prdContent: string) => ScopedTask[];
-};
-// Same broad DB heuristic the implement planner warns with (db-safety gap):
-// oracle commands run on the harness clock, so the "confirm the target is
-// disposable" nudge must fire here too.
-const { DB_TOUCH_PATTERN } = require("../../lib/planning.js") as { DB_TOUCH_PATTERN: RegExp };
-// One execution semantics for oracle commands: the harness's oracle-run
-// tokenizes with shellLikeTokens and spawns WITHOUT a shell, so the gate must
-// too (same shared-lib pattern as prd_parser above). The two executors used
-// to diverge (gate: shell:true) and the same declared Check command could
-// PASS at the gate while the harness recorded not_met.
-const { shellLikeTokens, commandsMatchContract, coverageFromText } = require("../../lib/inference.js") as {
-  shellLikeTokens: (command: string) => string[];
+const { commandsMatchContract, coverageFromText } = require("../../lib/inference.js") as {
   commandsMatchContract: (actual: string, expected: string) => boolean;
   coverageFromText: (text: string) => { requirements: string[]; acceptanceCriteria: string[]; tasks: string[] };
 };
@@ -567,11 +529,12 @@ const { collectArtifacts } = require("../../lib/artifacts.js") as {
 // Fresh-pass reuse shares finalize's rule (one predicate, two consumers): a
 // verify-run pass pinned to an identical tree fingerprint already proves what
 // the mechanical stage would re-prove by running the same command again.
-const { freshVerifyRunPasses } = require("../../lib/fresh_pass.js") as {
+const { freshVerifyRunPasses, declaredSideEffect } = require("../../lib/fresh_pass.js") as {
   freshVerifyRunPasses: (
     state: ImplementStateLite,
     projectRoot: string,
-  ) => { verificationId: string; command: string; logPath: string | null }[];
+  ) => { verificationId: string; command: string; cwd: string; logPath: string | null }[];
+  declaredSideEffect: (item: ImplementVerificationLite) => string;
 };
 
 /** A registered artifact entry as state_store.attachArtifact writes it; verify-run adds command/exitCode. */
@@ -584,6 +547,25 @@ interface ImplementArtifact {
   createdAt?: string;
 }
 
+interface ImplementVerificationLite {
+  id?: string;
+  status?: string;
+  text?: string;
+  matrix?: { covers?: string; sideEffect?: string; requiredForDone?: boolean };
+  evidence?: { text?: string; ts?: string }[];
+  artifacts?: ImplementArtifact[];
+}
+
+interface ImplementPlanCheckLite {
+  id?: string;
+  verificationId?: string;
+  category?: string;
+  command?: string | null;
+  cwd?: string | null;
+  status?: string;
+  requiredForDone?: boolean;
+}
+
 /**
  * The slice of an implement run's state.json the gate reads. The dependency is
  * deliberately read-only, one-way, and optional: the gate layer otherwise
@@ -592,8 +574,17 @@ interface ImplementArtifact {
  */
 interface ImplementStateLite {
   tasks?: { id?: string; title?: string; status?: string; acceptanceCriteria?: string[]; artifacts?: ImplementArtifact[] }[];
-  acceptanceCriteria?: { id?: string; requirements?: string[]; artifacts?: ImplementArtifact[] }[];
-  verification?: { id?: string; text?: string; matrix?: { covers?: string }; artifacts?: ImplementArtifact[] }[];
+  acceptanceCriteria?: {
+    id?: string;
+    status?: string;
+    requirements?: string[];
+    artifacts?: ImplementArtifact[];
+  }[];
+  verification?: ImplementVerificationLite[];
+  verificationPlan?: {
+    checks?: ImplementPlanCheckLite[];
+    coverage?: Record<string, { coveredBy?: string[] }>;
+  };
   projectRoot?: string;
   runDir?: string;
   /** Bumped by every harness write (marks, verify-run, registered artifacts); the rerun short-circuit reads it as "any new evidence since the last attempt?". */
@@ -610,6 +601,98 @@ function readImplementState(projectRoot: string, topic: string): ImplementStateL
     // Unreadable implement state is doctor's problem, never the gate's.
     return null;
   }
+}
+
+/**
+ * Safe command checks already approved in the PRD verification plan. Browser,
+ * API, DB, and side-effect-declared checks remain in their evidence lanes;
+ * only shell-like command/automated rows belong in the $0 pre-judge filter.
+ */
+function mechanicalCommandsFromVerificationPlan(state: ImplementStateLite | null): ResolvedCommand[] {
+  const checks = Array.isArray(state?.verificationPlan?.checks) ? state.verificationPlan.checks : [];
+  const verificationById = new Map(
+    (Array.isArray(state?.verification) ? state.verification : [])
+      .filter(item => typeof item?.id === "string")
+      .map(item => [item.id!, item]),
+  );
+  const commands: ResolvedCommand[] = [];
+  for (const check of checks) {
+    if (check?.status !== "planned") continue;
+    if (check.category !== "command" && check.category !== "automated") continue;
+    const command = typeof check.command === "string" ? check.command.trim() : "";
+    if (!command) continue;
+    const verification = typeof check.verificationId === "string"
+      ? verificationById.get(check.verificationId)
+      : undefined;
+    if (verification && declaredSideEffect(verification)) continue;
+    commands.push({ kind: "check", command, cwd: check.cwd || ".", source: "verification-plan" });
+  }
+  return commands;
+}
+
+interface DeclaredGap {
+  criterionId: string;
+  verificationIds: string[];
+  reasons: string[];
+}
+
+/**
+ * An acceptance criterion is a declared gap only when its complete planned
+ * coverage consists of required verification rows already marked blocked
+ * with evidence. Pending work, failed checks, hand-edited AC statuses, and
+ * partially blocked coverage remain judgeable.
+ */
+function declaredGapsFromImplementState(
+  state: ImplementStateLite | null,
+  criterionIds: Set<string>,
+): DeclaredGap[] {
+  const checks = Array.isArray(state?.verificationPlan?.checks) ? state.verificationPlan.checks : [];
+  const coverage = state?.verificationPlan?.coverage;
+  const acceptance = Array.isArray(state?.acceptanceCriteria) ? state.acceptanceCriteria : [];
+  const verification = Array.isArray(state?.verification) ? state.verification : [];
+  if (!coverage || checks.length === 0 || acceptance.length === 0 || verification.length === 0) return [];
+
+  const checksById = new Map(checks
+    .filter(check => typeof check?.id === "string" && typeof check?.verificationId === "string")
+    .map(check => [check.id!, check]));
+  const verificationById = new Map(verification
+    .filter(item => typeof item?.id === "string")
+    .map(item => [item.id!, item]));
+  const acceptanceById = new Map(acceptance
+    .filter(item => typeof item?.id === "string")
+    .map(item => [item.id!, item]));
+  const gaps: DeclaredGap[] = [];
+
+  for (const criterionId of criterionIds) {
+    const ac = acceptanceById.get(criterionId);
+    if (!ac || ac.status === "met") continue;
+    const checkIds = Array.isArray(coverage[criterionId]?.coveredBy) ? coverage[criterionId]!.coveredBy! : [];
+    if (checkIds.length === 0) continue;
+    const verificationIds = checkIds.flatMap(checkId => {
+      const verificationId = checksById.get(checkId)?.verificationId;
+      return typeof verificationId === "string" ? [verificationId] : [];
+    });
+    if (verificationIds.length !== checkIds.length) continue;
+
+    const blocked = verificationIds.map(verificationId => {
+      const item = verificationById.get(verificationId);
+      const check = checks.find(candidate => candidate.verificationId === verificationId);
+      const required = item?.matrix?.requiredForDone === true || check?.requiredForDone === true;
+      const evidence = Array.isArray(item?.evidence)
+        ? item.evidence.filter(entry => typeof entry?.text === "string" && entry.text.trim() !== "")
+        : [];
+      return item && required && item.status === "blocked" && evidence.length > 0
+        ? { id: verificationId, reason: evidence[evidence.length - 1]!.text!.trim() }
+        : null;
+    });
+    if (blocked.some(item => item === null)) continue;
+    gaps.push({
+      criterionId,
+      verificationIds: blocked.map(item => item!.id),
+      reasons: blocked.map(item => item!.reason),
+    });
+  }
+  return gaps;
 }
 
 /**
@@ -666,16 +749,16 @@ interface RerunRefusal {
  * currentDiffSource null - "would an identical rerun be refused" is the
  * honest question those callers can answer without a caller-supplied base.
  *
- * Arms ONLY on a semantic-stage FAIL/BLOCK: mechanical commands, oracles, and
- * the evidence/human lanes read state the vouched fingerprint cannot see, so
+ * Arms ONLY on a semantic-stage FAIL/BLOCK: mechanical commands and the
+ * evidence/human lanes read state the vouched fingerprint cannot see, so
  * their FAILs pin their tree (item 10) but never refuse a rerun; records
  * without the stage/diff stamps (pre-field files) never refuse either.
  * Deliberate exclusions: PASS needs no twin (a fresh PASS is already reported
  * live by gateStatus freshness); ERROR is a fact about the judge, not the
  * tree, so an identical-tree retry is legitimate; an overridden record is a
  * standing user decision the harness must not re-litigate. Identical
- * fingerprints mean identical vouched content in scoped and fallback mode
- * alike (reproduced against the record's own pinned base via judgedDiffSha256).
+ * fingerprints mean identical full curated repository content (reproduced
+ * against the record's own pinned base via judgedDiffSha256).
  */
 function armedRerunRefusal(
   projectRoot: string,
@@ -722,7 +805,7 @@ function armedRerunRefusal(
   // agents/ namespace is excluded from it by design), so each must break the
   // short-circuit on its own: the pinned input documents and evidence files
   // (a quick contract lives under agents/quick/**), and the implement run's
-  // registered evidence (any new verify-run/oracle observation or mark bumps
+  // registered evidence (any new verify-run observation or mark bumps
   // agents/implement/<slug>/state.json's updatedAt). A record without pinned
   // inputs cannot prove its documents are unchanged and never
   // short-circuits; an explicitly-empty pin list has nothing to drift.
@@ -906,6 +989,9 @@ export async function runVerifyGate(
   // rather than something the agent submitted whenever it looked good.
   const contract = docKind === "contract" && docFile ? parseContract(docFile.content) : null;
   const contractCommands: ResolvedCommand[] = [];
+  const verificationPlanCommands = docKind === "prd"
+    ? mechanicalCommandsFromVerificationPlan(implementState)
+    : [];
   if (contract) {
     for (const check of contract.checks) {
       contractCommands.push({ kind: "check", command: check.command, source: "contract" });
@@ -952,7 +1038,8 @@ export async function runVerifyGate(
   const freshPassFor =
     freshPasses.length > 0
       ? (cmd: ResolvedCommand) => {
-          const hit = freshPasses.find((entry) => commandsMatchContract(entry.command, cmd.command));
+          const hit = freshPasses.find((entry) => commandsMatchContract(entry.command, cmd.command)
+            && (entry.cwd || ".") === (cmd.cwd || "."));
           return hit ? { verificationId: hit.verificationId, logPath: hit.logPath } : null;
         }
       : undefined;
@@ -960,6 +1047,7 @@ export async function runVerifyGate(
     const commandsToRun = options.skipMechanical ? contractCommands.filter((cmd) => cmd.kind === "capture") : contractCommands;
     mechanical = runMechanical(projectRoot, config, commandsToRun, {
       skipProjectCommands: options.skipMechanical === true,
+      verificationPlanCommands,
       ...(freshPassFor !== undefined ? { freshPassFor } : {}),
     });
     const reused = mechanical.runs.filter((run) => run.freshPass !== undefined);
@@ -1018,7 +1106,7 @@ export async function runVerifyGate(
   // no test command, and the judge can still do its job.
   const mechanicalWarning =
     options.skipMechanical !== true && mechanical !== undefined && mechanical.runs.length === 0
-      ? "verify resolved ZERO mechanical commands: the $0 pre-judge filter (tests/lint/build) is INACTIVE and every failure will be discovered by the judge instead. Declare commands in agents/config.json under verify.commands (e.g. {\"verify\":{\"commands\":{\"test\":\"cd app && npm test\"}}}) - auto-detection only sees a package.json/pyproject.toml/Cargo.toml/go.mod at the project root."
+      ? "verify resolved ZERO mechanical commands: the $0 pre-judge filter (tests/lint/build) is INACTIVE and every failure will be discovered by the judge instead. Add a safe command/automated row to the PRD verification plan, declare agents/config.json verify.commands, or place a supported manifest at the project root."
       : undefined;
   if (mechanicalWarning !== undefined) {
     process.stderr.write(`sasu: WARNING: ${mechanicalWarning}\n`);
@@ -1040,6 +1128,17 @@ export async function runVerifyGate(
         : "no acceptance criteria found (expected '## 7. Acceptance Criteria' with '- AC#.' items)",
     );
   }
+  const declaredGaps = docKind === "prd"
+    ? declaredGapsFromImplementState(implementState, new Set(criteria.map(criterion => criterion.id)))
+    : [];
+  const declaredGapCriterionIds = new Set(declaredGaps.map(gap => gap.criterionId));
+  const declaredGapFindings: Finding[] = declaredGaps.map(gap => ({
+    area: "declared-gap",
+    severity: "P0" as const,
+    missing: `${gap.criterionId}: required verification ${gap.verificationIds.join(", ")} is declared blocked with evidence`,
+    recommendation: "Resolve the recorded blocker and update the verification evidence, or finalize the run honestly as partial/blocked.",
+    requiresHuman: false,
+  }));
   // judgedDiff answers null when git itself refuses (a bogus base, a non-git
   // directory), which used to surface as a raw execFileSync throw; the message
   // has to name the base because that is the argument the caller controls.
@@ -1055,66 +1154,10 @@ export async function runVerifyGate(
       `empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}. Implement the change first, or point --base at the commit you started from. Note that gitignored files are invisible here even when they exist.`,
     );
   }
-  // The oversized-diff guard moved to the per-lane assembly below: a lane may
-  // shrink under the budget via PRD Scope globs, and an oversized lane falls
-  // back to the agentic judge when the backend supports one.
+  // The oversized-diff guard lives at per-lane assembly. Every lane receives
+  // the full curated diff and falls back to the read-only agentic judge when
+  // the backend supports one.
 
-  // AC oracle stage (PRD path): criteria whose bullet declares a machine
-  // oracle (Check:/Artifact: tail) are settled by the harness right here -
-  // exit codes, output substrings, and file existence, no judge. They leave
-  // the judge lanes the same way human-lane criteria do: already decided,
-  // by a stronger authority than a model reading a diff.
-  const oracleTargets =
-    docKind === "prd"
-      ? criteria.flatMap((c) => {
-          const oracle = parseAcOracle(c.text);
-          return oracle ? [{ id: c.id, text: c.text, oracle }] : [];
-        })
-      : [];
-  const oracleCriterionIds = new Set(oracleTargets.map((c) => c.id));
-  // Parsed now, EXECUTED later: oracle commands are side effects spent on the
-  // world, so they run only after every no-judgment exit is behind us - the
-  // evidence lane block and, on the judged path, the oversized-diff hard
-  // error (which used to throw after oracles had already executed, with
-  // nothing recorded to show for them). Which criteria are oracle-backed is
-  // pure parsing and is decided here either way.
-  const settleOracles = (): { oracleOutcomes: OracleOutcome[]; oracleFindings: Finding[]; oracleCriteria: CriterionVerdict[] } => {
-    const oracleStage = oracleTargets.length > 0 ? runAcOracles(projectRoot, config, oracleTargets, topic) : null;
-    const oracleOutcomes = oracleStage ? oracleStage.outcomes : [];
-    for (const warning of oracleStage ? oracleStage.warnings : []) {
-      process.stderr.write(`sasu: WARNING: ${warning}\n`);
-    }
-    // Read BEFORE this round is recorded, so the sequence is strictly the prior
-    // rounds - the agent needs to know whether the failure in front of it has
-    // happened before, not that it is happening now (see oracle_history.ts).
-    const priorOracleRounds = oracleHistory(projectRoot, state.gates.verify);
-    const oracleFindings: Finding[] = oracleOutcomes
-      .filter((outcome) => !outcome.met)
-      .map((outcome) => {
-        const base =
-          outcome.digestViolation === true
-            ? "The oracle command must not modify the workspace; make it read-only or fix the declaration."
-            : "Make the PRD-declared oracle check pass and re-run sasu verify.";
-        // One surface, three readers for free: the recommendation is printed to
-        // the agent now, stored in gates.json, and stamped into a blocked
-        // receipt's finding list for whoever audits it later.
-        const repeat = oracleRepeatFailureNote(priorOracleRounds.get(outcome.id));
-        return {
-          area: "oracle",
-          severity: "P0" as const,
-          missing: `${outcome.id}: ${outcome.reason}`,
-          recommendation: repeat === null ? base : `${base} ${repeat}`,
-          requiresHuman: false,
-        };
-      });
-    const oracleCriteria: CriterionVerdict[] = oracleOutcomes.map((outcome) => ({
-      id: outcome.id,
-      verdict: outcome.met ? ("PASS" as const) : ("FAIL" as const),
-      reason: outcome.reason,
-      evidence: outcome.evidence,
-    }));
-    return { oracleOutcomes, oracleFindings, oracleCriteria };
-  };
 
   // Stage 1b: collect the evidence lane. A declared artifact that is missing
   // or oversized blocks here, before the judge call, the same way a broken
@@ -1159,81 +1202,69 @@ export async function runVerifyGate(
 
   // Criteria whose proof no judge can see - declared human, or an attached
   // image on a backend that cannot attach - never reach the judge. They come
-  // back as requiresHuman findings, which the Stop hook already lets the agent
-  // hand to the user. Oracle-backed criteria leave the lanes the same way:
-  // the harness already settled them mechanically above.
+  // back as requiresHuman findings, which the Stop hook lets the agent hand
+  // to the user.
   const humanLane = lane ? lane.humanFindings : [];
   const judgedCriteria = criteria.filter(
-    (c) => !(lane !== null && lane.humanCriterionIds.has(c.id)) && !oracleCriterionIds.has(c.id),
+    (c) => !(lane !== null && lane.humanCriterionIds.has(c.id))
+      && !declaredGapCriterionIds.has(c.id),
   );
   const evidenceInputs = lane ? lane.inputs : [];
   const allInputs = [...inputs, ...evidenceInputs];
 
   if (judgedCriteria.length === 0) {
-    // Nothing left for a judge: every criterion is human-verified or
-    // oracle-settled. All-oracle-pass is an honest zero-LLM-call PASS (the
-    // ouroboros $0 tier); any human criterion or failed oracle keeps the
-    // gate closed.
-    const { oracleOutcomes, oracleFindings, oracleCriteria } = settleOracles();
-    const zeroJudgeFindings = [...oracleFindings, ...humanLane];
-    const zeroJudgePassed = zeroJudgeFindings.length === 0 && oracleCriteria.length > 0;
-    // An all-oracle PASS is honest but easy to mistake for a judged one: say
-    // loudly, on the record and on stderr, that no model ever saw this diff.
-    if (zeroJudgePassed) {
-      process.stderr.write(
-        "sasu: NOTE: verify gate PASSED with ZERO judge calls - every AC was oracle-backed; the semantic judge never saw this diff.\n",
-      );
-    }
-    // Every recorded verdict pins the diff it was earned on (PRINCIPLES item
-    // 10): the rerun short-circuit compares against this pin, so a FAIL that
-    // skipped it would make the next identical re-run unrefusable.
+    // Human-only and declared-gap criteria cannot be certified by the semantic
+    // judge. Record a closed, externally visible failure without inventing a
+    // mechanical substitute for product judgment.
+    const exclusiveDeclaredGap = humanLane.length === 0 && declaredGaps.length > 0;
+    const zeroJudgeFindings = [
+      ...humanLane,
+      ...declaredGapFindings.map((finding) => ({ ...finding, requiresHuman: exclusiveDeclaredGap })),
+    ];
     const judgedDiffSha256 = gitLib.judgedDiffHash(diff);
+    const failedStage = humanLane.length > 0 ? "human" : "declared-gap";
     state = recordGateResult(
       store,
       state,
       "verify",
       {
         kind: "verdict",
-        verdict: zeroJudgePassed ? "PASS" : "FAIL",
+        verdict: "FAIL",
         findings: zeroJudgeFindings,
         inputs: allInputs,
         judgedDiffSha256,
-        // Oracle and human-lane FAILs both resolve outside what the semantic
-        // judge sees (an oracle reads live out-of-tree state; a human criterion
-        // waits on the user), so neither stage may ever refuse a rerun.
-        failedStage: oracleFindings.length > 0 ? "oracle" : "human",
+        failedStage,
         diffSource,
+        usedLiveMaterial: false,
+        docKind,
         artifactPayload: {
-          stage: humanLane.length > 0 ? "human-lane" : "oracle",
-          verdict: zeroJudgePassed ? "PASS" : "FAIL",
+          stage: failedStage,
+          verdict: "FAIL",
           findings: zeroJudgeFindings,
           judgedCriteriaIds: [],
-          oracle: oracleOutcomes,
-          criteria: oracleCriteria,
+          ...(declaredGaps.length > 0 ? { declaredGaps } : {}),
           evidence: lane ? lane.artifacts : [],
           mechanical: mechanicalRecord(),
           judgedDiffSha256,
           diffSource,
-          ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
           inputs: allInputs,
         },
       },
       records,
     );
     return {
-      ok: zeroJudgePassed && gateStatus(state, "verify", config.judge.retryBudget, projectRoot).effective === "PASS",
+      ok: false,
       status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
       prelint,
       mechanical,
       ...warningField,
-      // No judge ran: the per-criterion verdicts are the oracle's, and the
-      // receipt for a human close rests on the findings and the artifacts.
-      criteria: oracleCriteria,
+      criteria: [],
       inputs: allInputs,
       evidence: lane ? lane.artifacts : [],
       checks: collectCheckResults(),
       judgedCriteriaIds: [],
-      ...(zeroJudgePassed ? { zeroJudgeCalls: true } : {}),
+      ...(declaredGaps.length > 0 ? { declaredGaps } : {}),
+      zeroJudgeCalls: true,
     };
   }
 
@@ -1267,34 +1298,11 @@ export async function runVerifyGate(
   // file the judge saw joins the input pins, so freshness stays honest.
   const judgeInputs = [...allInputs, ...injected.inputs];
 
-  // PRD-declared lane scoping (4a): tasks' Scope globs, resolved through the
-  // AC -> Covers-task chain, decide which slice of the curated diff each lane
-  // sees. Files in the diff that no declared glob claims surface as a warning
-  // (mechanized first step of the unmapped-scope hard-stop; not blocking yet).
-  const scopedTasks = docKind === "prd" && docFile !== null ? parsePrdTasksForScoping(docFile.content) : [];
-  const anyDeclaredScope = scopedTasks.some((task) => task.scopeGlobs.length > 0);
-  const declaredGlobs = scopedTasks.flatMap((task) => task.scopeGlobs);
-  // The unscoped-files warning fires only when EVERY task declared a Scope:
-  // with a partial declaration a file outside the declared globs may simply
-  // belong to a Scope-less task (T1 `Scope: src/**` plus a docs task with no
-  // Scope warned on every docs file the docs task legitimately owned), so
-  // ownership is ambiguous and the warning would be noise.
-  const everyTaskDeclaredScope = scopedTasks.length > 0 && scopedTasks.every((task) => task.scopeGlobs.length > 0);
-  const unscopedFiles = everyTaskDeclaredScope
-    ? splitDiffByFile(diff)
-        .map((block) => block.path)
-        .filter((file) => !declaredGlobs.some((glob) => matchesScopeGlob(file, glob)))
-    : [];
-  if (unscopedFiles.length > 0) {
-    process.stderr.write(
-      `sasu: WARNING: ${unscopedFiles.length} changed file(s) fall under no task's Scope glob: ${unscopedFiles.join(", ")}. Every change should belong to a declared task scope; extend a task's Scope or explain the file.\n`,
-    );
-  }
-
   // Semantic fan-out (mirrors the gap-audit lane pattern): the exhaustive
   // single call concentrated every criterion plus the whole diff into one
   // 75-137s prompt, so criteria are partitioned into criterion-scoped lanes
-  // that run concurrently over the (per-lane scoped) curated diff.
+  // that run concurrently. Every lane still receives the full curated diff;
+  // only criterion ownership is partitioned.
   // judge.fanout: false is the same escape hatch the gap-list gates honor.
   const laneCriteria = config.judge.fanout ? partitionVerifyCriteria(judgedCriteria) : [judgedCriteria];
   const laneCount = laneCriteria.length;
@@ -1351,14 +1359,7 @@ export async function runVerifyGate(
         ...laneInjected.flatMap((item) => (item.imagePath !== undefined ? [item.imagePath] : [])),
       ]),
     ];
-    const laneGlobs = anyDeclaredScope ? scopeForLane(criteriaSlice, scopedTasks) : null;
-    const scoped = laneGlobs !== null ? filterDiffByGlobs(diff, laneGlobs) : null;
-    // A scoped diff with zero matching files would show the judge nothing and
-    // fail every criterion as absent; fall back to the full curated diff and
-    // say so in the artifact, because empty-by-scope is far more often a glob
-    // mistake than a real no-op.
-    const scopeFellBack = scoped !== null && scoped.text.trim() === "";
-    const laneDiff = scoped !== null && !scopeFellBack ? scoped.text : diff;
+    const laneDiff = diff;
     const agentic = laneDiff.length > VERIFY_DIFF_MAX_CHARS;
     // Injected check TAILS ride the same per-lane budget as material text:
     // dozens of V-row command logs used to render up to 8KB each with no cap,
@@ -1393,8 +1394,7 @@ export async function runVerifyGate(
     // Live sources, one per prompt input: a lane the agentic judge reads live
     // files for; a harness-run check (executed this round, or reused from a
     // fresh pass whose original run read live state); capture-produced
-    // evidence; and settled oracle tails, OR-ed in below once the oracles have
-    // run. Injected implement logs are NOT live: they are files, hash-pinned
+    // evidence. Injected implement logs are NOT live: they are files, hash-pinned
     // into judgeInputs, so a changed log stales the record instead.
     // Adding a new prompt input means deciding here whether it is live.
     const liveMaterial =
@@ -1410,19 +1410,11 @@ export async function runVerifyGate(
       laneInjected,
       laneInjectedChecks,
       omittedEvidenceCount,
-      // Budget accounting handed to the prompt-assembly pass below, where the
-      // settled oracle tails (built only after the oracles run) are charged
-      // against the remainder of the same per-lane budget.
-      injectedTextBytes,
       omittedTailCount,
       laneChecks,
       liveMaterial,
       laneDiff,
       images,
-      // Audit trail: which paths this lane was scoped to (null = full diff),
-      // whether scoping fell back, and whether the lane went agentic.
-      scope: scopeFellBack ? null : laneGlobs,
-      scopeFellBack,
       diffChars: laneDiff.length,
       agentic,
     };
@@ -1434,56 +1426,19 @@ export async function runVerifyGate(
   if (oversized.length > 0 && !backendAgentic) {
     const worst = Math.max(...oversized.map((vl) => vl.diffChars));
     throw new Error(
-      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the ${config.judge.backend} judge backend cannot run the read-only agentic fallback. No judgment ran and no retry attempt was spent. Narrow the change under judgment: declare task Scope globs in the PRD so each lane judges only its own files, point --base at the commit you started from, or split the change.`,
+      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the ${config.judge.backend} judge backend cannot run the read-only agentic fallback. No judgment ran and no retry attempt was spent. Point --base at the commit you started from or split the change into independently reviewable work.`,
     );
   }
-  // Every no-judgment exit is behind us: NOW spend the oracle side effects
-  // (see settleOracles - they used to run before the oversized hard error).
-  // The agentic fallback path still reaches this line, so oversized-but-
-  // capable rounds run their oracles exactly as before.
-  const { oracleOutcomes, oracleFindings, oracleCriteria } = settleOracles();
-  // Oracle outcomes ride into every lane as settled context: the harness
-  // already decided those criteria with a stronger instrument, and the judge
-  // must see what it proved instead of doubting it from the diff. Prompts are
-  // therefore built HERE, after the oracles ran - the only data dependency
-  // that moved prompt assembly below the no-judgment exits.
-  const settledContext: SettledCriterion[] = oracleOutcomes.map((outcome) => ({
-    criterionId: outcome.id,
-    note: outcome.reason,
-    ...(outcome.tail !== undefined && outcome.tail !== "" ? { tail: outcome.tail } : {}),
-  }));
   const verifyLanes = assembledLanes.map((vl) => {
-    // Settled oracle TAILS are charged against the remainder of the lane's
-    // injected-evidence budget (same rule as check tails above): the settled
-    // note line always rides - the judge must know the criterion is decided -
-    // and only the unbounded tail is droppable, whole and flagged.
-    let injectedTextBytes = vl.injectedTextBytes;
-    let omittedTailCount = vl.omittedTailCount;
-    const laneSettled: SettledCriterion[] = settledContext.map((item) => {
-      if (item.tail === undefined) return item;
-      const cost = Math.min(item.tail.length, CHECK_TAIL_RENDER_MAX_CHARS);
-      if (injectedTextBytes + cost > INJECTED_EVIDENCE_LANE_MAX_BYTES) {
-        omittedTailCount += 1;
-        return { criterionId: item.criterionId, note: item.note, tailOmitted: true };
-      }
-      injectedTextBytes += cost;
-      return item;
-    });
     const laneOptions = {
       mechanicalRan: options.skipMechanical !== true,
       ...(laneCount > 1 ? { lane: { index: vl.index + 1, count: laneCount } } : {}),
-      ...(laneSettled.length > 0 ? { settled: laneSettled } : {}),
       ...(vl.omittedEvidenceCount > 0 ? { omittedEvidenceCount: vl.omittedEvidenceCount } : {}),
     };
     const prompt = vl.agentic
       ? agenticSemanticVerifyPrompt(diffStatFromText(vl.laneDiff), vl.criteria, vl.material, vl.laneChecks, laneOptions)
       : semanticVerifyPrompt(vl.laneDiff, vl.criteria, vl.material, vl.laneChecks, laneOptions);
-    // An oracle tail is arbitrary live output: it can differ on the next round
-    // while the outcome stays met, so it makes the lane's prompt live. A
-    // tail-less settled note cannot - if the outcome itself flipped, the round
-    // would be an oracle FAIL, which never arms.
-    const liveMaterial = vl.liveMaterial || laneSettled.some((item) => item.tail !== undefined);
-    return { ...vl, omittedTailCount, prompt, liveMaterial };
+    return { ...vl, prompt };
   });
   // One auditable hash of everything sent this round: the lane prompts joined
   // in lane order. For a single lane this is byte-identical to the old
@@ -1493,9 +1448,8 @@ export async function runVerifyGate(
     laneId: vl.laneId,
     criteriaIds: vl.criteria.map((c) => c.id),
     promptSha256: sha256Of(vl.prompt),
-    // Auditability (4a/4b): what slice of the diff this lane received and how.
-    scope: vl.scope,
-    ...(vl.scopeFellBack ? { scopeFellBack: true } : {}),
+    // Every lane receives the same full curated diff; criterion partitioning
+    // changes judgment ownership, never the evidence surface.
     diffChars: vl.diffChars,
     agenticFallback: vl.agentic,
     // What the judge saw beyond the diff (paths + hashes + owner, never
@@ -1542,7 +1496,7 @@ export async function runVerifyGate(
             vl.purpose,
             // Tier stays "standard" per lane: verify caught a real production
             // bug at this tier, and the fan-out win is latency and attention
-            // scope, not model cost. Multi-lane rounds pair the narrow scope
+            // scope, not model cost. Multi-lane rounds pair the narrow set of criteria
             // with the low effort budget (the calibrated fan-out speed lever,
             // see LANE_EFFORT); a single-lane round is the old exhaustive call
             // and keeps the backend's default effort.
@@ -1617,17 +1571,19 @@ export async function runVerifyGate(
         recommendation: "Address the criterion and re-run sasu verify.",
         requiresHuman: false,
       }));
-    findings.push(...oracleFindings);
     findings.push(...humanLane);
+    const exclusiveDeclaredGap = judgedVerdict === "PASS" && humanLane.length === 0;
+    findings.push(...declaredGapFindings.map(finding => ({ ...finding, requiresHuman: exclusiveDeclaredGap })));
     // Pin the tree the verdict was earned on; the Stop-hook quick guard
     // recomputes this to catch code edited after a PASS, and the rerun
     // short-circuit compares a FAIL's pin against the next call's tree.
     const judgedDiffSha256 = gitLib.judgedDiffHash(diff);
     // An unjudged human criterion keeps the gate closed even when every judged
     // one passed: nobody has confirmed it yet, and the honest report of that
-    // is a blocking requiresHuman finding, not a PASS. A failed oracle closes
-    // it the same way - the harness observed the criterion unmet.
-    const passed = judgedVerdict === "PASS" && humanLane.length === 0 && oracleFindings.length === 0;
+    // is a blocking requiresHuman finding, not a PASS.
+    const passed = judgedVerdict === "PASS"
+      && humanLane.length === 0
+      && declaredGaps.length === 0;
     // Live-material stamp for the rerun short-circuit (see the GateRecord
     // field comment). One lane resting on live material is enough: the round's
     // verdict is the merge of every lane, so it is reproducible-by-construction
@@ -1641,13 +1597,11 @@ export async function runVerifyGate(
     // legitimate reason to re-run the gate.
     const usedLiveMaterial =
       verifyLanes.some((vl) => vl.liveMaterial) || contractCommands.some((cmd) => cmd.kind === "capture");
-    // Document-order verdict list for the receipt: judged criteria carry the
-    // judge's verdicts, oracle-backed ones the harness's; human criteria have
-    // no verdict to quote (their findings carry the story).
-    const verdictByIdAll = new Map<string, CriterionVerdict>([
-      ...mergedCriteria.map((c) => [c.id, c] as const),
-      ...oracleCriteria.map((c) => [c.id, c] as const),
-    ]);
+    // Document-order verdict list for the receipt. Human criteria have no
+    // verdict to quote; their findings carry the unresolved judgment.
+    const verdictByIdAll = new Map<string, CriterionVerdict>(
+      mergedCriteria.map((c) => [c.id, c] as const),
+    );
     const resultCriteria = criteria.flatMap((c) => {
       const verdict = verdictByIdAll.get(c.id);
       return verdict !== undefined ? [verdict] : [];
@@ -1662,12 +1616,13 @@ export async function runVerifyGate(
         findings,
         inputs: judgeInputs,
         judgedDiffSha256,
-        // The stage that closed the gate, most-out-of-tree first: any failed
-        // oracle means live state the fingerprint cannot see, so the record
-        // must never refuse a rerun; an open human criterion is the user's to
-        // resolve; only a pure judge FAIL over this pinned diff is the
-        // deterministic "semantic" case the short-circuit may refuse.
-        failedStage: oracleFindings.length > 0 ? "oracle" : judgedVerdict === "FAIL" ? "semantic" : "human",
+        // Only a pure semantic failure is reproducible from the pinned diff.
+        // Human and declared-gap failures depend on evidence outside the judge.
+        failedStage: judgedVerdict === "FAIL"
+          ? "semantic"
+          : humanLane.length > 0
+            ? "human"
+            : "declared-gap",
         diffSource,
         usedLiveMaterial,
         docKind,
@@ -1681,10 +1636,10 @@ export async function runVerifyGate(
           usedLiveMaterial,
           criteria: resultCriteria,
           humanLane,
-          ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
           // What the judge was actually shown, so "AC4 was never sent" is an
           // auditable fact rather than something you re-derive from the code.
           judgedCriteriaIds,
+          ...(declaredGaps.length > 0 ? { declaredGaps } : {}),
           promptSha256,
           // Per-lane judge records replace the old top-level `judge` key, the
           // same shape shift the gap-audit fan-out made to its artifact.
@@ -1701,7 +1656,6 @@ export async function runVerifyGate(
           ...(injected.omitted.length > 0 ? { injectionOmitted: injected.omitted } : {}),
           mechanical: mechanicalRecord(),
           judgedDiffSha256,
-          ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
           inputs: judgeInputs,
         },
       },
@@ -1720,13 +1674,14 @@ export async function runVerifyGate(
       checks: checkResults,
       judgedCriteriaIds,
       judgedVerdict,
-      ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
+      ...(declaredGaps.length > 0 ? { declaredGaps } : {}),
     };
   } catch (error) {
     // A broken judge round does not erase the run's real work: the receipt
     // contract holds on this path too, minus the verdicts nobody produced.
     const failurePayload = {
       judgedCriteriaIds,
+      ...(declaredGaps.length > 0 ? { declaredGaps } : {}),
       promptSha256,
       diffSource,
       lanes: lanesManifest,
@@ -1734,8 +1689,6 @@ export async function runVerifyGate(
       evidence: evidenceSummary,
       ...(injected.omitted.length > 0 ? { injectionOmitted: injected.omitted } : {}),
       mechanical: mechanicalRecord(),
-      ...(oracleOutcomes.length > 0 ? { oracle: oracleOutcomes } : {}),
-      ...(unscopedFiles.length > 0 ? { unscopedFiles } : {}),
       inputs: judgeInputs,
     };
     return {
@@ -2063,8 +2016,8 @@ function boundedTextExcerpt(raw: Buffer, cap: number): { text: string; truncated
  * buildCoverageMatrix): an AC owns its artifacts directly, a task's artifacts
  * follow its Covers ACs, and a V row's follow its Covers ACs plus any AC that
  * shares a covered R#. An owner that maps to SOME criterion but none that is
- * judged (oracle-settled or human-lane) is skipped - those criteria are
- * decided by a stronger authority. An owner that maps to NO criterion at all
+ * judged because it belongs to a human-only lane is skipped. An owner that
+ * maps to NO criterion at all
  * is ambiguous and goes to every lane rather than being dropped.
  *
  * Fail-open like readImplementState: a damaged entry is skipped (recorded in
@@ -2167,8 +2120,7 @@ function collectImplementEvidence(
         }
         const mapped = ownerAcIds(entry.ownerKind, ownerId);
         const judgedTargets = mapped.filter((id) => judgedIds.has(id));
-        // Owned by criteria a stronger authority already settled (oracle or
-        // human lane): the artifact would only duplicate a decided verdict.
+        // Owned by a human-only criterion: the semantic lane cannot decide it.
         if (mapped.length > 0 && judgedTargets.length === 0) continue;
         const laneWide = mapped.length === 0;
         const targets = laneWide ? [ownerId] : judgedTargets;
@@ -2417,24 +2369,6 @@ const gitLib = require("../../lib/git.js") as {
 
 export const isExcludedFromDiff = gitLib.isExcludedFromDiff;
 
-// --- PRD-declared lane scoping (4a) ---
-//
-// The trust rule: which slice of the diff a judge lane sees is decided by the
-// vetted PRD's `Scope:` declarations and derived here by the harness - never
-// picked by the implementer at verification time (the reason the --diff-file
-// flag no longer exists; diffText remains as a test-only seam the CLI never
-// exposes).
-
-/**
- * Minimal glob dialect for §8 Scope tails, owned by cli/lib/scope_match.js
- * (the lib-side freshness scoping in git.js reads the same module, so the two
- * consumers can never drift). Re-exported here so gate-internal callers and
- * the dist/gates/commands.js test imports keep their path.
- */
-export const { matchesScopeGlob } = require("../../lib/scope_match.js") as {
-  matchesScopeGlob: (file: string, glob: string) => boolean;
-};
-
 interface DiffFileBlock {
   /** Path of the change (b-side; a-side for deletions). */
   path: string;
@@ -2468,43 +2402,6 @@ export function splitDiffByFile(diff: string): DiffFileBlock[] {
   return blocks;
 }
 
-/** Keep only the file blocks whose path matches any of the globs. */
-export function filterDiffByGlobs(diff: string, globs: string[]): { text: string; files: string[] } {
-  const kept = splitDiffByFile(diff).filter((block) => globs.some((glob) => matchesScopeGlob(block.path, glob)));
-  return { text: kept.map((block) => block.text).join("\n"), files: kept.map((block) => block.path) };
-}
-
-/**
- * Lane scope from the AC -> Covers-task chain: the union of Scope globs of
- * every task covering any of the lane's criteria (directly by AC id, or via a
- * requirement the AC references - the same chain the prelint coverage rule
- * walks). Scoping applies ONLY when every covering task of every lane
- * criterion declared a Scope; a single undeclared task, or a criterion no
- * task covers (a global-invariant AC), keeps the lane on the full curated
- * diff - narrowing on partial declarations would hide evidence the
- * undeclared work may have touched.
- */
-export function scopeForLane(
-  criteria: { id: string; text: string }[],
-  tasks: ScopedTask[],
-): string[] | null {
-  const globs = new Set<string>();
-  for (const criterion of criteria) {
-    // Case-insensitive + uppercased to match the lib parser, which uppercases
-    // every R ref: a bullet writing "r3" must ride the same coverage chain.
-    const referencedRequirements = new Set((criterion.text.match(/\br\d+\b/gi) ?? []).map((ref) => ref.toUpperCase()));
-    const covering = tasks.filter(
-      (task) =>
-        task.acceptanceCriteria.includes(criterion.id)
-        || task.requirements.some((requirement) => referencedRequirements.has(requirement)),
-    );
-    if (covering.length === 0) return null;
-    if (covering.some((task) => task.scopeGlobs.length === 0)) return null;
-    for (const task of covering) for (const glob of task.scopeGlobs) globs.add(glob);
-  }
-  return globs.size > 0 ? [...globs] : null;
-}
-
 /**
  * Diff-stat for the agentic fallback prompt: file list plus added/removed line
  * counts, computed from the diff text itself so an injected test diff and a
@@ -2523,123 +2420,3 @@ export function diffStatFromText(diff: string): string {
   });
   return `${lines.join("\n")}\n${blocks.length} file(s) changed`;
 }
-
-// --- AC oracle stage (5c) ---
-
-export interface OracleOutcome {
-  id: string;
-  kind: "check" | "artifact";
-  command?: string;
-  path?: string;
-  exitCode?: number;
-  expectMatched?: boolean;
-  digestViolation?: boolean;
-  /** Bounded, prefixed (~changed/+added/-removed) vouched paths the digest guard saw move; only present on a violation. */
-  changedPaths?: string[];
-  met: boolean;
-  reason: string;
-  evidence: string;
-  /**
-   * Bounded stdout/stderr tail of the oracle command. Kept (not discarded
-   * after the substring test) so judge lanes can see WHAT the oracle observed,
-   * not just that it passed - the missing context that made judges BLOCK
-   * runtime criteria in live reruns.
-   */
-  tail?: string;
-}
-
-/**
- * Execute the PRD-declared AC oracles on the harness clock (ouroboros
- * AcceptanceCriterionSpec, scaled down): exit 0 plus optional stdout substring
- * for `Check:`, file existence for `Artifact:`. Check commands get the same
- * workspace digest guard as verify-run - an oracle that mutates the tree to
- * pass is recorded as a violation, not a pass.
- *
- * Exported so tests can pin executor parity with the harness's cmdOracleRun.
- */
-export function runAcOracles(
-  projectRoot: string,
-  config: SasuConfig,
-  targets: { id: string; text: string; oracle: AcOracle }[],
-  slug?: string,
-): { outcomes: OracleOutcome[]; warnings: string[] } {
-  const outcomes: OracleOutcome[] = [];
-  const warnings: string[] = [];
-  for (const target of targets) {
-    const oracle = target.oracle;
-    if (oracle.kind === "artifact") {
-      const artifactPath = oracle.path ?? "";
-      const exists = artifactPath !== "" && fs.existsSync(path.join(projectRoot, artifactPath));
-      outcomes.push({
-        id: target.id,
-        kind: "artifact",
-        path: artifactPath,
-        met: exists,
-        reason: exists ? `declared artifact ${artifactPath} exists (harness-observed)` : `declared artifact ${artifactPath} does not exist`,
-        evidence: `harness checked existence of ${artifactPath}`,
-      });
-      continue;
-    }
-    const command = oracle.command ?? "";
-    if (DB_TOUCH_PATTERN.test(command)) {
-      warnings.push(
-        `${target.id}: oracle command appears to touch a database (\`${command}\`). Confirm the connection target is a disposable local or branch database, never production data.`,
-      );
-    }
-    // Slug scopes the guard's vouched set so a concurrent session editing its
-    // own agents/prd/<other>/** during the oracle window cannot falsely trip
-    // this oracle's digest check (mark.js oracle-run passes the same).
-    // Entries ride along (free - already computed internally) so a violation
-    // can name WHICH paths moved instead of reporting a bare boolean.
-    const before = vouchedTreeFingerprint({ projectRoot, slug, includeEntries: true });
-    // Harness semantics, verbatim: shellLikeTokens + shell:false. The PRD
-    // oracle grammar never promised shell operators, so
-    // `test -f README.md && grep -c Test README.md` hands "&&" to `test` as a
-    // literal argument (non-zero) in BOTH executors instead of passing here
-    // and failing in oracle-run. Authors who want a shell write it
-    // explicitly: `bash -c "..."` (prelint warns on bare operators).
-    const tokens = shellLikeTokens(command);
-    const result = spawnSync(tokens[0] ?? command, tokens.slice(1), {
-      cwd: projectRoot,
-      shell: false,
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-      timeout: config.verify.commandTimeoutMs,
-      env: process.env,
-    });
-    const after = vouchedTreeFingerprint({ projectRoot, slug, includeEntries: true });
-    const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
-    const exitCode = timedOut ? 124 : (result.status ?? 1);
-    const stdout = result.stdout ?? "";
-    const expectMatched = oracle.expect ? stdout.includes(oracle.expect) : true;
-    // Same bounded-tail convention as the mechanical stage (runMechanical):
-    // last 30 lines of combined output, enough for a judge to see what the
-    // oracle observed without unbounded prompt growth.
-    const combinedOutput = [stdout, result.stderr ?? ""].filter((part) => part !== "").join("\n");
-    const tail = combinedOutput === "" ? "" : combinedOutput.split("\n").slice(-30).join("\n");
-    const digestViolation = Boolean(before && after && !vouchedFingerprintsMatch(before, after));
-    const digestDiff = digestViolation ? summarizeFingerprintDiff(before, after) : null;
-    const met = exitCode === 0 && expectMatched && !digestViolation;
-    const reason =
-      digestViolation && exitCode === 0
-        ? `oracle command mutated the workspace during verification (digest guard: ${digestDiff !== null ? digestDiff.text : "changed paths unavailable"}): \`${command}\``
-        : met
-          ? `harness ran \`${command}\`: exit 0${oracle.expect ? `, output contained "${oracle.expect}"` : ""}`
-          : `harness ran \`${command}\`: exit ${exitCode}${oracle.expect && !expectMatched ? `, output did not contain "${oracle.expect}"` : ""}`;
-    outcomes.push({
-      id: target.id,
-      kind: "check",
-      command,
-      exitCode,
-      expectMatched,
-      digestViolation,
-      ...(digestDiff !== null ? { changedPaths: digestDiff.paths } : {}),
-      met,
-      reason,
-      evidence: `harness executed \`${command}\` (exit ${exitCode})`,
-      ...(tail !== "" ? { tail } : {}),
-    });
-  }
-  return { outcomes, warnings };
-}
-

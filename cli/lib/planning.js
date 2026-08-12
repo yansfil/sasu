@@ -4,11 +4,11 @@
 
 const path = require("path");
 
-const { SELF_PATH, nowIso, cwd, toProjectRelative, sha256Text, uniqueMatches, formatCommandArgs } = require("./util");
+const { SELF_PATH, nowIso, cwd, toProjectRelative, sha256Text, formatCommandArgs } = require("./util");
 const { invariantsForWriteScopes } = require("./rules");
 const { isVerificationRequiredForDone, verificationIsClosedForAccounting, verificationPlanSummary, verificationPlanBlocksImplementation, executionPlanSummary, executionPlanBlocksImplementation, finalReviewRequiredForState, independentFidelityRequiredForState } = require("./state_data");
-const { inferVerificationMode } = require("./prd_parser");
-const { repoSignals, classifyVerification, commandFromText, commandForMode, coverageFromText, artifactsForVerification, passCriteriaFromText, toolForVerification, targetForVerification, plannedCheckStatus, plannerNotes, hasAppStartupSignal } = require("./inference");
+const { inferVerificationMode, coverageFromText } = require("./prd_parser");
+const { repoSignals, classifyVerification, commandForMode, artifactsForVerification, passCriteriaFromText, toolForVerification, targetForVerification, plannedCheckStatus, plannerNotes, hasAppStartupSignal } = require("./inference");
 
 function commandFromMatrixMethod(method) {
   const value = String(method || "").trim();
@@ -37,14 +37,31 @@ function verificationContractHash(state) {
 function buildVerificationPlan(state, statePath) {
   const projectRoot = state.projectRoot || cwd();
   const signals = repoSignals(projectRoot);
+  const priorChecks = new Map((((state.verificationPlan && state.verificationPlan.checks) || []))
+    .map(check => [String(check.verificationId).toUpperCase(), check]));
   const checks = state.verification.map((verification, index) => {
     const mode = inferVerificationMode(verification, state.testModeContract || []);
     const category = classifyVerification(verification, mode);
-    const explicitCommand = verification.matrix && verification.matrix.method
+    const contractHash = sha256Text(JSON.stringify({
+      id: verification.id,
+      text: verification.text,
+      matrix: verification.matrix || null,
+    }));
+    const prior = priorChecks.get(String(verification.id).toUpperCase());
+    const preserved = prior && prior.contractHash === contractHash ? prior : null;
+    const injectedCommand = verification.source === "rules_injection" && verification.matrix && verification.matrix.method
       ? commandFromMatrixMethod(verification.matrix.method)
-      : commandFromText(verification.text);
+      : null;
+    const inferredCommand = commandForMode(mode, category, signals);
     const command = category === "command" || category === "automated"
-      ? explicitCommand || commandForMode(mode, category, signals)
+      ? injectedCommand || (preserved && preserved.command) || inferredCommand
+      : null;
+    const commandCwd = command
+      ? injectedCommand
+        ? "."
+        : preserved && preserved.command === command
+          ? preserved.cwd || "."
+          : signals.packageRoot || "."
       : null;
     const covers = coverageFromText([
       verification.matrix && verification.matrix.covers,
@@ -62,6 +79,14 @@ function buildVerificationPlan(state, statePath) {
       category,
       tool: toolForVerification(category, signals),
       command,
+      cwd: commandCwd,
+      bindingSource: command
+        ? injectedCommand
+          ? "rules"
+          : preserved && preserved.command === command
+            ? preserved.bindingSource || "verify-run"
+            : "repository"
+        : null,
       target: targetForVerification(category, signals),
       covers,
       artifactKinds: artifacts,
@@ -71,20 +96,18 @@ function buildVerificationPlan(state, statePath) {
       testMode: mode ? mode.mode : null,
       testModeContract: mode || null,
       contract: verification.matrix || null,
-      contractHash: sha256Text(JSON.stringify({
-        id: verification.id,
-        text: verification.text,
-        matrix: verification.matrix || null,
-      })),
+      contractHash,
       status: plannedCheckStatus({ verification, category, command, covers, artifacts, mode }),
       notes: plannerNotes({ verification, category, command, covers, signals, mode }),
     };
   });
   const coverage = buildCoverageMatrix(state, checks);
   const gaps = buildVerificationGaps(state, checks, coverage, signals);
+  const contractBlocking = gaps.some(gap => gap.severity === "blocking" && gap.phase !== "binding");
+  const bindingBlocking = gaps.some(gap => gap.severity === "blocking" && gap.phase === "binding");
   return {
     schema: "hoyeon.prd-implement.verification-plan.v1",
-    status: gaps.some(gap => gap.severity === "blocking") ? "needs_review" : "ready",
+    status: contractBlocking ? "needs_review" : bindingBlocking ? "needs_binding" : "ready",
     generatedAt: nowIso(),
     prdPath: state.prdPath,
     prdSha256: state.prdSnapshot ? state.prdSnapshot.sha256 : null,
@@ -351,7 +374,6 @@ function findDependencyCycle(items) {
 function readyExecutionPlan(state) {
   const plan = state.executionPlan;
   const planSummary = executionPlanSummary(state);
-  const verificationSummary = verificationPlanSummary(state);
   if (!plan) {
     return {
       readySequential: [],
@@ -367,7 +389,7 @@ function readyExecutionPlan(state) {
   for (const task of state.tasks || []) {
     if (!["pending", "in_progress"].includes(task.status)) continue;
     const waitingFor = [];
-    if (verificationSummary.status !== "ready" || verificationSummary.blockingGapCount > 0) waitingFor.push("VP0");
+    if (verificationPlanBlocksImplementation(state)) waitingFor.push("VP0");
     if (plan.status !== "ready" || planSummary.blockingGapCount > 0) waitingFor.push("EP0");
     for (const depId of task.dependsOn || []) {
       const dep = tasksById.get(String(depId).toUpperCase());
@@ -431,13 +453,18 @@ function plannedCommandForVerification(state, verificationId) {
   const check = ((state.verificationPlan && state.verificationPlan.checks) || [])
     .find(candidate => String(candidate.verificationId).toUpperCase() === String(verificationId).toUpperCase());
   if (check && check.command) return check.command;
-  const item = (state.verification || [])
-    .find(candidate => String(candidate.id).toUpperCase() === String(verificationId).toUpperCase());
-  return item
-    ? item.matrix && item.matrix.method
-      ? commandFromMatrixMethod(item.matrix.method)
-      : commandFromText(item.text || "")
-    : null;
+  return null;
+}
+
+function plannedBindingForVerification(state, verificationId) {
+  const check = ((state.verificationPlan && state.verificationPlan.checks) || [])
+    .find(candidate => String(candidate.verificationId).toUpperCase() === String(verificationId).toUpperCase());
+  if (!check) return null;
+  return {
+    check,
+    command: check.command || null,
+    cwd: check.cwd || ".",
+  };
 }
 
 function buildCoverageMatrix(state, checks) {
@@ -498,7 +525,9 @@ function structuralParseGaps(state) {
   const acIds = new Set(acs.map(item => String(item.id).toUpperCase()));
   const referencedAc = new Set();
   for (const task of tasks) for (const id of task.acceptanceCriteria || []) referencedAc.add(String(id).toUpperCase());
-  for (const verification of verifications) for (const id of uniqueMatches(verification.text || "", /\bAC\d+\b/gi)) referencedAc.add(id.toUpperCase());
+  for (const verification of verifications) {
+    for (const id of coverageFromText(verification.text || "").acceptanceCriteria) referencedAc.add(id.toUpperCase());
+  }
   if (acs.length > 0) {
     for (const id of referencedAc) {
       if (!acIds.has(id)) {
@@ -515,8 +544,12 @@ function structuralParseGaps(state) {
   if (requirements.length > 0) {
     const referencedR = new Set();
     for (const task of tasks) for (const id of task.requirements || []) referencedR.add(String(id).toUpperCase());
-    for (const verification of verifications) for (const id of uniqueMatches(verification.text || "", /\bR\d+\b/gi)) referencedR.add(id.toUpperCase());
-    for (const ac of acs) for (const id of uniqueMatches(ac.text || "", /\bR\d+\b/gi)) referencedR.add(id.toUpperCase());
+    for (const verification of verifications) {
+      for (const id of coverageFromText(verification.text || "").requirements) referencedR.add(id.toUpperCase());
+    }
+    for (const ac of acs) {
+      for (const id of coverageFromText(ac.text || "").requirements) referencedR.add(id.toUpperCase());
+    }
     for (const requirement of requirements) {
       if (!referencedR.has(String(requirement.id).toUpperCase())) {
         gaps.push({
@@ -539,18 +572,8 @@ const DB_TOUCH_PATTERN = /\b(migrat\w*|seed\w*|db|database|sql|psql|drizzle|pris
 
 function buildVerificationGaps(state, checks, coverage, signals) {
   const gaps = structuralParseGaps(state);
-  const oracleBackedAcs = new Set((state.acceptanceCriteria || [])
-    .filter(ac => ac.oracle && typeof ac.oracle === "object")
-    .map(ac => ac.id));
   for (const [acId, item] of Object.entries(coverage)) {
     if (!item.coveredBy.length) {
-      // An AC with a declared machine oracle (Check:/Artifact: tail) is its
-      // own verification: oracle-run settles it mechanically, so demanding an
-      // additional V-row mapping would force ceremony the oracle replaces.
-      if (oracleBackedAcs.has(acId)) {
-        item.status = "oracle";
-        continue;
-      }
       gaps.push({
         severity: "blocking",
         code: "acceptance-uncovered",
@@ -560,12 +583,13 @@ function buildVerificationGaps(state, checks, coverage, signals) {
     }
   }
   for (const check of checks) {
-    if (check.status === "needs_command") {
+    if (check.status === "needs_binding") {
       gaps.push({
         severity: "blocking",
-        code: "command-missing",
+        phase: "binding",
+        code: "verification-binding-missing",
         item: check.id,
-        message: `${check.id}/${check.verificationId} needs a concrete command or approved verifier`,
+        message: `${check.id}/${check.verificationId} has no repository command binding yet; run verify-run after the implementation creates the verifier`,
       });
     }
     if (check.status === "needs_coverage_mapping") {
@@ -576,12 +600,12 @@ function buildVerificationGaps(state, checks, coverage, signals) {
         message: `${check.id}/${check.verificationId} has no R/AC/T coverage mapping`,
       });
     }
-    if (check.status === "needs_artifact") {
+    if (check.status === "needs_evidence_strategy") {
       gaps.push({
         severity: "blocking",
-        code: "artifact-missing",
+        code: "evidence-strategy-missing",
         item: check.id,
-        message: `${check.id}/${check.verificationId} has no explicit artifact requirement`,
+        message: `${check.id}/${check.verificationId} mode does not imply an evidence strategy`,
       });
     }
     const contractValues = check.contract ? Object.values(check.contract).filter(value => typeof value === "string").join(" ") : "";
@@ -817,6 +841,7 @@ module.exports = {
   buildParallelGroups,
   writeScopesOverlap,
   plannedCommandForVerification,
+  plannedBindingForVerification,
   buildCoverageMatrix,
   structuralParseGaps,
   buildVerificationGaps,

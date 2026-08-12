@@ -39,7 +39,7 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
   --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
 ```
 
-If no session ID is available, initialize without `--session-id` and let the first Stop or PreToolUse hook payload bind `activeSessionId`.
+If no session ID is available, initialize without `--session-id` and let the first Stop or PreToolUse hook payload bind `ownerSessionId`.
 Do not intentionally share one active state across unrelated agent sessions.
 
 The `$please` path passes the exact user invocation through `--allow-unapproved-prd` as its approval deviation.
@@ -104,8 +104,9 @@ In worktree mode, initialization also writes active pointers and session-scoped 
 The latest legacy pointer is informational.
 Session-scoped files are authoritative when a hook payload includes a session ID.
 
-The harness stamps the pointer with its writing session and refuses cross-session pointer access; pin `--state` only when running multiple runs from one session (the refusal message lists the candidate state paths).
-When diagnosing a mismatch, inspect `status`, the emitted `statePath`, `activeSessionId`, and the pointer's `owner` stamp before changing anything.
+A run belongs to exactly one session (`ownerSessionId`), and the pointer only mirrors it; pin `--state` when running multiple runs from one session (the refusal message lists the candidate state paths).
+`--state` is not a way around ownership: pinning another session's run refuses too. Add `--adopt` to take the run over, which is recorded as a deviation - that is the supported way to finish a run whose session is gone, including an honest `finalize --status blocked`.
+When diagnosing a mismatch, inspect `status`, the emitted `statePath`, and `ownerSessionId` before changing anything.
 
 ## Post-Receipt PR Handoff
 

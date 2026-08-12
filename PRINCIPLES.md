@@ -25,7 +25,7 @@ it implemented something. "I made the change" is not evidence; an exit code, a
 captured response, a rendered screen, a queried row is.
 
 So use the full instrument set before falling back to reading a diff: a
-mechanical command's exit code, a declared AC oracle, a runtime capture
+mechanical command's exit code, an implementation-bound criterion check, a runtime capture
 (browser, API, DB), a registered artifact, an agentic judge with read-only
 repository access when the proof lives outside the diff. Judging a criterion
 from the diff alone is the weakest available instrument, not the default one.

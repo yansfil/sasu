@@ -38,13 +38,15 @@ function verificationIsClosedForAccounting(verification) {
  * @param {string} actualCommand
  * @returns {Deviation|null}
  */
-function findVerificationCommandDeviation(state, targetId, expectedCommand, actualCommand) {
+function findVerificationCommandDeviation(state, targetId, expectedCommand, actualCommand, expectedCwd, actualCwd) {
   return (state.deviations || []).find(entry =>
     entry.type === "verification_command"
     && entry.targetId === targetId
     && entry.details
     && entry.details.expectedCommand === expectedCommand
-    && entry.details.actualCommand === actualCommand) || null;
+    && entry.details.actualCommand === actualCommand
+    && entry.details.expectedCwd === expectedCwd
+    && entry.details.actualCwd === actualCwd) || null;
 }
 
 /**
@@ -66,7 +68,14 @@ function findVerificationCommandDeviation(state, targetId, expectedCommand, actu
 function recordDeviation(state, type, targetId, summary, details = {}) {
   if (!state.deviations) state.deviations = [];
   if (type === "verification_command") {
-    const existing = findVerificationCommandDeviation(state, targetId, details.expectedCommand, details.actualCommand);
+    const existing = findVerificationCommandDeviation(
+      state,
+      targetId,
+      details.expectedCommand,
+      details.actualCommand,
+      details.expectedCwd,
+      details.actualCwd,
+    );
     if (existing) {
       existing.details.occurrences = (existing.details.occurrences || 1) + 1;
       existing.details.lastSeenAt = nowIso();
@@ -436,12 +445,6 @@ function autoCloseAcceptanceCriteria(state) {
   const closed = [];
   for (const ac of state.acceptanceCriteria || []) {
     if (ac.status !== "pending") continue;
-    // Oracle-backed ACs never auto-close on V coverage: oracle-run is their
-    // only path to met. Incidental coverage (a V row that happens to name the
-    // AC) used to auto-met an oracle AC without its declared check ever
-    // running - the exact bypass the oracle grammar exists to prevent, and
-    // finalize now rejects the resulting met as evidence-free anyway.
-    if (ac.oracle && typeof ac.oracle === "object") continue;
     const coveredBy = (plan.coverage[ac.id] && plan.coverage[ac.id].coveredBy) || [];
     if (!coveredBy.length) continue;
     const covering = coveredBy.map(checkId => {
@@ -537,14 +540,20 @@ function verificationPlanSummary(state) {
       status: "missing",
       checkCount: 0,
       blockingGapCount: 1,
+      contractBlockingGapCount: 1,
+      bindingGapCount: 0,
       warningCount: 0,
     };
   }
   const gaps = plan.gaps || [];
+  const contractBlockingGapCount = gaps.filter(gap => gap.severity === "blocking" && gap.phase !== "binding").length;
+  const bindingGapCount = gaps.filter(gap => gap.severity === "blocking" && gap.phase === "binding").length;
   return {
     status: plan.status || "unknown",
     checkCount: (plan.checks || []).length,
     blockingGapCount: gaps.filter(gap => gap.severity === "blocking").length,
+    contractBlockingGapCount,
+    bindingGapCount,
     warningCount: gaps.filter(gap => gap.severity !== "blocking").length,
     generatedAt: plan.generatedAt,
   };
@@ -553,7 +562,7 @@ function verificationPlanSummary(state) {
 /** @param {State} state */
 function verificationPlanBlocksImplementation(state) {
   const summary = verificationPlanSummary(state);
-  return summary.status === "missing" || summary.blockingGapCount > 0;
+  return summary.status === "missing" || summary.contractBlockingGapCount > 0;
 }
 
 /** @param {State} state */

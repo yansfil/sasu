@@ -15,6 +15,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { stripSessionEnv } from "./helpers/session_env.mjs";
+
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
 const goldenDir = path.join(repoRoot, "tests", "golden", "prd-state-standard-flow");
@@ -26,7 +28,7 @@ function run(command, args, options = {}) {
     shell: false,
     encoding: "utf8",
     input: options.input,
-    env: options.env,
+    env: options.env || stripSessionEnv(),
     maxBuffer: 20 * 1024 * 1024,
   });
   if (!options.allowFailure && result.status !== 0) {
@@ -116,7 +118,7 @@ No major technical structure change expected.
 
 ## 7. Acceptance Criteria
 
-- AC1. V1 passes with a command-log artifact.
+- AC1. The local verification succeeds and records evidence.
 
 ## 8. PRD-Level Tasks
 
@@ -132,9 +134,9 @@ No major technical structure change expected.
 
 ### 9.2 Required Agent Verification
 
-| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no |
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
+| --- | --- | --- | --- | --- | --- |
+| V1 | build/static | R1, AC1, T1 | the implementation-bound verifier exits zero | yes | no |
 
 ### 9.3 Human Verification
 
@@ -176,7 +178,7 @@ Status: PASS
 
 ## Verification Intent Checklist
 
-- V1: Pass Intent: command exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
+- V1: Pass Intent: the implementation-bound verifier exits zero; Covers: R1, AC1; Artifacts checked: ${logPath}; Judgment: PASS; Gap: none
 
 ## Coverage Judgment
 

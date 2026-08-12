@@ -8,6 +8,7 @@ const path = require("path");
 
 const { SCHEMA, ACTIVE_PATH, PRD_ROOT_REL, IMPLEMENT_ROOT_REL, nowIso, cwd, resolveProjectPath, toProjectRelative, canonicalPath, readJson, writeJson, appendJsonl, safeTimestamp } = require("./util");
 const { primaryWorktreeRoot } = require("./git");
+const { recordDeviation } = require("./state_data");
 const { artifactManifestPath, inspectArtifact, assertArtifactPathIsEvidence } = require("./artifacts");
 
 function activePath(baseDir = cwd()) {
@@ -56,10 +57,20 @@ function readActiveFile(file) {
   return { file, active };
 }
 
+/**
+ * The run's owner as the pointer reports it. The pointer mirrors
+ * `state.ownerSessionId` and never records an owner of its own, so this and
+ * `state.ownerSessionId` cannot disagree - see pointerOwnerStamp for the
+ * incident that rule exists for.
+ */
+function pointerOwnerSessionId(record) {
+  return normalizeSessionId(record && record.owner && record.owner.sessionId);
+}
+
 // A single active pointer per checkout (`.prd-implement-active.json`). Without a
-// session id, return it as-is (statusline, prd-ship). With one, an unbound
-// pointer is claimable (first-hook bootstrap) and a pointer bound to this session
-// matches; a pointer bound to a different session is not this session's run.
+// session id, return it as-is (statusline, prd-ship). With one, an unowned
+// pointer is claimable (first-hook bootstrap) and a pointer owned by this session
+// matches; a pointer owned by a different session is not this session's run.
 // Concurrent runs in one checkout are not supported by design; use a worktree,
 // which gets its own pointer.
 function readActive(baseDir = cwd(), options = {}) {
@@ -67,7 +78,8 @@ function readActive(baseDir = cwd(), options = {}) {
   if (!active) return null;
   const sessionId = normalizeSessionId(options.sessionId);
   if (!sessionId) return active;
-  if (!active.active.activeSessionId || sameSessionId(active.active.activeSessionId, sessionId)) return active;
+  const owner = pointerOwnerSessionId(active.active);
+  if (!owner || sameSessionId(owner, sessionId)) return active;
   return null;
 }
 
@@ -117,7 +129,7 @@ function activeDiagnostics(baseDir, selectedStatePath) {
   const info = pointer ? {
     file: toProjectRelative(pointer.file, baseDir),
     statePath: pointer.active.statePath,
-    activeSessionId: pointer.active.activeSessionId || null,
+    ownerSessionId: pointerOwnerSessionId(pointer.active),
     status: pointer.active.status || null,
     updatedAt: pointer.active.updatedAt || null,
     selected: activeRecordStatePath(pointer.active, baseDir) === selected,
@@ -147,8 +159,10 @@ function implementStateCandidates(baseDir) {
 }
 
 /**
- * Cross-session pointer guard, applied only when state is resolved VIA the
- * shared pointer (an explicit --state pin is always honored).
+ * Cross-session guard for state resolved VIA the shared pointer. The question
+ * it answers is "which run does this pointer name, and is it mine?" - naming a
+ * run with --state answers the first half, so that path gets the narrower
+ * assertPinnedAccess below instead.
  *
  * Live evidence this exists for: two concurrent sessions in one checkout.
  * Session P ran `init` (pointer -> pokemon); session T's later activity
@@ -168,10 +182,10 @@ function implementStateCandidates(baseDir) {
  */
 function assertPointerAccess(record, statePath, baseDir, accessIntent) {
   const readOnly = accessIntent === "read";
-  const ownerSessionId = normalizeSessionId((record.owner && record.owner.sessionId) || record.activeSessionId);
+  const ownerSessionId = pointerOwnerSessionId(record);
   const sessionId = currentSessionIdentity();
   const candidates = implementStateCandidates(baseDir);
-  const pinHint = `Pass --state <path> to name the run explicitly${candidates.length ? ` (candidates: ${candidates.join(", ")})` : ""}.`;
+  const pinHint = `Pass --state <path> to name the run explicitly${candidates.length ? ` (candidates: ${candidates.join(", ")})` : ""}. Add --adopt to that pinned command to take ownership of a run whose session is gone.`;
   if (ownerSessionId && sessionId) {
     if (sameSessionId(ownerSessionId, sessionId)) return;
     const message = [
@@ -199,14 +213,60 @@ function assertPointerAccess(record, statePath, baseDir, accessIntent) {
 }
 
 /**
- * @param {Object} [options] parsed CLI options; supports options.state
+ * Ownership check for an explicit `--state` pin. Deliberately narrower than the
+ * pointer guard: naming the run removes the "which run is this?" ambiguity that
+ * the pointer guard's unverifiable-identity rule exists for, so the only
+ * question left is whether this session may write to THAT run.
+ *
+ * Two consequences, both load-bearing:
+ * - An unverifiable caller proceeds (CI, a bare shell, any process without a
+ *   session env var). The pointer guard's multi-run refusal points at --state
+ *   as its exit, and an exit that also refuses is a deadlock, not a guard.
+ * - A foreign owner refuses, but --adopt always gets through. A run whose
+ *   session is gone must stay rescuable - an honest `finalize --status blocked`
+ *   can never be the thing ownership locks out.
+ *
+ * Until 2026-08-12 this path had no check at all: `--state` returned before the
+ * guard ran, and the pointer guard's own refusal message advertised it. Measured
+ * on pokemon-rpg-run-1 - the working session, refused by the pointer at 03:05:59,
+ * pinned --state on every call afterwards, and each pinned write re-stamped the
+ * pointer's owner (mark.js calls syncActive) while never touching the state's
+ * binding. By 03:09:45 the pointer named the working session and the state still
+ * named a bystander. Not one record wrong: two records of one fact, taking turns.
+ */
+function assertPinnedAccess(statePath, options, baseDir, accessIntent) {
+  if (accessIntent === "read") return;
+  let owner = null;
+  try {
+    owner = normalizeSessionId(readJson(statePath).ownerSessionId);
+  } catch {
+    // Unreadable or malformed: let the caller's own read produce the real
+    // error instead of masking it with an ownership complaint.
+    return;
+  }
+  const sessionId = currentSessionIdentity();
+  if (!owner || !sessionId || sameSessionId(owner, sessionId) || options.adopt) return;
+  throw new Error([
+    `${toProjectRelative(statePath, baseDir)} belongs to another session.`,
+    `  run owner:    session ${owner}`,
+    `  this session: ${sessionId}`,
+    "Refusing to mutate another session's run. Re-run with --adopt to take ownership; the handover is recorded as a deviation.",
+  ].join("\n"));
+}
+
+/**
+ * @param {Object} [options] parsed CLI options; supports options.state, options.adopt
  * @param {string} [baseDir]
- * @param {"mutate"|"read"} [accessIntent] pointer-guard posture; defaults to
+ * @param {"mutate"|"read"} [accessIntent] guard posture; defaults to
  *   the conservative "mutate" so every caller that does not declare itself
  *   read-only gets the cross-session refusal
  */
 function resolveStatePath(options = {}, baseDir = cwd(), accessIntent = "mutate") {
-  if (options.state) return resolveProjectPath(options.state, baseDir);
+  if (options.state) {
+    const pinned = resolveProjectPath(options.state, baseDir);
+    assertPinnedAccess(pinned, options, baseDir, accessIntent);
+    return pinned;
+  }
   const active = readActive(baseDir);
   if (!active) throw new Error(`No active PRD implementation state found at ${ACTIVE_PATH}`);
   const statePath = resolveProjectPath(active.active.statePath, baseDir);
@@ -215,7 +275,45 @@ function resolveStatePath(options = {}, baseDir = cwd(), accessIntent = "mutate"
 }
 
 /**
- * @param {Object} [options] parsed CLI options; supports options.state
+ * One owner per run, moved only deliberately.
+ *
+ * An unowned run is claimed by the first identified writer. This is DESIGNED,
+ * not incidental: `init` from a process with no session env (CI, a bare shell)
+ * must still produce a run someone can finish, so an ownerless run cannot be
+ * allowed to deadlock. The cost is real and named here - until a run is claimed,
+ * any session that writes to it becomes its owner, which is exactly how
+ * pokemon-rpg-run-1 came to belong to a session that never started it (init
+ * resolved no identity, leaving the field null; the first Stop hook to fire in
+ * the checkout claimed it, and that hook belonged to a bystander). Narrowing the
+ * window is init's job - resolving identity from the one shared resolver so a
+ * run is owned from birth - not this function's, which must keep the escape open.
+ *
+ * An owned run changes hands only under --adopt, and the handover lands in
+ * `state.deviations` so the record says
+ * a takeover happened instead of leaving it to be inferred from who wrote last.
+ *
+ * The refusal already happened in resolveStatePath; this only performs what the
+ * guard let through.
+ */
+function claimOrAdoptOwnership(state, options) {
+  const sessionId = currentSessionIdentity();
+  if (!sessionId) return;
+  const owner = normalizeSessionId(state.ownerSessionId);
+  if (sameSessionId(owner, sessionId)) return;
+  if (!owner) {
+    state.ownerSessionId = sessionId;
+    return;
+  }
+  if (!options.adopt) return;
+  state.ownerSessionId = sessionId;
+  recordDeviation(state, "run_adopted", "RUN", `Run ownership adopted by session ${sessionId} (previous owner ${owner}).`, {
+    previousSessionId: owner,
+    sessionId,
+  });
+}
+
+/**
+ * @param {Object} [options] parsed CLI options; supports options.state, options.adopt
  * @param {string} [baseDir]
  * @param {"mutate"|"read"} [accessIntent]
  * @returns {{statePath: string, state: State}}
@@ -224,18 +322,30 @@ function loadState(options = {}, baseDir = cwd(), accessIntent = "mutate") {
   const statePath = resolveStatePath(options, baseDir, accessIntent);
   const state = readJson(statePath);
   if (state.schema !== SCHEMA) throw new Error(`Unsupported state schema in ${statePath}`);
+  if (accessIntent !== "read") claimOrAdoptOwnership(state, options);
   return { statePath, state };
 }
 
-// Ownership stamp for the pointer: the identity of the LAST WRITER. The
-// writer's own env identity wins (a session pinning --state onto a run
-// re-points the pointer to itself - ownership follows the last legitimate
-// writer); env-less writers (hook processes) fall back to the run's bound
-// session, which is the identity the hook just adopted or matched. pid and
-// startedAt are debugging breadcrumbs, never compared.
+// The pointer MIRRORS the run's owner; it never records an owner of its own.
+//
+// This used to stamp the last writer's env identity instead. That made THREE
+// records of one fact - `state.activeSessionId` (write-once), this stamp
+// (write-always), and the pointer's own `activeSessionId` - and the old guard
+// read `owner.sessionId || activeSessionId`, so a single env-less write (a hook
+// process) slid authority quietly onto the fallback.
+//
+// Measured 2026-08-12 on pokemon-rpg-run-1. One session drove the run start to
+// finish and never received a continuation directive; a bystander session that
+// started nothing received every one of them and could not act on any, because
+// each record named a different session and they took turns being right
+// (03:05:59 pointer said the bystander, 03:09:45 it said the worker, the state
+// said the bystander throughout). Ownership now moves in exactly one place
+// (claimOrAdoptOwnership) and every other site reads it.
+//
+// pid and startedAt stay last-writer breadcrumbs, never compared.
 function pointerOwnerStamp(state) {
   return {
-    sessionId: currentSessionIdentity() || normalizeSessionId(state.activeSessionId),
+    sessionId: normalizeSessionId(state.ownerSessionId),
     pid: process.pid,
     startedAt: nowIso(),
   };
@@ -253,7 +363,6 @@ function activeRecordForState(statePath, state, projectRoot = state.projectRoot 
       branch: state.delivery.branch,
       worktreePath: state.delivery.worktree && state.delivery.worktree.path,
     } : null,
-    activeSessionId: state.activeSessionId || null,
     owner: pointerOwnerStamp(state),
     updatedAt: nowIso(),
   };

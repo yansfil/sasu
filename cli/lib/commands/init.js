@@ -8,7 +8,7 @@ const { SCHEMA, PROJECT_CONFIG_PATH, SELF_PATH, harnessCommand, nowIso, cwd, res
 const { runGit, branchExists, isLinkedWorktree, gitWorktreeRoots, worktreeSnapshot } = require("../git");
 const { readProjectConfig, normalizeDeliveryConfig, normalizeExecutionConfig, classifyReviewProfile } = require("../config");
 const { recordDeviation, verificationPlanSummary, executionPlanSummary, countState, isVerificationRequiredForDone } = require("../state_data");
-const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parseAcOracle, parsePreWorkChecklist, pendingPreWork, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults } = require("../prd_parser");
+const { stripFrontmatter, extractFirstSection, extractFirstNestedSection, parseMarkdownItems, parsePreWorkChecklist, pendingPreWork, buildIntentTrace, parseVerification, parseTestModeContract, applyTestModeDefaults, findPrdImplementationBindings } = require("../prd_parser");
 const { verificationContractHash, buildVerificationPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { ensureRunDirs } = require("../artifacts");
 const { activePath, normalizeSessionId, currentSessionIdentity, writeActiveRecord, persistState } = require("../state_store");
@@ -141,16 +141,25 @@ function resolveInitInputs(options) {
   const prdInput = options.prd;
   if (!prdInput) throw new Error("--prd is required");
   const projectRoot = cwd();
-  const initialSessionId = normalizeSessionId(
-    options["session-id"] ||
-    options.sessionId ||
-    process.env.CODEX_SESSION_ID ||
-    process.env.CODEX_THREAD_ID ||
-    process.env.CLAUDE_SESSION_ID,
-  );
+  // An explicit --session-id wins; otherwise the environment answers through
+  // the ONE resolver (state_store's SESSION_ID_ENV_KEYS). This used to inline
+  // its own env list that omitted CLAUDE_CODE_SESSION_ID - the variable Claude
+  // Code actually sets - so an un-flagged `init` bound the run to null while
+  // the pointer stamp, which did call the shared resolver, recorded the real
+  // session. Two identity resolvers, one init, guaranteed drift.
+  const initialSessionId = normalizeSessionId(options["session-id"] || options.sessionId)
+    || currentSessionIdentity();
   const prdAbs = resolveProjectPath(prdInput, projectRoot);
   if (!fs.existsSync(prdAbs)) throw new Error(`PRD not found: ${prdAbs}`);
   const prdText = fs.readFileSync(prdAbs, "utf8");
+  const implementationBindings = findPrdImplementationBindings(prdText);
+  if (implementationBindings.length) {
+    throw new Error([
+      "PRD contains implementation-owned bindings.",
+      ...implementationBindings.map(defect => `- line ${defect.line}: ${defect.message}`),
+      "Keep product semantics in the PRD and bind commands, cwd, writeScope, and evidence paths during implementation.",
+    ].join("\n"));
+  }
   const parsed = stripFrontmatter(prdText);
   const approvalRaw = String(parsed.frontmatter.human_approval || "").toLowerCase();
   const approvalOverride = typeof options["allow-unapproved-prd"] === "string"
@@ -195,11 +204,11 @@ function writeWorktreePointer(inputs, worktreePreparation) {
       branch: inputs.deliveryConfig.branch,
       worktreePath: worktreePreparation.path,
     },
-    activeSessionId: inputs.initialSessionId || null,
-    // Ownership stamp: the initializing session is the pointer's first writer
-    // (see pointerOwnerStamp in state_store.js for the semantics).
+    // The pointer mirrors the run's owner and holds no binding of its own; the
+    // initializing session is that owner (see pointerOwnerStamp in
+    // state_store.js for why this may not be resolved a second way here).
     owner: {
-      sessionId: currentSessionIdentity() || inputs.initialSessionId || null,
+      sessionId: inputs.initialSessionId || null,
       pid: process.pid,
       startedAt: nowIso(),
     },
@@ -229,13 +238,6 @@ function parsePrdContract(parsed, projectRoot) {
     "7. Acceptance Criteria",
     "Acceptance Criteria",
   ]), "AC", "AC");
-  // Machine oracle tails (Check:/Artifact:) declared on AC bullets: the
-  // harness settles these ACs mechanically via `oracle-run` instead of a
-  // judge or a manual mark, so the declaration must survive into state.
-  for (const criterion of acceptanceCriteria) {
-    const oracle = parseAcOracle(criterion.text);
-    if (oracle) criterion.oracle = oracle;
-  }
   const requirements = parseMarkdownItems(extractFirstSection(parsed.body, [
     "6. Requirements",
     "Requirements",
@@ -279,6 +281,7 @@ function parsePrdContract(parsed, projectRoot) {
 function buildInitialState(inputs, contract, worktreePreparation, options, runDirRel) {
   const { projectRoot, prdAbs, prdText, parsed, approvalRaw, approvalOverride } = inputs;
   const { tasks, acceptanceCriteria, requirements, verification, testModeContract, intentTrace, preWorkChecklist } = contract;
+  resolveApprovedHumanDecisions(preWorkChecklist, approvalRaw === "approved" || Boolean(approvalOverride));
   const reviewProfile = classifyReviewProfile({
     reviewProfile: parsed.frontmatter.review_profile,
     reviewRationale: parsed.frontmatter.review_rationale,
@@ -332,7 +335,7 @@ function buildInitialState(inputs, contract, worktreePreparation, options, runDi
     implementationNotes: contract.implementationNotes,
     createdAt: nowIso(),
     updatedAt: nowIso(),
-    activeSessionId: inputs.initialSessionId,
+    ownerSessionId: inputs.initialSessionId,
     tasks,
     acceptanceCriteria,
     requirements,
@@ -349,6 +352,19 @@ function buildInitialState(inputs, contract, worktreePreparation, options, runDi
     supersededReviews: [],
     finalReceipt: null,
   };
+}
+
+function resolveApprovedHumanDecisions(preWorkChecklist, approved) {
+  if (!approved) return preWorkChecklist;
+  for (const item of (preWorkChecklist && preWorkChecklist.items) || []) {
+    if (item.section !== "4.2" || item.status !== "pending") continue;
+    item.status = "resolved";
+    item.evidence = [{
+      ts: nowIso(),
+      text: "Resolved by the approved PRD decision contract at initialization.",
+    }];
+  }
+  return preWorkChecklist;
 }
 
 function prepareDeliveryWorktree(projectRoot, prdAbs, deliveryConfig, options, approvalOverride, initialSessionId) {
@@ -537,6 +553,7 @@ function copyRequiredInitInputsToWorktree(sourceRoot, targetRoot, prdAbs, delive
 module.exports = {
   cmdInit,
   parsePrdContract,
+  resolveApprovedHumanDecisions,
   prepareDeliveryWorktree,
   syncPathForWorktree,
   copyRequiredInitInputsToWorktree,

@@ -140,10 +140,8 @@ const PRE_WORK_EMPTY_LIST = /^(?:none|n\/a|없음|해당\s*없음)(?:\s*(?:requi
  * (2026-08-11). This text is what a human reads and what a prompt quotes, so
  * matched pairs go anywhere in the line, not just at the ends.
  *
- * Code spans are left byte-for-byte: inside them `**` is a real recursive glob
- * (`src/**\/*.ts`), not emphasis. `Scope:` globs are unaffected either way -
- * they are parsed from the pre-strip raw text precisely because this strip is
- * lossy (see parseScopeGlobs's caller).
+ * Code spans are left byte-for-byte: inside them `**` may be meaningful text,
+ * not emphasis.
  */
 function stripBoldMarkers(text) {
   return text
@@ -257,20 +255,9 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     if (!current) return;
     current.text = current.text.replace(/\s+/g, " ").trim();
     current.title = firstSentence(current.text);
-    current.requirements = uniqueMatches(current.text, /\bR\d+\b/gi);
-    current.acceptanceCriteria = uniqueMatches(current.text, /\bAC\d+\b/gi);
-    // §8 task tail `Scope: <glob>[, <glob>...]` - the PRD's own declaration of
-    // where this task's change lives. Extracted for every item kind (only
-    // tasks use it today) so the verify gate can scope a judge lane's diff to
-    // the paths the vetted document named, instead of paths the implementer
-    // picked at verification time (submission-bias boundary, D: verify-input
-    // selection belongs to the document/harness). Parsed from the pre-strip
-    // raw text: stripBoldMarkers is lossy on an unfenced glob (a bare trailing
-    // `**` is exactly how a recursive glob ends, and two of them in one line
-    // read as an emphasis pair), so the glob grammar never reads `text`.
-    const scopeGlobs = parseScopeGlobs(current.rawText.replace(/\s+/g, " ").trim());
-    if (scopeGlobs.length) current.scopeGlobs = scopeGlobs;
-    delete current.rawText;
+    const coverage = coverageFromText(current.text);
+    current.requirements = coverage.requirements;
+    current.acceptanceCriteria = coverage.acceptanceCriteria;
     items.push(current);
     current = null;
   };
@@ -281,7 +268,6 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     if (!match) {
       if (current && /^\s{2,}\S/.test(rawLine) && !line.startsWith("|")) {
         current.text += ` ${line}`;
-        current.rawText += ` ${line}`;
       }
       continue;
     }
@@ -300,7 +286,6 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
     current = {
       id,
       text,
-      rawText: match[1].trim(),
       status: "pending",
       evidence: [],
       artifacts: [],
@@ -310,124 +295,33 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
   return items;
 }
 
-/**
- * `Scope:` tail grammar for §8 task bullets: `Scope: <glob>[, <glob>...]` at
- * the end of the bullet. One grammar, three readers - this parser (init state),
- * the TS prelint (syntax gate), and the verify gate's lane scoping - so the
- * regexes live here and everyone imports them.
- */
-const SCOPE_TAIL = /(?:^|\s)Scope:\s*(.+)$/;
-
-function parseScopeGlobs(text) {
-  const match = String(text || "").match(SCOPE_TAIL);
-  if (!match) return [];
-  return match[1]
-    .replace(/\.\s*$/, "")
-    .split(",")
-    .map(part => part.trim().replace(/^`|`$/g, "").trim())
-    .filter(Boolean);
+function coverageFromText(text) {
+  return {
+    requirements: expandCoverageIds(text, "R"),
+    acceptanceCriteria: expandCoverageIds(text, "AC"),
+    tasks: expandCoverageIds(text, "T"),
+  };
 }
 
-// Syntax validation shared with prelint: null when the glob is acceptable,
-// otherwise the human-readable reason. Globs are repo-relative by contract -
-// the diff they scope is repo-relative - so absolute paths and `..` escapes
-// are structural defects, not style.
-function scopeGlobDefect(glob) {
-  const value = String(glob || "").trim();
-  if (!value) return "empty glob";
-  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value)) return `glob is absolute: ${value}`;
-  if (value.split("/").includes("..")) return `glob escapes the project root: ${value}`;
-  if (/\\/.test(value)) return `glob uses backslashes: ${value} (use forward slashes)`;
-  if (!/^[A-Za-z0-9_@.\-/*?]+$/.test(value)) return `glob has unsupported characters: ${value} (allowed: letters, digits, _ @ . - / * ?)`;
-  return null;
-}
-
-/**
- * AC oracle tail grammar (§7): a machine-checkable acceptance criterion may
- * end with one of
- *   Check: `<command>` -> <expected stdout substring>
- *   Check: `<command>`                (exit 0 alone proves it)
- *   Artifact: <project-relative path> (existence proves it)
- * Scaled-down import of ouroboros's AcceptanceCriterionSpec
- * (verify_command/output_assertion/expected_artifacts): the oracle is declared
- * in the vetted document at PRD time and executed by the harness, so the
- * implementer never picks what proves the criterion. Oracle-backed ACs are
- * settled mechanically and skip the judge lane entirely.
- */
-const AC_ORACLE_CHECK = /(?:^|\s)Check:\s*`([^`]+)`\s*(?:(?:->|→)\s*(\S.*))?$/;
-const AC_ORACLE_ARTIFACT = /(?:^|\s)Artifact:\s*(\S+?)\s*$/;
-
-function parseAcOracle(text) {
-  const normalized = String(text || "").replace(/\s+/g, " ").trim();
-  const check = normalized.match(AC_ORACLE_CHECK);
-  if (check) {
-    let expect = (check[2] || "").trim();
-    // A backtick-wrapped expectation is taken verbatim (the escape hatch for
-    // expectations that literally end in a period). A bare one sheds the
-    // bullet's sentence-final period so `-> ok.` asserts "ok", not "ok." -
-    // unless the period follows a quote, which reads as literal content
-    // (e.g. a JSON snippet like -> "status":"ok").
-    const backticked = expect.match(/^`(.*)`$/);
-    if (backticked) expect = backticked[1];
-    else if (!/["'`]\.$/.test(expect)) expect = expect.replace(/\.$/, "");
-    return { kind: "check", command: check[1].trim(), expect: expect || null };
-  }
-  const artifact = normalized.match(AC_ORACLE_ARTIFACT);
-  if (artifact) {
-    const artifactPath = artifact[1].replace(/^`|`$/g, "").replace(/\.$/, "");
-    return { kind: "artifact", path: artifactPath };
-  }
-  return null;
-}
-
-// Structural defects in an oracle tail, for the $0 prelint: a bullet that
-// gestures at the reserved Check:/Artifact: markers but does not parse must
-// block before any judge or oracle run reads it as prose.
-function acOracleDefect(text) {
-  const normalized = String(text || "").replace(/\s+/g, " ").trim();
-  const mentionsCheck = /(?:^|\s)Check:/.test(normalized);
-  const mentionsArtifact = /(?:^|\s)Artifact:/.test(normalized);
-  if (!mentionsCheck && !mentionsArtifact) return null;
-  if (mentionsCheck && mentionsArtifact) {
-    return "AC declares both Check: and Artifact: oracles; keep exactly one (split the criterion if both proofs matter)";
-  }
-  if (mentionsCheck && !AC_ORACLE_CHECK.test(normalized)) {
-    return "Check: oracle must be `Check: \\`<command>\\` [-> <expected stdout substring>]` at the end of the bullet, command in backticks";
-  }
-  const oracle = parseAcOracle(normalized);
-  if (oracle && oracle.kind === "artifact") {
-    if (oracle.path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(oracle.path)) {
-      return `Artifact: oracle path is absolute: ${oracle.path} (use a project-relative path)`;
-    }
-    if (oracle.path.split(/[\\/]/).includes("..")) {
-      return `Artifact: oracle path escapes the project root: ${oracle.path}`;
+function expandCoverageIds(text, prefix) {
+  const source = String(text || "");
+  const seen = new Set(uniqueMatches(source, new RegExp(`\\b${prefix}\\d+\\b`, "gi")).map(id => id.toUpperCase()));
+  const ranges = new RegExp(`\\b${prefix}(\\d+)\\s*-\\s*(?:${prefix})?(\\d+)\\b`, "gi");
+  for (const match of source.matchAll(ranges)) {
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) continue;
+    if (start <= 0 || end <= 0 || Math.abs(end - start) > 100) continue;
+    const step = start <= end ? 1 : -1;
+    for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
+      seen.add(`${prefix}${value}`);
     }
   }
-  if (mentionsArtifact && !oracle) {
-    return "Artifact: oracle must be `Artifact: <project-relative path>` at the end of the bullet";
-  }
-  return null;
-}
-
-/**
- * Task scope view for the verify gate's lane scoping (TS side requires this
- * through the same lib the state parser uses, so both read one §8 grammar).
- * `acceptanceCriteria`/`requirements` are the task's Covers references; an AC
- * is scope-covered by a task either directly or via a shared R# - the same
- * chain the prelint's AC-coverage rule walks.
- */
-function parsePrdTasksForScoping(prdContent) {
-  const parsed = stripFrontmatter(String(prdContent || ""));
-  const tasks = parseMarkdownItems(extractFirstSection(parsed.body, [
-    "8. PRD-Level Tasks",
-    "PRD-Level Tasks",
-  ]), "T", "Task");
-  return tasks.map(task => ({
-    id: task.id,
-    scopeGlobs: task.scopeGlobs || [],
-    acceptanceCriteria: task.acceptanceCriteria || [],
-    requirements: task.requirements || [],
-  }));
+  return Array.from(seen).sort((left, right) => {
+    const a = Number(left.replace(/^\D+/, ""));
+    const b = Number(right.replace(/^\D+/, ""));
+    return a - b || left.localeCompare(right);
+  });
 }
 
 function buildIntentTrace(parsed, projectRoot) {
@@ -621,7 +515,7 @@ function looksLikeMarkdownTable(line, tableHeaders) {
   if (!line.includes("|")) return false;
   if (line.startsWith("|") || line.endsWith("|")) return true;
   if (tableHeaders) return true;
-  return /\b(id|covers|coverage)\b\s*\|/i.test(line) && /\|\s*(method|check|command|artifact|artifacts|pass)/i.test(line);
+  return /\b(id|covers|coverage)\b\s*\|/i.test(line) && /\|\s*(mode|pass|expected|required|can be blocked)/i.test(line);
 }
 
 /**
@@ -697,11 +591,10 @@ function extractCodeSpans(text) {
 /**
  * Split a (already outer-pipe-stripped) table row into raw cell strings.
  * A `|` is a cell delimiter only outside backtick code spans and only when not
- * escaped as `\|`; span text is copied wholesale so commands keep their pipes.
- * This deliberately diverges from GFM (which cuts cells at pipes even inside
- * code spans) because the PRD contract treats a backticked Method cell as the
- * literal command to execute - what the author wrote inside the backticks is
- * what must run.
+ * escaped as `\|`; span text is copied wholesale so semantic examples keep
+ * their literal pipes. This deliberately diverges from GFM, which cuts cells
+ * at pipes even inside code spans, because the harness must preserve the text
+ * the author approved.
  */
 function splitTableRow(text) {
   const value = String(text || "");
@@ -818,30 +711,22 @@ function matrixVerificationItem(headers, cells, currentLevel, counter) {
   const idCell = tableValue(headers, cells, ["id", "check id", "verification id"]);
   const mode = tableValue(headers, cells, ["mode", "test mode", "verification mode"]);
   const covers = tableValue(headers, cells, ["covers", "coverage", "mapped ids"]);
-  const method = tableValue(headers, cells, ["method", "check", "command", "command / method", "tool / method", "scenario", "flow"]);
-  const artifact = tableValue(headers, cells, ["artifact", "artifacts", "evidence", "expected artifact", "expected artifacts"]);
   const passCriteria = tableValue(headers, cells, ["pass intent", "pass criteria", "pass", "expected", "expected result", "success criteria", "proof intent"]);
-  const environment = tableValue(headers, cells, ["environment", "env", "runtime"]);
   const requiredForDoneRaw = tableValue(headers, cells, ["required for done", "required", "done gate", "required_for_done"]);
   const canBeBlockedRaw = tableValue(headers, cells, ["can be blocked", "blockable", "can block", "blocker semantics", "can_be_blocked"]);
   const safeProbe = tableValue(headers, cells, ["safe probe", "probe", "safe_probe"]);
-  const liveProof = tableValue(headers, cells, ["live proof", "live check", "real proof", "live_proof"]);
-  const sideEffect = tableValue(headers, cells, ["side effect", "side effects", "external side effect", "side_effect"]);
+  const sideEffect = tableValue(headers, cells, ["side effect", "side effects", "allowed side effect", "allowed side effects", "external side effect", "side_effect"]);
   const sensitiveDataPolicy = tableValue(headers, cells, ["sensitive data policy", "pii policy", "secret policy", "sensitive data", "sensitive_data_policy"]);
-  if (!idCell && mode && !method && !artifact && !passCriteria) return null;
-  if (!covers && !method && !artifact && !passCriteria) return null;
+  if (!idCell && mode && !passCriteria) return null;
+  if (!covers && !passCriteria) return null;
 
   const textParts = [];
   if (mode) textParts.push(`Mode: ${mode}`);
   if (covers) textParts.push(`Covers: ${covers}`);
-  if (method) textParts.push(`Check: ${method}`);
-  if (artifact) textParts.push(`Artifact: ${artifact}`);
   if (passCriteria) textParts.push(`Pass: ${passCriteria}`);
-  if (environment) textParts.push(`Environment: ${environment}`);
   if (requiredForDoneRaw) textParts.push(`Required For Done: ${requiredForDoneRaw}`);
   if (canBeBlockedRaw) textParts.push(`Can Be Blocked: ${canBeBlockedRaw}`);
   if (safeProbe) textParts.push(`Safe Probe: ${safeProbe}`);
-  if (liveProof) textParts.push(`Live Proof: ${liveProof}`);
   if (sideEffect) textParts.push(`Side Effect: ${sideEffect}`);
   if (sensitiveDataPolicy) textParts.push(`Sensitive Data Policy: ${sensitiveDataPolicy}`);
   let text = textParts.join(". ");
@@ -851,7 +736,7 @@ function matrixVerificationItem(headers, cells, currentLevel, counter) {
   return {
     id,
     level: currentLevel,
-    title: firstSentence(method || covers || passCriteria || id),
+    title: firstSentence(passCriteria || covers || id),
     text,
     status: "pending",
     evidence: [],
@@ -860,16 +745,12 @@ function matrixVerificationItem(headers, cells, currentLevel, counter) {
     matrix: {
       mode,
       covers,
-      method,
-      artifact,
       passCriteria,
-      environment,
       requiredForDone: parseBooleanCell(requiredForDoneRaw, true),
       requiredForDoneRaw,
       canBeBlocked: parseBooleanCell(canBeBlockedRaw, false),
       canBeBlockedRaw,
       safeProbe,
-      liveProof,
       sideEffect,
       sensitiveDataPolicy,
     },
@@ -992,6 +873,92 @@ function modeMatches(mode, patterns) {
   return patterns.some(pattern => pattern.test(text));
 }
 
+const PRD_IMPLEMENTATION_COLUMNS = new Set([
+  "method", "check", "command", "command / method", "tool / method",
+  "artifact", "artifacts", "evidence", "expected artifact", "expected artifacts",
+  "environment", "env", "runtime", "live proof", "live check", "real proof",
+]);
+
+/**
+ * Find implementation-owned bindings in a PRD without interpreting product
+ * prose. This is the single structural rule used by stateless planning, init,
+ * and gate prelint.
+ */
+function findPrdImplementationBindings(content) {
+  const lines = String(content || "").split("\n");
+  const defects = [];
+  let section = null;
+  let currentAc = null;
+  let inVerificationMatrix = false;
+  let matrixHeaderSeen = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const heading = line.match(/^##\s+(?:([0-9]+)\.\s*)?(.+?)\s*$/);
+    if (heading) {
+      const number = heading[1] || "";
+      const title = heading[2].toLowerCase();
+      section = number === "7" || title === "acceptance criteria" ? "ac"
+        : number === "8" || title === "prd-level tasks" ? "task"
+          : null;
+      currentAc = null;
+      inVerificationMatrix = false;
+      matrixHeaderSeen = false;
+    }
+    const subsection = line.match(/^###\s+(?:9\.2\s*)?Required Agent Verification\s*$/i);
+    if (subsection) {
+      section = null;
+      currentAc = null;
+      inVerificationMatrix = true;
+      matrixHeaderSeen = false;
+      continue;
+    }
+    if (/^###\s+/.test(line) && !subsection) {
+      inVerificationMatrix = false;
+      matrixHeaderSeen = false;
+    }
+
+    if (section === "task" && /(?:^|\s)Scope:\s*/i.test(line)) {
+      defects.push({
+        code: "prd-implementation-binding",
+        line: index + 1,
+        message: "PRD task declares file Scope, which belongs to the implementation execution plan",
+      });
+    }
+
+    if (section === "ac") {
+      const definition = line.match(/^\s*-\s*(AC\d+)[.:]\s+/i);
+      if (definition) currentAc = definition[1].toUpperCase();
+      else if (!/^\s+\S/.test(line) || /^\s*-\s/.test(line)) currentAc = null;
+      if (currentAc && /(?:^|\s)(?:Check|Artifact):\s*/i.test(line)) {
+        defects.push({
+          code: "prd-implementation-binding",
+          line: index + 1,
+          message: `${currentAc} declares an executable Check or Artifact path inside the product criterion`,
+        });
+      }
+    }
+
+    if (inVerificationMatrix && !matrixHeaderSeen && line.trim().startsWith("|")) {
+      const header = parseMarkdownTableRow(line);
+      const normalizedHeader = header.map(column => column.trim().toLowerCase());
+      if (!normalizedHeader.includes("id") || !normalizedHeader.includes("mode") || !normalizedHeader.includes("covers")) {
+        continue;
+      }
+      matrixHeaderSeen = true;
+      for (const column of header) {
+        if (!PRD_IMPLEMENTATION_COLUMNS.has(column.trim().toLowerCase())) continue;
+        defects.push({
+          code: "prd-implementation-binding",
+          line: index + 1,
+          message: `9.2 declares implementation-owned column "${column}"`,
+        });
+      }
+    }
+  }
+  return defects;
+}
+
 module.exports = {
   stripFrontmatter,
   extractSection,
@@ -999,11 +966,8 @@ module.exports = {
   extractNestedSection,
   extractFirstNestedSection,
   parseMarkdownItems,
-  parseScopeGlobs,
-  scopeGlobDefect,
-  parseAcOracle,
-  acOracleDefect,
-  parsePrdTasksForScoping,
+  coverageFromText,
+  expandCoverageIds,
   parsePreWorkChecklist,
   preWorkItems,
   pendingPreWork,
@@ -1035,4 +999,5 @@ module.exports = {
   inferVerificationMode,
   inferredModeNameFromText,
   modeMatches,
+  findPrdImplementationBindings,
 };

@@ -289,60 +289,27 @@ Use IDs in the text:
 - T1. ... Covers R1, AC1.
 ```
 
-#### AC Machine Oracles (Check / Artifact tails)
+#### Product Semantics Versus Implementation Bindings
 
-Whenever an acceptance criterion can be confirmed by a command or a file's
-existence, declare that oracle on the bullet itself so the harness settles the
-AC mechanically (`oracle-run` / the verify gate) instead of a judge or a manual
-mark — declared at PRD time, executed on the harness clock, immune to
-implementer submission bias:
+Keep every AC as an observable product outcome.
+Do not append `Check:` commands or `Artifact:` paths to AC bullets.
+Do not phrase the evidence procedure as the result: `tests pass`, `a screenshot
+is registered`, `the reviewer confirms`, and `the check runs in a browser`
+belong in `V#` Pass Intent. State the resulting behavior, state, quality, or
+bound in the AC instead.
+Map every AC to a V row by AC or requirement coverage.
+The implementation plan binds exact commands and cwd, then records concrete runtime evidence paths after it inspects the repository.
 
-```markdown
-- AC2. The health endpoint answers. Check: `curl -sf localhost:3000/health` -> "status":"ok"
-- AC3. The coverage report is generated. Artifact: coverage/index.html
-```
-
-`Check:` is a backticked command at the end of the bullet, optionally followed
-by `-> <expected stdout substring>` (exit 0 alone proves it when the arrow is
-omitted; backtick-wrap the expectation if it ends in a period). `Artifact:` is
-a project-relative path whose existence proves the AC. An oracle-backed AC
-needs no 9.2 V-row coverage — the oracle is its verification. Malformed tails
-fail the $0 prelint, and oracle commands must not modify the workspace (the
-digest guard records a mutation as a failure).
-
-Check commands are tokenized and executed **without a shell**: operators like
-`|`, `&&`, `;`, `>` are passed to the program as literal arguments, never
-interpreted (prelint warns when it sees them) — wrap the command in
-`bash -c "..."` when shell semantics are intended. The same declared oracle
-runs in two places (the harness `oracle-run` sweep and the verify gate's
-oracle stage), so the command must be repeatable/idempotent. A trivially
-constant command (`true`, `exit 0`, a bare `echo`) proves nothing and draws a
-prelint warning.
-
-#### Task Scope Globs
-
-When a task's change surface is known at PRD time, declare it as a `Scope:`
-tail of repo-relative globs — the verify gate then scopes each judge lane's
-diff to the paths the covering tasks declared (input selection by the vetted
-document, not the implementer). When **every** task declares a Scope, changed
-files outside all declared scopes surface as a warning; with a partial
-declaration the warning stays off, because a file outside the declared globs
-may simply belong to a Scope-less task:
-
-```markdown
-- T1. Build the widget renderer. Covers R1, AC1. Scope: src/widget/**, src/render.ts
-```
-
-Scoping only narrows a lane when every task covering that lane's ACs declares
-a Scope, so leave it off global-invariant work rather than guessing.
+Keep every task as a capability or delivery obligation.
+Do not append file `Scope:` globs or name prospective source and test files.
+The implementation plan owns `writeScope`, dependencies, risk, and parallel safety.
+Judge lanes and freshness always use the full curated change, never implementation ownership as an evidence filter.
 
 #### Test Coverage Bias
 
-For implementation work, default to adding or updating automated regression tests for every newly introduced or materially changed behavior.
-
-Automated regression coverage is required by default for changed behavior.
-If the PRD omits automated tests for an in-scope behavior, it must explain why that behavior is better proven by browser/runtime, live API, DB probe, or human verification.
-Do not weaken this default just because adding tests is inconvenient.
+Require automated regression coverage when a realistic future regression risk exists and the test's protection exceeds its maintenance cost.
+State the risk protected, not a quota of tests per requirement or AC.
+If automation has poor return, name the stronger proof mode instead.
 
 Prefer high-signal tests in this order:
 
@@ -355,7 +322,7 @@ Prefer high-signal tests in this order:
 Do not require tests that only lock implementation details, duplicate framework behavior, create brittle snapshots, depend on production data, or make the suite meaningfully slower without covering a real regression risk.
 Low-risk copy-only, content-only, documentation-only, or one-off operational changes may use a non-automated verification mode only when the PRD explicitly states why automated regression coverage would not protect a meaningful future regression.
 
-When the existing repo has weak or missing test infrastructure, include a PRD-level task to establish the smallest useful test harness needed for the changed behavior, then cover the new behavior with at least one regression test.
+When the existing repo has weak or missing test infrastructure, add a PRD-level harness task only when at least one high-value regression test justifies that infrastructure.
 
 ### 9. Verification Contract
 
@@ -387,8 +354,7 @@ If a PRD marks automated behavior as optional, blocked, or not applicable, it mu
 
 #### 9.2 Required Agent Verification
 
-Use a lean verification matrix when the repository's `package.json` has a canonically named script the planner can derive commands from (`verify`, `check`, `build`, `typecheck`, `lint`, `test`, `test:unit`, `test:integration`, `test:e2e`).
-Outside that case (Python/Go/Rust repos, non-canonical script names, no `package.json`), write the Method-bearing matrix below instead; the lean form would fail the Harness Readiness Gate with `command-missing`.
+Always use the semantic verification matrix below.
 `Mode` is required and must match one row from the Test Mode Contract.
 Write this matrix under the `9.2 Required Agent Verification` subsection.
 Do not put Test Mode Contract rows in this subsection.
@@ -401,29 +367,14 @@ Do not put Test Mode Contract rows in this subsection.
 | V3 | browser/runtime | R1-R4, AC1-AC4 | main flow works in browser runtime | yes | no |
 ```
 
-The Method-bearing matrix is the current form whenever exact commands are
-known or the lean form cannot derive them; always include `Mode`:
-
-```markdown
-| ID | Mode | Covers | Method | Artifact | Pass Criteria | Environment | Required For Done | Can Be Blocked | Safe Probe | Live Proof | Side Effect | Sensitive Data Policy |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| V1 | build/static | R1, AC1 | `pnpm build` | command-log | exits 0 | local shell | yes | no | none | command log | none | no secrets |
-```
-
 Rules:
 
-- A `Method` command must be runnable exactly as written, because `implement`
-  takes it from the backticks and runs it from the repository root. Two shapes
-  read fine to a human but diverge from what actually runs, and the gate's PRD
-  prelint rejects both:
-  - a directory parked outside the command. Write
-    `bash -c "cd cli && npm test"`, not `` `npm test` `` followed by `(cli/)`.
-  - a command whose first word is not a runner the planner knows
-    (`pnpm`/`npm`/`node`/`bash`/`python`/`go`/`cargo`/... - see
-    `cli/lib/runners.js`). Wrap anything else, including bare `grep` and
-    project binaries: `bash -c "grep -q foo README.md"`.
-  Prose Method cells for `manual-agent` and human-decision rows are unaffected;
-  the rules apply only to rows whose `Artifact` is a command log.
+- Do not add Method, Check, Command, Artifact, Environment, Runtime, or Live Proof columns.
+- Exact executors and evidence locations are implementation bindings, even when the author expects them to be obvious.
+- Give each V row one independently observable failure responsibility.
+  Merge rows that would use the same command, evidence, and completion blocker;
+  express their combined obligations in one Pass Intent instead of running the
+  same proof twice.
 - `Required For Done` is `yes` by default.
 - The Test Mode Contract sets the mode-level default. Verification rows should
   repeat `Required For Done`; if omitted, `implement` inherits the mode
@@ -436,16 +387,17 @@ Rules:
 - Browser/UI work should include a browser/runtime mode unless impossible.
 - Server/API/DB/external work should include the relevant mode and side-effect
   or sensitive-data policy when applicable.
-- Live external/API proof needs a safe probe or an explicit human/account
-  blocker.
+- Live external/API proof needs an approved non-production and side-effect
+  boundary or an explicit human/account blocker.
 
-For live/API/DB/external checks, add compact safety columns rather than
-expanding the whole PRD into executor detail:
+For live/API/DB/external checks, keep approved safety boundaries in the PRD.
+The verification plan and recorded run evidence own the concrete probe and
+runtime lifecycle:
 
 ```markdown
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Safe Probe | Side Effect | Sensitive Data Policy |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| V4 | live external API | R4, AC4 | external/API proof follows safe-probe policy | no | yes | validate sandbox credentials with non-mutating call | may create sandbox record only if approved | redact tokens and personal data |
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Allowed Side Effect | Sensitive Data Policy |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| V4 | live external API | R4, AC4 | external behavior is proven inside the approved safety boundary | no | yes | sandbox record only when approved | redact tokens and personal data |
 ```
 
 #### 9.3 Human Verification
@@ -464,9 +416,9 @@ Quality checking splits by what can verify it:
 
 - Mechanical checks belong to the Harness Readiness Gate below. Do not spend
   agent effort re-deriving what the script already checks (requirement and AC
-  coverage mapping, dangling AC references, missing commands, missing
-  artifact strategy; browser-startup and external-proof concerns surface as
-  warnings).
+  coverage mapping, dangling references, mode conformance, and the absence of
+  implementation-owned bindings; browser-startup and external-proof concerns
+  surface as warnings).
 - Semantic checks are this single inline self-check. No separate audit file,
   no auditor subagent, no separate quality checklist; the sasu Spec Gate
   and the implementation-side requirements fidelity review independently
@@ -487,8 +439,9 @@ After drafting and before marking the PRD `ready`, verify inline:
 - Pass intent: each required `V#` states a pass intent whose success is
   observable by an artifact or tool, and it actually proves the covered
   requirement rather than a proxy condition.
-- Regression bias: every changed behavior has automated regression coverage
-  or an explicit reason why another mode is the better proof.
+- Regression value: each automated test names a realistic regression risk and
+  has enough protection value to justify its maintenance cost; other behavior
+  uses the strongest fitting proof mode.
 - Product completeness: the PRD covers the coherent intended journey and relevant quality boundaries, and every omission is an explicit product decision rather than an implicit MVP cut.
 - Verification semantics: the Test Mode Contract covers the proof classes the
   product actually needs (build/static, automated behavior, browser/runtime
@@ -510,13 +463,16 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification --
 
 This is stateless: it parses the PRD exactly the way `implement` will,
 derives the verification plan against real repo signals, and writes nothing.
-Exit code 2 means the verification contract is not harness-readable: an
-uncovered requirement or AC, a dangling AC reference, or a check without a
-concrete command, coverage mapping, or artifact strategy. Browser-startup and
-external-proof concerns are warnings, not blockers. Fix the PRD and rerun
-until `blockingGaps` is empty; resolve or consciously accept warnings. Skipping this gate pushes the same failures
-into `implement`, where they cost a re-init and a re-plan instead of a
-one-second check.
+Exit code 2 means the semantic verification contract is not harness-readable.
+Examples include uncovered ACs, dangling references, missing coverage, or invalid mode semantics.
+Missing implementation commands appear under `deferredBindings` and do not block PRD approval.
+For greenfield work, the precheck validates semantic coverage and the derived
+binding shape, including required evidence kinds, without requiring a runner,
+package script, or cwd that implementation has not created yet.
+Executable existence is checked when implementation binds and runs the verifier.
+Browser-startup and external-proof concerns are warnings, not blockers.
+Fix the PRD and rerun until `blockingGaps` is empty.
+Resolve or consciously accept warnings.
 
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
@@ -570,6 +526,7 @@ Require the implementing agent to report:
 - status: `Done`, `Partially Done`, or `Blocked`.
 - user-visible changes.
 - major changed routes/modules/APIs/data shapes.
+- actual file/module structure selected during implementation and each responsibility boundary.
 - whether approved technical structure was followed.
 - task completion status.
 - R/AC/V coverage.

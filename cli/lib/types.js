@@ -35,8 +35,6 @@
  * @property {string} status
  * @property {Evidence[]} evidence
  * @property {Artifact[]} artifacts
- * @property {{kind: string, command?: string, expect?: string|null, path?: string}} [oracle] declared Check:/Artifact: machine oracle (ACs only, parsed at init)
- * @property {{at: string, kind: string, met: boolean, exitCode?: number, logPath?: string, path?: string}} [oracleObservation] latest harness-recorded oracle run (ACs only, stamped by oracle-run; finalize requires a passing one for a met oracle AC)
  * @property {string[]} [dependsOn] task ids that must complete first (tasks only)
  * @property {string[]} [writeScope] repository-relative paths the task owns (tasks only)
  * @property {boolean} [parallelSafe] tasks only
@@ -48,16 +46,12 @@
  * @typedef {Object} VerificationMatrix
  * @property {string} mode
  * @property {string} covers
- * @property {string} method
- * @property {string} artifact
  * @property {string} passCriteria
- * @property {string} environment
  * @property {boolean} requiredForDone
  * @property {string} requiredForDoneRaw
  * @property {boolean} canBeBlocked
  * @property {string} canBeBlockedRaw
  * @property {string} safeProbe
- * @property {string} liveProof
  * @property {string} sideEffect
  * @property {string} sensitiveDataPolicy
  */
@@ -92,6 +86,7 @@
 /**
  * @typedef {Object} PlanGap
  * @property {string} severity "blocking" or a warning level
+ * @property {"contract"|"binding"} [phase] lifecycle phase that owns the gap
  * @property {string} id
  * @property {string} message
  */
@@ -100,7 +95,7 @@
  * @typedef {Object} VerificationPlan
  * @property {string} status
  * @property {string} generatedAt
- * @property {Array<Object>} checks planned checks keyed by verificationId
+ * @property {Array<{verificationId: string, command: string|null, cwd: string|null, bindingSource: string|null, status: string}>} checks semantic checks plus implementation-owned execution bindings
  * @property {PlanGap[]} gaps
  * @property {Object} [coverage]
  * @property {string} [contractHash]
@@ -172,7 +167,7 @@
  * @property {string} implementationNotes
  * @property {string} createdAt
  * @property {string} updatedAt
- * @property {string|null} activeSessionId
+ * @property {string|null} ownerSessionId the one session this run belongs to; moves only through --adopt
  * @property {TrackedItem[]} tasks
  * @property {TrackedItem[]} acceptanceCriteria
  * @property {TrackedItem[]} requirements
@@ -196,8 +191,7 @@
  * @property {string} [runDir]
  * @property {string} [status]
  * @property {Object} [delivery]
- * @property {string|null} [activeSessionId]
- * @property {{sessionId: string|null, pid: number, startedAt: string}} [owner] identity of the last pointer writer; pointer-resolved mutations from other sessions refuse
+ * @property {{sessionId: string|null, pid: number, startedAt: string}} [owner] mirror of the run's ownerSessionId (pid/startedAt are last-writer breadcrumbs); pointer-resolved mutations from other sessions refuse
  * @property {string} updatedAt
  */
 

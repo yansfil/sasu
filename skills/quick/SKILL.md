@@ -102,7 +102,7 @@ Write `agents/quick/.quick-active.json`:
 { "slug": "<slug>", "contractPath": "agents/quick/<slug>/contract.md", "baseRef": "<sha>", "startedAt": "<iso>" }
 ```
 
-From this point the Stop hook blocks turn completion until the verify gate is settled and finalization is done. On its first firing the hook claims the run by rewriting the marker with an `activeSessionId`; leave that field alone while the run is yours. The one exception is adopting an orphan: if the guard reports the run is owned by another session and you know that session is gone, clear `activeSessionId` and finish the run normally.
+From this point the Stop hook blocks turn completion until the verify gate is settled and finalization is done. On its first firing the hook claims the run by rewriting the marker with an `ownerSessionId`; leave that field alone while the run is yours. The one exception is adopting an orphan: if the guard reports the run is owned by another session and you know that session is gone, clear `ownerSessionId` and finish the run normally.
 
 Then summarize the contract in chat (goal, ACs, assumptions). Informational, not an approval request; continue immediately - the user can interrupt.
 

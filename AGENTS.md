@@ -18,7 +18,7 @@ Apply these to every design proposal, diff review, and refactor. Items 1 and 2
 are a pair, read together or not at all: ceremony gets cut, proof never does.
 
 1. **Prove every AC with the tools you actually have.** Verification must be
-   tight (촘촘하게). An exit code, an AC oracle, a runtime capture, a
+   tight (촘촘하게). An exit code, an implementation-bound criterion check, a runtime capture, a
    registered artifact, a read-only agentic judge — reach for the strongest
    instrument the criterion admits. The agent's report is not evidence, diff
    reading is the weakest instrument, and cost never justifies dropping a proof.
@@ -81,7 +81,7 @@ Golden files regenerate with `UPDATE_GOLDEN=1`; regenerate deliberately, never
 to make a failure go away.
 
 **Namespaces.** Run artifacts live in the target project under `agents/**`
-(`agents/interview/**`, `agents/prd/**`, `agents/implement/**`,
+(`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/benchmarks/**`,
 `agents/gates/**`, `agents/rules/**`, `agents/config.json`) — the only
 namespace the harness reads or writes. It is bookkeeping, never a verification
 input: nothing under `agents/**` belongs in a judged diff or a freshness

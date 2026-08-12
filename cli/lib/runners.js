@@ -1,14 +1,12 @@
 "use strict";
 
-// Single source of truth for the command runners the verification planner
-// recognizes at the start of a PRD 9.2 Method command.
+// Single source of truth for command runners the repository-aware verification
+// planner recognizes when it discovers an existing executable check.
 //
 // Two consumers must agree on this list or PRDs drift back into repeated
 // `verification_command` deviations: `commandFromText` (below, in inference.js)
-// extracts the command the harness will actually run, and the pre-judge lint
-// (cli/src/gates/prelint.ts) refuses a Method cell whose backticked command
-// starts with anything else. A command the lint accepts must be a command the
-// planner can parse, so the list lives here rather than in either consumer.
+// extracts the command the harness can bind. Keeping the list here avoids
+// duplicating runner syntax across inference paths.
 const RUNNER_COMMANDS = [
   "pnpm",
   "npm",

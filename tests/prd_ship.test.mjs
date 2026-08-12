@@ -5,6 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { stripSessionEnv } from "./helpers/session_env.mjs";
+
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const shipScript = path.join(repoRoot, "skills", "ship", "scripts", "prd_ship.js");
 
@@ -13,7 +15,7 @@ function run(command, args, options = {}) {
     cwd: options.cwd,
     shell: false,
     encoding: "utf8",
-    env: options.env || process.env,
+    env: options.env || stripSessionEnv(),
     maxBuffer: 20 * 1024 * 1024,
   });
   if (!options.allowFailure && result.status !== 0) {

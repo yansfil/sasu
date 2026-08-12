@@ -15,50 +15,12 @@ import { parseContract } from "./contract";
  * re-fixes are harmless.
  */
 
-// Shared with the verification planner (cli/lib/inference.js commandFromText):
-// a Method command this lint accepts must be one the planner can parse, so both
-// read the same runner list instead of keeping two copies in step by hand.
-const { RUNNER_PATTERN } = require("../../lib/runners.js") as { RUNNER_PATTERN: string };
-
-// Same single-grammar rule for the §8 `Scope:` and §7 `Check:`/`Artifact:`
-// tails: the lib parser owns the grammar, this lint only reports its defects.
-// Table-cell splitting also comes from the lib (code-span-aware: a `|` inside
-// backticks is command text, not a cell boundary) so this lint sees exactly
-// the cell boundaries the state parser will persist.
-const {
-  parseScopeGlobs,
-  scopeGlobDefect,
-  parseAcOracle,
-  acOracleDefect,
-  splitTableRow,
-  parseMarkdownTableRow,
-  extractCodeSpans,
-} = require("../../lib/prd_parser.js") as {
-  parseScopeGlobs: (text: string) => string[];
-  scopeGlobDefect: (glob: string) => string | null;
-  parseAcOracle: (text: string) => { kind: "check" | "artifact"; command?: string; expect?: string | null; path?: string } | null;
-  acOracleDefect: (text: string) => string | null;
+// Table-cell splitting comes from the shared parser so prelint sees exactly
+// the same cell boundaries the state parser persists.
+const { splitTableRow, findPrdImplementationBindings } = require("../../lib/prd_parser.js") as {
   splitTableRow: (text: string) => string[];
-  parseMarkdownTableRow: (line: string) => string[];
-  extractCodeSpans: (text: string) => { spans: string[]; unmatched: number };
+  findPrdImplementationBindings: (content: string) => { code: string; line: number; message: string }[];
 };
-
-const ENV_ASSIGNMENT = "(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+)*";
-const RUNNER_PREFIX = new RegExp(`^${ENV_ASSIGNMENT}(?:${RUNNER_PATTERN})\\b`, "i");
-
-/**
- * A parenthetical is a scope qualifier only when it is *nothing but* a
- * directory ("cli/", "app/web/", "repo root"), optionally followed by a comma
- * and prose. Both halves of that test earn their place against real cells:
- * "(see docs/testing.md)" contains a path but does not open with one, and
- * "(backends/mechanical 유닛 포함)" opens with something path-shaped that is
- * actually prose - only a trailing slash distinguishes a directory from a
- * source path someone is naming in passing.
- */
-const DIRECTORY_QUALIFIER = /^\s*(?:(?:[\w.-]+\/)+|repo(?:sitory)?\s+root|저장소\s*루트)\s*(?:[,;]|$)/i;
-
-/** Commands that already carry their own working directory need no qualifier. */
-const SELF_SCOPED_COMMAND = /(^|\s)(?:cd\s|-C\s|--prefix[\s=]|--cwd[\s=]|--directory[\s=])/;
 
 export interface PrelintFinding extends Finding {
   /** Stable rule identifier, e.g. "qa-dangling-decision-id". */
@@ -71,12 +33,7 @@ export interface PrelintResult {
   ok: boolean;
   doc: "qa-log" | "prd" | "contract";
   findings: PrelintFinding[];
-  /**
-   * Non-blocking advisories: real smells that must not gate (an author may
-   * legitimately mean them), e.g. shell operators in a Check oracle command
-   * (they are NOT interpreted - both executors run without a shell) or a
-   * trivially-constant oracle. Never counted toward `ok`.
-   */
+  /** Non-blocking structural advisories. Never counted toward `ok`. */
   warnings?: PrelintFinding[];
 }
 
@@ -163,14 +120,9 @@ function parseTable(lines: string[], fromIndex: number, toIndex: number): Table 
   return null;
 }
 
-/** Raw cells of a table row (outer pipes stripped, code-span-aware split, no trimming). */
-function splitRawRow(line: string): string[] {
-  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return splitTableRow(trimmed);
-}
-
 function splitRow(line: string): string[] {
-  return splitRawRow(line).map((cell) => cell.trim());
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return splitTableRow(trimmed).map((cell) => cell.trim());
 }
 
 function sectionRange(lines: string[], heading: string): { start: number; end: number } | null {
@@ -380,15 +332,9 @@ export function prelintPrd(content: string): PrelintResult {
     }
   }
 
-  const acTexts = collectAcBulletTexts(lines);
   for (const [ac, line] of acDefinitionLines) {
     const viaRequirement = [...(acRequirementRefs.get(ac) ?? [])].some((r) => coveredRs.has(r));
-    // An AC with a declared machine oracle (Check:/Artifact: tail) is its own
-    // verification - oracle-run / the verify gate settle it mechanically - so
-    // demanding an additional V-row mapping would be ceremony the oracle
-    // replaces (mirrors the lib planner's acceptance-uncovered rule).
-    const oracleBacked = parseAcOracle(acTexts.get(ac)?.text ?? "") !== null;
-    if (!coveredAcs.has(ac) && !viaRequirement && !oracleBacked) {
+    if (!coveredAcs.has(ac) && !viaRequirement) {
       findings.push(finding("prd-uncovered-ac", line, `${ac} is not covered by any V row in 9.2 Required Agent Verification (directly or via a covered R# it references)`, `Add ${ac} (or an R# it references) to a V row's Covers.`));
     }
   }
@@ -409,326 +355,21 @@ export function prelintPrd(content: string): PrelintResult {
   }
 
   const warnings: PrelintFinding[] = [];
-  checkMethodCommands(verificationTable, vRows, findings, warnings);
-  checkMethodCellRoundTrip(lines, verificationTable, vRows, findings);
   checkTableRowShape(lines, verificationTable, "9.2", findings, warnings);
   checkTableRowShape(lines, modeTable, "9.1", findings, warnings);
-  checkTaskScopeTails(lines, findings);
-  checkAcOracleTails(lines, acDefinitionLines, findings);
-  checkAcOracleAdvisories(lines, acDefinitionLines, warnings);
+  for (const defect of findPrdImplementationBindings(content)) {
+    findings.push(finding(
+      defect.code,
+      defect.line,
+      defect.message,
+      "Keep product semantics in the PRD and bind commands, cwd, writeScope, and evidence paths during implementation.",
+    ));
+  }
 
   return { ok: findings.length === 0, doc: "prd", findings, ...(warnings.length > 0 ? { warnings } : {}) };
 }
 
-function numberedSectionRange(lines: string[], sectionNumber: number): { start: number; end: number } | null {
-  const start = lines.findIndex((line) => new RegExp(`^##\\s+${sectionNumber}\\.`).test(line));
-  if (start === -1) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^##\s/.test(lines[i]!)) {
-      end = i;
-      break;
-    }
-  }
-  return { start, end };
-}
-
-/**
- * §8 `Scope:` tails must be well-formed repo-relative globs: the verify gate
- * scopes judge-lane diffs by them, so a malformed glob would silently widen
- * (or empty) a lane's evidence. Line-based on purpose - the tail grammar puts
- * Scope at the end of a bullet (or its continuation line), so a per-line scan
- * sees every declaration.
- */
-function checkTaskScopeTails(lines: string[], findings: PrelintFinding[]): void {
-  const section = numberedSectionRange(lines, 8);
-  if (!section) return;
-  for (let i = section.start + 1; i < section.end; i += 1) {
-    const line = lines[i]!;
-    if (!/(?:^|\s)Scope:\s*/.test(line)) continue;
-    const globs = parseScopeGlobs(line);
-    if (globs.length === 0) {
-      findings.push(
-        finding("prd-task-scope-syntax", i + 1, "Scope: tail declares no globs", "Write Scope: <glob>[, <glob>...] at the end of the task bullet, e.g. Scope: cli/src/**, cli/lib/render.js."),
-      );
-      continue;
-    }
-    for (const glob of globs) {
-      const defect = scopeGlobDefect(glob);
-      if (defect !== null) {
-        findings.push(finding("prd-task-scope-syntax", i + 1, `Scope glob ${defect}`, "Use repo-relative globs with *, ** and ? only."));
-      }
-    }
-  }
-}
-
-/**
- * Rejoin each AC bullet with its continuation lines, document-wide: the
- * oracle grammar is defined over the whole bullet text, the same way the lib
- * parser reads it after normalizing whitespace.
- */
-function collectAcBulletTexts(lines: string[]): Map<string, { line: number; text: string }> {
-  const texts = new Map<string, { line: number; text: string }>();
-  let currentId: string | null = null;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
-    const definition = line.match(/^\s*-\s*(AC\d+)[.:]\s+(.*)$/);
-    if (definition) {
-      currentId = definition[1]!;
-      if (!texts.has(currentId)) texts.set(currentId, { line: i + 1, text: definition[2]! });
-      continue;
-    }
-    if (currentId !== null && /^\s+\S/.test(line) && !/^\s*-\s/.test(line)) {
-      const entry = texts.get(currentId)!;
-      entry.text += ` ${line.trim()}`;
-    } else {
-      currentId = null;
-    }
-  }
-  return texts;
-}
-
-/**
- * Oracle tails (`Check:` / `Artifact:`) on AC bullets must parse, because the
- * verify gate and `oracle-run` execute them mechanically: a malformed tail
- * would be read as prose and the AC would silently lose its declared machine
- * proof.
- */
-function checkAcOracleTails(lines: string[], acDefinitionLines: Map<string, number>, findings: PrelintFinding[]): void {
-  for (const [id, entry] of collectAcBulletTexts(lines)) {
-    const defect = acOracleDefect(entry.text);
-    if (defect !== null) {
-      findings.push(
-        finding("prd-ac-oracle-syntax", acDefinitionLines.get(id) ?? entry.line, `${id}: ${defect}`, "Fix the oracle tail or drop the reserved Check:/Artifact: marker."),
-      );
-    }
-  }
-}
-
-// Shell-operator scan shares the executors' own quoting semantics (D-04
-// zero-false-positive goal): both executors run shellLikeTokens + shell:false,
-// so a metacharacter inside a quoted token is a literal argument by
-// construction and must not warn - `npm test -- --grep "a|b"` was a reproduced
-// false positive, and so was the rule's own recommended `bash -c "..."` shape
-// (exempted below via the same wrapper grammar unwrapShellCommandTokens uses,
-// but ONLY when the wrapper consumes the whole command - see
-// isFullShellWrapperCommand).
-const { isShellWrapperCommand, shellLikeTokens, unquotedShellMetachars } = require("../../lib/inference.js") as {
-  isShellWrapperCommand: (command: string) => boolean;
-  shellLikeTokens: (command: string) => string[];
-  unquotedShellMetachars: (command: string) => string[];
-};
-
-/**
- * True only when the bash/sh/zsh -c wrapper consumes the ENTIRE command: the
- * script is the last token. Under shellLikeTokens + spawn(shell:false),
- * anything after the script token reaches the script as inert $0/$1
- * positional arguments, so `bash -c "true" && test -f missing.txt` is a
- * constant-true oracle wearing a wrapper (reproduced 2026-08-11: the `&&`
- * tail never executes in either executor, and the old any-prefix exemption
- * drew no warning for it). A wrapper with residue is scanned like any bare
- * command.
- */
-function isFullShellWrapperCommand(command: string): boolean {
-  if (!isShellWrapperCommand(command)) return false;
-  const tokens = shellLikeTokens(command);
-  // Wrapper grammar (inference.js unwrapShellCommandTokens): `bash -c <script>`
-  // and `bash -lc <script>` put the script at index 2, `bash -l -c <script>`
-  // at index 3.
-  const scriptIndex = tokens[1] === "-l" ? 3 : 2;
-  return tokens.length === scriptIndex + 1;
-}
-// Constant-true shapes an author reaches for while stubbing: exactly `true`,
-// `:`, `exit 0`, or any bare `echo ...` (exit 0 no matter what it prints).
-const ORACLE_CONSTANT_TRUE = /^(?:true|:|exit 0)$|^echo\s/;
-
-/**
- * Non-blocking oracle advisories.
- *
- * Shell operators: both executors (gate stage and harness oracle-run) tokenize
- * the Check command and spawn WITHOUT a shell, so an unquoted `a && b` hands
- * "&&" to `a` as a literal argument. Before the executors were unified the
- * gate ran a real shell and the same command PASSED there while the harness
- * recorded not_met - the author must be told operators are inert, not left to
- * find out from a verdict split. Two shapes are clean on purpose: an explicit
- * bash/sh/zsh -c wrapper that consumes the whole command (shell semantics ARE
- * provided - it is this rule's own recommendation) and operators inside quoted
- * arguments (literal to the program in both executors, so nothing is silently
- * reinterpreted). A wrapper with trailing tokens is NOT clean: the tail is
- * inert positional arguments, not executed shell.
- *
- * Constant-true commands: an all-oracle PRD can pass the verify gate with zero
- * judge calls, so `Check: \`true\`` would be a self-certifying PASS that
- * proves nothing about the change.
- */
-function checkAcOracleAdvisories(lines: string[], acDefinitionLines: Map<string, number>, warnings: PrelintFinding[]): void {
-  for (const [id, entry] of collectAcBulletTexts(lines)) {
-    const oracle = parseAcOracle(entry.text);
-    if (oracle === null || oracle.kind !== "check") continue;
-    const command = (oracle.command ?? "").trim();
-    const inertOperators = isFullShellWrapperCommand(command) ? [] : unquotedShellMetachars(command);
-    if (inertOperators.length > 0) {
-      const recommendation = isShellWrapperCommand(command)
-        ? `Everything after the -c script token is inert positional arguments, never executed; move the whole pipeline inside ONE -c string, e.g. Check: \`bash -c "<script> && <rest>"\`.`
-        : `Wrap the command if shell semantics are intended, e.g. Check: \`bash -c "${command}"\`.`;
-      warnings.push(
-        warning(
-          "prd-ac-oracle-shell-operators",
-          acDefinitionLines.get(id) ?? entry.line,
-          `${id}: Check command \`${command}\` contains unquoted shell operator characters (${inertOperators.join(" ")}), but oracle commands run without a shell - operators like | && ; > < $ are passed to the program as literal arguments, not interpreted`,
-          recommendation,
-        ),
-      );
-    }
-    if (ORACLE_CONSTANT_TRUE.test(command)) {
-      warnings.push(
-        warning(
-          "prd-ac-oracle-constant-true",
-          acDefinitionLines.get(id) ?? entry.line,
-          `${id}: Check command \`${command}\` is trivially constant - a constant-true oracle proves nothing about the acceptance criterion`,
-          "Declare a command whose exit code or output actually depends on the criterion, or drop the Check: tail and map the AC to a V row.",
-        ),
-      );
-    }
-    const directory = nodeTestDirectoryTarget(command);
-    if (directory !== null) {
-      warnings.push(
-        warning(
-          "prd-node-test-directory",
-          acDefinitionLines.get(id) ?? entry.line,
-          `${id}: Check command \`${command}\` points node --test at a directory-shaped path (${directory}); Node 22 resolves a bare directory as a module and fails with MODULE_NOT_FOUND instead of running the tests in it`,
-          `Name the test files with a glob, e.g. \`node --test "${directory.replace(/\/+$/, "")}/*.test.mjs"\`.`,
-        ),
-      );
-    }
-  }
-}
-
-/**
- * 9.2 Method commands must be executable exactly as written.
- *
- * The harness runs `verify-run` from the repository root and takes the command
- * from the Method cell's backticks, so two shapes that read fine to a human
- * silently diverge from what actually runs, and every run then records a
- * `verification_command` deviation for the same cell:
- *
- *   `npm test` (cli/)      -> the harness runs `npm test` at the root
- *   `checkshirt gate ...`  -> not a recognized runner, so no command is parsed
- *                             and a "runtime" Mode misclassifies as browser
- *                             evidence (a demanded screenshot that never comes)
- *
- * Both are fixed the same way: fold the whole thing into one runner-prefixed
- * command, e.g. `bash -c "cd cli && npm test"`.
- *
- * Scoped to rows whose Artifact is a command log, which is the PRD's own
- * statement that this row is proven by running something. Manual-agent and
- * human-calibration rows also put names in backticks (a skill, a gate, a menu
- * item) and must not be read as shell commands.
- */
-function checkMethodCommands(table: Table | null, vRows: { cells: string[]; line: number }[], findings: PrelintFinding[], warnings: PrelintFinding[]): void {
-  if (!table) return;
-  const methodColumn = table.header.indexOf("Method");
-  const artifactColumn = table.header.indexOf("Artifact");
-  if (methodColumn === -1 || artifactColumn === -1) return;
-
-  for (const row of vRows) {
-    const id = row.cells[0] ?? "";
-    const method = row.cells[methodColumn];
-    if (method === undefined || method === "") continue;
-    if (!/\bcommand[-\s]?log\b/i.test(row.cells[artifactColumn] ?? "")) continue;
-
-    const spans = [...method.matchAll(/`([^`]+)`/g)];
-    if (spans.length === 0) continue;
-
-    const runner = spans.find((span) => RUNNER_PREFIX.test(span[1]!.trim()));
-    if (runner) {
-      const directory = nodeTestDirectoryTarget(runner[1]!.trim());
-      if (directory !== null) {
-        warnings.push(
-          warning(
-            "prd-node-test-directory",
-            row.line,
-            `${id}: Method command \`${runner[1]!.trim()}\` points node --test at a directory-shaped path (${directory}); Node 22 resolves a bare directory as a module and fails with MODULE_NOT_FOUND instead of running the tests in it`,
-            `Name the test files with a glob, e.g. \`node --test "${directory.replace(/\/+$/, "")}/*.test.mjs"\`.`,
-          ),
-        );
-      }
-    }
-    if (!runner) {
-      const first = spans[0]![1]!.trim();
-      findings.push(
-        finding(
-          "prd-method-runner-unknown",
-          row.line,
-          `${id}: Method command \`${first}\` does not start with a runner the verification planner recognizes`,
-          `Wrap it so the command starts with a known runner, e.g. \`bash -c "${first}"\`.`,
-        ),
-      );
-      continue;
-    }
-
-    // A scope qualifier parked outside the backticks never reaches the shell.
-    if (SELF_SCOPED_COMMAND.test(runner[1]!)) continue;
-    const trailing = method.slice(method.indexOf(runner[0]!) + runner[0]!.length);
-    const parenthetical = trailing.match(/^\s*\(([^)]*)\)/);
-    if (parenthetical && DIRECTORY_QUALIFIER.test(parenthetical[1]!)) {
-      findings.push(
-        finding(
-          "prd-method-parenthetical-scope",
-          row.line,
-          `${id}: Method puts the working directory in a parenthetical "(${parenthetical[1]!.trim()})" instead of the command, but the harness runs from the repository root`,
-          `Fold the directory into the command, e.g. \`bash -c "cd <dir> && ${runner[1]!.trim()}"\`.`,
-        ),
-      );
-    }
-  }
-}
-
-/**
- * Directory-shaped `node --test` target, or null. Purely syntactic (prelint
- * never touches the filesystem): a target with no glob character and no
- * test-file suffix is directory-shaped. Node 22's test runner resolves a bare
- * directory as a module and dies with MODULE_NOT_FOUND (verified empirically;
- * Node >= 23 restored directory walking), so the command silently proves
- * nothing on the runtime the harness pins.
- */
-function nodeTestDirectoryTarget(command: string): string | null {
-  const tokens = command.trim().split(/\s+/);
-  if (tokens[0] !== "node") return null;
-  const testFlagIndex = tokens.indexOf("--test");
-  if (testFlagIndex === -1) return null;
-  const rest = tokens.slice(testFlagIndex + 1);
-  for (let i = 0; i < rest.length; i += 1) {
-    const token = rest[i]!.replace(/^["']|["']$/g, "");
-    if (token === "") continue;
-    if (token === "--") continue; // end-of-options: what follows is positional
-    if (token.startsWith("-")) {
-      // A space-separated flag value (`--test-reporter spec`) is not a test
-      // target; `=`-joined flags carry their value in-token. Skipping one
-      // token after a boolean flag can hide a real directory target, but for
-      // an advisory a missed warning beats naming a flag value as a
-      // directory.
-      if (!token.includes("=")) i += 1;
-      continue;
-    }
-    if (/[*?[\]]/.test(token)) continue; // glob form names files explicitly
-    if (/\.[cm]?[jt]s$/i.test(token)) continue; // explicit test file
-    return token;
-  }
-  return null;
-}
-
-/**
- * Table row-shape guard: the harness reads cells span-aware (a `|` inside
- * backticks is command text), but GFM rendering — what the human approved —
- * splits on every unescaped pipe. When stray backticks in two different
- * cells pair up, the harness silently reads FEWER cells than the rendered
- * table shows and every later column shifts (a "yes" in Required For Done
- * can become invisible). That direction blocks (prd-table-span-collision).
- * A row with MORE cells than the header (an unescaped pipe outside any
- * span) shifts columns the same way in both readers — advisory
- * (prd-table-row-shape), since prose pipes may be intended.
- */
+/** Validate table cell counts against the shared span-aware parser. */
 function checkTableRowShape(
   lines: string[],
   table: Table | null,
@@ -766,67 +407,6 @@ function checkTableRowShape(
   }
 }
 
-/**
- * Round-trip guard for 9.2 Method cells (rule prd-method-cell-mismatch): the
- * generic tripwire against the whole family of cell-parsing bugs, in the same
- * spirit as the finalize digest guard.
- *
- * A live session lost half a Method command to a naive pipe split - the
- * truncated `bash -c "... || exit 1; done"` was still valid shell, so
- * plan-verification passed it and the session burned two verify-run contract
- * rejections before diagnosing. The split is fixed, but any FUTURE divergence
- * between what the PRD author wrote inside backticks and what the parsed cell
- * yields must block loudly at $0 instead of running a different command:
- * whatever code spans the raw cell text contains (modulo the documented `\|`
- * table escape) must come out of the full parse pipeline byte-identical.
- * Unbalanced backticks make the command boundary unknowable - same family,
- * same blocking rule.
- */
-function checkMethodCellRoundTrip(
-  lines: string[],
-  table: Table | null,
-  vRows: { cells: string[]; line: number }[],
-  findings: PrelintFinding[],
-): void {
-  if (!table) return;
-  const methodColumn = table.header.indexOf("Method");
-  if (methodColumn === -1) return;
-
-  for (const row of vRows) {
-    const id = row.cells[0] ?? "";
-    const rawLine = lines[row.line - 1] ?? "";
-    const rawMethod = splitRawRow(rawLine)[methodColumn] ?? "";
-    const rawScan = extractCodeSpans(rawMethod);
-    if (rawScan.unmatched > 0) {
-      findings.push(
-        finding(
-          "prd-method-cell-mismatch",
-          row.line,
-          `${id}: Method cell has ${rawScan.unmatched} unbalanced backtick(s), so where the command starts and ends cannot be parsed reliably: ${rawMethod.trim()}`,
-          "Close every backtick code span in the Method cell; the executable command must sit inside one balanced `...` span.",
-        ),
-      );
-      continue;
-    }
-    if (rawScan.spans.length === 0) continue;
-    const parsedMethod = parseMarkdownTableRow(rawLine)[methodColumn] ?? "";
-    const parsedSpans = extractCodeSpans(parsedMethod).spans.map((span) => span.trim());
-    // `\|` is the one transform the table contract documents, even inside a
-    // code span; everything else must survive verbatim.
-    const rawSpans = rawScan.spans.map((span) => span.replace(/\\\|/g, "|").trim());
-    const mismatch = rawSpans.length !== parsedSpans.length || rawSpans.some((span, i) => span !== parsedSpans[i]);
-    if (mismatch) {
-      findings.push(
-        finding(
-          "prd-method-cell-mismatch",
-          row.line,
-          `${id}: Method cell does not round-trip through the table parser; the PRD cell declares \`${rawSpans.join("\` + \`")}\` but the harness would read \`${parsedSpans.join("\` + \`") || "(no command)"}\``,
-          "The harness would execute a different command than the PRD declares (a cell-parsing defect). Rewrite the Method cell as prose plus one balanced backticked command, escape literal pipes outside spans as \\|, and report a sasu bug if the two forms still differ.",
-        ),
-      );
-    }
-  }
-}
 
 // --- quick-contract rules (verify gate entrance for the quick path) ---
 

@@ -61,15 +61,15 @@ test("vouched fingerprint: committing dirty work does not move it (commit-invari
   assert.ok(vouchedFingerprintsMatch(dirty, committed));
 });
 
-test("vouched fingerprint: scoped mode sees in-scope changes and new files, not out-of-scope ones", () => {
+test("vouched fingerprint: implementation scope cannot hide repository changes", () => {
   const dir = makeRepo();
   const options = { projectRoot: dir, slug: "demo", scopeGlobs: ["src/**"] };
   const base = vouchedTreeFingerprint(options);
-  assert.equal(base.mode, "scoped");
-  assert.deepEqual(base.scopeGlobs, ["src/**"]);
+  assert.equal(base.mode, "full");
+  assert.equal(base.scopeGlobs, undefined);
 
   write(dir, "docs/readme.md", "# out of scope edit\n");
-  assert.equal(vouchedTreeFingerprint(options).vouched, base.vouched, "out-of-scope change must not move the fingerprint");
+  assert.notEqual(vouchedTreeFingerprint(options).vouched, base.vouched, "task ownership must not hide a changed file");
 
   write(dir, "src/app.js", "console.log('in scope')\n");
   const inScope = vouchedTreeFingerprint(options);
@@ -81,13 +81,13 @@ test("vouched fingerprint: scoped mode sees in-scope changes and new files, not 
   assert.equal(withNewFile.entryCount, inScope.entryCount + 1);
 });
 
-test("vouched fingerprint: harness bookkeeping never moves it, in both modes", () => {
+test("vouched fingerprint: harness bookkeeping never moves the full fingerprint", () => {
   const dir = makeRepo();
   const fallbackOptions = { projectRoot: dir, slug: "demo", runDir: "agents/implement/demo" };
   const scopedOptions = { ...fallbackOptions, scopeGlobs: ["src/**", "agents/**"] };
   const fallbackBase = vouchedTreeFingerprint(fallbackOptions);
   const scopedBase = vouchedTreeFingerprint(scopedOptions);
-  assert.equal(fallbackBase.mode, "fallback");
+  assert.equal(fallbackBase.mode, "full");
 
   write(dir, "agents/gates/demo/gates.json", "{}");
   write(dir, "agents/gates/demo/artifacts/verify-1.json", "{}");
@@ -97,9 +97,9 @@ test("vouched fingerprint: harness bookkeeping never moves it, in both modes", (
   write(dir, "agents/quick/.quick-active.json", "{}");
 
   assert.equal(vouchedTreeFingerprint(fallbackOptions).vouched, fallbackBase.vouched,
-    "fallback mode must be blind to gates/implement/quick bookkeeping - the circular-invalidation killer");
+    "the fingerprint must be blind to gates/implement/quick bookkeeping - the circular-invalidation killer");
   assert.equal(vouchedTreeFingerprint(scopedOptions).vouched, scopedBase.vouched,
-    "scoped mode must exclude bookkeeping even when a glob would cover it");
+    "a legacy scope option must not pull bookkeeping into the fingerprint");
 });
 
 // This test replaced two that pinned the OPPOSITE rule: spec docs used to ride
@@ -176,7 +176,7 @@ test("vouched fingerprint: spec-doc drift is caught by content pins, not by the 
   assert.match(violations[0], /PRD file changed after implementation state was initialized/);
 });
 
-test("vouched fingerprint: state derivation unions full Scope declarations and falls back on partial ones", () => {
+test("vouched fingerprint: state task ownership never changes the vouched set", () => {
   const dir = makeRepo();
   const stateFor = tasks => ({ projectRoot: dir, runDir: "agents/implement/demo", topicSlug: "demo", tasks });
 
@@ -184,8 +184,8 @@ test("vouched fingerprint: state derivation unions full Scope declarations and f
     { id: "T1", scopeGlobs: ["src/**"] },
     { id: "T2", scopeGlobs: ["docs/**"] },
   ]));
-  assert.equal(full.mode, "scoped");
-  assert.deepEqual(full.scopeGlobs.sort(), ["docs/**", "src/**"]);
+  assert.equal(full.mode, "full");
+  assert.equal(full.scopeGlobs, undefined);
 
   // One Scope-less task would leave that task's writes invisible to a partial
   // union, so the whole run drops to fallback.
@@ -195,8 +195,8 @@ test("vouched fingerprint: state derivation unions full Scope declarations and f
     [],
     undefined,
   ]) {
-    assert.equal(vouchedTreeFingerprintForState(stateFor(tasks)).mode, "fallback",
-      `${JSON.stringify(tasks)} must derive fallback mode`);
+    assert.equal(vouchedTreeFingerprintForState(stateFor(tasks)).mode, "full",
+      `${JSON.stringify(tasks)} must keep full mode`);
   }
 });
 

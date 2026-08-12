@@ -1,0 +1,4 @@
+interface:
+  display_name: "Benchmark Implement"
+  short_description: "Measure isolated receipt-backed implementation runs"
+  default_prompt: "Use $benchmark-implement to run an approved PRD in a fresh worktree and write a comparable report.json."

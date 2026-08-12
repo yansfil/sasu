@@ -1,0 +1,38 @@
+{
+  "schema": "sasu.benchmark-case.v2",
+  "id": "pokemon-rpg",
+  "prd": "prd.md",
+  "environment": {
+    "mode": "fresh-worktree",
+    "baseRef": "c8c3dc9b6590b7e0e007666ce82bc25b6e1a8e1d",
+    "mustBeAbsent": [
+      "pokemon-rpg"
+    ]
+  },
+  "expected": {
+    "terminalStatuses": [
+      "complete"
+    ],
+    "requiredStages": [
+      "init",
+      "implementation",
+      "verification",
+      "verify-gate",
+      "requirements-fidelity",
+      "finalize"
+    ],
+    "forbiddenStages": [
+      "final-adversarial-review"
+    ],
+    "maxVerifyAttempts": 3,
+    "falseCompleteAllowed": false
+  },
+  "evaluation": {
+    "required": true,
+    "requiredCoverage": "complete",
+    "models": {
+      "claudeCode": "opus",
+      "codex": "gpt-5.6-sol"
+    }
+  }
+}

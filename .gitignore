@@ -8,3 +8,7 @@
 /cli/dist/
 /cli/bin/
 /cli/lib/node_modules/
+
+/benchmarks/pokemon-rpg/*
+!benchmarks/pokemon-rpg/prd.md
+!benchmarks/pokemon-rpg/benchmark.json

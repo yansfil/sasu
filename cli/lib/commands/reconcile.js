@@ -5,10 +5,10 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, sha256Text } = require("../util");
 const { recordDeviation, markCompletionReviewsStale, countState } = require("../state_data");
-const { stripFrontmatter } = require("../prd_parser");
+const { stripFrontmatter, findPrdImplementationBindings } = require("../prd_parser");
 const { buildVerificationPlan, buildExecutionPlan, verificationContractHash, nextBrief } = require("../planning");
 const { loadState, syncActive, persistState } = require("../state_store");
-const { parsePrdContract } = require("./init");
+const { parsePrdContract, resolveApprovedHumanDecisions } = require("./init");
 
 const EXECUTOR_FIELDS = ["dependsOn", "writeScope", "parallelSafe", "risk", "owner"];
 
@@ -86,6 +86,14 @@ function cmdReconcile(options) {
   const prdAbs = resolveProjectPath(state.prdPath, projectRoot);
   if (!fs.existsSync(prdAbs)) throw new Error(`PRD not found: ${prdAbs}`);
   const prdText = fs.readFileSync(prdAbs, "utf8");
+  const implementationBindings = findPrdImplementationBindings(prdText);
+  if (implementationBindings.length) {
+    throw new Error([
+      "PRD contains implementation-owned bindings.",
+      ...implementationBindings.map(defect => `- line ${defect.line}: ${defect.message}`),
+      "Keep product semantics in the PRD and bind commands, cwd, writeScope, and evidence paths during implementation.",
+    ].join("\n"));
+  }
   const newSha = sha256Text(prdText);
   const previousSha = state.prdSnapshot ? state.prdSnapshot.sha256 : null;
   if (previousSha === newSha) {
@@ -100,6 +108,7 @@ function cmdReconcile(options) {
 
   const parsed = stripFrontmatter(prdText);
   const contract = parsePrdContract(parsed, projectRoot);
+  resolveApprovedHumanDecisions(contract.preWorkChecklist, parsed.frontmatter.human_approval === "approved" || state.prdApproval.source === "override");
   const changes = { added: [], changed: [], removed: [], unchanged: 0 };
 
   // Executor fields are plan data, not recorded progress: a task whose PRD text

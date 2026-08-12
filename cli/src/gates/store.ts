@@ -63,14 +63,14 @@ export interface GateDeviation {
 /**
  * Which verify stage produced a non-PASS verdict. The rerun short-circuit may
  * arm ONLY on "semantic": the "identical tree ⇒ identical verdict" premise
- * holds for a judge reading a pinned diff, but mechanical commands and PRD
- * oracles read state the vouched fingerprint cannot see (gitignored
+ * holds for a judge reading a pinned diff, but mechanical commands read state
+ * the vouched fingerprint cannot see (gitignored
  * node_modules/, build outputs, running servers - reproduced 2026-08-11: a
  * mechanical FAIL on a missing gitignored marker refused the rerun after the
  * legitimate out-of-tree fix). "human" covers a round closed only by
  * requiresHuman criteria; it is the user's to resolve, never refusable.
  */
-export type VerifyFailedStage = "mechanical" | "evidence" | "oracle" | "human" | "semantic";
+export type VerifyFailedStage = "mechanical" | "evidence" | "human" | "semantic" | "declared-gap";
 
 export interface GateRunSummary {
   at: string;
@@ -100,14 +100,13 @@ export interface GateRunSummary {
 /**
  * Content-based tree fingerprint (cli/lib/git.js vouchedTreeFingerprint): the
  * files the verdict vouches for, hashed by blob content, commit-invariant,
- * and blind to harness bookkeeping. `mode`/`scopeGlobs` describe the vouched
- * set so a consumer can recompute the identical fingerprint later.
+ * and blind to harness bookkeeping. `mode` describes the vouched set so a
+ * consumer can recompute the identical fingerprint later.
  */
 export interface VouchedTreeFingerprint {
   vouched: string;
   entryCount: number;
-  mode?: "scoped" | "fallback";
-  scopeGlobs?: string[];
+  mode?: "full";
 }
 
 
@@ -197,7 +196,7 @@ export interface GateRecord {
    * Verify gate only, stamped alongside failedStage on a non-PASS semantic
    * round: true when any judged lane rested on material the tree fingerprint
    * cannot see - a harness-run criterion `check:`, capture-produced evidence,
-   * a settled oracle tail, or an agentic lane Reading live files (gitignored
+   * or an agentic lane Reading live files (gitignored
    * ones included). Such a FAIL is not reproducible-by-construction, so it
    * must never arm the rerun short-circuit (reproduced 2026-08-11 twice: a
    * capture, then a `check:`, of gitignored service-state "BROKEN" earned a
@@ -476,7 +475,14 @@ export function recordGateResult(
     const docKind = outcome.verdict !== "PASS" ? outcome.docKind : undefined;
     if (docKind !== undefined) record.docKind = docKind;
     else delete record.docKind;
-    record.attempts = outcome.verdict === "PASS" ? 0 : record.attempts + 1;
+    // A declared gap is an evidenced blocked handoff, not another failed fix
+    // attempt. It keeps the gate closed but cannot consume a budget whose job
+    // is to bound attempts to fix newly discovered findings.
+    record.attempts = outcome.verdict === "PASS"
+      ? 0
+      : failedStage === "declared-gap"
+        ? record.attempts
+        : record.attempts + 1;
     // Cumulative twin of the gauge above: every real run counts, PASS included,
     // and nothing resets it (see the GateRecord field comment).
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;

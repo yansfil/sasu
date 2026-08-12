@@ -22,6 +22,8 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import test from "node:test";
 
+import { stripSessionEnv } from "./helpers/session_env.mjs";
+
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
 const requireModule = createRequire(import.meta.url);
@@ -33,7 +35,7 @@ function run(command, args, options = {}) {
     shell: false,
     encoding: "utf8",
     input: options.input,
-    env: options.env,
+    env: options.env || stripSessionEnv(),
     maxBuffer: 20 * 1024 * 1024,
   });
   if (!options.allowFailure && result.status !== 0) {
@@ -126,9 +128,9 @@ No major technical structure change expected.
 
 ### 9.2 Required Agent Verification
 
-| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no |
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
+| --- | --- | --- | --- | --- | --- |
+| V1 | build/static | R1, AC1, T1 | the implementation-bound verifier exits zero | yes | no |
 
 ### 9.3 Human Verification
 
@@ -203,9 +205,8 @@ test("the three real modakbul human-only bullets are extracted and start pending
   assert.match(items[1].text, /`SLACK_ALERT_WEBHOOK_URL`/);
 });
 
-// The one place `**` is content rather than emphasis: a recursive glob inside a
-// code span. §8's `Scope:` tail parses from the pre-strip raw text, but the
-// display text must not mangle it either.
+// The one place `**` is content rather than emphasis: a recursive glob inside
+// a code span. Display text must not mangle it.
 test("bold stripping leaves code spans alone, including recursive globs", () => {
   const items = parsePreWorkChecklist([
     "## 4. Pre-Work And Required Decisions",
@@ -311,9 +312,10 @@ test("init lists every item loudly with the exact mark command", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(
     result.preWorkChecklist.items.map(item => [item.id, item.section, item.status]),
-    [["PW1", "4.1", "pending"], ["PW2", "4.1", "pending"], ["PW3", "4.1", "pending"], ["HD1", "4.2", "pending"]],
+    [["PW1", "4.1", "pending"], ["PW2", "4.1", "pending"], ["PW3", "4.1", "pending"], ["HD1", "4.2", "resolved"]],
   );
-  assert.match(result.preWorkAction, /PW1, PW2, PW3, HD1/);
+  assert.match(result.preWorkAction, /PW1, PW2, PW3/);
+  assert.doesNotMatch(result.preWorkAction, /HD1/);
   assert.match(result.preWorkAction, /mark --kind prework/);
   assert.match(result.preWorkAction, /human\|agent\|resolved/);
 
@@ -352,7 +354,7 @@ test("a pending item blocks the Stop hook, and disposing every item releases it"
   const blocked = JSON.parse(run(process.execPath, [harness, "hook", "stop"], { cwd: projectRoot, input: stopInput }).stdout);
   assert.equal(blocked.decision, "block");
   assert.match(blocked.reason, /# Undisposed pre-work \(PRD §4\)/);
-  assert.match(blocked.reason, /Next required item: PRE-WORK: 4 PRD §4 item\(s\) are undisposed/);
+  assert.match(blocked.reason, /Next required item: PRE-WORK: 3 PRD §4 item\(s\) are undisposed/);
   assert.match(blocked.reason, /Vercel 프로젝트 소유자만 가능하다/);
   assert.match(blocked.reason, /mark --kind prework/);
   // The task must not be offered as the next item while pre-work is pending.
@@ -369,11 +371,10 @@ test("a pending item blocks the Stop hook, and disposing every item releases it"
   ], projectRoot);
   assert.equal(partial.ok, true);
   assert.deepEqual(partial.marked.map(entry => [entry.id, entry.status]), [["PW1", "human"], ["PW2", "human"]]);
-  assert.equal(partial.preWorkPending.length, 2);
+  assert.equal(partial.preWorkPending.length, 1);
   assert.match(partial.preWorkPending[0], /^PW3 \(4\.1\)/);
 
-  runJson(["mark", "--kind", "prework", "--id", "PW3", "--status", "agent", "--evidence", "Cutover switch happens in this run."], projectRoot);
-  const last = runJson(["mark", "--kind", "prework", "--id", "HD1", "--status", "resolved", "--evidence", "User approved the copy in conversation."], projectRoot);
+  const last = runJson(["mark", "--kind", "prework", "--id", "PW3", "--status", "agent", "--evidence", "Cutover switch happens in this run."], projectRoot);
   assert.equal(last.preWorkPending, undefined);
 
   const released = JSON.parse(run(process.execPath, [harness, "hook", "stop"], { cwd: projectRoot, input: stopInput }).stdout);
@@ -402,7 +403,7 @@ test("undisposed pre-work blocks completion, and every disposition clears it", (
   assert.equal(blocked.ok, false);
   const preWorkViolation = blocked.violations.find(item => /PRD §4 pre-work item/.test(item));
   assert.ok(preWorkViolation, `expected a pre-work completion blocker, got: ${JSON.stringify(blocked.violations)}`);
-  assert.match(preWorkViolation, /4 PRD §4 pre-work item\(s\) are still undisposed \(PW1, PW2, PW3, HD1\)/);
+  assert.match(preWorkViolation, /3 PRD §4 pre-work item\(s\) are still undisposed \(PW1, PW2, PW3\)/);
   assert.match(preWorkViolation, /mark --kind prework/, "the blocker names the command that clears it");
 
   // `human` and `agent` are dispositions, not completions: an item the agent
@@ -410,10 +411,8 @@ test("undisposed pre-work blocks completion, and every disposition clears it", (
   runJson(["mark", "--kind", "prework", "--id", "PW1,PW2", "--status", "human", "--evidence", "Asked in one batched message."], projectRoot);
   runJson(["mark", "--kind", "prework", "--id", "PW3", "--status", "agent", "--evidence", "This run performs the cutover."], projectRoot);
   const partial = runJson(["finalize", "--status", "complete", "--summary", "Claiming done."], projectRoot, { allowFailure: true });
-  assert.ok(partial.violations.some(item => /1 PRD §4 pre-work item\(s\) are still undisposed \(HD1\)/.test(item)),
-    `expected the count to fall to the undisposed remainder, got: ${JSON.stringify(partial.violations)}`);
+  assert.equal(partial.violations.some(item => /PRD §4 pre-work item/.test(item)), false);
 
-  runJson(["mark", "--kind", "prework", "--id", "HD1", "--status", "resolved", "--evidence", "User approved the copy."], projectRoot);
   const cleared = runJson(["finalize", "--status", "complete", "--summary", "Claiming done."], projectRoot, { allowFailure: true });
   assert.equal(cleared.violations.some(item => /PRD §4 pre-work item/.test(item)), false,
     `every item disposed must clear the blocker, got: ${JSON.stringify(cleared.violations)}`);

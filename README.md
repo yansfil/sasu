@@ -37,12 +37,13 @@ remember = lessons land as enforcement, not notes
 | `interview-me` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, and one normalized PRD-ready `qa-log.md` |
 | `gen-prd` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
 | `implement` | Agent-planned, harness-checked implementation: task-level execution plan, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
+| `benchmark-implement` | Fixed-PRD harness benchmark: implement delegation, fresh session analysis, deterministic process reports, and baseline comparison |
 | `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
 
-Run artifacts live under the visible `agents/` namespace in the target project (`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/config.json`), which is the only namespace the harness reads or writes.
+Run artifacts live under the visible `agents/` namespace in the target project (`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/benchmarks/**`, `agents/config.json`), which is the only namespace the harness reads or writes.
 
 ## Dual Runtime, One Source
 
@@ -162,7 +163,7 @@ npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --ski
 After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
-- Claude Code: start a new session and check that `/interview-me`, `/gen-prd`, `/implement`, `/ship`, `/ho-setup`, and `/please` appear in the skill list
+- Claude Code: start a new session and check that `/interview-me`, `/gen-prd`, `/implement`, `/benchmark-implement`, `/ship`, `/ho-setup`, and `/please` appear in the skill list
 
 ## Repository Layout
 
@@ -171,6 +172,7 @@ skills/
   interview-me/  SKILL.md
   gen-prd/   SKILL.md
   implement/  SKILL.md, scripts/prd_state_harness.js (thin entry into cli/lib), references/
+  benchmark-implement/  SKILL.md, deterministic reporter, evaluator rubric
   ship/   SKILL.md, scripts/prd_ship.js
   ho-setup/  SKILL.md
   please/    SKILL.md

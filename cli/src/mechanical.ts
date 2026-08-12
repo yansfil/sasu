@@ -15,7 +15,8 @@ export type MechanicalKind = ProjectMechanicalKind | "check" | "capture";
 export interface ResolvedCommand {
   kind: MechanicalKind;
   command: string;
-  source: "config" | "detected" | "contract";
+  cwd?: string;
+  source: "config" | "verification-plan" | "detected" | "contract";
   /**
    * Criteria this command proves, for contract-declared checks and captures.
    * A list because two criteria may declare the same command: it runs once,
@@ -27,7 +28,8 @@ export interface ResolvedCommand {
 export interface MechanicalRun {
   kind: MechanicalKind;
   command: string;
-  source: "config" | "detected" | "contract";
+  cwd?: string;
+  source: "config" | "verification-plan" | "detected" | "contract";
   criterionIds?: string[];
   exitCode: number;
   ok: boolean;
@@ -49,11 +51,16 @@ export interface MechanicalResult {
 }
 
 /**
- * Resolve mechanical verify commands (D-08): agents/config.json declarations
- * win; otherwise detect from project manifests and suggest recording the
- * detection back into config.
+ * Resolve mechanical verify commands (D-08): explicit config wins, followed
+ * by the implement run's already-approved verification plan, then root
+ * manifest detection. The plan is an input rather than a dependency so this
+ * low-level executor stays independent of implement state shape.
  */
-export function resolveMechanicalCommands(projectRoot: string, config: SasuConfig): {
+export function resolveMechanicalCommands(
+  projectRoot: string,
+  config: SasuConfig,
+  verificationPlanCommands: ResolvedCommand[] = [],
+): {
   resolved: ResolvedCommand[];
   configSuggestion: Record<string, string> | null;
 } {
@@ -66,6 +73,9 @@ export function resolveMechanicalCommands(projectRoot: string, config: SasuConfi
       resolved.push({ kind, command: declared[kind]!, source: "config" });
     }
     return { resolved, configSuggestion: null };
+  }
+  if (verificationPlanCommands.length > 0) {
+    return { resolved: verificationPlanCommands, configSuggestion: null };
   }
   const detected = detectFromManifests(projectRoot);
   const suggestion: Record<string, string> = {};
@@ -112,6 +122,7 @@ export function runMechanical(
   extra: ResolvedCommand[] = [],
   options: {
     skipProjectCommands?: boolean;
+    verificationPlanCommands?: ResolvedCommand[];
     /**
      * Fresh-pass lookup for project commands (never contract checks/captures:
      * those are quick-path evidence the harness must execute itself). A non-null
@@ -122,7 +133,7 @@ export function runMechanical(
 ): MechanicalResult {
   const base = options.skipProjectCommands
     ? { resolved: [] as ResolvedCommand[], configSuggestion: null }
-    : resolveMechanicalCommands(projectRoot, config);
+    : resolveMechanicalCommands(projectRoot, config, options.verificationPlanCommands ?? []);
   const configSuggestion = base.configSuggestion;
   // A contract that restates a configured command (the natural thing to write
   // when you want the check tier and `npm test` is the only command you have)
@@ -131,11 +142,11 @@ export function runMechanical(
   // criterion's proof, though: the surviving run inherits every criterion that
   // declared the command, and a capture outranks an identical check because it
   // also has to produce an artifact.
+  const commandKey = (cmd: ResolvedCommand): string => `${cmd.cwd ?? "."}\0${cmd.command.trim()}`;
   const byCommand = new Map<string, ResolvedCommand>();
-  for (const cmd of base.resolved) byCommand.set(cmd.command.trim(), cmd);
   const order: string[] = [];
-  for (const cmd of extra) {
-    const key = cmd.command.trim();
+  for (const cmd of [...base.resolved, ...extra]) {
+    const key = commandKey(cmd);
     const existing = byCommand.get(key);
     if (!existing) {
       byCommand.set(key, { ...cmd, ...(cmd.criterionIds ? { criterionIds: [...cmd.criterionIds] } : {}) });
@@ -148,7 +159,7 @@ export function runMechanical(
       ...(merged.size > 0 ? { criterionIds: [...merged] } : {}),
     });
   }
-  const resolved = [...base.resolved.map((cmd) => byCommand.get(cmd.command.trim())!), ...order.map((key) => byCommand.get(key)!)];
+  const resolved = order.map((key) => byCommand.get(key)!);
   const runs: MechanicalRun[] = [];
   let ok = true;
   for (const cmd of resolved) {
@@ -162,6 +173,7 @@ export function runMechanical(
       runs.push({
         kind: cmd.kind,
         command: cmd.command,
+        ...(cmd.cwd !== undefined ? { cwd: cmd.cwd } : {}),
         source: cmd.source,
         ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
         exitCode: 0,
@@ -190,8 +202,22 @@ export function runMechanical(
 }
 
 function runOne(projectRoot: string, cmd: ResolvedCommand, config: SasuConfig): MechanicalRun {
+  const commandCwd = path.resolve(projectRoot, cmd.cwd ?? ".");
+  const relativeCwd = path.relative(projectRoot, commandCwd);
+  if (relativeCwd === ".." || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
+    return {
+      kind: cmd.kind,
+      command: cmd.command,
+      cwd: cmd.cwd,
+      source: cmd.source,
+      ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
+      exitCode: 1,
+      ok: false,
+      tail: `[sasu] verification-plan cwd escapes the project root: ${cmd.cwd}`,
+    };
+  }
   const result = spawnSync(cmd.command, {
-    cwd: projectRoot,
+    cwd: commandCwd,
     shell: true,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
@@ -208,6 +234,7 @@ function runOne(projectRoot: string, cmd: ResolvedCommand, config: SasuConfig): 
   return {
     kind: cmd.kind,
     command: cmd.command,
+    ...(cmd.cwd !== undefined ? { cwd: cmd.cwd } : {}),
     source: cmd.source,
     ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
     exitCode: timedOut ? 124 : exitCode,

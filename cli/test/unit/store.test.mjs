@@ -59,6 +59,22 @@ test("state machine: PASS resets attempts and closes the gate", () => {
   assert.equal(view.attempts, 0);
 });
 
+test("a declared gap closes the gate without spending the fix budget", () => {
+  const store = makeStore();
+  const state = recordGateResult(store, store.load(), "verify", {
+    kind: "verdict",
+    verdict: "FAIL",
+    findings: [{ ...BLOCK_FINDING, area: "declared-gap" }],
+    failedStage: "declared-gap",
+    artifactPayload: { declaredGaps: [{ criterionId: "AC1", verificationIds: ["V1"] }] },
+  }, []);
+  const view = gateStatus(state, "verify", 2);
+  assert.equal(view.effective, "BLOCKED");
+  assert.equal(view.attempts, 0, "an already-evidenced blocker is not a failed fix attempt");
+  assert.equal(view.requiresHuman, true);
+  assert.equal(state.gates.verify.totalAttempts, 1, "the run remains visible in the cumulative ledger");
+});
+
 test("state machine fail-closed: judge error records ERROR and stays blocked", () => {
   const store = makeStore();
   let state = store.load();

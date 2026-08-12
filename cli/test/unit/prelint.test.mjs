@@ -57,13 +57,7 @@ const PRD_CASES = [
   ["prd-dangling-ref.md", "prd-dangling-ref"],
   ["prd-uncovered-ac.md", "prd-uncovered-ac"],
   ["prd-mode-mismatch.md", "prd-mode-mismatch"],
-  ["prd-method-runner-unknown.md", "prd-method-runner-unknown"],
-  ["prd-method-parenthetical-scope.md", "prd-method-parenthetical-scope"],
-  ["prd-method-cell-mismatch.md", "prd-method-cell-mismatch"],
-  ["prd-method-cell-unbalanced.md", "prd-method-cell-mismatch"],
-  ["prd-table-span-collision.md", "prd-table-span-collision"],
-  ["prd-task-scope-syntax.md", "prd-task-scope-syntax"],
-  ["prd-ac-oracle-syntax.md", "prd-ac-oracle-syntax"],
+  ["prd-method-runner-unknown.md", "prd-implementation-binding"],
 ];
 
 for (const [file, rule] of PRD_CASES) {
@@ -157,213 +151,24 @@ test("runPrelint fails closed on an internal crash instead of throwing (D-11)", 
   assert.match(result.findings[0].missing, /prelint crashed/);
 });
 
-// An AC whose bullet declares a machine oracle is its own verification: the
-// coverage rule must not demand a V-row mapping on top of it (mirrors the lib
-// planner's acceptance-uncovered exemption).
-test("prd rule prd-uncovered-ac does not fire for an oracle-backed AC", () => {
+test("PRD implementation bindings are rejected at every semantic surface", () => {
+  const cleanPrd = fixture("prd-clean.md");
+  const taskScope = prelintPrd(cleanPrd.replace("- T1.", "- T1. Scope: src/**."));
+  assert.equal(taskScope.ok, false);
+  assert.ok(taskScope.findings.some((entry) => entry.rule === "prd-implementation-binding" && /file Scope/.test(entry.missing)));
+
+  const acCheck = prelintPrd(cleanPrd.replace("- AC1.", "- AC1. Check: `npm test`."));
+  assert.equal(acCheck.ok, false);
+  assert.ok(acCheck.findings.some((entry) => entry.rule === "prd-implementation-binding" && /executable Check/.test(entry.missing)));
+
+  const methodMatrix = prelintPrd(fixture("prd-method-runner-unknown.md"));
+  assert.equal(methodMatrix.ok, false);
+  assert.ok(methodMatrix.findings.some((entry) => entry.rule === "prd-implementation-binding" && /column "Method"/.test(entry.missing)));
+});
+
+test("an AC with a Check tail still requires V coverage", () => {
   const result = prelintPrd(fixture("prd-oracle-covered-ac.md"));
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-});
-
-// --- oracle advisories: non-blocking warnings, never counted toward ok ---
-
-test("a Check command with shell operators draws the operators-not-interpreted warning without blocking", () => {
-  const prd = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    "- AC3. the marker greps. Check: `test -f README.md && grep -c Test README.md` -> 1",
-  );
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, true, "advisories must never block");
-  assert.equal(result.findings.length, 0);
-  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-ac-oracle-shell-operators"]);
-  assert.match(result.warnings[0].missing, /not interpreted/);
-  assert.match(result.warnings[0].recommendation, /bash -c/);
-});
-
-// Reproduced false positive #1 (2026-08-11): the rule's own recommendation is
-// `bash -c "..."`, yet that exact shape still warned. A declared shell wrapper
-// provides the shell semantics the warning exists to flag as absent.
-test("the recommended bash -c wrapper shape is exempt from the shell-operators warning", () => {
-  const prd = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    '- AC3. the marker greps. Check: `bash -c "test -f README.md && grep -c Test README.md"` -> 1',
-  );
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-  assert.equal(result.findings.length, 0);
-  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
-});
-
-test("the bash -l -c wrapper variant consuming the whole command is exempt too", () => {
-  const prd = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    '- AC3. the marker greps. Check: `bash -l -c "test -f README.md && grep -c Test README.md"` -> 1',
-  );
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
-});
-
-// Reproduced 2026-08-11: `bash -c "true" && test -f missing.txt` starts with
-// the wrapper shape, so the any-prefix exemption silenced the warning - but
-// under shellLikeTokens + shell:false the `&& test -f missing.txt` tail is
-// inert $0/$1 arguments to the script, making the oracle constant-true. The
-// exemption must cover only a wrapper that consumes the entire command.
-test("a bash -c wrapper with a trailing operator tail outside the script still warns", () => {
-  const prd = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    '- AC3. the file exists. Check: `bash -c "true" && test -f missing.txt`',
-  );
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, true, "advisories must never block");
-  assert.equal(result.findings.length, 0);
-  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-ac-oracle-shell-operators"], JSON.stringify(result.warnings));
-  assert.match(result.warnings[0].missing, /not interpreted/);
-  assert.match(result.warnings[0].recommendation, /inert positional arguments/, "the fix names the wrapper-residue mechanics");
-  assert.match(result.warnings[0].recommendation, /ONE -c string/);
-});
-
-// Reproduced false positive #2 (2026-08-11): a metacharacter inside a quoted
-// argument is a literal token to both executors (shellLikeTokens + shell:false),
-// so nothing is silently reinterpreted and the warning was pure noise.
-test("a quoted metacharacter argument is exempt from the shell-operators warning", () => {
-  const prd = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    '- AC3. the grep filter runs. Check: `npm test -- --grep "a|b"`',
-  );
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-  assert.equal(result.findings.length, 0);
-  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
-});
-
-test("a trivially-constant Check command draws the constant-true warning without blocking", () => {
-  for (const command of ["true", ":", "exit 0", "echo done"]) {
-    const prd = fixture("prd-oracle-covered-ac.md").replace(
-      "- AC3. the marker exists. Artifact: out/marker.txt",
-      `- AC3. the stub passes. Check: \`${command}\``,
-    );
-    const result = prelintPrd(prd);
-    assert.equal(result.ok, true, `\`${command}\` must warn, not block`);
-    assert.deepEqual(
-      result.warnings.map((w) => w.rule),
-      ["prd-ac-oracle-constant-true"],
-      `\`${command}\`: ${JSON.stringify(result.warnings)}`,
-    );
-    assert.match(result.warnings[0].missing, /proves nothing/);
-  }
-});
-
-// --- Method-cell round trip: pipes in code spans, mismatch guard, node --test advisory ---
-
-// The exact live repro: the naive pipe split used to truncate this command at
-// `||`, and the truncated form was still valid shell.
-const LIVE_METHOD_COMMAND = 'bash -c "for f in $(git diff --name-only); do node --check \\"$f\\" || exit 1; done"';
-
-function withMethod(method) {
-  return fixture("prd-method-runner-unknown.md").replace("`checkshirt gate spec --slug fixture`", method);
-}
-
-test("a Method command with pipes inside its code span parses whole and passes clean", () => {
-  const result = prelintPrd(withMethod(`\`${LIVE_METHOD_COMMAND}\``));
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-  assert.equal(result.findings.length, 0);
-  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
-});
-
-test("an escaped \\| inside a Method code span round-trips to a literal pipe", () => {
-  const result = prelintPrd(withMethod('`bash -c "grep -c \\"a\\|b\\" README.md"`'));
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-});
-
-test("prd-method-cell-mismatch quotes both the declared and the parsed form", () => {
-  const result = prelintPrd(fixture("prd-method-cell-mismatch.md"));
   assert.equal(result.ok, false);
-  assert.equal(result.findings[0].rule, "prd-method-cell-mismatch");
-  assert.match(result.findings[0].missing, /declares `npm test` \+ `x`/);
-  assert.match(result.findings[0].missing, /would read `npm test``x`/);
-});
-
-test("an unbalanced backtick in a Method cell blocks with the same rule family", () => {
-  const result = prelintPrd(fixture("prd-method-cell-unbalanced.md"));
-  assert.equal(result.ok, false);
-  assert.equal(result.findings[0].rule, "prd-method-cell-mismatch");
-  assert.match(result.findings[0].missing, /unbalanced backtick/);
-});
-
-test("node --test on a directory-shaped path draws the glob-form warning without blocking", () => {
-  const result = prelintPrd(withMethod("`node --test cli/test/unit`"));
-  assert.equal(result.ok, true, "advisories must never block");
-  assert.equal(result.findings.length, 0);
-  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-node-test-directory"]);
-  assert.match(result.warnings[0].missing, /directory-shaped/);
-  assert.match(result.warnings[0].recommendation, /cli\/test\/unit\/\*\.test\.mjs/);
-});
-
-test("node --test with a glob or an explicit file draws no warning", () => {
-  for (const method of [
-    '`node --test "cli/test/unit/*.test.mjs"`',
-    "`node --test cli/test/unit/quick.test.mjs`",
-    "`node --test-reporter=spec --test cli/test/unit/quick.test.mjs`",
-  ]) {
-    const result = prelintPrd(withMethod(method));
-    assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-    assert.equal(result.warnings, undefined, `${method}: ${JSON.stringify(result.warnings)}`);
-  }
-});
-
-test("space-separated flag values are not mistaken for directory targets", () => {
-  for (const method of [
-    '`node --test --test-reporter spec "cli/test/unit/*.test.mjs"`',
-    '`node --test --test-concurrency 4 "cli/test/unit/*.test.mjs"`',
-  ]) {
-    const result = prelintPrd(withMethod(method));
-    assert.equal(result.warnings, undefined, `${method}: ${JSON.stringify(result.warnings)}`);
-  }
-  // The real target after a skipped flag value, and after `--`, still warns.
-  for (const method of [
-    "`node --test --test-reporter spec cli/test/unit`",
-    "`node --test -- cli/test/unit`",
-  ]) {
-    const result = prelintPrd(withMethod(method));
-    assert.deepEqual(result.warnings?.map((w) => w.rule), ["prd-node-test-directory"], method);
-  }
-});
-
-test("cross-cell backtick pairing blocks; an extra unescaped pipe only advises", () => {
-  // Blocking direction is the fixture matrix row (prd-table-span-collision.md);
-  // here: the advisory direction and the message content.
-  const collision = prelintPrd(fixture("prd-table-span-collision.md"));
-  assert.equal(collision.ok, false);
-  assert.match(collision.findings[0].missing, /parses to 6 cell\(s\) but its rendered form shows 7/);
-  const extraPipe = prelintPrd(
-    fixture("prd-method-cell-mismatch.md").replace(
-      "| V1 | automated behavior | R1, AC1, AC2 | `npm test`**`x` | command-log | yes | no |",
-      "| V1 | automated behavior | R1, AC1, AC2 | `npm test` | command-log | yes a|b | no |",
-    ),
-  );
-  assert.equal(extraPipe.ok, true, "extra-cell direction must not block");
-  assert.deepEqual(extraPipe.warnings?.map((w) => w.rule), ["prd-table-row-shape"]);
-});
-
-test("a Check oracle pointing node --test at a directory draws the same warning", () => {
-  const prd = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    "- AC3. the tests pass. Check: `node --test cli/test/unit`",
-  );
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.warnings.map((w) => w.rule), ["prd-node-test-directory"]);
-});
-
-test("a substantive Check command and an Artifact oracle draw no advisory", () => {
-  const artifactOnly = prelintPrd(fixture("prd-oracle-covered-ac.md"));
-  assert.equal(artifactOnly.warnings, undefined);
-  const check = fixture("prd-oracle-covered-ac.md").replace(
-    "- AC3. the marker exists. Artifact: out/marker.txt",
-    '- AC3. the marker prints. Check: `node -e "console.log(1)"` -> 1',
-  );
-  const result = prelintPrd(check);
-  assert.equal(result.ok, true);
-  assert.equal(result.warnings, undefined, JSON.stringify(result.warnings));
+  assert.ok(result.findings.some((entry) => entry.rule === "prd-uncovered-ac"));
+  assert.ok(result.findings.some((entry) => entry.rule === "prd-implementation-binding"));
 });

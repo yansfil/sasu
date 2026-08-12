@@ -30,7 +30,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const SKILL_NAMES = ["interview-me", "gen-prd", "implement", "ship", "ho-setup", "please", "remember", "quick"];
+const SKILL_NAMES = ["interview-me", "gen-prd", "implement", "benchmark-implement", "ship", "ho-setup", "please", "remember", "quick"];
 
 // Pre-rename install directories that this pipeline used to own, including
 // the retired ho-* compatibility aliases.
@@ -56,7 +56,7 @@ const TARGETS = {
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
   // Invocation tokens: $interview-me -> /interview-me.
-  return roots.replace(/\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember|quick)\b/g, "/$1");
+  return roots.replace(/\$(interview-me|gen-prd|implement|benchmark-implement|ship|ho-setup|please|remember|quick)\b/g, "/$1");
 }
 
 function ensureDir(dir) {

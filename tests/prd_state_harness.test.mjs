@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import test from "node:test";
 
+import { sessionEnv, stripSessionEnv } from "./helpers/session_env.mjs";
+
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
 const requireModule = createRequire(import.meta.url);
@@ -25,12 +27,17 @@ test("parseGitStatusZ preserves rename source records", () => {
 });
 
 function run(command, args, options = {}) {
+  // A test supplying `env` owns it completely (that is how the identity-binding
+  // tests inject one); everything else inherits a session-stripped environment.
+  // Until 2026-08-12 every spawn inherited the developer's session id, so a run
+  // bound to "session-a" was mutated by that ambient identity without refusal
+  // and the suite's result depended on who ran it.
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     shell: false,
     encoding: "utf8",
     input: options.input,
-    env: options.env,
+    env: options.env || stripSessionEnv(),
     maxBuffer: 20 * 1024 * 1024,
   });
   if (!options.allowFailure && result.status !== 0) {
@@ -120,7 +127,7 @@ No major technical structure change expected.
 
 ## 7. Acceptance Criteria
 
-- AC1. V1 passes with a command-log artifact.
+- AC1. The local verification succeeds and records evidence.
 
 ## 8. PRD-Level Tasks
 
@@ -136,9 +143,9 @@ No major technical structure change expected.
 
 ### 9.2 Required Agent Verification
 
-| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no |
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
+| --- | --- | --- | --- | --- | --- |
+| V1 | build/static | R1, AC1, T1 | the implementation-bound verifier exits zero | yes | no |
 
 ### 9.3 Human Verification
 
@@ -224,7 +231,7 @@ test("PR delivery init rejects receipt gates that require PR, CI, or merge outco
   const root = initGitRepo();
   const prdPath = writeApprovedPrd(root, "circular-delivery");
   const circular = fs.readFileSync(prdPath, "utf8")
-    .replace("- AC1. V1 passes with a command-log artifact.", "- AC1. V1 passes and the CI checks pass.");
+    .replace("- AC1. The local verification succeeds and records evidence.", "- AC1. The local verification and required CI checks pass.");
   fs.writeFileSync(prdPath, circular);
 
   const result = run(process.execPath, [harness, "init", "--prd", prdPath, "--delivery", "pr"], {
@@ -240,14 +247,10 @@ test("PR delivery init rejects receipt gates that require PR, CI, or merge outco
 test("an unbound pointer is claimed by the first hook session and isolated from others", () => {
   const root = initGitRepo();
   const prd = writeApprovedPrd(root, "bootstrap");
-  // Init without any session id (env stripped) leaves the pointer unbound.
-  const noSessionEnv = { ...process.env };
-  delete noSessionEnv.CODEX_SESSION_ID;
-  delete noSessionEnv.CODEX_THREAD_ID;
-  delete noSessionEnv.CLAUDE_SESSION_ID;
-  run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env: noSessionEnv });
+  // Init without any session id leaves the run unowned.
+  run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root });
   const before = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", ".prd-implement-active.json"), "utf8"));
-  assert.equal(before.activeSessionId, null);
+  assert.equal(before.owner.sessionId, null);
   runJson(["plan-execution"], root);
 
   // First hook with a session id claims the unbound run and binds it.
@@ -257,7 +260,7 @@ test("an unbound pointer is claimed by the first hook session and isolated from 
   });
   assert.match(JSON.parse(claim.stdout).reason, /prd-implement-continuation/);
   const bound = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "bootstrap", "state.json"), "utf8"));
-  assert.equal(bound.activeSessionId, "boot-s");
+  assert.equal(bound.ownerSessionId, "boot-s");
 
   // A different session must not pick up the now-bound run.
   const foreign = run(process.execPath, [harness, "hook", "stop"], {
@@ -277,7 +280,7 @@ test("worktree init overwrites the main active pointer bound to the session", ()
   const stale = {
     schema: "hoyeon.prd-implement.active.v1",
     statePath: "agents/implement/stale/state.json",
-    activeSessionId: "codex:old",
+    owner: { sessionId: "codex:old", pid: 1, startedAt: "2026-06-01T00:00:00.000Z" },
     updatedAt: "2026-06-01T00:00:00.000Z",
   };
   write(path.join(projectRoot, "agents", "implement", ".prd-implement-active.json"), JSON.stringify(stale, null, 2));
@@ -289,7 +292,7 @@ test("worktree init overwrites the main active pointer bound to the session", ()
   const active = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", ".prd-implement-active.json"), "utf8"));
   assert.match(active.statePath, /pointer-test\/state\.json$/);
   assert.match(active.statePath, /worktrees/);
-  assert.equal(active.activeSessionId, "new-session");
+  assert.equal(active.owner.sessionId, "new-session");
 
   const cleanup = runJson(["cleanup-active", "--state", active.statePath], projectRoot);
   assert.equal(cleanup.ok, true);
@@ -366,59 +369,158 @@ test("init refuses an existing target worktree owned by another checkout", () =>
   assert.match(result.stderr, /not registered under the current checkout/);
 });
 
-test("verify-run treats bash -lc wrapper as the planned command", () => {
+test("greenfield verification binding is deferred until first verify-run and then enforced", () => {
   const projectRoot = initGitRepo();
-  const prdPath = writeApprovedPrd(projectRoot, "command-normalization");
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  const result = runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  const prdPath = writeApprovedPrd(projectRoot, "greenfield-binding");
+  const precheck = runJson(["plan-verification", "--prd", prdPath], projectRoot);
+  assert.equal(precheck.ok, true);
+  assert.equal(precheck.deferredBindings.length, 1);
+  assert.equal(precheck.deferredBindings[0].verificationId, "V1");
+  assert.deepEqual(precheck.deferredBindings[0].missing, ["command", "cwd"]);
+  assert.ok(precheck.deferredBindings[0].artifactKinds.length > 0);
+  assert.equal(precheck.deferredBindings[0].bindAt, "first verify-run after implementation creates the verifier");
+  const initialized = runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const statePath = path.join(projectRoot, "agents", "implement", "greenfield-binding", "state.json");
+  let state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+
+  assert.equal(state.verificationPlan.status, "needs_binding");
+  assert.equal(state.verificationPlan.checks[0].command, null);
+  assert.deepEqual(initialized.ready.readySequential, ["T1"]);
+  assert.equal(initialized.next.kind, "task");
+
+  fs.mkdirSync(path.join(projectRoot, "app"));
+  const command = ["node", "-e", "if (!process.cwd().endsWith('/app')) process.exit(2)"];
+  const result = runJson(["verify-run", "--id", "V1", "--cwd", "app", "--", ...command], projectRoot);
   assert.equal(result.ok, true);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "command-normalization", "state.json"), "utf8"));
-  assert.deepEqual(state.deviations.filter(item => item.type === "verification_command"), []);
+
+  state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(state.verificationPlan.status, "ready");
+  assert.equal(state.verificationPlan.checks[0].cwd, "app");
+  assert.equal(state.verificationPlan.checks[0].bindingSource, "verify-run");
+  assert.match(state.verificationPlan.checks[0].command, /^node -e /);
+
+  runJson(["plan-verification"], projectRoot);
+  state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(state.verificationPlan.checks[0].cwd, "app");
+  assert.equal(state.verificationPlan.checks[0].bindingSource, "verify-run");
+
+  const refused = run(process.execPath, [harness, "verify-run", "--id", "V1", "--cwd", ".", "--", ...command], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /binding differs from the implementation plan/);
 });
 
-test("verify-run treats planned bash -lc wrapper as equivalent to the inner command", () => {
+test("a missing greenfield executable fails observably at first verify-run, not PRD planning", () => {
   const projectRoot = initGitRepo();
-  const prdPath = writeApprovedPrd(projectRoot, "planned-wrapper", `
-## Extra
+  const prdPath = writeApprovedPrd(projectRoot, "greenfield-missing-executable");
+  const precheck = runJson(["plan-verification", "--prd", prdPath], projectRoot);
+  assert.equal(precheck.ok, true);
+  assert.equal(precheck.deferredBindings[0].verificationId, "V1");
 
-The intended verifier may be wrapped by a login shell.
-`);
-  let text = fs.readFileSync(prdPath, "utf8");
-  text = text.replace("`node -e \"process.exit(0)\"`", "`bash -lc 'node -e \"process.exit(0)\"'`");
-  fs.writeFileSync(prdPath, text);
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const executed = run(process.execPath, [harness, "verify-run", "--id", "V1", "--", "sasu-definitely-missing-executable"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(executed.status, 2);
+  const result = JSON.parse(executed.stdout);
+  assert.equal(result.ok, false);
+  assert.equal(result.exitCode, 1);
+
+  const statePath = path.join(projectRoot, "agents", "implement", "greenfield-missing-executable", "state.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(state.verificationPlan.status, "ready");
+  assert.equal(state.verificationPlan.checks[0].command, "sasu-definitely-missing-executable");
+  assert.equal(state.verificationPlan.checks[0].bindingSource, "verify-run");
+  assert.equal(state.verification[0].status, "fail");
+  assert.match(fs.readFileSync(path.join(projectRoot, result.logPath), "utf8"), /ENOENT/);
+});
+
+test("stateless planning and init reject implementation bindings declared by the PRD", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "binding-boundary");
+  const bound = fs.readFileSync(prdPath, "utf8")
+    .replace("- AC1.", "- AC1. Check: `npm test`.")
+    .replace("- T1.", "- T1. Scope: src/**.")
+    .replace(
+      "| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |",
+      "| ID | Mode | Covers | Method | Pass Intent | Required For Done | Can Be Blocked |",
+    );
+  fs.writeFileSync(prdPath, bound);
+
+  const precheck = run(process.execPath, [harness, "plan-verification", "--prd", prdPath], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.equal(precheck.status, 2);
+  const parsed = JSON.parse(precheck.stdout);
+  assert.equal(parsed.blockingGaps.filter(gap => gap.code === "prd-implementation-binding").length, 3);
+
+  const init = run(process.execPath, [harness, "init", "--prd", prdPath, "--review-profile", "trivial"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(init.status, 0);
+  assert.match(init.stderr, /PRD contains implementation-owned bindings/);
+  assert.equal(fs.existsSync(path.join(projectRoot, "agents", "implement", "binding-boundary", "state.json")), false);
+});
+
+test("reconcile rejects newly added PRD implementation bindings without mutating state", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "reconcile-binding-boundary");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  const statePath = path.join(projectRoot, "agents", "implement", "reconcile-binding-boundary", "state.json");
+  const before = fs.readFileSync(statePath, "utf8");
+
+  const bound = fs.readFileSync(prdPath, "utf8")
+    .replace("- AC1.", "- AC1. Check: `npm test`.");
+  fs.writeFileSync(prdPath, bound);
+
+  const result = run(process.execPath, [harness, "reconcile"], {
+    cwd: projectRoot,
+    allowFailure: true,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /PRD contains implementation-owned bindings/);
+  assert.equal(fs.readFileSync(statePath, "utf8"), before);
+});
+
+test("a bound bash -lc wrapper remains equivalent to its inner command", () => {
+  const projectRoot = initGitRepo();
+  const prdPath = writeApprovedPrd(projectRoot, "bound-wrapper");
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
   const result = runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
   assert.equal(result.ok, true);
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "planned-wrapper", "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "bound-wrapper", "state.json"), "utf8"));
   assert.deepEqual(state.deviations.filter(item => item.type === "verification_command"), []);
 });
 
-test("verify-run preserves quoted argument whitespace when comparing commands", () => {
+test("verify-run preserves quoted argument whitespace when comparing bound commands", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "quoted-whitespace");
-  let text = fs.readFileSync(prdPath, "utf8");
-  text = text.replace("`node -e \"process.exit(0)\"`", "`node -e \"process.stdout.write('a b')\"`");
-  fs.writeFileSync(prdPath, text);
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.stdout.write('a b')"], projectRoot);
   const result = run(process.execPath, [harness, "verify-run", "--id", "V1", "--", "node", "-e", "process.stdout.write('a    b')"], {
     cwd: projectRoot,
     allowFailure: true,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /command differs from PRD contract/);
+  assert.match(result.stderr, /binding differs from the implementation plan/);
 });
 
 test("verify-run dedupes identical verification_command deviations and reuses the recorded justification", () => {
   const projectRoot = initGitRepo();
   const prdPath = writeApprovedPrd(projectRoot, "deviation-dedupe");
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], projectRoot);
   const statePath = path.join(projectRoot, "agents", "implement", "deviation-dedupe", "state.json");
   const readDeviations = () => JSON.parse(fs.readFileSync(statePath, "utf8"))
     .deviations.filter(item => item.type === "verification_command");
   const actual = ["node", "-e", "void 0; process.exit(0)"];
 
-  // Same (target, expected, actual) triple twice: one entry, occurrences 2,
-  // and the ORIGINAL summary survives even when a new reason is typed.
   runJson(["verify-run", "--id", "V1", "--deviation", "DATABASE_URL을 로컬로 대체한 동등 검증", "--", ...actual], projectRoot);
   runJson(["verify-run", "--id", "V1", "--deviation", "retyped different reason", "--", ...actual], projectRoot);
   let deviations = readDeviations();
@@ -428,36 +530,30 @@ test("verify-run dedupes identical verification_command deviations and reuses th
   assert.equal(deviations[0].details.occurrences, 2);
   assert.ok(deviations[0].details.lastSeenAt, "deduped deviation must record lastSeenAt");
 
-  // Missing --deviation with an identical recorded mismatch must not throw:
-  // the intentional-equivalent justification is already on record.
   const rerun = runJson(["verify-run", "--id", "V1", "--", ...actual], projectRoot);
   assert.equal(rerun.ok, true);
   deviations = readDeviations();
   assert.equal(deviations.length, 1);
   assert.equal(deviations[0].details.occurrences, 3);
 
-  // A different actual command is a genuinely new mismatch: --deviation is
-  // still required, and providing it appends a second entry.
   const different = ["node", "-e", "void 0;; process.exit(0)"];
   const refused = run(process.execPath, [harness, "verify-run", "--id", "V1", "--", ...different], {
     cwd: projectRoot,
     allowFailure: true,
   });
   assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /command differs from PRD contract/);
+  assert.match(refused.stderr, /binding differs from the implementation plan/);
   runJson(["verify-run", "--id", "V1", "--deviation", "second distinct equivalent verifier", "--", ...different], projectRoot);
   deviations = readDeviations();
   assert.equal(deviations.length, 2);
   assert.equal(deviations[1].details.occurrences, 1);
 
-  // The rendered deviation section shows the repeat count instead of rows.
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
   writeImplementationReport(statePath, state);
   const report = fs.readFileSync(path.join(path.dirname(statePath), "implementation-result.md"), "utf8");
   assert.match(report, /D1: verification_command - DATABASE_URL을 로컬로 대체한 동등 검증 \(×3, last \d{4}-\d{2}-\d{2}T/);
   assert.doesNotMatch(report, /second distinct equivalent verifier \(×/);
 });
-
 function failingFidelityReviewBody(logPath) {
   return fidelityReviewBody(logPath)
     .replace("Status: PASS", "Status: FAIL")
@@ -536,6 +632,40 @@ test("non-high-risk partial finalize is unaffected by the final-review handoff g
   const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
   assert.equal(receipt.status, "partial");
   assert.equal(receipt.finalReview, null);
+});
+
+test("partial handoff records an honest fidelity pass and stamps stale verification evidence", () => {
+  const projectRoot = initGitRepo();
+  const slug = "partial-fidelity-pass";
+  const prdPath = writeApprovedPrd(projectRoot, slug);
+  runJson(["init", "--prd", prdPath, "--review-profile", "trivial", "--session-id", "partial-pass-session"], projectRoot);
+  runJson(["plan-execution"], projectRoot);
+
+  // V1 and its covered AC are complete, while T1 intentionally remains open.
+  // Fidelity answers whether the implemented work preserved intent; finalize
+  // owns the separate question of whether the whole run is complete.
+  runJson(["verify-run", "--id", "V1", "--", "bash", "-lc", "node -e 'process.exit(0)'"], projectRoot);
+  let state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "state.json"), "utf8"));
+  const logPath = state.verification[0].artifacts[0].path;
+  const reviewPath = path.join(projectRoot, "agents", "implement", slug, "review", "requirements-fidelity-review.md");
+  write(reviewPath, fidelityReviewBody(logPath));
+  const review = runJson([
+    "requirements-review-record", "--status", "pass", "--report", reviewPath,
+    "--summary", "Implemented work preserves the approved intent; T1 remains open.",
+  ], projectRoot);
+  assert.equal(review.ok, true, "open completion work must not force the fidelity verdict to fail");
+
+  // Move the product tree after the pass. A partial receipt does not rerun the
+  // command, but it must disclose that the recorded proof is stale.
+  write(path.join(projectRoot, "implementation.js"), "export const changedAfterVerification = true;\n");
+  const finalized = runJson(["finalize", "--status", "partial", "--summary", "Intent preserved with T1 still open."], projectRoot);
+  assert.equal(finalized.ok, true);
+  const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", slug, "receipt.json"), "utf8"));
+  assert.equal(receipt.requirementsFidelityReview.status, "pass");
+  assert.equal(receipt.status, "partial");
+  assert.equal(receipt.finalReverification.mode, "inspect-only");
+  assert.equal(receipt.finalReverification.results[0].freshness, "stale");
+  assert.equal(receipt.finalReverification.results[0].exitCode, undefined, "partial handoff inspects but does not rerun");
 });
 
 test("fidelity Coverage Judgment accepts plain label lines and demotes a missing label to a structure warning", () => {
@@ -802,10 +932,9 @@ PASS.
   assert.match(preToolDirective.reason, /effective review policy/);
   const finalized = runJson(["finalize", "--status", "complete", "--summary", "Trivial run completed."], projectRoot);
   assert.equal(finalized.ok, true);
-  // The receipt nudges remember with the run's recorded deviations.
+  // No deviation was needed: the first verify-run established the binding.
   assert.ok(Array.isArray(finalized.rememberSuggestions));
-  assert.ok(finalized.rememberSuggestions.some(item => /deviation/.test(item)),
-    `expected a deviation-based remember suggestion, got: ${JSON.stringify(finalized.rememberSuggestions)}`);
+  assert.deepEqual(finalized.rememberSuggestions, []);
   const receipt = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "trivial-finalize", "receipt.json"), "utf8"));
   assert.equal(receipt.status, "complete");
   assert.equal(receipt.finalReview, null);
@@ -1435,7 +1564,7 @@ test("session ids match across runtime prefixes and legacy stored values", () =>
   runJson(["init", "--prd", prd, "--review-profile", "trivial", "--session-id", "claude:sess-1"], root);
   const statePath = path.join(root, "agents", "implement", "session-neutral", "state.json");
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  assert.equal(state.activeSessionId, "sess-1");
+  assert.equal(state.ownerSessionId, "sess-1");
   runJson(["plan-execution"], root);
 
   // A bare hook payload id (Claude Code) matches the stored session.
@@ -1454,7 +1583,7 @@ test("session ids match across runtime prefixes and legacy stored values", () =>
 
   // Legacy state files that stored a prefixed id keep matching bare payloads.
   const legacy = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  legacy.activeSessionId = "codex:sess-1";
+  legacy.ownerSessionId = "codex:sess-1";
   fs.writeFileSync(statePath, JSON.stringify(legacy, null, 2));
   const legacyMatch = run(process.execPath, [harness, "hook", "stop"], {
     cwd: root,
@@ -1473,13 +1602,11 @@ test("session ids match across runtime prefixes and legacy stored values", () =>
 test("CLAUDE_SESSION_ID env binds the session at init", () => {
   const root = initGitRepo();
   const prd = writeApprovedPrd(root, "claude-env");
-  const env = { ...process.env };
-  delete env.CODEX_SESSION_ID;
-  delete env.CODEX_THREAD_ID;
+  const env = stripSessionEnv();
   env.CLAUDE_SESSION_ID = "claude-env-session";
   run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root, env });
   const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "claude-env", "state.json"), "utf8"));
-  assert.equal(state.activeSessionId, "claude-env-session");
+  assert.equal(state.ownerSessionId, "claude-env-session");
 });
 
 test("hook directives emit the invoked harness path, not a hardcoded install root", () => {
@@ -1505,7 +1632,7 @@ test("doctor reports hook registration per runtime from HOME", () => {
   }, null, 2));
   const result = run(process.execPath, [harness, "doctor"], {
     cwd: root,
-    env: { ...process.env, HOME: fakeHome },
+    env: { ...stripSessionEnv(), HOME: fakeHome },
     allowFailure: true,
   });
   const doctor = JSON.parse(result.stdout);
@@ -1655,7 +1782,7 @@ test("plan-execution injects matching learned invariants as verification items",
   assert.equal(injectedCheck.command, "node -e 'process.exit(0)'");
   assert.deepEqual(injectedCheck.covers.tasks, ["T1"]);
   assert.equal(injectedCheck.status, "planned");
-  assert.equal(state.verificationPlan.status, "ready");
+  assert.equal(state.verificationPlan.status, "needs_binding", "the learned check is planned, while V1 still awaits its implementation binding");
   assert(state.verification.some(item => item.id === injected.id && item.matrix.covers.includes("T1")));
 
   // Re-planning must not duplicate the injected item.
@@ -1869,7 +1996,10 @@ test("reconcile preserves marks across a PRD edit and resets only changed items"
 
   // Now change AC1's definition: only AC1 resets; the task survives.
   const edited = fs.readFileSync(prdPath, "utf8")
-    .replace("- AC1. V1 passes with a command-log artifact.", "- AC1. V1 passes with a command-log artifact and prints a summary.");
+    .replace(
+      "- AC1. The local verification succeeds and records evidence.",
+      "- AC1. The local verification succeeds, records evidence, and prints a summary.",
+    );
   fs.writeFileSync(prdPath, edited);
   const second = runJson(["reconcile"], root);
   assert.deepEqual(second.changedItems, ["ac:AC1"]);
@@ -1934,10 +2064,8 @@ test("review-policy records a user-directed profile override as a deviation", ()
 test("plan-verification warns when a check appears to touch a database", () => {
   const root = initGitRepo();
   const prdPath = writeApprovedPrd(root, "db-safety");
-  const edited = fs.readFileSync(prdPath, "utf8")
-    .replace('`node -e "process.exit(0)"`', '`psql "$DATABASE_URL" -c "select count(*) from applications"`');
-  fs.writeFileSync(prdPath, edited);
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], root);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)", "psql", "DATABASE_URL"], root);
   const state = JSON.parse(fs.readFileSync(path.join(root, "agents", "implement", "db-safety", "state.json"), "utf8"));
   const dbGaps = state.verificationPlan.gaps.filter(gap => gap.code === "db-safety");
   assert.equal(dbGaps.length, 1);
@@ -1950,6 +2078,7 @@ test("plan-verification warns when a check appears to touch a database", () => {
   const cleanRoot = initGitRepo();
   const cleanPrd = writeApprovedPrd(cleanRoot, "db-safety-clean");
   runJson(["init", "--prd", cleanPrd, "--review-profile", "trivial"], cleanRoot);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], cleanRoot);
   const cleanState = JSON.parse(fs.readFileSync(path.join(cleanRoot, "agents", "implement", "db-safety-clean", "state.json"), "utf8"));
   assert.equal(cleanState.verificationPlan.gaps.filter(gap => gap.code === "db-safety").length, 0);
 });
@@ -2076,9 +2205,8 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
     judgeCalls: [],
   }, null, 2));
 
-  // Budget remaining: the cheap escapes stay shut - attempts are left to
-  // spend, so an empty blocker list still refuses the blocked handoff and
-  // the gate still vetoes a passing review record (fix and re-verify first).
+  // Budget remaining: the blocked handoff stays shut because attempts remain.
+  // Fidelity is a separate axis and may still record its honest verdict.
   writeGates({ ...emptyGate, verdict: "FAIL", attempts: 1, findings: [finding] });
   const early = runJson(["finalize", "--status", "blocked", "--summary", "Giving up early."], projectRoot, { allowFailure: true });
   assert.equal(early.ok, false);
@@ -2087,8 +2215,7 @@ test("a budget-exhausted BLOCKED verify gate is itself the blocker: finalize --s
     `expected a budget-remaining refusal, got: ${JSON.stringify(early.violations)}`,
   );
   const earlyRecord = runJson(["requirements-review-record", "--status", "pass", "--report", reviewPath, "--summary", "PASS again"], projectRoot, { allowFailure: true });
-  assert.equal(earlyRecord.ok, false);
-  assert.ok(earlyRecord.violations.some(item => /Verify gate is BLOCKED/.test(item)), JSON.stringify(earlyRecord.violations));
+  assert.equal(earlyRecord.ok, true, "completion blockers must not rewrite the fidelity verdict");
 
   // Budget exhausted: complete keeps rejecting, but the honest review record
   // opens together with the blocked handoff - the gate is terminal, so it no
@@ -2906,6 +3033,7 @@ test("posttool-use hook records side-door rehearsals of contract commands", () =
   const prd = writeApprovedPrd(root, "rehearsal");
   run(process.execPath, [harness, "init", "--prd", prd, "--review-profile", "trivial"], { cwd: root });
   runJson(["plan-verification"], root);
+  runJson(["verify-run", "--id", "V1", "--", "node", "-e", "process.exit(0)"], root);
   const rehearsalsPath = path.join(root, "agents", "implement", "rehearsal", "rehearsals.jsonl");
 
   const postTool = (command, exitCode) => run(process.execPath, [harness, "hook", "posttool-use"], {
@@ -3203,7 +3331,7 @@ test("quick guard blocks a stop before verify has run, and claims the session", 
   assert.match(directive.reason, /verify gate has not run/);
   assert.match(directive.reason, /sasu verify --slug demo --contract agents\/quick\/demo\/contract\.md --json/);
   const marker = JSON.parse(fs.readFileSync(path.join(root, "agents", "quick", ".quick-active.json"), "utf8"));
-  assert.equal(marker.activeSessionId, "quick-s");
+  assert.equal(marker.ownerSessionId, "quick-s");
   // A foreign session must be told, not silently released: a stray hook
   // firing in this directory would otherwise disarm the guard for the owner.
   const foreign = JSON.parse(quickStop(root, "other-session"));
@@ -3421,17 +3549,17 @@ test("hooks stay silent inside a judge subprocess so the judge is never derailed
   const judged = run(process.execPath, [harness, "hook", "stop"], {
     cwd: root,
     input: JSON.stringify({ hook_event_name: "Stop", cwd: root, session_id: "judge-session" }),
-    env: { ...process.env, SASU_JUDGE_SUBPROCESS: "1" },
+    env: { ...stripSessionEnv(), SASU_JUDGE_SUBPROCESS: "1" },
   });
   assert.equal(judged.stdout.trim(), "", "a judge subprocess must get no directive");
   const marker = JSON.parse(fs.readFileSync(path.join(root, "agents", "quick", ".quick-active.json"), "utf8"));
-  assert.equal(marker.activeSessionId, undefined, "the judge must not claim the run marker");
+  assert.equal(marker.ownerSessionId, undefined, "the judge must not claim the run marker");
 
   // The owning session still gets its directive afterwards.
   assert.equal(JSON.parse(quickStop(root)).decision, "block");
 });
 
-// --- workspace digest guard (5a) and AC oracles (5c) ---
+// --- workspace digest guard ---
 
 test("verify-run digest guard demotes an exit-0 pass whose command mutated the workspace", () => {
   const projectRoot = initGitRepo();
@@ -3468,16 +3596,16 @@ test("verify-run digest guard is skipped for a contract-declared side effect, on
   // PRD's decision, not the runner's.
   const prdText = fs.readFileSync(prdPath, "utf8")
     .replace(
-      "| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked |",
-      "| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked | Side Effect |",
+      "| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |",
+      "| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Side Effect |",
     )
     .replace(
-      "| --- | --- | --- | --- | --- | --- | --- | --- |",
-      "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
     )
     .replace(
-      '| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no |',
-      '| V1 | build/static | R1, AC1, T1 | \`node -e "process.exit(0)"\` | command-log | command exits zero | yes | no | writes fixture data |',
+      "| V1 | build/static | R1, AC1, T1 | the implementation-bound verifier exits zero | yes | no |",
+      "| V1 | build/static | R1, AC1, T1 | the implementation-bound verifier exits zero | yes | no | writes fixture data |",
     );
   fs.writeFileSync(prdPath, prdText);
   runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
@@ -3525,219 +3653,4 @@ test("finalize reverification digest guard fails a re-run whose command mutates 
     parsed.violations.some(v => /changed: ~README\.md/.test(v)),
     `the finalize violation must name the moved paths: ${JSON.stringify(parsed.violations, null, 2)}`,
   );
-});
-
-test("oracle-run settles Check and Artifact oracles mechanically and records evidence", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeApprovedPrd(projectRoot, "oracle-run");
-  const prdText = fs.readFileSync(prdPath, "utf8").replace(
-    "- AC1. V1 passes with a command-log artifact.",
-    [
-      "- AC1. V1 passes with a command-log artifact.",
-      '- AC2. The oracle marker prints. Check: \`node -e "console.log(\'MARKER OK\')"\` -> MARKER OK',
-      "- AC3. The report artifact exists. Artifact: out/report.txt",
-    ].join("\n"),
-  );
-  fs.writeFileSync(prdPath, prdText);
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  const state = () => JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-run", "state.json"), "utf8"));
-  assert.equal(state().acceptanceCriteria.find(ac => ac.id === "AC2").oracle.kind, "check");
-
-  // First sweep: the check passes, the artifact is missing.
-  const first = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
-  assert.equal(first.status, 2);
-  const firstParsed = JSON.parse(first.stdout);
-  assert.equal(firstParsed.ran, 2);
-  const ac2 = state().acceptanceCriteria.find(ac => ac.id === "AC2");
-  assert.equal(ac2.status, "met");
-  assert.match(ac2.evidence.at(-1).text, /harness ran/);
-  assert.ok(ac2.artifacts.length >= 1, "the check oracle records a command-log artifact");
-  assert.equal(state().acceptanceCriteria.find(ac => ac.id === "AC3").status, "not_met");
-
-  // Produce the artifact and narrow the sweep to AC3: it flips to met.
-  write(path.join(projectRoot, "out", "report.txt"), "report");
-  const second = runJson(["oracle-run", "--id", "AC3"], projectRoot);
-  assert.equal(second.ok, true);
-  assert.equal(state().acceptanceCriteria.find(ac => ac.id === "AC3").status, "met");
-});
-
-test("oracle-run digest guard records not_met when the oracle command mutates the tree", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeApprovedPrd(projectRoot, "oracle-guard");
-  const prdText = fs.readFileSync(prdPath, "utf8").replace(
-    "- AC1. V1 passes with a command-log artifact.",
-    [
-      "- AC1. V1 passes with a command-log artifact.",
-      '- AC2. The self-fixing check passes. Check: \`bash -c "echo dirty >> README.md"\`',
-    ].join("\n"),
-  );
-  fs.writeFileSync(prdPath, prdText);
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  const result = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
-  assert.equal(result.status, 2);
-  const parsed = JSON.parse(result.stdout);
-  assert.equal(parsed.results[0].digestViolation, true);
-  assert.deepEqual(parsed.results[0].changedPaths, ["~README.md"], "the oracle guard names the moved paths");
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-guard", "state.json"), "utf8"));
-  const ac2 = state.acceptanceCriteria.find(ac => ac.id === "AC2");
-  assert.equal(ac2.status, "not_met");
-  assert.match(ac2.evidence.at(-1).text, /MUTATED the workspace/);
-  assert.match(ac2.evidence.at(-1).text, /~README\.md/, "the evidence line names the violating path");
-});
-
-// --- oracle enforcement (verifier-confirmed defects, 2026-08 adversarial audit) ---
-
-function writeOraclePrd(projectRoot, slug, acLine) {
-  const prdPath = writeApprovedPrd(projectRoot, slug);
-  const prdText = fs.readFileSync(prdPath, "utf8").replace(
-    "- AC1. V1 passes with a command-log artifact.",
-    ["- AC1. V1 passes with a command-log artifact.", acLine].join("\n"),
-  );
-  fs.writeFileSync(prdPath, prdText);
-  return prdPath;
-}
-
-test("oracle-run default sweep re-observes a not_met oracle once the world is fixed (F3)", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeOraclePrd(projectRoot, "oracle-resweep", "- AC2. The report exists. Artifact: out/report.txt");
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  const first = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
-  assert.equal(first.status, 2);
-  // Fix the world; the documented bare sweep (no --id) must re-observe the
-  // failed oracle instead of returning {ok:true, ran:0} forever.
-  write(path.join(projectRoot, "out", "report.txt"), "report");
-  const second = runJson(["oracle-run"], projectRoot);
-  assert.equal(second.ran, 1, "the not_met oracle must be back in the default sweep");
-  assert.equal(second.ok, true);
-  const ac2 = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-resweep", "state.json"), "utf8"))
-    .acceptanceCriteria.find(ac => ac.id === "AC2");
-  assert.equal(ac2.status, "met");
-  assert.equal(ac2.oracleObservation.met, true, "the flip carries a fresh harness-recorded observation");
-});
-
-test("mark cannot met an oracle-backed AC, directly or via task co-mark (F4a)", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeOraclePrd(projectRoot, "oracle-exclusive", '- AC2. The failing check passes. Check: `node -e "process.exit(1)"`');
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
-
-  const direct = run(process.execPath, [harness, "mark", "--kind", "ac", "--id", "AC2", "--status", "met", "--evidence", "trust me"], {
-    cwd: projectRoot,
-    allowFailure: true,
-  });
-  assert.equal(direct.status, 1, "a manual met must not override the oracle's not_met");
-  assert.match(direct.stderr, /oracle-run --id AC2/);
-
-  const coMark = run(process.execPath, [harness, "mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC2", "--evidence", "done"], {
-    cwd: projectRoot,
-    allowFailure: true,
-  });
-  assert.equal(coMark.status, 1, "the task co-mark must not be a side door to a manual met");
-  assert.match(coMark.stderr, /oracle-run --id AC2/);
-
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-exclusive", "state.json"), "utf8"));
-  assert.equal(state.acceptanceCriteria.find(ac => ac.id === "AC2").status, "not_met");
-
-  // Pessimistic manual judgments stay allowed - closing down is never a bypass.
-  const blocked = runJson(["mark", "--kind", "ac", "--id", "AC2", "--status", "blocked", "--evidence", "blocked on infra"], projectRoot);
-  assert.equal(blocked.ok, true);
-});
-
-test("incidental V coverage does not auto-met an oracle-backed AC (F4b)", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeOraclePrd(projectRoot, "oracle-autoclose", "- AC2. The report exists. Artifact: out/report.txt");
-  // Make V1 cover the oracle AC too: the covering pass must still not close it.
-  const prdText = fs.readFileSync(prdPath, "utf8").replace("| V1 | build/static | R1, AC1, T1 |", "| V1 | build/static | R1, AC1, AC2, T1 |");
-  fs.writeFileSync(prdPath, prdText);
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  const result = runJson(["verify-run", "--id", "V1", "--deviation", "autoclose test", "--", "node", "-e", "process.exit(0)"], projectRoot);
-  assert.equal(result.ok, true);
-  assert.ok(result.autoMetAcceptanceCriteria.includes("AC1"), "the plain AC still auto-closes on coverage");
-  assert.ok(!result.autoMetAcceptanceCriteria.includes("AC2"), "the oracle AC must wait for oracle-run");
-  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, "agents", "implement", "oracle-autoclose", "state.json"), "utf8"));
-  assert.equal(state.acceptanceCriteria.find(ac => ac.id === "AC2").status, "pending");
-});
-
-test("finalize accepts a met oracle AC through its recorded observation and needs no V-row coverage (F1)", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeOraclePrd(projectRoot, "oracle-finalize", '- AC2. The marker prints. Check: `node -e "console.log(\'MARKER OK\')"` -> MARKER OK');
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  runJson(["verify-run", "--id", "V1", "--deviation", "finalize test", "--", "node", "-e", "process.exit(0)"], projectRoot);
-  runJson(["oracle-run"], projectRoot);
-  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "done"], projectRoot);
-  const reviewDir = path.join(projectRoot, "agents", "implement", "oracle-finalize", "review");
-  write(path.join(reviewDir, "requirements-fidelity-review.md"), [
-    "# Requirements Fidelity Review", "", "Status: PASS", "", "## Fidelity", "", "- ok", "",
-  ].join("\n"));
-  runJson(["requirements-review-record", "--status", "pass", "--report", path.join(reviewDir, "requirements-fidelity-review.md"), "--summary", "ok"], projectRoot);
-  const finalize = runJson(["finalize", "--status", "complete", "--summary", "done"], projectRoot);
-  assert.equal(finalize.ok, true, `oracle-backed AC must not deadlock finalize: ${JSON.stringify(finalize)}`);
-});
-
-test("finalize rejects a met oracle AC whose observation trail is missing (F1 evidence)", () => {
-  const projectRoot = initGitRepo();
-  const prdPath = writeOraclePrd(projectRoot, "oracle-tamper", '- AC2. The marker prints. Check: `node -e "console.log(\'MARKER OK\')"` -> MARKER OK');
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  runJson(["verify-run", "--id", "V1", "--deviation", "tamper test", "--", "node", "-e", "process.exit(0)"], projectRoot);
-  runJson(["mark", "--kind", "task", "--id", "T1", "--status", "complete", "--ac", "AC1", "--evidence", "done"], projectRoot);
-  // Simulate the bypass the guard exists for: met status written into state
-  // without the oracle ever running (mark rejects this path, so edit directly).
-  const statePath = path.join(projectRoot, "agents", "implement", "oracle-tamper", "state.json");
-  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  const ac2 = state.acceptanceCriteria.find(ac => ac.id === "AC2");
-  ac2.status = "met";
-  ac2.evidence.push({ ts: new Date().toISOString(), text: "hand-written pass" });
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-  // The guard fires everywhere completionViolations runs: the fidelity review
-  // record already rejects on the evidence-free met, and finalize stays shut.
-  const reviewDir = path.join(projectRoot, "agents", "implement", "oracle-tamper", "review");
-  write(path.join(reviewDir, "requirements-fidelity-review.md"), [
-    "# Requirements Fidelity Review", "", "Status: PASS", "", "## Fidelity", "", "- ok", "",
-  ].join("\n"));
-  const record = run(process.execPath, [harness, "requirements-review-record", "--status", "pass", "--report", path.join(reviewDir, "requirements-fidelity-review.md"), "--summary", "ok"], {
-    cwd: projectRoot,
-    allowFailure: true,
-  });
-  assert.equal(record.status, 2, "the review record must already reject the evidence-free met");
-  const finalize = run(process.execPath, [harness, "finalize", "--status", "complete", "--summary", "done"], {
-    cwd: projectRoot,
-    allowFailure: true,
-  });
-  assert.equal(finalize.status, 2);
-  const parsed = JSON.parse(finalize.stdout);
-  assert.ok(
-    parsed.violations.some(v => /AC2.*no recorded passing observation.*oracle-run --id AC2/.test(v)),
-    JSON.stringify(parsed.violations, null, 2),
-  );
-});
-
-test("gate and harness oracle executors agree on an operator-bearing Check command (F2)", { skip: !fs.existsSync(path.join(repoRoot, "cli", "dist", "gates", "commands.js")) && "cli/dist not built" }, () => {
-  const projectRoot = initGitRepo();
-  // Under a real shell this prints 1 and passes (README.md contains "Test");
-  // without a shell `test` receives "&&" as a literal argument and fails.
-  // Both executors must fail it the same way - the gate used to run a shell
-  // and PASS while the harness recorded not_met for the same declared oracle.
-  const command = "test -f README.md && grep -c Test README.md";
-  const prdPath = writeOraclePrd(projectRoot, "oracle-parity", `- AC2. Marker greps. Check: \`${command}\` -> 1`);
-  runJson(["init", "--prd", prdPath, "--review-profile", "trivial"], projectRoot);
-  const harnessRun = run(process.execPath, [harness, "oracle-run"], { cwd: projectRoot, allowFailure: true });
-  assert.equal(harnessRun.status, 2);
-  const harnessResult = JSON.parse(harnessRun.stdout).results[0];
-  assert.equal(harnessResult.met, false);
-  assert.notEqual(harnessResult.exitCode, 0);
-
-  const { runAcOracles } = requireModule(path.join(repoRoot, "cli", "dist", "gates", "commands.js"));
-  const { loadConfig } = requireModule(path.join(repoRoot, "cli", "dist", "config.js"));
-  const gateStage = runAcOracles(projectRoot, loadConfig(projectRoot), [
-    { id: "AC2", text: "Marker greps.", oracle: { kind: "check", command, expect: "1" } },
-  ]);
-  assert.equal(gateStage.outcomes[0].met, false, "gate must agree with the harness: operators are not interpreted");
-  assert.notEqual(gateStage.outcomes[0].exitCode, 0);
-
-  // Positive parity: a plain tokenizable command passes at the gate exactly
-  // like the harness ("oracle-run settles Check and Artifact oracles" above
-  // pins the harness side of this same command).
-  const plain = { id: "AC2", text: "Marker prints.", oracle: { kind: "check", command: `node -e "console.log('MARKER OK')"`, expect: "MARKER OK" } };
-  const gatePlain = runAcOracles(projectRoot, loadConfig(projectRoot), [plain]);
-  assert.equal(gatePlain.outcomes[0].met, true);
 });

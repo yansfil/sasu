@@ -306,23 +306,6 @@ export interface CheckResult {
 }
 
 /**
- * A criterion the harness already settled with its own oracle before any judge
- * ran (PRD `Check:`/`Artifact:` tails). Injected into every lane as context:
- * without it, live reruns showed judges BLOCKing runtime criteria they could
- * not see evidence for and sessions rebuilding ad-hoc verification to satisfy
- * them.
- */
-export interface SettledCriterion {
-  criterionId: string;
-  /** The oracle's own reason line, e.g. "harness ran `cmd`: exit 0". */
-  note: string;
-  /** Bounded stdout/stderr tail of the oracle command, when one ran. */
-  tail?: string;
-  /** The tail was dropped whole by the per-lane budget; the note always rides. */
-  tailOmitted?: boolean;
-}
-
-/**
  * Per-item render clamp for inlined evidence text. Exported because the
  * PRD-path injection excerpts oversized artifacts to exactly this size BEFORE
  * rendering: an excerpt cut larger than the render clamp would be re-truncated
@@ -331,7 +314,7 @@ export interface SettledCriterion {
 export const EVIDENCE_RENDER_MAX_CHARS = 40_000;
 
 /**
- * Per-item render clamp for check and settled-oracle output tails. Exported
+ * Per-item render clamp for check output tails. Exported
  * because the verify lane assembly charges tails against the per-lane
  * injected-evidence budget at exactly this rendered cost - charging raw bytes
  * would over-drop a long tail this clamp was going to bound anyway.
@@ -458,37 +441,6 @@ ${lines.join("\n\n")}
 }
 
 /**
- * Oracle-settled criteria ride into every lane as context, never as work: the
- * harness already decided them by a stronger instrument than a model reading a
- * diff. Shown so the judge sees what the runtime already proved (live reruns:
- * judges BLOCKed runtime criteria whose evidence they were never shown)
- * instead of doubting or re-deriving it.
- */
-function settledSection(settled: SettledCriterion[]): string {
-  if (settled.length === 0) return "";
-  const blocks = settled.map((item) => {
-    const head = `[${item.criterionId} - settled by harness oracle] ${item.note}`;
-    if (item.tailOmitted === true) {
-      return `${head}\n[output tail omitted for the judge input budget; the settled verdict above stands]`;
-    }
-    return item.tail !== undefined && item.tail !== ""
-      ? `${head}\nOutput tail:\n---\n${clampDocument(item.tail, CHECK_TAIL_RENDER_MAX_CHARS)}\n---`
-      : head;
-  });
-  return `
-CRITERIA ALREADY SETTLED BY THE HARNESS (context only - NOT yours to judge):
-The harness executed these criteria's declared oracles at runtime and recorded their verdicts; they
-are not in your criteria list and need no re-proving. They are shown so you can rest related
-judgments on what the runtime already demonstrated. Each settled entry proves ONLY what its own
-command observed - it is NOT proof of any criterion in your list, and every listed criterion still
-needs its own evidence.
-${QUOTED_DATA_NOTE}
-
-${blocks.join("\n\n")}
-`;
-}
-
-/**
  * Judge input budget for the verify diff. The diff is never clamped: an
  * audited run (2026-08) lost 91k chars out of the middle of a 251k diff, and
  * because git orders paths alphabetically the surviving head was 100%
@@ -560,8 +512,6 @@ judged in parallel by other reviewers.`
 export interface SemanticVerifyOptions {
   mechanicalRan?: boolean;
   lane?: { index: number; count: number };
-  /** Oracle-settled criteria, injected as context in every lane. */
-  settled?: SettledCriterion[];
   /** Artifacts dropped by the per-lane evidence budget; announced, never silent. */
   omittedEvidenceCount?: number;
 }
@@ -582,7 +532,7 @@ ${SEMANTIC_JSON_CONTRACT}
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
-${checkSection(checks)}${settledSection(options.settled ?? [])}${evidenceSection(evidence, options.omittedEvidenceCount ?? 0)}
+${checkSection(checks)}${evidenceSection(evidence, options.omittedEvidenceCount ?? 0)}
 DIFF:
 ${DIFF_DATA_NOTE}
 ---
@@ -621,7 +571,7 @@ ${SEMANTIC_JSON_CONTRACT}
 
 ACCEPTANCE CRITERIA:
 ${criteriaBlock}
-${checkSection(checks)}${settledSection(options.settled ?? [])}${evidenceSection(evidence, options.omittedEvidenceCount ?? 0)}
+${checkSection(checks)}${evidenceSection(evidence, options.omittedEvidenceCount ?? 0)}
 CHANGED FILES (diff-stat of the change under judgment; read these files for detail):
 ${DIFF_DATA_NOTE}
 ---

@@ -100,25 +100,6 @@ function cmdRequirementsReviewRecord(options) {
   printStructureWarnings("requirements fidelity report", structureWarnings);
   const reportPath = toProjectRelative(reportAbs, state.projectRoot || cwd());
 
-  if (status === "pass") {
-    const violations = completionViolations(statePath, state, {
-      includeRequirementsFidelityReview: false,
-      includeFinalReview: false,
-      // A terminally blocked gate (BLOCKED, budget spent) must not veto the
-      // record: this run's only exit is `finalize --status blocked`, which
-      // itself requires the recorded review - vetoing here made the two
-      // errors point at each other with no escape but a dishonest --status
-      // fail (reproduced 2026-08-11). With budget remaining the gate still
-      // rejects a pass: fix the findings and re-run `sasu verify` first.
-      allowTerminallyBlockedVerifyGate: true,
-    }).filter(violation => violation !== "Requirements fidelity review report hash changed");
-    if (violations.length) {
-      process.stdout.write(JSON.stringify({ ok: false, status: "rejected", violations }, null, 2) + "\n");
-      process.exitCode = 2;
-      return;
-    }
-  }
-
   // Consumed before superseding, because the round number counts the live record.
   const scope = consumeReviewHandout(state, "fidelity", nextReviewRound(state, "fidelity"));
   supersedeReviewRound(state, "fidelity");
@@ -271,6 +252,58 @@ function cmdReviewRecord(options) {
 const REVERIFY_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * Describe every required verification against the tree being finalized.
+ * This is inspection, not execution: partial and blocked receipts need the
+ * same honest freshness picture as complete receipts without paying to rerun
+ * checks for work that explicitly is not being claimed complete.
+ */
+function inspectRequiredVerificationFreshness(state) {
+  const currentFingerprint = vouchedTreeFingerprintForState(state);
+  const results = [];
+  for (const item of state.verification || []) {
+    if (!isVerificationRequiredForDone(item)) continue;
+    if (item.status !== "pass") {
+      results.push({ id: item.id, freshness: "open", verificationStatus: item.status });
+      continue;
+    }
+    const lastLog = latestCommandLog(item);
+    if (!lastLog) {
+      results.push({ id: item.id, freshness: "not-reusable", reason: "no recorded command (non-shell evidence)" });
+      continue;
+    }
+    const sideEffect = declaredSideEffect(item);
+    if (sideEffect) {
+      results.push({
+        id: item.id,
+        freshness: "not-reusable",
+        command: lastLog.command,
+        cwd: lastLog.cwd || ".",
+        reason: `declared side effect: ${sideEffect}`,
+      });
+      continue;
+    }
+    if (isFreshPass(lastLog, currentFingerprint)) {
+      results.push({
+        id: item.id,
+        freshness: "fresh",
+        command: lastLog.command,
+        cwd: lastLog.cwd || ".",
+        recordedFingerprint: lastLog.treeFingerprint,
+      });
+      continue;
+    }
+    results.push({
+      id: item.id,
+      freshness: "stale",
+      command: lastLog.command,
+      cwd: lastLog.cwd || ".",
+      recordedFingerprint: lastLog.treeFingerprint || null,
+    });
+  }
+  return { inspectedAt: nowIso(), currentFingerprint, results };
+}
+
+/**
  * Final reverification: re-run every required command-backed verification at
  * receipt time, on the harness's clock instead of the agent's.
  *
@@ -288,49 +321,53 @@ const REVERIFY_TIMEOUT_MS = 10 * 60 * 1000;
  */
 function reverifyRequiredVerifications(statePath, state) {
   const projectRoot = state.projectRoot || cwd();
-  const currentFingerprint = vouchedTreeFingerprintForState(state);
+  const inspection = inspectRequiredVerificationFreshness(state);
   const results = [];
-  for (const item of state.verification || []) {
-    if (!isVerificationRequiredForDone(item)) continue;
-    if (item.status !== "pass") continue; // open/blocked items are already violations elsewhere
-    // Selection and skip rules shared with the gate's fresh-pass reuse
-    // (fresh_pass.js): one place decides what a command log is, whether a
-    // side effect disqualifies it, and when a pass is still fresh.
-    const lastLog = latestCommandLog(item);
-    if (!lastLog) {
-      results.push({ id: item.id, skipped: "no recorded command (non-shell evidence)" });
+  for (const inspected of inspection.results) {
+    if (inspected.freshness === "open") {
+      results.push(inspected);
       continue;
     }
-    const sideEffect = declaredSideEffect(item);
-    if (sideEffect) {
-      results.push({ id: item.id, skipped: `declared side effect: ${sideEffect}` });
+    if (inspected.freshness === "not-reusable") {
+      results.push({ ...inspected, skipped: inspected.reason });
       continue;
     }
-    // A pass earned on the identical tree would re-run the identical
-    // experiment; skip it. The common honest flow (final suite, then
-    // finalize) therefore costs nothing - only stale passes re-run.
-    // Shared predicate with the verify gate's mechanical stage (fresh_pass.js).
-    if (isFreshPass(lastLog, currentFingerprint)) {
-      results.push({ id: item.id, skipped: `fresh pass: worktree unchanged since the recorded pass (${currentFingerprint.vouched})` });
+    if (inspected.freshness === "fresh") {
+      results.push({
+        ...inspected,
+        skipped: `fresh pass: worktree unchanged since the recorded pass (${inspection.currentFingerprint.vouched})`,
+      });
       continue;
     }
-    const command = lastLog.command;
+    const item = (state.verification || []).find(candidate => candidate.id === inspected.id);
+    const command = inspected.command;
+    const commandCwd = inspected.cwd || ".";
+    const commandCwdAbs = path.resolve(projectRoot, commandCwd);
+    const relativeCwd = path.relative(projectRoot, commandCwdAbs);
+    if (relativeCwd === ".." || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
+      results.push({
+        ...inspected,
+        freshness: "stale",
+        exitCode: 1,
+        error: `recorded verification cwd escapes the project root: ${commandCwd}`,
+      });
+      continue;
+    }
     const tokens = shellLikeTokens(command);
     // Same workspace digest guard as verify-run: a reverification command that
     // mutates the tree it is certifying is reward hacking, not proof, even at
     // exit 0. Side-effectful contracts were already skipped above, so every
     // command that reaches here promised to leave the tree alone. Recomputed
     // per item because a violating command changes the tree for the next one.
-    // Scoped runs share verify-run's tradeoff: only in-scope mutations are
-    // seen, which is where the code under test - and therefore reward
-    // hacking - lives.
+    // The full curated repository is fingerprinted, so implementation task
+    // ownership cannot hide a mutation.
     // Entries ride along (free - computed inside the fingerprint either way)
     // so a violation names the moved paths; nothing here is persisted beyond
     // the bounded changedPaths list.
     const preFingerprint = vouchedTreeFingerprintForState(state, { includeEntries: true });
     const startedAt = nowIso();
     const spawned = childProcess.spawnSync(tokens[0], tokens.slice(1), {
-      cwd: projectRoot,
+      cwd: commandCwdAbs,
       shell: false,
       encoding: "utf8",
       timeout: REVERIFY_TIMEOUT_MS,
@@ -346,6 +383,7 @@ function reverifyRequiredVerifications(statePath, state) {
     const logRel = path.join(state.runDir, "reverify", `${item.id}-${safeTimestamp()}.log`);
     writeMarkdown(path.join(projectRoot, logRel), [
       `command: ${command}`,
+      `cwd: ${commandCwd}`,
       `phase: final reverification (finalize)`,
       `startedAt: ${startedAt}`,
       `finishedAt: ${nowIso()}`,
@@ -361,16 +399,30 @@ function reverifyRequiredVerifications(statePath, state) {
       spawned.stderr || "",
     ].filter(line => line !== "").join("\n"));
     results.push({
-      id: item.id, command, exitCode, digestViolation,
+      ...inspected, freshness: exitCode === 0 && !digestViolation ? "refreshed" : "stale",
+      exitCode, digestViolation,
       ...(digestDiff ? { changedPaths: digestDiff.paths } : {}),
       logPath: logRel,
     });
   }
   return {
+    mode: "reverify-stale",
     ranAt: nowIso(),
+    currentFingerprint: inspection.currentFingerprint,
     results,
     failures: results.filter(result =>
       (typeof result.exitCode === "number" && result.exitCode !== 0) || result.digestViolation === true),
+  };
+}
+
+function inspectRequiredVerifications(state) {
+  const inspection = inspectRequiredVerificationFreshness(state);
+  return {
+    mode: "inspect-only",
+    ranAt: inspection.inspectedAt,
+    currentFingerprint: inspection.currentFingerprint,
+    results: inspection.results,
+    failures: [],
   };
 }
 
@@ -520,11 +572,16 @@ function cmdFinalize(options) {
   const verifyGate = verifyGateStatus(state);
   const priceExit = finalizeExitPricer(statePath, state, verifyGate);
   const violations = [...priceExit(status)];
-  // Reverify only when the cheap checks pass and completion is claimed; the
-  // re-run is the last gate before the receipt, on the harness's clock.
+  // Every successful exit gets the same freshness inspection. Only complete
+  // pays to rerun stale, safe commands; partial and blocked merely stamp what
+  // is fresh, stale, open, or not reusable on the tree they hand off.
   let finalReverification = null;
-  if (status === "complete" && violations.length === 0) {
-    finalReverification = reverifyRequiredVerifications(statePath, state);
+  if (violations.length === 0) {
+    finalReverification = status === "complete"
+      ? reverifyRequiredVerifications(statePath, state)
+      : inspectRequiredVerifications(state);
+  }
+  if (status === "complete" && finalReverification !== null) {
     for (const failure of finalReverification.failures) {
       violations.push(failure.digestViolation && failure.exitCode === 0
         ? `Final reverification digest guard: ${failure.id} re-ran \`${failure.command}\` at exit 0 but the command mutated the workspace (${failure.changedPaths && failure.changedPaths.length ? `changed: ${failure.changedPaths.slice(0, 5).join(", ")}${failure.changedPaths.length > 5 ? ` (+${failure.changedPaths.length - 5} more)` : ""}` : "changed paths unavailable"}); a verifier that edits the tree it certifies cannot vouch for it (log: ${failure.logPath})`
@@ -533,7 +590,7 @@ function cmdFinalize(options) {
   }
   const uniqueViolations = Array.from(new Set(violations));
   if (uniqueViolations.length) {
-    const exits = finalizeExits(priceExit, status, uniqueViolations, finalReverification !== null);
+    const exits = finalizeExits(priceExit, status, uniqueViolations, status === "complete" && finalReverification !== null);
     process.stdout.write(JSON.stringify({
       ok: false,
       status: "rejected",

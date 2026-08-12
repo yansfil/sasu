@@ -1,5 +1,5 @@
 // Code-span-aware markdown table parsing (prd_parser.js). Live-session
-// evidence: a naive split("|") truncated a Verification Method cell at the
+// evidence: a naive split("|") truncated a verification table cell at the
 // `||` inside `bash -c "... || exit 1; done"`, and the truncated command was
 // still valid shell - so plan-verification passed it and the session hit two
 // verify-run contract rejections before diagnosing. A `|` inside a backtick
@@ -16,6 +16,7 @@ const {
   cleanTableCell,
   parseVerification,
 } = require("../../lib/prd_parser.js");
+const { artifactsForVerification } = require("../../lib/inference.js");
 
 // The exact live repro command, pipes and all.
 const LIVE_COMMAND = 'bash -c "for f in $(git diff --name-only); do node --check \\"$f\\" || exit 1; done"';
@@ -73,7 +74,7 @@ test("cleanTableCell protects code-span content from cosmetic transforms", () =>
   assert.equal(cleanTableCell("a<br>b `x<br>y`"), "a; b `x<br>y`");
 });
 
-test("parseVerification carries the full Method command into the matrix (end to end)", () => {
+test("parseVerification keeps only semantic matrix fields", () => {
   const section = [
     "### 9.2 Required Agent Verification",
     "",
@@ -85,6 +86,37 @@ test("parseVerification carries the full Method command into the matrix (end to 
   const items = parseVerification(section);
   assert.equal(items.length, 1);
   assert.equal(items[0].id, "V1");
-  assert.equal(items[0].matrix.method, `Run \`${LIVE_COMMAND}\``);
-  assert.equal(items[0].matrix.artifact, "command-log");
+  assert.equal(items[0].matrix.method, undefined);
+  assert.equal(items[0].matrix.artifact, undefined);
+  assert.equal(items[0].matrix.passCriteria, "exits zero");
+});
+
+test("parseVerification preserves an approved side-effect boundary without treating it as an executor", () => {
+  const section = [
+    "### 9.2 Required Agent Verification",
+    "",
+    "| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Allowed Side Effect | Sensitive Data Policy |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| V1 | live external API | R1, AC1 | sandbox behavior is proven | no | yes | sandbox record only when approved | redact tokens |",
+    "",
+  ].join("\n");
+  const [item] = parseVerification(section);
+  assert.equal(item.matrix.sideEffect, "sandbox record only when approved");
+  assert.equal(item.matrix.sensitiveDataPolicy, "redact tokens");
+});
+
+test("evidence kinds come from verification structure, not incidental words in product prose", () => {
+  const verification = { level: "General", text: "DOM-independent rule; build remains valid" };
+  assert.deepEqual(
+    artifactsForVerification(verification, "command", { mode: "build/static", normalizedMode: "build-static" }),
+    ["command-log"],
+  );
+  assert.deepEqual(
+    artifactsForVerification(verification, "automated", { mode: "automated behavior", normalizedMode: "automated-behavior" }),
+    ["command-log"],
+  );
+  assert.deepEqual(
+    artifactsForVerification(verification, "manual-agent", { mode: "visual judgment", normalizedMode: "visual-judgment" }),
+    ["screenshot"],
+  );
 });

@@ -3,8 +3,8 @@
 const fs = require("fs");
 const path = require("path");
 
-const { toProjectRelative, readJson, uniqueMatches } = require("./util");
-const { modeMatches } = require("./prd_parser");
+const { toProjectRelative, readJson } = require("./util");
+const { modeMatches, coverageFromText, expandCoverageIds } = require("./prd_parser");
 const { RUNNER_PATTERN } = require("./runners");
 
 function repoSignals(projectRoot) {
@@ -236,59 +236,24 @@ function commandsMatchContract(actual, expected) {
   return normalizeCommandForCompare(actual) === normalizeCommandForCompare(expected);
 }
 
-function coverageFromText(text) {
-  return {
-    requirements: expandCoverageIds(text, "R"),
-    acceptanceCriteria: expandCoverageIds(text, "AC"),
-    tasks: expandCoverageIds(text, "T"),
-  };
-}
-
-function expandCoverageIds(text, prefix) {
-  const source = String(text || "");
-  const ids = uniqueMatches(source, new RegExp(`\\b${prefix}\\d+\\b`, "gi"));
-  const seen = new Set(ids);
-  const ranges = new RegExp(`\\b${prefix}(\\d+)\\s*-\\s*(?:${prefix})?(\\d+)\\b`, "gi");
-  for (const match of source.matchAll(ranges)) {
-    const start = Number(match[1]);
-    const end = Number(match[2]);
-    if (!Number.isInteger(start) || !Number.isInteger(end)) continue;
-    if (start <= 0 || end <= 0 || Math.abs(end - start) > 100) continue;
-    const step = start <= end ? 1 : -1;
-    for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
-      seen.add(`${prefix}${value}`);
-    }
-  }
-  return Array.from(seen).sort((left, right) => {
-    const a = Number(left.replace(/^\D+/, ""));
-    const b = Number(right.replace(/^\D+/, ""));
-    return a - b || left.localeCompare(right);
-  });
-}
-
 function artifactsForVerification(verification, category, mode = null) {
-  const text = `${verification.level} ${verification.text}`.toLowerCase();
   const artifacts = new Set();
   if (category === "command" || category === "automated") artifacts.add("command-log");
   if (category === "browser") {
     artifacts.add("screenshot");
-    artifacts.add("console-log");
+    artifacts.add("browser");
   }
-  if (category === "server") artifacts.add("server-log");
-  if (category === "api") artifacts.add("api-log");
-  if (category === "db") artifacts.add("db-log");
-  if (/screenshot/.test(text)) artifacts.add("screenshot");
-  if (/console/.test(text)) artifacts.add("console-log");
-  if (/network/.test(text)) artifacts.add("network-log");
-  if (/dom/.test(text)) artifacts.add("dom-log");
-  if (/(^|[^A-Za-z-])log\b/.test(text) && !Array.from(artifacts).some(kind => kind.endsWith("-log"))) artifacts.add("log");
+  if (category === "server") artifacts.add("log");
+  if (category === "api") artifacts.add("api");
+  if (category === "db") artifacts.add("db");
+  if (modeMatches(mode, [/visual/, /judgment/, /\bui\b/])) artifacts.add("screenshot");
   if (modeMatches(mode, [/build/, /static/, /automated/, /behavior/, /test/])) artifacts.add("command-log");
   if (modeMatches(mode, [/browser/, /runtime/])) {
     artifacts.add("screenshot");
-    artifacts.add("console-log");
+    artifacts.add("browser");
   }
-  if (modeMatches(mode, [/api/, /external/, /live/])) artifacts.add("api-log");
-  if (modeMatches(mode, [/^db$/, /database/, /sql/])) artifacts.add("db-log");
+  if (modeMatches(mode, [/api/, /external/, /live/])) artifacts.add("api");
+  if (modeMatches(mode, [/^db$/, /database/, /sql/])) artifacts.add("db");
   if (artifacts.size === 0) artifacts.add("log");
   return Array.from(artifacts);
 }
@@ -320,31 +285,25 @@ function targetForVerification(category, signals) {
 }
 
 function plannedCheckStatus(details) {
-  const { verification, category, command, covers, artifacts, mode } = details;
-  if ((category === "command" || category === "automated") && !command) return "needs_command";
-  if (!hasDeclaredArtifact(verification) && !artifactDerivableFromMode(mode, category, artifacts)) return "needs_artifact";
-  if (!artifacts.length) return "needs_artifact";
+  const { category, command, covers, artifacts } = details;
   if (!covers.requirements.length && !covers.acceptanceCriteria.length && !covers.tasks.length) return "needs_coverage_mapping";
+  if (!artifacts.length) return "needs_evidence_strategy";
+  if ((category === "command" || category === "automated") && !command) return "needs_binding";
   return "planned";
 }
 
 function artifactDerivableFromMode(mode, category, artifacts) {
   if (!mode || !artifacts || artifacts.length === 0) return false;
   if (category === "command" || category === "automated" || category === "browser" || category === "api" || category === "db" || category === "server") return true;
+  if (modeMatches(mode, [/visual/, /judgment/, /\bui\b/])) return true;
   return false;
-}
-
-function hasDeclaredArtifact(verification) {
-  if (verification.matrix) return Boolean(verification.matrix.artifact);
-  return /\bartifacts?:\s*\S/i.test(verification.text);
 }
 
 function plannerNotes(details) {
   const notes = [];
   const { verification, category, command, covers, signals, mode } = details;
-  if ((category === "command" || category === "automated") && !command) notes.push("No concrete command found; planner must bind this to an existing script or add an approved verifier.");
-  if (!hasDeclaredArtifact(verification) && !artifactDerivableFromMode(mode, category, artifactsForVerification(verification, category, mode))) notes.push("No explicit Artifact field found; the PRD must declare the evidence file type to record.");
-  if (mode && !hasDeclaredArtifact(verification)) notes.push(`Artifact kinds were derived from Test Mode Contract mode: ${mode.mode}.`);
+  if ((category === "command" || category === "automated") && !command) notes.push("No repository command is bound yet; the first verify-run binds the exact command and cwd after implementation creates the verifier.");
+  if (mode) notes.push(`Evidence kinds were derived from Test Mode Contract mode: ${mode.mode}.`);
   if (!covers.requirements.length && !covers.acceptanceCriteria.length && !covers.tasks.length) notes.push("No R/AC/T coverage IDs found in the PRD verification item.");
   if (category === "browser" && !signals.packageScripts.includes("dev")) notes.push("No package.json dev script detected; target URL/server startup must be supplied before runtime QA.");
   if (category === "server" && !signals.dockerComposeFiles.length) notes.push("No docker-compose file detected; use repo-local service command or ask for service startup instructions.");
@@ -381,7 +340,6 @@ module.exports = {
   targetForVerification,
   plannedCheckStatus,
   artifactDerivableFromMode,
-  hasDeclaredArtifact,
   plannerNotes,
   hasAppStartupSignal,
 };

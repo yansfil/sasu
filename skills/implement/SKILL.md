@@ -83,6 +83,12 @@ verification items with evidence, both plans, and recorded deviations all live
 inside it. There are no derived view files; `status` renders the current
 picture on demand.
 
+Ownership stays explicit:
+
+- `executionPlan` owns execution units, dependencies, `writeScope`, and parallel coordination.
+- `verificationPlan` owns commands, cwd, proof tools, evidence kinds, and repo-derived target and runtime strategies.
+- `implementation-result.md` reports the file/module structure actually selected and its responsibility boundaries.
+
 ```text
 agents/implement/<topic-slug>/state.json
 agents/implement/<topic-slug>/artifacts/manifest.jsonl
@@ -109,10 +115,10 @@ agents/implement/<topic-slug>/review/final-review.md
 
 ```text
 goal tracking opened
-  -> init (PRD contract parsed; verification and execution plans auto-built)
+  -> init (semantic verification and execution plans auto-built)
   -> main-agent coverage check
   -> ready task implementation
-  -> verify-run / record-artifact (covered ACs auto-met on verification pass)
+  -> verify-run binds exact command/cwd / record-artifact (covered ACs auto-met on verification pass)
   -> residue check + code freeze
   -> sasu verify gate ∥ requirements fidelity review (concurrent, read-only)
   -> blocked/partial handoff when completion is impossible
@@ -130,7 +136,7 @@ Before editing:
 2. Confirm `human_approval: "approved"` or obtain the verbatim approval deviation authorized by the calling workflow.
 3. Never set human approval yourself; when the user explicitly approves in conversation, either update frontmatter with that quoted approval in the implementation notes or pass the exact approval to `init --allow-unapproved-prd`.
 4. Dispose of every `## 4` pre-work item; `init` lists them all in `preWorkChecklist` and the Stop hook blocks the run while any is `pending` (section 3).
-5. Treat Major Technical Structure Changes as the approved structure lock.
+5. Treat Major Technical Structure Changes as approved system-boundary constraints, not a file-layout lock.
 6. Read Implementation Guardrails and Risks.
 7. Read `agents/config.json` when it exists.
 8. Run `doctor` when delivery, worktree sync, or PR and CI readiness is uncertain.
@@ -181,7 +187,8 @@ Initialization fails when PRD approval is pending and no allowed deviation is re
 Bind a session ID and handle PR delivery or worktrees according to `references/worktrees-and-delivery.md` when those conditions apply.
 
 The harness extracts PRD-level tasks, acceptance criteria, verification items, test modes, and structure locks into durable state.
-It also extracts every `## 4` pre-work and human-decision bullet into `preWorkChecklist` (init output and `state.json`), undisposed: the harness reads Markdown structure and never guesses what a bullet means, so deciding who deals with each item is yours.
+It extracts every `## 4.1` pre-work bullet into `preWorkChecklist` without guessing what the prose means.
+An approved PRD has already settled its `## 4.2` human decisions, so those rows start resolved with approval evidence.
 Ask the user about ALL the `human` ones in ONE batched message (in Claude Code, one AskUserQuestion call listing every item) BEFORE starting task implementation, then record every item with `mark --kind prework --id <ids> --status human|agent|resolved --evidence "<what was asked/decided>"`.
 The Stop hook refuses to advance the run past the first task mark while any item is still `pending`.
 Record items the user defers as blockers on the affected tasks and proceed on unaffected tasks.
@@ -203,11 +210,12 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js reconcile --reason "
 
 ## 4. Plan Before Implementation
 
-`init` already built both plans: the verification plan from the PRD Verification Contract and the default sequential execution plan with `T#` to `AC#`/`V#` traceability.
+`init` already built both plans: the semantic verification plan from the PRD Verification Contract and the default sequential execution plan with `T#` to `AC#`/`V#` traceability.
 Inspect the init output (or `status`) for blocking gaps and ready tasks.
 
-Do not implement while either plan has blocking gaps.
-Fix the PRD contract (then `reconcile`) or rerun the planner:
+Do not implement while the verification plan has contract-phase gaps or the execution plan has blocking gaps.
+`needs_binding` is expected for greenfield command checks and does not block implementation.
+Fix semantic PRD gaps with `reconcile`, then rerun the planner:
 
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification
@@ -215,6 +223,22 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-execution
 ```
 
 Read `references/verification-and-evidence.md` for planner semantics, command binding, evidence classes, and safe live-proof rules.
+
+After the repository contains a verifier, run it through the harness.
+Immediately before invoking it, confirm the selected cwd and runner or package
+script now exist.
+The first run validates the cwd, binds the exact command and cwd into
+`state.verificationPlan`, executes it, and makes a missing executable or script
+an observable failed run.
+Planning does not require greenfield executors to exist before implementation.
+Later substitutions require a recorded deviation:
+
+```sh
+node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
+  --id <Vn> \
+  --cwd <repo-relative-dir> \
+  -- <command...>
+```
 
 When parallel execution is enabled and a useful split exists, inspect the repo and pass one explicit task-plan JSON file to `plan-execution --task-plan <path>`.
 Do not put file ownership or low-level dependencies in the PRD.
@@ -414,7 +438,9 @@ node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
   --summary "<evidence-backed summary>"
 ```
 
-`finalize --status complete` re-runs every required command-backed verification on the final tree before writing the receipt, on the harness's schedule rather than yours; a nonzero exit rejects the receipt with a `Final reverification failed` violation.
+`finalize --status complete` reuses a required command pass only when its recorded tree fingerprint is still exact.
+It reruns stale or missing command-backed verification on the final tree before writing the receipt.
+A nonzero exit rejects the receipt with a `Final reverification failed` violation.
 Fix the failing check and finalize again - do not try to route around the re-run.
 
 Do not report `Done` or complete the tracked Goal until `receipt.json` exists and `status` reports zero open tracked items.
@@ -455,6 +481,7 @@ At minimum report:
 - Status: `Done`, `Partially Done`, or `Blocked`.
 - user-visible changes.
 - major technical changes and structure conformance.
+- actual file/module structure and the responsibility owned by each boundary.
 - completed, deferred, and added tasks.
 - acceptance-criterion status.
 - verification evidence by test mode.

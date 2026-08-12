@@ -18,6 +18,9 @@ Read this reference before `plan-execution`, while implementing tasks, when assi
 - The PRD owns product requirements, acceptance criteria, PRD-level tasks, major technical structure changes, the verification contract, the test mode contract, human review needs, and implementation guardrails.
 - `state.json` is the single source of truth for progress. PRD tasks live in `state.tasks`, and `plan-execution` writes the executor fields onto those same task items, so there is exactly one place a task's status and plan are recorded.
 - `state.verificationPlan` holds the repo-specific proof plan derived from the PRD Verification Contract, and `state.executionPlan` holds plan metadata (status, gaps, whether a task plan was applied); both live inside `state.json` with no separate plan files.
+- `executionPlan` owns execution units, dependencies, `writeScope`, and parallel coordination.
+- `verificationPlan` owns exact commands, cwd, proof tools, evidence kinds, and repo-derived target and runtime strategies.
+- `implementation-result.md` owns the actual file/module structure selected during implementation and its responsibility boundaries.
 - `artifacts/manifest.jsonl` is the durable evidence registration trail.
 - `state.deviations` records soft-gate deviations that a completion review must explicitly accept: the fidelity review's Deviation Audit on every profile, plus the final adversarial review on `high-risk`.
 
@@ -25,6 +28,8 @@ There are no derived view files. `status` renders the current plans, counts, rea
 
 Do not add executor-only fields to the PRD.
 `writeScope`, `parallelSafe`, `risk`, low-level `dependsOn`, owner, ready state, and subagent scheduling belong to implementation artifacts.
+`writeScope` coordinates concurrent writers only.
+It never narrows a judge lane, a freshness fingerprint, or the changed files a completion review may inspect.
 
 ## Planning And Coverage Check
 
@@ -78,7 +83,7 @@ Record material findings in `context-notes.md` and stop on material blockers.
 Beyond its PRD-parsed `id`, `title`, `text`, `requirements`, and `acceptanceCriteria`, each task in `state.tasks` carries:
 
 - `dependsOn`: task IDs that must complete first.
-- `writeScope`: agent-declared repository-relative files or directories, normalized by the harness.
+- `writeScope`: agent-declared repository-relative files or directories used only for ownership and parallel-conflict checks.
 - `parallelSafe`: false when safety is uncertain.
 - `risk`: `low`, `medium`, or `high`.
 - `owner`: the optional coordinator or `subagent:<id>`.

@@ -36,11 +36,11 @@ Receipt: agents/implement/standard-regression/receipt.json
 
 ## Acceptance Criteria
 
-- AC1: met - V1 passes with a command-log artifact.
+- AC1: met - The local verification succeeds and records evidence.
 
 ## Verification Evidence And Regression Coverage
 
-- V1: pass - General: `node -e "process.exit(0)"`
+- V1: pass - General: the implementation-bound verifier exits zero
   - Latest evidence: Command passed with exit code 0: bash -lc 'node -e '\''process.exit(0)'\'''. Log: agents/implement/standard-regression/artifacts/logs/V1-<TS>.log
   - Artifacts: agents/implement/standard-regression/artifacts/logs/V1-<TS>.log
 
@@ -53,8 +53,8 @@ Receipt: agents/implement/standard-regression/receipt.json
 - Delivery mode: local
 - Branch: prd/standard-regression
 - Local delivery result: implement performed no commit, push, PR, CI, release, or deployment action.
-- Initial worktree snapshot: <TS>; 2 entries; status hash 00369b65.
-- Final worktree snapshot: <TS>; 1 entries; status hash 77da28be.
+- Initial worktree snapshot: <TS>; 2 entries; status hash d341d86c.
+- Final worktree snapshot: <TS>; 1 entries; status hash 7599dc17.
 - Preserved initial dirty entries: 1.
 - Added, changed, or removed after initialization: baseline-only.txt.
 
@@ -140,7 +140,7 @@ Receipt: agents/implement/standard-regression/receipt.json
   "initialWorktreeSnapshot": {
     "capturedAt": "<TS>",
     "headSha": "<SHA>",
-    "statusHash": "00369b65",
+    "statusHash": "d341d86c",
     "entryCount": 2,
     "entries": [
       {
@@ -148,7 +148,7 @@ Receipt: agents/implement/standard-regression/receipt.json
         "path": "agents/prd/standard-regression/prd.md",
         "originalPath": null,
         "sha256": "<SHA>",
-        "bytes": 1729,
+        "bytes": 1694,
         "kind": "file",
         "executable": false
       },
@@ -166,7 +166,7 @@ Receipt: agents/implement/standard-regression/receipt.json
   "worktreeSnapshot": {
     "capturedAt": "<TS>",
     "headSha": "<SHA>",
-    "statusHash": "77da28be",
+    "statusHash": "7599dc17",
     "entryCount": 1,
     "entries": [
       {
@@ -174,7 +174,7 @@ Receipt: agents/implement/standard-regression/receipt.json
         "path": "agents/prd/standard-regression/prd.md",
         "originalPath": null,
         "sha256": "<SHA>",
-        "bytes": 1729,
+        "bytes": 1694,
         "kind": "file",
         "executable": false
       }
@@ -183,7 +183,7 @@ Receipt: agents/implement/standard-regression/receipt.json
   "vouchedTreeFingerprint": {
     "vouched": "5dc0d647",
     "entryCount": 1,
-    "mode": "fallback"
+    "mode": "full"
   },
   "executionPlan": {
     "status": "ready",
@@ -250,11 +250,24 @@ Receipt: agents/implement/standard-regression/receipt.json
   },
   "reviewFollowUps": [],
   "finalReverification": {
+    "mode": "reverify-stale",
     "ranAt": "<TS>",
+    "currentFingerprint": {
+      "vouched": "5dc0d647",
+      "entryCount": 1,
+      "mode": "full"
+    },
     "results": [
       {
         "id": "V1",
+        "freshness": "refreshed",
         "command": "bash -lc 'node -e '\\''process.exit(0)'\\'''",
+        "cwd": ".",
+        "recordedFingerprint": {
+          "vouched": "e86aa95f",
+          "entryCount": 2,
+          "mode": "full"
+        },
         "exitCode": 0,
         "digestViolation": false,
         "logPath": "agents/implement/standard-regression/reverify/V1-<TS>.log"
@@ -267,12 +280,12 @@ Receipt: agents/implement/standard-regression/receipt.json
     "status": "pass",
     "summary": "PASS",
     "reportPath": "agents/implement/standard-regression/review/requirements-fidelity-review.md",
-    "reportBytes": 755,
+    "reportBytes": 781,
     "reportSha256": "<SHA>",
     "worktreeSnapshot": {
       "capturedAt": "<TS>",
       "headSha": "<SHA>",
-      "statusHash": "77da28be",
+      "statusHash": "7599dc17",
       "entryCount": 1,
       "entries": [
         {
@@ -280,7 +293,7 @@ Receipt: agents/implement/standard-regression/receipt.json
           "path": "agents/prd/standard-regression/prd.md",
           "originalPath": null,
           "sha256": "<SHA>",
-          "bytes": 1729,
+          "bytes": 1694,
           "kind": "file",
           "executable": false
         }

@@ -5,7 +5,6 @@ const path = require("path");
 const childProcess = require("child_process");
 
 const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, sha256Text, normalizeRelPath, simpleHash } = require("./util");
-const { matchesScopeGlob } = require("./scope_match");
 
 function runGit(projectRoot, args, options = {}) {
   return runCommand("git", args, { ...options, cwd: projectRoot });
@@ -170,18 +169,15 @@ function worktreeSnapshot(state) {
 /**
  * THE freshness fingerprint: one content-based answer to "is this recorded
  * PASS/review still vouching for the current tree?", shared by every consumer
- * (gate staleness, the Stop-hook quick guard, verify-run/oracle digest
+ * (gate staleness, the Stop-hook quick guard, verify-run digest
  * guards, finalize reverification skip, fresh-pass reuse, review freshness).
  * It replaced five divergent per-consumer fingerprints whose exclusion lists
  * watched each other's bookkeeping and deadlocked (verify re-run staled the
  * review, review record staled the verify pass, forever).
  *
  * Vouched set:
- * - Scoped mode (`scopeGlobs` non-empty): files matching the run's declared
- *   Scope globs, minus the agents/ namespace.
- * - Fallback mode (no globs): the whole repo minus the agents/ namespace and
- *   the run dir.
- * - Both modes exclude the ENTIRE `agents/**` namespace (AGENTS.md invariant:
+ * - The whole repo minus the agents/ namespace and the run dir.
+ * - The fingerprint excludes the ENTIRE `agents/**` namespace (AGENTS.md invariant:
  *   nothing under agents/** belongs in a freshness fingerprint). Spec docs
  *   (`agents/prd/<slug>/**`) used to ride the fingerprint as "judged inputs",
  *   and loose `agents/*` files (agents/config.json, test plumbing) rode the
@@ -205,7 +201,7 @@ function worktreeSnapshot(state) {
  * invisible (git status does not list it), and a dirty submodule pointer is
  * pinned by presence only.
  *
- * Returns `{ vouched, entryCount, mode, scopeGlobs? }` - deliberately a
+ * Returns `{ vouched, entryCount, mode }` - deliberately a
  * different key set from the legacy `{ headSha, statusHash }` so a recorded
  * legacy fingerprint is detectable and always reads as stale. Returns null
  * when the project is not a git checkout. With `includeEntries: true` the
@@ -215,28 +211,14 @@ function worktreeSnapshot(state) {
 function vouchedTreeFingerprint(options) {
   const opts = options || {};
   const projectRoot = opts.projectRoot || cwd();
-  const scopeGlobs = Array.isArray(opts.scopeGlobs)
-    ? Array.from(new Set(opts.scopeGlobs.map(glob => String(glob || "").trim()).filter(Boolean)))
-    : [];
-  const scoped = scopeGlobs.length > 0;
 
-  // ONE exclusion: the whole agents/ namespace, in both modes (see the
-  // vouched-set comment above). Two options are now inert and kept only so no
-  // caller has to change: `slug` (the per-slug prd carve-out died with the
-  // namespace-wide rule - the same tree must never fingerprint differently
-  // depending on who asks) and `runDir`, which the harness always sets to
-  // `agents/implement/<slug>` or `agents/quick/<slug>` and is therefore already
-  // inside NAMESPACE_ROOT. runDir stays in the list as a cheap guard in case a
-  // caller ever points a run dir outside the namespace; neither option may grow
-  // new meaning without re-reading that comment.
-  const excludedPrefixes = [
-    normalizeRelPath(NAMESPACE_ROOT),
-    normalizeRelPath(opts.runDir || ""),
-  ].filter(Boolean);
+  // ONE exclusion: the whole agents/ namespace (see the
+  // vouched-set comment above). Run identity and implementation ownership do
+  // not alter this set.
+  const excludedPrefixes = [normalizeRelPath(NAMESPACE_ROOT)];
   const underAny = (rel, prefixes) => prefixes.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`));
   const vouches = rel => {
     if (!rel || underAny(rel, excludedPrefixes)) return false;
-    if (scoped) return scopeGlobs.some(glob => matchesScopeGlob(rel, glob));
     return true;
   };
 
@@ -349,8 +331,7 @@ function vouchedTreeFingerprint(options) {
   return {
     vouched: simpleHash(JSON.stringify(pairs)),
     entryCount: pairs.length,
-    mode: scoped ? "scoped" : "fallback",
-    ...(scoped ? { scopeGlobs } : {}),
+    mode: "full",
     // Per-path evidence for digest-guard diffs, opt-in only: the [path, blob]
     // pairs are computed above either way (only their JSON hash was kept), so
     // retaining them costs nothing at capture time - but they are large, so
@@ -396,7 +377,7 @@ function vouchedFingerprintDiff(before, after) {
 
 /**
  * One bounded rendering of a fingerprint diff for every digest-guard consumer
- * (verify-run, oracle-run, gate oracles, finalize reverification), so the
+ * (verify-run and finalize reverification), so the
  * "name the violating paths" contract cannot drift per site. `paths` is capped
  * for persistence (fallback-mode churn can touch thousands of files), `text`
  * is capped tighter for messages; both carry the true total.
@@ -421,33 +402,11 @@ function summarizeFingerprintDiff(before, after, options = {}) {
   };
 }
 
-/**
- * Run-level scope for an implement run: the union of every task's declared
- * Scope globs, but only when EVERY task declared one - a partial union would
- * blind the fingerprint to the undeclared tasks' writes, so any Scope-less
- * task drops the whole run to fallback mode. Mirrors the verify gate's
- * scopeForLane rule for partial declarations.
- */
-function runScopeGlobs(state) {
-  const tasks = Array.isArray(state && state.tasks) ? state.tasks : [];
-  if (!tasks.length) return null;
-  const globs = [];
-  for (const task of tasks) {
-    const taskGlobs = Array.isArray(task && task.scopeGlobs) ? task.scopeGlobs.filter(Boolean) : [];
-    if (!taskGlobs.length) return null;
-    globs.push(...taskGlobs);
-  }
-  return globs;
-}
-
 /** vouchedTreeFingerprint keyed off an implement state object (the lib-side callers' shape). */
 function vouchedTreeFingerprintForState(state, options) {
   const source = state || {};
   return vouchedTreeFingerprint({
     projectRoot: source.projectRoot || cwd(),
-    runDir: source.runDir || null,
-    slug: source.topicSlug || null,
-    scopeGlobs: runScopeGlobs(source),
     includeEntries: Boolean(options && options.includeEntries),
   });
 }
@@ -627,10 +586,8 @@ function judgedDiff(projectRoot, baseRef) {
  * reviews {vouched bd743ad6, 57 entries, scoped} on one tree.
  *
  * Pinning the diff body instead covers exactly what was judged, no more and no
- * less: untracked files ride along as add-diffs, files that declare no `Scope:`
- * are included (a scope pin structurally cannot see those - the reason
- * unscopedFiles warnings exist), and a per-lane slice of an identical diff is
- * itself identical, so lane scoping needs no separate pin.
+ * less: untracked files ride along as add-diffs, and the full curated diff is
+ * pinned independently of implementation task ownership.
  *
  * Accepted blind spot, named because it is a real narrowing: a change confined
  * to files isExcludedFromDiff filters out - the agents/** namespace and

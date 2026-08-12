@@ -124,9 +124,13 @@ function quickStopDirective(hookCwd, sessionId) {
   if (!fs.existsSync(markerPath)) return "";
   const marker = readJson(markerPath);
   if (!marker || typeof marker.slug !== "string" || typeof marker.contractPath !== "string") return "";
-  const foreignOwner = marker.activeSessionId && !sameSessionId(marker.activeSessionId, sessionId);
-  if (!marker.activeSessionId) {
-    marker.activeSessionId = sessionId;
+  // Same field name as the implement run's owner, and the same meaning: the one
+  // session this run belongs to. A quick run keeps only this single record, so
+  // it never had the implement path's two-records-drift bug - but one name must
+  // mean one thing across the two pipelines or the next reader has to check.
+  const foreignOwner = marker.ownerSessionId && !sameSessionId(marker.ownerSessionId, sessionId);
+  if (!marker.ownerSessionId) {
+    marker.ownerSessionId = sessionId;
     writeJson(markerPath, marker);
   }
 
@@ -137,7 +141,7 @@ function quickStopDirective(hookCwd, sessionId) {
   // meant a stray hook firing in this directory could disarm the guard for the
   // session actually doing the work. Say so instead of going quiet.
   if (foreignOwner) {
-    return block(`A quick run ('${marker.slug}') is active in this directory but is owned by another session (${marker.activeSessionId}).\n\nIf that run is yours, adopt it by clearing "activeSessionId" in \`${QUICK_ACTIVE_PATH}\` and finish it normally. If it is genuinely abandoned, say so to the user and let them decide - do not start a second quick run alongside it.`);
+    return block(`A quick run ('${marker.slug}') is active in this directory but is owned by another session (${marker.ownerSessionId}).\n\nIf that run is yours, adopt it by clearing "ownerSessionId" in \`${QUICK_ACTIVE_PATH}\` and finish it normally. If it is genuinely abandoned, say so to the user and let them decide - do not start a second quick run alongside it.`);
   }
   const gatesPath = path.join(hookCwd, "agents", "gates", marker.slug, "gates.json");
   const gates = fs.existsSync(gatesPath) ? readJson(gatesPath) : null;
@@ -321,7 +325,7 @@ function runStopHook(payload, started) {
   if (!fs.existsSync(statePath)) return quickStopDirective(hookCwd, sessionId);
   const state = readJson(statePath);
   if (state.schema !== SCHEMA) return quickStopDirective(hookCwd, sessionId);
-  if (state.activeSessionId && !sameSessionId(state.activeSessionId, sessionId)) return quickStopDirective(hookCwd, sessionId);
+  if (state.ownerSessionId && !sameSessionId(state.ownerSessionId, sessionId)) return quickStopDirective(hookCwd, sessionId);
   if (state.status !== "active") {
     if (deliveryShipPending(statePath, state)) {
       return renderShipHandoffDirective(statePath, state, hookCwd);
@@ -338,8 +342,8 @@ function runStopHook(payload, started) {
       ? renderShipHandoffDirective(statePath, state, hookCwd)
       : "";
   }
-  if (!state.activeSessionId) {
-    state.activeSessionId = sessionId;
+  if (!state.ownerSessionId) {
+    state.ownerSessionId = sessionId;
     state.updatedAt = nowIso();
     writeJson(statePath, state);
     syncActive(statePath, state);
@@ -395,15 +399,15 @@ function runPreToolUseHook(payload) {
   if (!fs.existsSync(statePath)) return "";
   const state = readJson(statePath);
   if (state.schema !== SCHEMA) return "";
-  if (state.activeSessionId && !sameSessionId(state.activeSessionId, sessionId)) return "";
+  if (state.ownerSessionId && !sameSessionId(state.ownerSessionId, sessionId)) return "";
   if (state.status !== "active") {
     if (deliveryShipPending(statePath, state)) {
       return renderShipHandoffDirective(statePath, state, hookCwd);
     }
     return "";
   }
-  if (!state.activeSessionId) {
-    state.activeSessionId = sessionId;
+  if (!state.ownerSessionId) {
+    state.ownerSessionId = sessionId;
     state.updatedAt = nowIso();
     writeJson(statePath, state);
     syncActive(statePath, state);
@@ -483,11 +487,8 @@ function runPostToolUseHook(payload) {
 }
 
 /**
- * Match a Bash command against the run's verification contract. A planned
- * command is either the resolved command itself or a prose Method cell around
- * a backticked command, so compare the raw text and every backtick span
- * (commandFromText's prose fallback truncates at periods - `process.exit(0)`
- * would lose its tail). A leading `cd <dir> &&` on either side is ignored:
+ * Match a Bash command against the implementation-bound verification command.
+ * A leading `cd <dir> &&` on either side is ignored:
  * scoping into a package dir is the dominant rehearsal shape and does not
  * change which check is being rehearsed.
  */
@@ -497,11 +498,8 @@ function matchRehearsalCommand(state, command) {
   for (const item of state.verification || []) {
     const contract = plannedCommandForVerification(state, item.id);
     if (!contract) continue;
-    const candidates = [contract, ...[...String(contract).matchAll(/`([^`]+)`/g)].map(span => span[1])];
-    for (const candidate of candidates) {
-      const normalizedContract = normalizeRehearsalCommand(candidate);
-      if (normalizedContract && normalizedContract === normalizedActual) return item.id;
-    }
+    const normalizedContract = normalizeRehearsalCommand(contract);
+    if (normalizedContract && normalizedContract === normalizedActual) return item.id;
   }
   return null;
 }
@@ -594,15 +592,14 @@ Drive the Next required item above to done, then record it with the matching har
     : `# Required procedure this turn
 
 1. The State block above and \`${context.statePath}\` are the source of truth. Mirror progress in the runtime task surface at phase boundaries only; the harness, not the tracker, is the completion authority. Do not re-read unchanged plan files each turn.
-2. If the next item is \`VERIFICATION_PLAN VP0\`: inspect the blocking gaps in \`${HARNESS} status\`, fix the PRD verification contract or planner inputs, and rerun \`${HARNESS} plan-verification\` before implementation.
+2. If the next item is \`VERIFICATION_PLAN VP0\`: inspect the contract-phase gaps in \`${HARNESS} status\`, fix the PRD semantic verification contract, run \`${HARNESS} reconcile\`, and rerun \`${HARNESS} plan-verification\` before implementation. A \`needs_binding\` plan does not block task work.
 3. If the next item is \`EXECUTION_PLAN EP0\`: the auto-built execution plan has blocking gaps (unparsable PRD tasks or a dependency cycle); fix the PRD, run \`${HARNESS} reconcile\`, then \`${HARNESS} plan-execution\` until the gaps clear.
 4. Otherwise drive the next item to done (SKILL.md sections 5-6 hold the details). Before the first code edit of the run, do the one-time coverage check (intent, ambiguity, coverage, structure-lock drift) and record material findings in \`${state.runDir}/context-notes.md\`. Stop for approval before material structure deviations, register artifacts immediately, then record with:
    - \`${HARNESS} mark --kind task --id <Tn[,Tn...]> --status complete [--ac <ACn,...>] --evidence "<evidence>"\`
    - \`${HARNESS} mark --kind ac --id <ACn[,ACn...]> --status met --evidence "<evidence>"\`
-   - \`${HARNESS} verify-run --id <Vn> -- <command>\` and \`${HARNESS} record-artifact --id <Vn> --kind <kind> --path <artifact> --description "<what it proves>"\`
-   - \`${HARNESS} oracle-run\` for ACs whose bullet declares a \`Check:\`/\`Artifact:\` oracle tail - the harness runs the declared check and settles met/not_met mechanically; never mark those by hand.
+   - \`${HARNESS} verify-run --id <Vn> [--cwd <repo-relative-dir>] -- <command>\` and \`${HARNESS} record-artifact --id <Vn> --kind <kind> --path <artifact> --description "<what it proves>"\`
    Batch with comma lists and \`--ac\`; marks return counts and the next item, so do not poll \`status\`. A task closes only when you mark it with evidence that its mapped ACs and verification are satisfied. If status reports a PRD snapshot violation, run \`${HARNESS} reconcile\`, never \`init --force\`.
-5. When no open items remain: sweep every AC (\`${HARNESS} oracle-run\` settles oracle-backed ones mechanically), stop verification-only runtime processes, then run the requirements fidelity review for profile ${reviewPolicy.profile}: \`${HARNESS} requirements-review-prompt\`, ${reviewPolicy.fidelityOwner === "independent"
+5. When no open items remain, stop verification-only runtime processes, then run the requirements fidelity review for profile ${reviewPolicy.profile}: \`${HARNESS} requirements-review-prompt\`, ${reviewPolicy.fidelityOwner === "independent"
     ? "have one fresh independent read-only sidecar write the report from the raw prompt (fresh manual pass if sidecars are unavailable, stating that fallback)"
     : "write the report as the main agent after reading the complete canonical qa-log or conversation source"}, save \`${state.runDir}/review/requirements-fidelity-review.md\`, and record it with \`${HARNESS} requirements-review-record --status pass|fail --report <path> --summary "<verdict>"\`. Sidecars never mutate harness state; the coordinator records.
 ${finalReviewRequired ? `6. Only after fidelity passes: \`${HARNESS} review-prompt\`, have a fresh independent read-only sidecar write \`${state.runDir}/review/final-review.md\`, then \`${HARNESS} review-record --status pass|fail --report <path> --summary "<verdict>"\`.

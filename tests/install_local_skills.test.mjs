@@ -30,8 +30,8 @@ test("installer installs canonical skills with correct substitutions and no alia
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
-  assert.equal(report.installed.codex.length, 8);
-  assert.equal(report.installed.claude.length, 8);
+  assert.equal(report.installed.codex.length, 9);
+  assert.equal(report.installed.claude.length, 9);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
@@ -78,6 +78,14 @@ test("installer installs canonical skills with correct substitutions and no alia
   const claudePlease = fs.readFileSync(path.join(home, ".claude", "skills", "please", "SKILL.md"), "utf8");
   assert.match(claudePlease, /~\/\.claude\/skills\/gen-prd\/SKILL\.md/);
 
+  const codexBenchmark = fs.readFileSync(path.join(home, ".codex", "skills", "benchmark-implement", "SKILL.md"), "utf8");
+  assert.match(codexBenchmark, /\$benchmark-implement/);
+  assert.match(codexBenchmark, /~\/\.codex\/skills\/implement\/SKILL\.md/);
+  const claudeBenchmark = fs.readFileSync(path.join(home, ".claude", "skills", "benchmark-implement", "SKILL.md"), "utf8");
+  assert.match(claudeBenchmark, /\/benchmark-implement/);
+  assert.match(claudeBenchmark, /~\/\.claude\/skills\/implement\/SKILL\.md/);
+  assert.doesNotMatch(claudeBenchmark, /\$benchmark-implement/);
+
   // Auxiliary entries are symlinks into the repo; Codex-only entries are skipped for Claude.
   const claudeScripts = path.join(home, ".claude", "skills", "implement", "scripts");
   assert.ok(fs.lstatSync(claudeScripts).isSymbolicLink());
@@ -92,7 +100,7 @@ test("installer installs canonical skills with correct substitutions and no alia
     if (!referenceName.endsWith(".md")) continue;
     const referenceText = fs.readFileSync(path.join(claudeReferences, referenceName), "utf8");
     assert.doesNotMatch(referenceText, /~\/\.codex\/skills\//, `${referenceName} keeps a Codex path`);
-    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
+    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|benchmark-implement|ship|ho-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
   }
   // Codex references stay symlinked (verbatim source is correct there).
   assert.ok(fs.lstatSync(path.join(home, ".codex", "skills", "implement", "references")).isSymbolicLink());

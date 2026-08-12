@@ -22,15 +22,22 @@ Run the planner before implementation:
 node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification
 ```
 
-The planner binds the PRD Verification Contract to repository reality.
+The planner separates the PRD semantic contract from repository execution bindings.
 
-- Full matrices with `Method` and `Artifact` use those concrete fields directly.
-- Lean matrices with `Pass Intent` derive commands, tools, targets, and artifact kinds from the Test Mode Contract plus repository signals.
+- The PRD supplies Mode, Covers, Pass Intent, required/blockable semantics, and applicable safety policy.
+- `state.verificationPlan` owns the exact command, cwd, selected proof tools,
+  evidence kinds, and repo-derived target and runtime strategies.
+- The PRD owns approved side-effect and sensitive-data boundaries; the plan
+  plus actual run evidence owns the concrete probe and lifecycle within them.
+- Registered artifacts own the concrete runtime evidence paths observed during implementation.
+- Existing canonical repository scripts may bind automatically.
+- A greenfield command check remains `needs_binding` until its first `verify-run`.
 - Checks are classified as command, automated, browser, server, API, DB, or manual-agent.
-- The planner creates acceptance-criterion coverage and blocking gaps for missing coverage, missing commands, missing artifact strategy, missing browser startup, or unsafe external proof.
+- Contract-phase gaps block implementation.
+- Binding-phase gaps block completion but do not block creating the verifier.
 
-Do not implement while the verification plan has blocking gaps (`plan-verification` output or `status` shows them).
-Fix the PRD contract, supply missing repository context, or ask for the missing decision, then rerun `plan-verification`.
+Do not implement while contract-phase gaps remain.
+Treat `needs_binding` as implementation work, not a reason to put a command back into the PRD.
 
 ## Focused And Final Verification
 
@@ -38,11 +45,21 @@ Use the generated verification plan as the concrete proof plan.
 Run the smallest focused probe while source is changing.
 Reserve broad suites and cost-bearing benchmarks for a coherent milestone or the frozen final implementation content.
 
-When the PRD or planner produced a concrete command, `verify-run` must execute that command exactly.
+Immediately before the first run, inspect repository reality and confirm the
+selected cwd and runner or package script exist.
+The first `verify-run` for an unbound command check validates the cwd, binds its
+exact command and repository-relative cwd, and executes it.
+A missing executable or package script is an observable failed run, not a
+planning-time reason to reject a greenfield PRD.
+Later runs must execute that binding exactly.
 If an equivalent command is necessary, record why its coverage is equivalent through `--deviation`.
 
 Every required verification item needs both `pass` status and artifact-backed evidence from the actual run.
 A prose claim, file existence alone, or self-authored summary does not close a required check.
+
+Give each verification item an independently observable failure responsibility.
+When two proposed items would use the same command, evidence, and completion
+blocker, merge them into one item with a combined Pass Intent.
 
 ## Cost-Bearing Benchmarks
 
@@ -66,6 +83,7 @@ For shell-verifiable checks, use:
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
   --id V1 \
+  --cwd <repo-relative-dir> \
   -- <exact command>
 ```
 
@@ -74,6 +92,7 @@ For an equivalent replacement command, use:
 ```sh
 node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
   --id V1 \
+  --cwd <repo-relative-dir> \
   --deviation "<why equivalent coverage is preserved>" \
   -- <replacement command>
 ```
@@ -87,20 +106,11 @@ Do not edit `rehearsals.jsonl` or cite it as passing evidence; only `verify-run`
 
 `verify-run` fingerprints the tree before and after the command (workspace digest guard): a command that exits 0 but mutates the workspace is recorded as a failure, because a verifier that edits the code it certifies is reward hacking, not proof.
 A side effect declared in the 9.2 matrix's Side Effect column opts that verification out of the guard, with the skip on the record.
-The same guard runs at finalize's reverification and on oracle commands.
+The same guard runs at finalize's reverification.
 
-## AC Oracles
-
-Acceptance criteria whose PRD bullet declares a machine oracle tail (`Check: \`<command>\` [-> <expected stdout substring>]` or `Artifact: <path>`) are settled by the harness, never by hand:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js oracle-run
-```
-
-runs every open oracle-backed AC (narrow with `--id AC2,AC3`; the default sweep covers `pending` and `not_met`, so a failed oracle is re-observed once the world is fixed), judges met/not_met from the exit code, output substring, or file existence, and records the evidence and command log automatically.
-Do not `mark --kind ac` an oracle-backed AC; the harness rejects a manual `met` outright, and `finalize` accepts a met oracle-backed AC only when its latest harness-recorded oracle observation is a pass — status without that observation is a completion violation.
-Oracle commands run in both the harness sweep (`oracle-run`) and the verify gate's oracle stage, so they must be repeatable/idempotent.
-Check commands are tokenized and run without a shell in both executors: shell operators (`|`, `&&`, `;`, `>`, …) are literal arguments, not syntax — wrap the command in `bash -c "..."` when shell semantics are intended.
+AC bullets never own executable commands or artifact paths.
+Every AC must map to a V row and remains subject to semantic judgment.
+Use `verify-run` or `record-artifact` for the implementation-owned proof, then let passing V coverage auto-close eligible pending ACs.
 
 ## Database Safety
 
@@ -173,7 +183,7 @@ A met acceptance criterion also needs at least one covering verification item in
 
 Before completion reviews, sweep every verification item and confirm:
 
-- the executed command or probe matches the planned method or has a recorded equivalent-command deviation.
+- the executed command and cwd match the implementation binding or have a recorded equivalent-binding deviation.
 - the registered artifact exists, is non-empty, has the expected kind, and has no hash drift.
 - the artifact proves the stated Pass Intent and every mapped `R#` and `AC#`.
 - sensitive data, side effects, and live-provider constraints follow the PRD contract.

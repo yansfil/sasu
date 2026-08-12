@@ -5,7 +5,7 @@ const path = require("path");
 
 const { nowIso, cwd, resolveProjectPath, toProjectRelative, sha256Text, slugFromPrdPath, runDirRelFor } = require("../util");
 const { markCompletionReviewsStale, verificationPlanSummary, executionPlanSummary } = require("../state_data");
-const { stripFrontmatter } = require("../prd_parser");
+const { stripFrontmatter, findPrdImplementationBindings } = require("../prd_parser");
 const { parsePrdContract } = require("./init");
 const { buildVerificationPlan, buildExecutionPlan, applyExecutionPlan, readyExecutionPlan, nextItem } = require("../planning");
 const { loadState, syncActive, persistState } = require("../state_store");
@@ -34,7 +34,15 @@ function cmdPlanVerificationCheck(options) {
     syntheticState,
     path.join(projectRoot, runDirRelFor(slugFromPrdPath(prdAbs)), "state.json"),
   );
-  const blocking = plan.gaps.filter(gap => gap.severity === "blocking");
+  const bindingDefects = findPrdImplementationBindings(prdText).map(defect => ({
+    severity: "blocking",
+    phase: "contract",
+    code: defect.code,
+    item: `line ${defect.line}`,
+    message: defect.message,
+  }));
+  const semanticGaps = [...bindingDefects, ...plan.gaps.filter(gap => gap.phase !== "binding")];
+  const blocking = semanticGaps.filter(gap => gap.severity === "blocking");
   process.stdout.write(JSON.stringify({
     ok: blocking.length === 0,
     mode: "prd-precheck",
@@ -45,13 +53,26 @@ function cmdPlanVerificationCheck(options) {
       verificationCount: verification.length,
       testModeCount: testModeContract.length,
     },
-    status: plan.status,
+    status: blocking.length ? "needs_review" : "ready",
     checkCount: plan.checks.length,
     blockingGaps: blocking,
-    warnings: plan.gaps.filter(gap => gap.severity !== "blocking"),
+    warnings: semanticGaps.filter(gap => gap.severity !== "blocking"),
+    deferredBindings: plan.gaps
+      .filter(gap => gap.phase === "binding")
+      .map(gap => {
+        const check = plan.checks.find(candidate => candidate.id === gap.item);
+        return {
+          verificationId: check ? check.verificationId : gap.item,
+          category: check ? check.category : null,
+          missing: check && !check.command ? ["command", "cwd"] : [],
+          artifactKinds: check ? check.artifactKinds : [],
+          bindAt: "first verify-run after implementation creates the verifier",
+          message: gap.message,
+        };
+      }),
     note: blocking.length
-      ? "The PRD verification contract is not harness-ready. Fix the PRD (Method/Artifact/Pass Intent, coverage, artifact strategy) before approval; init/plan-verification would block on these gaps."
-      : "PRD verification contract is harness-ready; plan-verification after init should produce a ready plan.",
+      ? "The PRD semantic verification contract is not harness-ready. Fix coverage, mode, pass intent, or safety semantics before approval."
+      : "The PRD semantic verification contract is harness-ready. Concrete commands, cwd, and evidence paths are bound from repository reality during implementation.",
   }, null, 2) + "\n");
   if (blocking.length) process.exitCode = 2;
 }

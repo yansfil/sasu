@@ -76,7 +76,7 @@ function freshVerifyRunPasses(state, projectRoot) {
     if (declaredSideEffect(item)) continue;
     const log = latestCommandLog(item);
     if (!isFreshPass(log, current)) continue;
-    entries.push({ verificationId: item.id, command: log.command, logPath: log.path || null });
+    entries.push({ verificationId: item.id, command: log.command, cwd: log.cwd || ".", logPath: log.path || null });
   }
   return entries;
 }

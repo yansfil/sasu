@@ -6,7 +6,7 @@ const { cmdHook } = require("../../../cli/lib/hooks");
 const { cmdInit } = require("../../../cli/lib/commands/init");
 const { cmdStatus, cmdVerifyDelivery, cmdDoctor, cmdCleanupActive } = require("../../../cli/lib/commands/inspect");
 const { cmdPlanVerification, cmdPlanExecution } = require("../../../cli/lib/commands/plan");
-const { cmdMark, cmdAssign, cmdRecordArtifact, cmdVerifyRun, cmdOracleRun } = require("../../../cli/lib/commands/mark");
+const { cmdMark, cmdAssign, cmdRecordArtifact, cmdVerifyRun } = require("../../../cli/lib/commands/mark");
 const { cmdReviewPrompt, cmdRequirementsReviewPrompt, cmdRequirementsReviewRecord, cmdReviewRecord, cmdFinalize } = require("../../../cli/lib/commands/review");
 const { cmdReconcile } = require("../../../cli/lib/commands/reconcile");
 const { cmdPause, cmdReviewPolicy } = require("../../../cli/lib/commands/lifecycle");
@@ -48,12 +48,7 @@ const COMMANDS = [
     usageArgs: ["--kind task|ac|verification|prework --id <id[,id...]> --status <status> [--ac <ACn[,ACn...]>] --evidence <text>  (prework status: human|agent|resolved)"],
     run: args => cmdMark(parseArgs(args)),
   },
-  { name: "verify-run", usageArgs: ["--id <Vn> -- <command...>"], run: args => cmdVerifyRun(args) },
-  {
-    name: "oracle-run",
-    usageArgs: ["[--id <ACn[,ACn...]>]  (mechanically settle ACs with a declared Check:/Artifact: oracle tail)"],
-    run: args => cmdOracleRun(parseArgs(args)),
-  },
+  { name: "verify-run", usageArgs: ["--id <Vn> [--cwd <repo-relative-dir>] -- <command...>"], run: args => cmdVerifyRun(args) },
   {
     name: "record-artifact",
     usageArgs: ["--id <id> --kind screenshot|log|browser|api|db|file --path <path> --description <text>"],

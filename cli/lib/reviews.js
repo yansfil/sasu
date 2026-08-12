@@ -303,9 +303,9 @@ function meaningfulReviewSection(section) {
  * The severity vocabulary the harness compares, and the floor that separates a
  * finding a run may carry from one it may not.
  *
- * Declaring this in the review report passes the item 7 test the way `Scope:`
- * and `Check:` do and `Owner: human` did not: the harness EXECUTES a comparison
- * on the value. `MINOR` is a claim the reviewer makes and the harness acts on -
+ * Declaring this in the review report passes the item 7 test because the
+ * harness executes a comparison on the value. `MINOR` is a claim the reviewer
+ * makes and the harness acts on -
  * it becomes a recorded follow-up instead of another review round - and
  * `BLOCKER`/`MAJOR` is a claim the harness holds the recording to.
  *
@@ -1030,7 +1030,10 @@ function completionViolations(statePath, state, options = {}) {
   if (verificationPlan.status === "missing") {
     violations.push(`Verification plan is missing; run \`${H} plan-verification\``);
   } else if (verificationPlan.blockingGapCount > 0) {
-    violations.push(`Verification plan has ${verificationPlan.blockingGapCount} blocking gap(s); read them in \`${H} status\`, fix the PRD verification contract, then re-run \`${H} plan-verification\``);
+    const action = verificationPlan.contractBlockingGapCount > 0
+      ? `fix the PRD semantic verification contract, then re-run \`${H} reconcile\``
+      : `bind each implementation verifier with \`${H} verify-run --id <Vn> [--cwd <dir>] -- <command...>\``;
+    violations.push(`Verification plan has ${verificationPlan.blockingGapCount} blocking gap(s); read them in \`${H} status\`, then ${action}`);
   }
   const executionPlan = executionPlanSummary(state);
   if (executionPlan.status === "missing") {
@@ -1049,24 +1052,9 @@ function completionViolations(statePath, state, options = {}) {
   const verificationById = new Map((state.verification || []).map(item => [item.id, item]));
   for (const ac of state.acceptanceCriteria) {
     if (ac.status !== "met") {
-      violations.push(ac.oracle && typeof ac.oracle === "object"
-        ? `Acceptance ${ac.id} is ${ac.status}; it declares an oracle, so settle it mechanically with \`${H} oracle-run --id ${ac.id}\` (never by hand)`
-        : `Acceptance ${ac.id} is ${ac.status}; satisfy it, then \`${H} mark --kind ac --id ${ac.id} --status met --evidence "<what proves it>"\``);
+      violations.push(`Acceptance ${ac.id} is ${ac.status}; satisfy it, then \`${H} mark --kind ac --id ${ac.id} --status met --evidence "<what proves it>"\``);
     }
     if (!ac.evidence.length) violations.push(`Acceptance ${ac.id} has no evidence; re-run \`${H} mark --kind ac --id ${ac.id} --status ${ac.status} --evidence "<what proves it>"\``);
-    // An oracle-backed AC satisfies coverage through its oracle, not a V row
-    // (the planner, prelint, and gen-prd all promise no V-row mapping is
-    // needed; demanding one here deadlocked finalize for every run that used
-    // the documented feature). But the exemption is earned only by evidence:
-    // met must rest on a harness-recorded passing oracle observation
-    // (cmdOracleRun stamps ac.oracleObservation), because met status alone
-    // can be reached by drift or a hand-edited state file.
-    if (ac.oracle && typeof ac.oracle === "object") {
-      if (ac.status === "met" && !(ac.oracleObservation && ac.oracleObservation.met === true)) {
-        violations.push(`Acceptance ${ac.id} is met but its declared oracle has no recorded passing observation; run oracle-run --id ${ac.id} so the harness observes the pass`);
-      }
-      continue;
-    }
     // Mechanical backstop for the skill's promise that every AC is provably
     // closed: prose evidence alone cannot complete an AC whose entire
     // verification coverage was skipped or blocked.
