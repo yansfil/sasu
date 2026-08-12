@@ -2278,6 +2278,7 @@ function recordJudgeFailure(
   );
   const recoveryByCode: Record<string, string> = {
     "judge-binary-missing": "Install the judge CLI (claude or codex) or set judge.backend in agents/config.json.",
+    "judge-auth": "The Claude judge was not authenticated and Codex fallback was unavailable. Log in to Claude or install/log in to Codex, then re-run.",
     "judge-auth-or-runtime": "Check the judge CLI login/auth status and re-run.",
     "judge-timeout": "Re-run; if it persists, raise judge.timeoutMs in agents/config.json.",
     "judge-invalid-output": "Re-run; if it persists, try a stronger tier model via judge.tierModels.",
