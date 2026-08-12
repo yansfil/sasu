@@ -1,6 +1,6 @@
 import type { SasuConfig, Tier } from "../config";
 import { tierModelFor } from "../config";
-import { resolveBackend } from "./backends";
+import { resolveBackend, resolveFallbackBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeCallRecord } from "./types";
 
 export interface JudgeOutcome<T> {
@@ -23,11 +23,12 @@ export async function runJudge<T>(
   validate: (value: unknown) => T | string,
   options: { effort?: string; images?: string[]; agentic?: boolean; cwd?: string } = {},
 ): Promise<JudgeOutcome<T>> {
-  const backend = resolveBackend(config.judge.backend);
-  const model = tierModelFor(config, backend.name, tier);
-  const startedAt = Date.now();
+  let backend = resolveBackend(config.judge.backend);
+  let model = tierModelFor(config, backend.name, tier);
+  let startedAt = Date.now();
   let attempts = 0;
   let lastProblem = "";
+  let fallback: JudgeCallRecord["fallback"];
   while (attempts < 2) {
     attempts += 1;
     const retryPreamble =
@@ -49,8 +50,24 @@ export async function runJudge<T>(
       ).text;
     } catch (error) {
       if (error instanceof JudgeError) {
+        const fallbackBackend = error.code === "judge-auth" ? resolveFallbackBackend(backend) : null;
+        if (fallbackBackend !== null) {
+          fallback = {
+            at: new Date(startedAt).toISOString(),
+            backend: backend.name,
+            model,
+            durationMs: Date.now() - startedAt,
+            outcome: error.code,
+          };
+          backend = fallbackBackend;
+          model = tierModelFor(config, backend.name, tier);
+          startedAt = Date.now();
+          attempts = 0;
+          lastProblem = "";
+          continue;
+        }
         throw Object.assign(error, {
-          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code),
+          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
         });
       }
       throw error;
@@ -67,12 +84,12 @@ export async function runJudge<T>(
     }
     return {
       value: validated,
-      record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, "ok"),
+      record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, "ok", fallback),
     };
   }
   const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
   throw Object.assign(error, {
-    record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code),
+    record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
   });
 }
 
@@ -84,6 +101,7 @@ function makeRecord(
   startedAt: number,
   attempts: number,
   outcome: JudgeCallRecord["outcome"],
+  fallback?: JudgeCallRecord["fallback"],
 ): JudgeCallRecord {
   return {
     at: new Date(startedAt).toISOString(),
@@ -94,6 +112,7 @@ function makeRecord(
     durationMs: Date.now() - startedAt,
     attempts,
     outcome,
+    ...(fallback !== undefined ? { fallback } : {}),
   };
 }
 
