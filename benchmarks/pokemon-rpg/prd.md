@@ -2,12 +2,12 @@
 topic: "pokemon-rpg"
 status: "ready"
 human_approval: "approved"
-human_approval_note: "2026-08-12 사용자가 prd-new.md를 정식 prd.md로 교체해 다음 benchmark-implement 실행에 사용하도록 승인했다."
+human_approval_note: "2026-08-13 사용자가 benchmark PRD 계약 갱신 후에도 승인 상태를 유지하도록 명시했다."
 review_profile: "standard"
 review_rationale: "새로운 사용자 대면 브라우저 게임이지만 인증, 결제, 서버 데이터, 외부 호출, 되돌릴 수 없는 외부 부수효과가 없고 영속 범위는 브라우저의 단일 로컬 세이브뿐이다."
-source_intake: "agents/interview/pokemon-rpg/qa-log.md"
+source_intake: "current conversation"
 created_at: "2026-08-11"
-updated_at: "2026-08-12"
+updated_at: "2026-08-13"
 ---
 
 # PRD: pokemon-rpg
@@ -28,7 +28,7 @@ Approval checklist:
 - 스코프와 non-goal - §3
 - 제품이 요구하는 경계와 제약 - §5
 - 고정 콘텐츠 데이터와 게임 규칙 - §6
-- 구현 파일과 명령을 PRD에서 소유하지 않는 계약 - §8, §9
+- task dependency는 PRD가 소유하고 구현 파일과 명령은 실행 계획이 소유하는 계약 - §8, §9
 - required-for-done 검증 모드와 고유 실패 책임 - §9
 - 스코프 축소 금지와 실패 공개 원칙 - §11
 
@@ -114,7 +114,7 @@ Approval checklist:
 
 계정, 자격증명, 결제, 외부 서비스, 사용자 소유 에셋이 필요하지 않다.
 
-### 4.2 Approved Human Decisions
+### 4.2 Human Decisions Before PRD Approval
 
 - §3의 전체 제품 스코프와 non-goal을 승인한다.
 - §6의 캐릭터 5명, 몬스터 20종, 맵 7장, 타입 상성표와 구체 수치를 고정 계약으로 승인한다.
@@ -124,8 +124,8 @@ Approval checklist:
 
 ### 4.3 Decision Traceability For Fidelity Review
 
-소스는 `agents/interview/pokemon-rpg/qa-log.md`다.
-아래 표는 결정 레지스터 D-01부터 D-50까지의 배치를 보존한다.
+이 고정 benchmark PRD는 원본 인터뷰에서 승인된 결정을 아래 표에 자체 포함한다.
+실행 worktree에서는 이 절이 fidelity review의 canonical source이며, 표는 결정 레지스터 D-01부터 D-50까지의 배치를 보존한다.
 
 | ID | Type | PRD disposition |
 | --- | --- | --- |
@@ -363,27 +363,28 @@ Approval checklist:
 ## 8. PRD-Level Tasks
 
 이 task는 승인할 제품 capability를 묶는 단위다.
-구현 순서, 병렬성, 소유자, 의존성, 파일 write scope는 구현 계획이 정한다.
+PRD가 capability 간 완료 의존성을 소유하며, 이 workload의 사용자 여정은 T1부터 T6까지 순차적으로 완성된다.
+구현 계획은 소유자, 파일 write scope, task 내부 실행 단위만 정한다.
 구현 계획은 필요하면 이 task를 더 작은 실행 단위로 분해할 수 있다.
 
 - T1. 플레이 가능한 시작과 복원 흐름을 완성한다.
   정적 앱 진입, 캐릭터 선택, 시작 파트너, 기본 조작, 단일 세이브, 이어하기, 새로 시작을 사용자 관점에서 연결한다.
-  Covers R1, R2, R3, R17, R20, AC1, AC2, AC3, AC4, AC25, AC27, AC28, AC31.
+  Covers R1, R2, R3, R17, R20, AC1, AC2, AC3, AC4, AC25, AC27, AC28, AC31. Depends on: none.
 - T2. 연결 월드와 단계적 개방을 완성한다.
   맵 7장, 충돌과 전환, 필드 인카운터, 미션 게이팅과 개방 영속을 연결한다.
-  Covers R3, R4, R5, R6, AC5, AC6, AC7, AC8, AC9.
+  Covers R3, R4, R5, R6, AC5, AC6, AC7, AC8, AC9. Depends on: T1.
 - T3. 전투에서 복구까지 한 사이클을 완성한다.
   결정적 전투, 야생전과 트레이너전, 포획, 파티, 아이템, 전멸 복구를 연결한다.
-  Covers R7, R8, R9, R10, R11, R18, R22, AC10, AC11, AC12, AC13, AC14, AC15, AC16, AC26.
+  Covers R7, R8, R9, R10, R11, R18, R22, AC10, AC11, AC12, AC13, AC14, AC15, AC16, AC26. Depends on: T2.
 - T4. 성장과 미션 진행 사이클을 완성한다.
   성장과 진화, NPC, 4유형·4상태 미션, 보상, 퀘스트 로그, 저장 복원을 연결한다.
-  Covers R12, R13, R14, AC17, AC18, AC19, AC23.
+  Covers R12, R13, R14, AC17, AC18, AC19, AC23. Depends on: T3.
 - T5. 최종전과 계속 플레이를 완성한다.
   라이벌 전파, 보스방, 엔딩, 엔딩 후 상태, 도감을 연결한다.
-  Covers R15, R16, AC20, AC21, AC22.
+  Covers R15, R16, AC20, AC21, AC22. Depends on: T4.
 - T6. 제품 품질과 증거 계약을 완성한다.
   시각 완성도, 접근성, 반응형, 성능, 정적 검사, 규칙 회귀, AC별 판정, 실제 브라우저 흐름, 스크린샷 판정을 연결한다.
-  Covers R19, R20, R21, R22, R23, AC1, AC11, AC24, AC25, AC27, AC28, AC29, AC30, AC31.
+  Covers R19, R20, R21, R22, R23, AC1, AC11, AC24, AC25, AC27, AC28, AC29, AC30, AC31. Depends on: T5.
 
 ## 9. Verification Contract
 

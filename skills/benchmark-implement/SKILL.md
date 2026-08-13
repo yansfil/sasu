@@ -57,6 +57,8 @@ prepare a fresh worktree and reserve a run ID
 
 Require `benchmark.json` using `sasu.benchmark-case.v2`.
 Require an approved PRD, expected terminal statuses, required and forbidden stages, `falseCompleteAllowed: false`, and the fixed evaluator models.
+Before reserving a run or creating a worktree, `prepare-run` requires `status: ready`, `human_approval: approved`, and a passing result from the current harness's `sasu prd readiness` command.
+An obsolete or malformed fixed PRD therefore fails preparation without leaving a runnable benchmark environment.
 Require `environment.mode: "fresh-worktree"`, an explicit base ref, and at least one product path that must be absent at that ref.
 
 Use these evaluator defaults unless the user explicitly changes the benchmark contract:

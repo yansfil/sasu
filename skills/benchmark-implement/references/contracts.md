@@ -42,6 +42,7 @@ Paths in the contract are relative to the case file.
 
 `baseRef` identifies the clean repository state from which every run starts.
 `mustBeAbsent` names product paths that make a greenfield case invalid if they already exist at that ref.
+Preparation validates the fixed PRD against the current harness before reserving a run: its frontmatter must be `status: ready` and `human_approval: approved`, and `sasu prd readiness` must pass.
 The runner also requires the PRD topic's implement and gate directories to be absent.
 Preparation writes `sasu.benchmark-run.v1` to the reserved result directory before implementation starts.
 That record binds the run ID, worktree, copied case inputs, base commit, and initial worktree snapshot.

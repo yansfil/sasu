@@ -240,6 +240,39 @@ function harnessRoot() {
   return path.resolve(path.dirname(fs.realpathSync(__filename)), "../../..");
 }
 
+function validateBenchmarkPrd(projectRoot, prdPath, prdRelative) {
+  const parserPath = path.join(harnessRoot(), "cli", "lib", "prd_parser.js");
+  const cliPath = path.join(harnessRoot(), "cli", "dist", "cli.js");
+  if (!fs.existsSync(cliPath)) {
+    throw new Error(`benchmark harness CLI is not built: ${cliPath}`);
+  }
+  const { frontmatter } = require(parserPath).stripFrontmatter(fs.readFileSync(prdPath, "utf8"));
+  if (frontmatter.status !== "ready") {
+    throw new Error(`benchmark PRD status must be ready, got ${frontmatter.status || "missing"}`);
+  }
+  if (frontmatter.human_approval !== "approved") {
+    throw new Error(`benchmark PRD human_approval must be approved, got ${frontmatter.human_approval || "missing"}`);
+  }
+
+  const readiness = childProcess.spawnSync(
+    process.execPath,
+    [cliPath, "prd", "readiness", "--prd", prdRelative, "--json"],
+    { cwd: projectRoot, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 },
+  );
+  let output = null;
+  try {
+    output = JSON.parse(readiness.stdout || "null");
+  } catch {
+    // The raw command output below is the useful failure when the CLI did not
+    // honor its JSON contract.
+  }
+  if (readiness.status !== 0 || output?.ok !== true) {
+    const detail = output?.message || readiness.stderr.trim() || readiness.stdout.trim() || "unknown readiness failure";
+    throw new Error(`benchmark PRD readiness failed: ${detail}`);
+  }
+  return output.detail;
+}
+
 function canonicalPath(value) {
   const resolved = path.resolve(value);
   return fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
@@ -271,6 +304,7 @@ function commandPrepareRun(options) {
   const prdPath = path.resolve(path.dirname(casePath), contract.prd);
   const prdRelative = requireInside(projectRoot, prdPath, "benchmark PRD");
   if (!fs.existsSync(prdPath)) throw new Error(`benchmark PRD not found: ${prdPath}`);
+  const prdReadiness = validateBenchmarkPrd(projectRoot, prdPath, prdRelative);
   const topic = prdTopic(prdPath);
   const headSha = runGit(
     projectRoot,
@@ -290,6 +324,7 @@ function commandPrepareRun(options) {
     caseHash: sha256File(casePath),
     prdPath: prdRelative,
     prdHash: sha256File(prdPath),
+    prdReadiness,
     environment: {
       mode: contract.environment.mode,
       baseRef: contract.environment.baseRef,
@@ -350,6 +385,7 @@ function commandPrepareRun(options) {
       prd: record.preparedPrdPath,
       runDir: record.runDir,
       gates: record.gatesPath,
+      prdReadiness,
     })}\n`);
   } catch (error) {
     writeJsonAtomic(runRecordPath, {

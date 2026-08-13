@@ -7,6 +7,7 @@ import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const reporter = path.join(repoRoot, "skills", "benchmark-implement", "scripts", "benchmark_report.js");
+const cleanPrd = fs.readFileSync(path.join(repoRoot, "cli", "test", "fixtures", "prelint", "prd-clean.md"), "utf8");
 
 function write(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -28,6 +29,11 @@ function git(root, args) {
   return result.stdout.trim();
 }
 
+function benchmarkPrd({ approval = "approved", includeSections = true } = {}) {
+  const approved = cleanPrd.replace('human_approval: "approved"', `human_approval: "${approval}"`);
+  return includeSections ? approved : approved.replace(/## 12\. Implementation Result Report Contract[\s\S]*$/, "");
+}
+
 test("report and comparison preserve hard outcomes while scoring only evidenced process behavior", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "benchmark-report-"));
   const caseDir = path.join(root, "benchmarks", "demo");
@@ -38,7 +44,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   git(root, ["add", "README.md"]);
   git(root, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture"]);
 
-  write(path.join(caseDir, "prd.md"), "---\ntopic: \"demo-app\"\nstatus: \"ready\"\nhuman_approval: \"approved\"\n---\n\n# Fixed benchmark PRD\n");
+  write(path.join(caseDir, "prd.md"), benchmarkPrd());
   write(path.join(caseDir, "benchmark.json"), {
     schema: "sasu.benchmark-case.v2",
     id: "demo",
@@ -57,6 +63,8 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   const secondPrepared = run(root, ["prepare-run", "--case", "benchmarks/demo/benchmark.json"]);
   assert.equal(prepared.runId, "demo-run-1");
   assert.equal(secondPrepared.runId, "demo-run-2");
+  assert.equal(prepared.prdReadiness.status, "ready");
+  assert.equal(prepared.prdReadiness.blockingGaps.length, 0);
   assert.notEqual(prepared.worktree, secondPrepared.worktree);
   assert.equal(fs.existsSync(path.join(prepared.worktree, "demo-app")), false);
   t.after(() => {
@@ -225,4 +233,44 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   const badEvidence = spawnSync(process.execPath, [reporter, ...badEvidenceArgs], { cwd: root, encoding: "utf8" });
   assert.notEqual(badEvidence.status, 0);
   assert.match(badEvidence.stderr, /qualitative evidence reference does not exist: session:missing-event/);
+});
+
+test("prepare-run rejects unapproved and unreadable PRDs before reserving a run", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "benchmark-prd-preflight-"));
+  git(root, ["init", "--quiet"]);
+  write(path.join(root, "README.md"), "# Benchmark fixture\n");
+  git(root, ["add", "README.md"]);
+  git(root, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture"]);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const contract = id => ({
+    schema: "sasu.benchmark-case.v2",
+    id,
+    prd: "prd.md",
+    environment: { mode: "fresh-worktree", baseRef: "HEAD", mustBeAbsent: ["demo-app"] },
+    expected: {
+      terminalStatuses: ["complete"],
+      requiredStages: ["init", "implementation", "verification", "verify-gate", "requirements-fidelity", "finalize"],
+      forbiddenStages: ["final-adversarial-review"],
+      maxVerifyAttempts: 2,
+      falseCompleteAllowed: false,
+    },
+    evaluation: { required: true, requiredCoverage: "complete", models: { codex: "gpt-5.6-sol", claudeCode: "opus" } },
+  });
+
+  for (const fixture of [
+    { id: "pending", prd: benchmarkPrd({ approval: "pending" }), error: /human_approval must be approved/ },
+    { id: "unreadable", prd: benchmarkPrd({ includeSections: false }), error: /benchmark PRD readiness failed/ },
+  ]) {
+    const caseDir = path.join(root, "benchmarks", fixture.id);
+    write(path.join(caseDir, "prd.md"), fixture.prd);
+    write(path.join(caseDir, "benchmark.json"), contract(fixture.id));
+    const result = spawnSync(process.execPath, [reporter, "prepare-run", "--case", `benchmarks/${fixture.id}/benchmark.json`], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, fixture.error);
+    assert.equal(fs.existsSync(path.join(root, "agents", "benchmarks", fixture.id)), false);
+  }
 });
