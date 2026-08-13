@@ -140,7 +140,7 @@ Reference shape:
     "setup": ["pnpm install"]
   },
   "judge": {
-    "retryBudget": 3,
+    "retryBudget": 5,
     "fanout": true,
     "profiles": {
       "routine": {

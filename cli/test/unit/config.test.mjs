@@ -24,7 +24,7 @@ test("judge profiles default to Codex xhigh with capability-preserving Claude fa
     primary: { backend: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
     fallback: { backend: "claude", model: "claude-opus-5", effort: "xhigh" },
   });
-  assert.equal(config.judge.retryBudget, 3);
+  assert.equal(config.judge.retryBudget, 5);
   assert.equal(config.judge.fanout, true);
   assert.equal(config.verify.commandTimeoutMs, 600_000);
 });
@@ -41,7 +41,7 @@ test("project config partially overrides one profile without repeating defaults"
           fallback: { model: "claude-project-opus" },
         },
       },
-      retryBudget: 5,
+      retryBudget: 7,
       fanout: false,
     },
     verify: { commandTimeoutMs: 1234 },
@@ -55,7 +55,7 @@ test("project config partially overrides one profile without repeating defaults"
     model: "claude-project-opus",
     effort: "xhigh",
   });
-  assert.equal(config.judge.retryBudget, 5);
+  assert.equal(config.judge.retryBudget, 7);
   assert.equal(config.judge.fanout, false);
   assert.equal(config.verify.commandTimeoutMs, 1234);
 });

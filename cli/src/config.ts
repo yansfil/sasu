@@ -51,7 +51,11 @@ const DEFAULT_JUDGE: JudgeConfig = {
       fallback: { backend: "claude", model: "claude-opus-5", effort: "xhigh" },
     },
   },
-  retryBudget: 3,
+  // 2026-08-13: raised from 3 after a real run exhausted the budget on two
+  // legitimate fix rounds plus one artifact-staleness slip. The bound exists
+  // to stop unconverging fix loops (PRINCIPLES #13), not to punish honest
+  // iteration; 5 keeps the loop finite while surviving one clumsy attempt.
+  retryBudget: 5,
   // 2026-08-13 creator-assist exploration-settings run: with ~145KB of diff
   // per lane at xhigh effort, Codex Luna finished in 159-165s while Claude
   // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. A timeout
