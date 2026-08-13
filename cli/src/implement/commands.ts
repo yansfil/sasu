@@ -693,12 +693,28 @@ async function acceptanceLane(
     }
     const record = await judgeLane(crypto.randomUUID(), async () => {
       const material = acceptanceMaterial(projectRoot, state, criterion, changedFiles, mechanical);
+      // With no inlined check, artifact, or image, the only honest basis for
+      // a PASS is the code itself - and the agentic probe measured judges
+      // reading zero to two files, zero included. A PASS with a known-zero
+      // read trace is rejected through the normal invalid-output ladder
+      // (retry with the reason, then backend fallback). An unknown trace
+      // (toolRounds null) never rejects: absence of a signal is not evidence
+      // of absence.
+      const inlinedProof = material.checks.length > 0 || material.evidence.length > 0 || material.readableArtifacts.length > 0;
       return runJudge(
         config,
         `implement:acceptance:${criterion.id}`,
         "routine",
         acceptancePrompt(state, criterion, material),
-        (value) => validateSemanticVerdict(value, [criterion.id]),
+        (value, activity) => {
+          const verdict = validateSemanticVerdict(value, [criterion.id]);
+          if (typeof verdict === "string") return verdict;
+          const passed = verdict.criteria.some((entry) => entry.verdict === "PASS");
+          if (!inlinedProof && passed && activity.commands.length === 0 && activity.toolRounds === 0) {
+            return `${criterion.id} has no inlined check or artifact, so a PASS must rest on reading the implementation; no file read was recorded - read the files you cite as evidence, then judge again`;
+          }
+          return verdict;
+        },
         // 2026-08-13 live probe: 16 Luna xhigh calls across direct proof,
         // code PASS/FAIL, a 21-file noisy manifest, allowlisted dependencies,
         // and prompt injection were correct with zero to two exact-path reads.

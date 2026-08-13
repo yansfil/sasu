@@ -49,7 +49,7 @@ function writeContract(dir, n) {
   return "agents/quick/t/contract.md";
 }
 
-function withStub(dir, response, fn) {
+function withStub(dir, response, fn, extraEnv = {}) {
   // Under agents/ so the stub plumbing rides neither the judged git diff
   // (isExcludedFromDiff excludes the whole namespace) nor the vouched tree
   // fingerprint. Only the first half was true when this comment was written:
@@ -63,14 +63,16 @@ function withStub(dir, response, fn) {
   const stubFile = path.join(dir, "agents", "stub.json");
   fs.mkdirSync(path.dirname(stubFile), { recursive: true });
   fs.writeFileSync(stubFile, JSON.stringify(response));
-  const saved = { backend: process.env.SASU_JUDGE_BACKEND, file: process.env.SASU_JUDGE_STUB_FILE };
+  const keys = ["SASU_JUDGE_BACKEND", "SASU_JUDGE_STUB_FILE", ...Object.keys(extraEnv)];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   process.env.SASU_JUDGE_BACKEND = "stub";
   process.env.SASU_JUDGE_STUB_FILE = stubFile;
+  for (const [key, value] of Object.entries(extraEnv)) process.env[key] = value;
   const restore = () => {
-    if (saved.backend === undefined) delete process.env.SASU_JUDGE_BACKEND;
-    else process.env.SASU_JUDGE_BACKEND = saved.backend;
-    if (saved.file === undefined) delete process.env.SASU_JUDGE_STUB_FILE;
-    else process.env.SASU_JUDGE_STUB_FILE = saved.file;
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
   };
   return fn().finally(restore);
 }
@@ -162,6 +164,9 @@ test("an oversized diff on an agentic backend falls back to the read-only judge 
     dir,
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "read big.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "read big.ts" }] },
     () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, diffText: bigDiff, skipMechanical: true }),
+    // The simulated agentic judge attests one read round; an unbacked PASS
+    // with a known-zero trace is rejected by the read-evidence guard.
+    { SASU_JUDGE_STUB_TOOL_ROUNDS: "1" },
   );
   assert.equal(result.ok, true, "the fallback must judge, not throw");
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
@@ -798,7 +803,10 @@ test("short-circuit: an agentic-lane semantic FAIL never refuses - the judge rea
   // fenced diff. That FAIL is not reproducible-by-construction either.
   fs.writeFileSync(path.join(dir, "big.ts"), `export const x = [\n${"  1,\n".repeat(Math.ceil(VERIFY_DIFF_MAX_CHARS / 5))}];\n`);
   const run = (response) =>
-    withStub(dir, response, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
+    withStub(dir, response, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }),
+      // This test's premise is a judge that read live files; attest the read
+      // so the read-evidence guard does not reject the unbacked AC1 PASS.
+      { SASU_JUDGE_STUB_TOOL_ROUNDS: "1" });
 
   const first = await run(FAIL_TWO);
   assert.equal(first.ok, false);

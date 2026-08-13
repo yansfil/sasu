@@ -9,6 +9,13 @@ export interface BackendRunResult {
   text: string;
   activity?: {
     commands: string[];
+    /**
+     * Evidence-gathering rounds the backend can attest to beyond `commands`:
+     * claude `-p` reports `num_turns`, where a one-shot no-tool reply is 1
+     * turn, so `num_turns - 1` counts tool rounds. Absent means the backend
+     * has no signal, which callers must treat as unknown, never as zero.
+     */
+    toolRounds?: number;
   };
 }
 
@@ -229,7 +236,18 @@ export class ClaudeBackend implements JudgeBackend {
         const detail = String(rec["result"] ?? "claude reported an error");
         throw new JudgeError(classifyFailure(this.name, detail), this.name, detail);
       }
-      if (typeof rec["result"] === "string") return { text: rec["result"] };
+      if (typeof rec["result"] === "string") {
+        // num_turns 1 = one-shot reply with zero tool rounds (verified
+        // 2026-08-13 against a no-tool -p call). Reported only when parseable
+        // so a missing field stays "unknown" instead of a false zero.
+        const numTurns = rec["num_turns"];
+        return {
+          text: rec["result"],
+          ...(typeof numTurns === "number" && Number.isFinite(numTurns)
+            ? { activity: { commands: [], toolRounds: Math.max(0, numTurns - 1) } }
+            : {}),
+        };
+      }
     }
     // Fall back to raw stdout when the envelope shape changes across CLI versions.
     if (result.stdout.trim() !== "") return { text: result.stdout };
@@ -477,17 +495,28 @@ export class StubBackend implements JudgeBackend {
       if (item === undefined) {
         throw new JudgeError("judge-invalid-output", this.name, `stub byPurpose has no match for: ${purpose ?? "(none)"}`);
       }
-      return { text: typeof item === "string" ? item : JSON.stringify(item) };
+      return { text: typeof item === "string" ? item : JSON.stringify(item), activity: stubActivity() };
     }
     if (Array.isArray(raw)) {
       const cursorFile = `${stubFile}.cursor`;
       const cursor = fs.existsSync(cursorFile) ? Number(fs.readFileSync(cursorFile, "utf8")) : 0;
       const item = raw[Math.min(cursor, raw.length - 1)];
       fs.writeFileSync(cursorFile, String(cursor + 1));
-      return { text: typeof item === "string" ? item : JSON.stringify(item) };
+      return { text: typeof item === "string" ? item : JSON.stringify(item), activity: stubActivity() };
     }
-    return { text: typeof raw === "string" ? raw : JSON.stringify(raw) };
+    return { text: typeof raw === "string" ? raw : JSON.stringify(raw), activity: stubActivity() };
   }
+}
+
+/**
+ * The stub reads nothing by construction, so it attests zero tool rounds by
+ * default - that default is what lets tests exercise the read-evidence
+ * guard. Tests simulating a judge that DID read live files (same rehearsal
+ * pattern as SASU_JUDGE_STUB_NO_AGENTIC) set SASU_JUDGE_STUB_TOOL_ROUNDS.
+ */
+function stubActivity(): { commands: string[]; toolRounds: number } {
+  const raw = Number(process.env["SASU_JUDGE_STUB_TOOL_ROUNDS"] ?? "0");
+  return { commands: [], toolRounds: Number.isFinite(raw) && raw > 0 ? raw : 0 };
 }
 
 interface SpawnOutcome {

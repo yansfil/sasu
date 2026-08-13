@@ -733,3 +733,52 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   assert.equal(finalized.json.detail.receipt.status, "complete");
   assert.equal(finalized.json.state.status, "complete");
 });
+
+test("an unbacked acceptance PASS with a known-zero read trace is invalidated", () => {
+  const root = makeProject();
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  let text = fs.readFileSync(prdPath, "utf8");
+  text = text.replace(
+    "- AC1. A completed task can be verified and finalized from one state.",
+    "- AC1. A completed task can be verified and finalized from one state.\n- AC2. The same flow reports its status honestly.",
+  );
+  // AC2 hangs off its own requirement covered ONLY by a live-judge
+  // verification: coverage expands through requirements, so R1's mechanical
+  // rows must not reach AC2 or its checks would count as inlined proof.
+  text = text.replace(
+    "- R1. The flow completes through one state. Covers AC1.",
+    "- R1. The flow completes through one state. Covers AC1.\n- R2. The flow reports honestly. Covers AC2.",
+  );
+  text = text.replace("- T1. Implement the flow. Covers R1.", "- T1. Implement the flow. Covers R1, R2.");
+  text = text.replace(
+    "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |",
+    "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |\n| V4 | live judge runtime | R2, AC2 | the status report criterion is judged from the implementation | yes | no |",
+  );
+  fs.writeFileSync(prdPath, text);
+  const { file, capture } = stub(root);
+  const stubJson = JSON.parse(fs.readFileSync(file, "utf8"));
+  stubJson.byPurpose["implement:acceptance:AC2"] = {
+    verdict: "PASS",
+    criteria: [{ id: "AC2", verdict: "PASS", reason: "status honest", evidence: "src/status.ts" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(stubJson));
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+
+  // The stub attests zero tool rounds, so AC2's unbacked PASS is rejected
+  // through the invalid-output ladder while check-backed AC1 still settles.
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 1);
+  const attempt = verified.json.detail.attempt;
+  assert.equal(attempt.lanes.acceptance.verdict, "ERROR");
+  const ac1 = attempt.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
+  const ac2 = attempt.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC2");
+  assert.equal(ac1.verdict, "PASS");
+  assert.equal(ac2.verdict, "ERROR");
+  assert.match(ac2.error.message, /no file read was recorded/);
+
+  // A judge that attests a read is accepted on the same contract.
+  const attested = run(root, ["implement", "verify"], { env: { ...env, SASU_JUDGE_STUB_TOOL_ROUNDS: "1" } });
+  assert.equal(attested.status, 0, attested.stderr + attested.stdout);
+  assert.equal(attested.json.detail.attempt.verdict, "PASS");
+});

@@ -815,7 +815,7 @@ async function settleVerifyLanes(
           vl.purpose,
           "routine",
           vl.prompt,
-          (value) => {
+          (value, activity) => {
             const laneIds = vl.criteria.map((c) => c.id);
             const validated = validateSemanticVerdict(value, laneIds);
             if (typeof validated === "string") return validated;
@@ -827,6 +827,21 @@ async function settleVerifyLanes(
             // a foreign FAIL cannot fail a lane it does not belong to.
             const allowed = new Set(laneIds);
             const own = validated.criteria.filter((c) => allowed.has(c.id));
+            // An agentic lane gets no diff body - only criteria backed by an
+            // inlined check or artifact can honestly PASS without a file
+            // read. A known-zero read trace under an unbacked PASS goes back
+            // through the invalid-output ladder; an unknown trace never
+            // rejects (absence of a signal is not evidence of absence).
+            if (vl.agentic && activity.commands.length === 0 && activity.toolRounds === 0) {
+              const backed = new Set([
+                ...vl.laneChecks.map((c) => c.criterionId),
+                ...vl.material.map((m) => m.criterionId),
+              ]);
+              const unbacked = own.filter((c) => c.verdict === "PASS" && !backed.has(c.id));
+              if (unbacked.length > 0) {
+                return `criteria ${unbacked.map((c) => c.id).join(", ")} passed with no inlined proof and no recorded file read - read the files you cite as evidence, then judge again`;
+              }
+            }
             return { verdict: own.some((c) => c.verdict === "FAIL") ? ("FAIL" as const) : ("PASS" as const), criteria: own };
           },
           {

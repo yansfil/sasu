@@ -3,6 +3,17 @@ import { judgeProfileFor } from "../config";
 import { resolveBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeCallRecord } from "./types";
 
+/**
+ * What the judge demonstrably did to gather evidence during one attempt.
+ * `toolRounds: null` means the backend gave no signal - callers must treat
+ * that as unknown, never as "read nothing", or a missing envelope field
+ * would invalidate honest verdicts.
+ */
+export interface JudgeActivity {
+  commands: string[];
+  toolRounds: number | null;
+}
+
 export interface JudgeOutcome<T> {
   value: T;
   record: JudgeCallRecord;
@@ -45,7 +56,7 @@ export async function runJudge<T>(
   purpose: string,
   profile: JudgeProfile,
   prompt: string,
-  validate: (value: unknown) => T | string,
+  validate: (value: unknown, activity: JudgeActivity) => T | string,
   options: { images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[] } = {},
 ): Promise<JudgeOutcome<T>> {
   const selected = effectiveJudgeProfile(config, profile);
@@ -87,6 +98,7 @@ export async function runJudge<T>(
     activityCommands = [];
     return true;
   };
+  let attemptActivity: JudgeActivity = { commands: [], toolRounds: null };
   while (true) {
     attempts += 1;
     const retryPreamble =
@@ -107,6 +119,12 @@ export async function runJudge<T>(
       });
       text = result.text;
       activityCommands.push(...(result.activity?.commands ?? []));
+      attemptActivity = {
+        commands: result.activity?.commands ?? [],
+        toolRounds:
+          result.activity?.toolRounds ??
+          (result.activity !== undefined ? result.activity.commands.length : null),
+      };
     } catch (error) {
       if (error instanceof JudgeError) {
         const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout" || error.code === "judge-invalid-output";
@@ -129,7 +147,7 @@ export async function runJudge<T>(
       }
       continue;
     }
-    const validated = validate(parsed);
+    const validated = validate(parsed, attemptActivity);
     if (typeof validated === "string") {
       lastProblem = validated;
       if (attempts >= 2) {

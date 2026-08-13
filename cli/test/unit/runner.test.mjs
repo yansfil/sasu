@@ -307,3 +307,38 @@ test("runJudge falls back from a Codex runtime failure to Claude", async () => {
     process.env.PATH = previousPath;
   }
 });
+
+test("claude num_turns rides into validator activity; a missing field stays unknown", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const verdict = JSON.stringify({ verdict: "PASS", findings: [] });
+  const envelope = (extra) => JSON.stringify({ type: "result", is_error: false, result: verdict, ...extra });
+  const fakeClaude = path.join(binDir, "claude");
+  fs.chmodSync(fs.writeFileSync(fakeClaude, `#!/bin/sh\ncat "$CLAUDE_FAKE_ENVELOPE"\n`) ?? fakeClaude, 0o755);
+  const envelopeFile = path.join(binDir, "envelope.json");
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "claude";
+  process.env.PATH = `${binDir}:/usr/bin:/bin`;
+  process.env.CLAUDE_FAKE_ENVELOPE = envelopeFile;
+  try {
+    fs.writeFileSync(envelopeFile, envelope({ num_turns: 3 }));
+    let seen = null;
+    await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
+      seen = activity;
+      return validateGapVerdict(value);
+    });
+    assert.deepEqual(seen, { commands: [], toolRounds: 2 }, "num_turns 3 = two tool rounds");
+
+    fs.writeFileSync(envelopeFile, envelope({}));
+    await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
+      seen = activity;
+      return validateGapVerdict(value);
+    });
+    assert.equal(seen.toolRounds, null, "a missing num_turns must stay unknown, never zero");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    delete process.env.CLAUDE_FAKE_ENVELOPE;
+  }
+});

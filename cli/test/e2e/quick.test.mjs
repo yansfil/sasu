@@ -750,6 +750,9 @@ test("an oversized real diff on an agentic backend falls back to the read-only j
         { id: "AC2", verdict: "PASS", reason: "persist() present", evidence: "read widget.js" },
       ],
     }),
+    // The simulated agentic judge attests one read round; an unbacked PASS
+    // with a known-zero trace is rejected by the read-evidence guard.
+    env: { SASU_JUDGE_STUB_TOOL_ROUNDS: "1" },
   });
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
