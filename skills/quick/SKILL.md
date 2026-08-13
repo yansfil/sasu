@@ -22,6 +22,20 @@ The cost of that trade: the acceptance criteria are the whole spec and there is 
 
 Normal-sized diffs are pushed into the judge prompt. When one lane exceeds the prompt budget, an agentic-capable routine backend receives the exact changed-file allowlist in a scoped read-only workspace; its command trace is audited and recorded. This fallback reads evidence but never executes project code, writes, browses, or explores broadly.
 
+## Ambiguity Policy
+
+The `$quick` invocation is the user's standing decision to trade questions for recorded, veto-able assumptions.
+Default to deciding, not asking: if a reasonable senior implementer could pick a defensible default from the conversation and the repository's conventions, and a wrong pick is reversible in code, it is an assumption — never a question.
+An assumption that shapes the spec lands in the contract as a criterion or non-goal; every assumption lands in the final report, so the user can veto it after the fact.
+
+Ask only when one of these holds:
+
+- The answer is in the hard-stop class: credentials, billing or external spend, production data, destructive or irreversible actions, or an auth/security product decision.
+- No defensible default exists and a wrong guess is expensive to reverse.
+
+When something does clear that bar, front-load it: collect every qualifying question into one single message before Stage 1, each with a recommended default so one short reply settles them all.
+After that message, do not ask again mid-run; the only later stops are the ones in Stops that first materialize during execution.
+
 ## Preflight
 
 - Derive a kebab-case `<slug>` from the topic.
@@ -136,6 +150,6 @@ In both cases:
 
 Never stop for stage transitions, and never stop before Stage 4 has run. Stop and ask only when:
 
-- a contract-breaking ambiguity has no defensible assumption.
+- an ambiguity clears the Ambiguity Policy's bar for asking (hard-stop class, or no defensible default and expensive to reverse).
 - a verify finding is marked `requiresHuman`, the retry budget is exhausted, or a re-run is refused on the unchanged tree - after closing the run through the handoff path.
 - the work touches an implement-pipeline hard stop (real-data migrations, auth/security decisions, payments, production data, credentials, destructive actions, external spend).

@@ -42,10 +42,20 @@ If `agents/interview/<topic-slug>/qa-log.md` exists for the same topic (or the l
 
 ## Ambiguity Policy
 
-Follow the `gen-prd` skill's rule: ask only contract-breaking questions.
-A question is contract-breaking when a wrong guess would change scope, data shape, external-service choice, delivery mode, or destroy work.
-Everything else becomes an explicit assumption recorded in the PRD's `Decision Traceability For Fidelity Review` section, so the fidelity review can audit it later.
-Do not run an interactive interview; the conversation already happened.
+The `$please` invocation is the user's standing decision to trade questions for recorded, veto-able assumptions.
+Default to deciding, not asking: if a reasonable senior implementer could pick a defensible default from the conversation, the repository's conventions, and `agents/config.json`, and a wrong pick is reversible in code, it is an assumption — never a question.
+Record every such assumption in the PRD's `Decision Traceability For Fidelity Review` section, restate it in the pre-implementation PRD summary and the final report, and let the user veto it after the fact.
+
+Ask only when one of these holds:
+
+- The answer is in the hard-stop class: credentials, billing or external spend, production data, destructive or irreversible actions, or an auth/security product decision.
+- No defensible default exists and a wrong guess is expensive to reverse: an external-service commitment, a persistent data shape, or delivery mode with no config and no conversational signal.
+
+`gen-prd`'s standalone prompts do not apply here: the conversation is the interview, so never ask its "no interview source" blocking question or recommend `$interview-me` mid-run.
+When a short affirmative in the conversation is ambiguous, resolve it by the strongest contextual reading and record the reading as an assumption instead of asking.
+
+When something does clear the bar for asking, front-load it: finish the completeness sweep first, collect every qualifying question together with the `4.1` human-only pre-work items into one single message at the start of the run, and attach a recommended default to each so one short reply can settle everything.
+After that single upfront message, do not ask again mid-run; the only later stops are hard stops that first materialize during execution (a failed verification needing a product decision, an unexpected destructive step, a credential that turns out to be required).
 Before drafting, perform a silent product-completeness sweep over the full intended user journey, relevant UX states, accessibility, responsive behavior, performance, security, operation, support, and recovery boundaries.
 Apply only relevant boundaries and ask only when a missing answer is contract-breaking.
 Do not silently reduce the product to an MVP because the pipeline is automated.
@@ -57,6 +67,9 @@ Write the PRD by following the `gen-prd` skill in full:
 - Output to `agents/prd/<topic-slug>/prd.md` with every required section.
 - `source_intake: "current conversation"` unless a real intake file exists.
 - Preserve conversation decisions in Decision Traceability: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above.
+- Author `4.2 Human Decisions Before PRD Approval` as `None required` by default: the `$please` invocation already carries the user's approval of scope, structure, verification modes, and conversation-agreed delivery, so approval-type bullets become Decision Traceability assumptions instead.
+  Only hard-stop-class decisions (per the Ambiguity Policy) may remain in `4.2`.
+  Keep `4.1 Pre-Work` honest — genuinely human-only items (credentials, accounts, owner-identity steps) still block and still get asked, in one message.
 - Preserve a coherent production-quality product boundary, with every deliberate omission recorded as a non-goal or deferred decision with consequence, rationale, and revisit condition.
 - Assign `review_profile` semantically from the complete product and engineering effects and write a concrete `review_rationale`; use `standard` for small user-facing work and `high-risk` for sensitive or irreversible effects.
 - Run the Inline Self-Check Before Ready (including its losslessness item; do not treat silence or a topic change as approval) and the Harness Readiness Gate (`sasu prd readiness --prd`) exactly as the `gen-prd` skill requires.
