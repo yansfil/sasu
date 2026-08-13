@@ -96,7 +96,60 @@ function inputFingerprint(
   }));
 }
 
-function publicState(state: ImplementState, currentSourceDigest?: string, currentInputFingerprint?: string): Record<string, unknown> {
+interface VerificationBudgetView {
+  fixAttempts: number;
+  totalAttempts: number;
+  budget: number;
+  budgetExhausted: boolean;
+  consecutiveErrors: number;
+  judgeErrorLoop: boolean;
+}
+
+function verificationBudget(state: ImplementState, budget: number): VerificationBudgetView {
+  let fixAttempts = 0;
+  let consecutiveErrors = 0;
+  for (const attempt of state.verificationAttempts) {
+    if (attempt.verdict === "PASS") {
+      fixAttempts = 0;
+      consecutiveErrors = 0;
+      continue;
+    }
+    if (attempt.verdict === "ERROR") {
+      consecutiveErrors += 1;
+      continue;
+    }
+    // Prelint is a free structural correction. Any other settled non-PASS
+    // gave the implementation session something concrete to fix.
+    if (attempt.error?.stage === "prelint") continue;
+    fixAttempts += 1;
+    consecutiveErrors = 0;
+  }
+  return {
+    fixAttempts,
+    totalAttempts: state.verificationAttempts.length,
+    budget,
+    budgetExhausted: fixAttempts > 0 && fixAttempts >= budget,
+    consecutiveErrors,
+    judgeErrorLoop: consecutiveErrors > 0 && consecutiveErrors >= budget,
+  };
+}
+
+function terminalBudgetMessage(view: VerificationBudgetView): string | null {
+  if (view.budgetExhausted) {
+    return `unified verification fix budget exhausted (${view.fixAttempts}/${view.budget})`;
+  }
+  if (view.judgeErrorLoop) {
+    return `unified judge failed ${view.consecutiveErrors} times in a row without a verdict`;
+  }
+  return null;
+}
+
+function publicState(
+  state: ImplementState,
+  retryBudget: number,
+  currentSourceDigest?: string,
+  currentInputFingerprint?: string,
+): Record<string, unknown> {
   const latest = state.verificationAttempts.at(-1) ?? null;
   const effectiveVerdict = latest === null
     ? "NOT_RUN"
@@ -115,13 +168,19 @@ function publicState(state: ImplementState, currentSourceDigest?: string, curren
       acceptanceOpen: state.acceptanceCriteria.filter((entry) => entry.status !== "complete").length,
       verificationNotPassed: state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").length,
     },
-    verification: { verdict: effectiveVerdict, attempts: state.verificationAttempts.length, latest },
+    verification: {
+      verdict: effectiveVerdict,
+      attempts: state.verificationAttempts.length,
+      budget: verificationBudget(state, retryBudget),
+      latest,
+    },
     artifacts: state.artifacts,
     completion: state.completion,
   };
 }
 
 function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const config = loadConfig(projectRoot);
   const prdInput = requiredFlag(args, "prd");
   const prd = normalizeProjectPath(projectRoot, prdInput);
   if (!fs.existsSync(prd.absolute)) throw new Error(`PRD not found: ${prd.relative}`);
@@ -180,10 +239,11 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   fs.mkdirSync(path.join(projectRoot, state.runDir, "artifacts", "logs"), { recursive: true });
   writeJsonAtomic(statePath, state);
   writeActivePointer(projectRoot, state);
-  return result("start", true, `implement run started: ${slug}`, publicState(state), state);
+  return result("start", true, `implement run started: ${slug}`, publicState(state, config.judge.retryBudget), state);
 }
 
 function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const config = loadConfig(projectRoot);
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   if (state.status === "complete") throw new Error("implement run is already complete");
   const id = requiredFlag(args, "id").toUpperCase();
@@ -214,10 +274,10 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
     return `${entry.id} (${label}, ${note})`;
   };
   const remainingLine = remaining.length === 0
-    ? "remaining: none — all tasks closed"
+    ? "remaining: none - all tasks closed"
     : `remaining: ${remaining.map(describe).join(", ")}`;
   return result("task", true, `${id} is ${nextStatus}; ${remainingLine}`, {
-    ...publicState(state),
+    ...publicState(state, config.judge.retryBudget),
     remainingTasks: remaining.map((entry) => ({
       id: entry.id,
       title: entry.title,
@@ -272,6 +332,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 }
 
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const config = loadConfig(projectRoot);
   const { state } = loadState(projectRoot, stateOptions(args));
   const source = captureSourceSnapshot(projectRoot);
   const problems = artifactIntegrityProblems(projectRoot, state, source);
@@ -284,7 +345,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const currentInput = inputFingerprint(state, source.digest, fidelityInput);
   return result("status", true, `${state.topicSlug}: ${state.status}`, {
-    ...publicState(state, source.digest, prdStale ? "PRD_STALE" : currentInput),
+    ...publicState(state, config.judge.retryBudget, source.digest, prdStale ? "PRD_STALE" : currentInput),
     artifactProblems: problems,
     prdProblem: prdStale ? "PRD changed after implement start" : null,
   });
@@ -697,6 +758,18 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   if (state.status === "complete") throw new Error("implement run is already complete");
   const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
   if (openTasks.length > 0) throw new Error(`verify requires all tasks complete; open: ${openTasks.map((entry) => entry.id).join(", ")}`);
+  const config = loadConfig(projectRoot);
+  const budgetBefore = verificationBudget(state, config.judge.retryBudget);
+  const terminalBefore = terminalBudgetMessage(budgetBefore);
+  if (terminalBefore !== null) {
+    return result(
+      "verify",
+      false,
+      `${terminalBefore}; no mechanical command or judge was called`,
+      { verificationBudget: budgetBefore, judgeCalls: 0, terminalReason: budgetBefore.budgetExhausted ? "budget-exhausted" : "judge-error-loop" },
+      state,
+    );
+  }
   const started = Date.now();
   const startedAt = nowIso();
   const prdAbsolute = normalizeProjectPath(projectRoot, state.prdPath).absolute;
@@ -713,14 +786,23 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
-    return result("verify", false, "PRD prelint failed before mechanical verification; no judge was called", { attempt }, state);
+    return result("verify", false, "PRD prelint failed before mechanical verification; no judge was called", {
+      attempt,
+      verificationBudget: verificationBudget(state, config.judge.retryBudget),
+    }, state);
   }
   const runtimeArtifactProblems = artifactIntegrityProblems(projectRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) }, source);
   if (runtimeArtifactProblems.length > 0) {
     const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, [], "artifact", "artifact-stale", runtimeArtifactProblems.join("; "), "STALE");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
-    return result("verify", false, "runtime artifact preflight failed; no mechanical command or judge was called", { attempt, problems: runtimeArtifactProblems }, state);
+    const budget = verificationBudget(state, config.judge.retryBudget);
+    const terminal = terminalBudgetMessage(budget);
+    return result("verify", false, `runtime artifact preflight failed; no mechanical command or judge was called${terminal === null ? "" : `; ${terminal}`}`, {
+      attempt,
+      problems: runtimeArtifactProblems,
+      verificationBudget: budget,
+    }, state);
   }
   const bindings = mechanicalBindings(projectRoot, state.verification);
   const mechanical = runMechanicalBindings(projectRoot, state, bindings, source.digest);
@@ -733,13 +815,18 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
-    return result("verify", false, `${message}; no judge was called`, { attempt, judgeCalls: 0 }, state);
+    const budget = verificationBudget(state, config.judge.retryBudget);
+    const terminal = terminalBudgetMessage(budget);
+    return result("verify", false, `${message}; no judge was called${terminal === null ? "" : `; ${terminal}`}`, {
+      attempt,
+      judgeCalls: 0,
+      verificationBudget: budget,
+    }, state);
   }
 
   const material = changeMaterial(projectRoot, state, source);
   const changedPaths = changedPathsSince(state.initialSource, source);
   const changedFiles = changedFileManifest(projectRoot, changedPaths);
-  const config = loadConfig(projectRoot);
   const fidelityInvocationId = crypto.randomUUID();
   const [acceptance, fidelity] = await Promise.all([
     acceptanceLane(config, projectRoot, state, changedFiles, changedPaths, mechanical),
@@ -782,7 +869,13 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   };
   state.verificationAttempts.push(attempt);
   persistState(statePath, state);
-  return result("verify", verdict === "PASS", `unified verification ${verdict}`, { attempt, sourceRouting: sourceContext.routing }, state);
+  const budget = verificationBudget(state, config.judge.retryBudget);
+  const terminal = terminalBudgetMessage(budget);
+  return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}`, {
+    attempt,
+    sourceRouting: sourceContext.routing,
+    verificationBudget: budget,
+  }, state);
 }
 
 function completionFingerprint(

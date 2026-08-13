@@ -172,6 +172,8 @@ For a qa-log PRD, full qa-log is used unless a fresh spec gate already settled t
 
 Do not automatically retry a generative judge.
 A new explicit verify command creates a new attempt.
+The CLI bounds the autonomous loop with `judge.retryBudget`: non-PASS attempts spend the fix budget, judge-only ERRORs use a separate consecutive-error gauge, prelint corrections are free, and PASS resets both gauges.
+When verify reports `budgetExhausted` or `judgeErrorLoop`, stop rather than running another attempt.
 
 ## 6. Finalize
 

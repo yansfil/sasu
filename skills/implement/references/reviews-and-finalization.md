@@ -46,6 +46,8 @@ NOT_RUN, FAIL, BLOCKED, ERROR, and STALE are not completion states.
 
 A source or evidence change after PASS makes the result stale.
 Run verify again explicitly after the implementation and final evidence are coherent.
+Each explicit run returns the current fix budget and consecutive judge-error gauges.
+When `budgetExhausted` or `judgeErrorLoop` is true, the CLI refuses further verification work and the run moves to a blocked handoff.
 
 ## Finalize
 

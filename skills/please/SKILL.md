@@ -36,7 +36,7 @@ The requirement source is the current conversation.
 An argument after `$please` is a topic brief or emphasis, not a replacement for the conversation.
 
 Before starting, capture verbatim the user message that invoked `$please` (including any argument).
-This exact text is passed to `init --allow-unapproved-prd` later; losing it forces a stop to re-ask.
+This exact text is passed to `sasu implement start --allow-unapproved-prd` later; losing it forces a stop to re-ask.
 
 If `agents/interview/<topic-slug>/qa-log.md` exists for the same topic (or the legacy `agents/intake/<topic-slug>/qa-log.md` from before the rename), use it as an additional canonical interview source per the `gen-prd` skill's normal input rules.
 
@@ -59,7 +59,7 @@ Write the PRD by following the `gen-prd` skill in full:
 - Preserve conversation decisions in Decision Traceability: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above.
 - Preserve a coherent production-quality product boundary, with every deliberate omission recorded as a non-goal or deferred decision with consequence, rationale, and revisit condition.
 - Assign `review_profile` semantically from the complete product and engineering effects and write a concrete `review_rationale`; use `standard` for small user-facing work and `high-risk` for sensitive or irreversible effects.
-- Run the Inline Self-Check Before Ready (including its losslessness item; do not treat silence or a topic change as approval) and the Harness Readiness Gate (`plan-verification --prd`) exactly as the `gen-prd` skill requires.
+- Run the Inline Self-Check Before Ready (including its losslessness item; do not treat silence or a topic change as approval) and the Harness Readiness Gate (`sasu prd readiness --prd`) exactly as the `gen-prd` skill requires.
 - Mark `status: ready` only when those gates pass.
 - Leave `human_approval: "pending"`.
   Never write `approved`; the user did not review the document, and the deviation record in Stage 2 is the honest representation of what happened.
@@ -81,7 +81,7 @@ sasu implement start \
 Rules:
 
 - The PRD declares the review profile; a missing or invalid value safely defaults to `standard`.
-- Task implementation stays sequential. Worktree and delivery concerns remain outside the closing CLI.
+- Task order follows the PRD dependencies. Independent ready tasks may run concurrently; only this orchestrating session closes tasks in `state.json`.
 - If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$ho-setup` once in the final report.
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - Existing or old-schema runs are not resumed or migrated. Start a new topic slug after explicitly retiring obsolete state.
@@ -110,12 +110,12 @@ Stop and ask only when:
 
 ## Sasu Gates In The Autonomous Loop
 
-A sasu gate BLOCK is not a stop: it means "cannot pass until PASS".
-When a gate (gap-audit, spec, or verify) blocks during a `$please` run:
+A BLOCK is not a stop until the CLI reports a terminal cause: first fix the reported cause, then ask the same stage again.
+When gap-audit, spec, standalone verify, or unified implement verify blocks during a `$please` run:
 
 1. Fix every agent-fixable finding (amend the qa-log or PRD, fix the code), then re-run the same gate.
-2. Repeat within the gate's retry budget (default 3 autonomous fix attempts). The budget is N chances to fix and re-verify, not N identical retries: re-running with nothing changed is refused at $0 and spends no attempt.
-3. Stop and hand the findings to the user only when a finding is marked `needs human decision`, or the gate output says the retry budget is exhausted or that an identical re-run is refused.
+2. Re-run only after a real fix. The CLI owns the configured retry budget, reports `budgetExhausted` or `judgeErrorLoop`, and refuses further unified verification work after either terminal cause.
+3. Stop and hand the findings to the user only when a finding needs a human decision, the CLI reports a terminal budget cause, or a standalone gate refuses an identical re-run.
 
 Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
 A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `sasu gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.

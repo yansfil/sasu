@@ -558,7 +558,7 @@ Require the implementing agent to report:
 7. Run the Inline Self-Check Before Ready (losslessness, intent, pass intent,
    regression bias, product completeness, verification semantics, and review
    profile) and fix failures.
-8. Run the Harness Readiness Gate (`plan-verification --prd`) and fix any
+8. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
    blocking gaps.
 9. Run the sasu Spec Gate and fix findings until it passes or a
    human-decision finding stops the loop. When the `sasu` binary or its judge

@@ -18,9 +18,9 @@ What this path keeps from the PRD pipeline: acceptance criteria pinned by conten
 
 What it drops: the interview, the 12-section PRD, gap-audit/spec gates, the implement state harness, profile reviews, and ship delivery.
 
-The cost of that trade: the acceptance criteria are the whole spec, judged in one call over the whole diff. When the work needs many criteria over a large diff, verification density drops; the PRD pipeline judges each acceptance criterion at its semantic scope and runs a separate fidelity lane. There is no hard cap - the user's invocation of `$quick` is the only switch - but say so in the final report when the contract grew past a handful of criteria.
+The cost of that trade: the acceptance criteria are the whole spec and there is no separate fidelity lane. Up to eight machine-judged criteria stay in one routine judge call. Larger contracts split into balanced criterion lanes that run concurrently, so the user still gets the quick path without one oversized judgment. There is no hard cap - the user's invocation of `$quick` is the only switch - but say so in the final report when the contract grew past a handful of criteria.
 
-The judge stays a single tool-less call no matter how much evidence a run carries. Evidence is material the harness pushes into that one call, never something the judge goes and fetches.
+Normal-sized diffs are pushed into the judge prompt. When one lane exceeds the prompt budget, an agentic-capable routine backend receives the exact changed-file allowlist in a scoped read-only workspace; its command trace is audited and recorded. This fallback reads evidence but never executes project code, writes, browses, or explores broadly.
 
 ## Preflight
 
@@ -70,7 +70,7 @@ Rules:
 
 ### The evidence lane
 
-The judge sees the diff, plus whatever the harness collected for it. It never goes and fetches anything - it has no tools. So a criterion whose proof is a runtime fact has to declare where that proof comes from, and the harness produces it.
+The judge sees the diff plus whatever the harness collected for it. An oversized-diff lane may read only its exact changed-file allowlist, but it does not discover or produce runtime facts. A criterion whose proof is runtime behavior must still declare where that proof comes from, and the harness produces it.
 
 Four tiers, most trustworthy first. **Always use the highest tier a criterion can reach**; drop a tier only when the one above is genuinely impossible:
 
@@ -82,7 +82,7 @@ Four tiers, most trustworthy first. **Always use the highest tier a criterion ca
 
 Constraints worth knowing before you write the contract:
 
-- Image attachment is a backend capability. Codex supports it directly; Claude can inspect an allowlisted image only in an isolated-read judgment. If a configured routine primary cannot see the image, the criterion falls to the human lane while the capture still runs and is hash-pinned. Configure `judge.profiles.routine.primary` as Codex when a run leans on visual criteria.
+- Image attachment is a backend capability. Codex supports it directly; Claude can inspect an allowlisted image only in a scoped-read judgment. If a configured routine primary cannot see the image, the criterion falls to the human lane while the capture still runs and is hash-pinned. Configure `judge.profiles.routine.primary` as Codex when a run leans on visual criteria.
 - An image only reaches the judge through `capture:`. The same file declared with `evidence:` goes to the human lane instead, because nothing proves when it was made.
 - Evidence paths must be relative to the project root (an absolute path is refused even when it points inside), and must resolve to an ordinary file whose content lives in the tree - symlinks out of the tree and hard links are refused at read time. Keep artifacts under `agents/quick/<slug>/evidence/`.
 - Inline evidence must be text. Binary content is refused - use a capture for something visual, or a check command for what the binary proves.

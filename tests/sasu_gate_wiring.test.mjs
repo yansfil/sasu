@@ -25,6 +25,8 @@ test("interview-me routes closure through the gap-audit gate", () => {
 
 test("gen-prd routes readiness through the spec gate", () => {
   const skill = readSkill("gen-prd");
+  assert.match(skill, /sasu prd readiness --prd/);
+  assert.doesNotMatch(skill, /plan-verification/);
   assert.match(skill, /sasu gate spec --slug <topic-slug> --prd/);
   assert.match(skill, /fidelity/i);
   assert.match(skill, /Never run `sasu gate override` yourself/);
@@ -40,9 +42,20 @@ test("implement routes changed-code tasks through unified implement verify", () 
 test("please treats gate BLOCKs as fix-and-regate loops, stopping only for humans or budget", () => {
   const skill = readSkill("please");
   assert.match(skill, /BLOCK is not a stop/);
-  assert.match(skill, /needs human decision/);
-  assert.match(skill, /retry budget/i);
+  assert.match(skill, /sasu prd readiness --prd/);
+  assert.doesNotMatch(skill, /plan-verification/);
+  assert.match(skill, /needs a human decision/);
+  assert.match(skill, /budgetExhausted/);
+  assert.match(skill, /judgeErrorLoop/);
   assert.match(skill, /Never run `sasu gate override` yourself/);
+});
+
+test("quick documents its fast single-lane path and bounded large-input fallback", () => {
+  const skill = readSkill("quick");
+  assert.match(skill, /Up to eight machine-judged criteria stay in one routine judge call/);
+  assert.match(skill, /balanced criterion lanes that run concurrently/);
+  assert.match(skill, /command trace is audited and recorded/);
+  assert.doesNotMatch(skill, /single tool-less call/);
 });
 
 test("every gate-calling skill keeps the override user-only in the same breath", () => {

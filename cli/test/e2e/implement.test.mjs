@@ -486,6 +486,8 @@ test("artifact registration and verify converge safely when each operation runs 
   assert.equal(verifiedTwice.status, 0);
   assert.equal(verifiedTwice.json.state.verificationAttempts.length, 2);
   assert.equal(verifiedTwice.json.state.verificationAttempts.every((attempt) => attempt.verdict === "PASS"), true);
+  assert.equal(verifiedTwice.json.detail.verificationBudget.fixAttempts, 0);
+  assert.equal(verifiedTwice.json.detail.verificationBudget.consecutiveErrors, 0);
 });
 
 test("closing a task reports the remaining open tasks in the response", () => {
@@ -495,7 +497,7 @@ test("closing a task reports the remaining open tasks in the response", () => {
 
   const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
-  assert.match(closed.json.message, /remaining: none — all tasks closed/);
+  assert.match(closed.json.message, /remaining: none - all tasks closed/);
   assert.deepEqual(closed.json.detail.remainingTasks, []);
 
   const reopened = run(root, ["implement", "task", "--id", "T1", "--status", "pending"]);
@@ -539,5 +541,71 @@ test("task dependencies gate closing order and the response marks ready tasks", 
   assert.equal(run(root, ["implement", "task", "--id", "T3", "--evidence", "adapter b done"]).status, 0);
   const last = run(root, ["implement", "task", "--id", "T4", "--evidence", "integration done"]);
   assert.equal(last.status, 0, last.stderr + last.stdout);
-  assert.match(last.json.message, /remaining: none — all tasks closed/);
+  assert.match(last.json.message, /remaining: none - all tasks closed/);
+});
+
+test("the conversation-approved please chain reaches a finalized receipt", () => {
+  const root = makeProject();
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8").replace('human_approval: "approved"', 'human_approval: "pending"'));
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+
+  const readiness = run(root, ["prd", "readiness", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(readiness.status, 0, readiness.stderr + readiness.stdout);
+  const invocation = "$please implement the current conversation";
+  const started = run(root, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--allow-unapproved-prd", invocation,
+  ]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  assert.equal(started.json.state.prd.approval.source, "conversation");
+  assert.equal(started.json.state.prd.approval.evidence, invocation);
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented from the approved conversation"]).status, 0);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+  const finalized = run(root, ["implement", "finalize"]);
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  assert.equal(finalized.json.detail.receipt.status, "complete");
+});
+
+test("implement verify stops at the configured fix budget before running more work", () => {
+  const root = makeProject();
+  fs.mkdirSync(path.join(root, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    scripts: {
+      test: "node -e \"const fs=require('fs');const p='agents/verify-count';const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8')):0;fs.writeFileSync(p,String(n+1));process.exit(1)\"",
+    },
+  }));
+  startAndClose(root);
+
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  const second = run(root, ["implement", "verify"]);
+  assert.equal(second.status, 1);
+  assert.equal(second.json.detail.verificationBudget.budgetExhausted, true);
+  const refused = run(root, ["implement", "verify"]);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
+  assert.equal(refused.json.detail.judgeCalls, 0);
+  assert.equal(refused.json.state.verificationAttempts.length, 2);
+  assert.equal(fs.readFileSync(path.join(root, "agents", "verify-count"), "utf8"), "2");
+});
+
+test("implement verify bounds consecutive judge errors without spending the fix budget", () => {
+  const root = makeProject();
+  fs.mkdirSync(path.join(root, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  const { file, capture } = stub(root);
+  fs.writeFileSync(file, "{bad json");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
+  const second = run(root, ["implement", "verify"], { env });
+  assert.equal(second.status, 1);
+  assert.equal(second.json.detail.verificationBudget.fixAttempts, 0);
+  assert.equal(second.json.detail.verificationBudget.judgeErrorLoop, true);
+  const refused = run(root, ["implement", "verify"], { env });
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.detail.terminalReason, "judge-error-loop");
+  assert.equal(refused.json.state.verificationAttempts.length, 2);
 });

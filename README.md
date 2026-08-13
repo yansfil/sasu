@@ -26,7 +26,8 @@ conversation
               └─ ship    branch, PR body, push, CI watch, gated merge
                               └─ recorded delivery result
 
-please = the whole chain in one invocation, stopping only for risky work
+quick = small conversation-to-change work with one compact contract and routine judge path
+please = the whole PRD chain in one invocation, stopping only for terminal or risky work
 remember = lessons land as enforcement, not notes
 ```
 
@@ -40,7 +41,8 @@ remember = lessons land as enforcement, not notes
 | `benchmark-implement` | Fixed-PRD harness benchmark: implement delegation, fresh session analysis, deterministic process reports, and baseline comparison |
 | `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
-| `please` | All-in-one runner: conversation to PR with no approval round-trips, recording the invocation itself as the approval deviation |
+| `quick` | Fast path for small work: compact conversation contract, mechanical checks, routine Luna judgment, and a pinned receipt |
+| `please` | All-in-one runner: conversation to PRD, implementation, verified receipt, and conditional PR delivery with no stage-approval round-trips |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
 
 Run artifacts live under the visible `agents/` namespace in the target project (`agents/interview/**`, `agents/prd/**`, `agents/runs/**`, `agents/benchmarks/**`, `agents/config.json`), which is the only namespace the harness reads or writes.
@@ -124,6 +126,7 @@ The prompt limits reads to the copied working set, and the CLI audits Codex's JS
 Accepted command traces are recorded with the judge call so later review can answer what the judge inspected.
 Claude fallback sessions grant only `Read` and `Grep` for the same prompt-level allowlist.
 Gates are hard blocks: an agent can fix findings and re-gate within a retry budget, but only the user can override, and every judgment and override lands in `agents/runs/<topic>/gates/` for the receipt.
+Unified implement verification uses the same configured bound: non-PASS results spend the fix budget, judge-only failures use a separate consecutive-error gauge, and the CLI refuses more work after either terminal condition instead of relying on an agent to stop looping.
 A PASS is pinned to the content hash of its input documents; editing the qa-log or PRD afterwards turns the gate `STALE` in `gate status` until it is re-run, so a gate can never keep vouching for a document it has not seen.
 The CLI never executes implementation work: coding stays in the host agent session.
 `cli/src/implement` owns implement state, evidence registration, unified verification, and finalization.
