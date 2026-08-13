@@ -58,9 +58,8 @@ test("validateSemanticVerdict requires every expected criterion id", () => {
   assert.match(String(result), /AC2/);
 });
 
-// Ouroboros import (semantic.py): an approval that cites nothing is a
-// verification failure, not a pass - the runner's retry loop gets one chance
-// to make the judge cite its sources.
+// An approval that cites nothing is a verification failure, not a pass - the
+// runner's retry loop gets one chance to make the judge cite its sources.
 test("validateSemanticVerdict rejects a PASS criterion with empty evidence", () => {
   const result = validateSemanticVerdict(
     { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] },

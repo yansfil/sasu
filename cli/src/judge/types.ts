@@ -71,8 +71,8 @@ export interface CriterionVerdict {
   reason: string;
   /**
    * What the judge actually looked at for this verdict: file/hunk names or
-   * artifact paths (ouroboros semantic.py import: an empty evidence list on an
-   * approval is treated as a verification failure, not a pass). Enforced for
+   * artifact paths (an empty evidence list on an approval is treated as a
+   * verification failure, not a pass). Enforced for
    * PASS verdicts by validateSemanticVerdict; a FAIL may stand on absence,
    * which has no artifact to cite.
    */
