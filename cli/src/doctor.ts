@@ -4,7 +4,7 @@ import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 
 export interface DoctorSection {
-  section: "judge" | "verify" | "contract";
+  section: "judge" | "verify" | "namespace" | "contract";
   ok: boolean;
   lines: string[];
 }
@@ -65,6 +65,29 @@ export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorS
     verifyLines.push(config.configPath ? `config: ${config.configPath}` : "config: agents/config.json not present (defaults in effect)");
   }
   sections.push({ section: "verify", ok: verifyOk, lines: verifyLines });
+
+  // Run state must never enter commits or PRs. The skill docs claimed "the
+  // doctor enforces this" while no code checked it (a prose-only rule,
+  // PRINCIPLES item 7); this makes the claim true. A probe under the runs
+  // root is what check-ignore is asked about, so both `agents/runs/` and
+  // glob-style ignore rules match; outside a git checkout there is nothing
+  // to enforce and the section reports that honestly.
+  const namespaceLines: string[] = [];
+  let namespaceOk = true;
+  const checkIgnore = spawnSync("git", ["check-ignore", "-q", "agents/runs/probe"], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  if (checkIgnore.error !== undefined || checkIgnore.status === null || checkIgnore.status >= 2) {
+    namespaceLines.push("agents/runs/ gitignore: not checkable (no git checkout)");
+  } else if (checkIgnore.status === 0) {
+    namespaceLines.push("agents/runs/ is gitignored");
+  } else {
+    namespaceOk = false;
+    namespaceLines.push('agents/runs/ is NOT gitignored: run state would enter commits and PRs. Add the line "agents/runs/" to .gitignore');
+  }
+  sections.push({ section: "namespace", ok: namespaceOk, lines: namespaceLines });
 
   sections.push({
     section: "contract",
