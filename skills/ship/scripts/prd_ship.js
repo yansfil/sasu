@@ -967,8 +967,15 @@ function cmdMerge(options) {
   if (!approval) {
     throw new Error("merge requires --approval \"<verbatim user approval to merge>\"; PR creation or CI success alone is not merge approval");
   }
+  const overrides = [];
   if (config.mode !== "pr") {
-    throw new Error(`Delivery mode is '${config.mode}', not 'pr'. Merge is not approved for this implementation run.`);
+    if (!options["override-mode"]) {
+      throw new Error([
+        `Delivery mode is '${config.mode}', not 'pr'. Merge is not approved for this implementation run.`,
+        "Pass --override-mode --reason \"<verbatim user approval>\" only when the user explicitly approved PR delivery after implementation.",
+      ].join("\n"));
+    }
+    overrides.push({ kind: "mode", from: config.mode, reason: requireReason(options, "override-mode") });
   }
 
   const freshness = verifyDelivery(context);
@@ -1046,6 +1053,7 @@ function cmdMerge(options) {
       noChecks: checks.noChecks,
     },
     rules,
+    overrides,
     merge: {
       method,
       commit: mergedPr.mergeCommit && mergedPr.mergeCommit.oid ? mergedPr.mergeCommit.oid : null,
@@ -1062,6 +1070,7 @@ function cmdMerge(options) {
     implementationHead: headSha,
     mergeCommit: result.merge.commit,
     approval,
+    overrides,
   });
   const output = {
     ok: true,

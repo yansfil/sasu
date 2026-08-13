@@ -160,6 +160,8 @@ timeout (rerun `watch-ci`), `1` a guardrail refused the run.
 
 `merge` is a separate, explicitly approved action.
 Pass the user's merge instruction verbatim through `--approval`.
+When implementation was finalized in local delivery mode and the user approves PR delivery later, also pass `--override-mode --reason "<verbatim user approval>"`.
+This mode override records new delivery authorization only and does not bypass freshness, base, CI, mergeability, or reviewed-head checks.
 The command revalidates implementation freshness after the delivery commit,
 proves the local and remote PR heads are identical, checks CI and GitHub
 mergeability, then writes
