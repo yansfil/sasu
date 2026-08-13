@@ -83,6 +83,9 @@ test("installer installs canonical skills with correct substitutions and no alia
   const codexBenchmark = fs.readFileSync(path.join(home, ".codex", "skills", "benchmark-implement", "SKILL.md"), "utf8");
   assert.match(codexBenchmark, /\$benchmark-implement/);
   assert.match(codexBenchmark, /~\/\.codex\/skills\/implement\/SKILL\.md/);
+  assert.match(codexBenchmark, /current coordinator session/);
+  assert.match(codexBenchmark, /Do not spawn an implementation worker session/);
+  assert.doesNotMatch(codexBenchmark, /delegate implementation, gathers/);
   const claudeBenchmark = fs.readFileSync(path.join(home, ".claude", "skills", "benchmark-implement", "SKILL.md"), "utf8");
   assert.match(claudeBenchmark, /\/benchmark-implement/);
   assert.match(claudeBenchmark, /~\/\.claude\/skills\/implement\/SKILL\.md/);

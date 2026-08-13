@@ -240,6 +240,11 @@ function harnessRoot() {
   return path.resolve(path.dirname(fs.realpathSync(__filename)), "../../..");
 }
 
+function canonicalPath(value) {
+  const resolved = path.resolve(value);
+  return fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
+}
+
 function captureWorktreeSnapshot(worktreePath, runDirRelative) {
   const previousCwd = process.cwd();
   const gitModule = path.join(harnessRoot(), "cli", "lib", "git.js");
@@ -638,14 +643,14 @@ function commandReport(options) {
   if (!fs.existsSync(prdPath)) throw new Error(`benchmark PRD not found: ${prdPath}`);
   const prepared = readPreparedRun(projectRoot, contract, casePath, prdPath, runId);
   const runDir = path.resolve(projectRoot, requireOption(options, "run-dir"));
-  if (runDir !== path.resolve(prepared.record.runDir)) {
+  if (canonicalPath(runDir) !== canonicalPath(prepared.record.runDir)) {
     throw new Error(`--run-dir does not match the prepared fresh environment: ${prepared.record.runDir}`);
   }
   const receiptPath = path.join(runDir, "receipt.json");
   const statePath = path.join(runDir, "state.json");
   const receipt = readJson(receiptPath, "implementation receipt");
   const state = readJson(statePath, "implementation state");
-  if (!state.projectRoot || path.resolve(state.projectRoot) !== path.resolve(prepared.record.worktreePath)) {
+  if (!state.projectRoot || canonicalPath(state.projectRoot) !== canonicalPath(prepared.record.worktreePath)) {
     throw new Error("implementation state does not belong to the prepared fresh worktree");
   }
   if (receipt.initialWorktreeSnapshot?.headSha !== prepared.record.initialWorktreeSnapshot?.headSha
@@ -660,7 +665,7 @@ function commandReport(options) {
   const qualitative = qualitativePath ? validateQualitative(readJson(qualitativePath, "qualitative evaluation")) : null;
   const sessionPath = options.session ? path.resolve(options.session) : null;
   if (sessionPath && !fs.existsSync(sessionPath)) throw new Error(`session transcript not found: ${sessionPath}`);
-  const stateSessionId = bareSessionId(state.activeSessionId);
+  const stateSessionId = bareSessionId(state.activeSessionId || state.ownerSessionId);
   const requestedSessionId = bareSessionId(sessionId);
   if (!stateSessionId) throw new Error("implementation state has no activeSessionId; session identity cannot be verified");
   if (stateSessionId !== requestedSessionId) {
