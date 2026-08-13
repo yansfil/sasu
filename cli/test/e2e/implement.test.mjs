@@ -487,3 +487,57 @@ test("artifact registration and verify converge safely when each operation runs 
   assert.equal(verifiedTwice.json.state.verificationAttempts.length, 2);
   assert.equal(verifiedTwice.json.state.verificationAttempts.every((attempt) => attempt.verdict === "PASS"), true);
 });
+
+test("closing a task reports the remaining open tasks in the response", () => {
+  const root = makeProject();
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+
+  const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
+  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+  assert.match(closed.json.message, /remaining: none — all tasks closed/);
+  assert.deepEqual(closed.json.detail.remainingTasks, []);
+
+  const reopened = run(root, ["implement", "task", "--id", "T1", "--status", "pending"]);
+  assert.equal(reopened.status, 0, reopened.stderr + reopened.stdout);
+  assert.match(reopened.json.message, /remaining: T1 \(/);
+  assert.equal(reopened.json.detail.remainingTasks.length, 1);
+  assert.equal(reopened.json.detail.remainingTasks[0].id, "T1");
+  assert.equal(reopened.json.detail.remainingTasks[0].status, "pending");
+});
+
+test("task dependencies gate closing order and the response marks ready tasks", () => {
+  const root = makeProject();
+  const parallelPrd = prd().replace(
+    "- T1. Implement the flow. Covers R1.",
+    [
+      "- T1. Base interface. Covers R1.",
+      "- T2. Adapter A. Covers R1. Depends on: T1.",
+      "- T3. Adapter B. Covers R1. Depends on: T1.",
+      "- T4. Integration. Covers R1. Depends on: T2, T3.",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), parallelPrd);
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+
+  const early = run(root, ["implement", "task", "--id", "T4", "--evidence", "premature"]);
+  assert.notEqual(early.status, 0);
+  assert.match(early.json.message, /cannot close T4: depends on T2, T3 \(not complete\)/);
+
+  const base = run(root, ["implement", "task", "--id", "T1", "--evidence", "base done"]);
+  assert.equal(base.status, 0, base.stderr + base.stdout);
+  assert.match(base.json.message, /T2 \(Adapter A, ready\)/);
+  assert.match(base.json.message, /T3 \(Adapter B, ready\)/);
+  assert.match(base.json.message, /T4 \(Integration, waiting on T2, T3\)/);
+  const byId = Object.fromEntries(base.json.detail.remainingTasks.map((entry) => [entry.id, entry]));
+  assert.equal(byId.T2.ready, true);
+  assert.equal(byId.T4.ready, false);
+  assert.deepEqual(byId.T4.dependsOn, ["T2", "T3"]);
+
+  assert.equal(run(root, ["implement", "task", "--id", "T2", "--evidence", "adapter a done"]).status, 0);
+  assert.equal(run(root, ["implement", "task", "--id", "T3", "--evidence", "adapter b done"]).status, 0);
+  const last = run(root, ["implement", "task", "--id", "T4", "--evidence", "integration done"]);
+  assert.equal(last.status, 0, last.stderr + last.stdout);
+  assert.match(last.json.message, /remaining: none — all tasks closed/);
+});

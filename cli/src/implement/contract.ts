@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
-import type { ContractItem, MechanicalBinding, ReviewProfile, VerificationItem } from "./types";
+import type { ContractItem, MechanicalBinding, ReviewProfile, TaskItem, VerificationItem } from "./types";
 
 interface ParsedItem {
   id: string;
@@ -38,7 +38,7 @@ const parser = require("../../lib/prd_parser.js") as ParserLibrary;
 export interface ImplementContract {
   frontmatter: Record<string, string>;
   body: string;
-  tasks: ContractItem[];
+  tasks: TaskItem[];
   requirements: ContractItem[];
   acceptanceCriteria: ContractItem[];
   verification: VerificationItem[];
@@ -64,6 +64,50 @@ function profile(value: string | undefined): ReviewProfile {
   return "standard";
 }
 
+// Task lines may carry `Depends on: T1, T3` or `Depends on: none`. Absence
+// means "the previous task", so a PRD written without the clause keeps the
+// sequential behavior it always had; only explicit declarations unlock
+// out-of-chain (including parallel) execution.
+const DEPENDS_ON = /\bdepends\s+on:\s*(none\b|T\d+(?:\s*,\s*T\d+)*)/i;
+
+function taskItems(parsed: ParsedItem[]): TaskItem[] {
+  return parsed.map((entry, index): TaskItem => {
+    const clause = entry.text.match(DEPENDS_ON);
+    const dependsOn = clause === null
+      ? (index === 0 ? [] : [parsed[index - 1]!.id])
+      : clause[1]!.toLowerCase() === "none"
+        ? []
+        : [...new Set(clause[1]!.split(",").map((id) => id.trim().toUpperCase()))];
+    return { ...item(entry), dependsOn };
+  });
+}
+
+function validateTaskDependencies(tasks: TaskItem[]): void {
+  const ids = new Set<string>();
+  for (const task of tasks) {
+    if (ids.has(task.id)) throw new Error(`duplicate task id: ${task.id}`);
+    ids.add(task.id);
+  }
+  for (const task of tasks) {
+    for (const dep of task.dependsOn) {
+      if (dep === task.id) throw new Error(`task ${task.id} cannot depend on itself`);
+      if (!ids.has(dep)) throw new Error(`task ${task.id} depends on unknown task ${dep}`);
+    }
+  }
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const visiting = new Set<string>();
+  const settled = new Set<string>();
+  const visit = (id: string, trail: string[]): void => {
+    if (settled.has(id)) return;
+    if (visiting.has(id)) throw new Error(`task dependency cycle: ${[...trail, id].join(" -> ")}`);
+    visiting.add(id);
+    for (const dep of byId.get(id)!.dependsOn) visit(dep, [...trail, id]);
+    visiting.delete(id);
+    settled.add(id);
+  };
+  for (const task of tasks) visit(task.id, []);
+}
+
 export function parseImplementContract(markdown: string): ImplementContract {
   const parsed = parser.stripFrontmatter(markdown);
   const requirements = parser
@@ -72,9 +116,10 @@ export function parseImplementContract(markdown: string): ImplementContract {
   const acceptanceCriteria = parser
     .parseMarkdownItems(parser.extractFirstSection(parsed.body, ["7. Acceptance Criteria", "Acceptance Criteria"]), "AC", "AC")
     .map(item);
-  const tasks = parser
-    .parseMarkdownItems(parser.extractFirstSection(parsed.body, ["8. PRD-Level Tasks", "PRD-Level Tasks"]), "T", "Task")
-    .map(item);
+  const tasks = taskItems(
+    parser.parseMarkdownItems(parser.extractFirstSection(parsed.body, ["8. PRD-Level Tasks", "PRD-Level Tasks"]), "T", "Task"),
+  );
+  validateTaskDependencies(tasks);
   const verificationSection = parser.extractFirstSection(parsed.body, ["9. Verification Contract", "Verification Contract"]);
   const rawVerification = parser.parseVerification(verificationSection);
   const testModes = parser.parseTestModeContract(

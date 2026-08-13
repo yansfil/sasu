@@ -276,8 +276,14 @@ Task rules:
 - Every task traces to at least one requirement unless it is pure verification
   or release hygiene.
 - Tasks must not add hidden scope beyond approved requirements.
-- Do not include write scopes, owners, parallel safety, low-level dependencies,
-  or subagent scheduling. `implement` derives those.
+- A task without a `Depends on:` clause depends on the previous task, so a
+  plain task list stays sequential.
+  Add `Depends on: T1` (or a list, or `none`) only to declare that a task is
+  independent of the chain; the CLI rejects closing a task before its declared
+  dependencies are complete, so an independence claim is part of the approved
+  contract, not a runtime improvisation.
+- Do not include write scopes, owners, or subagent scheduling. `implement`
+  derives those.
 - If implementation later needs an unmapped task or material structure change,
   the agent must ask for approval before continuing.
 
@@ -287,6 +293,7 @@ Use IDs in the text:
 - R1. ...
 - AC1. ...
 - T1. ... Covers R1, AC1.
+- T2. ... Covers R2. Depends on: T1.
 ```
 
 #### Product Semantics Versus Implementation Bindings

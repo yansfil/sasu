@@ -37,6 +37,7 @@ import {
   type MechanicalBinding,
   type MechanicalRunRecord,
   type RegisteredArtifact,
+  type TaskItem,
   type UnifiedVerificationAttempt,
   type VerificationItem,
   type VerificationStatus,
@@ -194,16 +195,36 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   if (item === undefined) throw new Error(`unknown task: ${id}`);
   const evidence = flag(args, "evidence")?.trim() ?? "";
   if (nextStatus !== "pending" && evidence === "") throw new Error("--evidence is required when closing or blocking a task");
+  if (nextStatus === "complete") {
+    const byId = new Map(state.tasks.map((entry) => [entry.id, entry]));
+    const openDeps = item.dependsOn.filter((dep) => byId.get(dep)?.status !== "complete");
+    if (openDeps.length > 0) throw new Error(`cannot close ${id}: depends on ${openDeps.join(", ")} (not complete)`);
+  }
   item.status = nextStatus;
   if (evidence !== "" && !item.evidence.some((entry) => entry.text === evidence)) item.evidence.push({ at: nowIso(), text: evidence });
   persistState(statePath, state);
+  const complete = new Set(state.tasks.filter((entry) => entry.status === "complete").map((entry) => entry.id));
   const remaining = state.tasks.filter((entry) => entry.status !== "complete");
+  const describe = (entry: TaskItem): string => {
+    const waits = entry.dependsOn.filter((dep) => !complete.has(dep));
+    const note = entry.status === "blocked" ? "blocked" : waits.length === 0 ? "ready" : `waiting on ${waits.join(", ")}`;
+    // The recorded title is the full task text; the one-line response only
+    // needs the leading description, not the Covers/Depends on clauses.
+    const label = entry.title.split(". ")[0]!.replace(/\.$/, "");
+    return `${entry.id} (${label}, ${note})`;
+  };
   const remainingLine = remaining.length === 0
     ? "remaining: none — all tasks closed"
-    : `remaining: ${remaining.map((entry) => `${entry.id} (${entry.title}${entry.status === "blocked" ? ", blocked" : ""})`).join(", ")}`;
+    : `remaining: ${remaining.map(describe).join(", ")}`;
   return result("task", true, `${id} is ${nextStatus}; ${remainingLine}`, {
     ...publicState(state),
-    remainingTasks: remaining.map((entry) => ({ id: entry.id, title: entry.title, status: entry.status })),
+    remainingTasks: remaining.map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      status: entry.status,
+      dependsOn: entry.dependsOn,
+      ready: entry.status !== "blocked" && entry.dependsOn.every((dep) => complete.has(dep)),
+    })),
   }, state);
 }
 
@@ -800,7 +821,7 @@ function implementationReport(state: ImplementState, attempt: UnifiedVerificatio
   const laneLine = (name: string, lane: LaneRecord<unknown> | null): string => lane === null
     ? `- ${name}: NOT_REQUIRED`
     : `- ${name}: ${lane.verdict}, invocation ${lane.invocationId}, ${lane.startedAt} to ${lane.finishedAt}, ${lane.durationMs}ms`;
-  return `# Implementation Result: ${state.topicSlug}\n\nStatus: Done\n\n## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n\nTask implementation parallelization remains deferred to a later PRD.\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\nStatus: Done\n\n## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {

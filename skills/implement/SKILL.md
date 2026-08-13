@@ -92,8 +92,13 @@ Start a new run instead of migrating or adapting them.
 
 ## 3. Implement Tasks
 
-Tasks are sequential by default.
-Task implementation parallelization is a separate concern and is not configured by this skill.
+Execution order comes from the PRD's task dependencies.
+A task without a `Depends on:` clause depends on the previous task, so a plain task list runs sequentially; explicit `Depends on:` declarations (approved with the PRD) are the only thing that unlocks out-of-chain order.
+The CLI rejects closing a task before its dependencies are complete, and each close response lists the remaining tasks with which are `ready`.
+
+Tasks whose dependencies are all complete may be implemented in any order, including concurrently through worker subagents.
+When fanning out, this session remains the orchestrator: brief each worker with the mapped requirement, acceptance criteria, and file scope directly; workers return changed files, focused check results, and evidence text.
+Workers never run `sasu` commands — the orchestrating session reviews each result and closes the task itself, staying the only writer of `state.json`.
 
 For each task:
 
@@ -227,4 +232,4 @@ At minimum report:
 - Evidence that mechanical failure made zero judge calls.
 - Evidence that finalize made zero execution calls.
 - Completion fingerprint and receipt path.
-- Deviations, remaining risks, and deferred Task implementation parallelization.
+- Deviations and remaining risks.

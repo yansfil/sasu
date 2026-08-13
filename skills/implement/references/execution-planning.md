@@ -15,8 +15,19 @@ Stop on a material gap instead of inventing behavior.
 
 ## Execution Order
 
-Work sequentially by default.
-This skill does not configure task parallelism, write scopes, ready groups, or subagent scheduling.
+The PRD's task dependencies own the order.
+A task without a `Depends on:` clause depends on the previous task; `Depends on: none` or an explicit list overrides that default.
+The CLI enforces the declaration: closing a task whose dependencies are open is rejected, and every close response reports the remaining tasks with which are `ready`.
+
+Work the ready set in the order your own judgment prefers — risk first is usually right.
+Tasks that are simultaneously ready may be implemented concurrently through worker subagents when the briefing cost is worth it; write scopes that overlap are a reason to keep them sequential or to keep the shared file's wiring in the orchestrator's own hands.
+
+When fanning out:
+
+- Brief each worker directly with the mapped requirement, acceptance criteria, and file scope; contracts left only in documents do not reach a spawned worker.
+- Workers return changed files, focused check results, and evidence text. They never run `sasu` commands.
+- This session reviews each worker result against the actual diff and closes the task itself. `state.json` has exactly one writer.
+- A failed or suspect worker result leaves the task open; re-run it or implement it directly. Nothing is recorded as complete without reviewed evidence.
 
 For each task:
 

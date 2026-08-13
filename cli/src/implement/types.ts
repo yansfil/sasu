@@ -1,6 +1,7 @@
 import type { JudgeCallRecord } from "../judge/types";
 
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v3" as const;
+// v4: task entries carry dependsOn (PRD-declared execution dependencies).
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v4" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 
 export type ItemStatus = "pending" | "complete" | "blocked";
@@ -20,6 +21,12 @@ export interface ContractItem {
   acceptanceCriteria: string[];
   status: ItemStatus;
   evidence: EvidenceNote[];
+}
+
+export interface TaskItem extends ContractItem {
+  // Task ids this task's close is gated on. Absent clause in the PRD means
+  // "the previous task"; `Depends on: none` or an explicit list overrides it.
+  dependsOn: string[];
 }
 
 export interface VerificationItem {
@@ -154,7 +161,7 @@ export interface ImplementState {
     sourceIntake: string;
   };
   initialSource: SourceSnapshot;
-  tasks: ContractItem[];
+  tasks: TaskItem[];
   requirements: ContractItem[];
   acceptanceCriteria: ContractItem[];
   verification: VerificationItem[];
