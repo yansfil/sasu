@@ -87,12 +87,12 @@ namespace the harness reads or writes. It is bookkeeping, never a verification
 input: nothing under `agents/**` belongs in a judged diff or a freshness
 fingerprint.
 
-**Module layering.** `cli/lib/` is a strict left-to-right chain: `util` →
-`git` → `config` → `rules` → `state_data` → `prd_parser` → `inference` →
-`planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` →
-`commands/*`. A module requires only layers to its left, keeping the graph
-acyclic. `skills/implement/scripts/prd_state_harness.js` is a thin dispatcher
-into it, not a second implementation.
+**Module layering.** Public implement behavior lives in `cli/src/implement/` and
+is exposed only through `sasu implement ...`.
+Shared document and gate helpers remain in `cli/lib/`; new implement state and
+completion authority must not be added there.
+`skills/implement/scripts/prd_state_harness.js` is a removed-entrypoint
+tombstone, not an implementation surface.
 
 **Concurrent sessions.** Multiple Claude sessions work this repository at once.
 Before editing `cli/**`, check with peer sessions and claim the files you are

@@ -8,10 +8,20 @@ import test from "node:test";
 import { stripSessionEnv } from "./helpers/session_env.mjs";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const harness = path.join(repoRoot, "skills", "implement", "scripts", "prd_state_harness.js");
+const rulesModule = path.join(repoRoot, "cli", "lib", "commands", "rules.js");
+const setupModule = path.join(repoRoot, "cli", "lib", "commands", "setup.js");
 
 function run(args, cwd, options = {}) {
-  const result = spawnSync(process.execPath, [harness, ...args], {
+  const isSetup = args[0] === "seed-agents-md";
+  const script = isSetup
+    ? "require(process.argv[1]).cmdSeedAgentsMd(Object.fromEntries(JSON.parse(process.argv[2]).map(x => [x.slice(2), true])))"
+    : "require(process.argv[1]).cmdRules(JSON.parse(process.argv[2]))";
+  const result = spawnSync(process.execPath, [
+    "-e",
+    script,
+    isSetup ? setupModule : rulesModule,
+    JSON.stringify(isSetup ? args.slice(1) : args.slice(1)),
+  ], {
     cwd,
     shell: false,
     encoding: "utf8",

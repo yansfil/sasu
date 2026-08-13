@@ -458,7 +458,7 @@ After the self-check passes, run the mechanical precheck from the target
 repository root before marking the PRD `ready`:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification --prd agents/prd/<topic-slug>/prd.md
+sasu prd readiness --prd agents/prd/<topic-slug>/prd.md
 ```
 
 This is stateless: it parses the PRD exactly the way `implement` will,

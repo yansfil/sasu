@@ -26,7 +26,7 @@ Match the user's language by default.
 Always start with the doctor:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
+sasu doctor
 ```
 
 It reports the effective delivery config (config file plus defaults), unknown or
@@ -47,7 +47,7 @@ On first setup in a project, also seed the agent-facing structure notes before
 the config interview:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js seed-agents-md
+sasu setup seed-agents-md
 ```
 
 This writes (or updates, marker-based and idempotent) a Harness Namespace
