@@ -51,6 +51,15 @@ After mechanical PASS:
 - the fidelity judge checks intent preservation with a fixed rubric and dynamic source context.
 - a high-risk run adds one final risk judge after the two base lanes finish.
 
+For each acceptance criterion, the harness places the relevant mechanical output and text artifact content directly in the prompt.
+It lists run-owned changed files and visual artifacts as an exact read allowlist instead of copying every changed file into every prompt.
+The default Codex judge gets a disposable workspace containing only those copied allowlisted files.
+Its read-only sandbox blocks writes but is not an OS-hard host-read boundary, so the CLI audits its JSON command trace and invalidates any command beyond bounded `sed` or `rg` reads of an allowlisted path.
+Accepted commands are recorded on the judge call for later review.
+It may not list directories, search broadly, inspect history or environment variables, access the network, or execute project code.
+The Claude fallback can use only Read/Grep against the same prompt-level allowlist.
+The implementing agent does not maintain a second manual file-to-criterion ledger.
+
 The acceptance and fidelity calls are independent and concurrent.
 Neither can overwrite the other's failure.
 

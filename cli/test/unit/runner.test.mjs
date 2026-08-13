@@ -29,7 +29,7 @@ const config = loadConfig(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-")));
 
 test("runJudge accepts a valid first reply with attempts=1", async () => {
   await withStub([{ verdict: "PASS", findings: [] }], async () => {
-    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.attempts, 1);
     assert.equal(outcome.record.outcome, "ok");
@@ -38,7 +38,7 @@ test("runJudge accepts a valid first reply with attempts=1", async () => {
 
 test("runJudge retries exactly once on invalid output, then succeeds", async () => {
   await withStub(["not json at all", { verdict: "PASS", findings: [] }], async () => {
-    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.attempts, 2);
   });
@@ -47,7 +47,7 @@ test("runJudge retries exactly once on invalid output, then succeeds", async () 
 test("runJudge throws a typed error after two invalid replies", async () => {
   await withStub(["garbage one", "garbage two"], async () => {
     await assert.rejects(
-      () => runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict),
+      () => runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict),
       (error) => error.code === "judge-invalid-output" && error.record.attempts === 2,
     );
   });
@@ -56,7 +56,7 @@ test("runJudge throws a typed error after two invalid replies", async () => {
 test("runJudge rejects schema-invalid JSON the same as non-JSON", async () => {
   await withStub([{ verdict: "MAYBE" }, { verdict: "BLOCK", findings: [] }], async () => {
     await assert.rejects(
-      () => runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict),
+      () => runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict),
       (error) => error.code === "judge-invalid-output",
     );
   });
@@ -71,9 +71,9 @@ test("runJudge byPurpose stub selects the matching lane response", async () => {
       },
     },
     async () => {
-      const ux = await runJudge(config, "gate:gap-audit:lane:ux-behavior", "frugal", "prompt", validateGapVerdict);
+      const ux = await runJudge(config, "gate:gap-audit:lane:ux-behavior", "routine", "prompt", validateGapVerdict);
       assert.equal(ux.value.verdict, "BLOCK");
-      const other = await runJudge(config, "gate:gap-audit:lane:data-tech", "frugal", "prompt", validateGapVerdict);
+      const other = await runJudge(config, "gate:gap-audit:lane:data-tech", "routine", "prompt", validateGapVerdict);
       assert.equal(other.value.verdict, "PASS");
     },
   );
@@ -95,7 +95,7 @@ test("runJudge enforces judge.timeoutMs per call after the async refactor", asyn
   try {
     const startedAt = Date.now();
     await assert.rejects(
-      () => runJudge(fastConfig, "gate:test", "frugal", "prompt", validateGapVerdict),
+      () => runJudge(fastConfig, "gate:test", "routine", "prompt", validateGapVerdict),
       (error) => error.code === "judge-timeout",
     );
     assert.ok(Date.now() - startedAt < 4000, "timeout must fire well before the fake binary exits");
@@ -123,12 +123,61 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 1000 } };
   try {
-    const outcome = await runJudge(fastConfig, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(fastConfig, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
     assert.equal(outcome.record.fallback?.backend, "claude");
     assert.equal(outcome.record.fallback?.outcome, "judge-timeout");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+test("an agentic Claude failure falls back to Codex with only allowlisted evidence", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const fakeClaude = path.join(binDir, "claude");
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(path.join(binDir, "allowed.txt"), "READY\n");
+  fs.writeFileSync(path.join(binDir, "decoy.txt"), "MUST NOT COPY\n");
+  fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 5\n");
+  fs.writeFileSync(fakeCodex, [
+    "#!/bin/sh",
+    'last=""',
+    'root=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2',
+    '  elif [ "$1" = "-C" ]; then root="$2"; shift 2',
+    '  else shift; fi',
+    "done",
+    'test -f "$root/allowed.txt" || exit 41',
+    'test ! -e "$root/decoy.txt" || exit 42',
+    `printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc sed -n 1p allowed.txt"}}'`,
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    "",
+  ].join("\n"));
+  fs.chmodSync(fakeClaude, 0o755);
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "claude";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 1000 } };
+  try {
+    const outcome = await runJudge(
+      fastConfig,
+      "gate:test",
+      "routine",
+      "prompt",
+      validateGapVerdict,
+      { agentic: true, cwd: binDir, evidencePaths: ["allowed.txt"] },
+    );
+    assert.equal(outcome.value.verdict, "PASS");
+    assert.equal(outcome.record.backend, "codex");
+    assert.equal(outcome.record.fallback?.backend, "claude");
+    assert.deepEqual(outcome.record.activity?.commands, ["/bin/zsh -lc sed -n 1p allowed.txt"]);
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
@@ -152,7 +201,7 @@ test("runJudge falls back from repeated invalid Claude output to Codex", async (
   process.env.SASU_JUDGE_BACKEND = "claude";
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
@@ -181,7 +230,7 @@ test("runJudge falls back from Claude authentication failure to Codex", async ()
   process.env.SASU_JUDGE_BACKEND = "claude";
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
@@ -213,7 +262,7 @@ test("runJudge falls back from a Claude runtime failure to Codex", async () => {
   process.env.SASU_JUDGE_BACKEND = "claude";
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
@@ -244,7 +293,7 @@ test("runJudge falls back from a Codex runtime failure to Claude", async () => {
   process.env.SASU_JUDGE_BACKEND = "codex";
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "claude");
     assert.equal(outcome.record.attempts, 1);

@@ -1,4 +1,4 @@
-import type { BackendName, Tier } from "../config";
+import type { BackendName, JudgeEffort, JudgeProfile } from "../config";
 
 export type JudgeErrorCode =
   | "judge-binary-missing"
@@ -24,7 +24,8 @@ export interface JudgeCallRecord {
   at: string;
   backend: BackendName;
   model: string | null;
-  tier: Tier;
+  profile: JudgeProfile;
+  effort: JudgeEffort;
   purpose: string;
   durationMs: number;
   /**
@@ -34,11 +35,16 @@ export interface JudgeCallRecord {
    */
   attempts: number;
   outcome: "ok" | JudgeErrorCode;
+  /** Audited shell reads made by an agentic backend, when exposed. */
+  activity?: {
+    commands: string[];
+  };
   /** A backend failure that was recovered by one cross-vendor fallback. */
   fallback?: {
     at: string;
     backend: BackendName;
     model: string | null;
+    effort: JudgeEffort;
     durationMs: number;
     outcome: JudgeErrorCode;
   };

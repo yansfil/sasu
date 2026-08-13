@@ -82,7 +82,7 @@ Four tiers, most trustworthy first. **Always use the highest tier a criterion ca
 
 Constraints worth knowing before you write the contract:
 
-- Image attachment is a backend capability. `codex` supports it; `claude` does not (its headless mode has no local-image flag, and the judge is deliberately tool-less). On a claude backend a `capture:` criterion falls to tier 4 automatically - the capture still runs and is hash-pinned, but a person reviews it. Set `judge.backend` to `codex` in `agents/config.json` when a run leans on visual criteria.
+- Image attachment is a backend capability. Codex supports it directly; Claude can inspect an allowlisted image only in an isolated-read judgment. If a configured routine primary cannot see the image, the criterion falls to the human lane while the capture still runs and is hash-pinned. Configure `judge.profiles.routine.primary` as Codex when a run leans on visual criteria.
 - An image only reaches the judge through `capture:`. The same file declared with `evidence:` goes to the human lane instead, because nothing proves when it was made.
 - Evidence paths must be relative to the project root (an absolute path is refused even when it points inside), and must resolve to an ordinary file whose content lives in the tree - symlinks out of the tree and hard links are refused at read time. Keep artifacts under `agents/quick/<slug>/evidence/`.
 - Inline evidence must be text. Binary content is refused - use a capture for something visual, or a check command for what the binary proves.

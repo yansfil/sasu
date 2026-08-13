@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { SasuConfig } from "../config";
 import { resolveBackend } from "../judge/backends";
-import { runJudge, judgeCallRecordFrom } from "../judge/runner";
+import { effectiveJudgeProfile, runJudge, judgeCallRecordFrom } from "../judge/runner";
 import {
   JudgeError,
   validateGapVerdict,
@@ -130,14 +130,6 @@ function readInputFile(projectRoot: string, filePath: string, label: string): In
   const resolved = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   return { content, input: { path: path.relative(projectRoot, resolved), sha256: freshnessHash(content) } };
 }
-
-/**
- * Reasoning-effort cap for lane judges. A lane owns a narrow scope, so a low
- * budget preserved mine detection in calibration while cutting a ~52s call
- * to ~13s. The single-judge path (judge.fanout: false) keeps the backend's
- * default effort. Claude-only; codex/stub backends ignore it.
- */
-const LANE_EFFORT = "low";
 
 /**
  * Deterministic criterion partition for the verify fan-out: stable document
@@ -324,7 +316,7 @@ async function runGapListGate(
 
     if (!config.judge.fanout) {
       // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).
-      const outcome = await runJudge(config, purpose, "frugal", buildPrompt(priorFindings, { rerun: isRerun }), (value) =>
+      const outcome = await runJudge(config, purpose, "routine", buildPrompt(priorFindings, { rerun: isRerun }), (value) =>
         validateGapVerdict(value, { requireOrigin: isRerun }),
       );
       records.push(outcome.record);
@@ -368,10 +360,9 @@ async function runGapListGate(
           const outcome = await runJudge(
             config,
             `${purpose}:lane:${lane.id}`,
-            "frugal",
+            "routine",
             buildPrompt(routedPrior.get(lane.id) ?? [], { lane, laneCount: lanes.length, rerun: isRerun }),
             (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
-            { effort: LANE_EFFORT },
           );
           return { laneId: lane.id, outcome, error: null };
         } catch (error) {
@@ -722,7 +713,7 @@ function assembleVerifyLanes(input: {
   // capability is checked once so every lane takes the same path.
   let backendAgentic = false;
   try {
-    backendAgentic = resolveBackend(config.judge.backend).agentic;
+    backendAgentic = resolveBackend(effectiveJudgeProfile(config, "routine").primary.backend).agentic;
   } catch {
     backendAgentic = false;
   }
@@ -774,7 +765,7 @@ function assembleVerifyLanes(input: {
   if (oversized.length > 0 && !backendAgentic) {
     const worst = Math.max(...oversized.map((vl) => vl.diffChars));
     throw new Error(
-      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the ${config.judge.backend} judge backend cannot run the read-only agentic fallback. No judgment ran and no retry attempt was spent. Point --base at the commit you started from or split the change into independently reviewable work.`,
+      `diff is ${worst} chars, over the ${VERIFY_DIFF_MAX_CHARS}-char judge input budget, and the routine primary backend cannot run isolated evidence access. No judgment ran and no retry attempt was spent. Point --base at the commit you started from or split the change into independently reviewable work.`,
     );
   }
   const verifyLanes = assembledLanes.map((vl) => {
@@ -822,13 +813,7 @@ async function settleVerifyLanes(
         const outcome = await runJudge(
           config,
           vl.purpose,
-          // Tier stays "standard" per lane: verify caught a real production
-          // bug at this tier, and the fan-out win is latency and attention
-          // scope, not model cost. Multi-lane rounds pair the narrow set of criteria
-          // with the low effort budget (the calibrated fan-out speed lever,
-          // see LANE_EFFORT); a single-lane round is the old exhaustive call
-          // and keeps the backend's default effort.
-          "standard",
+          "routine",
           vl.prompt,
           (value) => {
             const laneIds = vl.criteria.map((c) => c.id);
@@ -846,15 +831,14 @@ async function settleVerifyLanes(
           },
           {
             ...(vl.images.length > 0 ? { images: vl.images } : {}),
-            ...(laneCount > 1 ? { effort: LANE_EFFORT } : {}),
             // Oversized lane: the judge reads the tree itself (read-only)
             // instead of receiving the diff inline; see the lane assembly.
-            ...(vl.agentic ? { agentic: true } : {}),
-            // Anchor the judge process to the project root, not the
-            // caller's cwd: `sasu verify` from a subdirectory otherwise
-            // hands the agentic judge a working directory where the
-            // diff-stat's repo-relative paths do not resolve. (Codex builds
-            // its own empty work root and ignores this.)
+            ...(vl.agentic ? {
+              agentic: true,
+              evidencePaths: splitDiffByFile(vl.laneDiff).map((block) => block.path),
+            } : {}),
+            // Anchor evidence resolution to the project root. Claude uses it
+            // as cwd; Codex copies the exact evidencePaths into isolation.
             cwd: projectRoot,
           },
         );
@@ -1515,7 +1499,7 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
   const pinned = new Set<string>();
   let canAttach = false;
   try {
-    canAttach = resolveBackend(config.judge.backend).attachments;
+    canAttach = resolveBackend(effectiveJudgeProfile(config, "routine").primary.backend).attachments;
   } catch {
     // No backend resolvable: the judge call downstream reports it properly.
     canAttach = false;
@@ -1625,8 +1609,8 @@ function collectEvidence(projectRoot: string, contract: ParsedContract, config: 
         if (!canAttach) {
           unjudgeable = {
             path: artifact.path,
-            reason: `image evidence (${artifact.path}) cannot be shown to the ${config.judge.backend} judge backend, which has no attachment support`,
-            fix: `Review ${artifact.path} yourself and report the result, or set judge.backend to "codex" in agents/config.json so the judge can see it.`,
+            reason: `image evidence (${artifact.path}) cannot be shown to the routine primary judge backend, which has no attachment support`,
+            fix: `Review ${artifact.path} yourself and report the result, or configure judge.profiles.routine.primary.backend as "codex" in agents/config.json.`,
           };
           continue;
         }
@@ -1711,11 +1695,11 @@ function recordJudgeFailure(
     records,
   );
   const recoveryByCode: Record<string, string> = {
-    "judge-binary-missing": "Install the judge CLI (claude or codex) or set judge.backend in agents/config.json.",
+    "judge-binary-missing": "Install the configured judge CLI or change the profile primary/fallback in agents/config.json.",
     "judge-auth": "The Claude judge was not authenticated and Codex fallback was unavailable. Log in to Claude or install/log in to Codex, then re-run.",
     "judge-auth-or-runtime": "Check the judge CLI login/auth status and re-run.",
     "judge-timeout": "Re-run; if it persists, raise judge.timeoutMs in agents/config.json.",
-    "judge-invalid-output": "Re-run; if it persists, try a stronger tier model via judge.tierModels.",
+    "judge-invalid-output": "Re-run; if it persists, change the model in judge.profiles.routine or judge.profiles.high-risk.",
   };
   const status = gateStatus(state, gate, config.judge.retryBudget, store.projectRoot);
   // Same rule the rerun short-circuit follows: the component that ends the loop

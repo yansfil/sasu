@@ -173,7 +173,8 @@ test("verify PASSes end to end and records judge usage for the receipt", () => {
   assert.equal(state.gates.verify.verdict, "PASS");
   assert.equal(state.judgeCalls.length, 1);
   assert.equal(state.judgeCalls[0].backend, "stub");
-  assert.equal(state.judgeCalls[0].tier, "standard");
+  assert.equal(state.judgeCalls[0].profile, "routine");
+  assert.equal(state.judgeCalls[0].effort, "xhigh");
 });
 
 test("verify auto-detects commands from package.json and suggests pinning them", () => {

@@ -1,15 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type Tier = "frugal" | "standard" | "frontier";
+export type JudgeProfile = "routine" | "high-risk";
 export type BackendName = "claude" | "codex" | "stub";
+export type JudgeEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface JudgeTarget {
+  backend: BackendName;
+  model: string | null;
+  effort: JudgeEffort;
+}
+
+export interface JudgeProfileConfig {
+  primary: JudgeTarget;
+  fallback: JudgeTarget | null;
+}
 
 export interface JudgeConfig {
-  backend: "auto" | BackendName;
-  tierModels: {
-    claude: Record<Tier, string | null>;
-    codex: Record<Tier, string | null>;
-  };
+  profiles: Record<JudgeProfile, JudgeProfileConfig>;
   retryBudget: number;
   timeoutMs: number;
   /** Lane-parallel fan-out for the gap-list gates; false restores the single-judge path. */
@@ -28,39 +36,54 @@ export interface SasuConfig {
   configPath: string | null;
 }
 
-// Cross-vendor independence (D-12): the default backend is "auto" (first
-// available binary, claude preferred). Judging with a different vendor than
-// the implementing runtime is recommended in docs but not enforced in v1;
-// consensus (v2) revisits enforcement.
+// Model strength and review risk are separate from evidence access. Routine
+// calls use the inexpensive high-throughput model at the same xhigh reasoning
+// budget as every other judge. High-risk changes upgrade the model, while an
+// scoped evidence workspace and audited command trace constrain source reads.
 const DEFAULT_JUDGE: JudgeConfig = {
-  backend: "auto",
-  tierModels: {
-    claude: {
-      // Frugal was claude-haiku-4-5 until live calibration (2026-07-17,
-      // meeting-hub qa-log): on the exhaustive gap-scan prompt haiku spent
-      // 11-20k output tokens per call (146-238s, brushing the 180s timeout)
-      // and flipped verdicts across runs, while sonnet answered in ~7k
-      // tokens (~80s) decisively - faster wall-clock at similar effective
-      // cost. Pin haiku back via judge.tierModels.claude.frugal if desired.
-      frugal: "claude-sonnet-5",
-      standard: "claude-sonnet-5",
-      frontier: "claude-opus-4-8",
+  profiles: {
+    routine: {
+      primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" },
+      fallback: { backend: "claude", model: "claude-sonnet-5", effort: "xhigh" },
     },
-    // Codex models default to the user's own CLI default; overriding is
-    // config-only because model catalogs vary by plan.
-    codex: { frugal: null, standard: null, frontier: null },
+    "high-risk": {
+      primary: { backend: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+      fallback: { backend: "claude", model: "claude-opus-5", effort: "xhigh" },
+    },
   },
-  // E2E calibration (2026-07-16) showed judges discover gaps progressively
-  // across rounds, so 2 attempts starved good-faith fix loops; 3 is the
-  // observed floor for reaching PASS on an honestly revised document. The
-  // budget is advisory for autonomous loops - the CLI never locks a
-  // user-instructed re-run.
   retryBudget: 3,
   timeoutMs: 180_000,
   fanout: true,
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
+const PROFILE_NAMES: JudgeProfile[] = ["routine", "high-risk"];
+const BACKENDS: BackendName[] = ["claude", "codex", "stub"];
+const EFFORTS: JudgeEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+type RawTarget = Partial<JudgeTarget>;
+type RawProfile = { primary?: RawTarget; fallback?: RawTarget | null };
+
+function mergeTarget(base: JudgeTarget, raw: RawTarget | undefined, label: string): JudgeTarget {
+  const target = { ...base, ...(raw ?? {}) };
+  if (!BACKENDS.includes(target.backend)) throw new Error(`${label}.backend must be claude, codex, or stub`);
+  if (target.model !== null && (typeof target.model !== "string" || target.model.trim() === "")) {
+    throw new Error(`${label}.model must be a non-empty string or null`);
+  }
+  if (!EFFORTS.includes(target.effort)) throw new Error(`${label}.effort must be one of: ${EFFORTS.join(", ")}`);
+  return target;
+}
+
+function mergeProfile(base: JudgeProfileConfig, raw: RawProfile | undefined, label: string): JudgeProfileConfig {
+  const primary = mergeTarget(base.primary, raw?.primary, `${label}.primary`);
+  const fallback = raw?.fallback === null
+    ? null
+    : mergeTarget(base.fallback ?? base.primary, raw?.fallback, `${label}.fallback`);
+  if (fallback !== null && fallback.backend === primary.backend) {
+    throw new Error(`${label}.fallback.backend must differ from primary.backend`);
+  }
+  return { primary, fallback };
+}
 
 export function loadConfig(projectRoot: string): SasuConfig {
   const configPath = path.join(projectRoot, "agents", "config.json");
@@ -75,14 +98,20 @@ export function loadConfig(projectRoot: string): SasuConfig {
     }
   }
   const judgeRaw = (raw["judge"] ?? {}) as Partial<JudgeConfig> & {
-    tierModels?: Partial<JudgeConfig["tierModels"]>;
+    backend?: unknown;
+    tierModels?: unknown;
+    profiles?: Partial<Record<JudgeProfile, RawProfile>>;
   };
+  if (judgeRaw.backend !== undefined || judgeRaw.tierModels !== undefined) {
+    throw new Error("judge.backend and judge.tierModels were removed; configure judge.profiles.routine/high-risk");
+  }
+  const unknownProfiles = Object.keys(judgeRaw.profiles ?? {}).filter((name) => !PROFILE_NAMES.includes(name as JudgeProfile));
+  if (unknownProfiles.length > 0) throw new Error(`unknown judge profile(s): ${unknownProfiles.join(", ")}`);
   const verifyRaw = (raw["verify"] ?? {}) as Partial<VerifyConfig>;
   const judge: JudgeConfig = {
-    backend: judgeRaw.backend ?? DEFAULT_JUDGE.backend,
-    tierModels: {
-      claude: { ...DEFAULT_JUDGE.tierModels.claude, ...(judgeRaw.tierModels?.claude ?? {}) },
-      codex: { ...DEFAULT_JUDGE.tierModels.codex, ...(judgeRaw.tierModels?.codex ?? {}) },
+    profiles: {
+      routine: mergeProfile(DEFAULT_JUDGE.profiles.routine, judgeRaw.profiles?.routine, "judge.profiles.routine"),
+      "high-risk": mergeProfile(DEFAULT_JUDGE.profiles["high-risk"], judgeRaw.profiles?.["high-risk"], "judge.profiles.high-risk"),
     },
     retryBudget: judgeRaw.retryBudget ?? DEFAULT_JUDGE.retryBudget,
     timeoutMs: judgeRaw.timeoutMs ?? DEFAULT_JUDGE.timeoutMs,
@@ -90,6 +119,9 @@ export function loadConfig(projectRoot: string): SasuConfig {
   };
   if (!Number.isInteger(judge.retryBudget) || judge.retryBudget < 0) {
     throw new Error(`judge.retryBudget must be a non-negative integer, got: ${String(judge.retryBudget)}`);
+  }
+  if (!Number.isInteger(judge.timeoutMs) || judge.timeoutMs <= 0) {
+    throw new Error(`judge.timeoutMs must be a positive integer, got: ${String(judge.timeoutMs)}`);
   }
   const commandTimeoutMs = verifyRaw.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
   if (!Number.isInteger(commandTimeoutMs) || commandTimeoutMs <= 0) {
@@ -102,7 +134,6 @@ export function loadConfig(projectRoot: string): SasuConfig {
   };
 }
 
-export function tierModelFor(config: SasuConfig, backend: BackendName, tier: Tier): string | null {
-  if (backend === "stub") return null;
-  return config.judge.tierModels[backend][tier];
+export function judgeProfileFor(config: SasuConfig, profile: JudgeProfile): JudgeProfileConfig {
+  return config.judge.profiles[profile];
 }

@@ -102,7 +102,7 @@ sasu doctor           judge backends, verify commands, contract version
 The interview commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation, so a full interview turn costs one short chained command instead of a hand-written multi-hunk markdown edit.
 Every mutating interview command re-runs the structural qa-log prelint (closure-only rules excluded) and reports drift immediately instead of at the gate.
 `interview coherence` adds an independent mid-interview check that the resolved decisions cohere and stay on the stated goal - it reads only the decisions (not the conversation), so it catches direction drift the interviewing agent is biased not to see, and stays advisory: it never touches gate state or the retry budget and its findings are next-question candidates.
-It judges only coherence, never completeness (that is the gap-audit closure gate), and because its input is just the decision table it runs in roughly 3-6s against the frugal-tier judge.
+It judges only coherence, never completeness (that is the gap-audit closure gate), and uses the project-configured `routine` judge profile.
 
 Every command accepts `--json` for structured output: a top-level `contractVersion` (schema-change detection for programmatic consumers), the gate verdict/attempt state, and on gate/verify a `prelint` key kept separate from judge findings.
 Exit codes are identical in both modes (0 pass, 1 block/fail, 2 usage error).
@@ -113,13 +113,42 @@ A finding that requires explicit human agreement remains blocking on re-runs, an
 A prelint failure hard-blocks with rule IDs and line numbers but never calls the judge and never consumes a retry-budget attempt, so structural defects are fixed for free and judge findings stay purely semantic.
 The rule set targets zero false positives; ID numbering gaps (R1, R2, R4) are deliberately not checked.
 
-Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with tools disabled, schema validation, one retry, and fail-closed errors.
+Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with schema validation, one retry, and fail-closed errors.
 The gap-list gates fan out into lane-parallel narrow judges (gap-audit: 4 document-area lanes; spec: 2 review-axis lanes) whose findings the CLI merges mechanically - union, normalized dedupe, any blocking finding blocks - so the wall-clock cost is one narrow judge, not one exhaustive sweep; set `judge.fanout: false` to restore the single-judge path.
-Codex judges run with best-effort isolation (empty ephemeral work root, user config ignored, no-tools instruction) because codex CLI cannot disable its shell; reviewer isolation is strongest on the claude backend, which runs with all tools removed.
+Routine judgment defaults to Codex `gpt-5.6-luna` at `xhigh`, with Claude Sonnet 5 at `xhigh` as the fallback.
+High-risk review defaults to Codex `gpt-5.6-sol` at `xhigh`, with Claude Opus 5 at `xhigh` as the fallback.
+Prompt-only Codex calls run in an empty ephemeral work root with user config and project rules disabled.
+When a judge needs source evidence, the harness copies only the exact allowlisted files into a disposable working directory.
+Codex's read-only sandbox blocks writes but does not provide an OS-hard boundary against every host read.
+The prompt limits reads to the copied working set, and the CLI audits Codex's JSON command trace: only bounded `sed` or `rg` reads naming allowlisted paths are accepted, while any other command invalidates the verdict.
+Accepted command traces are recorded with the judge call so later review can answer what the judge inspected.
+Claude fallback sessions grant only `Read` and `Grep` for the same prompt-level allowlist.
 Gates are hard blocks: an agent can fix findings and re-gate within a retry budget, but only the user can override, and every judgment and override lands in `agents/runs/<topic>/gates/` for the receipt.
 A PASS is pinned to the content hash of its input documents; editing the qa-log or PRD afterwards turns the gate `STALE` in `gate status` until it is re-run, so a gate can never keep vouching for a document it has not seen.
 The CLI never executes implementation work: coding stays in the host agent session.
 `cli/src/implement` owns implement state, evidence registration, unified verification, and finalization.
+
+Project-specific judge models and fallbacks are configured in `agents/config.json`.
+Omitted fields inherit the defaults above.
+
+```json
+{
+  "judge": {
+    "profiles": {
+      "routine": {
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
+        "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "xhigh" }
+      },
+      "high-risk": {
+        "primary": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "xhigh" }
+      }
+    }
+  }
+}
+```
+
+The removed `judge.backend` and `judge.tierModels` keys fail explicitly so an obsolete project setting cannot be silently ignored.
 
 ## Completion Is Explicit And Provable
 

@@ -36,16 +36,18 @@ INTERVIEW LOG:
 ${TINY_LOG}
 ---`;
 
-function configForBackend(backend) {
+function configForBackend(backend, model) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-smoke-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify({ judge: { backend } }));
+  fs.writeFileSync(path.join(dir, "agents", "config.json"), JSON.stringify({
+    judge: { profiles: { routine: { primary: { backend, model, effort: "xhigh" }, fallback: null } } },
+  }));
   return loadConfig(dir);
 }
 
 test("live claude -p returns schema-valid gate JSON", { timeout: 240_000 }, async () => {
   delete process.env.SASU_JUDGE_BACKEND;
-  const outcome = await runJudge(configForBackend("claude"), "smoke:claude", "frugal", PROMPT, validateGapVerdict);
+  const outcome = await runJudge(configForBackend("claude", "claude-sonnet-5"), "smoke:claude", "routine", PROMPT, validateGapVerdict);
   assert.ok(["PASS", "BLOCK"].includes(outcome.value.verdict));
   assert.equal(outcome.record.backend, "claude");
   assert.equal(outcome.record.model, "claude-sonnet-5");
@@ -54,7 +56,7 @@ test("live claude -p returns schema-valid gate JSON", { timeout: 240_000 }, asyn
 
 test("live codex exec returns schema-valid gate JSON", { timeout: 240_000 }, async () => {
   delete process.env.SASU_JUDGE_BACKEND;
-  const outcome = await runJudge(configForBackend("codex"), "smoke:codex", "frugal", PROMPT, validateGapVerdict);
+  const outcome = await runJudge(configForBackend("codex", "gpt-5.6-luna"), "smoke:codex", "routine", PROMPT, validateGapVerdict);
   assert.ok(["PASS", "BLOCK"].includes(outcome.value.verdict));
   assert.equal(outcome.record.backend, "codex");
   console.log(`codex smoke: verdict=${outcome.value.verdict} attempts=${outcome.record.attempts} durationMs=${outcome.record.durationMs}`);

@@ -12,6 +12,9 @@ Read this reference before unified verify, finalize, or a blocked handoff.
 
 The CLI executes these policies.
 There is no manual prompt generation or review-record step.
+Acceptance and fidelity use the project `routine` judge profile.
+The additional risk lane uses the `high-risk` judge profile.
+By default those profiles are Codex Luna xhigh and Codex Sol xhigh, with Claude Sonnet 5 xhigh and Claude Opus 5 xhigh fallbacks respectively.
 
 ## Fidelity Rubric
 

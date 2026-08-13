@@ -84,21 +84,23 @@ test("acceptance prompt is scoped to one criterion and its mapped proof", () => 
       { id: "V1", covers: ["AC1"], passIntent: "prove first" },
       { id: "V2", covers: ["AC2"], passIntent: "prove second" },
     ],
-    artifacts: [
-      { verificationId: "V1", kind: "log", path: "first.log", sha256: "a", description: "first" },
-      { verificationId: "V2", kind: "log", path: "second.log", sha256: "b", description: "second" },
-    ],
   };
-  const criterion = { id: "AC1", text: "first criterion", requirements: ["R1"] };
-  const prompt = acceptancePrompt(scopedState, criterion, "changed file", [
-    { status: "PASS", cwd: ".", command: "first", verificationIds: ["V1"], logPath: "first-command.log" },
-    { status: "PASS", cwd: ".", command: "second", verificationIds: ["V2"], logPath: "second-command.log" },
-  ]);
-  assert.match(prompt, /AC1: first criterion/);
-  assert.match(prompt, /R1: first requirement/);
-  assert.match(prompt, /V1: prove first/);
-  assert.match(prompt, /first\.log/);
-  assert.doesNotMatch(prompt, /AC2|R2:|V2:|second\.log|command=second/);
+  const criterion = { id: "AC2", text: "second criterion", requirements: ["R2"] };
+  const prompt = acceptancePrompt(scopedState, criterion, {
+    changedFiles: "- src/second.ts [text, 80 bytes]",
+    checks: [{ criterionId: "AC2", command: "npm test", exitCode: 0, tail: "SECOND-MECHANICAL-PROOF" }],
+    evidence: [{ criterionId: "AC2", path: "second.log", sha256: "b".repeat(64), bytes: 21, text: "SECOND-ARTIFACT-BODY" }],
+    readableArtifacts: [{ path: "second.png", kind: "screenshot", sha256: "c".repeat(64), bytes: 42, description: "second screen" }],
+  });
+  assert.match(prompt, /AC2: second criterion/);
+  assert.match(prompt, /"id": "AC2"/);
+  assert.match(prompt, /R2: second requirement/);
+  assert.match(prompt, /V2: prove second/);
+  assert.match(prompt, /SECOND-MECHANICAL-PROOF/);
+  assert.match(prompt, /SECOND-ARTIFACT-BODY/);
+  assert.match(prompt, /second\.png/);
+  assert.match(prompt, /src\/second\.ts \[text, 80 bytes\]/);
+  assert.doesNotMatch(prompt, /AC1:|R1:|V1:|first\.log|RUN-OWNED CHANGE MATERIAL/);
 });
 
 test("implement contract extracts nested Decision Traceability content", () => {

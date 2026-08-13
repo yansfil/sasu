@@ -100,7 +100,7 @@ function makeProject({ profile = "standard", testExit = 0, sourceIntake = "curre
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-implement-"));
   fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd(profile, sourceIntake));
-  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `node -e "process.exit(${testExit})"` } }));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `node -e "console.log('MECHANICAL-PROOF'); process.exit(${testExit})"` } }));
   for (const args of [["init", "-q"], ["add", "package.json"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]]) {
     const run = spawnSync("git", args, { cwd: root, encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
@@ -207,6 +207,12 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   startAndClose(root);
+  fs.writeFileSync(path.join(root, "source.txt"), "SOURCE-BODY-MUST-NOT-BE-INLINED\n");
+  fs.writeFileSync(path.join(root, "runtime.log"), "REGISTERED-RUNTIME-EVIDENCE\n");
+  const registered = run(root, [
+    "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof body",
+  ]);
+  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
   const attempt = verified.json.detail.attempt;
@@ -223,6 +229,15 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.match(fidelityPrompt, /F1 Original goal preserved/);
   assert.match(fidelityPrompt, /SOURCE ROUTING: decision-traceability/);
   assert.match(fidelityPrompt, /Do not repeat code-correctness/);
+
+  const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC1.prompt.txt"), "utf8");
+  const acceptanceOptions = JSON.parse(fs.readFileSync(path.join(capture, "implement_acceptance_AC1.options.json"), "utf8"));
+  assert.match(acceptancePrompt, /"id": "AC1"/);
+  assert.match(acceptancePrompt, /MECHANICAL-PROOF/);
+  assert.match(acceptancePrompt, /REGISTERED-RUNTIME-EVIDENCE/);
+  assert.match(acceptancePrompt, /source\.txt \[text, \d+ bytes\]/);
+  assert.doesNotMatch(acceptancePrompt, /SOURCE-BODY-MUST-NOT-BE-INLINED/);
+  assert.deepEqual(acceptanceOptions, { agentic: true, cwd: fs.realpathSync(root), effort: "xhigh" });
 
   const failBin = path.join(root, "agents", "fail-on-call-bin");
   const sentinel = path.join(root, "agents", "unexpected-finalize-execution");
@@ -243,6 +258,26 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.equal(second.status, 0, second.stderr + second.stdout);
   assert.equal(second.json.detail.executionCalls, 0);
   assert.equal(fs.readFileSync(receiptPath, "utf8"), firstReceipt);
+});
+
+test("a backend without read-only file access fails acceptance observably instead of judging from missing code", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = {
+    SASU_JUDGE_BACKEND: "stub",
+    SASU_JUDGE_STUB_FILE: file,
+    SASU_JUDGE_STUB_CAPTURE_DIR: capture,
+    SASU_JUDGE_STUB_NO_AGENTIC: "1",
+  };
+  startAndClose(root);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 1);
+  const attempt = verified.json.detail.attempt;
+  assert.equal(attempt.verdict, "ERROR");
+  assert.equal(attempt.lanes.acceptance.verdict, "ERROR");
+  assert.match(attempt.lanes.acceptance.error.message, /requires isolated read-only evidence access/);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC1.prompt.txt")), false);
+  assert.equal(fs.existsSync(path.join(capture, "implement_fidelity.prompt.txt")), true);
 });
 
 test("high-risk runs the risk judge only after both base lanes complete", () => {

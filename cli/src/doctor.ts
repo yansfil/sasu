@@ -33,10 +33,12 @@ export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorS
     codexVersion ? `codex: ${codexVersion}` : "codex: NOT FOUND on PATH",
   ];
   if (config) {
-    judgeLines.push(`configured backend: ${config.judge.backend}`);
-    judgeLines.push(
-      `tier models (claude): frugal=${config.judge.tierModels.claude.frugal} standard=${config.judge.tierModels.claude.standard} frontier=${config.judge.tierModels.claude.frontier}`,
-    );
+    for (const name of ["routine", "high-risk"] as const) {
+      const profile = config.judge.profiles[name];
+      judgeLines.push(
+        `${name}: primary=${profile.primary.backend}/${profile.primary.model ?? "default"}/${profile.primary.effort} fallback=${profile.fallback === null ? "none" : `${profile.fallback.backend}/${profile.fallback.model ?? "default"}/${profile.fallback.effort}`}`,
+      );
+    }
     judgeLines.push(`retry budget: ${config.judge.retryBudget}`);
   }
   sections.push({

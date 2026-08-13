@@ -241,7 +241,7 @@ test("fan-out: criteria split into lanes, lanes merge in document order, one rou
   assert.equal(state.gates.verify.attempts, 1, "one fan-out round is ONE gate attempt");
   assert.equal(state.judgeCalls.length, 2, "one judge call per lane");
   assert.deepEqual(state.judgeCalls.map((c) => c.purpose).sort(), ["gate:verify-semantic:lane:1", "gate:verify-semantic:lane:2"]);
-  assert.ok(state.judgeCalls.every((c) => c.tier === "standard"), "lanes must not be cheapened below the standard tier");
+  assert.ok(state.judgeCalls.every((c) => c.profile === "routine" && c.effort === "xhigh"), "lanes use the configured routine profile");
 
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
   assert.equal(artifact.lanes.length, 2);
@@ -1046,4 +1046,3 @@ test("short-circuit: a mechanical FAIL pins nothing and never refuses - it faile
   assert.equal(verifyGates(dir).verdict, "PASS");
   assert.equal(verifyGates(dir).history.length, 2, "the rerun is a real recorded run");
 });
-

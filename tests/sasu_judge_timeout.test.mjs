@@ -32,7 +32,7 @@ test("sasu judge calls time out per call after the async refactor", { skip: !fs.
   try {
     const startedAt = Date.now();
     await assert.rejects(
-      () => runJudge(config, "regression:timeout", "frugal", "prompt", () => "never valid"),
+      () => runJudge(config, "regression:timeout", "routine", "prompt", () => "never valid"),
       (error) => error.code === "judge-timeout",
     );
     assert.ok(Date.now() - startedAt < 4000, "timeout must fire well before the hung binary exits");

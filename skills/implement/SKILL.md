@@ -152,7 +152,9 @@ The CLI owns this order:
 Acceptance judge responsibility:
 
 - Decide whether code and registered evidence satisfy every acceptance criterion.
-- Cite concrete changed files, mechanical logs, or registered artifacts.
+- Receive the relevant mechanical output and text artifact bytes directly from the harness.
+- Inspect only the exact run-owned changed files and visual artifacts placed in the disposable evidence workspace; execution, writes, broad file discovery, history inspection, and web access remain disabled.
+- Cite concrete changed files, mechanical output, or registered artifacts actually used.
 
 Fidelity judge responsibility:
 

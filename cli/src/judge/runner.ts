@@ -1,11 +1,36 @@
-import type { SasuConfig, Tier } from "../config";
-import { tierModelFor } from "../config";
-import { resolveBackend, resolveFallbackBackend } from "./backends";
+import type { BackendName, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
+import { judgeProfileFor } from "../config";
+import { resolveBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeCallRecord } from "./types";
 
 export interface JudgeOutcome<T> {
   value: T;
   record: JudgeCallRecord;
+}
+
+/** Effective project profile after the test/diagnostic backend override. */
+export function effectiveJudgeProfile(config: SasuConfig, profile: JudgeProfile): { primary: JudgeTarget; fallback: JudgeTarget | null } {
+  const configured = judgeProfileFor(config, profile);
+  const override = process.env["SASU_JUDGE_BACKEND"] as BackendName | undefined;
+  if (override !== undefined && override !== "claude" && override !== "codex" && override !== "stub") {
+    throw new Error(`SASU_JUDGE_BACKEND must be claude, codex, or stub, got: ${override}`);
+  }
+  const configuredTargets = [configured.primary, configured.fallback].filter((target): target is JudgeTarget => target !== null);
+  const overriddenPrimary = override === undefined
+    ? null
+    : configuredTargets.find((target) => target.backend === override) ?? {
+        ...configured.primary,
+        backend: override,
+        ...(override === "stub" ? { model: null } : {}),
+      };
+  return override === undefined
+    ? configured
+    : {
+        primary: overriddenPrimary!,
+        fallback: override === "stub"
+          ? null
+          : configuredTargets.find((target) => target.backend !== override) ?? null,
+      };
 }
 
 /**
@@ -18,34 +43,48 @@ export interface JudgeOutcome<T> {
 export async function runJudge<T>(
   config: SasuConfig,
   purpose: string,
-  tier: Tier,
+  profile: JudgeProfile,
   prompt: string,
   validate: (value: unknown) => T | string,
-  options: { effort?: string; images?: string[]; agentic?: boolean; cwd?: string } = {},
+  options: { images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[] } = {},
 ): Promise<JudgeOutcome<T>> {
-  let backend = resolveBackend(config.judge.backend);
-  let model = tierModelFor(config, backend.name, tier);
+  const selected = effectiveJudgeProfile(config, profile);
+  let target: JudgeTarget = selected.primary;
+  let backend = resolveBackend(target.backend);
+  if (options.agentic === true && !backend.agentic) {
+    throw new Error(`judge requires isolated read-only evidence access; ${backend.name} cannot provide it for profile ${profile}`);
+  }
   let startedAt = Date.now();
   let attempts = 0;
   let lastProblem = "";
+  let activityCommands: string[] = [];
   let fallback: JudgeCallRecord["fallback"];
   let fallbackUsed = false;
   const useFallback = (outcome: Exclude<JudgeCallRecord["outcome"], "ok">): boolean => {
-    const fallbackBackend = !fallbackUsed ? resolveFallbackBackend(backend) : null;
-    if (fallbackBackend === null) return false;
+    const fallbackTarget = !fallbackUsed ? selected.fallback : null;
+    if (fallbackTarget === null) return false;
+    const fallbackBackend = resolveBackend(fallbackTarget.backend);
+    if (!fallbackBackend.available()) return false;
+    // A fallback must be able to see the same proof surface. Dropping isolated
+    // evidence access or image visibility would turn backend recovery into a
+    // different judgment with missing inputs.
+    if (options.agentic === true && !fallbackBackend.agentic) return false;
+    if ((options.images?.length ?? 0) > 0 && !fallbackBackend.attachments && !(options.agentic === true && fallbackBackend.agentic)) return false;
     fallbackUsed = true;
     fallback = {
       at: new Date(startedAt).toISOString(),
       backend: backend.name,
-      model,
+      model: target.model,
+      effort: target.effort,
       durationMs: Date.now() - startedAt,
       outcome,
     };
+    target = fallbackTarget;
     backend = fallbackBackend;
-    model = tierModelFor(config, backend.name, tier);
     startedAt = Date.now();
     attempts = 0;
     lastProblem = "";
+    activityCommands = [];
     return true;
   };
   while (true) {
@@ -56,23 +95,24 @@ export async function runJudge<T>(
         : `Your previous reply was rejected: ${lastProblem}. Reply with ONLY the JSON object, no prose, no code fences.\n\n`;
     let text: string;
     try {
-      text = (
-        await backend.run(retryPreamble + prompt, {
-          model,
-          timeoutMs: config.judge.timeoutMs,
-          purpose,
-          ...(options.effort !== undefined ? { effort: options.effort } : {}),
-          ...(options.images !== undefined ? { images: options.images } : {}),
-          ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
-          ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-        })
-      ).text;
+      const result = await backend.run(retryPreamble + prompt, {
+        model: target.model,
+        timeoutMs: config.judge.timeoutMs,
+        purpose,
+        effort: target.effort,
+        ...(options.images !== undefined ? { images: options.images } : {}),
+        ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+        ...(options.evidencePaths !== undefined ? { evidencePaths: options.evidencePaths } : {}),
+      });
+      text = result.text;
+      activityCommands.push(...(result.activity?.commands ?? []));
     } catch (error) {
       if (error instanceof JudgeError) {
         const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout" || error.code === "judge-invalid-output";
         if (canFallback && useFallback(error.code)) continue;
         throw Object.assign(error, {
-          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+          record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
         });
       }
       throw error;
@@ -84,7 +124,7 @@ export async function runJudge<T>(
         const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
         if (useFallback(error.code)) continue;
         throw Object.assign(error, {
-          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+          record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
         });
       }
       continue;
@@ -96,37 +136,40 @@ export async function runJudge<T>(
         const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
         if (useFallback(error.code)) continue;
         throw Object.assign(error, {
-          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+          record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
         });
       }
       continue;
     }
     return {
       value: validated,
-      record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, "ok", fallback),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, activityCommands),
     };
   }
 }
 
 function makeRecord(
   backend: JudgeCallRecord["backend"],
-  model: string | null,
-  tier: Tier,
+  target: JudgeTarget,
+  profile: JudgeProfile,
   purpose: string,
   startedAt: number,
   attempts: number,
   outcome: JudgeCallRecord["outcome"],
   fallback?: JudgeCallRecord["fallback"],
+  activityCommands: string[] = [],
 ): JudgeCallRecord {
   return {
     at: new Date(startedAt).toISOString(),
     backend,
-    model,
-    tier,
+    model: target.model,
+    profile,
+    effort: target.effort,
     purpose,
     durationMs: Date.now() - startedAt,
     attempts,
     outcome,
+    ...(activityCommands.length > 0 ? { activity: { commands: activityCommands } } : {}),
     ...(fallback !== undefined ? { fallback } : {}),
   };
 }

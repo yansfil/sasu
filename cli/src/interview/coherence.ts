@@ -160,10 +160,9 @@ export async function runInterviewCoherence(
     const outcome = await runJudge(
       config,
       "interview:coherence",
-      "frugal",
+      "routine",
       coherencePrompt(topic, currentUnderstanding(content), decided),
       (value) => validateGapVerdict(value),
-      { effort: "low" },
     );
     return {
       ...base,

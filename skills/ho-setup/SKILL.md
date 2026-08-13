@@ -84,26 +84,24 @@ Then interview:
      `agents/implement/**` and `agents/gates/**` in projects that still carry
      old-layout runs.
 6. Sasu judge gates (optional; defaults work without config):
-   - `judge.backend`: `auto` (default; prefers claude, falls back to codex),
-     `claude`, or `codex`. Judging with a different vendor than the
-     implementing runtime is recommended for reviewer independence but not
-     enforced in v1.
-   - `judge.tierModels`: per-backend model per tier. Defaults:
-     claude frugal=`claude-sonnet-5` (gap-audit/spec), standard=`claude-sonnet-5`
-     (semantic verify), frontier=`claude-opus-4-8`; codex uses the user's own
-     CLI default model unless configured. (Frugal moved off haiku after live
-     calibration showed haiku slower and less stable on gate prompts; pin
-     `claude.frugal` back to a haiku-class model here if cost matters more.)
+   - `judge.profiles.routine`: primary and fallback target for interview,
+     document-gate, acceptance, fidelity, and normal semantic judgment.
+     The default is Codex `gpt-5.6-luna` xhigh, then Claude Sonnet 5 xhigh.
+   - `judge.profiles.high-risk`: primary and fallback target for the final
+     high-risk lane.
+     The default is Codex `gpt-5.6-sol` xhigh, then Claude Opus 5 xhigh.
+   - Each target has `backend`, `model`, and `effort`; `fallback: null`
+     explicitly disables fallback for that profile.
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
      (default 3; advisory for autonomous loops - a user-instructed re-run is
      never locked).
    - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
      lanes) and spec (2 review-axis lanes), merged mechanically by the CLI
      (default `true`; set `false` to restore the single exhaustive judge).
-   - Codex judge limitation: codex CLI cannot disable its shell, so codex
-     judges get best-effort isolation only (empty ephemeral work root,
-     `--ignore-user-config`, no-tools instruction); the claude backend gives
-     the strongest reviewer isolation (all tools removed).
+   - Evidence access is not configurable.
+     Prompt-only Codex calls use an empty ephemeral work root.
+     File-reading Codex calls see only exact allowlisted files copied into a
+     disposable read-only workspace, while Claude fallback grants Read/Grep.
    - `verify.commands`: mechanical verify commands (`test`, `lint`,
      `typecheck`, `build`). Declared commands win; otherwise sasu
      detects from manifests and suggests pinning here.
@@ -142,11 +140,17 @@ Reference shape:
     "setup": ["pnpm install"]
   },
   "judge": {
-    "backend": "auto",
     "retryBudget": 3,
     "fanout": true,
-    "tierModels": {
-      "claude": { "frugal": "claude-sonnet-5", "standard": "claude-sonnet-5", "frontier": "claude-opus-4-8" }
+    "profiles": {
+      "routine": {
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
+        "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "xhigh" }
+      },
+      "high-risk": {
+        "primary": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "xhigh" }
+      }
     }
   },
   "verify": {

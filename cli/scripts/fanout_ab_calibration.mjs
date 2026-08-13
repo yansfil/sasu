@@ -96,7 +96,7 @@ console.error(`[calibration] gate=${gate} doc=${docPath} (${doc.length} chars), 
 
 console.error("[calibration] single-judge run...");
 const single = await timed(async () => {
-  const outcome = await runJudge(config, `calibration:${gate}:single`, "frugal", buildPrompt({}), validate);
+  const outcome = await runJudge(config, `calibration:${gate}:single`, "routine", buildPrompt({}), validate);
   return outcome.value;
 });
 console.error(`[calibration] single: ${single.ms}ms, verdict=${single.value.verdict}, findings=${single.value.findings.length}`);
@@ -105,8 +105,7 @@ console.error("[calibration] fan-out run...");
 const fanout = await timed(async () => {
   const outcomes = await Promise.all(
     lanes.map((lane) =>
-      // Mirror the production lane path: narrow scope + low reasoning effort.
-      runJudge(config, `calibration:${gate}:lane:${lane.id}`, "frugal", buildPrompt({ lane, laneCount: lanes.length }), validate, { effort: "low" }),
+      runJudge(config, `calibration:${gate}:lane:${lane.id}`, "routine", buildPrompt({ lane, laneCount: lanes.length }), validate),
     ),
   );
   return {
@@ -128,7 +127,7 @@ const result = {
   doc: docPath,
   docChars: doc.length,
   at: new Date().toISOString(),
-  model: config.judge.tierModels.claude.frugal,
+  model: config.judge.profiles.routine.primary.model,
   single: {
     ms: single.ms,
     verdict: single.value.verdict,

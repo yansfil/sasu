@@ -5,11 +5,12 @@ import { spawnSync } from "node:child_process";
 import { loadConfig } from "../config";
 import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
+import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateSemanticVerdict } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
-import { acceptancePrompt, fidelityPrompt, fidelitySource, riskPrompt } from "./prompts";
+import { acceptancePrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
 import {
   artifactIntegrityProblems,
   captureSourceSnapshot,
@@ -28,6 +29,7 @@ import {
   IMPLEMENT_SCHEMA,
   type AcceptanceCriterionInvocation,
   type AcLaneResult,
+  type ContractItem,
   type FidelityCheckResult,
   type ImplementCommandResult,
   type ImplementState,
@@ -195,7 +197,14 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   item.status = nextStatus;
   if (evidence !== "" && !item.evidence.some((entry) => entry.text === evidence)) item.evidence.push({ at: nowIso(), text: evidence });
   persistState(statePath, state);
-  return result("task", true, `${id} is ${nextStatus}`, publicState(state), state);
+  const remaining = state.tasks.filter((entry) => entry.status !== "complete");
+  const remainingLine = remaining.length === 0
+    ? "remaining: none — all tasks closed"
+    : `remaining: ${remaining.map((entry) => `${entry.id} (${entry.title}${entry.status === "blocked" ? ", blocked" : ""})`).join(", ")}`;
+  return result("task", true, `${id} is ${nextStatus}; ${remainingLine}`, {
+    ...publicState(state),
+    remainingTasks: remaining.map((entry) => ({ id: entry.id, title: entry.title, status: entry.status })),
+  }, state);
 }
 
 function inspectArtifactFile(absolute: string, kind: string): { sha256: string; bytes: number } {
@@ -373,6 +382,86 @@ function changeMaterial(projectRoot: string, state: ImplementState, current: Ret
   return sections.join("\n\n");
 }
 
+function changedFileManifest(projectRoot: string, paths: string[]): string {
+  if (paths.length === 0) return "- none";
+  return paths.map((relative) => {
+    const absolute = path.join(projectRoot, relative);
+    if (!fs.existsSync(absolute)) return `- ${relative} [deleted]`;
+    const buffer = fs.readFileSync(absolute);
+    return `- ${relative} [${buffer.includes(0) ? "binary" : "text"}, ${buffer.length} bytes]`;
+  }).join("\n");
+}
+
+function boundedExcerpt(text: string, limit: number): { text: string; truncated: boolean } {
+  if (text.length <= limit) return { text, truncated: false };
+  const marker = `\n\n[... ${text.length - limit} chars omitted by sasu ...]\n\n`;
+  const side = Math.max(1, Math.floor((limit - marker.length) / 2));
+  return { text: `${text.slice(0, side)}${marker}${text.slice(-side)}`, truncated: true };
+}
+
+function isImageBytes(buffer: Buffer): boolean {
+  const png = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const jpeg = buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer.at(-2) === 0xff && buffer.at(-1) === 0xd9;
+  return png || jpeg;
+}
+
+function acceptanceMaterial(
+  projectRoot: string,
+  state: ImplementState,
+  criterion: ContractItem,
+  changedFiles: string,
+  runs: MechanicalRunRecord[],
+): AcceptancePromptMaterial {
+  const verificationIds = new Set(
+    state.verification.filter((entry) => entry.covers.includes(criterion.id)).map((entry) => entry.id),
+  );
+  const checks: CheckResult[] = runs
+    .filter((run) => run.verificationIds.some((id) => verificationIds.has(id)))
+    .map((run) => {
+      const log = fs.readFileSync(path.join(projectRoot, run.logPath), "utf8");
+      const tail = boundedExcerpt(log, CHECK_TAIL_RENDER_MAX_CHARS);
+      return {
+        criterionId: criterion.id,
+        command: run.command,
+        exitCode: run.exitCode,
+        tail: tail.text,
+        provenance: `the harness ran \`${run.command}\` at ${run.startedAt} from cwd=${run.cwd}; recorded log=${run.logPath}`,
+      };
+    });
+  const evidence: EvidenceMaterial[] = [];
+  const readableArtifacts: AcceptancePromptMaterial["readableArtifacts"] = [];
+  for (const artifact of state.artifacts.filter(
+    (entry) => entry.command === undefined && verificationIds.has(entry.verificationId),
+  )) {
+    const absolute = normalizeProjectPath(projectRoot, artifact.path).absolute;
+    const buffer = fs.readFileSync(absolute);
+    if (isImageBytes(buffer)) {
+      readableArtifacts.push({
+        path: artifact.path,
+        kind: artifact.kind,
+        sha256: artifact.sha256,
+        bytes: artifact.bytes,
+        description: artifact.description,
+      });
+      continue;
+    }
+    if (buffer.includes(0)) {
+      throw new Error(`${criterion.id}: registered artifact is binary but not a PNG or JPEG the judge can inspect: ${artifact.path}`);
+    }
+    const excerpt = boundedExcerpt(buffer.toString("utf8"), EVIDENCE_RENDER_MAX_CHARS);
+    evidence.push({
+      criterionId: criterion.id,
+      path: artifact.path,
+      sha256: artifact.sha256,
+      bytes: artifact.bytes,
+      text: excerpt.text,
+      provenance: `registered by the implementing session at ${artifact.registeredAt}; hash-pinned by the harness; description: ${artifact.description}`,
+      ...(excerpt.truncated ? { truncated: true } : {}),
+    });
+  }
+  return { changedFiles, checks, evidence, readableArtifacts };
+}
+
 function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
   const raw = value as { verdict?: unknown; checks?: unknown };
@@ -448,23 +537,37 @@ async function judgeLane<T>(
 
 async function acceptanceLane(
   config: ReturnType<typeof loadConfig>,
+  projectRoot: string,
   state: ImplementState,
-  changeMaterial: string,
+  changedFiles: string,
+  changedPaths: string[],
   mechanical: MechanicalRunRecord[],
 ): Promise<NonNullable<UnifiedVerificationAttempt["lanes"]["acceptance"]>> {
   const invocationId = crypto.randomUUID();
   const started = Date.now();
   const startedAt = nowIso();
   const records = await Promise.all(state.acceptanceCriteria.map((criterion) =>
-    judgeLane(crypto.randomUUID(), () =>
-      runJudge(
+    judgeLane(crypto.randomUUID(), async () => {
+      const material = acceptanceMaterial(projectRoot, state, criterion, changedFiles, mechanical);
+      return runJudge(
         config,
         `implement:acceptance:${criterion.id}`,
-        "standard",
-        acceptancePrompt(state, criterion, changeMaterial, mechanical),
+        "routine",
+        acceptancePrompt(state, criterion, material),
         (value) => validateSemanticVerdict(value, [criterion.id]),
-      ),
-    ),
+        // 2026-08-13 live probe: 16 Luna xhigh calls across direct proof,
+        // code PASS/FAIL, a 21-file noisy manifest, allowlisted dependencies,
+        // and prompt injection were correct with zero to two exact-path reads.
+        {
+          agentic: true,
+          cwd: projectRoot,
+          evidencePaths: [...changedPaths, ...material.readableArtifacts.map((artifact) => artifact.path)],
+          ...(material.readableArtifacts.length > 0
+            ? { images: material.readableArtifacts.map((artifact) => normalizeProjectPath(projectRoot, artifact.path).absolute) }
+            : {}),
+        },
+      );
+    }),
   ));
   const criteria = records.flatMap((record) => record.result?.criteria ?? []);
   const invocations: AcceptanceCriterionInvocation[] = records.map((record, index) => ({
@@ -613,19 +716,21 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
 
   const material = changeMaterial(projectRoot, state, source);
+  const changedPaths = changedPathsSince(state.initialSource, source);
+  const changedFiles = changedFileManifest(projectRoot, changedPaths);
   const config = loadConfig(projectRoot);
   const fidelityInvocationId = crypto.randomUUID();
   const [acceptance, fidelity] = await Promise.all([
-    acceptanceLane(config, state, material, mechanical),
+    acceptanceLane(config, projectRoot, state, changedFiles, changedPaths, mechanical),
     judgeLane(fidelityInvocationId, () =>
-      runJudge(config, "implement:fidelity", "standard", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
+      runJudge(config, "implement:fidelity", "routine", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
     ),
   ]);
 
   let risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: string[] }> | null = null;
   if (state.prd.reviewProfile === "high-risk") {
     risk = await judgeLane(crypto.randomUUID(), () =>
-      runJudge(config, "implement:risk", "frontier", riskPrompt(prdText, material, acceptance.result, fidelity.result), validateRisk),
+      runJudge(config, "implement:risk", "high-risk", riskPrompt(prdText, material, acceptance.result, fidelity.result), validateRisk),
     );
   }
   const laneVerdicts = [acceptance.verdict, fidelity.verdict, ...(risk !== null ? [risk.verdict] : [])];

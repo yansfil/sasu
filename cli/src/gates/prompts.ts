@@ -359,7 +359,7 @@ inside the change is itself a sign of gaming worth a FAIL/finding.`;
  *   and injection-shaped content entered under trusted framing, so these get
  *   an honest weigh-accordingly label instead.
  */
-function evidenceSection(evidence: EvidenceMaterial[], omittedCount = 0): string {
+export function evidenceSection(evidence: EvidenceMaterial[], omittedCount = 0): string {
   if (evidence.length === 0 && omittedCount === 0) return "";
   const render = (item: EvidenceMaterial): string => {
     const provenance =
@@ -417,7 +417,7 @@ ${blocks.join("\n\n")}
  * name the criterion they prove, so the judge can rest a verdict on "the
  * harness ran this and it exited 0" instead of re-deriving it from the diff.
  */
-function checkSection(checks: CheckResult[]): string {
+export function checkSection(checks: CheckResult[]): string {
   if (checks.length === 0) return "";
   const lines = checks.map((check) => {
     const head = check.provenance
