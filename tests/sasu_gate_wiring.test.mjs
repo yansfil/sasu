@@ -30,11 +30,11 @@ test("gen-prd routes readiness through the spec gate", () => {
   assert.match(skill, /Never run `sasu gate override` yourself/);
 });
 
-test("implement routes changed-code tasks through the verify gate", () => {
+test("implement routes changed-code tasks through unified implement verify", () => {
   const skill = readSkill("implement");
-  assert.match(skill, /sasu verify --slug <topic-slug> --prd/);
+  assert.match(skill, /sasu implement verify/);
   assert.match(skill, /mechanical/i);
-  assert.match(skill, /Never run `sasu gate override` yourself/);
+  assert.match(skill, /Do not use overrides on the user's behalf/);
 });
 
 test("please treats gate BLOCKs as fix-and-regate loops, stopping only for humans or budget", () => {
@@ -46,7 +46,7 @@ test("please treats gate BLOCKs as fix-and-regate loops, stopping only for human
 });
 
 test("every gate-calling skill keeps the override user-only in the same breath", () => {
-  for (const name of ["interview-me", "gen-prd", "implement", "please"]) {
+  for (const name of ["interview-me", "gen-prd", "please"]) {
     const skill = readSkill(name);
     const gateMentions = skill.match(/sasu (gate|verify)/g) ?? [];
     assert.ok(gateMentions.length > 0, `${name} must call a sasu gate`);

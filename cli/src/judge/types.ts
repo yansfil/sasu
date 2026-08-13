@@ -2,6 +2,7 @@ import type { BackendName, Tier } from "../config";
 
 export type JudgeErrorCode =
   | "judge-binary-missing"
+  | "judge-auth"
   | "judge-auth-or-runtime"
   | "judge-timeout"
   | "judge-invalid-output";
@@ -33,6 +34,14 @@ export interface JudgeCallRecord {
    */
   attempts: number;
   outcome: "ok" | JudgeErrorCode;
+  /** A backend failure that was recovered by one cross-vendor fallback. */
+  fallback?: {
+    at: string;
+    backend: BackendName;
+    model: string | null;
+    durationMs: number;
+    outcome: JudgeErrorCode;
+  };
 }
 
 export interface Finding {

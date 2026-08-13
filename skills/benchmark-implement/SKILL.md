@@ -8,7 +8,7 @@ description: |
 # benchmark-implement
 
 Benchmark the harness process, not the subjective quality of the implemented product.
-Keep this skill as a thin wrapper around `$implement`: it prepares one isolated run, delegates implementation, gathers that run's records, requests one independent session evaluation, and builds `report.json`.
+Keep this skill as a thin wrapper around `$implement`: it prepares one isolated run, runs implementation in the coordinator's current session, gathers that run's records, requests one independent session evaluation, and builds `report.json`.
 
 ## Read Before Running
 
@@ -45,7 +45,7 @@ Store its path and hash, and cite stable session event identifiers in qualitativ
 
 ```text
 prepare a fresh worktree and reserve a run ID
-  -> delegate the approved PRD to $implement
+  -> run the approved PRD through $implement in the coordinator session
   -> wait for receipt.json, including honest partial or blocked receipts
   -> locate the raw runtime transcript
   -> fresh read-only evaluator produces qualitative.json
@@ -86,9 +86,13 @@ Existing reports may be read only when the user explicitly asks to analyze or co
 When coordinates differ, still emit both reports but let `comparison.json` mark them non-comparable.
 Do not explain away that result in prose.
 
-### 3. Run Implement
+### 3. Run Implement In The Coordinator Session
 
-Change into the prepared worktree and invoke `$implement` with the prepared PRD path.
+Change into the prepared worktree and invoke `$implement` with the prepared PRD path in the current coordinator session.
+The coordinator is the implementation executor for this benchmark.
+Do not spawn an implementation worker session and do not delegate implementation through a subagent.
+This preserves the coordinator's approved-PRD context while the prepared worktree still isolates the source tree and run records.
+Bind the implement run to the current session ID when initializing, and record the coordinator's actual runtime and model as the executor coordinates.
 Let that skill own init, task execution, verification, review, finalization, and its receipt.
 Do not reproduce or bypass implement commands in this skill.
 Treat `complete`, `partial`, and `blocked` receipts as analyzable outcomes.

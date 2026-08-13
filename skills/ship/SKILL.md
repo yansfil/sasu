@@ -106,7 +106,7 @@ Script-enforced guardrails (fail closed):
 
 - receipt must be `complete`.
 - delivery mode must be `pr`.
-- reviews and receipt must be fresh against the current worktree (`prd_state_harness.js verify-delivery`).
+- the implement receipt must match the fresh PASS reported by `sasu implement status` for the current worktree.
 - the branch must not be behind `origin/<base>`; `preflight` fetches and reports
   `baseFreshness`, and `ship` refuses a stale base (`--allow-stale-base --reason` to override).
   When behind, rebase onto the origin base, resolve conflicts, rerun the relevant
@@ -160,6 +160,8 @@ timeout (rerun `watch-ci`), `1` a guardrail refused the run.
 
 `merge` is a separate, explicitly approved action.
 Pass the user's merge instruction verbatim through `--approval`.
+When implementation was finalized in local delivery mode and the user approves PR delivery later, also pass `--override-mode --reason "<verbatim user approval>"`.
+This mode override records new delivery authorization only and does not bypass freshness, base, CI, mergeability, or reviewed-head checks.
 The command revalidates implementation freshness after the delivery commit,
 proves the local and remote PR heads are identical, checks CI and GitHub
 mergeability, then writes

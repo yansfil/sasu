@@ -22,6 +22,9 @@ import {
 } from "./interview/commands";
 import { runInterviewCoherence, type CoherenceResult } from "./interview/coherence";
 import { contractVersion } from "./version";
+import { runImplementCommand, type ImplementArgs } from "./implement/commands";
+import { runPrdCommand } from "./prd/commands";
+import { runRulesCommand, runSetupCommand } from "./support/commands";
 
 const USAGE = `sasu - harness CLI: judge gates, verification, doctor
 
@@ -31,7 +34,16 @@ Usage:
   sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--json]
   sasu gate status    --slug <topic> [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
-  sasu verify         --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
+  sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
+  sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--json]
+  sasu implement task     --id <Tn> [--status <complete|pending|blocked>] --evidence "<proof>" [--json]
+  sasu implement artifact --id <Vn> --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
+  sasu implement status   [--slug <topic> | --state <path>] [--json]
+  sasu implement verify   [--slug <topic> | --state <path>] [--json]
+  sasu implement finalize [--slug <topic> | --state <path>] [--json]
+  sasu prd readiness       --prd <path> [--json]
+  sasu rules <add|check|relevant> [...]
+  sasu setup seed-agents-md [--project-root <path>] [--adopt-claude-md]
   sasu interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
   sasu interview log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
   sasu interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
@@ -274,17 +286,40 @@ async function main(): Promise<void> {
     process.exit(report.ok ? 0 : 1);
   }
 
+  if (command === "implement") {
+    const implementResult = await runImplementCommand(projectRoot, args as ImplementArgs);
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...implementResult }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`[implement:${implementResult.action}] ${implementResult.ok ? "ok" : "FAIL"} - ${implementResult.message}\n`);
+      if (implementResult.detail !== undefined) process.stdout.write(`${JSON.stringify(implementResult.detail, null, 2)}\n`);
+    }
+    process.exit(implementResult.exitCode);
+  }
+
+  if (command === "prd") {
+    const prdResult = runPrdCommand(projectRoot, subcommand, args.flags);
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...prdResult }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`[prd:${prdResult.action}] ${prdResult.ok ? "ok" : "FAIL"} - ${prdResult.message}\n`);
+      if (prdResult.detail !== undefined) process.stdout.write(`${JSON.stringify(prdResult.detail, null, 2)}\n`);
+    }
+    process.exit(prdResult.exitCode);
+  }
+
   if (command === "verify") {
-    const config = loadConfig(projectRoot);
-    const topic = requireFlag(args, "slug");
-    const result = await runVerifyGate(projectRoot, config, topic, {
-      prdPath: typeof args.flags.get("prd") === "string" ? (args.flags.get("prd") as string) : undefined,
-      contractPath: typeof args.flags.get("contract") === "string" ? (args.flags.get("contract") as string) : undefined,
-      baseRef: typeof args.flags.get("base") === "string" ? (args.flags.get("base") as string) : undefined,
-      skipMechanical: args.flags.get("skip-mechanical") === true,
-      allowOpenTasks: args.flags.get("allow-open-tasks") === true,
-    });
-    emitGateResult(result, asJson);
+    fail("`sasu verify` was removed; use `sasu implement verify` for an implementation run or `sasu gate verify` for a standalone diff gate");
+  }
+
+  if (command === "rules") {
+    runRulesCommand(args);
+    return;
+  }
+
+  if (command === "setup") {
+    runSetupCommand(args);
+    return;
   }
 
   if (command === "interview") {
@@ -354,6 +389,17 @@ async function main(): Promise<void> {
 
   if (command === "gate") {
     const config = loadConfig(projectRoot);
+    if (subcommand === "verify") {
+      const topic = requireFlag(args, "slug");
+      const result = await runVerifyGate(projectRoot, config, topic, {
+        prdPath: typeof args.flags.get("prd") === "string" ? (args.flags.get("prd") as string) : undefined,
+        contractPath: typeof args.flags.get("contract") === "string" ? (args.flags.get("contract") as string) : undefined,
+        baseRef: typeof args.flags.get("base") === "string" ? (args.flags.get("base") as string) : undefined,
+        skipMechanical: args.flags.get("skip-mechanical") === true,
+        allowOpenTasks: args.flags.get("allow-open-tasks") === true,
+      });
+      emitGateResult(result, asJson);
+    }
     if (subcommand === "gap-audit") {
       const result = await runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"));
       emitGateResult(result, asJson);

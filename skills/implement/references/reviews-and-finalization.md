@@ -1,335 +1,73 @@
 # Reviews And Finalization
 
-Read this reference before acceptance sweeping, generating either completion review, finalizing a receipt, or handing off a blocked or partial run.
-
-## Contents
-
-- [Review Profiles](#review-profiles)
-- [User-Directed Review Override](#user-directed-review-override)
-- [Review Ownership](#review-ownership)
-- [Acceptance Sweep](#acceptance-sweep)
-- [Requirements Fidelity Review](#requirements-fidelity-review)
-- [Fidelity Review Recording And Freshness](#fidelity-review-recording-and-freshness)
-- [Final Adversarial Review](#final-adversarial-review)
-- [Final Review Recording And Freshness](#final-review-recording-and-freshness)
-- [Review Round Scope](#review-round-scope)
-- [Complete Finalization](#complete-finalization)
-- [Blocked Or Partial Finalization](#blocked-or-partial-finalization)
-- [Completion Authority](#completion-authority)
+Read this reference before unified verify, finalize, or a blocked handoff.
 
 ## Review Profiles
 
-The agent assigns a semantic review profile in PRD frontmatter, and the harness records it during `init`.
-Review semantics depend on the profile alone.
+| Profile | Unified lanes |
+| --- | --- |
+| `trivial` | acceptance and fidelity in parallel |
+| `standard` | acceptance and fidelity in parallel |
+| `high-risk` | acceptance and fidelity in parallel, then risk |
 
-| Profile | Requirements fidelity | Final adversarial review | Gate tail |
-| --- | --- | --- | --- |
-| `trivial` | Compact, main-agent owned | Not required | fidelity review, then finalize |
-| `standard` | Full combined semantic review by one fresh independent reviewer | Not required | fidelity review, then finalize |
-| `high-risk` | Full, main-agent owned | Full, fresh independent reviewer | fidelity review, then final review, then finalize |
+The CLI executes these policies.
+There is no manual prompt generation or review-record step.
 
-Read the complete intent, user-visible behavior, data effects, technical structure, external side effects, and delivery plan before choosing the profile.
-Use `trivial` only for bounded work with no changed user-visible behavior or runtime contract.
-Use `standard` for normal product and engineering changes, including small UI and UX work.
-Use `high-risk` for sensitive, destructive, irreversible, costly, or production-affecting work.
-The PRD's `review_rationale` makes this semantic decision auditable without teaching the harness to parse natural language.
-The PRD declaration, fixed project config, and explicit CLI value are safety floors.
-The harness uses the strongest declared profile, so an operational override may raise review strength but cannot silently lower a stronger semantic judgment.
-A missing declaration safely falls back to `standard` only when no other floor is supplied.
+## Fidelity Rubric
 
-## User-Directed Review Override
+The fidelity judge always answers the same five questions:
 
-The safety floors above bind agent-initiated choices; they are not a license to overrule the user.
-When the user explicitly changes review scope mid-run, for example "리뷰 한번만 돌리고 마무리해" or "this needs the full high-risk review", record it instead of ignoring it or silently skipping gates:
+1. Was the original goal preserved?
+2. Were accepted decisions and constraints preserved?
+3. Were rejected options and non-goals kept out?
+4. Did deviations avoid distorting intent?
+5. Are completion and status claims honest?
 
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js review-policy \
-  --profile trivial|standard|high-risk \
-  --reason "<the user's verbatim instruction>"
-```
+The context changes with the PRD source.
+Conversation-only PRDs use Decision Traceability as canonical intent.
+Qa-log PRDs use the full qa-log unless a fresh spec gate already proved the qa-log to PRD leg.
 
-The command records a `review_profile_override` deviation with the quoted instruction, updates the effective policy, and the receipt carries both.
-Follow the resulting effective policy from that point.
-Do not run `review-policy` on your own judgment; it exists only to carry an explicit user instruction.
+Fidelity does not rejudge per-verification artifact sufficiency or code correctness.
+The acceptance judge owns those questions.
 
-Supply an explicit profile when the run needs a stronger floor than the PRD or project policy.
+## Unified Verdict
+
+Run:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
-  --prd <prd-path> \
-  --review-profile trivial|standard|high-risk
+sasu implement verify
 ```
 
-Lowering a stronger PRD or project-policy floor requires correcting that source explicitly rather than bypassing it at runtime.
+The unified verdict is PASS only when every required lane is PASS.
+NOT_RUN, FAIL, BLOCKED, ERROR, and STALE are not completion states.
 
-## Review Ownership
+A source or evidence change after PASS makes the result stale.
+Run verify again explicitly after the implementation and final evidence are coherent.
 
-The main agent owns compact `trivial` fidelity and full `high-risk` fidelity.
-A `standard` run uses one fresh independent read-only sidecar for its combined requirements fidelity review when multi-agent tools are available.
-The required final adversarial review uses a fresh independent sidecar for `high-risk`.
-Use a default independent subagent with fresh context for either independent role.
-In Codex, omit `agent_type` and use `fork_context: false` when the tool supports that option.
-In Claude Code, use the default general-purpose subagent.
-Do not choose a `hoyeon-*` role unless the user explicitly requests that role.
+## Finalize
 
-Pass raw artifact paths and the generated review prompt rather than the coordinator's conclusions.
-Reviewer sidecars are read-only and must not edit files, mutate harness state, call `mark`, call either review-record command, call `finalize`, or update Goal state.
-The coordinator evaluates the findings and records the report.
-
-If multi-agent tools are unavailable, write `Subagent unavailable: <reason>` in the applicable report and perform a fresh manual pass.
-Never silently skip a required independent review.
-
-Mechanical completion belongs to the harness.
-Reviewers should trust passing tracked-state, artifact-registration, hash, freshness, and required-verification gates unless evidence is inconsistent, missing, or suspicious.
-They should not spend the default path rerunning the complete test suite or recomputing every artifact hash.
-
-## Acceptance Residue Check
-
-Acceptance criteria close themselves: when every verification item covering a pending AC settles and at least one passes, the harness marks it met with derived evidence (`autoMetAcceptanceCriteria` in mark/verify-run output).
-A manual `met`/`not_met`/`blocked` judgment is never overridden by the auto-close.
-
-Before completion reviews, check only the residue - any AC still `pending` means one of:
-
-- a covering verification has not run yet: run it.
-- the AC's proof genuinely lives outside the verification contract: mark `met` manually with real evidence.
-- the criterion is not satisfied or is stuck: mark `not_met` or `blocked` with the reason - these always remain manual judgments.
-
-Keep working when a required acceptance criterion is not met and no concrete blocker exists.
-
-## Requirements Fidelity Review
-
-Generate the strict intent-review prompt:
+Run:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-prompt
+sasu implement finalize
 ```
 
-The fidelity review and the sasu verify gate divide the semantic lane and may run concurrently once the acceptance sweep is done and the code is frozen.
-The gate owns per-criterion code-vs-AC verdicts from the diff; the fidelity reviewer owns intent lineage, decision provenance, deviations, and whether registered evidence proves the intent - neither consumes the other's output.
-Ownership and concurrency are different axes: on `standard`, launch the independent reviewer as a background sidecar and run `sasu verify` while it works; on `high-risk`, run `sasu verify` in the background and write the main-agent fidelity review while the gate runs (the independent final adversarial review is still spawned only after fidelity is recorded); on `trivial`, the main agent writes the compact review and gate concurrency is moot.
-If the gate fails and the fix changes code, the fidelity review goes stale under the normal freshness rule and must re-run; accept that risk instead of serializing the two calls.
+Finalize validates only current state, source hashes, artifact hashes, and the fresh unified PASS.
+It performs no tests, judge calls, capture calls, browser work, or subprocess execution.
 
-This review compares the canonical intent source (reading depth per the spec-gate rule below), accepted decisions, rejected alternatives, PRD scope, acceptance criteria, verification evidence, and implementation result.
-It is not a general code-quality review.
-Fail on material semantic drift, missing user-visible behavior, diluted acceptance criteria, hidden scope, unapproved decision reversal, weak evidence for the actual user goal, or an overclaimed `Done` status.
-
-When the verification contract or artifacts contain a user-visible surface, treat UI and UX as a fidelity overlay rather than a separate gate.
-Judge primary flows and relevant loading, empty, and error states.
-Judge responsive behavior and accessibility when contracted, copy and hierarchy where applicable, and explicitly separate evidence-backed findings from remaining human taste.
-
-The generated prompt carries the checks themselves; pass it to the reviewer verbatim rather than restating them.
-One policy inside it is worth knowing before you read a report, because it decides how much the reviewer read:
-
-- when the source is qa-log.md, reading depth follows the spec-gate record (the generated prompt states which case applies). Settled case - the spec gate verdict is PASS, not overridden, and every recorded input hash still matches the qa-log and PRD on disk: the qa-log→PRD leg is already judged, so the reviewer reads the PRD's Decision Traceability section plus the implementation and registered evidence instead of the full qa-log, falling back to reading the canonical qa-log in full if anything in the PRD's decision trace looks inconsistent or truncated, the spec record looks suspicious, or a decision's provenance is unclear. Unsettled case - the spec gate is absent, stale, failed, or overridden: read the complete qa-log (Current Understanding, Decision Register, material Raw Q&A with Decision Packet content in each entry's `immediate_notes`, UX Scenario Cards, objections, evidence, and audit findings) instead of relying on a summary or parsed sample. The layering principle is that each layer sees only what only it can see: in an audited run the fidelity reviewer re-read a 37k-char qa-log behind a fresh spec-gate PASS and found zero issues the gate had not already caught.
-
-Write:
+Successful finalize writes:
 
 ```text
-agents/implement/<topic-slug>/review/requirements-fidelity-review.md
+agents/implement/<topic-slug>/receipt.json
+agents/implement/<topic-slug>/implementation-result.md
 ```
 
-The report should follow the recommended skeleton the generated prompt emits: `Intent Sources Read`, `Decision Trace`, `Findings`, `Verification Intent Checklist`, `Coverage Judgment`, `Deviation Audit`, and `Verdict`.
-Structure deviations (missing sections, bullet floors, label grammar, per-`V#` mentions, placeholders) are advisory: `requirements-review-record` reports them as `structureWarnings` and never rejects on them.
-Two things are enforced mechanically: a verdict the report *states* must not contradict `--status`, and a `FAIL` report must carry at least one finding.
-The check is a contradiction check, not a shape check - `Status: FAIL`, `**Status:** FAIL`, and `Status: FAIL - see findings` all read as a stated FAIL, and a report that states no verdict at all is accepted with an advisory warning because `--status` already carries it.
-For every required `V#`, list the PRD Pass Intent or derived pass criteria, covered `R#` and `AC#` IDs, registered artifact paths inspected, a `PASS` or `FAIL` judgment, and any gap.
-A passing review must fail when a required `V#` is missing, lacks a registered artifact path, or has an artifact that does not prove its mapped requirement or acceptance criterion.
+Both outputs derive from `state.json`.
+They are not independent completion ledgers.
 
-## Fidelity Review Recording And Freshness
+Running finalize again with the same completion fingerprint returns the existing result.
 
-Record a passing report with:
+## Blocked Handoff
 
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js requirements-review-record \
-  --status pass \
-  --report agents/implement/<topic-slug>/review/requirements-fidelity-review.md \
-  --summary "<requirements fidelity verdict>"
-```
-
-State the verdict the review actually reached; a stated `FAIL` contradicting `--status pass` is rejected.
-Never edit the report to match the flag - that is forging the evidence, and it is the reason the shape requirement was deleted.
-
-When the fidelity review fails, fix its findings or mark the implementation `Blocked` or `Partially Done` with evidence.
-Do not proceed to a final adversarial review or complete receipt until requirements fidelity passes.
-
-New evidence, a new verification result, or a new deviation after a passing fidelity review makes it stale, and so does a change to anything the review actually read: the PRD, the interview log, or any registered evidence artifact, each pinned by content hash at record time.
-A source change does not, because the code is the verify gate's subject and that gate pins the exact diff it judged - the two axes do not consume each other's results, which is what the split above already said.
-The final adversarial review still goes stale on a source change: reading the code is its mandate.
-
-For a blocked or partial handoff, still run and record requirements fidelity.
-That report may contain `Status: FAIL`, but it must compare original intent, decisions, PRD scope, acceptance criteria, verification evidence, and implementation result.
-The handoff must reflect the verdict and must not soften it into `Done`.
-
-## Final Adversarial Review
-
-Generate the reviewer prompt only after requirements fidelity has been recorded and the effective policy requires final review, or when a human explicitly requests an optional review:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js review-prompt
-```
-
-Before this review, stop verification-only runtime servers, browser sessions, tunnels, and background processes unless there is an explicit reason to leave one running.
-Record shutdown evidence or the intentional left-running exception.
-
-This review is a delta on top of the recorded gates and the fidelity review, never a re-derivation of them.
-The generated prompt carries the checks themselves, so pass it to the reviewer verbatim and do not restate them here or in the handoff.
-On round 2 and later the prompt narrows again, against the previous round - see [Review Round Scope](#review-round-scope).
-
-Write:
-
-```text
-agents/implement/<topic-slug>/review/final-review.md
-```
-
-## Final Review Recording And Freshness
-
-Record a passing final review with:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js review-record \
-  --status pass \
-  --report agents/implement/<topic-slug>/review/final-review.md \
-  --summary "<review verdict>"
-```
-
-When a required final review fails, fix the findings, re-capture any runtime evidence the fix invalidates, rerun requirements fidelity, then record a new passing final review; `finalize` re-runs required command-backed verification on the final tree, so do not re-run passed command-backed items manually.
-
-A recorded final review pins the requirements fidelity verdict it audited - that verdict's status and report hash - and goes stale only when THAT changes.
-Re-recording the same fidelity verdict from the same report therefore keeps a passing final review alive: nothing it audited moved.
-Recording a different fidelity verdict, or a changed fidelity report, stales it and the rejection says which of the two moved.
-A source change still stales it separately, because reading the code is this review's mandate.
-
-Label each finding in either review report with a severity the harness compares: `Severity: BLOCKER`, `Severity: MAJOR`, or `Severity: MINOR` (a leading `- MINOR - ...` or a Severity table column reads the same).
-`MINOR` means "worth recording, not worth another review round": those findings are carried into the receipt as open follow-up items, and the run may finish with them open.
-`BLOCKER` and `MAJOR` mean the work is not done, so a report stating either cannot be recorded as a pass - fix them and re-review, or record the honest `fail`.
-Labelling is never rejected on its own: a report that labels nothing behaves exactly as it did before, so an unlabelled finding simply cannot be deferred.
-
-The autonomous review loop is bounded: the harness counts every accepted review recording as a round, and once the count reaches its cap it tells you to stop summoning rounds and to record the remaining advisory findings as follow-up items in the receipt instead.
-The bound redirects and never refuses - recordings still succeed and `finalize` still works - and it applies only to rounds you decide on yourself, never to a round the user asks for.
-An open finding written into the receipt is more honest than a round that pretends to close it.
-
-## Review Round Scope
-
-Round 1 on either axis judges the whole contract.
-Round 2 and later are narrowed by the harness, not by you: the generated prompt contains only what moved since the previous round on that axis, so there is nothing to remember and nothing to ask for.
-
-Each axis narrows against its own pin.
-The fidelity prompt names the pinned intent inputs whose content changed - PRD, interview log, registered evidence - plus any deviation recorded since the baseline.
-The final prompt names the source paths whose state changed, says whether the fidelity verdict it audited moved, and carries the same deviation list.
-Both restate the baseline round's verdict, why it went stale when it did, and the findings it deferred, and both point at the previous report when that file is still on disk under the hash it was recorded with.
-
-The narrowing is a default, never a ceiling.
-If the delta is not enough - the baseline reasoning is thin, or a changed input is broad enough that the lineage has to be re-read - widen the scope, read what you need, and say so in the report.
-A round that states it widened is behaving correctly; a round that reports a delta-scoped verdict as full coverage is not.
-
-The harness will not narrow what it cannot prove.
-No baseline, a baseline with no pin, or a comparison it cannot compute (a commit between rounds moves HEAD, so the changed-path list would be a fiction) all render the full prompt with the reason stated in it.
-Recording a round carries the scope it was handed - `full`, `delta`, or `unrecorded` when no prompt was generated for that round - onto the review record, the round ledger, and the receipt.
-So generate the prompt once per round and hand the reviewer that text.
-Composing your own shorter brief narrows the review without recording what you left out, which is the one thing this contract exists to prevent.
-
-Required final reviews must be independent in both time and content.
-The report file must be authored after `requirements-review-record` succeeds.
-An earlier report is rejected.
-
-The report should follow the recommended skeleton:
-
-- `Fidelity Review Checked`, citing the recorded fidelity report path and status.
-- `Findings`.
-- `Artifact Audit`.
-- `Deviation Audit`.
-- `Verdict`.
-
-Missing or empty skeleton sections are advisory: `review-record` reports them as `structureWarnings` without rejecting.
-A stated verdict must not contradict `--status`, and a `FAIL` recording must carry at least one finding; the report does not re-list every required `V#` (the fidelity review owns that checklist).
-The harness stores a git worktree snapshot and makes the review stale when source changes afterward.
-
-## Complete Finalization
-
-Only after every gate required by the assigned review profile passes, run:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
-  --status complete \
-  --summary "<evidence-backed summary>"
-```
-
-`finalize --status complete` ends with a harness-timed reverification: every required verification item whose evidence carries an executed command and whose contract declares no side effect is re-run on the final tree, and any nonzero exit rejects the receipt with a `Final reverification failed` violation and a log under the run's `reverify/` directory (receipt provenance, not registered agent evidence).
-This is deliberate: verify-run passes are recorded on the agent's schedule, so the receipt re-earns them on the harness's schedule.
-A pass earned on a worktree whose fingerprint (HEAD plus dirty-file hashes, harness bookkeeping excluded) still matches at finalize is skipped as `fresh pass` - the honest flow of running the final suite right before finalizing therefore costs nothing, and only passes the tree has drifted away from re-run.
-The accepted blind spot of that skip is gitignored-only drift, which git status cannot see; any tracked or untracked change re-triggers the run.
-Skipped items (non-shell evidence, declared side effects, fresh passes) are stamped into the receipt's `finalReverification` with their reason - do not try to route around the re-run; fix the failing check instead.
-
-Do not report done and do not mark the tracked Goal complete until:
-
-- `receipt.json` exists.
-- `status` reports zero open tracked items.
-- every required verification item is `pass` with artifact-backed evidence.
-- every met acceptance criterion has at least one covering verification item in `pass` status.
-- verification and execution plans are ready.
-- artifact validation has no violation.
-- requirements fidelity status is `pass` and fresh.
-- final review status is `pass` and fresh when the profile requires it.
-- verification-only runtime processes are stopped or intentionally left running with an explicit report.
-
-After the complete receipt, use the local cleanup or PR delivery handoff defined in `worktrees-and-delivery.md`.
-
-The generated implementation result must use `Done`, `Partially Done`, or `Blocked` and must follow the PRD's Implementation Result Report Contract.
-It includes the effective review policy, approval deviations, evidence and registered artifacts, initial-versus-final worktree scope, delivery boundaries, review verdicts, receipt, and coordinator context notes.
-New runs capture `initialWorktreeSnapshot` at initialization so the final report can distinguish preserved dirty entries from changes added during the run.
-Legacy runs without that snapshot must provide explicit baseline provenance in registered evidence and `context-notes.md` rather than claiming a clean baseline.
-
-## Blocked Or Partial Finalization
-
-Do not write a blocked or partial handoff until:
-
-- a requirements fidelity report exists.
-- the verdict it states does not contradict the recorded status, and the record is fresh.
-- every cited blocker or known not-done item has evidence.
-- the report status is `Blocked` or `Partially Done`, never `Done`.
-
-When the verify gate is BLOCKED terminally and every tracked item is complete, the gate itself is the blocker: `finalize --status blocked` succeeds and the receipt stamps the gate snapshot (verdict, attempts, findings, terminal cause).
-Terminal means the autonomous fix loop has no move left, on any of three causes the harness names distinctly: the retry budget is spent, an identical re-run would be refused on this unchanged tree (so the remaining attempts are unspendable), or the judge backend failed repeatedly without ever returning a verdict (so the fix budget is honestly unspent and nothing was judged).
-The receipt reports the real numbers in every case and never fakes an exhausted budget.
-In that terminal state both review-record commands accept the review's honest status, including `pass`: the run is heading to a blocked receipt that requires the recorded review, so the gate no longer vetoes the record.
-While retry budget remains, a `pass` record is still rejected - fix the cited findings and re-run `sasu verify` first.
-
-Use:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
-  --status blocked \
-  --summary "<evidence-backed blocker summary>"
-
-node ~/.codex/skills/implement/scripts/prd_state_harness.js finalize \
-  --status partial \
-  --summary "<evidence-backed partial handoff summary>"
-```
-
-Do not mark the tracked Goal complete for blocked or partial outcomes.
-Call `update_goal blocked` only when the Goal tool's own repeated-blocker contract is satisfied.
-Otherwise leave the Goal active and report the receipt state honestly.
-
-## Completion Authority
-
-The receipt is the only authoritative implementation completion proof.
-Goal state is lifecycle control and may mirror a successful receipt, but it is not a second proof artifact.
-
-`finalize --status complete` rejects completion mechanically when any of these remain:
-
-- the receipt is missing.
-- the execution or verification plan is missing or has blocking gaps.
-- PRD tasks, acceptance criteria, or verification items are open or lack evidence.
-- a met acceptance criterion has no covering verification item in `pass` status.
-- requirements fidelity is missing, failed, or stale.
-- a required final review is missing, failed, or stale.
-- source, evidence, artifacts, plans, or deviations changed after a passing review.
-- required artifacts are missing, empty, invalid, unregistered, hash-mismatched, the wrong kind, or (for command/automated checks) missing verify-run execution metadata.
-- required verification is blocked, skipped, failed, pending, or lacks artifact-backed evidence.
-- the sasu verify gate ran and is BLOCKED, or its PASS went stale.
-
-The agent additionally owns these completion duties, which the harness cannot check:
-
-- create or complete the tracked Goal when Goal tools are available.
-- stop verification-only runtime processes or record the explicit exception.
-- run the verify gate (or record the `sasu` binary's unavailability in `context-notes.md`); a `NOT_RUN` gate is stamped into the receipt.
+When proof cannot pass, report the failed stage, exact observable error, recovery path, open items, and stale inputs.
+Do not generate a complete receipt and do not soften the status into Done.

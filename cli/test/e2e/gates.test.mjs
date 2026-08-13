@@ -124,7 +124,7 @@ test("verify FAILs mechanically without calling the judge", () => {
     git: true,
   });
   // Poison stub: any judge call would return an invalid reply and surface as ERROR.
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "should never be consumed"),
   });
   assert.equal(result.status, 1);
@@ -140,7 +140,7 @@ test("verify FAILs semantically with per-criterion reasons after mechanical pass
     config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
     git: true,
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "FAIL",
       criteria: [
@@ -159,7 +159,7 @@ test("verify PASSes end to end and records judge usage for the receipt", () => {
     config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
     git: true,
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -181,7 +181,7 @@ test("verify auto-detects commands from package.json and suggests pinning them",
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ scripts: { test: "node -e \"process.exit(0)\"" } }));
   // Committed so the judged diff stays the widget.js change alone.
   gitCommitAll(dir, "declare test script", ["package.json"]);
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -305,7 +305,7 @@ test("verify PASS prints a per-criterion semantic summary", () => {
     config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
     git: true,
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -596,7 +596,7 @@ test("prelint: verify blocks on a broken PRD before the mechanical commands run 
     git: true,
   });
   fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE.replace("Covers R1, AC1, AC2.", "Covers R9, AC1, AC2."));
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "poison"),
   });
   assert.equal(result.status, 1);
@@ -710,7 +710,7 @@ test("verify refuses a mid-run call while implement tasks are open, at zero cost
       { id: "T2", title: "build the widget", status: "pending" },
     ],
   });
-  const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "should never be consumed"),
   });
   assert.equal(result.status, 1);
@@ -726,7 +726,7 @@ test("verify open-task guard: --allow-open-tasks proceeds with a warning", () =>
   writeImplementState(dir, "fixture", { tasks: [{ id: "T1", title: "still open", status: "in_progress" }] });
   const result = runCli(
     dir,
-    ["verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-tasks"],
+    ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-tasks"],
     { stub: stubFile(dir, PASS_STUB) },
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -743,7 +743,7 @@ test("verify open-task guard fails open: closed tasks, corrupt state, and missin
   ]) {
     const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
     if (state !== null) writeImplementState(dir, "fixture", state);
-    const result = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+    const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
       stub: stubFile(dir, PASS_STUB),
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -781,7 +781,7 @@ test("verify mechanical stage reuses a fresh verify-run pass and re-runs after d
     ],
   });
 
-  const reusedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const reusedRun = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub,
   });
   assert.equal(reusedRun.status, 0, reusedRun.stdout + reusedRun.stderr);
@@ -792,7 +792,7 @@ test("verify mechanical stage reuses a fresh verify-run pass and re-runs after d
   // Any vouched drift invalidates the recorded fingerprint (untracked files
   // are hashed like tracked ones): the command runs again.
   fs.appendFileSync(path.join(dir, "widget.js"), "log()\n");
-  const driftedRun = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], {
+  const driftedRun = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, PASS_STUB),
   });
   assert.equal(driftedRun.status, 0, driftedRun.stdout + driftedRun.stderr);
@@ -821,7 +821,7 @@ test("verify short-circuit: an identical semantic FAIL rerun refuses; a correcte
       { id: "AC2", verdict: "FAIL", reason: "no persistence code in the diff" },
     ],
   };
-  const first = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
+  const first = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
   assert.equal(first.status, 1, first.stdout + first.stderr);
   const record = gatesState(dir, "fixture").gates.verify;
   assert.equal(record.failedStage, "semantic");
@@ -833,7 +833,7 @@ test("verify short-circuit: an identical semantic FAIL rerun refuses; a correcte
   assert.equal(record.diffSource, `git:${headAfterCommit.stdout.trim()}`);
 
   // Identical base, identical tree: refused at $0, before any stage runs.
-  const refused = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
+  const refused = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /rerun short-circuit/);
   assert.match(refused.stderr, /--base/, "the refusal names the corrected-base escape");
@@ -841,7 +841,7 @@ test("verify short-circuit: an identical semantic FAIL rerun refuses; a correcte
 
   // Corrected base: a different judged diff (now containing the
   // implementation), so the gate must run it.
-  const corrected = runCli(dir, ["verify", "--slug", "fixture", "--prd", "prd.md", "--base", baseSha], {
+  const corrected = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--base", baseSha], {
     stub: stubFile(dir, PASS_STUB),
   });
   assert.equal(corrected.status, 0, corrected.stdout + corrected.stderr);

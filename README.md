@@ -36,7 +36,7 @@ remember = lessons land as enforcement, not notes
 | --- | --- |
 | `interview-me` | Pre-PRD interview: decision-driven Q&A, targeted UX scenario coverage, risk escalation, and one normalized PRD-ready `qa-log.md` |
 | `gen-prd` | The PRD as a complete-product contract: scope, non-goals, semantic review profile, decision traceability, verification, and explicit `human_approval` |
-| `implement` | Agent-planned, harness-checked implementation: task-level execution plan, explicit parallel scopes, artifact-backed evidence, profile-aware reviews, and a strict receipt |
+| `implement` | Approved-PRD implementation with task closure, registered evidence, one unified verify, and a state-derived receipt |
 | `benchmark-implement` | Fixed-PRD harness benchmark: implement delegation, fresh session analysis, deterministic process reports, and baseline comparison |
 | `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
 | `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
@@ -61,20 +61,17 @@ node scripts/install-local-skills.mjs
 | `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$implement` becomes `/implement`) |
 | `scripts/` | Symlinked to this repository | Symlinked to this repository |
 | `references/` | Symlinked to this repository | Copied with the same substitutions as `SKILL.md` |
-| Hooks | `Stop` + `PreToolUse` in `~/.codex/hooks.json` | `Stop` in `~/.claude/settings.json` |
+| Hooks | No implement lifecycle hooks | No implement lifecycle hooks |
 
 The mechanics that make one source possible:
 
-- **Self-locating scripts.**
-  `prd_state_harness.js` and `prd_ship.js` resolve their own install location and their sibling scripts from the invoked path, with a realpath fallback through the symlink.
-  Every command the hooks re-inject therefore matches the runtime that is actually running.
-- **Runtime-neutral session identity.**
-  Session ids are canonicalized bare: `codex:`, `claude:`, and `opencode:` prefixes are stripped for storage and comparison, and legacy prefixed state files keep matching.
-  Init binds from `CODEX_SESSION_ID`, `CODEX_THREAD_ID`, or `CLAUDE_SESSION_ID`, and otherwise the first hook payload claims the run.
+- **One public CLI.**
+  Implement lifecycle behavior is exposed only through `sasu implement ...`.
+  The old JavaScript dispatcher is a tombstone that returns migration guidance.
 - **Install-time substitution instead of forked docs.**
   The Claude copies of `SKILL.md` and `references/*.md` are generated, so a skill edit in this repository lands in both runtimes on the next install.
-- **Idempotent hook registration.**
-  The installer merges harness hooks into existing hook files without touching unrelated entries, and refuses to overwrite a foreign skill directory.
+- **Idempotent hook retirement.**
+  The installer removes legacy implement hooks without touching unrelated entries, and refuses to overwrite a foreign skill directory.
 
 ## The Sasu CLI
 
@@ -91,7 +88,12 @@ sasu interview coherence  advisory mid-interview judge: resolved-decision contra
 sasu interview status     interview state resync: counts, open P0/P1 nodes, checkpoint due, drift
 sasu gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
 sasu gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
-sasu verify           PRD prelint + mechanical checks ($0) first, then an independent diff-vs-AC judge
+sasu gate verify      standalone PRD prelint + mechanical checks, then a diff-vs-AC judge
+sasu implement start  initialize one approved-PRD implementation state
+sasu implement task   close one implementation obligation without implying verification
+sasu implement artifact  register already-created runtime evidence with hashes
+sasu implement verify run mechanical proof, then parallel AC and fidelity judges
+sasu implement finalize  create receipt and result from a fresh PASS without rerunning proof
 sasu gate status      gate verdicts, attempts, freshness, judge usage for a topic
 sasu gate override    user-only escape hatch; records a deviation with the user's reason
 sasu doctor           judge backends, verify commands, contract version
@@ -117,49 +119,40 @@ Codex judges run with best-effort isolation (empty ephemeral work root, user con
 Gates are hard blocks: an agent can fix findings and re-gate within a retry budget, but only the user can override, and every judgment and override lands in `agents/gates/<topic>/` for the receipt.
 A PASS is pinned to the content hash of its input documents; editing the qa-log or PRD afterwards turns the gate `STALE` in `gate status` until it is re-run, so a gate can never keep vouching for a document it has not seen.
 The CLI never executes implementation work: coding stays in the host agent session.
-`cli/lib` also hosts the absorbed implement state library (`prd_state_harness.js` in the skill directory is a thin entrypoint into it).
+`cli/src/implement` owns implement state, evidence registration, unified verification, and finalization.
 
-## Completion Is Enforced, Not Promised
+## Completion Is Explicit And Provable
 
-The harness treats "done" as a provable state, and the enforcement works identically in both runtimes:
+The CLI treats "done" as a provable state through one explicit path:
 
-- **Stop-hook continuation loop.**
-  While a PRD run is active, ending the turn re-injects the current state and the next required item.
-  The loop only releases when the receipt exists or a concrete blocker is recorded.
+- **One closing flow.**
+  Finish implementation, register final evidence, run `sasu implement verify`, then run `sasu implement finalize`.
+  No lifecycle hook mutates or advances the run.
 - **Evidence or it did not happen.**
-  Required verification items need registered artifacts of the right kind per mode (command logs, screenshots, API/DB probes).
+  Required verification items need current-tree mechanical proof or a registered runtime artifact such as a screenshot, API response, DB probe, or log.
   Self-authored summaries never count as evidence, and artifact hashes plus git snapshots make stale reviews detectable.
-- **Profile-aware review.**
-  Every run gets a requirements fidelity review, while only high-risk runs require a second adversarial review.
-  The agent declares semantic risk from full context, and the harness validates the profile instead of classifying natural language with keyword rules.
-  PRD, project policy, and CLI profiles act as safety floors, so a runtime flag cannot silently lower a stronger judgment.
-  Any source change after a passing review marks it stale.
+- **Separate semantic lanes.**
+  Mechanical proof runs first.
+  AC and fidelity judges then run as independent concurrent calls, and only a high-risk profile adds a final risk judge.
+  Any source or registered-artifact change makes the prior PASS stale.
 - **Fail-closed delivery.**
-  `implement` rejects PRDs that circularly require PR, CI, or merge evidence before the implementation receipt.
   `ship` refuses stale receipts, stale bases, out-of-allowlist staging, leftover placeholders, and agent attribution.
   Its explicit merge command rechecks CI and mergeability and pins the reviewed PR head with `--match-head-commit` before recording the merge commit.
   Every override needs a `--reason` and lands in the ship log.
 - **Learned invariants gate delivery.**
-  Lessons registered through `rules add` carry trigger globs and an executable check; `ship` matches every changed file against the triggers and fails closed on a failing check, execution planning (run by `init` and `plan-execution`) injects scope-matched invariants as verification items, and `doctor` rot-checks the ledger.
+  Lessons registered through `rules add` carry trigger globs and an executable check; `ship` matches every changed file against the triggers and fails closed on a failing check.
   Evidence-free or unverifiable rules are rejected at registration, so the rulebook cannot decay into wishes.
-- **Premature-completion guards.**
-  Codex gets a `PreToolUse` guard that blocks `update_goal complete` before the receipt; Claude Code has no goal tool, so the Stop hook carries the guarantee alone.
-
 ## Verify
 
 ```sh
 node --test tests/*.test.mjs
-node ~/.codex/skills/implement/scripts/prd_state_harness.js doctor
+(cd cli && npm test)
+(cd cli && npm run test:e2e)
+(cd cli && npm run build)
+sasu doctor
 ```
 
-Optional state-schema typecheck (uses the JSDoc typedefs in `cli/lib/types.js`):
-
-```sh
-npx -p typescript tsc --noEmit --allowJs --target es2022 --module commonjs --skipLibCheck \
-  cli/lib/state_data.js cli/lib/types.js
-```
-
-`doctor` reports the effective delivery config, environment readiness, and hook registration for both runtimes.
+`doctor` reports the effective delivery config and environment readiness.
 After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
@@ -171,28 +164,25 @@ After changing installed skills, confirm visibility:
 skills/
   interview-me/  SKILL.md
   gen-prd/   SKILL.md
-  implement/  SKILL.md, scripts/prd_state_harness.js (thin entry into cli/lib), references/
+  implement/  SKILL.md, removed-entrypoint tombstone, references/
   benchmark-implement/  SKILL.md, deterministic reporter, evaluator rubric
   ship/   SKILL.md, scripts/prd_ship.js
   ho-setup/  SKILL.md
   please/    SKILL.md
   remember/  SKILL.md
 scripts/
-  install-local-skills.mjs   dual-runtime installer + hook registration
+  install-local-skills.mjs   dual-runtime installer + legacy hook retirement
 tests/
-  prd_state_harness.test.mjs      harness command behavior end to end
-  prd_state_regression.test.mjs   full standard-profile flow + golden artifact snapshots
   prd_parser_unit.test.mjs        direct unit tests for cli/lib/prd_parser.js
   rules_engine.test.mjs           rules add/check/relevant + seed-agents-md
-  install_local_skills.test.mjs   dual-runtime installer + hook registration
+  install_local_skills.test.mjs   dual-runtime installer + legacy hook retirement
   prd_ship.test.mjs               ship delivery gates
   sasu_gate_wiring.test.mjs / sasu_judge_timeout.test.mjs   sasu gate CLI wiring
   interview_me_docs.test.mjs / implement_skill_structure.test.mjs       skill-doc contracts
   golden/                         normalized golden files (regenerate: UPDATE_GOLDEN=1)
 ```
 
-`prd_state_harness.js` is a thin dispatcher over `cli/lib/`:
-`util` → `git` → `config` → `rules` → `state_data` → `prd_parser` → `inference` → `planning` → `artifacts` → `reviews` → `render` → `state_store` → `hooks` → `commands/*`.
-Modules only require layers to their left, so the dependency graph stays acyclic.
+The public implement modules are layered as contract and prompts, state store, orchestration commands, then CLI dispatch.
+Shared parser and gate utilities remain reusable internals and do not own implement completion state.
 
 Run artifacts live in the target project, not here: PRDs under `agents/prd/**` (committed), implementation state and evidence under `agents/implement/**` (gitignored via `agents/implement/` plus `agents/gates/**` judgment artifacts, enforced by `doctor`).

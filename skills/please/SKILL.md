@@ -70,39 +70,30 @@ Continue immediately; the user can interrupt.
 
 ## Stage 2: Implement
 
-Run the `implement` skill in full, with one difference at init:
+Run the `implement` skill in full, with conversational approval recorded at start:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js init \
+sasu implement start \
   --prd agents/prd/<topic-slug>/prd.md \
-  --allow-unapproved-prd "<verbatim $please invocation message>" \
-  --session-id "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-${CLAUDE_SESSION_ID}}}"
+  --allow-unapproved-prd "<verbatim $please invocation message>"
 ```
 
 Rules:
 
-- The PRD, explicit CLI value, and project policy each declare a review safety floor; the harness uses the strongest one.
-  The harness does not infer risk from natural-language keywords and safely defaults a missing declaration to `standard`.
-  Runtime flags can raise the floor but cannot silently lower stronger PRD or project policy; `trivial` is only for bounded work with no changed user-visible or runtime behavior.
-- Worktree, parallel execution, and delivery mode come from `agents/config.json` as usual.
-  An explicit delivery request in the conversation overrides the config for this run (pass `--delivery`).
+- The PRD declares the review profile; a missing or invalid value safely defaults to `standard`.
+- Task implementation stays sequential. Worktree and delivery concerns remain outside the closing CLI.
 - If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$ho-setup` once in the final report.
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
-- If `init` reports an existing active run for the same topic, resume it.
-  Use `--force` only when the user explicitly asked for a clean restart.
-- `init` lists EVERY PRD `## 4` pre-work and human-decision bullet in `preWorkChecklist`, all of them undisposed: the harness reads Markdown structure and never guesses what a bullet means, so deciding who deals with each one is yours.
-  Read them, ask the user about ALL the ones only the user can do in ONE batched message before starting task implementation, then record every item with `mark --kind prework --id <ids> --status human|agent|resolved --evidence "<what was asked/decided>"`.
-  The Stop hook refuses to advance the run past the first task mark while any item is still `pending`, and `finalize` refuses a receipt while any is.
-  This single batched ask is the exception to the no-round-trip flow: asking once up front is cheaper than stalling on each item mid-implementation.
-  Items the user defers become recorded blockers on the affected tasks, and implementation proceeds on unaffected tasks.
-- All verification, evidence, fidelity review, final review, and `finalize` requirements apply unchanged.
+- Existing or old-schema runs are not resumed or migrated. Start a new topic slug after explicitly retiring obsolete state.
+- Resolve section 4 before start. Ask all user-owned blocking items in one message.
+- Final evidence registration, unified verify, and state-only finalize requirements apply unchanged.
 
 ## Stage 3: Ship (Conditional)
 
-After `finalize --status complete`:
+After `sasu implement finalize`:
 
 - If the effective delivery mode is `pr`, run the `ship` skill in full: preflight, body, ship, CI watch, and its failure loop.
-- If delivery mode is `local`, run `cleanup-active` per the `implement` skill and stop after the receipt.
+- If delivery mode is `local`, stop after the receipt.
 
 Do not commit or push anything in local mode unless the conversation agreed to it.
 

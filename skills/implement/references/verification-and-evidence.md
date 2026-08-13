@@ -1,190 +1,64 @@
 # Verification And Evidence
 
-Read this reference before `plan-verification`, before running any required `V#`, while registering runtime evidence, or when an artifact is replaced or rejected.
+Read this reference before capturing or registering final runtime evidence and before unified verify.
 
-## Contents
+## Evidence Ownership
 
-- [Verification Planning](#verification-planning)
-- [Focused And Final Verification](#focused-and-final-verification)
-- [Cost-Bearing Benchmarks](#cost-bearing-benchmarks)
-- [Shell Verification](#shell-verification)
-- [Database Safety](#database-safety)
-- [Runtime Evidence](#runtime-evidence)
-- [Required Artifact Classes](#required-artifact-classes)
-- [Artifact Registration And Integrity](#artifact-registration-and-integrity)
-- [Required Verification Semantics](#required-verification-semantics)
+- The agent or a suitable tool creates screenshots, recordings, API traces, DB captures, and runtime logs.
+- `sasu implement artifact` validates and registers an existing file.
+- `sasu implement verify` creates mechanical command logs itself.
+- `state.json` records hashes, source fingerprints, metadata, and verification attempts.
 
-## Verification Planning
+## Final Evidence Timing
 
-Run the planner before implementation:
+Capture final runtime evidence after implementation is coherent.
+Temporary evidence created while debugging need not become final registered evidence.
+
+Register final evidence immediately after capture:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js plan-verification
-```
-
-The planner separates the PRD semantic contract from repository execution bindings.
-
-- The PRD supplies Mode, Covers, Pass Intent, required/blockable semantics, and applicable safety policy.
-- `state.verificationPlan` owns the exact command, cwd, selected proof tools,
-  evidence kinds, and repo-derived target and runtime strategies.
-- The PRD owns approved side-effect and sensitive-data boundaries; the plan
-  plus actual run evidence owns the concrete probe and lifecycle within them.
-- Registered artifacts own the concrete runtime evidence paths observed during implementation.
-- Existing canonical repository scripts may bind automatically.
-- A greenfield command check remains `needs_binding` until its first `verify-run`.
-- Checks are classified as command, automated, browser, server, API, DB, or manual-agent.
-- Contract-phase gaps block implementation.
-- Binding-phase gaps block completion but do not block creating the verifier.
-
-Do not implement while contract-phase gaps remain.
-Treat `needs_binding` as implementation work, not a reason to put a command back into the PRD.
-
-## Focused And Final Verification
-
-Use the generated verification plan as the concrete proof plan.
-Run the smallest focused probe while source is changing.
-Reserve broad suites and cost-bearing benchmarks for a coherent milestone or the frozen final implementation content.
-
-Immediately before the first run, inspect repository reality and confirm the
-selected cwd and runner or package script exist.
-The first `verify-run` for an unbound command check validates the cwd, binds its
-exact command and repository-relative cwd, and executes it.
-A missing executable or package script is an observable failed run, not a
-planning-time reason to reject a greenfield PRD.
-Later runs must execute that binding exactly.
-If an equivalent command is necessary, record why its coverage is equivalent through `--deviation`.
-
-Every required verification item needs both `pass` status and artifact-backed evidence from the actual run.
-A prose claim, file existence alone, or self-authored summary does not close a required check.
-
-Give each verification item an independently observable failure responsibility.
-When two proposed items would use the same command, evidence, and completion
-blocker, merge them into one item with a combined Pass Intent.
-
-## Cost-Bearing Benchmarks
-
-Before a cost-bearing agent or provider benchmark:
-
-- required local static, unit, integration, and browser checks must already pass.
-- the user-approved run budget and stop condition must be explicit.
-- permission to exceed a budget must never be inferred.
-- randomized tasks must use a recorded deterministic seed.
-- the implementation HEAD and dirty-source snapshot must be stored with the evidence.
-
-A fixed-coordinate replay against a randomized task is diagnostic evidence rather than a passing benchmark result.
-Any source change after a cost-bearing run invalidates that run as final-HEAD proof.
-Rerun the affected benchmark within the approved budget before completion reviews.
-Batch small source fixes and run the broad suite once against frozen final content instead of repeatedly paying for the same check.
-
-## Shell Verification
-
-For shell-verifiable checks, use:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
-  --id V1 \
-  --cwd <repo-relative-dir> \
-  -- <exact command>
-```
-
-For an equivalent replacement command, use:
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js verify-run \
-  --id V1 \
-  --cwd <repo-relative-dir> \
-  --deviation "<why equivalent coverage is preserved>" \
-  -- <replacement command>
-```
-
-`verify-run` captures a command log, records the artifact with the executed command and exit code, and updates verification status.
-Do not run a required command outside the harness and later substitute a prose result when `verify-run` can capture it directly.
-
-Plain Bash runs of a contract command during development are fine and expected; a PostToolUse hook records them (with exit codes) to the run's `rehearsals.jsonl`, and `status` and the receipt surface per-verification rehearsal counts and failures.
-This ledger is observational and never blocks: its purpose is an honest failure history, so a required check whose recorded history never once failed is visible for what it is.
-Do not edit `rehearsals.jsonl` or cite it as passing evidence; only `verify-run` closes a verification item.
-
-`verify-run` fingerprints the tree before and after the command (workspace digest guard): a command that exits 0 but mutates the workspace is recorded as a failure, because a verifier that edits the code it certifies is reward hacking, not proof.
-A side effect declared in the 9.2 matrix's Side Effect column opts that verification out of the guard, with the skip on the record.
-The same guard runs at finalize's reverification.
-
-AC bullets never own executable commands or artifact paths.
-Every AC must map to a V row and remains subject to semantic judgment.
-Use `verify-run` or `record-artifact` for the implementation-owned proof, then let passing V coverage auto-close eligible pending ACs.
-
-## Database Safety
-
-Any verification, test, seed, or migration that writes to a database must target a disposable database: a local instance, an ephemeral container, or a provider branch (for example a Neon branch).
-Before the first DB-touching run, resolve which connection string the command will actually use and confirm it is not production.
-A production connection string in a test, seed, or migration path is a hard stop: pause the work and ask the user; do not proceed on an assumption that the data is disposable.
-`plan-verification` flags likely DB-touching checks with a non-blocking `db-safety` warning gap; treat each flagged check as unconfirmed until the connection target has been verified once and noted in `context-notes.md`.
-Deleting or mutating production rows to make a test pass is never acceptable evidence.
-
-## Runtime Evidence
-
-For browser, API, DB, or other runtime evidence, create the artifact from the real run and register it immediately.
-
-```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js record-artifact \
+sasu implement artifact \
   --id V3 \
   --kind screenshot \
-  --path <path-to-png-or-jpg> \
-  --description "<what this proves>"
+  --path docs/screenshots/example.png \
+  --description '<what this proves>'
 ```
 
-Use `chromux` for browser QA by default when it is available.
-Register relevant screenshots, console logs, network logs, API logs, DB logs, and server logs.
-Evidence must prove the PRD Pass Intent and mapped requirement rather than a shallow proxy.
+The file must exist, be non-empty, stay inside the repository, and match its declared kind.
+Image evidence must contain valid PNG or JPEG bytes.
 
-## Required Artifact Classes
+## Freshness
 
-The harness enforces evidence classes by verification mode:
+Artifact registration pins both the artifact hash and current source fingerprint.
+Changing either makes the artifact stale.
+Recapture or re-register only the evidence invalidated by the source change.
 
-- Browser and runtime checks need a `screenshot`, `image`, or `browser` artifact.
-- Build, static, and automated checks need a `command-log`, normally produced by `verify-run`.
-- API checks need an `api` artifact or `command-log`.
-- DB checks need a `db` artifact or `command-log`.
-- Manual-agent checks still need an allowed concrete artifact when they are required for done.
+Do not edit `state.json` to refresh a hash.
 
-Self-authored Markdown summaries never count as verification evidence.
-Files inside the run directory can be registered only when they live under `artifacts/`.
-Harness state and plan files, including `state.json`, verification plans, and review reports, are rejected as verification artifacts.
+## Mechanical Verification
 
-## Artifact Registration And Integrity
+Unified verify discovers repository build and test scripts, groups identical `(cwd, argv)` bindings, and executes each group once.
+One result may prove several verification IDs without running the command several times.
 
-Register an artifact immediately after producing it.
-Do not leave files under `artifacts/` unregistered.
-If an artifact exists before registration, run `record-artifact` before using it as evidence for a task, acceptance criterion, review, or final report.
+The mechanical stage runs before any LLM call.
+A failure, timeout, malformed state, invalid artifact, or source mutation fails closed and makes zero judge calls.
 
-Before final review, run `status` and resolve every artifact violation.
-Register valid evidence or remove only unregistered artifacts created by the current implementation run.
-Never remove unrelated user artifacts to make the audit pass.
+## Judge Verification
 
-If a rerun overwrites an already registered file at the same path, do not edit `state.json` and do not write an ad hoc rehash script.
-Re-run `record-artifact` for the same owner and path: it supersedes the old registration with the fresh hash and marks completion reviews stale.
-Rerun stale reviews before finalization.
+After mechanical PASS:
 
-Artifact-backed review freshness also depends on the final source snapshot.
-After a code edit, do not manually re-run already-passed command-backed verifications: `finalize` re-runs every required command-backed item on the final tree and skips fingerprint-fresh passes, on the harness's schedule, so a manual full-suite sweep only duplicates that audit.
-The agent's staleness duty after such an edit covers exactly three things:
+- the acceptance judge checks code and evidence against acceptance criteria.
+- the fidelity judge checks intent preservation with a fixed rubric and dynamic source context.
+- a high-risk run adds one final risk judge after the two base lanes finish.
 
-- the sasu verify gate PASS, which goes stale when its inputs change.
-- the completion reviews (requirements fidelity, final adversarial), which go stale under the normal freshness rule.
-- runtime-evidence artifacts (browser, API, DB captures), only when the change invalidates what a specific artifact proves - `finalize` cannot re-run non-command evidence and records those items as skipped, so a UI fix requires re-capturing the affected screenshot.
+The acceptance and fidelity calls are independent and concurrent.
+Neither can overwrite the other's failure.
 
-A runtime artifact the change does not invalidate stays valid; re-capture only what the edit actually broke.
+## Safety
 
-## Required Verification Semantics
+Use only synthetic or non-production data for tests and live judge smoke runs.
+Never put secrets, personal data, or production source in fixtures.
+Database-writing proof requires an explicitly disposable database.
 
-Required verification is closed only by a passing check with valid registered evidence.
-Blocked, skipped, failed, pending, or evidence-free required verification prevents a complete receipt.
-Optional checks may be skipped or blocked only when the PRD contract allows it and the status carries evidence.
-A met acceptance criterion also needs at least one covering verification item in `pass` status; prose evidence alone cannot complete an AC whose entire coverage was skipped or blocked.
-
-Before completion reviews, sweep every verification item and confirm:
-
-- the executed command and cwd match the implementation binding or have a recorded equivalent-binding deviation.
-- the registered artifact exists, is non-empty, has the expected kind, and has no hash drift.
-- the artifact proves the stated Pass Intent and every mapped `R#` and `AC#`.
-- sensitive data, side effects, and live-provider constraints follow the PRD contract.
-- no required check is merely inferred from another passing check.
+The live judge check is required for completion.
+If the local judge binary, authentication, or provider is unavailable, record the observable blocker and do not claim Done.

@@ -50,13 +50,15 @@ test("installer installs canonical skills with correct substitutions and no alia
   // Codex: canonical directory names, verbatim SKILL.md.
   const codexFulfill = path.join(home, ".codex", "skills", "implement", "SKILL.md");
   const codexText = fs.readFileSync(codexFulfill, "utf8");
-  assert.match(codexText, /~\/\.codex\/skills\/implement\/scripts\/prd_state_harness\.js/);
+  assert.match(codexText, /sasu implement verify/);
+  assert.doesNotMatch(codexText, /prd_state_harness\.js/);
   assert.match(codexText, /"\$implement"/);
 
   // Claude: canonical directory names, substituted SKILL.md.
   const claudeFulfill = path.join(home, ".claude", "skills", "implement", "SKILL.md");
   const claudeText = fs.readFileSync(claudeFulfill, "utf8");
-  assert.match(claudeText, /~\/\.claude\/skills\/implement\/scripts\/prd_state_harness\.js/);
+  assert.match(claudeText, /sasu implement verify/);
+  assert.doesNotMatch(claudeText, /prd_state_harness\.js/);
   assert.match(claudeText, /"\/implement"/);
   assert.doesNotMatch(claudeText, /~\/\.codex\/skills\//);
   assert.doesNotMatch(
@@ -64,13 +66,13 @@ test("installer installs canonical skills with correct substitutions and no alia
     /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember)\b/,
   );
 
-  // remember installs on both runtimes with the substituted harness path.
+  // remember installs on both runtimes with the public rules CLI.
   const claudeRemember = fs.readFileSync(path.join(home, ".claude", "skills", "remember", "SKILL.md"), "utf8");
-  assert.match(claudeRemember, /~\/\.claude\/skills\/implement\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(claudeRemember, /sasu rules add/);
   assert.match(claudeRemember, /## Mandatory Confirmation Gate/);
   assert.match(claudeRemember, /not as permission to write/);
   const codexRemember = fs.readFileSync(path.join(home, ".codex", "skills", "remember", "SKILL.md"), "utf8");
-  assert.match(codexRemember, /~\/\.codex\/skills\/implement\/scripts\/prd_state_harness\.js rules add/);
+  assert.match(codexRemember, /sasu rules add/);
   assert.match(codexRemember, /## Mandatory Confirmation Gate/);
   assert.match(codexRemember, /not as permission to write/);
 
@@ -81,6 +83,9 @@ test("installer installs canonical skills with correct substitutions and no alia
   const codexBenchmark = fs.readFileSync(path.join(home, ".codex", "skills", "benchmark-implement", "SKILL.md"), "utf8");
   assert.match(codexBenchmark, /\$benchmark-implement/);
   assert.match(codexBenchmark, /~\/\.codex\/skills\/implement\/SKILL\.md/);
+  assert.match(codexBenchmark, /current coordinator session/);
+  assert.match(codexBenchmark, /Do not spawn an implementation worker session/);
+  assert.doesNotMatch(codexBenchmark, /delegate implementation, gathers/);
   const claudeBenchmark = fs.readFileSync(path.join(home, ".claude", "skills", "benchmark-implement", "SKILL.md"), "utf8");
   assert.match(claudeBenchmark, /\/benchmark-implement/);
   assert.match(claudeBenchmark, /~\/\.claude\/skills\/implement\/SKILL\.md/);
@@ -107,15 +112,9 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "implement", "agents")));
   assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "implement", "agents")), false);
 
-  // Hooks: Codex gets Stop + PreToolUse, Claude gets Stop only.
-  const codexHooks = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
-  assert.ok(codexHooks.hooks.Stop.some(matcher => matcher.hooks.some(hook => hook.command.includes("prd_state_harness.js"))));
-  assert.equal(codexHooks.hooks.SubagentStop, undefined);
-  assert.ok(codexHooks.hooks.PreToolUse.some(matcher => matcher.hooks.some(hook => hook.command.includes("hook pretool-use"))));
-  const claudeSettings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.ok(claudeSettings.hooks.Stop.some(matcher => matcher.hooks.some(hook => hook.command.includes("prd_state_harness.js"))));
-  assert.equal(claudeSettings.hooks.PreToolUse, undefined);
-  assert.match(claudeSettings.hooks.Stop[0].hooks[0].command, /\.claude\/skills\/implement\/scripts\/prd_state_harness\.js/);
+  // The implement workflow is CLI-owned and installs no lifecycle hooks.
+  assert.equal(fs.existsSync(path.join(home, ".codex", "hooks.json")), false);
+  assert.equal(fs.existsSync(path.join(home, ".claude", "settings.json")), false);
 });
 
 test("installer removes owned legacy directories and keeps foreign ones", () => {
@@ -152,7 +151,7 @@ test("installer is idempotent and preserves foreign hooks and settings", () => {
   runInstaller(home);
   const first = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.equal(first.model, "opus");
-  assert.equal(first.hooks.Stop.length, 2);
+  assert.equal(first.hooks.Stop.length, 1);
   assert.equal(first.hooks.Stop[0].hooks[0].command, "echo unrelated");
 
   // Second run changes nothing and does not duplicate hook entries.
@@ -161,7 +160,29 @@ test("installer is idempotent and preserves foreign hooks and settings", () => {
   assert.equal(report.hooks.claude.changed, false);
   assert.equal(report.hooks.codex.changed, false);
   const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.equal(settings.hooks.Stop.length, 2);
+  assert.equal(settings.hooks.Stop.length, 1);
+});
+
+test("installer retires legacy harness hooks without touching foreign hooks", () => {
+  const home = freshHome();
+  for (const runtime of [".codex", ".claude"]) {
+    fs.mkdirSync(path.join(home, runtime), { recursive: true });
+  }
+  const legacy = { hooks: [{ type: "command", command: "node /tmp/prd_state_harness.js hook stop" }] };
+  const foreign = { hooks: [{ type: "command", command: "echo unrelated" }] };
+  fs.writeFileSync(path.join(home, ".codex", "hooks.json"), JSON.stringify({
+    hooks: { Stop: [foreign, legacy], PreToolUse: [legacy] },
+  }, null, 2));
+  fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({
+    hooks: { Stop: [legacy], PostToolUse: [foreign, legacy] },
+  }, null, 2));
+
+  runInstaller(home);
+
+  const codex = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
+  assert.deepEqual(codex.hooks, { Stop: [foreign] });
+  const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+  assert.deepEqual(claude.hooks, { PostToolUse: [foreign] });
 });
 
 test("installer refuses to overwrite a foreign skill directory", () => {

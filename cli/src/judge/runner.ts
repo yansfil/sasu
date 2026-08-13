@@ -1,6 +1,6 @@
 import type { SasuConfig, Tier } from "../config";
 import { tierModelFor } from "../config";
-import { resolveBackend } from "./backends";
+import { resolveBackend, resolveFallbackBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeCallRecord } from "./types";
 
 export interface JudgeOutcome<T> {
@@ -23,12 +23,32 @@ export async function runJudge<T>(
   validate: (value: unknown) => T | string,
   options: { effort?: string; images?: string[]; agentic?: boolean; cwd?: string } = {},
 ): Promise<JudgeOutcome<T>> {
-  const backend = resolveBackend(config.judge.backend);
-  const model = tierModelFor(config, backend.name, tier);
-  const startedAt = Date.now();
+  let backend = resolveBackend(config.judge.backend);
+  let model = tierModelFor(config, backend.name, tier);
+  let startedAt = Date.now();
   let attempts = 0;
   let lastProblem = "";
-  while (attempts < 2) {
+  let fallback: JudgeCallRecord["fallback"];
+  let fallbackUsed = false;
+  const useFallback = (outcome: Exclude<JudgeCallRecord["outcome"], "ok">): boolean => {
+    const fallbackBackend = !fallbackUsed ? resolveFallbackBackend(backend) : null;
+    if (fallbackBackend === null) return false;
+    fallbackUsed = true;
+    fallback = {
+      at: new Date(startedAt).toISOString(),
+      backend: backend.name,
+      model,
+      durationMs: Date.now() - startedAt,
+      outcome,
+    };
+    backend = fallbackBackend;
+    model = tierModelFor(config, backend.name, tier);
+    startedAt = Date.now();
+    attempts = 0;
+    lastProblem = "";
+    return true;
+  };
+  while (true) {
     attempts += 1;
     const retryPreamble =
       attempts === 1
@@ -49,8 +69,10 @@ export async function runJudge<T>(
       ).text;
     } catch (error) {
       if (error instanceof JudgeError) {
+        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout" || error.code === "judge-invalid-output";
+        if (canFallback && useFallback(error.code)) continue;
         throw Object.assign(error, {
-          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code),
+          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
         });
       }
       throw error;
@@ -58,22 +80,32 @@ export async function runJudge<T>(
     const parsed = extractJsonObject(text);
     if (parsed === null) {
       lastProblem = "no JSON object found in output";
+      if (attempts >= 2) {
+        const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
+        if (useFallback(error.code)) continue;
+        throw Object.assign(error, {
+          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+        });
+      }
       continue;
     }
     const validated = validate(parsed);
     if (typeof validated === "string") {
       lastProblem = validated;
+      if (attempts >= 2) {
+        const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
+        if (useFallback(error.code)) continue;
+        throw Object.assign(error, {
+          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+        });
+      }
       continue;
     }
     return {
       value: validated,
-      record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, "ok"),
+      record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, "ok", fallback),
     };
   }
-  const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
-  throw Object.assign(error, {
-    record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code),
-  });
 }
 
 function makeRecord(
@@ -84,6 +116,7 @@ function makeRecord(
   startedAt: number,
   attempts: number,
   outcome: JudgeCallRecord["outcome"],
+  fallback?: JudgeCallRecord["fallback"],
 ): JudgeCallRecord {
   return {
     at: new Date(startedAt).toISOString(),
@@ -94,6 +127,7 @@ function makeRecord(
     durationMs: Date.now() - startedAt,
     attempts,
     outcome,
+    ...(fallback !== undefined ? { fallback } : {}),
   };
 }
 

@@ -214,7 +214,8 @@ export class ClaudeBackend implements JudgeBackend {
     if (envelope && typeof envelope === "object" && !Array.isArray(envelope)) {
       const rec = envelope as Record<string, unknown>;
       if (rec["is_error"] === true) {
-        throw new JudgeError("judge-auth-or-runtime", this.name, String(rec["result"] ?? "claude reported an error"));
+        const detail = String(rec["result"] ?? "claude reported an error");
+        throw new JudgeError(classifyFailure(this.name, detail), this.name, detail);
       }
       if (typeof rec["result"] === "string") return { text: rec["result"] };
     }
@@ -388,15 +389,23 @@ function interpretSpawnFailure(backend: BackendName, result: SpawnOutcome): void
     if (err.code === "ETIMEDOUT" || result.signal === "SIGTERM") {
       throw new JudgeError("judge-timeout", backend, "judge call timed out");
     }
-    throw new JudgeError("judge-auth-or-runtime", backend, err.message);
+    throw new JudgeError(classifyFailure(backend, err.message), backend, err.message);
   }
   if (result.signal === "SIGTERM") {
     throw new JudgeError("judge-timeout", backend, "judge call timed out");
   }
   if (result.status !== 0) {
     const stderr = (result.stderr ?? "").trim().slice(0, 800);
-    throw new JudgeError("judge-auth-or-runtime", backend, stderr || `exit code ${String(result.status)}`);
+    const detail = stderr || `exit code ${String(result.status)}`;
+    throw new JudgeError(classifyFailure(backend, detail), backend, detail);
   }
+}
+
+function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "judge-auth-or-runtime" {
+  if (backend !== "claude") return "judge-auth-or-runtime";
+  return /(?:not\s+logged\s+in|log\s*in|auth(?:entication|orization)?|api\s*key|unauthori[sz]ed|\b401\b|credential|oauth|access\s+token|token\s+expired|expired\s+token)/i.test(detail)
+    ? "judge-auth"
+    : "judge-auth-or-runtime";
 }
 
 function safeParse(text: string): unknown | null {
@@ -423,4 +432,14 @@ export function resolveBackend(preference: "auto" | BackendName): JudgeBackend {
     "claude",
     "no judge backend available: neither `claude` nor `codex` found on PATH",
   );
+}
+
+/** Claude and Codex may each make one cross-vendor failure fallback. */
+export function resolveFallbackBackend(primary: JudgeBackend): JudgeBackend | null {
+  const fallback = primary.name === "claude"
+    ? new CodexBackend()
+    : primary.name === "codex"
+      ? new ClaudeBackend()
+      : null;
+  return fallback !== null && fallback.available() ? fallback : null;
 }
