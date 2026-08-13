@@ -82,7 +82,13 @@ function inputFingerprint(
   sourceDigest: string,
   fidelityInput: UnifiedVerificationAttempt["fidelityInput"],
 ): string {
+  // Command-produced artifacts (mechanical run logs) are the attempt's own
+  // byproducts, not judgment inputs: their bytes carry per-run noise such as
+  // timestamps, so including them makes the fingerprint unequal between two
+  // attempts over an identical tree. The mechanical proof itself is compared
+  // as [command, cwd, exitCode, status] wherever it matters.
   const artifacts = state.artifacts
+    .filter((entry) => entry.command === undefined)
     .map((entry) => ({ verificationId: entry.verificationId, path: entry.path, sha256: entry.sha256, sourceFingerprint: entry.sourceFingerprint }))
     .sort((left, right) => `${left.verificationId}:${left.path}`.localeCompare(`${right.verificationId}:${right.path}`));
   return sha256(JSON.stringify({
@@ -617,6 +623,48 @@ async function judgeLane<T>(
   }
 }
 
+/**
+ * A settled judge verdict is a pure function of its pinned inputs: the PRD
+ * (prdSha256), the judged tree (sourceFingerprint), the registered artifacts
+ * (per-artifact sha256 inside inputFingerprint), and the fidelity source.
+ * Mechanical log text is the one unpinned input a criterion prompt carries,
+ * so reuse additionally requires the mechanical commands to have re-run with
+ * identical outcomes; residual log noise (timestamps, durations) cannot
+ * change which commands passed. Reuse is limited to the immediately
+ * preceding ERROR'd attempt: 2026-08-13 creator-assist, one criterion's
+ * judge timeout discarded 21 settled verdicts and the full re-judgment
+ * spent budget wall-clock on infrastructure instead of on the two real
+ * findings.
+ */
+function reusableErrorAttempt(
+  state: ImplementState,
+  currentInputFingerprint: string,
+  sourceDigest: string,
+  mechanical: MechanicalRunRecord[],
+): UnifiedVerificationAttempt | null {
+  const prior = state.verificationAttempts.at(-1);
+  if (prior === undefined || prior.verdict !== "ERROR") return null;
+  if (prior.inputFingerprint !== currentInputFingerprint || prior.sourceFingerprint !== sourceDigest) return null;
+  const outcomes = (runs: MechanicalRunRecord[]) =>
+    JSON.stringify(runs.map((run) => [run.command, run.cwd, run.exitCode, run.status]));
+  if (outcomes(prior.mechanical) !== outcomes(mechanical)) return null;
+  return prior;
+}
+
+function settledAcceptanceInvocations(
+  attempt: UnifiedVerificationAttempt,
+): Map<string, { invocation: AcceptanceCriterionInvocation; criteria: AcLaneResult[] }> {
+  const settled = new Map<string, { invocation: AcceptanceCriterionInvocation; criteria: AcLaneResult[] }>();
+  const lane = attempt.lanes.acceptance;
+  if (lane === null || lane.result === null) return settled;
+  for (const invocation of lane.result.invocations) {
+    if (invocation.verdict === "ERROR") continue;
+    const criteria = lane.result.criteria.filter((entry) => entry.id === invocation.criterionId);
+    if (criteria.length > 0) settled.set(invocation.criterionId, { invocation, criteria });
+  }
+  return settled;
+}
+
 async function acceptanceLane(
   config: ReturnType<typeof loadConfig>,
   projectRoot: string,
@@ -624,12 +672,23 @@ async function acceptanceLane(
   changedFiles: string,
   changedPaths: string[],
   mechanical: MechanicalRunRecord[],
+  reuse: UnifiedVerificationAttempt | null,
 ): Promise<NonNullable<UnifiedVerificationAttempt["lanes"]["acceptance"]>> {
   const invocationId = crypto.randomUUID();
   const started = Date.now();
   const startedAt = nowIso();
-  const records = await Promise.all(state.acceptanceCriteria.map((criterion) =>
-    judgeLane(crypto.randomUUID(), async () => {
+  const settled = reuse === null
+    ? new Map<string, { invocation: AcceptanceCriterionInvocation; criteria: AcLaneResult[] }>()
+    : settledAcceptanceInvocations(reuse);
+  const perCriterion = await Promise.all(state.acceptanceCriteria.map(async (criterion) => {
+    const prior = settled.get(criterion.id);
+    if (reuse !== null && prior !== undefined) {
+      return {
+        invocation: { ...prior.invocation, reusedFrom: reuse.id },
+        criteria: prior.criteria,
+      };
+    }
+    const record = await judgeLane(crypto.randomUUID(), async () => {
       const material = acceptanceMaterial(projectRoot, state, criterion, changedFiles, mechanical);
       return runJudge(
         config,
@@ -649,22 +708,24 @@ async function acceptanceLane(
             : {}),
         },
       );
-    }),
-  ));
-  const criteria = records.flatMap((record) => record.result?.criteria ?? []);
-  const invocations: AcceptanceCriterionInvocation[] = records.map((record, index) => ({
-    criterionId: state.acceptanceCriteria[index]!.id,
-    invocationId: record.invocationId,
-    startedAt: record.startedAt,
-    finishedAt: record.finishedAt,
-    durationMs: record.durationMs,
-    verdict: record.verdict,
-    judge: record.judge,
-    error: record.error,
+    });
+    const invocation: AcceptanceCriterionInvocation = {
+      criterionId: criterion.id,
+      invocationId: record.invocationId,
+      startedAt: record.startedAt,
+      finishedAt: record.finishedAt,
+      durationMs: record.durationMs,
+      verdict: record.verdict,
+      judge: record.judge,
+      error: record.error,
+    };
+    return { invocation, criteria: record.result?.criteria ?? [] };
   }));
-  const verdict: VerificationStatus = records.some((record) => record.verdict === "ERROR")
+  const criteria = perCriterion.flatMap((entry) => entry.criteria);
+  const invocations = perCriterion.map((entry) => entry.invocation);
+  const verdict: VerificationStatus = invocations.some((entry) => entry.verdict === "ERROR")
     ? "ERROR"
-    : records.every((record) => record.verdict === "PASS")
+    : invocations.every((entry) => entry.verdict === "PASS")
       ? "PASS"
       : "FAIL";
   return {
@@ -676,7 +737,7 @@ async function acceptanceLane(
     result: { verdict: verdict === "PASS" ? "PASS" : "FAIL", criteria, invocations },
     judge: null,
     error: verdict === "ERROR"
-      ? { code: "acceptance-criterion-error", message: records.map((record) => record.error?.message).filter(Boolean).join("; ") }
+      ? { code: "acceptance-criterion-error", message: invocations.map((entry) => entry.error?.message).filter(Boolean).join("; ") }
       : null,
   };
 }
@@ -827,14 +888,24 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const material = changeMaterial(projectRoot, state, source);
   const changedPaths = changedPathsSince(state.initialSource, source);
   const changedFiles = changedFileManifest(projectRoot, changedPaths);
+  const reuse = reusableErrorAttempt(state, inputFingerprint(state, source.digest, fidelityInput), source.digest, mechanical);
+  const priorFidelity = reuse !== null && reuse.lanes.fidelity !== null && reuse.lanes.fidelity.verdict !== "ERROR"
+    ? { ...reuse.lanes.fidelity, reusedFrom: reuse.id }
+    : null;
   const fidelityInvocationId = crypto.randomUUID();
   const [acceptance, fidelity] = await Promise.all([
-    acceptanceLane(config, projectRoot, state, changedFiles, changedPaths, mechanical),
-    judgeLane(fidelityInvocationId, () =>
-      runJudge(config, "implement:fidelity", "routine", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
-    ),
+    acceptanceLane(config, projectRoot, state, changedFiles, changedPaths, mechanical, reuse),
+    priorFidelity !== null
+      ? Promise.resolve(priorFidelity)
+      : judgeLane(fidelityInvocationId, () =>
+          runJudge(config, "implement:fidelity", "routine", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
+        ),
   ]);
 
+  // The risk lane is never reused: its prompt consumes acceptance.result and
+  // fidelity.result. If both upstream lanes were fully reused, the prior
+  // attempt's ERROR was the risk lane itself; otherwise a fresh upstream
+  // judgment changed the risk lane's inputs. Either way it must re-run.
   let risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: string[] }> | null = null;
   if (state.prd.reviewProfile === "high-risk") {
     risk = await judgeLane(crypto.randomUUID(), () =>

@@ -609,3 +609,73 @@ test("implement verify bounds consecutive judge errors without spending the fix 
   assert.equal(refused.json.detail.terminalReason, "judge-error-loop");
   assert.equal(refused.json.state.verificationAttempts.length, 2);
 });
+
+test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree only", () => {
+  const root = makeProject();
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  let text = fs.readFileSync(prdPath, "utf8");
+  text = text.replace(
+    "- AC1. A completed task can be verified and finalized from one state.",
+    "- AC1. A completed task can be verified and finalized from one state.\n- AC2. The same flow reports its status honestly.",
+  );
+  text = text.replaceAll("R1, AC1", "R1, AC1, AC2");
+  text = text.replace("Covers AC1.", "Covers AC1, AC2.");
+  fs.writeFileSync(prdPath, text);
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+
+  // AC2 has no stub entry, so its judge call errors while AC1 and fidelity settle.
+  const errored = run(root, ["implement", "verify"], { env });
+  assert.equal(errored.status, 1);
+  const first = errored.json.detail.attempt;
+  assert.equal(first.verdict, "ERROR");
+  assert.equal(first.lanes.acceptance.verdict, "ERROR");
+  assert.equal(first.lanes.fidelity.verdict, "PASS");
+  const settledAc1 = first.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
+  assert.equal(settledAc1.verdict, "PASS");
+  assert.equal(errored.json.detail.verificationBudget.fixAttempts, 0, "an infrastructure ERROR spends no fix budget");
+
+  const stubJson = JSON.parse(fs.readFileSync(file, "utf8"));
+  stubJson.byPurpose["implement:acceptance:AC2"] = {
+    verdict: "PASS",
+    criteria: [{ id: "AC2", verdict: "PASS", reason: "status honest", evidence: "transcript" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(stubJson));
+  fs.rmSync(capture, { recursive: true, force: true });
+
+  const reused = run(root, ["implement", "verify"], { env });
+  assert.equal(reused.status, 0, reused.stderr + reused.stdout);
+  const second = reused.json.detail.attempt;
+  assert.equal(second.verdict, "PASS");
+  const ac1 = second.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
+  const ac2 = second.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC2");
+  assert.equal(ac1.reusedFrom, first.id);
+  assert.equal(ac1.invocationId, settledAc1.invocationId);
+  assert.equal(ac2.reusedFrom, undefined);
+  assert.equal(second.lanes.fidelity.reusedFrom, first.id);
+  assert.deepEqual(second.lanes.acceptance.result.criteria.map((entry) => entry.id).sort(), ["AC1", "AC2"]);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC1.prompt.txt")), false, "a reused criterion must not re-call its judge");
+  assert.equal(fs.existsSync(path.join(capture, "implement_fidelity.prompt.txt")), false, "a reused fidelity lane must not re-call its judge");
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC2.prompt.txt")), true);
+
+  // ERROR again, then move the tree: nothing may be reused across a source change.
+  delete stubJson.byPurpose["implement:acceptance:AC2"];
+  fs.writeFileSync(file, JSON.stringify(stubJson));
+  assert.equal(run(root, ["implement", "verify"], { env }).json.detail.attempt.verdict, "ERROR");
+
+  stubJson.byPurpose["implement:acceptance:AC2"] = {
+    verdict: "PASS",
+    criteria: [{ id: "AC2", verdict: "PASS", reason: "status honest", evidence: "transcript" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(stubJson));
+  fs.writeFileSync(path.join(root, "changed.txt"), "the judged tree moved\n");
+  fs.rmSync(capture, { recursive: true, force: true });
+  const fresh = run(root, ["implement", "verify"], { env });
+  assert.equal(fresh.status, 0, fresh.stderr + fresh.stdout);
+  const third = fresh.json.detail.attempt;
+  assert.equal(third.verdict, "PASS");
+  assert.ok(third.lanes.acceptance.result.invocations.every((entry) => entry.reusedFrom === undefined));
+  assert.equal(third.lanes.fidelity.reusedFrom, undefined);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC1.prompt.txt")), true, "a changed tree re-judges every criterion");
+});

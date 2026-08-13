@@ -99,6 +99,9 @@ export interface AcceptanceCriterionInvocation {
   verdict: VerificationStatus;
   judge: JudgeCallRecord | null;
   error: { code: string; message: string } | null;
+  // Names the ERROR'd attempt this settled verdict was carried over from.
+  // Timestamps and judge record stay those of the original judgment.
+  reusedFrom?: string;
 }
 
 export interface FidelityCheckResult {
@@ -117,6 +120,8 @@ export interface LaneRecord<T> {
   result: T | null;
   judge: JudgeCallRecord | null;
   error: { code: string; message: string } | null;
+  // Names the ERROR'd attempt this settled lane was carried over from.
+  reusedFrom?: string;
 }
 
 export interface UnifiedVerificationAttempt {

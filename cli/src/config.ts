@@ -52,7 +52,12 @@ const DEFAULT_JUDGE: JudgeConfig = {
     },
   },
   retryBudget: 3,
-  timeoutMs: 180_000,
+  // 2026-08-13 creator-assist exploration-settings run: with ~145KB of diff
+  // per lane at xhigh effort, Codex Luna finished in 159-165s while Claude
+  // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. A timeout
+  // burns the full cap on primary AND fallback with nothing to show, so the
+  // cap must sit well above a real completion, not near it.
+  timeoutMs: 600_000,
   fanout: true,
 };
 
