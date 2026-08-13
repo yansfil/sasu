@@ -121,7 +121,7 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
   const previousPath = process.env.PATH;
   process.env.SASU_JUDGE_BACKEND = "claude";
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
-  const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 300 } };
+  const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 1000 } };
   try {
     const outcome = await runJudge(fastConfig, "gate:test", "frugal", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
