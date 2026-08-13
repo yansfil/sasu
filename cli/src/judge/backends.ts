@@ -434,9 +434,12 @@ export function resolveBackend(preference: "auto" | BackendName): JudgeBackend {
   );
 }
 
-/** Claude is the only backend with a configured cross-vendor auth fallback. */
+/** Claude and Codex may each make one cross-vendor failure fallback. */
 export function resolveFallbackBackend(primary: JudgeBackend): JudgeBackend | null {
-  if (primary.name !== "claude") return null;
-  const codex = new CodexBackend();
-  return codex.available() ? codex : null;
+  const fallback = primary.name === "claude"
+    ? new CodexBackend()
+    : primary.name === "codex"
+      ? new ClaudeBackend()
+      : null;
+  return fallback !== null && fallback.available() ? fallback : null;
 }

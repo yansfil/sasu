@@ -34,7 +34,7 @@ export interface JudgeCallRecord {
    */
   attempts: number;
   outcome: "ok" | JudgeErrorCode;
-  /** A Claude authentication failure that was recovered by the Codex fallback. */
+  /** A backend failure that was recovered by one cross-vendor fallback. */
   fallback?: {
     at: string;
     backend: BackendName;
