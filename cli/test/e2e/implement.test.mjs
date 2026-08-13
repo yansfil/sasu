@@ -679,3 +679,57 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   assert.equal(third.lanes.fidelity.reusedFrom, undefined);
   assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC1.prompt.txt")), true, "a changed tree re-judges every criterion");
 });
+
+test("a terminally stuck run closes through an explicit blocked finalize and can recover", () => {
+  const root = makeProject();
+  fs.mkdirSync(path.join(root, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  const failingTest = JSON.stringify({ scripts: { test: "node -e \"process.exit(1)\"" } });
+  fs.writeFileSync(path.join(root, "package.json"), failingTest);
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+
+  // A blocked close is refused while the budget still allows a fix loop.
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
+  const early = run(root, ["implement", "finalize", "--status", "blocked"]);
+  assert.equal(early.status, 2);
+  assert.match(early.json.message, /verification can still run/);
+
+  // Exhaust the budget; the refusal must name the honest exit.
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
+  const refused = run(root, ["implement", "verify"], { env });
+  assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
+  assert.match(refused.json.message, /finalize --status blocked/);
+
+  // A plain finalize still refuses; only the explicit blocked close works.
+  assert.equal(run(root, ["implement", "finalize"]).status, 2);
+  const closed = run(root, ["implement", "finalize", "--status", "blocked"]);
+  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+  assert.equal(closed.json.detail.receipt.status, "blocked");
+  assert.equal(closed.json.detail.receipt.terminalReason, "budget-exhausted");
+  assert.ok(closed.json.detail.receipt.openItems.length > 0);
+  assert.equal(closed.json.state.status, "blocked");
+  const receiptOnDisk = JSON.parse(fs.readFileSync(path.join(root, closed.json.detail.completion.receiptPath), "utf8"));
+  assert.equal(receiptOnDisk.status, "blocked");
+  const report = fs.readFileSync(path.join(root, closed.json.detail.completion.implementationResultPath), "utf8");
+  assert.match(report, /Status: Blocked \(budget-exhausted\)/);
+  assert.match(report, /## Open Items/);
+
+  // Idempotent re-close.
+  const again = run(root, ["implement", "finalize", "--status", "blocked"]);
+  assert.equal(again.status, 0);
+  assert.match(again.json.message, /already closed blocked/);
+
+  // Recovery: the user raises the budget and fixes the failure; verify
+  // reactivates the run and a fresh PASS overwrites the blocked receipt.
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 5 } }));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('MECHANICAL-PROOF')\"" } }));
+  const recovered = run(root, ["implement", "verify"], { env });
+  assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
+  assert.equal(recovered.json.state.status, "active");
+  const finalized = run(root, ["implement", "finalize"]);
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  assert.equal(finalized.json.detail.receipt.status, "complete");
+  assert.equal(finalized.json.state.status, "complete");
+});

@@ -152,7 +152,7 @@ export interface UnifiedVerificationAttempt {
 
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
-  status: "active" | "complete";
+  status: "active" | "complete" | "blocked";
   topicSlug: string;
   projectRoot: string;
   runDir: string;

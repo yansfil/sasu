@@ -141,11 +141,14 @@ function verificationBudget(state: ImplementState, budget: number): Verification
 }
 
 function terminalBudgetMessage(view: VerificationBudgetView): string | null {
+  // Both terminal states name the honest exit: without it, sessions improvise
+  // side doors (2026-08-13 creator-assist ran `gate verify --prd` against an
+  // exhausted implement run because nothing told it how to close).
   if (view.budgetExhausted) {
-    return `unified verification fix budget exhausted (${view.fixAttempts}/${view.budget})`;
+    return `unified verification fix budget exhausted (${view.fixAttempts}/${view.budget}); close the run honestly with \`sasu implement finalize --status blocked\``;
   }
   if (view.judgeErrorLoop) {
-    return `unified judge failed ${view.consecutiveErrors} times in a row without a verdict`;
+    return `unified judge failed ${view.consecutiveErrors} times in a row without a verdict; close the run honestly with \`sasu implement finalize --status blocked\``;
   }
   return null;
 }
@@ -831,6 +834,14 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       state,
     );
   }
+  // A blocked close is superseded the moment verification can run again
+  // (e.g. the user raised judge.retryBudget): every path below records a
+  // fresh attempt, so the run is live again and the next finalize decides
+  // the new terminal state.
+  if (state.status === "blocked") {
+    state.status = "active";
+    state.completion = null;
+  }
   const started = Date.now();
   const startedAt = nowIso();
   const prdAbsolute = normalizeProjectPath(projectRoot, state.prdPath).absolute;
@@ -964,7 +975,12 @@ function completionFingerprint(
   }));
 }
 
-function implementationReport(state: ImplementState, attempt: UnifiedVerificationAttempt, fingerprint: string): string {
+function implementationReport(
+  state: ImplementState,
+  attempt: UnifiedVerificationAttempt,
+  fingerprint: string,
+  blocked?: { terminalReason: string; openItems: string[] },
+): string {
   const taskLines = state.tasks.map((entry) => `- ${entry.id}: ${entry.status} - ${entry.title}`).join("\n");
   const requirementLines = state.requirements.map((entry) => {
     const mapped = state.acceptanceCriteria.filter((criterion) => criterion.requirements.includes(entry.id));
@@ -985,10 +1001,18 @@ function implementationReport(state: ImplementState, attempt: UnifiedVerificatio
   const laneLine = (name: string, lane: LaneRecord<unknown> | null): string => lane === null
     ? `- ${name}: NOT_REQUIRED`
     : `- ${name}: ${lane.verdict}, invocation ${lane.invocationId}, ${lane.startedAt} to ${lane.finishedAt}, ${lane.durationMs}ms`;
-  return `# Implementation Result: ${state.topicSlug}\n\nStatus: Done\n\n## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n`;
+  const statusLine = blocked === undefined ? "Status: Done" : `Status: Blocked (${blocked.terminalReason})`;
+  const openItemsSection = blocked === undefined
+    ? ""
+    : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const requestedStatus = flag(args, "status") ?? "complete";
+  if (requestedStatus !== "complete" && requestedStatus !== "blocked") {
+    throw new Error("finalize --status must be complete or blocked");
+  }
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   const source = captureSourceSnapshot(projectRoot);
   const latest = state.verificationAttempts.at(-1);
@@ -1013,6 +1037,62 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     blockers.push("unified verify input fingerprint no longer matches current state, artifacts, or fidelity source");
   }
   if (state.prd.reviewProfile === "high-risk" && latest.lanes.risk?.verdict !== "PASS") blockers.push("high-risk final judge is not PASS");
+  if (requestedStatus === "blocked") {
+    // The blocked close exists for runs whose verification machinery is
+    // terminally stuck, never as a shortcut past fixable findings: it stays
+    // refused while the budget predicate says another verify could run.
+    const view = verificationBudget(state, loadConfig(projectRoot).judge.retryBudget);
+    if (!view.budgetExhausted && !view.judgeErrorLoop) {
+      throw new Error(
+        "finalize --status blocked refused: verification can still run - fix the recorded findings and re-run `sasu implement verify`",
+      );
+    }
+    const terminalReason = view.budgetExhausted ? "budget-exhausted" : "judge-error-loop";
+    if (state.status === "blocked" && state.completion?.fingerprint === fingerprint) {
+      const receipt = path.join(projectRoot, state.completion.receiptPath);
+      const report = path.join(projectRoot, state.completion.implementationResultPath);
+      if (!fs.existsSync(receipt) || !fs.existsSync(report)) throw new Error("blocked state is missing a derived receipt or implementation result");
+      return result("finalize", true, "already closed blocked with the same completion fingerprint", { completion: state.completion, executionCalls: 0 }, state);
+    }
+    const blockedAt = nowIso();
+    const receiptPath = `${state.runDir}/receipt.json`;
+    const implementationResultPath = `${state.runDir}/implementation-result.md`;
+    const receipt = {
+      schema: "sasu.implement.receipt.v3",
+      status: "blocked",
+      terminalReason,
+      topicSlug: state.topicSlug,
+      prdPath: state.prdPath,
+      blockedAt,
+      completionFingerprint: fingerprint,
+      sourceFingerprint: source.digest,
+      verificationAttemptId: latest.id,
+      unifiedVerdict: latest.verdict,
+      lanes: {
+        acceptance: latest.lanes.acceptance?.verdict ?? "NOT_RUN",
+        fidelity: latest.lanes.fidelity?.verdict ?? "NOT_RUN",
+        risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
+      },
+      verificationBudget: { fixAttempts: view.fixAttempts, budget: view.budget, consecutiveErrors: view.consecutiveErrors },
+      openItems: blockers,
+      executionCallsDuringFinalize: 0,
+    };
+    writeJsonAtomic(path.join(projectRoot, receiptPath), receipt);
+    writeTextAtomic(
+      path.join(projectRoot, implementationResultPath),
+      implementationReport(state, latest, fingerprint, { terminalReason, openItems: blockers }),
+    );
+    state.status = "blocked";
+    state.completion = { fingerprint, completedAt: blockedAt, receiptPath, implementationResultPath };
+    persistState(statePath, state);
+    return result(
+      "finalize",
+      true,
+      `implementation closed blocked (${terminalReason}); the receipt records ${blockers.length} open item(s) and is not deliverable`,
+      { completion: state.completion, receipt, executionCalls: 0 },
+      state,
+    );
+  }
   if (blockers.length > 0) throw new Error(`finalize refused:\n- ${blockers.join("\n- ")}`);
   if (state.status === "complete" && state.completion?.fingerprint === fingerprint) {
     const receipt = path.join(projectRoot, state.completion.receiptPath);
