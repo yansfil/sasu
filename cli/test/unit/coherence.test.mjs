@@ -98,7 +98,7 @@ test("coherence returns judge findings and a duration without touching gate stat
   assert.equal(result.resolvedCount, 3);
   assert.equal(typeof result.durationMs, "number");
   // advisory: no gate state is written for the topic
-  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "drifted")), false);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "drifted")), false);
   // the qa-log itself is untouched (read-only judge)
   assert.match(fs.readFileSync(qaLogPathFor(dir, "drifted"), "utf8"), /question_count: 0/);
 });

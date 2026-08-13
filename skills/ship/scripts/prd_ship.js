@@ -23,9 +23,13 @@ function readNamespaceOverride() {
 }
 
 const NAMESPACE_ROOT = readNamespaceOverride() || "agents";
+// Unified run namespace: gate + implement state share agents/runs/<slug>/.
+// Legacy implement-namespace runs (and their active pointer) stay readable.
+const RUNS_ROOT_REL = path.join(NAMESPACE_ROOT, "runs");
 const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
-const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
+const ACTIVE_PATH = path.join(RUNS_ROOT_REL, ".prd-implement-active.json");
+const LEGACY_ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
@@ -239,7 +243,8 @@ function resolveState(options) {
   const repoRoot = findGitRoot(process.cwd());
   let statePath = options.state ? resolveInput(options.state, repoRoot) : null;
   if (!statePath) {
-    const activePath = path.join(repoRoot, ACTIVE_PATH);
+    let activePath = path.join(repoRoot, ACTIVE_PATH);
+    if (!fs.existsSync(activePath)) activePath = path.join(repoRoot, LEGACY_ACTIVE_PATH);
     if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active file at ${ACTIVE_PATH}`);
     const active = readJson(activePath);
     statePath = resolveInput(active.statePath, repoRoot);
@@ -493,8 +498,12 @@ function defaultExcludedPaths(context) {
   const runDir = context.state.runDir || path.dirname(toRepoRelative(context.statePath, context.repoRoot));
   return [
     ACTIVE_PATH,
+    LEGACY_ACTIVE_PATH,
     SESSIONS_DIR_REL,
     path.join(runDir, "artifacts"),
+    // Gate state shares the unified run dir but was never delivery material:
+    // it is runtime bookkeeping, never a verification input (AGENTS.md).
+    path.join(runDir, "gates"),
   ];
 }
 

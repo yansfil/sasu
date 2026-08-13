@@ -308,6 +308,8 @@ function commandPrepareRun(options) {
 
     const requiredAbsent = [
       ...contract.environment.mustBeAbsent,
+      path.join("agents", "runs", topic),
+      // Legacy namespaces: a base ref carrying an old-layout run is not fresh.
       path.join("agents", "implement", topic),
       path.join("agents", "gates", topic),
     ].map((value, index) => validateRelativePath(value, `fresh environment path[${index}]`));
@@ -323,8 +325,8 @@ function commandPrepareRun(options) {
       fs.copyFileSync(source, destination);
     }
 
-    const runDirRelative = path.join("agents", "implement", topic);
-    const gatesRelative = path.join("agents", "gates", topic, "gates.json");
+    const runDirRelative = path.join("agents", "runs", topic);
+    const gatesRelative = path.join("agents", "runs", topic, "gates", "gates.json");
     const initialWorktreeSnapshot = captureWorktreeSnapshot(worktreePath, runDirRelative);
     if (!initialWorktreeSnapshot) throw new Error("could not capture the fresh worktree snapshot");
 
@@ -1008,7 +1010,7 @@ function usage() {
     "Usage:\n"
     + "  benchmark_report.js prepare-run --case <benchmark.json>\n"
     + "  benchmark_report.js locate-session --runtime <claude-code|codex> --session-id <id>\n"
-    + "  benchmark_report.js report --case <benchmark.json> --run-id <case-run-N> --run-dir <prepared-worktree/agents/implement/slug> --runtime <runtime> --session-id <id> [--session <jsonl>] [--qualitative <json>] [--model <model>] [--output <json>]\n"
+    + "  benchmark_report.js report --case <benchmark.json> --run-id <case-run-N> --run-dir <prepared-worktree/agents/runs/slug> --runtime <runtime> --session-id <id> [--session <jsonl>] [--qualitative <json>] [--model <model>] [--output <json>]\n"
     + "  benchmark_report.js compare --baseline <report.json> --candidate <report.json> [--output <json>]\n",
   );
 }

@@ -15,6 +15,7 @@ import {
 } from "../judge/types";
 import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../mechanical";
 import type { ImplementState } from "../implement/types";
+import { implementStatePathFor } from "../runs/paths";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { runPrelint, type PrelintResult } from "./prelint";
 import {
@@ -519,7 +520,9 @@ type ImplementStateSlice = Partial<Pick<ImplementState, "tasks">>;
 
 function readImplementState(projectRoot: string, topic: string): ImplementStateSlice | null {
   try {
-    const statePath = path.join(projectRoot, "agents", "implement", topic, "state.json");
+    // Same slug, same run: resolved by the shared run-layout authority so the
+    // guard reads exactly the state `sasu implement` writes (legacy included).
+    const statePath = implementStatePathFor(projectRoot, topic);
     if (!fs.existsSync(statePath)) return null;
     const parsed: unknown = JSON.parse(fs.readFileSync(statePath, "utf8"));
     return parsed !== null && typeof parsed === "object" ? (parsed as ImplementStateSlice) : null;

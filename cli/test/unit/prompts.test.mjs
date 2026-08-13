@@ -57,7 +57,7 @@ test("both verify prompt builders render check provenance, evidence provenance, 
   const evidence = [
     {
       criterionId: "AC1",
-      path: "agents/implement/t/artifacts/logs/run.log",
+      path: "agents/runs/t/artifacts/logs/run.log",
       sha256: "ab".repeat(32),
       bytes: 999,
       text: "captured body",

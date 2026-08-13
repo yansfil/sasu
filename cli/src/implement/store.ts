@@ -9,8 +9,9 @@ import {
   type SourceEntry,
   type SourceSnapshot,
 } from "./types";
+import { ACTIVE_POINTER_REL, activePointerReadPath, implementStatePathFor } from "../runs/paths";
 
-export const ACTIVE_POINTER = path.join("agents", "implement", ".prd-implement-active.json");
+export const ACTIVE_POINTER = ACTIVE_POINTER_REL;
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -41,7 +42,7 @@ export function writeTextAtomic(file: string, value: string): void {
 }
 
 export function statePathFor(projectRoot: string, slug: string): string {
-  return path.join(projectRoot, "agents", "implement", slug, "state.json");
+  return implementStatePathFor(projectRoot, slug);
 }
 
 export function writeActivePointer(projectRoot: string, state: ImplementState): void {
@@ -57,7 +58,7 @@ export function writeActivePointer(projectRoot: string, state: ImplementState): 
 export function resolveStatePath(projectRoot: string, options: { slug?: string; state?: string } = {}): string {
   if (options.state !== undefined) return normalizeProjectPath(projectRoot, options.state).absolute;
   if (options.slug !== undefined) return statePathFor(projectRoot, options.slug);
-  const pointerPath = path.join(projectRoot, ACTIVE_POINTER);
+  const pointerPath = activePointerReadPath(projectRoot);
   if (!fs.existsSync(pointerPath)) {
     throw new Error("no active implement run; pass --slug <topic> or start one with `sasu implement start --prd <path>`");
   }

@@ -125,9 +125,9 @@ When blocked, follow the `implement` blocked/partial handoff rules; do not softe
 
 ## Artifacts
 
-Leave all `agents/prd/<slug>` and `agents/implement/<slug>` files in place.
+Leave all `agents/prd/<slug>` and `agents/runs/<slug>` files in place.
 No cleanup beyond what the chained skills already do.
-`agents/implement/**` is expected to be gitignored (the doctor enforces this), so these files never enter commits or PRs.
+`agents/runs/**` is expected to be gitignored (the doctor enforces this), so these files never enter commits or PRs.
 
 ## Final Report
 

@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
-const { ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, sha256Text, normalizeRelPath, simpleHash } = require("./util");
+const { ACTIVE_PATH, LEGACY_ACTIVE_PATH, NAMESPACE_ROOT, nowIso, cwd, runCommand, sha256File, sha256Text, normalizeRelPath, simpleHash } = require("./util");
 
 function runGit(projectRoot, args, options = {}) {
   return runCommand("git", args, { ...options, cwd: projectRoot });
@@ -136,7 +136,9 @@ function worktreeSnapshot(state) {
   if (status.status !== 0) return null;
   const excludedPrefixes = [
     normalizeRelPath(state.runDir || ""),
+    // Both pointer locations: a legacy run still updates the legacy pointer.
     normalizeRelPath(ACTIVE_PATH),
+    normalizeRelPath(LEGACY_ACTIVE_PATH),
   ].filter(Boolean);
   const entries = [];
   for (const parsed of parseGitStatusZ(status.stdout)) {

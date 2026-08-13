@@ -37,11 +37,16 @@ function readNamespaceOverride() {
 
 const NAMESPACE_ROOT = readNamespaceOverride() || "agents";
 const PRD_ROOT_REL = path.join(NAMESPACE_ROOT, "prd");
+// Unified run namespace (cli/src/runs/paths.ts is the TS authority): one
+// agents/runs/<slug>/ per run holds gates state and implement state together.
+// The legacy implement namespace remains readable for runs recorded there.
+const RUNS_ROOT_REL = path.join(NAMESPACE_ROOT, "runs");
 const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
 const RULES_ROOT_REL = path.join(NAMESPACE_ROOT, "rules");
 
-const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
+const ACTIVE_PATH = path.join(RUNS_ROOT_REL, ".prd-implement-active.json");
+const LEGACY_ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
 const QUICK_ROOT_REL = path.join(NAMESPACE_ROOT, "quick");
 const QUICK_ACTIVE_PATH = path.join(QUICK_ROOT_REL, ".quick-active.json");
@@ -49,7 +54,7 @@ const QUICK_ACTIVE_PATH = path.join(QUICK_ROOT_REL, ".quick-active.json");
 const PROJECT_CONFIG_PATH = path.join("agents", "config.json");
 
 function runDirRelFor(slug) {
-  return path.join(IMPLEMENT_ROOT_REL, slug);
+  return path.join(RUNS_ROOT_REL, slug);
 }
 
 const DEFAULT_HOOK_TIMEOUT_MS = 9000;
@@ -314,11 +319,13 @@ module.exports = {
   SCHEMA,
   NAMESPACE_ROOT,
   PRD_ROOT_REL,
+  RUNS_ROOT_REL,
   IMPLEMENT_ROOT_REL,
   SESSIONS_DIR_REL,
   RULES_ROOT_REL,
   runDirRelFor,
   ACTIVE_PATH,
+  LEGACY_ACTIVE_PATH,
   QUICK_ROOT_REL,
   QUICK_ACTIVE_PATH,
   PROJECT_CONFIG_PATH,

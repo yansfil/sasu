@@ -52,7 +52,7 @@ sasu setup seed-agents-md
 
 This writes (or updates, marker-based and idempotent) a Harness Namespace
 section in AGENTS.md explaining `agents/prd`, `agents/rules`,
-`agents/implement`, the gitignore policy, and how to consult learned rules,
+`agents/runs`, the gitignore policy, and how to consult learned rules,
 and it creates the `CLAUDE.md -> AGENTS.md` symlink.
 If CLAUDE.md already exists as a regular file, the command refuses; show the
 user the content, get confirmation, and rerun with `--adopt-claude-md`.
@@ -79,7 +79,10 @@ Then interview:
 5. `agents/` tracking policy:
    - Everything under `agents/` is committed and reviewable by default:
      `agents/prd/**`, `agents/rules/**`, `agents/config.json`.
-   - Only runtime state is ignored: `agents/implement/**` and `agents/gates/**`.
+   - Only runtime state is ignored: `agents/runs/**` (one run dir per slug
+     holding gate verdicts and implement state), plus the legacy
+     `agents/implement/**` and `agents/gates/**` in projects that still carry
+     old-layout runs.
 6. Sasu judge gates (optional; defaults work without config):
    - `judge.backend`: `auto` (default; prefers claude, falls back to codex),
      `claude`, or `codex`. Judging with a different vendor than the
@@ -112,9 +115,11 @@ Recommended `.gitignore` block (one line):
 
 ```gitignore
 # PRD pipeline runtime state
-agents/implement/
-agents/gates/
+agents/runs/
 ```
+
+Projects that still carry legacy-layout runs also keep the old lines
+(`agents/implement/`, `agents/gates/`) until those runs are gone.
 
 `agents/` is the only harness namespace. Do not add contradictory duplicate
 ignore rules for it.

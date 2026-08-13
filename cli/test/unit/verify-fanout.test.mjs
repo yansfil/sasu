@@ -76,18 +76,18 @@ function withStub(dir, response, fn) {
 }
 
 function gatesState(dir) {
-  return JSON.parse(fs.readFileSync(path.join(dir, "agents", "gates", "t", "gates.json"), "utf8"));
+  return JSON.parse(fs.readFileSync(path.join(dir, "agents", "runs", "t", "gates", "gates.json"), "utf8"));
 }
 
 function readArtifacts(dir) {
-  const artifactsDir = path.join(dir, "agents", "gates", "t", "artifacts");
+  const artifactsDir = path.join(dir, "agents", "runs", "t", "gates", "artifacts");
   return fs.readdirSync(artifactsDir).map((f) => JSON.parse(fs.readFileSync(path.join(artifactsDir, f), "utf8")));
 }
 
 // --- diff curation predicate ---
 
 test("isExcludedFromDiff: the whole agents/ namespace is out, not just gates/quick", () => {
-  for (const file of ["agents/gates/t/gates.json", "agents/quick/demo/contract.md", "agents/prd/prd.md", "agents/interview/qa-log.md", "agents/config.json"]) {
+  for (const file of ["agents/runs/t/gates/gates.json", "agents/gates/t/gates.json", "agents/quick/demo/contract.md", "agents/prd/prd.md", "agents/interview/qa-log.md", "agents/config.json"]) {
     assert.equal(isExcludedFromDiff(file), true, `${file} must be excluded`);
   }
 });
@@ -123,7 +123,7 @@ test("an oversized diff on a non-agentic backend fails the command without charg
   process.env.SASU_JUDGE_STUB_NO_AGENTIC = "1";
   const bigDiff = "+x".repeat(Math.ceil((VERIFY_DIFF_MAX_CHARS + 1) / 2));
   // Pre-seed a gate state mid fix-loop: the guard must leave it untouched.
-  const stateDir = path.join(dir, "agents", "gates", "t");
+  const stateDir = path.join(dir, "agents", "runs", "t", "gates");
   fs.mkdirSync(stateDir, { recursive: true });
   const empty = { verdict: null, attempts: 0, overridden: false, findings: [], lastRunAt: null, history: [] };
   fs.writeFileSync(
@@ -450,7 +450,7 @@ test("PRD path: every semantic lane receives the full curated diff", async () =>
 // --- PRD-path evidence injection (2nd wave, phase 1 track T) ---
 
 function writeImplementState(dir, state) {
-  const stateDir = path.join(dir, "agents", "implement", "t");
+  const stateDir = path.join(dir, "agents", "runs", "t");
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(path.join(stateDir, "state.json"), JSON.stringify(state, null, 2));
 }
@@ -857,9 +857,9 @@ test("short-circuit: a contract FAIL and the terminal predicate agree when imple
   // contract round's judged material (only the PRD path injects it), so the
   // gate refuses the rerun - and the terminal predicate must say the same, or
   // the Stop hook demands a re-run the gate refuses: the original livelock.
-  fs.mkdirSync(path.join(dir, "agents", "implement", "t"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "agents", "runs", "t"), { recursive: true });
   fs.writeFileSync(
-    path.join(dir, "agents", "implement", "t", "state.json"),
+    path.join(dir, "agents", "runs", "t", "state.json"),
     JSON.stringify({ updatedAt: new Date(Date.now() + 60_000).toISOString(), tasks: [] }),
   );
   await assert.rejects(run(), /rerun short-circuit/, "the gate ignores implement state on a contract round");
@@ -875,7 +875,7 @@ test("short-circuit: a pre-field record (no live-material stamp) never refuses",
   await run();
   // A file written before the stamp existed cannot prove its material was
   // diff-only, so the safe default is not arming.
-  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const gatesPath = path.join(dir, "agents", "runs", "t", "gates", "gates.json");
   const state = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
   delete state.gates.verify.usedLiveMaterial;
   delete state.gates.verify.history[state.gates.verify.history.length - 1].usedLiveMaterial;
@@ -896,7 +896,7 @@ test("short-circuit: a record with no doc-kind stamp never refuses", async () =>
   // predicate that disagrees with the gate IS the livelock. So an unstamped
   // record must re-run rather than refuse - and the terminal predicate must
   // not call the run over either.
-  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const gatesPath = path.join(dir, "agents", "runs", "t", "gates", "gates.json");
   const state = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
   delete state.gates.verify.docKind;
   delete state.gates.verify.history[state.gates.verify.history.length - 1].docKind;
@@ -920,7 +920,7 @@ test("short-circuit: a record whose stamps disagree with its latest history row 
   // stranding stale stamps under a verdict they never described. Every field the
   // record and its latest row share must agree, or the reader must not trust
   // either of them.
-  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const gatesPath = path.join(dir, "agents", "runs", "t", "gates", "gates.json");
   const pristine = fs.readFileSync(gatesPath, "utf8");
   const mutations = {
     "a rewritten lastRunAt": (record) => { record.lastRunAt = "2999-01-01T00:00:00.000Z"; },
@@ -951,7 +951,7 @@ test("short-circuit: a legacy ref-string diffSource can never refuse anything", 
   await run();
   // Pre-SHA-pinning files carry "git:HEAD" / "git:start": a pointer name, which
   // cannot prove the judged diff is still the same one. Unmatched, never armed.
-  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const gatesPath = path.join(dir, "agents", "runs", "t", "gates", "gates.json");
   const state = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
   state.gates.verify.diffSource = "git:HEAD";
   state.gates.verify.history[state.gates.verify.history.length - 1].diffSource = "git:HEAD";
@@ -1001,7 +1001,7 @@ test("short-circuit: gate override and a user-driven rerun are never swallowed",
     withStub(dir, FAIL_TWO, () => runVerifyGate(dir, loadConfig(dir), "t", { contractPath, skipMechanical: true }));
   await run();
   await assert.rejects(run(), /rerun short-circuit/);
-  const gatesPath = path.join(dir, "agents", "gates", "t", "gates.json");
+  const gatesPath = path.join(dir, "agents", "runs", "t", "gates", "gates.json");
   const state = JSON.parse(fs.readFileSync(gatesPath, "utf8"));
   state.gates.verify.overridden = true;
   fs.writeFileSync(gatesPath, JSON.stringify(state, null, 2));

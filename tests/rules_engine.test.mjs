@@ -66,7 +66,7 @@ function initGitRepo() {
 function invariantDraft(overrides = {}) {
   const base = {
     id: "INV-scripts-tested",
-    evidence: "agents/implement/some-run/state.json#D1",
+    evidence: "agents/runs/some-run/state.json#D1",
     triggerPaths: ["src/**"],
     checkType: "command",
     checkRun: "node -e 'process.exit(0)'",

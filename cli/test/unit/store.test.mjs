@@ -309,13 +309,32 @@ test("receipt fields: judge calls persist with backend, model, and attempts", ()
   assert.equal(reloaded.judgeCalls[0].purpose, "gate:gap-audit");
 });
 
-test("receipt fields: gate artifacts are written under agents/gates/<topic>/artifacts", () => {
+test("receipt fields: gate artifacts are written under agents/runs/<topic>/gates/artifacts", () => {
   const store = makeStore();
   let state = store.load();
   state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
   const artifact = state.gates["gap-audit"].history.at(-1).artifact;
-  assert.ok(artifact && artifact.includes(path.join("agents", "gates", "topic-a", "artifacts")));
+  assert.ok(artifact && artifact.includes(path.join("agents", "runs", "topic-a", "gates", "artifacts")));
   assert.ok(fs.existsSync(path.join(store.projectRoot, artifact)));
+});
+
+test("a legacy agents/gates/<topic> record keeps loading and writing in place", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-store-legacy-"));
+  const legacyDir = path.join(dir, "agents", "gates", "topic-a");
+  fs.mkdirSync(legacyDir, { recursive: true });
+  const legacyState = new GateStore(dir, "topic-a"); // no gates.json anywhere yet: unified wins
+  assert.ok(legacyState.dir.includes(path.join("agents", "runs", "topic-a", "gates")));
+  fs.writeFileSync(
+    path.join(legacyDir, "gates.json"),
+    JSON.stringify({ schema: 1, topic: "topic-a", gates: {}, deviations: [], judgeCalls: [] }),
+  );
+  const store = new GateStore(dir, "topic-a");
+  assert.equal(store.dir, legacyDir, "an existing legacy record must resolve to its own directory");
+  let state = store.load();
+  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
+  const artifact = state.gates["gap-audit"].history.at(-1).artifact;
+  assert.ok(artifact && artifact.includes(path.join("agents", "gates", "topic-a", "artifacts")), "legacy runs keep writing in place");
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("GateStore rejects non-kebab-case topic slugs", () => {

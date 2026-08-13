@@ -27,21 +27,21 @@ Match the user's language by default.
 Prefer an explicit state path:
 
 ```text
-agents/implement/<topic-slug>/state.json
+agents/runs/<topic-slug>/state.json
 ```
 
 If no path is provided, read:
 
 ```text
-agents/implement/.prd-implement-active.json
+agents/runs/.prd-implement-active.json
 ```
 
 Required files:
 
 ```text
-agents/implement/<topic-slug>/state.json
-agents/implement/<topic-slug>/receipt.json
-agents/implement/<topic-slug>/implementation-result.md
+agents/runs/<topic-slug>/state.json
+agents/runs/<topic-slug>/receipt.json
+agents/runs/<topic-slug>/implementation-result.md
 ```
 
 Optional project config:
@@ -137,15 +137,15 @@ or head override.
 ## Commands
 
 ```sh
-node ~/.codex/skills/ship/scripts/prd_ship.js preflight --state agents/implement/<topic-slug>/state.json
-node ~/.codex/skills/ship/scripts/prd_ship.js body --state agents/implement/<topic-slug>/state.json
-node ~/.codex/skills/ship/scripts/prd_ship.js ship --state agents/implement/<topic-slug>/state.json --title "<PR title>"
-node ~/.codex/skills/ship/scripts/prd_ship.js watch-ci --state agents/implement/<topic-slug>/state.json [--timeout <seconds>]
-node ~/.codex/skills/ship/scripts/prd_ship.js merge --state agents/implement/<topic-slug>/state.json --approval "<verbatim user approval>" [--method squash|merge|rebase]
-node ~/.codex/skills/ship/scripts/prd_ship.js status --state agents/implement/<topic-slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js preflight --state agents/runs/<topic-slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js body --state agents/runs/<topic-slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js ship --state agents/runs/<topic-slug>/state.json --title "<PR title>"
+node ~/.codex/skills/ship/scripts/prd_ship.js watch-ci --state agents/runs/<topic-slug>/state.json [--timeout <seconds>]
+node ~/.codex/skills/ship/scripts/prd_ship.js merge --state agents/runs/<topic-slug>/state.json --approval "<verbatim user approval>" [--method squash|merge|rebase]
+node ~/.codex/skills/ship/scripts/prd_ship.js status --state agents/runs/<topic-slug>/state.json
 ```
 
-`body` writes a draft to `agents/implement/<topic-slug>/delivery/pr-body.md`.
+`body` writes a draft to `agents/runs/<topic-slug>/delivery/pr-body.md`.
 The draft contains deterministic evidence sections generated from state (acceptance, verification,
 reviews, staging, changed paths) plus `AGENT-FILL` placeholders for the prose sections.
 Fill every placeholder with prose grounded in `implementation-result.md` and the recorded reviews,
@@ -165,7 +165,7 @@ This mode override records new delivery authorization only and does not bypass f
 The command revalidates implementation freshness after the delivery commit,
 proves the local and remote PR heads are identical, checks CI and GitHub
 mergeability, then writes
-`agents/implement/<topic-slug>/delivery/delivery-result.json` and a `merge`
+`agents/runs/<topic-slug>/delivery/delivery-result.json` and a `merge`
 event in `delivery/ship-log.jsonl`.
 Use this command instead of raw `gh pr merge` for PRD delivery.
 If it refuses because source or evidence changed, return to `implement`; do not
@@ -179,7 +179,7 @@ delivery commit in a non-interactive session.
 ```text
 PRD directory
 agents/config.json when recorded in state
-agents/implement/<topic-slug>/ except artifacts/
+agents/runs/<topic-slug>/ except artifacts/ and gates/
 execution-plan write scopes
 delivery.staging.include entries
 ```

@@ -81,7 +81,7 @@ id: INV-<short-name>
 kind: invariant
 status: active
 evidence:
-  - agents/implement/<run>/state.json#D3
+  - agents/runs/<run>/state.json#D3
 trigger:
   paths:
     - "src/payments/**"

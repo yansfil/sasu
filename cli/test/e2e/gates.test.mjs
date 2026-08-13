@@ -60,7 +60,7 @@ function runCli(cwd, args, { stub, env: extraEnv } = {}) {
 }
 
 function gatesState(dir, topic) {
-  return JSON.parse(fs.readFileSync(path.join(dir, "agents", "gates", topic, "gates.json"), "utf8"));
+  return JSON.parse(fs.readFileSync(path.join(dir, "agents", "runs", topic, "gates", "gates.json"), "utf8"));
 }
 
 const BLOCK_RESPONSE = {
@@ -556,7 +556,7 @@ test("prelint: a structural qa-log defect blocks at $0 - no judge call, no attem
   assert.match(result.stdout, /\[prelint\] qa-section-missing/);
   assert.match(result.stdout, /no attempt consumed/);
   assert.equal(
-    fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")),
+    fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")),
     false,
     "a prelint block must not create or mutate gate state",
   );
@@ -602,7 +602,7 @@ test("prelint: verify blocks on a broken PRD before the mechanical commands run 
   assert.equal(result.status, 1);
   assert.match(result.stdout, /\[prelint\] prd-dangling-ref/);
   assert.equal(fs.existsSync(path.join(dir, "mechanical-ran.marker")), false, "mechanical checks must not run after a prelint failure");
-  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), false);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false);
 });
 
 test("prelint: spec gate lints the PRD at its entrance", () => {
@@ -613,7 +613,7 @@ test("prelint: spec gate lints the PRD at its entrance", () => {
   });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /\[prelint\] prd-frontmatter-enum/);
-  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), false);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false);
 });
 
 test("prelint: an unreadable document path fails closed with a cause and no judge call (AC7)", () => {
@@ -623,7 +623,7 @@ test("prelint: an unreadable document path fails closed with a cause and no judg
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /qa-log not found/);
-  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), false);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false);
 });
 
 test("json contract: gate results carry contractVersion and a prelint key separate from judge findings", () => {
@@ -690,12 +690,12 @@ const PASS_STUB = {
   ],
 };
 
-function writeImplementState(dir, slug, state) {
-  const runDir = path.join(dir, "agents", "implement", slug);
+function writeImplementState(dir, slug, state, { legacy = false } = {}) {
+  const runDir = legacy ? path.join(dir, "agents", "implement", slug) : path.join(dir, "agents", "runs", slug);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(
     path.join(runDir, "state.json"),
-    typeof state === "string" ? state : JSON.stringify({ runDir: path.join("agents", "implement", slug), ...state }),
+    typeof state === "string" ? state : JSON.stringify({ runDir: path.relative(dir, runDir), ...state }),
   );
 }
 
@@ -718,7 +718,23 @@ test("verify refuses a mid-run call while implement tasks are open, at zero cost
   assert.match(result.stderr, /T2 \(build the widget\)/);
   assert.match(result.stderr, /--allow-open-tasks/);
   assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "mechanical stage must not run");
-  assert.ok(!fs.existsSync(path.join(dir, "agents", "gates", "fixture", "gates.json")), "no gate attempt may be recorded");
+  assert.ok(!fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), "no gate attempt may be recorded");
+});
+
+test("verify open-task guard still reads a legacy agents/implement/<slug> run", () => {
+  const dir = makeProject({
+    config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
+    git: true,
+  });
+  writeImplementState(dir, "fixture", {
+    tasks: [{ id: "T1", title: "legacy open task", status: "pending" }],
+  }, { legacy: true });
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
+    stub: stubFile(dir, "should never be consumed"),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /open task/);
+  assert.match(result.stderr, /T1 \(legacy open task\)/);
 });
 
 test("verify open-task guard: --allow-open-tasks proceeds with a warning", () => {

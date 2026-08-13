@@ -146,6 +146,32 @@ function startAndClose(root) {
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
 }
 
+test("a legacy agents/implement/<slug> run resolves by slug and by legacy active pointer", () => {
+  const root = makeProject();
+  startAndClose(root);
+  // Simulate a run recorded before the unified layout: state under the legacy
+  // namespace, pointer at the legacy location, nothing under agents/runs.
+  fs.mkdirSync(path.join(root, "agents", "implement"), { recursive: true });
+  fs.renameSync(path.join(root, "agents", "runs", "fixture"), path.join(root, "agents", "implement", "fixture"));
+  fs.renameSync(
+    path.join(root, "agents", "runs", ".prd-implement-active.json"),
+    path.join(root, "agents", "implement", ".prd-implement-active.json"),
+  );
+  const pointerPath = path.join(root, "agents", "implement", ".prd-implement-active.json");
+  const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf8"));
+  pointer.statePath = "agents/implement/fixture/state.json";
+  fs.writeFileSync(pointerPath, JSON.stringify(pointer));
+
+  const bySlug = run(root, ["implement", "status", "--slug", "fixture"]);
+  assert.equal(bySlug.status, 0, bySlug.stderr + bySlug.stdout);
+  const byPointer = run(root, ["implement", "status"]);
+  assert.equal(byPointer.status, 0, byPointer.stderr + byPointer.stdout);
+  // And the same slug cannot be restarted into a second, unified-layout run.
+  const restart = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(restart.status, 2);
+  assert.match(restart.json.message, /implement state already exists/);
+});
+
 test("old implement state schemas fail closed with restart guidance", () => {
   const root = makeProject();
   const legacy = path.join(root, "agents", "implement", "legacy", "state.json");
@@ -365,7 +391,7 @@ test("missing or malformed PRD, state, artifact, and judge input fail closed wit
 
   const malformedStateRoot = makeProject();
   startAndClose(malformedStateRoot);
-  fs.writeFileSync(path.join(malformedStateRoot, "agents", "implement", "fixture", "state.json"), "{bad json");
+  fs.writeFileSync(path.join(malformedStateRoot, "agents", "runs", "fixture", "state.json"), "{bad json");
   const malformedState = run(malformedStateRoot, ["implement", "status"]);
   assert.notEqual(malformedState.status, 0);
   assert.match(malformedState.json.message, /malformed implement state JSON/);

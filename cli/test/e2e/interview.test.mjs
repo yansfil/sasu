@@ -116,7 +116,7 @@ test("interview coherence is advisory: skips when thin, judges when seeded, neve
   assert.equal(view.resolvedCount, 3);
   assert.equal(typeof view.durationMs, "number");
   // advisory contract: no gate directory for the topic
-  assert.equal(fs.existsSync(path.join(dir, "agents", "gates", "coh")), false);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "coh")), false);
 
   // text mode reports the timing
   const text = runCli(dir, ["interview", "coherence", "--slug", "coh"], { stub: stubFile });

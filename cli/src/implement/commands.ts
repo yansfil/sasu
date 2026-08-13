@@ -7,6 +7,7 @@ import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateSemanticVerdict } from "../judge/types";
+import { runDirRel } from "../runs/paths";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import { acceptancePrompt, fidelityPrompt, fidelitySource, riskPrompt } from "./prompts";
 import {
@@ -149,7 +150,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     status: "active",
     topicSlug: slug,
     projectRoot,
-    runDir: `agents/implement/${slug}`,
+    runDir: runDirRel(slug),
     prdPath: prd.relative,
     prd: {
       sha256: sha256(text),

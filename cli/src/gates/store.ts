@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Finding, GapVerdict, JudgeCallRecord } from "../judge/types";
+import { gatesDirFor } from "../runs/paths";
 
 export type GateId = "gap-audit" | "spec" | "verify";
 
@@ -249,7 +250,9 @@ export class GateStore {
     }
     this.projectRoot = projectRoot;
     this.topic = topic;
-    this.dir = path.join(projectRoot, "agents", "gates", topic);
+    // Unified run layout with legacy fallback; cli/src/runs/paths.ts is the
+    // single authority so gates and implement can never disagree on identity.
+    this.dir = gatesDirFor(projectRoot, topic);
     this.statePath = path.join(this.dir, "gates.json");
     this.artifactsDir = path.join(this.dir, "artifacts");
   }

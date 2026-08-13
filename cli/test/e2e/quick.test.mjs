@@ -65,7 +65,7 @@ function runCli(cwd, args, { stub, env: extraEnv } = {}) {
 }
 
 function gatesState(dir) {
-  return JSON.parse(fs.readFileSync(path.join(dir, "agents", "gates", "demo", "gates.json"), "utf8"));
+  return JSON.parse(fs.readFileSync(path.join(dir, "agents", "runs", "demo", "gates", "gates.json"), "utf8"));
 }
 
 const PASS_RESPONSE = {
@@ -168,7 +168,7 @@ test("a structurally broken contract blocks at prelint without a judge call", ()
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.prelint.ok, false);
   assert.equal(parsed.prelint.findings[0].rule, "contract-ac-section-missing");
-  const gatesPath = path.join(dir, "agents", "gates", "demo", "gates.json");
+  const gatesPath = path.join(dir, "agents", "runs", "demo", "gates", "gates.json");
   assert.ok(
     !fs.existsSync(gatesPath) || JSON.parse(fs.readFileSync(gatesPath, "utf8")).gates.verify.verdict === null,
     "prelint block must not record a verdict or consume a gate attempt",
@@ -468,7 +468,7 @@ test("a criterion-scoped check reaches the judge as evidence for that criterion"
   ]);
   const artifact = JSON.parse(
     fs.readFileSync(
-      path.join(dir, "agents", "gates", "demo", "artifacts", fs.readdirSync(path.join(dir, "agents", "gates", "demo", "artifacts"))[0]),
+      path.join(dir, "agents", "runs", "demo", "gates", "artifacts", fs.readdirSync(path.join(dir, "agents", "runs", "demo", "gates", "artifacts"))[0]),
       "utf8",
     ),
   );
@@ -603,7 +603,7 @@ test("a broken judge call still reports the work the run really did", () => {
   assert.deepEqual(parsed.judgedCriteriaIds, ["AC1"]);
   assert.equal(parsed.checks[0].criterionId, "AC1");
   assert.ok(parsed.evidence.some((e) => e.path.endsWith("api.json")));
-  const artifacts = path.join(dir, "agents", "gates", "demo", "artifacts");
+  const artifacts = path.join(dir, "agents", "runs", "demo", "gates", "artifacts");
   const written = fs.readdirSync(artifacts).map((f) => JSON.parse(fs.readFileSync(path.join(artifacts, f), "utf8")));
   assert.ok(written.some((a) => a.stage === "judge-error" && a.promptSha256), "the failed run must leave an auditable artifact");
 });
@@ -617,7 +617,7 @@ test("files the run created are part of the diff the judge sees", () => {
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the new module exists\n");
   const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  const artifacts = path.join(dir, "agents", "gates", "demo", "artifacts");
+  const artifacts = path.join(dir, "agents", "runs", "demo", "gates", "artifacts");
   const payload = JSON.parse(fs.readFileSync(path.join(artifacts, fs.readdirSync(artifacts)[0]), "utf8"));
   assert.ok(payload.promptSha256, "the run must have reached the judge at all");
 });
@@ -643,7 +643,7 @@ test("the harness's own run bookkeeping stays out of the diff", () => {
   assert.equal(result.status, 0);
   // The contract and its artifacts are pinned as inputs; replaying them as
   // diff hunks would just crowd out the code under review.
-  const artifacts = path.join(dir, "agents", "gates", "demo", "artifacts");
+  const artifacts = path.join(dir, "agents", "runs", "demo", "gates", "artifacts");
   const payload = JSON.parse(fs.readFileSync(path.join(artifacts, fs.readdirSync(artifacts)[0]), "utf8"));
   assert.ok(payload.inputs.some((i) => i.path.endsWith("api.json")));
 });
@@ -734,7 +734,7 @@ test("an oversized real diff fails the command up front on a non-agentic backend
   assert.match(result.stderr, /judge input budget/);
   assert.match(result.stderr, /No judgment ran and no retry attempt was spent/);
   assert.ok(
-    !fs.existsSync(path.join(dir, "agents", "gates", "demo", "gates.json")),
+    !fs.existsSync(path.join(dir, "agents", "runs", "demo", "gates", "gates.json")),
     "an oversized diff must not create gate state or charge an attempt",
   );
 });
@@ -754,7 +754,7 @@ test("an oversized real diff on an agentic backend falls back to the read-only j
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.ok, true);
-  const artifactsDir = path.join(dir, "agents", "gates", "demo", "artifacts");
+  const artifactsDir = path.join(dir, "agents", "runs", "demo", "gates", "artifacts");
   const artifacts = fs.readdirSync(artifactsDir).map((f) => JSON.parse(fs.readFileSync(path.join(artifactsDir, f), "utf8")));
   const semantic = artifacts.find((a) => a.stage === "semantic");
   assert.equal(semantic.lanes[0].agenticFallback, true, "the artifact must record the agentic fallback");

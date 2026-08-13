@@ -81,8 +81,9 @@ Golden files regenerate with `UPDATE_GOLDEN=1`; regenerate deliberately, never
 to make a failure go away.
 
 **Namespaces.** Run artifacts live in the target project under `agents/**`
-(`agents/interview/**`, `agents/prd/**`, `agents/implement/**`, `agents/benchmarks/**`,
-`agents/gates/**`, `agents/rules/**`, `agents/config.json`) — the only
+(`agents/interview/**`, `agents/prd/**`, `agents/runs/**`, `agents/benchmarks/**`,
+`agents/rules/**`, `agents/config.json`, plus the legacy read-only
+`agents/implement/**` and `agents/gates/**` layouts) — the only
 namespace the harness reads or writes. It is bookkeeping, never a verification
 input: nothing under `agents/**` belongs in a judged diff or a freshness
 fingerprint.

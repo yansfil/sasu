@@ -58,8 +58,8 @@ It performs no tests, judge calls, capture calls, browser work, or subprocess ex
 Successful finalize writes:
 
 ```text
-agents/implement/<topic-slug>/receipt.json
-agents/implement/<topic-slug>/implementation-result.md
+agents/runs/<topic-slug>/receipt.json
+agents/runs/<topic-slug>/implementation-result.md
 ```
 
 Both outputs derive from `state.json`.

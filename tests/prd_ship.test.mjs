@@ -50,14 +50,14 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   run("git", ["push", "-u", "origin", "prd/merge-flow"], { cwd: root });
   const head = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
 
-  const stateDir = path.join(root, "agents", "implement", "merge-flow");
+  const stateDir = path.join(root, "agents", "runs", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
   const state = {
     schema: "sasu.implement.state.v3",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
-    runDir: "agents/implement/merge-flow",
+    runDir: "agents/runs/merge-flow",
     completion: { fingerprint: "fixture-completion" },
   };
   if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };

@@ -80,7 +80,7 @@ node ~/.codex/skills/benchmark-implement/scripts/benchmark_report.js prepare-run
 Use only the returned worktree, PRD path, run directory, gates path, result directory, and run ID for the remainder of that invocation.
 The command atomically reserves the next run ID, creates a detached disposable worktree from the contract's base ref, proves the declared product path and the implement run namespaces are absent, copies the fixed case inputs, and writes `run.json` with the initial snapshot.
 If preparation fails, stop and report the recorded `prepare-failed` result.
-Never fall back to the caller's worktree, an existing `agents/implement/**` directory, or an earlier report.
+Never fall back to the caller's worktree, an existing `agents/runs/**` (or legacy `agents/implement/**`) directory, or an earlier report.
 Existing reports may be read only when the user explicitly asks to analyze or compare existing runs.
 
 When coordinates differ, still emit both reports but let `comparison.json` mark them non-comparable.
@@ -142,7 +142,7 @@ After saving the evaluation, run:
 node ~/.codex/skills/benchmark-implement/scripts/benchmark_report.js report \
   --case benchmarks/<case-id>/benchmark.json \
   --run-id <case-id>-run-N \
-  --run-dir <prepared-worktree>/agents/implement/<topic> \
+  --run-dir <prepared-worktree>/agents/runs/<topic> \
   --runtime <claude-code|codex> \
   --model <actual-executor-model> \
   --session-id <session-id> \
