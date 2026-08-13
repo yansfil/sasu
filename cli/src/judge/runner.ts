@@ -51,7 +51,7 @@ export async function runJudge<T>(
       ).text;
     } catch (error) {
       if (error instanceof JudgeError) {
-        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime";
+        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout";
         const fallbackBackend = !fallbackUsed && canFallback ? resolveFallbackBackend(backend) : null;
         if (fallbackBackend !== null) {
           fallbackUsed = true;
