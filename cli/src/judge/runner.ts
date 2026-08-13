@@ -29,6 +29,7 @@ export async function runJudge<T>(
   let attempts = 0;
   let lastProblem = "";
   let fallback: JudgeCallRecord["fallback"];
+  let fallbackUsed = false;
   while (attempts < 2) {
     attempts += 1;
     const retryPreamble =
@@ -50,8 +51,10 @@ export async function runJudge<T>(
       ).text;
     } catch (error) {
       if (error instanceof JudgeError) {
-        const fallbackBackend = error.code === "judge-auth" ? resolveFallbackBackend(backend) : null;
+        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime";
+        const fallbackBackend = !fallbackUsed && canFallback ? resolveFallbackBackend(backend) : null;
         if (fallbackBackend !== null) {
+          fallbackUsed = true;
           fallback = {
             at: new Date(startedAt).toISOString(),
             backend: backend.name,
