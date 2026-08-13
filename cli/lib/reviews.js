@@ -428,7 +428,8 @@ const RERUN_FIDELITY_REVIEW = `re-run the reviewer (\`${harnessCommand()} requir
 
 // Collect every staleness cause rather than returning on the first: a
 // rejection that names one of two reasons is a second round-trip by
-// construction (see the finalize probing incident in commands/review.js).
+// construction (the finalize probing incident: each partial rejection forced
+// another finalize run just to learn the next undisclosed cause).
 function finalReviewFreshnessViolations(state) {
   const review = state.finalReview;
   if (!review || !review.recordedAt || review.status !== "pass") return [];
@@ -1001,8 +1002,7 @@ function verifyGateViolations(state, options = {}) {
 // that produces it. The alternative - a mapper that pattern-matches finished
 // violation text back to a remedy - keys on phrasing and silently loses the
 // remedy the moment a message is reworded (PRINCIPLES item 11). Producing the
-// pair together also carries the remedy to every consumer for free: the Stop
-// hook and the goal guard read the same strings (hooks.js).
+// pair together also carries the remedy to every consumer for free.
 function completionViolations(statePath, state, options = {}) {
   const includeFinalReview = options.includeFinalReview !== false;
   const includeRequirementsFidelityReview = options.includeRequirementsFidelityReview !== false;

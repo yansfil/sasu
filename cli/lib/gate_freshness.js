@@ -19,7 +19,7 @@ function sha256Of(content) {
  * self-staling. Everything else in the body pins the PASS.
  *
  * Single source shared by the TypeScript gate store (cli/src/gates/store.ts)
- * and the Stop-hook quick guard (cli/lib/hooks.js): both sides must agree on
+ * and the no-dist fallback (cli/lib/reviews.js): both sides must agree on
  * the hash or a live PASS would read as STALE from one of them.
  */
 function freshnessHash(content) {
