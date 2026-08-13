@@ -4,7 +4,7 @@
   "prd": "prd.md",
   "environment": {
     "mode": "fresh-worktree",
-    "baseRef": "c8c3dc9b6590b7e0e007666ce82bc25b6e1a8e1d",
+    "baseRef": "0d2510f",
     "mustBeAbsent": [
       "pokemon-rpg"
     ]
