@@ -449,15 +449,27 @@ ${lines.join("\n\n")}
  * lane diff falls back to the agentic read-only judge when the backend
  * supports it (agenticSemanticVerifyPrompt) and fails the command up front
  * when it does not (see runVerifyGate) - either way, never a silent clamp.
+ *
+ * Lane fan-out duplicates this diff into every lane prompt. Do not try to
+ * dedupe it with prefix caching: measured 2026-08-13 with a 150KB payload,
+ * neither backend reuses a shared prompt prefix across separate calls.
+ * `claude -p` auto-caches the whole turn behind a single end-of-message
+ * breakpoint (61,686 tokens written to the 1h cache), so a call whose tail
+ * differs rebuilds the entire block (second call: cache_read 4,606 = system
+ * prompt only). `codex exec` on the ChatGPT transport reported
+ * cached_input_tokens 8,960 (its own instruction prefix) with
+ * cache_write_input_tokens 0 even on a byte-identical repeat. Reordering
+ * lane prompts diff-first buys nothing until a transport starts writing
+ * payload cache entries.
  */
 export const VERIFY_DIFF_MAX_CHARS = 160_000;
 
 /**
  * Shared output contract for the semantic verify judge (inline-diff and
  * agentic paths). The mandatory per-criterion `evidence` field and the
- * reward-hacking instruction are ouroboros imports (semantic.py: an empty
- * evidence list on an approval is a verification failure, and gaming signs are
- * judged, not assumed away); validateSemanticVerdict enforces the PASS side.
+ * reward-hacking instruction encode one rule: an empty evidence list on an
+ * approval is a verification failure, and gaming signs are judged, not
+ * assumed away; validateSemanticVerdict enforces the PASS side.
  */
 const SEMANTIC_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fences:
 {
@@ -544,8 +556,8 @@ ${diffContent}
  * Agentic fallback prompt for a lane whose diff exceeds VERIFY_DIFF_MAX_CHARS:
  * the judge gets the diff-stat (file list + line counts) instead of the diff
  * and reads the end-state files itself through its read-only tools. This is
- * the ouroboros answer to the input-budget wall - don't shrink the answer
- * sheet, give the grader library access - imported after a 2026-08-10
+ * the answer to the input-budget wall - don't shrink the answer sheet,
+ * give the grader library access - adopted after a 2026-08-10
  * remeasurement showed the current model explores without wandering (see
  * ClaudeBackend for the numbers). The evidence field doubles as the audit
  * trail of what the judge actually read.
