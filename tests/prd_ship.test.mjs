@@ -30,7 +30,7 @@ function write(file, text, mode = null) {
   if (mode !== null) fs.chmodSync(file, mode);
 }
 
-function initMergeFixture() {
+function initMergeFixture({ includeDelivery = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "prd-ship-merge-"));
   const bare = `${root}-origin.git`;
   run("git", ["init", "--bare", bare], { cwd: os.tmpdir() });
@@ -52,15 +52,16 @@ function initMergeFixture() {
 
   const stateDir = path.join(root, "agents", "implement", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
-  write(statePath, JSON.stringify({
+  const state = {
     schema: "sasu.implement.state.v3",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
     runDir: "agents/implement/merge-flow",
-    delivery: { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" },
     completion: { fingerprint: "fixture-completion" },
-  }, null, 2));
+  };
+  if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };
+  write(statePath, JSON.stringify(state, null, 2));
   write(path.join(stateDir, "receipt.json"), JSON.stringify({
     schema: "sasu.implement.receipt.v3",
     status: "complete",
@@ -154,4 +155,27 @@ test("merge pins the reviewed PR head, requires passing CI, and records delivery
   assert.equal(deliveryResult.approval, "User approved merge after CI passes");
   const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
   assert.match(shipLog, /"event":"merge"/);
+});
+
+test("merge records a later explicit PR-delivery approval for v3 state without delivery config", () => {
+  const fixture = initMergeFixture({ includeDelivery: false });
+  const approval = "User approved immediate merge";
+  const result = run(process.execPath, [
+    shipScript,
+    "merge",
+    "--state", fixture.statePath,
+    "--pr", "https://example.test/pr/7",
+    "--approval", approval,
+    "--override-mode",
+    "--reason", approval,
+  ], { cwd: fixture.root, env: fixture.env });
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "merged");
+  assert.deepEqual(output.overrides, [{ kind: "mode", from: "local", reason: approval }]);
+
+  const deliveryResult = JSON.parse(fs.readFileSync(path.join(fixture.stateDir, "delivery", "delivery-result.json"), "utf8"));
+  assert.deepEqual(deliveryResult.overrides, output.overrides);
+  const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
+  assert.match(shipLog, /"kind":"mode"/);
+  assert.match(shipLog, /User approved immediate merge/);
 });
