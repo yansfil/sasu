@@ -723,7 +723,7 @@ test("verify refuses a mid-run call while implement tasks are open, at zero cost
 
 test("verify open-task guard: --allow-open-tasks proceeds with a warning", () => {
   const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
-  writeImplementState(dir, "fixture", { tasks: [{ id: "T1", title: "still open", status: "in_progress" }] });
+  writeImplementState(dir, "fixture", { tasks: [{ id: "T1", title: "still open", status: "pending" }] });
   const result = runCli(
     dir,
     ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-tasks"],
@@ -751,54 +751,6 @@ test("verify open-task guard fails open: closed tasks, corrupt state, and missin
   }
 });
 
-test("verify mechanical stage reuses a fresh verify-run pass and re-runs after drift", () => {
-  const command = "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"";
-  const dir = makeProject({ config: { verify: { commands: { test: command } } }, git: true });
-  const stub = stubFile(dir, PASS_STUB);
-  // Fingerprint the tree exactly as verify-run would have (same lib, same
-  // exclusions), then record a passing V1 log pinned to it. The untracked
-  // widget.js change is part of the fingerprinted tree, so verify's own
-  // recompute sees the identical state and reuses the pass.
-  const gitLib = path.join(path.dirname(CLI), "..", "lib", "git.js");
-  const fp = spawnSync(
-    "node",
-    ["-e", `const {vouchedTreeFingerprintForState}=require(${JSON.stringify(gitLib)});process.stdout.write(JSON.stringify(vouchedTreeFingerprintForState({projectRoot:${JSON.stringify(dir)},runDir:"agents/implement/fixture"})))`],
-    { encoding: "utf8" },
-  );
-  const fingerprint = JSON.parse(fp.stdout);
-  assert.ok(fingerprint && fingerprint.vouched, fp.stderr);
-  writeImplementState(dir, "fixture", {
-    projectRoot: dir,
-    tasks: [{ id: "T1", status: "complete" }],
-    verification: [
-      {
-        id: "V1",
-        status: "pass",
-        artifacts: [
-          { kind: "command-log", command, exitCode: 0, path: "agents/implement/fixture/artifacts/logs/v1.log", treeFingerprint: fingerprint },
-        ],
-      },
-    ],
-  });
-
-  const reusedRun = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub,
-  });
-  assert.equal(reusedRun.status, 0, reusedRun.stdout + reusedRun.stderr);
-  assert.match(reusedRun.stderr, /reused 1 fresh verify-run pass/);
-  assert.match(reusedRun.stderr, /V1/);
-  assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "fresh pass must skip execution");
-
-  // Any vouched drift invalidates the recorded fingerprint (untracked files
-  // are hashed like tracked ones): the command runs again.
-  fs.appendFileSync(path.join(dir, "widget.js"), "log()\n");
-  const driftedRun = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, PASS_STUB),
-  });
-  assert.equal(driftedRun.status, 0, driftedRun.stdout + driftedRun.stderr);
-  assert.ok(!/reused/.test(driftedRun.stderr), "drifted tree must not reuse the pass");
-  assert.ok(fs.existsSync(path.join(dir, "mech-ran.txt")), "drifted tree must re-run the command");
-});
 
 // --- FAIL-side rerun short-circuit through the CLI --------------------------
 

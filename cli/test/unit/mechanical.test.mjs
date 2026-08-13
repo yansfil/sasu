@@ -37,78 +37,12 @@ test("manifest detection suggests recording commands into config", () => {
   assert.deepEqual(Object.keys(configSuggestion).sort(), ["lint", "test"]);
 });
 
-test("verification-plan commands fill the gap before root manifest detection", () => {
-  const dir = tempProject({ packageJson: { scripts: { test: "should-not-win" } } });
-  const planned = [{ kind: "check", command: "node app/test.mjs", source: "verification-plan" }];
-  const { resolved, configSuggestion } = resolveMechanicalCommands(dir, loadConfig(dir), planned);
-  assert.deepEqual(resolved, planned);
-  assert.equal(configSuggestion, null);
-});
-
-test("explicit config still wins over verification-plan commands", () => {
-  const dir = tempProject({
-    config: { verify: { commands: { test: "node configured.mjs" } } },
-  });
-  const planned = [{ kind: "check", command: "node planned.mjs", source: "verification-plan" }];
-  const { resolved } = resolveMechanicalCommands(dir, loadConfig(dir), planned);
-  assert.equal(resolved.length, 1);
-  assert.equal(resolved[0].source, "config");
-  assert.equal(resolved[0].command, "node configured.mjs");
-});
-
 test("runMechanical passes on exit 0 and records runs", () => {
   const dir = tempProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } } });
   const result = runMechanical(dir, loadConfig(dir));
   assert.equal(result.ok, true);
   assert.equal(result.runs.length, 1);
   assert.equal(result.runs[0].ok, true);
-});
-
-test("verification-plan commands execute in their bound cwd and reject escapes", () => {
-  const dir = tempProject({});
-  fs.mkdirSync(path.join(dir, "app"));
-  const config = loadConfig(dir);
-  const bound = [{
-    kind: "check",
-    command: "node -e \"if (!process.cwd().endsWith('/app')) process.exit(2)\"",
-    cwd: "app",
-    source: "verification-plan",
-  }];
-  const passed = runMechanical(dir, config, [], { verificationPlanCommands: bound });
-  assert.equal(passed.ok, true);
-  assert.equal(passed.runs[0].cwd, "app");
-
-  fs.mkdirSync(path.join(dir, "server"));
-  const sameCommand = "node -e \"process.exit(0)\"";
-  const multiPackage = runMechanical(dir, config, [], {
-    verificationPlanCommands: [
-      { ...bound[0], command: sameCommand, cwd: "app" },
-      { ...bound[0], command: sameCommand, cwd: "server" },
-    ],
-  });
-  assert.deepEqual(multiPackage.runs.map((run) => run.cwd), ["app", "server"]);
-
-  const escaped = runMechanical(dir, config, [], {
-    verificationPlanCommands: [{ ...bound[0], cwd: "../outside" }],
-  });
-  assert.equal(escaped.ok, false);
-  assert.match(escaped.runs[0].tail, /cwd escapes the project root/);
-});
-
-test("identical verification-plan commands execute once and retain all criterion ownership", () => {
-  const dir = tempProject({});
-  const command = "node -e \"process.exit(0)\"";
-  const result = runMechanical(dir, loadConfig(dir), [], {
-    verificationPlanCommands: [
-      { kind: "check", command, cwd: ".", source: "verification-plan", criterionIds: ["AC1"] },
-      { kind: "check", command, cwd: ".", source: "verification-plan", criterionIds: ["AC2"] },
-    ],
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.resolved.length, 1);
-  assert.equal(result.runs.length, 1);
-  assert.deepEqual(result.runs[0].criterionIds, ["AC1", "AC2"]);
 });
 
 test("runMechanical fails fast on the first failing command", () => {

@@ -16,7 +16,7 @@ export interface ResolvedCommand {
   kind: MechanicalKind;
   command: string;
   cwd?: string;
-  source: "config" | "verification-plan" | "detected" | "contract";
+  source: "config" | "detected" | "contract";
   /**
    * Criteria this command proves, for contract-declared checks and captures.
    * A list because two criteria may declare the same command: it runs once,
@@ -29,18 +29,11 @@ export interface MechanicalRun {
   kind: MechanicalKind;
   command: string;
   cwd?: string;
-  source: "config" | "verification-plan" | "detected" | "contract";
+  source: "config" | "detected" | "contract";
   criterionIds?: string[];
   exitCode: number;
   ok: boolean;
   tail: string;
-  /**
-   * Set when the command was NOT executed because an implement verify-run
-   * already earned a pass for the same command on an identical tree
-   * fingerprint (cli/lib/fresh_pass.js rule). The skip is evidence reuse,
-   * never silence: it names the verification whose recorded pass it leans on.
-   */
-  freshPass?: { verificationId: string; logPath: string | null };
 }
 
 export interface MechanicalResult {
@@ -51,15 +44,12 @@ export interface MechanicalResult {
 }
 
 /**
- * Resolve mechanical verify commands (D-08): explicit config wins, followed
- * by the implement run's already-approved verification plan, then root
- * manifest detection. The plan is an input rather than a dependency so this
- * low-level executor stays independent of implement state shape.
+ * Resolve mechanical verify commands (D-08): explicit config wins, then root
+ * manifest detection.
  */
 export function resolveMechanicalCommands(
   projectRoot: string,
   config: SasuConfig,
-  verificationPlanCommands: ResolvedCommand[] = [],
 ): {
   resolved: ResolvedCommand[];
   configSuggestion: Record<string, string> | null;
@@ -73,9 +63,6 @@ export function resolveMechanicalCommands(
       resolved.push({ kind, command: declared[kind]!, source: "config" });
     }
     return { resolved, configSuggestion: null };
-  }
-  if (verificationPlanCommands.length > 0) {
-    return { resolved: verificationPlanCommands, configSuggestion: null };
   }
   const detected = detectFromManifests(projectRoot);
   const suggestion: Record<string, string> = {};
@@ -122,18 +109,11 @@ export function runMechanical(
   extra: ResolvedCommand[] = [],
   options: {
     skipProjectCommands?: boolean;
-    verificationPlanCommands?: ResolvedCommand[];
-    /**
-     * Fresh-pass lookup for project commands (never contract checks/captures:
-     * those are quick-path evidence the harness must execute itself). A non-null
-     * return skips execution and records the reused pass on the run.
-     */
-    freshPassFor?: (cmd: ResolvedCommand) => { verificationId: string; logPath?: string | null } | null;
   } = {},
 ): MechanicalResult {
   const base = options.skipProjectCommands
     ? { resolved: [] as ResolvedCommand[], configSuggestion: null }
-    : resolveMechanicalCommands(projectRoot, config, options.verificationPlanCommands ?? []);
+    : resolveMechanicalCommands(projectRoot, config);
   const configSuggestion = base.configSuggestion;
   // A contract that restates a configured command (the natural thing to write
   // when you want the check tier and `npm test` is the only command you have)
@@ -163,26 +143,6 @@ export function runMechanical(
   const runs: MechanicalRun[] = [];
   let ok = true;
   for (const cmd of resolved) {
-    // Evidence reuse, not laziness: the identical command already passed under
-    // the harness's own digest guard on this exact tree, so re-running it would
-    // repeat the identical experiment (same rule finalize uses for its
-    // reverification skip). Contract commands never qualify - a capture must
-    // produce a fresh artifact and a check is the quick contract's own proof.
-    const fresh = cmd.source !== "contract" ? (options.freshPassFor?.(cmd) ?? null) : null;
-    if (fresh) {
-      runs.push({
-        kind: cmd.kind,
-        command: cmd.command,
-        ...(cmd.cwd !== undefined ? { cwd: cmd.cwd } : {}),
-        source: cmd.source,
-        ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
-        exitCode: 0,
-        ok: true,
-        tail: `[sasu] not executed: fresh verify-run pass ${fresh.verificationId} covers this command on an identical tree${fresh.logPath ? ` (log: ${fresh.logPath})` : ""}`,
-        freshPass: { verificationId: fresh.verificationId, logPath: fresh.logPath ?? null },
-      });
-      continue;
-    }
     const run = runOne(projectRoot, cmd, config);
     runs.push(run);
     if (!run.ok) {
@@ -213,7 +173,7 @@ function runOne(projectRoot: string, cmd: ResolvedCommand, config: SasuConfig): 
       ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
       exitCode: 1,
       ok: false,
-      tail: `[sasu] verification-plan cwd escapes the project root: ${cmd.cwd}`,
+      tail: `[sasu] command cwd escapes the project root: ${cmd.cwd}`,
     };
   }
   const result = spawnSync(cmd.command, {
