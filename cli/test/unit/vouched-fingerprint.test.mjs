@@ -16,7 +16,6 @@ const {
   summarizeFingerprintDiff,
   stripFingerprintEntries,
 } = require(path.join(libDir, "git.js"));
-const { reviewWorktreeSnapshotViolations, prdSnapshotViolations } = require(path.join(libDir, "reviews.js"));
 const { sha256Text } = require(path.join(libDir, "util.js"));
 
 function git(dir, ...args) {
@@ -144,37 +143,6 @@ test("vouched fingerprint: the ENTIRE agents/ namespace is out, whoever asks and
   }
 });
 
-test("vouched fingerprint: spec-doc drift is caught by content pins, not by the fingerprint", () => {
-  // The compensating proof for the exclusion above. A PRD/contract edit still
-  // invalidates every recorded verdict that depended on it, through two pins
-  // the fingerprint never owned:
-  //   - the gate's own sha256 `inputs` list (cli/src/gates/store.ts staleInputsFor,
-  //     driven end to end by cli/test/unit/store.test.mjs "editing the input
-  //     document after a PASS turns the gate STALE")
-  //   - the implement run's prdSnapshot.sha256 (reviews.js prdSnapshotViolations)
-  // Asserted here on the second one, so the two halves of the argument live in
-  // the same file as the exclusion they justify.
-  const dir = makeRepo();
-  const prdRel = "agents/prd/demo/prd.md";
-  const before = vouchedTreeFingerprint({ projectRoot: dir, slug: "demo" });
-  const state = {
-    projectRoot: dir,
-    prdPath: prdRel,
-    prdSnapshot: { sha256: sha256Text(fs.readFileSync(path.join(dir, prdRel), "utf8")) },
-    tasks: [],
-    acceptanceCriteria: [],
-    verification: [],
-  };
-  assert.deepEqual(prdSnapshotViolations(path.join(dir, "agents/implement/demo/state.json"), state), [],
-    "an unedited PRD is clean");
-
-  write(dir, prdRel, "# PRD: demo (rewritten mid-run)\n");
-  assert.equal(vouchedTreeFingerprint({ projectRoot: dir, slug: "demo" }).vouched, before.vouched,
-    "the fingerprint is deliberately blind to this");
-  const violations = prdSnapshotViolations(path.join(dir, "agents/implement/demo/state.json"), state);
-  assert.equal(violations.length, 1, "the content pin is what notices");
-  assert.match(violations[0], /PRD file changed after implementation state was initialized/);
-});
 
 test("vouched fingerprint: state task ownership never changes the vouched set", () => {
   const dir = makeRepo();
@@ -296,61 +264,3 @@ test("vouchedFingerprintsMatch: legacy, missing, and malformed shapes never matc
   assert.equal(vouchedFingerprintsMatch(current, { ...current }), true);
 });
 
-test("review freshness: bookkeeping writes no longer stale a recorded review (deadlock killer), source writes do", () => {
-  const dir = makeRepo();
-  // The FINAL adversarial review is the axis that still watches the source tree:
-  // reading the code is its mandate. The requirements fidelity review left this
-  // check on purpose - it is pinned to what it actually reads (the PRD, the
-  // interview log, registered evidence), because pinning it to the tree made
-  // every bug fix invalidate a review whose subject had not moved.
-  const state = {
-    projectRoot: dir,
-    runDir: "agents/implement/demo",
-    topicSlug: "demo",
-    tasks: [{ id: "T1" }],
-    requirementsFidelityReview: null,
-    finalReview: {
-      status: "pass",
-      worktreeSnapshot: { statusHash: "audit-only", entries: [] },
-      vouchedTreeFingerprint: vouchedTreeFingerprintForState({ projectRoot: dir, runDir: "agents/implement/demo", topicSlug: "demo", tasks: [{ id: "T1" }] }),
-    },
-  };
-  assert.deepEqual(reviewWorktreeSnapshotViolations(state), [], "an unchanged tree is fresh");
-
-  // The old deadlock: verify re-run writes agents/gates/**, review goes stale,
-  // review re-record moves the tree, verify goes stale, forever. Bookkeeping
-  // is out of the vouched set, so this loop is now structurally impossible.
-  write(dir, "agents/gates/demo/gates.json", JSON.stringify({ gates: { verify: { verdict: "PASS" } } }));
-  write(dir, "agents/implement/demo/state.json", "{}");
-  assert.deepEqual(reviewWorktreeSnapshotViolations(state), [], "verify/gate bookkeeping must not stale the review");
-
-  write(dir, "src/app.js", "console.log('changed after review')\n");
-  const violations = reviewWorktreeSnapshotViolations(state);
-  assert.equal(violations.length, 1);
-  assert.match(violations[0], /Final review is stale/);
-
-  // And the fidelity axis is untouched by all of it - no source pin to move.
-  const fidelityState = {
-    ...state,
-    finalReview: null,
-    requirementsFidelityReview: { status: "pass", inputs: [] },
-  };
-  assert.deepEqual(reviewWorktreeSnapshotViolations(fidelityState), [],
-    "the fidelity review carries no source pin for this rule to compare");
-});
-
-test("review freshness: legacy review records (snapshot only, no vouched fingerprint) read as stale, not fresh, not a crash", () => {
-  const dir = makeRepo();
-  const legacyReview = {
-    status: "pass",
-    worktreeSnapshot: { headSha: "deadbeef", statusHash: "h1", entries: [] },
-  };
-  const state = { projectRoot: dir, tasks: [], requirementsFidelityReview: null, finalReview: legacyReview };
-  const violations = reviewWorktreeSnapshotViolations(state);
-  assert.equal(violations.length, 1, "a legacy record cannot prove freshness and must re-review");
-  assert.match(violations[0], /stale/);
-
-  // A record that never pinned anything (non-git era) was never checked.
-  const unpinned = { projectRoot: dir, tasks: [], requirementsFidelityReview: null, finalReview: { status: "pass" } };
-  assert.deepEqual(reviewWorktreeSnapshotViolations(unpinned), []);
-});

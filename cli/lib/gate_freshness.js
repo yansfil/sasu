@@ -18,9 +18,9 @@ function sha256Of(content) {
  * legitimately AFTER a gate passes; hashing them would make every PASS
  * self-staling. Everything else in the body pins the PASS.
  *
- * Single source shared by the TypeScript gate store (cli/src/gates/store.ts)
- * and the no-dist fallback (cli/lib/reviews.js): both sides must agree on
- * the hash or a live PASS would read as STALE from one of them.
+ * Single source consumed by the TypeScript gate store (cli/src/gates/store.ts):
+ * every reader of a pin must agree on the hash or a live PASS would read as
+ * STALE.
  */
 function freshnessHash(content) {
   let body = content;

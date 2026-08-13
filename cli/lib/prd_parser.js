@@ -4,7 +4,15 @@ const fs = require("fs");
 const path = require("path");
 
 const { resolveProjectPath, toProjectRelative, sha256Text, escapeRegExp, firstSentence, uniqueMatches } = require("./util");
-const { isVerificationRequiredForDone } = require("./state_data");
+
+// A verification row is required for done unless its matrix explicitly opts
+// out. (Inlined from the retired v2 state_data module; this is the one piece
+// of it the parser needs.)
+function isVerificationRequiredForDone(verification) {
+  const matrix = (verification && verification.matrix) || {};
+  if (typeof matrix.requiredForDone === "boolean") return matrix.requiredForDone;
+  return true;
+}
 
 function stripFrontmatter(markdown) {
   if (!markdown.startsWith("---\n")) return { frontmatter: {}, body: markdown };

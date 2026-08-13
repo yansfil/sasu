@@ -16,7 +16,6 @@ const {
   cleanTableCell,
   parseVerification,
 } = require("../../lib/prd_parser.js");
-const { artifactsForVerification } = require("../../lib/inference.js");
 
 // The exact live repro command, pipes and all.
 const LIVE_COMMAND = 'bash -c "for f in $(git diff --name-only); do node --check \\"$f\\" || exit 1; done"';
@@ -105,18 +104,3 @@ test("parseVerification preserves an approved side-effect boundary without treat
   assert.equal(item.matrix.sensitiveDataPolicy, "redact tokens");
 });
 
-test("evidence kinds come from verification structure, not incidental words in product prose", () => {
-  const verification = { level: "General", text: "DOM-independent rule; build remains valid" };
-  assert.deepEqual(
-    artifactsForVerification(verification, "command", { mode: "build/static", normalizedMode: "build-static" }),
-    ["command-log"],
-  );
-  assert.deepEqual(
-    artifactsForVerification(verification, "automated", { mode: "automated behavior", normalizedMode: "automated-behavior" }),
-    ["command-log"],
-  );
-  assert.deepEqual(
-    artifactsForVerification(verification, "manual-agent", { mode: "visual judgment", normalizedMode: "visual-judgment" }),
-    ["screenshot"],
-  );
-});
