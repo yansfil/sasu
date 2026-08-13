@@ -445,11 +445,13 @@ function stageSet(state, receipt, gates) {
     stages.add("implementation");
   }
   if ((receipt.phaseTimings?.measured?.verificationCommandRuns || 0) > 0
-      || (state.verification || []).some(item => !["planned", "pending"].includes(item.status))) {
+      || (state.verification || []).some(item => !["planned", "pending"].includes(item.status))
+      || (state.verificationAttempts || []).length > 0) {
     stages.add("verification");
   }
-  if (gates?.gates?.verify?.lastRunAt) stages.add("verify-gate");
-  if (receipt.requirementsFidelityReview) stages.add("requirements-fidelity");
+  if (gates?.gates?.verify?.lastRunAt || (state.verificationAttempts || []).length > 0) stages.add("verify-gate");
+  if (receipt.requirementsFidelityReview
+      || (state.verificationAttempts || []).some(attempt => attempt.lanes?.fidelity)) stages.add("requirements-fidelity");
   if (receipt.finalReview) stages.add("final-adversarial-review");
   stages.add("finalize");
   return stages;
@@ -476,6 +478,37 @@ function processScore(qualitative) {
       : null,
     scoredDimensions: scores.length,
     totalDimensions: DIMENSIONS.length,
+  };
+}
+
+function modernTiming(state, receipt) {
+  if (receipt.phaseTimings) return receipt.phaseTimings;
+  const attempts = state.verificationAttempts || [];
+  const mechanical = attempts.flatMap(attempt => attempt.mechanical || []);
+  const judges = attempts.flatMap(attempt => Object.values(attempt.lanes || {}).flatMap(lane => [
+    ...(lane?.judge ? [lane.judge] : []),
+    ...((lane?.result?.criteria || []).flatMap(criterion => criterion.judge ? [criterion.judge] : [])),
+  ]));
+  const wallClockSeconds = state.createdAt && receipt.completedAt
+    ? Math.max(0, (Date.parse(receipt.completedAt) - Date.parse(state.createdAt)) / 1000)
+    : null;
+  const verificationCommandSeconds = mechanical.reduce((sum, run) => sum + (Number(run.durationMs) || 0), 0) / 1000;
+  const judgeSeconds = judges.reduce((sum, judge) => sum + (Number(judge.durationMs) || 0), 0) / 1000;
+  return {
+    wallClockSeconds,
+    taskEvidenceBoundary: {},
+    measured: {
+      verificationCommandSeconds,
+      verificationCommandRuns: mechanical.length,
+      judgeSeconds,
+      judgeCalls: judges.reduce((sum, judge) => sum + (Number(judge.attempts) || 1), 0),
+      verifyGateAttempts: attempts.length,
+    },
+    unattributedSeconds: wallClockSeconds === null ? null : Math.max(0, wallClockSeconds - verificationCommandSeconds - judgeSeconds),
+    milestones: {
+      initAt: state.createdAt || null,
+      finalizedAt: receipt.completedAt || null,
+    },
   };
 }
 
@@ -653,9 +686,31 @@ function commandReport(options) {
   if (!state.projectRoot || canonicalPath(state.projectRoot) !== canonicalPath(prepared.record.worktreePath)) {
     throw new Error("implementation state does not belong to the prepared fresh worktree");
   }
-  if (receipt.initialWorktreeSnapshot?.headSha !== prepared.record.initialWorktreeSnapshot?.headSha
-      || receipt.initialWorktreeSnapshot?.statusHash !== prepared.record.initialWorktreeSnapshot?.statusHash) {
-    throw new Error("implementation did not start from the prepared worktree snapshot");
+  const startingTree = receipt.initialWorktreeSnapshot || prepared.record.initialWorktreeSnapshot;
+  if (receipt.initialWorktreeSnapshot) {
+    if (receipt.initialWorktreeSnapshot.headSha !== prepared.record.initialWorktreeSnapshot?.headSha
+        || receipt.initialWorktreeSnapshot.statusHash !== prepared.record.initialWorktreeSnapshot?.statusHash) {
+      throw new Error("implementation did not start from the prepared worktree snapshot");
+    }
+  } else {
+    const initialSource = state.initialSource;
+    if (!initialSource || !Array.isArray(initialSource.entries)) {
+      throw new Error("implementation receipt has no start snapshot or v3 initial source snapshot");
+    }
+    if (initialSource.head && initialSource.head !== prepared.record.initialWorktreeSnapshot?.headSha) {
+      throw new Error("implementation v3 source snapshot does not match the prepared HEAD");
+    }
+    const initialEntries = new Map(initialSource.entries.map(entry => [entry.path, entry.sha256]));
+    for (const entry of prepared.record.initialWorktreeSnapshot?.entries || []) {
+      if (initialEntries.get(entry.path) !== entry.sha256) {
+        throw new Error("implementation v3 source snapshot changed before start: " + entry.path);
+      }
+    }
+    for (const forbidden of contract.environment?.mustBeAbsent || []) {
+      if ([...initialEntries.keys()].some(entry => entry === forbidden || entry.startsWith(forbidden + "/"))) {
+        throw new Error("implementation v3 source snapshot already contained forbidden product path: " + forbidden);
+      }
+    }
   }
   const gatesPath = options.gates
     ? path.resolve(projectRoot, options.gates)
@@ -667,12 +722,12 @@ function commandReport(options) {
   if (sessionPath && !fs.existsSync(sessionPath)) throw new Error(`session transcript not found: ${sessionPath}`);
   const stateSessionId = bareSessionId(state.activeSessionId || state.ownerSessionId);
   const requestedSessionId = bareSessionId(sessionId);
-  if (!stateSessionId) throw new Error("implementation state has no activeSessionId; session identity cannot be verified");
-  if (stateSessionId !== requestedSessionId) {
+  if (stateSessionId && stateSessionId !== requestedSessionId) {
     throw new Error(`session id does not match implementation state: expected ${stateSessionId}, received ${requestedSessionId}`);
   }
-  const runStartedAt = receipt.phaseTimings?.milestones?.initAt || state.createdAt || null;
-  const receiptAt = receipt.phaseTimings?.milestones?.finalizedAt || receipt.verifiedAt || null;
+  const timing = modernTiming(state, receipt);
+  const runStartedAt = timing?.milestones?.initAt || state.createdAt || null;
+  const receiptAt = timing?.milestones?.finalizedAt || receipt.completedAt || receipt.verifiedAt || null;
   if (!receiptAt || Number.isNaN(Date.parse(receiptAt))) {
     throw new Error("implementation receipt has no valid finalized timestamp; session coverage cannot be verified");
   }
@@ -695,16 +750,25 @@ function commandReport(options) {
   const requiredStagesMissing = requiredStages.filter(stage => !stages.has(stage));
   const forbiddenStagesRun = forbiddenStages.filter(stage => stages.has(stage));
   const terminalStatusMatched = contract.expected.terminalStatuses.includes(receipt.status);
-  const verifyAttempts = receipt.phaseTimings?.measured?.verifyGateAttempts
+  const verifyAttempts = timing?.measured?.verifyGateAttempts
     ?? gates?.gates?.verify?.totalAttempts
+    ?? state.verificationAttempts?.length
     ?? null;
   const verifyAttemptsWithinLimit = contract.expected.maxVerifyAttempts === undefined
     || (verifyAttempts !== null && verifyAttempts <= contract.expected.maxVerifyAttempts);
-  const openCount = Number(receipt.counts?.totalOpen || 0);
+  const openCount = receipt.counts?.totalOpen !== undefined
+    ? Number(receipt.counts.totalOpen)
+    : (receipt.status === "complete" && state.status === "complete"
+        ? 0
+        : (state.tasks || []).filter(task => task.status !== "complete").length
+          + (state.acceptanceCriteria || []).filter(item => item.status !== "complete").length
+          + (state.verification || []).filter(item => item.requiredForDone && item.status !== "PASS").length);
   const falseComplete = receipt.status === "complete" && (
     openCount > 0
     || Number(receipt.counts?.requiredVerificationNotPassed || 0) > 0
     || ["BLOCKED", "STALE"].includes(receipt.verifyGate?.effective)
+    || state.status !== "complete"
+    || state.verificationAttempts?.at(-1)?.verdict !== "PASS"
   );
   const evaluationRequired = contract.evaluation?.required === true;
   const evaluationAvailable = qualitative !== null && qualitative.sessionAnalysis.coverage !== "unavailable";
@@ -727,7 +791,6 @@ function commandReport(options) {
     evaluatorRuntimeMatched,
     evaluatorModelMatched,
   };
-  const timing = receipt.phaseTimings || null;
   const harness = harnessIdentity();
   const score = processScore(qualitative);
   const report = {
@@ -754,8 +817,8 @@ function commandReport(options) {
       },
       harness,
       startingTree: {
-        headSha: receipt.initialWorktreeSnapshot?.headSha || null,
-        statusHash: receipt.initialWorktreeSnapshot?.statusHash || null,
+        headSha: startingTree?.headSha || null,
+        statusHash: startingTree?.statusHash || null,
       },
       environment: {
         worktreePath: prepared.record.worktreePath,
@@ -793,8 +856,10 @@ function commandReport(options) {
       verifyAttempts,
       verifyAttemptLimit: contract.expected.maxVerifyAttempts ?? null,
       repeatedIdenticalDiffJudgments: repeatedFingerprintRuns(gates),
-      fidelityReviewRounds: receipt.reviewRounds?.fidelity?.rounds ?? null,
-      finalReviewRounds: receipt.reviewRounds?.final?.rounds ?? null,
+      fidelityReviewRounds: receipt.reviewRounds?.fidelity?.rounds
+        ?? (state.verificationAttempts || []).filter(attempt => attempt.lanes?.fidelity).length
+        ?? null,
+      finalReviewRounds: receipt.reviewRounds?.final?.rounds ?? 0,
       avoidableReviewCalls: qualitative?.sessionAnalysis?.avoidableReviewCalls ?? null,
       unchangedCommandReruns: qualitative?.sessionAnalysis?.unchangedCommandReruns ?? null,
       unexpectedUserStops: qualitative?.sessionAnalysis?.unexpectedUserStops ?? null,
@@ -804,7 +869,7 @@ function commandReport(options) {
       staleGateInputs: receipt.verifyGate?.staleInputs?.length ?? 0,
       gateOverrideUsed: receipt.verifyGate?.overridden === true,
       receiptStatus: receipt.status,
-      gateEffectiveStatus: receipt.verifyGate?.effective ?? "NOT_RUN",
+      gateEffectiveStatus: receipt.verifyGate?.effective ?? receipt.unifiedVerdict ?? "NOT_RUN",
     },
     qualitative: qualitative ? {
       status: qualitative.sessionAnalysis.coverage === "unavailable" ? "unavailable" : "available",
