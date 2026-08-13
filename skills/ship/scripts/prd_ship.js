@@ -27,22 +27,6 @@ const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
 const ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 
-// Resolve the sibling implement harness relative to this script so the same
-// file works from the repo, ~/.codex/skills, and ~/.claude/skills.
-function defaultHarnessPath() {
-  const selfPath = path.resolve(process.argv[1] || __filename);
-  const roots = [path.dirname(path.dirname(path.dirname(selfPath)))];
-  try {
-    roots.push(path.dirname(path.dirname(path.dirname(fs.realpathSync(selfPath)))));
-  } catch {
-    // Keep the argv-based root only.
-  }
-  for (const root of roots) {
-    const candidate = path.join(root, "implement", "scripts", "prd_state_harness.js");
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return path.join(roots[0], "implement", "scripts", "prd_state_harness.js");
-}
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
   /co-authored-by:.*\b(claude|codex|copilot|cursor|chatgpt|gpt|openai|anthropic|gemini)\b/i,
@@ -303,17 +287,8 @@ function deliveryConfig(context, options = {}) {
   };
 }
 
-function harnessPath() {
-  const override = process.env.HOYEON_PRD_HARNESS;
-  const candidate = override ? resolveInput(override) : defaultHarnessPath();
-  if (!fs.existsSync(candidate)) {
-    throw new Error(`prd-implement state harness not found at ${candidate}. Set HOYEON_PRD_HARNESS to override.`);
-  }
-  return candidate;
-}
-
 function verifyDelivery(context) {
-  const result = run(process.execPath, [harnessPath(), "verify-delivery", "--state", context.statePath], {
+  const result = run("sasu", ["implement", "status", "--state", context.statePath, "--json"], {
     cwd: context.repoRoot,
     allowFailure: true,
   });
@@ -326,25 +301,21 @@ function verifyDelivery(context) {
   if (!parsed) {
     return {
       ok: false,
-      violations: [`verify-delivery did not return JSON (exit ${result.status}): ${(result.stderr || result.stdout || "").trim()}`],
+      violations: [`sasu implement status did not return JSON (exit ${result.status}): ${(result.stderr || result.stdout || "").trim()}`],
     };
   }
-  return parsed;
-}
-
-function cleanupActive(context) {
-  const result = run(process.execPath, [harnessPath(), "cleanup-active", "--state", context.statePath], {
-    cwd: context.repoRoot,
-    allowFailure: true,
-  });
-  try {
-    return result.stdout.trim() ? JSON.parse(result.stdout) : { ok: result.status === 0 };
-  } catch {
-    return {
-      ok: false,
-      error: (result.stderr || result.stdout || "").trim(),
-    };
+  const detail = parsed.detail || {};
+  const violations = [];
+  if (result.status !== 0 || parsed.ok !== true) violations.push(parsed.message || `status exited ${result.status}`);
+  if (detail.status !== "complete") violations.push(`implement state is ${detail.status || "unknown"}, not complete`);
+  if (!detail.verification || detail.verification.verdict !== "PASS") {
+    violations.push(`unified verification is ${detail.verification ? detail.verification.verdict : "missing"}, not PASS`);
   }
+  for (const problem of detail.artifactProblems || []) violations.push(problem);
+  if (!detail.completion || detail.completion.fingerprint !== context.receipt.completionFingerprint) {
+    violations.push("receipt completion fingerprint does not match sasu implement status");
+  }
+  return { ok: violations.length === 0, violations, status: detail };
 }
 
 function requireReason(options, flag) {
@@ -872,7 +843,6 @@ function cmdShip(options) {
   const pr = createOrUpdatePr(context, config, title, bodyPath, Boolean(options.draft));
   const ci = options["no-watch"] ? null : watchCi(context, { ...options, pr: pr.url });
   const ok = !ci || ci.ok;
-  const deliveryChecksPassed = ci ? ci.ok : false;
   const result = {
     ok,
     branch,
@@ -883,9 +853,6 @@ function cmdShip(options) {
     overrides,
     rules: rulesGate,
     ci,
-    activeCleanup: deliveryChecksPassed
-      ? cleanupActive(context)
-      : { ok: false, skipped: true, reason: ci ? "delivery checks did not pass" : "delivery checks were not watched" },
   };
   appendJsonl(shipLogPath(context), {
     ts: new Date().toISOString(),
@@ -908,9 +875,9 @@ function cmdShip(options) {
 // Failures are fail-closed; --skip-rules needs a --reason and lands in the
 // ship log like every other override.
 function runRulesGate(context, options, overrides) {
-  const checkArgs = [harnessPath(), "rules", "check"];
+  const checkArgs = ["rules", "check"];
   if (options.base) checkArgs.push("--base", String(options.base));
-  const result = run(process.execPath, checkArgs, {
+  const result = run("sasu", checkArgs, {
     cwd: context.repoRoot,
     allowFailure: true,
   });
@@ -1100,7 +1067,6 @@ function cmdMerge(options) {
     ok: true,
     ...result,
     resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
-    activeCleanup: cleanupActive(context),
   };
   process.stdout.write(JSON.stringify(output, null, 2) + "\n");
 }

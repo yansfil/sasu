@@ -1,7 +1,6 @@
-// Quick-path verify: `sasu verify --contract` replaces the 12-section PRD
+// Quick-path verify: `sasu gate verify --contract` replaces the 12-section PRD
 // with a tiny goal+AC contract while keeping the whole gate machinery -
-// prelint, mechanical, semantic judge, gate store, and (new) the tree
-// fingerprint the Stop-hook quick guard compares against.
+// prelint, mechanical, semantic judge, gate store, and a content fingerprint.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -87,7 +86,7 @@ const FAIL_RESPONSE = {
 
 test("contract verify PASS records the verdict, contract hash, and judged-diff pin", () => {
   const dir = makeGitProject();
-  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, PASS_RESPONSE),
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -112,7 +111,7 @@ test("contract verify PASS records the verdict, contract hash, and judged-diff p
 
 test("contract verify FAIL blocks with per-criterion findings and consumes an attempt", () => {
   const dir = makeGitProject();
-  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, FAIL_RESPONSE),
   });
   assert.equal(result.status, 1);
@@ -124,14 +123,14 @@ test("contract verify FAIL blocks with per-criterion findings and consumes an at
 
 test("a FAIL rerun on the identical diff is refused at zero cost until the code moves", () => {
   const dir = makeGitProject();
-  const first = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const first = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, FAIL_RESPONSE),
   });
   assert.equal(first.status, 1, first.stdout + first.stderr);
   assert.equal(gatesState(dir).gates.verify.attempts, 1);
 
   // Nothing changed: the rerun is refused before any spend.
-  const refused = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const refused = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, FAIL_RESPONSE),
   });
   assert.equal(refused.status, 1);
@@ -147,112 +146,12 @@ test("a FAIL rerun on the identical diff is refused at zero cost until the code 
 
   // The code under judgment moved: the rerun is a real attempt again.
   fs.appendFileSync(path.join(dir, "widget.js"), "persistHarder();\n");
-  const rerun = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const rerun = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, FAIL_RESPONSE),
   });
   assert.equal(rerun.status, 1, rerun.stdout + rerun.stderr);
   assert.equal(gatesState(dir).gates.verify.attempts, 2);
   assert.equal(gatesState(dir).gates.verify.totalAttempts, 2);
-});
-
-// Helpers for the Stop-hook half of the two blocked close-out tests below.
-const HARNESS_SCRIPT = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname), "..", "..", "..", "skills", "implement", "scripts", "prd_state_harness.js",
-);
-
-function armQuickMarker(dir) {
-  fs.writeFileSync(
-    path.join(dir, "agents", "quick", ".quick-active.json"),
-    JSON.stringify({ slug: "demo", contractPath: "agents/quick/demo/contract.md", startedAt: new Date().toISOString() }),
-  );
-}
-
-function stopDirective(dir, sessionId) {
-  const hook = spawnSync("node", [HARNESS_SCRIPT, "hook", "stop"], {
-    cwd: dir,
-    encoding: "utf8",
-    input: JSON.stringify({ hook_event_name: "Stop", cwd: dir, session_id: sessionId }),
-  });
-  assert.equal(hook.status, 0, hook.stderr);
-  return JSON.parse(hook.stdout);
-}
-
-// The livelock this wave set out to kill, in its final shape: a semantic FAIL at
-// attempts 1/3 arms the rerun short-circuit, so every remaining attempt is
-// unspendable at $0, `attempts` can never reach the budget, and a
-// budget-exhausted-only terminal predicate is unreachable. Before the fix the
-// Stop hook here still said "attempt 1/3, fix and re-run" while `sasu verify`
-// answered with the refusal - two components issuing contradictory directives,
-// with a user override as the only exit. The honest close-out must open NOW, and
-// it must report 1/3, never a faked 3/3 (PRINCIPLES item 10).
-test("a FAIL whose rerun is refused is terminally blocked at once: the guard stops saying re-run", () => {
-  const dir = makeGitProject();
-  const stub = stubFile(dir, FAIL_RESPONSE);
-  const first = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], { stub });
-  assert.equal(first.status, 1, first.stdout + first.stderr);
-  const record = gatesState(dir).gates.verify;
-  assert.equal(record.attempts, 1, "exactly one attempt was spent");
-  assert.equal(record.usedLiveMaterial, false, "a diff-only round is what arms the refusal");
-
-  // The refusal is real: an identical rerun costs nothing and records nothing,
-  // which is precisely why the budget can never be spent down.
-  const refused = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], { stub });
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /rerun short-circuit/);
-  assert.match(refused.stderr, /close the run out honestly as blocked/, "the refusal names the exit it creates");
-  assert.equal(gatesState(dir).gates.verify.attempts, 1, "still 1/3 - the budget is unspendable, not spent");
-
-  armQuickMarker(dir);
-  const directive = stopDirective(dir, "quick-e2e-refused");
-  assert.equal(directive.decision, "block");
-  assert.match(directive.reason, /attempt 1\/3/, "the directive reports the honest attempt count, never a faked exhaustion");
-  assert.match(directive.reason, /identical re-run is refused on this unchanged tree/);
-  assert.match(directive.reason, /status: blocked/, "the close-out is the blocked shape");
-  assert.ok(!/status: complete/.test(directive.reason), "a failed run must not be told to record itself complete");
-  assert.ok(!/exhausted its 3-attempt verify budget/.test(directive.reason), "the budget was NOT exhausted; say so");
-  // The contradiction itself: this guard used to print "attempt 1/3 ... Fix the
-  // findings and re-run" while `sasu verify` answered with the refusal.
-  assert.ok(!/Fix the findings and re-run/.test(directive.reason),
-    "a Stop hook must never point at a command that will exit with the refusal");
-  // The one move that could still reach a PASS must be named, or "blocked" reads
-  // as the only option and the guard becomes a give-up button.
-  assert.match(directive.reason, /change the code under judgment/i);
-
-  // And it really is a re-arm, not a dead end: a tree change makes the gate run
-  // again, so the escape the directive names actually works.
-  fs.appendFileSync(path.join(dir, "widget.js"), "persistForReal();\n");
-  const rerun = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
-    stub: stubFile(dir, FAIL_RESPONSE),
-  });
-  assert.equal(rerun.status, 1, rerun.stdout + rerun.stderr);
-  assert.equal(gatesState(dir).gates.verify.attempts, 2, "a tree change re-arms verification and spends a real attempt");
-});
-
-test("an exhausted retry budget hands off as an honest blocked close-out, not a fake complete", () => {
-  const dir = makeGitProject();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    // Real fix-loop shape: the tree moves between attempts, so all three
-    // attempts are genuinely spent. This is the budget-exhausted twin of the
-    // refusal test above - kept distinct on purpose, because the two terminal
-    // causes must report different numbers and different reasons.
-    if (attempt > 0) fs.appendFileSync(path.join(dir, "widget.js"), `attempt${attempt}();\n`);
-    const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
-      stub: stubFile(dir, FAIL_RESPONSE),
-    });
-    assert.equal(result.status, 1, result.stdout + result.stderr);
-  }
-  assert.equal(gatesState(dir).gates.verify.attempts, 3);
-  assert.equal(gatesState(dir).gates.verify.totalAttempts, 3, "the cumulative counter tracks every real run");
-
-  // The Stop-hook quick guard consumes the very gates.json the CLI just
-  // wrote: with the default 3-attempt budget spent, the directive must
-  // demand a `blocked` contract, never tell the failed run to say complete.
-  armQuickMarker(dir);
-  const directive = stopDirective(dir, "quick-e2e-blocked");
-  assert.equal(directive.decision, "block");
-  assert.match(directive.reason, /exhausted its 3-attempt verify budget/);
-  assert.match(directive.reason, /status: blocked/);
-  assert.ok(!/status: complete/.test(directive.reason), "a failed run must not be told to record itself complete");
 });
 
 test("a structurally broken contract blocks at prelint without a judge call", () => {
@@ -262,7 +161,7 @@ test("a structurally broken contract blocks at prelint without a judge call", ()
     CONTRACT.replace("## Acceptance Criteria", "## Criteria"),
   );
   // No stub: reaching the judge would fail loudly with judge-binary-missing.
-  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, PASS_RESPONSE),
   });
   assert.equal(result.status, 1);
@@ -283,7 +182,7 @@ function writeContract(dir, body) {
 }
 
 function verifyJson(dir, response, extraArgs = []) {
-  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json", ...extraArgs], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json", ...extraArgs], {
     stub: stubFile(dir, response),
   });
   return { result, parsed: JSON.parse(result.stdout) };
@@ -402,7 +301,7 @@ test("image evidence falls to the human lane when the backend cannot attach", ()
   );
   const stub = stubFile(dir, PASS_RESPONSE);
   const env = { ...process.env, SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: stub, SASU_JUDGE_STUB_NO_ATTACHMENTS: "1" };
-  const result = spawnSync("node", [CLI, "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = spawnSync("node", [CLI, "gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     cwd: dir,
     encoding: "utf8",
     env,
@@ -500,7 +399,7 @@ test("verify --json carries everything the receipt must quote", () => {
   assert.ok(!("text" in evidence), "the receipt summary must not re-embed the whole artifact");
 });
 
-test("gate status reports judged-diff drift, so it cannot disagree with the Stop hook", () => {
+test("gate status reports judged-diff drift", () => {
   const dir = makeGitProject();
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the widget renders\n");
   const { result } = verifyJson(dir, { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" }] });
@@ -635,7 +534,7 @@ test("skipping the mechanical stage never tells the judge the checks passed", ()
   const dir = makeGitProject();
   writeContract(dir, "## Acceptance Criteria\n\n- AC1. the widget renders\n");
   const stub = stubFile(dir, PASS_RESPONSE);
-  runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--skip-mechanical", "--json"], { stub });
+  runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--skip-mechanical", "--json"], { stub });
   // The stub echoes nothing back, so assert on the prompt the judge would see.
   const skipped = semanticVerifyPrompt("diff", [{ id: "AC1", text: "x" }], [], [], { mechanicalRan: false });
   assert.match(skipped, /were SKIPPED for this run/);
@@ -673,7 +572,7 @@ test("an artifact no judge could read is still reported with its hash", () => {
     "## Acceptance Criteria\n\n- AC1. dark mode renders\n  - capture: `bash -c \"printf png > shot.png\"` -> shot.png\n",
   );
   const stub = stubFile(dir, PASS_RESPONSE);
-  const result = spawnSync("node", [CLI, "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = spawnSync("node", [CLI, "gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     cwd: dir,
     encoding: "utf8",
     env: { ...process.env, SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: stub, SASU_JUDGE_STUB_NO_ATTACHMENTS: "1" },
@@ -827,7 +726,7 @@ test("an oversized real diff fails the command up front on a non-agentic backend
   fs.appendFileSync(path.join(dir, "widget.js"), `// ${"x".repeat(200_000)}\n`);
   // SASU_JUDGE_STUB_NO_AGENTIC rehearses the codex case: no read tools means
   // no agentic fallback, so the original fail-up-front contract must hold.
-  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, PASS_RESPONSE),
     env: { SASU_JUDGE_STUB_NO_AGENTIC: "1" },
   });
@@ -843,7 +742,7 @@ test("an oversized real diff fails the command up front on a non-agentic backend
 test("an oversized real diff on an agentic backend falls back to the read-only judge and passes", () => {
   const dir = makeGitProject();
   fs.appendFileSync(path.join(dir, "widget.js"), `// ${"x".repeat(200_000)}\n`);
-  const result = runCli(dir, ["verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
+  const result = runCli(dir, ["gate", "verify", "--slug", "demo", "--contract", "agents/quick/demo/contract.md", "--json"], {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
@@ -864,6 +763,7 @@ test("an oversized real diff on an agentic backend falls back to the read-only j
 test("passing both --prd and --contract is rejected", () => {
   const dir = makeGitProject();
   const result = runCli(dir, [
+    "gate",
     "verify",
     "--slug",
     "demo",

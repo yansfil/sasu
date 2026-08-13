@@ -56,7 +56,7 @@ If the target paths or proposed content change, preview again and re-confirm.
 2. Check for duplicates before landing anything:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js rules relevant --query "<keywords>"
+sasu rules relevant --query "<keywords>"
 ```
 
 Also skim `agents/rules/INDEX.md`. If an existing rule covers it, update that rule instead of adding a twin (the CLI rejects exact duplicates anyway).
@@ -66,7 +66,7 @@ Also skim `agents/rules/INDEX.md`. If an existing rule covers it, update that ru
 4. After confirmation, make sure the structure exists (first use in a project):
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js seed-agents-md
+sasu setup seed-agents-md
 ```
 
 If CLAUDE.md exists as a regular file, the command refuses: show the user its content, get confirmation, then rerun with `--adopt-claude-md` (content becomes AGENTS.md verbatim; CLAUDE.md becomes a symlink).
@@ -94,7 +94,7 @@ One paragraph: what must hold and why (cite the incident).
 ```
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --file <draft.md>
+sasu rules add --file <draft.md>
 ```
 
 `check.type` is `command`, `grep` (pattern + files + present/absent), or `manual` (requires an exact `confirm` sentence; surfaces as a delivery warning, never a silent skip).
@@ -103,13 +103,13 @@ The CLI rejects rules without evidence, without a trigger, or without a workable
 **fact** - write the body where the project's docs already live (follow existing structure; default `docs/`), add one line to AGENTS.md outside the seeded marker block (keep the index lean, roughly 30 lines; details belong in docs), then register the landing:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --kind fact --id FACT-<name> --summary "<one line>" --evidence "<run or incident ref>" --landing docs/<page>.md
+sasu rules add --kind fact --id FACT-<name> --summary "<one line>" --evidence "<run or incident ref>" --landing docs/<page>.md
 ```
 
 **regression** - write the test now, in the project's own test suite, and register it with `--kind regression --landing <test file>`. Only when writing it now is genuinely impossible, park it:
 
 ```sh
-node ~/.codex/skills/implement/scripts/prd_state_harness.js rules add --kind regression --id REG-<name> --summary "<one line>" --evidence "<ref>" --pending
+sasu rules add --kind regression --id REG-<name> --summary "<one line>" --evidence "<ref>" --pending
 ```
 
 Pending lessons are visible debt: `ship` warns on every ship and `doctor` reports them until they land.

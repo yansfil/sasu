@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -59,17 +60,27 @@ test("implement references stay direct, bounded, and navigable", () => {
 test("implement entrypoint retains lifecycle, safety, and completion authority", () => {
   const skill = fs.readFileSync(skillPath, "utf8");
   const requiredContracts = [
-    /Never implement a pending PRD without explicit human approval or a verbatim approval deviation/,
-    /Only the coordinator mutates harness state/,
-    /Every required verification item must pass with valid artifact-backed evidence/,
-    /Requirements fidelity review precedes final adversarial review/,
-    /`receipt\.json` is the only implementation completion proof/,
-    /PR creation, CI, and merge are post-receipt delivery outcomes/,
+    /Never implement a pending PRD without explicit human approval or the user's verbatim conversational approval/,
+    /`state\.json` is the only machine record/,
+    /Acceptance and fidelity are separate LLM calls/,
+    /`sasu implement finalize` never runs tests, judges, capture tools, or external commands/,
+    /`state\.json` is the completion authority/,
+    /Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes/,
     /^## Hard Stops$/m,
     /^## Final Report$/m,
   ];
 
   for (const contract of requiredContracts) {
     assert.match(skill, contract);
+  }
+});
+
+test("removed dispatcher rejects direct legacy invocations with new-command guidance", () => {
+  const script = path.join(skillDir, "scripts", "prd_state_harness.js");
+  for (const args of [[], ["hook", "stop"], ["verify-run", "--id", "V1"]]) {
+    const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /prd_state_harness\.js was removed/);
+    assert.match(result.stderr, /sasu implement start\|task\|artifact\|status\|verify\|finalize/);
   }
 });

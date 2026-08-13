@@ -53,15 +53,19 @@ function initMergeFixture() {
   const stateDir = path.join(root, "agents", "implement", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
   write(statePath, JSON.stringify({
-    schema: "hoyeon.prd-implement.state.v5",
+    schema: "sasu.implement.state.v3",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
     runDir: "agents/implement/merge-flow",
     delivery: { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" },
-    finalReceipt: { status: "complete" },
+    completion: { fingerprint: "fixture-completion" },
   }, null, 2));
-  write(path.join(stateDir, "receipt.json"), JSON.stringify({ status: "complete" }, null, 2));
+  write(path.join(stateDir, "receipt.json"), JSON.stringify({
+    schema: "sasu.implement.receipt.v3",
+    status: "complete",
+    completionFingerprint: "fixture-completion",
+  }, null, 2));
 
   const bin = path.join(root, "fake-bin");
   const ghLog = path.join(root, "gh.log");
@@ -86,19 +90,28 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 exit 1
 `, 0o755);
-  const fakeHarness = path.join(root, "fake-harness.js");
-  write(fakeHarness, `#!/usr/bin/env node
+  write(path.join(bin, "sasu"), `#!/usr/bin/env node
 const args = process.argv.slice(2).join(" ");
-if (args === "rules check") {
+if (args.startsWith("rules check")) {
   process.stdout.write(JSON.stringify({ ok: true, results: [], failures: [], manualConfirmations: [], pending: { count: 0, items: [] } }) + "\\n");
+} else if (args.startsWith("implement status")) {
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    detail: {
+      status: "complete",
+      verification: { verdict: "PASS" },
+      artifactProblems: [],
+      completion: { fingerprint: "fixture-completion" }
+    }
+  }) + "\\n");
 } else {
-  process.stdout.write(JSON.stringify({ ok: true, violations: [] }) + "\\n");
+  process.stderr.write("unexpected sasu command: " + args + "\\n");
+  process.exit(1);
 }
 `, 0o755);
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
-    HOYEON_PRD_HARNESS: fakeHarness,
     FAKE_GH_LOG: ghLog,
     FAKE_GH_MERGED: mergedMarker,
     FAKE_HEAD_SHA: head,

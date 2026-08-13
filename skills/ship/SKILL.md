@@ -106,7 +106,7 @@ Script-enforced guardrails (fail closed):
 
 - receipt must be `complete`.
 - delivery mode must be `pr`.
-- reviews and receipt must be fresh against the current worktree (`prd_state_harness.js verify-delivery`).
+- the implement receipt must match the fresh PASS reported by `sasu implement status` for the current worktree.
 - the branch must not be behind `origin/<base>`; `preflight` fetches and reports
   `baseFreshness`, and `ship` refuses a stale base (`--allow-stale-base --reason` to override).
   When behind, rebase onto the origin base, resolve conflicts, rerun the relevant

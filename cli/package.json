@@ -2,7 +2,7 @@
   "name": "sasu-cli",
   "version": "0.5.0",
   "private": true,
-  "description": "sasu harness CLI: judge gates, verification runner, and absorbed implement state library",
+  "description": "sasu CLI: document gates, unified implementation verification, and receipts",
   "type": "commonjs",
   "bin": {
     "sasu": "dist/cli.js"

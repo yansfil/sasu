@@ -16,10 +16,9 @@
 // `scripts` and `references` are symlinked back to this repository so both
 // installs share one implementation.
 //
-// The installer also registers the harness hooks idempotently
-// (~/.codex/hooks.json: Stop/PreToolUse; ~/.claude/settings.json:
-// Stop only, since Claude Code has no update_goal tool) and removes legacy
-// pre-rename install directories it owns (intake, prd, prd-implement, ...).
+// The installer also retires legacy harness hooks idempotently while
+// preserving foreign hooks, and removes pre-rename install directories it
+// owns (intake, prd, prd-implement, ...).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -155,23 +154,9 @@ function cleanupLegacyDirs(targetKey) {
   return removed;
 }
 
-// Version-manager node paths (nvm, fnm) die on version switches, which would
-// silently kill the hooks. Prefer a stable system node for hook commands.
-function hookNodeBinary() {
-  for (const candidate of ["/opt/homebrew/bin/node", "/usr/local/bin/node"]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return process.execPath;
-}
-
-function harnessHookCommand(targetKey) {
-  const script = path.join(TARGETS[targetKey].root, "implement", "scripts", "prd_state_harness.js");
-  return kind => `"${hookNodeBinary()}" "${script}" hook ${kind}`;
-}
-
-// Idempotently ensure the harness hook entries exist in a Claude/Codex-style
-// hooks config. Entries whose command mentions prd_state_harness.js are
-// replaced (paths may have changed); everything else is preserved.
+// Idempotently reconcile harness hook entries in a Claude/Codex-style hooks
+// config. An empty desired set retires every legacy harness hook while
+// preserving foreign entries and unrelated settings.
 function ensureHooks(file, entriesByEvent) {
   let config = {};
   if (fs.existsSync(file)) {
@@ -255,21 +240,9 @@ const removedLegacy = {
   claude: cleanupLegacyDirs("claude"),
 };
 
-const codexHookCommand = harnessHookCommand("codex");
-const claudeHookCommand = harnessHookCommand("claude");
 const hooks = {
-  // Codex uses the PreToolUse guard for premature `update_goal complete`.
-  codex: ensureHooks(path.join(home, ".codex", "hooks.json"), {
-    Stop: codexHookCommand("stop"),
-    PreToolUse: codexHookCommand("pretool-use"),
-  }),
-  // Claude Code has no update_goal tool, so no PreToolUse guard; PostToolUse
-  // observes side-door Bash runs of verification-contract commands and writes
-  // them to the run's rehearsals.jsonl (honest failure history, never blocks).
-  claude: ensureHooks(path.join(home, ".claude", "settings.json"), {
-    Stop: claudeHookCommand("stop"),
-    PostToolUse: claudeHookCommand("posttool-use"),
-  }),
+  codex: ensureHooks(path.join(home, ".codex", "hooks.json"), {}),
+  claude: ensureHooks(path.join(home, ".claude", "settings.json"), {}),
 };
 
 process.stdout.write(JSON.stringify({
