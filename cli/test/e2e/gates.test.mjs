@@ -218,9 +218,14 @@ test("hard block: override without --reason is rejected; with reason it unblocks
 
 test("fail-closed: a missing judge binary keeps the gate blocked with cause and override path", () => {
   const dir = makeProject();
-  const nodeDir = path.dirname(process.execPath);
+  // The node bin dir is not a safe PATH: some machines (hermes installs) put
+  // claude/codex shims next to node, which un-isolates the test. Build a dir
+  // holding only node so both judge binaries are genuinely absent.
+  const isolatedBin = path.join(dir, "isolated-bin");
+  fs.mkdirSync(isolatedBin);
+  fs.symlinkSync(process.execPath, path.join(isolatedBin, "node"));
   const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
-    env: { SASU_JUDGE_BACKEND: "claude", PATH: nodeDir },
+    env: { SASU_JUDGE_BACKEND: "claude", PATH: isolatedBin },
   });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /judge error: judge-binary-missing/);
