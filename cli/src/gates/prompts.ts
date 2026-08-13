@@ -452,15 +452,20 @@ ${lines.join("\n\n")}
  *
  * Lane fan-out duplicates this diff into every lane prompt. Do not try to
  * dedupe it with prefix caching: measured 2026-08-13 with a 150KB payload,
- * neither backend reuses a shared prompt prefix across separate calls.
- * `claude -p` auto-caches the whole turn behind a single end-of-message
- * breakpoint (61,686 tokens written to the 1h cache), so a call whose tail
- * differs rebuilds the entire block (second call: cache_read 4,606 = system
- * prompt only). `codex exec` on the ChatGPT transport reported
- * cached_input_tokens 8,960 (its own instruction prefix) with
- * cache_write_input_tokens 0 even on a byte-identical repeat. Reordering
- * lane prompts diff-first buys nothing until a transport starts writing
- * payload cache entries.
+ * neither backend reuses a shared prompt prefix across separate CLI calls,
+ * and the reason is structural in both. Anthropic caching only matches a
+ * prefix at an explicit cache_control breakpoint, and `claude -p` places
+ * its single breakpoint at the end of the whole turn (61,686 tokens written
+ * to the 1h cache) - a call whose criteria tail differs can never match a
+ * bookmark that sits past the divergence point (second call: cache_read
+ * 4,606 = system prompt only). OpenAI caching is automatic but partitioned
+ * by prompt_cache_key, which the codex CLI sets to the per-invocation
+ * thread UUID - each `codex exec` is a fresh partition, so even a
+ * byte-identical repeat read only codex's own shared instruction prefix
+ * (cached_input_tokens 8,960, cache_write 0). Sharing would need either
+ * direct API calls with a breakpoint at the end of the diff (forfeits the
+ * CLI subscription auth) or same-thread codex turns (forfeits lane
+ * independence). Neither trade is worth the prefill savings.
  */
 export const VERIFY_DIFF_MAX_CHARS = 160_000;
 
