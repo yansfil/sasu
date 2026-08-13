@@ -30,7 +30,25 @@ export async function runJudge<T>(
   let lastProblem = "";
   let fallback: JudgeCallRecord["fallback"];
   let fallbackUsed = false;
-  while (attempts < 2) {
+  const useFallback = (outcome: Exclude<JudgeCallRecord["outcome"], "ok">): boolean => {
+    const fallbackBackend = !fallbackUsed ? resolveFallbackBackend(backend) : null;
+    if (fallbackBackend === null) return false;
+    fallbackUsed = true;
+    fallback = {
+      at: new Date(startedAt).toISOString(),
+      backend: backend.name,
+      model,
+      durationMs: Date.now() - startedAt,
+      outcome,
+    };
+    backend = fallbackBackend;
+    model = tierModelFor(config, backend.name, tier);
+    startedAt = Date.now();
+    attempts = 0;
+    lastProblem = "";
+    return true;
+  };
+  while (true) {
     attempts += 1;
     const retryPreamble =
       attempts === 1
@@ -51,24 +69,8 @@ export async function runJudge<T>(
       ).text;
     } catch (error) {
       if (error instanceof JudgeError) {
-        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout";
-        const fallbackBackend = !fallbackUsed && canFallback ? resolveFallbackBackend(backend) : null;
-        if (fallbackBackend !== null) {
-          fallbackUsed = true;
-          fallback = {
-            at: new Date(startedAt).toISOString(),
-            backend: backend.name,
-            model,
-            durationMs: Date.now() - startedAt,
-            outcome: error.code,
-          };
-          backend = fallbackBackend;
-          model = tierModelFor(config, backend.name, tier);
-          startedAt = Date.now();
-          attempts = 0;
-          lastProblem = "";
-          continue;
-        }
+        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout" || error.code === "judge-invalid-output";
+        if (canFallback && useFallback(error.code)) continue;
         throw Object.assign(error, {
           record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
         });
@@ -78,11 +80,25 @@ export async function runJudge<T>(
     const parsed = extractJsonObject(text);
     if (parsed === null) {
       lastProblem = "no JSON object found in output";
+      if (attempts >= 2) {
+        const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
+        if (useFallback(error.code)) continue;
+        throw Object.assign(error, {
+          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+        });
+      }
       continue;
     }
     const validated = validate(parsed);
     if (typeof validated === "string") {
       lastProblem = validated;
+      if (attempts >= 2) {
+        const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
+        if (useFallback(error.code)) continue;
+        throw Object.assign(error, {
+          record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
+        });
+      }
       continue;
     }
     return {
@@ -90,10 +106,6 @@ export async function runJudge<T>(
       record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, "ok", fallback),
     };
   }
-  const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
-  throw Object.assign(error, {
-    record: makeRecord(backend.name, model, tier, purpose, startedAt, attempts, error.code, fallback),
-  });
 }
 
 function makeRecord(

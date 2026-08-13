@@ -136,6 +136,35 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
   }
 });
 
+test("runJudge falls back from repeated invalid Claude output to Codex", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const fakeClaude = path.join(binDir, "claude");
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeClaude, "#!/bin/sh\nprintf 'not json\\n'\n");
+  fs.writeFileSync(
+    fakeCodex,
+    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+  );
+  fs.chmodSync(fakeClaude, 0o755);
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "claude";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    const outcome = await runJudge(config, "gate:test", "frugal", "prompt", validateGapVerdict);
+    assert.equal(outcome.value.verdict, "PASS");
+    assert.equal(outcome.record.backend, "codex");
+    assert.equal(outcome.record.attempts, 1);
+    assert.equal(outcome.record.fallback?.backend, "claude");
+    assert.equal(outcome.record.fallback?.outcome, "judge-invalid-output");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
 test("runJudge falls back from Claude authentication failure to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
