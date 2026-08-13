@@ -25,6 +25,7 @@ import { contractVersion } from "./version";
 import { runImplementCommand, type ImplementArgs } from "./implement/commands";
 import { runPrdCommand } from "./prd/commands";
 import { runRulesCommand, runSetupCommand } from "./support/commands";
+import { ensureSetup } from "./support/ensure-setup";
 
 const USAGE = `sasu - harness CLI: judge gates, verification, doctor
 
@@ -285,6 +286,12 @@ async function main(): Promise<void> {
     }
     process.exit(report.ok ? 0 : 1);
   }
+
+  // Every skill funnels through this CLI, so one guard here auto-provisions
+  // setup for implement/quick/please/interview without per-skill prose
+  // (PRINCIPLES item 7). help/contract-version/doctor exited above: doctor
+  // stays a pure diagnostic that reports rather than mutates.
+  for (const notice of ensureSetup(projectRoot)) process.stderr.write(`sasu: ${notice}\n`);
 
   if (command === "implement") {
     const implementResult = await runImplementCommand(projectRoot, args as ImplementArgs);
