@@ -104,6 +104,16 @@ export interface AcceptanceCriterionInvocation {
   reusedFrom?: string;
 }
 
+// The severity floor is the risk lane's convergence bound: a fresh
+// adversarial judge always finds something new (2026-08-13 creator-assist: 17
+// risk rounds, 89 findings, zero repeats, every round FAIL), so only findings
+// the judge stakes as blocking may fail the lane. Advisory findings are
+// recorded without invalidating the run.
+export interface RiskFinding {
+  severity: "blocking" | "advisory";
+  text: string;
+}
+
 export interface FidelityCheckResult {
   id: "F1" | "F2" | "F3" | "F4" | "F5";
   verdict: "PASS" | "FAIL";
@@ -145,7 +155,7 @@ export interface UnifiedVerificationAttempt {
       invocations: AcceptanceCriterionInvocation[];
     }> | null;
     fidelity: LaneRecord<{ verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] }> | null;
-    risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: string[] }> | null;
+    risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: RiskFinding[] }> | null;
   };
   error: { stage: string; code: string; message: string } | null;
 }
@@ -172,6 +182,12 @@ export interface ImplementState {
   verification: VerificationItem[];
   artifacts: RegisteredArtifact[];
   verificationAttempts: UnifiedVerificationAttempt[];
+  // Explicit user go-aheads that opened a fresh fix budget after exhaustion.
+  // Recording them here keeps one state file authoritative: without this
+  // path, sessions improvised `mv state.json` + a fresh start, scattering the
+  // record across files (2026-08-13 creator-assist: three archived states,
+  // each new run re-judging every criterion from zero).
+  budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
   deviations: { at: string; type: string; summary: string }[];
   completion: {
     fingerprint: string;

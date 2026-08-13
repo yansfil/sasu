@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { captureSourceSnapshot } from "../../dist/implement/store.js";
+import { captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince } from "../../dist/implement/store.js";
 
 test("source freshness is commit-invariant when judged bytes do not change", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-fingerprint-"));
@@ -20,6 +20,60 @@ test("source freshness is commit-invariant when judged bytes do not change", () 
   assert.notEqual(before.head, after.head);
   assert.equal(before.digest, after.digest);
 });
+
+test("baseline snapshot pins dirty paths to HEAD so pre-start work stays run-owned", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-baseline-"));
+  try {
+    fs.writeFileSync(path.join(root, "base.txt"), "committed body\n");
+    fs.writeFileSync(path.join(root, "gone.txt"), "deleted later\n");
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.name", "fixture"],
+      ["config", "user.email", "fixture@example.com"],
+      ["add", "base.txt", "gone.txt"],
+      ["commit", "-q", "-m", "baseline"],
+    ]) {
+      assert.equal(spawnSync("git", args, { cwd: root }).status, 0);
+    }
+    // The restart scenario: implementation work exists before `implement start`.
+    fs.writeFileSync(path.join(root, "base.txt"), "modified before start\n");
+    fs.writeFileSync(path.join(root, "new.txt"), "untracked implementation\n");
+    fs.rmSync(path.join(root, "gone.txt"));
+
+    const baseline = captureBaselineSnapshot(root);
+    const byPath = new Map(baseline.entries.map((entry) => [entry.path, entry]));
+    assert.equal(byPath.get("base.txt").sha256, captureSourceSnapshotSha("committed body\n"));
+    assert.equal(byPath.has("new.txt"), false, "a file absent at HEAD is run-owned work, not baseline");
+    assert.equal(byPath.get("gone.txt").sha256, captureSourceSnapshotSha("deleted later\n"));
+
+    const working = captureSourceSnapshot(root);
+    assert.deepEqual(changedPathsSince(baseline, working), ["base.txt", "gone.txt", "new.txt"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("baseline snapshot without a git HEAD is the working tree", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-baseline-plain-"));
+  try {
+    fs.writeFileSync(path.join(root, "only.txt"), "no repository here\n");
+    const baseline = captureBaselineSnapshot(root);
+    const working = captureSourceSnapshot(root);
+    assert.deepEqual(baseline, working);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function captureSourceSnapshotSha(body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-sha-"));
+  try {
+    fs.writeFileSync(path.join(dir, "f"), body);
+    return captureSourceSnapshot(dir).entries[0].sha256;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 test("source snapshot excludes only the root agents bookkeeping namespace", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-agents-"));

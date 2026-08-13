@@ -13,6 +13,7 @@ import { mechanicalBindings, parseImplementContract, reviewProfile, type Impleme
 import { acceptancePrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
 import {
   artifactIntegrityProblems,
+  captureBaselineSnapshot,
   captureSourceSnapshot,
   changedPathsSince,
   loadState,
@@ -37,6 +38,7 @@ import {
   type MechanicalBinding,
   type MechanicalRunRecord,
   type RegisteredArtifact,
+  type RiskFinding,
   type TaskItem,
   type UnifiedVerificationAttempt,
   type VerificationItem,
@@ -109,12 +111,17 @@ interface VerificationBudgetView {
   budgetExhausted: boolean;
   consecutiveErrors: number;
   judgeErrorLoop: boolean;
+  grants: number;
 }
 
 function verificationBudget(state: ImplementState, budget: number): VerificationBudgetView {
   let fixAttempts = 0;
   let consecutiveErrors = 0;
-  for (const attempt of state.verificationAttempts) {
+  const grants = state.budgetGrants ?? [];
+  // A recorded user grant opens a fresh budget: attempts before the latest
+  // grant no longer count against either gauge.
+  const countFrom = grants.length === 0 ? 0 : grants[grants.length - 1]!.attemptCountBefore;
+  for (const attempt of state.verificationAttempts.slice(countFrom)) {
     if (attempt.verdict === "PASS") {
       fixAttempts = 0;
       consecutiveErrors = 0;
@@ -137,18 +144,21 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     budgetExhausted: fixAttempts > 0 && fixAttempts >= budget,
     consecutiveErrors,
     judgeErrorLoop: consecutiveErrors > 0 && consecutiveErrors >= budget,
+    grants: grants.length,
   };
 }
 
 function terminalBudgetMessage(view: VerificationBudgetView): string | null {
-  // Both terminal states name the honest exit: without it, sessions improvise
-  // side doors (2026-08-13 creator-assist ran `gate verify --prd` against an
-  // exhausted implement run because nothing told it how to close).
+  // Both terminal states name every honest exit: without them, sessions
+  // improvise side doors (2026-08-13 creator-assist ran `gate verify --prd`
+  // against an exhausted implement run, then archived state.json three times
+  // to mint fresh runs when the user said to keep going).
+  const exits = "close the run honestly with `sasu implement finalize --status blocked`, or, if the user explicitly approved more verification, record their words verbatim with `sasu implement verify --grant-budget \"<the user's words>\"`";
   if (view.budgetExhausted) {
-    return `unified verification fix budget exhausted (${view.fixAttempts}/${view.budget}); close the run honestly with \`sasu implement finalize --status blocked\``;
+    return `unified verification fix budget exhausted (${view.fixAttempts}/${view.budget}); ${exits}`;
   }
   if (view.judgeErrorLoop) {
-    return `unified judge failed ${view.consecutiveErrors} times in a row without a verdict; close the run honestly with \`sasu implement finalize --status blocked\``;
+    return `unified judge failed ${view.consecutiveErrors} times in a row without a verdict; ${exits}`;
   }
   return null;
 }
@@ -233,13 +243,14 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       reviewRationale: contract.frontmatter["review_rationale"] ?? "",
       sourceIntake: contract.frontmatter["source_intake"] ?? "",
     },
-    initialSource: captureSourceSnapshot(projectRoot),
+    initialSource: captureBaselineSnapshot(projectRoot),
     tasks: contract.tasks,
     requirements: contract.requirements,
     acceptanceCriteria: contract.acceptanceCriteria,
     verification: contract.verification,
     artifacts: [],
     verificationAttempts: [],
+    budgetGrants: [],
     deviations: [],
     completion: null,
     createdAt,
@@ -410,6 +421,14 @@ function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord,
   }
 }
 
+// Progress lines go to stderr so --json stdout stays parseable. Verify runs
+// minutes of judge work; silent, it forces callers to invent their own
+// polling (2026-08-13 creator-assist: 31 minutes of agent wall-clock spent on
+// nohup + sleep + ps loops watching an opaque verify).
+function progress(line: string): void {
+  process.stderr.write(`[implement:verify] ${line}\n`);
+}
+
 function runMechanicalBindings(projectRoot: string, state: ImplementState, bindings: MechanicalBinding[], sourceFingerprint: string): MechanicalRunRecord[] {
   const records: MechanicalRunRecord[] = [];
   const timeoutMs = loadConfig(projectRoot).verify.commandTimeoutMs;
@@ -445,6 +464,7 @@ function runMechanicalBindings(projectRoot: string, state: ImplementState, bindi
     ].join("");
     const logPath = writeMechanicalLog(projectRoot, state, binding, base, executed.stdout ?? "", `${executed.stderr ?? ""}${extra}`);
     const record: MechanicalRunRecord = { ...base, logPath };
+    progress(`mechanical ${record.status} in ${(record.durationMs / 1000).toFixed(1)}s: ${record.command}`);
     records.push(record);
     upsertCommandArtifacts(state, record, sourceFingerprint, projectRoot);
     if (record.status === "FAIL") break;
@@ -581,14 +601,31 @@ function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: F
   return { verdict: raw.verdict, checks };
 }
 
-function validateRisk(value: unknown): { verdict: "PASS" | "FAIL"; findings: string[] } | string {
+function validateRisk(value: unknown): { verdict: "PASS" | "FAIL"; findings: RiskFinding[] } | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
   const raw = value as { verdict?: unknown; findings?: unknown };
   if (raw.verdict !== "PASS" && raw.verdict !== "FAIL") return "verdict must be PASS or FAIL";
-  if (!Array.isArray(raw.findings) || raw.findings.some((entry) => typeof entry !== "string")) return "findings must be a string array";
-  if (raw.verdict === "PASS" && raw.findings.length > 0) return "PASS requires no findings";
-  if (raw.verdict === "FAIL" && raw.findings.length === 0) return "FAIL requires a finding";
-  return { verdict: raw.verdict, findings: raw.findings as string[] };
+  if (!Array.isArray(raw.findings)) return "findings must be an array";
+  const findings: RiskFinding[] = [];
+  for (const [index, entry] of raw.findings.entries()) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return `findings[${index}] must be an object with severity and text`;
+    }
+    const finding = entry as Record<string, unknown>;
+    if (finding["severity"] !== "blocking" && finding["severity"] !== "advisory") {
+      return `findings[${index}].severity must be blocking or advisory`;
+    }
+    if (typeof finding["text"] !== "string" || finding["text"].trim() === "") {
+      return `findings[${index}].text must be a non-empty string`;
+    }
+    findings.push({ severity: finding["severity"], text: finding["text"] });
+  }
+  // The verdict is a pure function of the severity floor, never a separate
+  // judgment: FAIL means at least one blocking finding, PASS means none.
+  const blocking = findings.some((entry) => entry.severity === "blocking");
+  if (raw.verdict === "PASS" && blocking) return "PASS cannot carry a blocking finding";
+  if (raw.verdict === "FAIL" && !blocking) return "FAIL requires at least one blocking finding";
+  return { verdict: raw.verdict, findings };
 }
 
 async function judgeLane<T>(
@@ -686,6 +723,7 @@ async function acceptanceLane(
   const perCriterion = await Promise.all(state.acceptanceCriteria.map(async (criterion) => {
     const prior = settled.get(criterion.id);
     if (reuse !== null && prior !== undefined) {
+      progress(`acceptance ${criterion.id}: ${prior.invocation.verdict} (reused from the ERROR'd attempt)`);
       return {
         invocation: { ...prior.invocation, reusedFrom: reuse.id },
         criteria: prior.criteria,
@@ -728,6 +766,7 @@ async function acceptanceLane(
         },
       );
     });
+    progress(`acceptance ${criterion.id}: ${record.verdict} (${(record.durationMs / 1000).toFixed(0)}s)`);
     const invocation: AcceptanceCriterionInvocation = {
       criterionId: criterion.id,
       invocationId: record.invocationId,
@@ -839,6 +878,21 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
   if (openTasks.length > 0) throw new Error(`verify requires all tasks complete; open: ${openTasks.map((entry) => entry.id).join(", ")}`);
   const config = loadConfig(projectRoot);
+  if (args.flags.has("grant-budget")) {
+    const evidence = flag(args, "grant-budget")?.trim() ?? "";
+    if (evidence === "") throw new Error("--grant-budget requires the user's verbatim approval text");
+    const view = verificationBudget(state, config.judge.retryBudget);
+    if (!view.budgetExhausted && !view.judgeErrorLoop) {
+      // A grant is only meaningful at a terminal gauge; anywhere else it
+      // would silently widen the budget the user configured.
+      throw new Error("--grant-budget refused: the verification budget is not exhausted; run `sasu implement verify` without it");
+    }
+    state.budgetGrants = [
+      ...(state.budgetGrants ?? []),
+      { at: nowIso(), evidence, attemptCountBefore: state.verificationAttempts.length },
+    ];
+    persistState(statePath, state);
+  }
   const budgetBefore = verificationBudget(state, config.judge.retryBudget);
   const terminalBefore = terminalBudgetMessage(budgetBefore);
   if (terminalBefore !== null) {
@@ -920,24 +974,33 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     ? { ...reuse.lanes.fidelity, reusedFrom: reuse.id }
     : null;
   const fidelityInvocationId = crypto.randomUUID();
+  progress(`judging ${state.acceptanceCriteria.length} acceptance criteria and fidelity in parallel (profile: ${state.prd.reviewProfile})`);
+  if (priorFidelity !== null) progress(`fidelity: ${priorFidelity.verdict} (reused from the ERROR'd attempt)`);
   const [acceptance, fidelity] = await Promise.all([
     acceptanceLane(config, projectRoot, state, changedFiles, changedPaths, mechanical, reuse),
     priorFidelity !== null
       ? Promise.resolve(priorFidelity)
       : judgeLane(fidelityInvocationId, () =>
           runJudge(config, "implement:fidelity", "routine", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
-        ),
+        ).then((record) => {
+          progress(`fidelity: ${record.verdict} (${(record.durationMs / 1000).toFixed(0)}s)`);
+          return record;
+        }),
   ]);
 
   // The risk lane is never reused: its prompt consumes acceptance.result and
   // fidelity.result. If both upstream lanes were fully reused, the prior
   // attempt's ERROR was the risk lane itself; otherwise a fresh upstream
   // judgment changed the risk lane's inputs. Either way it must re-run.
-  let risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: string[] }> | null = null;
+  let risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: RiskFinding[] }> | null = null;
   if (state.prd.reviewProfile === "high-risk") {
+    progress("risk: judging residual risk");
     risk = await judgeLane(crypto.randomUUID(), () =>
       runJudge(config, "implement:risk", "high-risk", riskPrompt(prdText, material, acceptance.result, fidelity.result), validateRisk),
     );
+    const blocking = risk.result?.findings.filter((entry) => entry.severity === "blocking").length ?? 0;
+    const advisory = risk.result?.findings.filter((entry) => entry.severity === "advisory").length ?? 0;
+    progress(`risk: ${risk.verdict} (${blocking} blocking, ${advisory} advisory, ${(risk.durationMs / 1000).toFixed(0)}s)`);
   }
   const laneVerdicts = [acceptance.verdict, fidelity.verdict, ...(risk !== null ? [risk.verdict] : [])];
   const verdict: VerificationStatus = laneVerdicts.includes("ERROR") ? "ERROR" : laneVerdicts.every((entry) => entry === "PASS") ? "PASS" : "FAIL";
@@ -967,6 +1030,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   };
   state.verificationAttempts.push(attempt);
   persistState(statePath, state);
+  progress(`unified verification ${verdict} in ${((Date.now() - started) / 1000).toFixed(0)}s`);
   const budget = verificationBudget(state, config.judge.retryBudget);
   const terminal = terminalBudgetMessage(budget);
   return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}`, {
@@ -1089,7 +1153,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         fidelity: latest.lanes.fidelity?.verdict ?? "NOT_RUN",
         risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
       },
-      verificationBudget: { fixAttempts: view.fixAttempts, budget: view.budget, consecutiveErrors: view.consecutiveErrors },
+      verificationBudget: { fixAttempts: view.fixAttempts, budget: view.budget, consecutiveErrors: view.consecutiveErrors, grants: view.grants },
       openItems: blockers,
       executionCallsDuringFinalize: 0,
     };

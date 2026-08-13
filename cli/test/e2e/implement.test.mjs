@@ -215,6 +215,13 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.equal(registered.status, 0, registered.stderr + registered.stdout);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  // Lane progress is observable from outside the process while stdout stays
+  // pure JSON: an opaque verify forces callers into ps-polling loops.
+  assert.match(verified.stderr, /\[implement:verify\] mechanical PASS in [\d.]+s: npm test/);
+  assert.match(verified.stderr, /\[implement:verify\] acceptance AC1: PASS \(\d+s\)/);
+  assert.match(verified.stderr, /\[implement:verify\] fidelity: PASS \(\d+s\)/);
+  assert.match(verified.stderr, /\[implement:verify\] unified verification PASS in \d+s/);
+  assert.doesNotMatch(verified.stdout, /\[implement:verify\]/, "progress must not corrupt the JSON stdout");
   const attempt = verified.json.detail.attempt;
   assert.equal(attempt.verdict, "PASS");
   assert.notEqual(attempt.lanes.acceptance.invocationId, attempt.lanes.fidelity.invocationId);
@@ -260,6 +267,23 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.equal(fs.readFileSync(receiptPath, "utf8"), firstReceipt);
 });
 
+test("work done before implement start is still judged as run-owned", () => {
+  // 2026-08-13 creator-assist: runs restarted after the implementation was
+  // written judged an empty diff, and every first verify round failed on
+  // "No run-owned source changes were detected."
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "impl.txt"), "implementation written before start\n");
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC1.prompt.txt"), "utf8");
+  assert.match(acceptancePrompt, /impl\.txt \[text, \d+ bytes\]/);
+  const fidelityPrompt = fs.readFileSync(path.join(capture, "implement_fidelity.prompt.txt"), "utf8");
+  assert.match(fidelityPrompt, /implementation written before start/);
+});
+
 test("a backend without read-only file access fails acceptance observably instead of judging from missing code", () => {
   const root = makeProject();
   const { file, capture } = stub(root);
@@ -289,6 +313,7 @@ test("high-risk runs the risk judge only after both base lanes complete", () => 
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
   const lanes = verified.json.detail.attempt.lanes;
   assert.equal(lanes.risk.verdict, "PASS");
+  assert.match(verified.stderr, /\[implement:verify\] risk: PASS \(0 blocking, 0 advisory, \d+s\)/);
   assert.ok(lanes.risk.startedAt >= lanes.acceptance.finishedAt);
   assert.ok(lanes.risk.startedAt >= lanes.fidelity.finishedAt);
 
@@ -304,6 +329,62 @@ test("high-risk runs the risk judge only after both base lanes complete", () => 
   assert.equal(trivial.status, 0, trivial.stderr + trivial.stdout);
   assert.equal(trivial.json.detail.attempt.lanes.risk, null);
   assert.equal(fs.existsSync(path.join(trivialStub.capture, "implement_risk.prompt.txt")), false);
+});
+
+test("risk findings fail the run only at the blocking severity floor", () => {
+  // Advisory findings ride along on PASS: without the floor, a fresh
+  // adversarial judge always finds something new and the lane cannot
+  // converge (2026-08-13 creator-assist: 17 rounds, 89 findings, 0 repeats).
+  const root = makeProject({ profile: "high-risk" });
+  const { file, capture } = stub(root, "high-risk");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:risk"] = {
+    verdict: "PASS",
+    findings: [{ severity: "advisory", text: "consider rate limiting the retry path" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  startAndClose(root);
+
+  const advisory = run(root, ["implement", "verify"], { env });
+  assert.equal(advisory.status, 0, advisory.stderr + advisory.stdout);
+  assert.equal(advisory.json.detail.attempt.lanes.risk.verdict, "PASS");
+  assert.deepEqual(advisory.json.detail.attempt.lanes.risk.result.findings, [
+    { severity: "advisory", text: "consider rate limiting the retry path" },
+  ]);
+  const riskPrompt = fs.readFileSync(path.join(capture, "implement_risk.prompt.txt"), "utf8");
+  assert.match(riskPrompt, /Delivery evidence is out of scope/);
+  assert.match(riskPrompt, /Their absence is never a finding here/);
+
+  // A blocking finding fails the lane and the run.
+  configured.byPurpose["implement:risk"] = {
+    verdict: "FAIL",
+    findings: [{ severity: "blocking", text: "credentials are written to a world-readable log" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const blocking = run(root, ["implement", "verify"], { env });
+  assert.equal(blocking.status, 1);
+  assert.equal(blocking.json.detail.attempt.lanes.risk.verdict, "FAIL");
+  assert.equal(blocking.json.detail.attempt.verdict, "FAIL");
+
+  // Free-prose string findings and severity-inconsistent verdicts are
+  // rejected as invalid output instead of silently accepted.
+  configured.byPurpose["implement:risk"] = { verdict: "FAIL", findings: ["prose finding without severity"] };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const malformed = run(root, ["implement", "verify"], { env });
+  assert.equal(malformed.status, 1);
+  assert.equal(malformed.json.detail.attempt.lanes.risk.verdict, "ERROR");
+  assert.equal(malformed.json.detail.attempt.lanes.risk.error.code, "judge-invalid-output");
+
+  configured.byPurpose["implement:risk"] = {
+    verdict: "FAIL",
+    findings: [{ severity: "advisory", text: "only advisory yet FAIL" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const inconsistent = run(root, ["implement", "verify"], { env });
+  assert.equal(inconsistent.status, 1);
+  assert.equal(inconsistent.json.detail.attempt.lanes.risk.verdict, "ERROR");
+  assert.equal(inconsistent.json.detail.attempt.lanes.risk.error.code, "judge-invalid-output");
 });
 
 test("lane failure and malformed judge output remain independent and block finalize", () => {
@@ -588,6 +669,53 @@ test("implement verify stops at the configured fix budget before running more wo
   assert.equal(refused.json.detail.judgeCalls, 0);
   assert.equal(refused.json.state.verificationAttempts.length, 2);
   assert.equal(fs.readFileSync(path.join(root, "agents", "verify-count"), "utf8"), "2");
+  assert.match(refused.json.message, /--grant-budget/);
+});
+
+test("an explicit user grant opens one fresh fix budget inside the same state record", () => {
+  // 2026-08-13 creator-assist: with no grant path, "새 검증 런을 허용한다"
+  // was honored by archiving state.json and starting a fresh run three
+  // times, scattering the record and re-judging everything from zero.
+  const root = makeProject();
+  fs.mkdirSync(path.join(root, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"process.exit(1)\"" } }));
+  startAndClose(root);
+
+  // A grant before exhaustion is refused: it would widen the configured budget.
+  const early = run(root, ["implement", "verify", "--grant-budget", "go ahead"]);
+  assert.equal(early.status, 2);
+  assert.match(early.json.message, /budget is not exhausted/);
+
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  const refused = run(root, ["implement", "verify"]);
+  assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
+
+  // Empty evidence is refused; the grant must carry the user's words.
+  const unevidenced = run(root, ["implement", "verify", "--grant-budget", "  "]);
+  assert.equal(unevidenced.status, 2);
+  assert.match(unevidenced.json.message, /verbatim approval/);
+
+  // The grant runs verification again and is recorded in the one state file.
+  const granted = run(root, ["implement", "verify", "--grant-budget", "새 검증 런을 허용한다"]);
+  assert.equal(granted.status, 1, granted.stderr + granted.stdout);
+  assert.notEqual(granted.json.detail.terminalReason, "budget-exhausted");
+  assert.equal(granted.json.state.verificationAttempts.length, 3);
+  assert.equal(granted.json.state.budgetGrants.length, 1);
+  assert.equal(granted.json.state.budgetGrants[0].evidence, "새 검증 런을 허용한다");
+  assert.equal(granted.json.state.budgetGrants[0].attemptCountBefore, 2);
+  assert.equal(granted.json.detail.verificationBudget.fixAttempts, 1);
+  assert.equal(granted.json.detail.verificationBudget.grants, 1);
+
+  // The granted budget exhausts again by the same rule, and the blocked
+  // close then works with the grant on the receipt's gauge.
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  const reExhausted = run(root, ["implement", "verify"]);
+  assert.equal(reExhausted.json.detail.terminalReason, "budget-exhausted");
+  const closed = run(root, ["implement", "finalize", "--status", "blocked"]);
+  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+  assert.equal(closed.json.detail.receipt.verificationBudget.grants, 1);
 });
 
 test("implement verify bounds consecutive judge errors without spending the fix budget", () => {

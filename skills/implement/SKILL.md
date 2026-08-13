@@ -174,6 +174,8 @@ Do not automatically retry a generative judge.
 A new explicit verify command creates a new attempt.
 The CLI bounds the autonomous loop with `judge.retryBudget`: non-PASS attempts spend the fix budget, judge-only ERRORs use a separate consecutive-error gauge, prelint corrections are free, and PASS resets both gauges.
 When verify reports `budgetExhausted` or `judgeErrorLoop`, stop rather than running another attempt.
+The only two exits are `sasu implement finalize --status blocked` and, when the user explicitly approves more verification, `sasu implement verify --grant-budget "<the user's words verbatim>"`.
+Never archive or replace `state.json` to mint a fresh run; the grant keeps the whole history in one record.
 
 ## 6. Finalize
 

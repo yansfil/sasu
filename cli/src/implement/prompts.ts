@@ -192,11 +192,18 @@ export function riskPrompt(
   fidelity: unknown,
 ): string {
   return `You are the final adversarial risk judge for a high-risk implementation.
-The acceptance and fidelity judges have already completed. Inspect only residual sensitive, destructive, irreversible, costly, production, security, rollback, and evidence-integrity risks.
+The acceptance and fidelity judges have already completed. Inspect only residual sensitive, destructive, irreversible, costly, security, and evidence-integrity risks in the run-owned change material below.
+
+SCOPE:
+- Judge only this run's changes. Do not re-litigate acceptance criteria or fidelity; those lanes already settled.
+- Delivery evidence is out of scope: branch, commit, PR, CI, merge, deployment, service health, and rollback receipts belong to the ship stage that follows this run. Their absence is never a finding here.
+- severity "blocking": a concrete residual risk demonstrable from the change material that makes shipping this diff unsafe (data loss, credential or sensitive-data exposure, irreversible or costly side effects, fabricated or contradictory evidence).
+- severity "advisory": everything else worth recording - hardening ideas, unproven-but-plausible concerns, follow-up work. Advisory findings do not fail the run.
+- When you cannot demonstrate the failure path from the material below, the finding is advisory, not blocking.
 
 ${JSON_RULE}
-{ "verdict": "PASS" | "FAIL", "findings": ["specific residual risk"] }
-PASS requires an empty findings array. FAIL requires at least one finding.
+{ "verdict": "PASS" | "FAIL", "findings": [{ "severity": "blocking" | "advisory", "text": "specific residual risk" }] }
+FAIL requires at least one blocking finding. PASS means no blocking finding; advisory findings are allowed on PASS.
 
 ACCEPTANCE RESULT:
 ${JSON.stringify(acceptance)}

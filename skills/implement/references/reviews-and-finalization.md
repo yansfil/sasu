@@ -47,7 +47,13 @@ NOT_RUN, FAIL, BLOCKED, ERROR, and STALE are not completion states.
 A source or evidence change after PASS makes the result stale.
 Run verify again explicitly after the implementation and final evidence are coherent.
 Each explicit run returns the current fix budget and consecutive judge-error gauges.
-When `budgetExhausted` or `judgeErrorLoop` is true, the CLI refuses further verification work and the run moves to a blocked handoff.
+When `budgetExhausted` or `judgeErrorLoop` is true, the CLI refuses further verification work.
+From that terminal state there are exactly two exits, both recorded in the same `state.json`:
+
+- `sasu implement finalize --status blocked` closes the run honestly with the open findings in the receipt.
+- `sasu implement verify --grant-budget "<the user's words verbatim>"` records the user's explicit go-ahead and opens one fresh fix budget.
+
+Do not archive, rename, or replace `state.json` to start over; a fresh run discards every settled verdict and re-judges every criterion from zero.
 
 ## Finalize
 
