@@ -206,11 +206,16 @@ export interface ImplementActivePointer {
   updatedAt: string;
 }
 
+// No `state` field by design: every command once echoed the whole
+// ImplementState back to stdout, and the echo grew with verificationAttempts
+// until one `implement artifact --json` registration (12 useful lines) cost
+// ~420k chars / ~117k tokens on a real run (exploration-collection-depth,
+// 2026-08-15). `state.json` is the only machine record (PRINCIPLES 10);
+// callers that need history read it from disk.
 export interface ImplementCommandResult {
   ok: boolean;
   action: string;
   exitCode: number;
   message: string;
-  state?: ImplementState;
   detail?: Record<string, unknown>;
 }

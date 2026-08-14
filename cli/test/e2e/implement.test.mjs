@@ -139,6 +139,12 @@ function run(root, args, options = {}) {
   return { ...executed, json };
 }
 
+// Command responses deliberately no longer echo the state (it grew to ~117k
+// tokens per call on real runs); history assertions read the record itself.
+function readState(root, slug = "fixture") {
+  return JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", slug, "state.json"), "utf8"));
+}
+
 function startAndClose(root) {
   const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
@@ -225,8 +231,9 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   const attempt = verified.json.detail.attempt;
   assert.equal(attempt.verdict, "PASS");
   assert.notEqual(attempt.lanes.acceptance.invocationId, attempt.lanes.fidelity.invocationId);
-  assert.equal(attempt.lanes.acceptance.result.invocations.length, 1);
-  assert.equal(attempt.lanes.acceptance.result.invocations[0].criterionId, "AC1");
+  const acceptanceInvocations = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations;
+  assert.equal(acceptanceInvocations.length, 1);
+  assert.equal(acceptanceInvocations[0].criterionId, "AC1");
   assert.ok(attempt.lanes.acceptance.startedAt <= attempt.lanes.fidelity.finishedAt);
   assert.ok(attempt.lanes.fidelity.startedAt <= attempt.lanes.acceptance.finishedAt);
   assert.equal(attempt.lanes.risk, null);
@@ -349,7 +356,11 @@ test("risk findings fail the run only at the blocking severity floor", () => {
   const advisory = run(root, ["implement", "verify"], { env });
   assert.equal(advisory.status, 0, advisory.stderr + advisory.stdout);
   assert.equal(advisory.json.detail.attempt.lanes.risk.verdict, "PASS");
-  assert.deepEqual(advisory.json.detail.attempt.lanes.risk.result.findings, [
+  // The response summarizes: no blocking findings inline, advisory as a count;
+  // the full findings stay in state.json.
+  assert.deepEqual(advisory.json.detail.attempt.lanes.risk.blocking, []);
+  assert.equal(advisory.json.detail.attempt.lanes.risk.advisoryCount, 1);
+  assert.deepEqual(readState(root).verificationAttempts.at(-1).lanes.risk.result.findings, [
     { severity: "advisory", text: "consider rate limiting the retry path" },
   ]);
   const riskPrompt = fs.readFileSync(path.join(capture, "implement_risk.prompt.txt"), "utf8");
@@ -565,8 +576,8 @@ test("artifact registration and verify converge safely when each operation runs 
   const verifiedTwice = run(root, ["implement", "verify"], { env });
   assert.equal(verifiedOnce.status, 0);
   assert.equal(verifiedTwice.status, 0);
-  assert.equal(verifiedTwice.json.state.verificationAttempts.length, 2);
-  assert.equal(verifiedTwice.json.state.verificationAttempts.every((attempt) => attempt.verdict === "PASS"), true);
+  assert.equal(readState(root).verificationAttempts.length, 2);
+  assert.equal(readState(root).verificationAttempts.every((attempt) => attempt.verdict === "PASS"), true);
   assert.equal(verifiedTwice.json.detail.verificationBudget.fixAttempts, 0);
   assert.equal(verifiedTwice.json.detail.verificationBudget.consecutiveErrors, 0);
 });
@@ -639,8 +650,8 @@ test("the conversation-approved please chain reaches a finalized receipt", () =>
     "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--allow-unapproved-prd", invocation,
   ]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
-  assert.equal(started.json.state.prd.approval.source, "conversation");
-  assert.equal(started.json.state.prd.approval.evidence, invocation);
+  assert.equal(readState(root).prd.approval.source, "conversation");
+  assert.equal(readState(root).prd.approval.evidence, invocation);
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented from the approved conversation"]).status, 0);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const finalized = run(root, ["implement", "finalize"]);
@@ -667,7 +678,7 @@ test("implement verify stops at the configured fix budget before running more wo
   assert.equal(refused.status, 1);
   assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
   assert.equal(refused.json.detail.judgeCalls, 0);
-  assert.equal(refused.json.state.verificationAttempts.length, 2);
+  assert.equal(readState(root).verificationAttempts.length, 2);
   assert.equal(fs.readFileSync(path.join(root, "agents", "verify-count"), "utf8"), "2");
   assert.match(refused.json.message, /--grant-budget/);
 });
@@ -701,10 +712,11 @@ test("an explicit user grant opens one fresh fix budget inside the same state re
   const granted = run(root, ["implement", "verify", "--grant-budget", "새 검증 런을 허용한다"]);
   assert.equal(granted.status, 1, granted.stderr + granted.stdout);
   assert.notEqual(granted.json.detail.terminalReason, "budget-exhausted");
-  assert.equal(granted.json.state.verificationAttempts.length, 3);
-  assert.equal(granted.json.state.budgetGrants.length, 1);
-  assert.equal(granted.json.state.budgetGrants[0].evidence, "새 검증 런을 허용한다");
-  assert.equal(granted.json.state.budgetGrants[0].attemptCountBefore, 2);
+  const grantedState = readState(root);
+  assert.equal(grantedState.verificationAttempts.length, 3);
+  assert.equal(grantedState.budgetGrants.length, 1);
+  assert.equal(grantedState.budgetGrants[0].evidence, "새 검증 런을 허용한다");
+  assert.equal(grantedState.budgetGrants[0].attemptCountBefore, 2);
   assert.equal(granted.json.detail.verificationBudget.fixAttempts, 1);
   assert.equal(granted.json.detail.verificationBudget.grants, 1);
 
@@ -735,7 +747,7 @@ test("implement verify bounds consecutive judge errors without spending the fix 
   const refused = run(root, ["implement", "verify"], { env });
   assert.equal(refused.status, 1);
   assert.equal(refused.json.detail.terminalReason, "judge-error-loop");
-  assert.equal(refused.json.state.verificationAttempts.length, 2);
+  assert.equal(readState(root).verificationAttempts.length, 2);
 });
 
 test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree only", () => {
@@ -760,7 +772,8 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   assert.equal(first.verdict, "ERROR");
   assert.equal(first.lanes.acceptance.verdict, "ERROR");
   assert.equal(first.lanes.fidelity.verdict, "PASS");
-  const settledAc1 = first.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
+  // Per-invocation detail lives only in state.json; the response carries a summary.
+  const settledAc1 = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
   assert.equal(settledAc1.verdict, "PASS");
   assert.equal(errored.json.detail.verificationBudget.fixAttempts, 0, "an infrastructure ERROR spends no fix budget");
 
@@ -776,13 +789,14 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   assert.equal(reused.status, 0, reused.stderr + reused.stdout);
   const second = reused.json.detail.attempt;
   assert.equal(second.verdict, "PASS");
-  const ac1 = second.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
-  const ac2 = second.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC2");
+  const secondState = readState(root).verificationAttempts.at(-1);
+  const ac1 = secondState.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
+  const ac2 = secondState.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC2");
   assert.equal(ac1.reusedFrom, first.id);
   assert.equal(ac1.invocationId, settledAc1.invocationId);
   assert.equal(ac2.reusedFrom, undefined);
   assert.equal(second.lanes.fidelity.reusedFrom, first.id);
-  assert.deepEqual(second.lanes.acceptance.result.criteria.map((entry) => entry.id).sort(), ["AC1", "AC2"]);
+  assert.deepEqual(secondState.lanes.acceptance.result.criteria.map((entry) => entry.id).sort(), ["AC1", "AC2"]);
   assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC1.prompt.txt")), false, "a reused criterion must not re-call its judge");
   assert.equal(fs.existsSync(path.join(capture, "implement_fidelity.prompt.txt")), false, "a reused fidelity lane must not re-call its judge");
   assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC2.prompt.txt")), true);
@@ -803,7 +817,7 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   assert.equal(fresh.status, 0, fresh.stderr + fresh.stdout);
   const third = fresh.json.detail.attempt;
   assert.equal(third.verdict, "PASS");
-  assert.ok(third.lanes.acceptance.result.invocations.every((entry) => entry.reusedFrom === undefined));
+  assert.ok(readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations.every((entry) => entry.reusedFrom === undefined));
   assert.equal(third.lanes.fidelity.reusedFrom, undefined);
   assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC1.prompt.txt")), true, "a changed tree re-judges every criterion");
 });
@@ -837,7 +851,7 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   assert.equal(closed.json.detail.receipt.status, "blocked");
   assert.equal(closed.json.detail.receipt.terminalReason, "budget-exhausted");
   assert.ok(closed.json.detail.receipt.openItems.length > 0);
-  assert.equal(closed.json.state.status, "blocked");
+  assert.equal(readState(root).status, "blocked");
   const receiptOnDisk = JSON.parse(fs.readFileSync(path.join(root, closed.json.detail.completion.receiptPath), "utf8"));
   assert.equal(receiptOnDisk.status, "blocked");
   const report = fs.readFileSync(path.join(root, closed.json.detail.completion.implementationResultPath), "utf8");
@@ -855,11 +869,11 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('MECHANICAL-PROOF')\"" } }));
   const recovered = run(root, ["implement", "verify"], { env });
   assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
-  assert.equal(recovered.json.state.status, "active");
+  assert.equal(readState(root).status, "active");
   const finalized = run(root, ["implement", "finalize"]);
   assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
   assert.equal(finalized.json.detail.receipt.status, "complete");
-  assert.equal(finalized.json.state.status, "complete");
+  assert.equal(readState(root).status, "complete");
 });
 
 test("an unbacked acceptance PASS with a known-zero read trace is invalidated", () => {
@@ -899,8 +913,9 @@ test("an unbacked acceptance PASS with a known-zero read trace is invalidated", 
   assert.equal(verified.status, 1);
   const attempt = verified.json.detail.attempt;
   assert.equal(attempt.lanes.acceptance.verdict, "ERROR");
-  const ac1 = attempt.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC1");
-  const ac2 = attempt.lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC2");
+  const invocations = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations;
+  const ac1 = invocations.find((entry) => entry.criterionId === "AC1");
+  const ac2 = invocations.find((entry) => entry.criterionId === "AC2");
   assert.equal(ac1.verdict, "PASS");
   assert.equal(ac2.verdict, "ERROR");
   assert.match(ac2.error.message, /no file read was recorded/);

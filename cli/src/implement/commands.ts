@@ -52,8 +52,61 @@ export interface ImplementArgs {
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
 
-function result(action: string, ok: boolean, message: string, detail?: Record<string, unknown>, state?: ImplementState): ImplementCommandResult {
-  return { ok, action, exitCode: ok ? 0 : 1, message, ...(detail !== undefined ? { detail } : {}), ...(state !== undefined ? { state } : {}) };
+function result(action: string, ok: boolean, message: string, detail?: Record<string, unknown>): ImplementCommandResult {
+  return { ok, action, exitCode: ok ? 0 : 1, message, ...(detail !== undefined ? { detail } : {}) };
+}
+
+/**
+ * What a command response says about a verification attempt: the verdict, the
+ * pins, and what still needs fixing - never the full lane transcripts. A raw
+ * attempt measured 42,944 chars (~12k tokens) on a real 16-criterion run
+ * because every PASS criterion carried its judge's full reasoning; those
+ * transcripts stay in `state.json`, the only machine record (PRINCIPLES 10).
+ * What survives here is the next-action information that keeps agents from
+ * re-polling `status` between commands: failing criteria with reasons,
+ * failing fidelity checks, blocking risk findings, mechanical runs, errors.
+ */
+function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {
+  const lane = <T>(record: LaneRecord<T> | null, slim: (laneResult: T) => Record<string, unknown>): Record<string, unknown> | null =>
+    record === null
+      ? null
+      : {
+          verdict: record.verdict,
+          invocationId: record.invocationId,
+          startedAt: record.startedAt,
+          finishedAt: record.finishedAt,
+          durationMs: record.durationMs,
+          ...(record.reusedFrom !== undefined ? { reusedFrom: record.reusedFrom } : {}),
+          ...(record.error !== null ? { error: record.error } : {}),
+          ...(record.result !== null ? slim(record.result) : {}),
+        };
+  return {
+    id: attempt.id,
+    verdict: attempt.verdict,
+    inputFingerprint: attempt.inputFingerprint,
+    sourceFingerprint: attempt.sourceFingerprint,
+    fidelityInput: attempt.fidelityInput,
+    startedAt: attempt.startedAt,
+    finishedAt: attempt.finishedAt,
+    durationMs: attempt.durationMs,
+    prelint: attempt.prelint,
+    mechanical: attempt.mechanical,
+    error: attempt.error,
+    lanes: {
+      acceptance: lane(attempt.lanes.acceptance, (laneResult) => ({
+        criteriaCount: laneResult.criteria.length,
+        failing: laneResult.criteria.filter((criterion) => criterion.verdict !== "PASS"),
+      })),
+      fidelity: lane(attempt.lanes.fidelity, (laneResult) => ({
+        checkCount: laneResult.checks.length,
+        failing: laneResult.checks.filter((check) => check.verdict !== "PASS"),
+      })),
+      risk: lane(attempt.lanes.risk, (laneResult) => ({
+        blocking: laneResult.findings.filter((finding) => finding.severity === "blocking"),
+        advisoryCount: laneResult.findings.filter((finding) => finding.severity === "advisory").length,
+      })),
+    },
+  };
 }
 
 function flag(args: ImplementArgs, name: string): string | undefined {
@@ -191,7 +244,7 @@ function publicState(
       verdict: effectiveVerdict,
       attempts: state.verificationAttempts.length,
       budget: verificationBudget(state, retryBudget),
-      latest,
+      latest: latest === null ? null : attemptSummary(latest),
     },
     artifacts: state.artifacts,
     completion: state.completion,
@@ -259,7 +312,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   fs.mkdirSync(path.join(projectRoot, state.runDir, "artifacts", "logs"), { recursive: true });
   writeJsonAtomic(statePath, state);
   writeActivePointer(projectRoot, state);
-  return result("start", true, `implement run started: ${slug}`, publicState(state, config.judge.retryBudget), state);
+  return result("start", true, `implement run started: ${slug}`, publicState(state, config.judge.retryBudget));
 }
 
 function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -305,7 +358,7 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
       dependsOn: entry.dependsOn,
       ready: entry.status !== "blocked" && entry.dependsOn.every((dep) => complete.has(dep)),
     })),
-  }, state);
+  });
 }
 
 function inspectArtifactFile(absolute: string, kind: string): { sha256: string; bytes: number } {
@@ -348,7 +401,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   state.artifacts = state.artifacts.filter((entry) => !(entry.verificationId === verificationId && entry.path === target.relative));
   state.artifacts.push(registered);
   persistState(statePath, state);
-  return result("artifact", true, `artifact registered for ${verificationId}: ${target.relative}`, { artifact: registered }, state);
+  return result("artifact", true, `artifact registered for ${verificationId}: ${target.relative}`, { artifact: registered });
 }
 
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -901,7 +954,6 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       false,
       `${terminalBefore}; no mechanical command or judge was called`,
       { verificationBudget: budgetBefore, judgeCalls: 0, terminalReason: budgetBefore.budgetExhausted ? "budget-exhausted" : "judge-error-loop" },
-      state,
     );
   }
   // A blocked close is superseded the moment verification can run again
@@ -929,9 +981,9 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     return result("verify", false, "PRD prelint failed before mechanical verification; no judge was called", {
-      attempt,
+      attempt: attemptSummary(attempt),
       verificationBudget: verificationBudget(state, config.judge.retryBudget),
-    }, state);
+    });
   }
   const runtimeArtifactProblems = artifactIntegrityProblems(projectRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) }, source);
   if (runtimeArtifactProblems.length > 0) {
@@ -941,10 +993,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const budget = verificationBudget(state, config.judge.retryBudget);
     const terminal = terminalBudgetMessage(budget);
     return result("verify", false, `runtime artifact preflight failed; no mechanical command or judge was called${terminal === null ? "" : `; ${terminal}`}`, {
-      attempt,
+      attempt: attemptSummary(attempt),
       problems: runtimeArtifactProblems,
       verificationBudget: budget,
-    }, state);
+    });
   }
   const bindings = mechanicalBindings(projectRoot, state.verification);
   const mechanical = runMechanicalBindings(projectRoot, state, bindings, source.digest);
@@ -960,10 +1012,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const budget = verificationBudget(state, config.judge.retryBudget);
     const terminal = terminalBudgetMessage(budget);
     return result("verify", false, `${message}; no judge was called${terminal === null ? "" : `; ${terminal}`}`, {
-      attempt,
+      attempt: attemptSummary(attempt),
       judgeCalls: 0,
       verificationBudget: budget,
-    }, state);
+    });
   }
 
   const material = changeMaterial(projectRoot, state, source);
@@ -1034,10 +1086,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const budget = verificationBudget(state, config.judge.retryBudget);
   const terminal = terminalBudgetMessage(budget);
   return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}`, {
-    attempt,
+    attempt: attemptSummary(attempt),
     sourceRouting: sourceContext.routing,
     verificationBudget: budget,
-  }, state);
+  });
 }
 
 function completionFingerprint(
@@ -1132,7 +1184,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       const receipt = path.join(projectRoot, state.completion.receiptPath);
       const report = path.join(projectRoot, state.completion.implementationResultPath);
       if (!fs.existsSync(receipt) || !fs.existsSync(report)) throw new Error("blocked state is missing a derived receipt or implementation result");
-      return result("finalize", true, "already closed blocked with the same completion fingerprint", { completion: state.completion, executionCalls: 0 }, state);
+      return result("finalize", true, "already closed blocked with the same completion fingerprint", { completion: state.completion, executionCalls: 0 });
     }
     const blockedAt = nowIso();
     const receiptPath = `${state.runDir}/receipt.json`;
@@ -1170,7 +1222,6 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       true,
       `implementation closed blocked (${terminalReason}); the receipt records ${blockers.length} open item(s) and is not deliverable`,
       { completion: state.completion, receipt, executionCalls: 0 },
-      state,
     );
   }
   if (blockers.length > 0) throw new Error(`finalize refused:\n- ${blockers.join("\n- ")}`);
@@ -1178,7 +1229,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const receipt = path.join(projectRoot, state.completion.receiptPath);
     const report = path.join(projectRoot, state.completion.implementationResultPath);
     if (!fs.existsSync(receipt) || !fs.existsSync(report)) throw new Error("completed state is missing a derived receipt or implementation result");
-    return result("finalize", true, "already finalized with the same completion fingerprint", { completion: state.completion, executionCalls: 0 }, state);
+    return result("finalize", true, "already finalized with the same completion fingerprint", { completion: state.completion, executionCalls: 0 });
   }
   const completedAt = nowIso();
   const receiptPath = `${state.runDir}/receipt.json`;
@@ -1205,7 +1256,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   state.status = "complete";
   state.completion = { fingerprint, completedAt, receiptPath, implementationResultPath };
   persistState(statePath, state);
-  return result("finalize", true, "implementation finalized from fresh unified PASS", { completion: state.completion, receipt, executionCalls: 0 }, state);
+  return result("finalize", true, "implementation finalized from fresh unified PASS", { completion: state.completion, receipt, executionCalls: 0 });
 }
 
 export async function runImplementCommand(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
