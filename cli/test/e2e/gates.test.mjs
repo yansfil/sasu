@@ -300,10 +300,28 @@ test("retry budget: repeated BLOCKs exhaust the configured budget and tell the a
   const second = block();
   assert.equal(second.status, 1);
   assert.match(second.stdout, /RETRY BUDGET EXHAUSTED/);
-  assert.match(second.stdout, /user-instructed re-run may continue/, "exhaustion must read as advisory, not a lock");
-  // Advisory semantics: a further (user-instructed) run is still executable.
+  assert.match(second.stdout, /--grant-budget/, "exhaustion names the one path that reopens the budget");
+  // Terminal semantics (measured 2026-08-14, creator-assist: 9 attempts ran
+  // against a budget of 8 because nothing refused): a further run without a
+  // recorded user grant is refused at $0 - no judge call, no state change.
+  const stateAtExhaustion = gatesState(dir, "fixture");
   const third = block();
-  assert.equal(third.status, 1, "third run executes instead of being locked out");
+  assert.equal(third.status, 1);
+  assert.match(third.stdout, /budget-exhausted/, "refused with the terminal cause, not another judged round");
+  assert.match(third.stdout, /no judge was called/);
+  assert.deepEqual(gatesState(dir, "fixture"), stateAtExhaustion, "a refused run leaves no trace in the ledger");
+  // The user's verbatim approval reopens exactly one fresh budget.
+  const granted = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--grant-budget", "user said keep going"], {
+    stub: stubFile(dir, {
+      ...BLOCK_RESPONSE,
+      findings: BLOCK_RESPONSE.findings.map((finding) => ({ ...finding, origin: "prior-unresolved" })),
+    }),
+  });
+  assert.equal(granted.status, 1, "the granted round runs and is judged (still BLOCK on this stub)");
+  assert.match(granted.stdout, /attempts 1\/2/, "the grant opened a fresh gauge and the new round spent one attempt");
+  const after = gatesState(dir, "fixture");
+  assert.equal(after.gates["gap-audit"].budgetGrants.length, 1);
+  assert.equal(after.gates["gap-audit"].budgetGrants[0].evidence, "user said keep going");
 });
 
 test("verify PASS prints a per-criterion semantic summary", () => {

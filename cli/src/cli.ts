@@ -31,8 +31,8 @@ const USAGE = `sasu - harness CLI: judge gates, verification, doctor
 
 Usage:
   sasu --contract-version
-  sasu gate gap-audit --slug <topic> --qa-log <path> [--json]
-  sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--json]
+  sasu gate gap-audit --slug <topic> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--json]
+  sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--json]
   sasu gate status    --slug <topic> [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
@@ -71,6 +71,11 @@ identical in both modes (0 pass, 1 block/fail, 2 usage error).
 
 Gates run a deterministic document prelint before the judge: a structural defect
 blocks at $0 with [prelint] findings - no judge call, no retry-budget attempt.
+
+Gates own their retry budget: after judge.retryBudget judged non-PASS rounds
+(or an equal streak of judge errors) the gate refuses further runs at $0 and the
+findings go to the user. Only the user reopens it - their verbatim approval
+recorded via --grant-budget, or a recorded 'gate override'.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
 Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
@@ -132,11 +137,12 @@ function printStatusView(view: GateStatusView): void {
   // to say so here, or `sasu gate status` is the one surface that hides the
   // terminal cause the receipt and the Stop hook both report.
   const terminal = view.budgetExhausted
-    ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (a user-instructed re-run may continue)"
+    ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (only their verbatim approval, recorded via --grant-budget, reopens the budget)"
     : view.judgeErrorLoop
-      ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge and re-run, or close the run out blocked`
+      ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge, then a user-granted --grant-budget re-run may continue, or close the run out blocked`
       : "";
-  const meta = `attempts ${view.attempts}/${view.budget}${terminal}`;
+  const grants = view.grants > 0 ? ` | grants ${view.grants}` : "";
+  const meta = `attempts ${view.attempts}/${view.budget}${grants}${terminal}`;
   process.stdout.write(`${head} | ${meta}\n`);
   for (const input of view.staleInputs) {
     process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - re-run the gate on the current document\n`);
@@ -408,7 +414,9 @@ async function main(): Promise<void> {
       emitGateResult(result, asJson);
     }
     if (subcommand === "gap-audit") {
-      const result = await runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"));
+      const result = await runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"), {
+        grantBudgetEvidence: typeof args.flags.get("grant-budget") === "string" ? (args.flags.get("grant-budget") as string) : undefined,
+      });
       emitGateResult(result, asJson);
     }
     if (subcommand === "spec") {
@@ -418,6 +426,9 @@ async function main(): Promise<void> {
         requireFlag(args, "slug"),
         requireFlag(args, "prd"),
         requireFlag(args, "qa-log"),
+        {
+          grantBudgetEvidence: typeof args.flags.get("grant-budget") === "string" ? (args.flags.get("grant-budget") as string) : undefined,
+        },
       );
       emitGateResult(result, asJson);
     }

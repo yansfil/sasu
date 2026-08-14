@@ -127,7 +127,7 @@ A BLOCK is not a stop until the CLI reports a terminal cause: first fix the repo
 When gap-audit, spec, standalone verify, or unified implement verify blocks during a `$please` run:
 
 1. Fix every agent-fixable finding (amend the qa-log or PRD, fix the code), then re-run the same gate.
-2. Re-run only after a real fix. The CLI owns the configured retry budget, reports `budgetExhausted` or `judgeErrorLoop`, and refuses further unified verification work after either terminal cause.
+2. Re-run only after a real fix. The CLI owns the configured retry budget and refuses any further run of that gate - gap-audit, spec, and unified verify alike - after either terminal cause (`budgetExhausted` or `judgeErrorLoop`). Only the user reopens a refused gate, by having their verbatim approval recorded with the gate's `--grant-budget` flag; a general instruction to keep going, given before the exhaustion existed, is not that approval.
 3. Stop and hand the findings to the user only when a finding needs a human decision, the CLI reports a terminal budget cause, or a standalone gate refuses an identical re-run.
 
 Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.

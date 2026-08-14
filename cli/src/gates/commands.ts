@@ -35,6 +35,7 @@ import {
   freshnessHash,
   GateStore,
   gateStatus,
+  grantGateBudget,
   hashGateInput,
   overrideGate,
   recordGateResult,
@@ -301,9 +302,39 @@ async function runGapListGate(
   ) => string,
   purpose: string,
   inputs: GateInput[],
+  options?: { grantBudgetEvidence?: string },
 ): Promise<GateCommandResult> {
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
+  if (options?.grantBudgetEvidence !== undefined) {
+    state = grantGateBudget(store, state, gate, options.grantBudgetEvidence, config.judge.retryBudget);
+  }
+  // Terminal-cause admission check, mirroring `implement verify`: a spent fix
+  // budget or a judge-error streak refuses the run BEFORE any judge call.
+  // Without it the budget was a status flag the loop never read - measured
+  // 2026-08-14 (creator-assist, exploration-collection-depth): gap-audit ran
+  // 9 attempts against retryBudget 8, each rerun lawfully re-blocking on
+  // fresh requiresHuman findings, so the round cap PRINCIPLES item 13
+  // demands existed on paper and bounded nothing.
+  const before = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
+  if (before.budgetExhausted || before.judgeErrorLoop) {
+    const cause = before.budgetExhausted
+      ? `fix budget exhausted (${before.attempts}/${before.budget} judged non-PASS rounds)`
+      : `judge failed ${before.consecutiveErrors} times in a row without a verdict`;
+    return {
+      ok: false,
+      status: before,
+      zeroJudgeCalls: true,
+      error: {
+        code: before.budgetExhausted ? "budget-exhausted" : "judge-error-loop",
+        message: `${gate} refused: ${cause}; no judge was called`,
+        recovery:
+          `hand the recorded findings to the user. If the user explicitly approves another round, record their words verbatim: `
+          + `sasu gate ${gate} ... --grant-budget "<the user's words>". `
+          + overrideRecovery(topic, gate),
+      },
+    };
+  }
   const records: JudgeCallRecord[] = [];
   try {
     const priorFindings = priorFindingsFor(state, gate);
@@ -433,6 +464,7 @@ export async function runGapAudit(
   config: SasuConfig,
   topic: string,
   qaLogPath: string,
+  gateOptions?: { grantBudgetEvidence?: string },
 ): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   const prelint = runPrelint("qa-log", qaLog.content);
@@ -445,6 +477,7 @@ export async function runGapAudit(
     (prior, options) => gapAuditPrompt(qaLog.content, prior, options),
     "gate:gap-audit",
     [qaLog.input],
+    gateOptions,
   );
   return { ...result, prelint };
 }
@@ -455,6 +488,7 @@ export async function runSpecGate(
   topic: string,
   prdPath: string,
   qaLogPath: string,
+  gateOptions?: { grantBudgetEvidence?: string },
 ): Promise<GateCommandResult> {
   const prd = readInputFile(projectRoot, prdPath, "prd");
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
@@ -469,6 +503,7 @@ export async function runSpecGate(
     (prior, options) => specGatePrompt(prd.content, qaLog.content, prior, options),
     "gate:spec",
     [prd.input, qaLog.input],
+    gateOptions,
   );
   return { ...result, prelint };
 }

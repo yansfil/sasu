@@ -218,6 +218,16 @@ export interface GateRecord {
    * original livelock verbatim (hook demanding a re-run the gate refuses).
    */
   docKind?: "prd" | "contract";
+  /**
+   * User-recorded budget grants (gap-audit/spec): each one reopened a fresh
+   * fix budget at a terminal gauge, quoting the user's approval verbatim.
+   * Mirrors implement's state.budgetGrants idea, not its machinery: these
+   * gauges are stored (not replayed from history), so a grant resets them
+   * directly and this array is the honest ledger of every reset
+   * (PRINCIPLES item 10). `attemptCountBefore` quotes the cumulative
+   * totalAttempts at grant time, which nothing ever resets.
+   */
+  budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
 }
 
 export interface GatesState {
@@ -324,6 +334,8 @@ export interface GateStatusView {
   judgeErrorLoop: boolean;
   requiresHuman: boolean;
   findings: Finding[];
+  /** Count of user budget grants recorded on this gate (GateRecord.budgetGrants). */
+  grants: number;
 }
 
 /**
@@ -417,7 +429,37 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
     judgeErrorLoop: !passed && record.verdict === "ERROR" && consecutiveErrors > 0 && consecutiveErrors >= budget,
     requiresHuman: record.findings.some((f) => f.requiresHuman),
     findings: record.findings,
+    grants: record.budgetGrants?.length ?? 0,
   };
+}
+
+/**
+ * Record a user's explicit approval of another fix round at a terminal gauge
+ * (budgetExhausted or judgeErrorLoop) and reopen a fresh budget. Refused
+ * anywhere else: a grant that lands on a live budget silently widens the
+ * bound the user configured. The agent never invokes this on its own - the
+ * CLI flag that reaches here requires the user's verbatim words as evidence,
+ * the same contract as `implement verify --grant-budget`.
+ */
+export function grantGateBudget(store: GateStore, state: GatesState, gate: GateId, evidence: string, budget: number): GatesState {
+  const trimmed = evidence.trim();
+  if (trimmed === "") {
+    throw new Error("--grant-budget requires the user's verbatim approval text");
+  }
+  const view = gateStatus(state, gate, budget);
+  if (!view.budgetExhausted && !view.judgeErrorLoop) {
+    throw new Error(`--grant-budget refused: the ${gate} fix budget is not exhausted; run the gate without it`);
+  }
+  const record = state.gates[gate]!;
+  record.budgetGrants = [
+    ...(record.budgetGrants ?? []),
+    { at: new Date().toISOString(), evidence: trimmed, attemptCountBefore: record.totalAttempts ?? 0 },
+  ];
+  record.attempts = 0;
+  record.consecutiveErrors = 0;
+  state.gates[gate] = record;
+  store.save(state);
+  return state;
 }
 
 export function recordGateResult(

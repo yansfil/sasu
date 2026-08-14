@@ -503,8 +503,9 @@ prelint already reports uncovered ACs and dangling Covers references at $0.
   per finding and re-run.
 - A finding marked `needs human decision` goes to the user; do not resolve it
   by editing the PRD toward your own guess.
-- When the retry budget is exhausted, stop revising and hand the findings to
-  the user.
+- When the retry budget is exhausted, the CLI refuses further runs of the gate
+  at $0: stop revising, hand the findings to the user, and re-run only after
+  the user's verbatim approval is recorded with `--grant-budget`.
 - If the judge backend is unavailable, the gate fails closed; report the cause
   and recovery, and treat the PRD as not `ready` until the user decides.
 - Never run `sasu gate override` yourself; it is user-only, and the
