@@ -133,6 +133,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
       avoidableReviewCalls: 0,
       unchangedCommandReruns: 1,
       unexpectedUserStops: 0,
+      redundantStatusPolls: 0,
     },
     dimensions: {
       flowAdherence: { score: 4, reason: "Expected order.", evidence: ["session:event-1"] },
@@ -176,6 +177,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.equal(report.timing.wallClockSeconds, 1000);
   assert.equal(report.timing.evaluationSeconds, 12.5);
   assert.equal(report.efficiency.repeatedIdenticalDiffJudgments, 1);
+  assert.equal(report.efficiency.redundantStatusPolls, 0);
   assert.equal(report.honesty.falseComplete, false, "an honest partial result is not a false complete");
   assert.equal(report.qualitative.processScore.score, 85);
   assert.equal(report.qualitative.evaluatorRuntimeMatched, true);

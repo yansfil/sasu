@@ -82,7 +82,8 @@ Every non-null score needs at least one stable evidence reference.
     "reason": "Full transcript and receipt-backed artifacts were available.",
     "avoidableReviewCalls": 0,
     "unchangedCommandReruns": 1,
-    "unexpectedUserStops": 0
+    "unexpectedUserStops": 0,
+    "redundantStatusPolls": 0
   },
   "dimensions": {
     "flowAdherence": {
@@ -123,6 +124,9 @@ Every non-null score needs at least one stable evidence reference.
 
 Use null for an unobservable score and explain why in `reason`.
 Do not add a `productQuality` field.
+
+`redundantStatusPolls` counts `status` calls whose answer the previous command's response already carried.
+A poll that follows a state change the response did not report is not redundant; count meaning, not command names.
 
 ## Report Contract
 

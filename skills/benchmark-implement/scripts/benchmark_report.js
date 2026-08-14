@@ -437,7 +437,12 @@ function validateQualitative(evaluation) {
   if (!["complete", "partial", "unavailable"].includes(evaluation.sessionAnalysis.coverage)) {
     throw new Error("qualitative.sessionAnalysis.coverage must be complete, partial, or unavailable");
   }
-  for (const field of ["avoidableReviewCalls", "unchangedCommandReruns", "unexpectedUserStops"]) {
+  // redundantStatusPolls: status calls whose answer the previous command's
+  // response already carried. Counted separately from unchangedCommandReruns
+  // (a poll after a task close follows a state change, so it is not an
+  // "unchanged rerun") because this is the waste the slimmed implement
+  // responses (8c2ef3a) are supposed to prevent - the number is the check.
+  for (const field of ["avoidableReviewCalls", "unchangedCommandReruns", "unexpectedUserStops", "redundantStatusPolls"]) {
     const value = evaluation.sessionAnalysis[field];
     if (value !== null && value !== undefined && (!Number.isInteger(value) || value < 0)) {
       throw new Error(`qualitative.sessionAnalysis.${field} must be a non-negative integer or null`);
@@ -901,6 +906,7 @@ function commandReport(options) {
       avoidableReviewCalls: qualitative?.sessionAnalysis?.avoidableReviewCalls ?? null,
       unchangedCommandReruns: qualitative?.sessionAnalysis?.unchangedCommandReruns ?? null,
       unexpectedUserStops: qualitative?.sessionAnalysis?.unexpectedUserStops ?? null,
+      redundantStatusPolls: qualitative?.sessionAnalysis?.redundantStatusPolls ?? null,
     },
     honesty: {
       falseComplete,
