@@ -226,6 +226,14 @@ export interface GateRecord {
    * directly and this array is the honest ledger of every reset
    * (PRINCIPLES item 10). `attemptCountBefore` quotes the cumulative
    * totalAttempts at grant time, which nothing ever resets.
+   *
+   * This ledger is a record, NOT enforcement: nothing binds `evidence` to
+   * something the user provably said, and nothing can - the CLI has no
+   * trusted channel to the conversation, and a refusal-time token would be
+   * read back by the same agent it is meant to exclude. The user-only rule
+   * is deliberately prose-guarded, exactly like `gate override`'s reason,
+   * and the verbatim quote exists so a fabricated approval is a falsifiable
+   * record the user can catch, not so the harness can catch it.
    */
   budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
 }
