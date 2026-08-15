@@ -31,8 +31,8 @@ const USAGE = `sasu - harness CLI: judge gates, verification, doctor
 
 Usage:
   sasu --contract-version
-  sasu gate gap-audit --slug <topic> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--json]
-  sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--json]
+  sasu gate gap-audit --slug <topic> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
+  sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate status    --slug <topic> [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
@@ -78,6 +78,11 @@ findings go to the user. Only the user reopens it - their verbatim approval
 recorded via --grant-budget, or a recorded 'gate override'.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
+--assume-human-findings exists for delegated runs only (the user invoked $please
+or equivalently handed the whole pipeline over): it converts non-P0 human-consent
+findings into a recorded, veto-able assumption ledger instead of a block, quoting
+the user's delegating message verbatim. P0 findings still block. Passing it
+without such a delegating user message is inventing consent.
 Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
 executes implementation work.`;
 
@@ -142,7 +147,12 @@ function printStatusView(view: GateStatusView): void {
       ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge, then a user-granted --grant-budget re-run may continue, or close the run out blocked`
       : "";
   const grants = view.grants > 0 ? ` | grants ${view.grants}` : "";
-  const meta = `attempts ${view.attempts}/${view.budget}${grants}${terminal}`;
+  // Assumed human findings must stay loud on every status read: a PASS earned
+  // by delegation is honest only while the substitution is visible (item 10).
+  const assumed = view.assumedHumanFindings > 0
+    ? ` | ASSUMED HUMAN DECISIONS: ${view.assumedHumanFindings} finding(s) converted to recorded assumptions under the delegated invocation - the user may veto (see the gate record's humanAssumptions)`
+    : "";
+  const meta = `attempts ${view.attempts}/${view.budget}${grants}${assumed}${terminal}`;
   process.stdout.write(`${head} | ${meta}\n`);
   for (const input of view.staleInputs) {
     process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - re-run the gate on the current document\n`);
@@ -416,6 +426,7 @@ async function main(): Promise<void> {
     if (subcommand === "gap-audit") {
       const result = await runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"), {
         grantBudgetEvidence: typeof args.flags.get("grant-budget") === "string" ? (args.flags.get("grant-budget") as string) : undefined,
+        assumeHumanEvidence: typeof args.flags.get("assume-human-findings") === "string" ? (args.flags.get("assume-human-findings") as string) : undefined,
       });
       emitGateResult(result, asJson);
     }
@@ -428,6 +439,7 @@ async function main(): Promise<void> {
         requireFlag(args, "qa-log"),
         {
           grantBudgetEvidence: typeof args.flags.get("grant-budget") === "string" ? (args.flags.get("grant-budget") as string) : undefined,
+          assumeHumanEvidence: typeof args.flags.get("assume-human-findings") === "string" ? (args.flags.get("assume-human-findings") as string) : undefined,
         },
       );
       emitGateResult(result, asJson);

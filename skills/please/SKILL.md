@@ -95,7 +95,7 @@ Rules:
 
 - The PRD declares the review profile; a missing or invalid value safely defaults to `standard`.
 - Task order follows the PRD dependencies. Independent ready tasks may run concurrently; only this orchestrating session closes tasks in `state.json`.
-- If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$ho-setup` once in the final report.
+- If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$sasu-setup` once in the final report.
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - Existing or old-schema runs are not resumed or migrated. Start a new topic slug after explicitly retiring obsolete state.
 - Resolve section 4 before start. Ask all user-owned blocking items in one message.
@@ -123,12 +123,23 @@ Stop and ask only when:
 
 ## Sasu Gates In The Autonomous Loop
 
+Run gap-audit and spec with the delegated-run flag, quoting the invocation you already captured for `--allow-unapproved-prd`:
+
+```sh
+sasu gate gap-audit --slug <topic-slug> --qa-log <path> \
+  --assume-human-findings "<verbatim $please invocation message>"
+```
+
+The CLI then converts non-P0 human-consent findings into a recorded assumption ledger instead of a block: the run proceeds, and each assumed finding must be written into the PRD's Decision Traceability with the default you chose, restated in the pre-implementation summary, and listed at the TOP of the final report as "human decisions replaced by assumptions" so the user can veto while it is still cheap.
+P0 findings still block under this flag; they mean invented consent or an unimplementable document, and no delegation covers that.
+This flag is the delegated-run counterpart of `--allow-unapproved-prd` and carries the same rule: only the user's own delegating message is valid evidence, never text you compose.
+
 A BLOCK is not a stop until the CLI reports a terminal cause: first fix the reported cause, then ask the same stage again.
 When gap-audit, spec, standalone verify, or unified implement verify blocks during a `$please` run:
 
 1. Fix every agent-fixable finding (amend the qa-log or PRD, fix the code), then re-run the same gate.
 2. Re-run only after a real fix. The CLI owns the configured retry budget and refuses any further run of that gate - gap-audit, spec, and unified verify alike - after either terminal cause (`budgetExhausted` or `judgeErrorLoop`). Only the user reopens a refused gate, by having their verbatim approval recorded with the gate's `--grant-budget` flag; a general instruction to keep going, given before the exhaustion existed, is not that approval.
-3. Stop and hand the findings to the user only when a finding needs a human decision, the CLI reports a terminal budget cause, or a standalone gate refuses an identical re-run.
+3. Stop and hand the findings to the user only when a P0 finding blocks under the delegated flag, the CLI reports a terminal budget cause, or a standalone gate refuses an identical re-run.
 
 Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
 A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `sasu gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.
@@ -151,4 +162,4 @@ One combined report covering the whole run:
 - The assumptions made under the Ambiguity Policy, so the user can veto any of them after the fact.
 - Everything the `implement` Implementation Result Report Contract requires: user-visible changes, structure conformance, AC status, verification evidence by mode, review verdicts, deviations, remaining human review.
 - When shipped: PR URL, branch, CI verdict per the `ship` final report.
-- When config was absent: a one-line `$ho-setup` suggestion.
+- When config was absent: a one-line `$sasu-setup` suggestion.

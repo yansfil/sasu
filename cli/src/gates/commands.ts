@@ -183,6 +183,54 @@ export function enforceHumanBlocking(judged: GapVerdict): GapVerdict {
 }
 
 /**
+ * Delegated-run disposition (--assume-human-findings): the user's $please
+ * invocation is a standing decision to trade questions for recorded,
+ * veto-able assumptions, and this extends that trade to the gate's
+ * human-consent findings. The judge still runs and every finding is still
+ * produced and recorded (item 1: proof is never cut) - what changes is the
+ * disposition: a non-P0 requiresHuman finding no longer blocks, it is
+ * demoted to an advisory P2 whose recommendation names the assumption, and
+ * the original finding lands verbatim in GateRecord.humanAssumptions with
+ * the invocation as evidence.
+ *
+ * The P0 floor is deliberate and it is the only severity line that matters
+ * here: enforceHumanBlocking promotes every human finding to at least P1,
+ * so P1+requiresHuman IS the normal consent question ("which delivery
+ * scope?", "which retention default?") - exactly the class the user
+ * delegated. P0+requiresHuman means invented consent or an unimplementable
+ * document; converting that would push through the corruption the gate
+ * exists to stop, so it still blocks.
+ *
+ * Who may turn this on is prose-guarded like --grant-budget and
+ * --allow-unapproved-prd (see 5644260): the CLI has no trusted channel to
+ * the conversation, so the guard is the recorded verbatim invocation the
+ * user can falsify, not a harness check. What leaves with this addition
+ * (item 4): the please-mode mid-run question round-trip on human findings,
+ * and please's skill prose instructing agents to stop and relay them.
+ */
+export function assumeHumanFindings(
+  converged: { verdict: "PASS" | "BLOCK"; findings: Finding[] },
+): { verdict: "PASS" | "BLOCK"; findings: Finding[]; assumed: Finding[] } {
+  const assumed: Finding[] = [];
+  const findings = converged.findings.map((finding) => {
+    if (!finding.requiresHuman || finding.severity === "P0") return finding;
+    assumed.push(finding);
+    return {
+      ...finding,
+      severity: "P2" as const,
+      requiresHuman: false,
+      recommendation:
+        `[assumed under the recorded delegated invocation: record the chosen default in Decision Traceability; the user may veto] ${finding.recommendation}`,
+    };
+  });
+  return {
+    verdict: findings.some((finding) => finding.severity !== "P2") ? "BLOCK" : "PASS",
+    findings,
+    assumed,
+  };
+}
+
+/**
  * Mechanical convergence rule for re-runs (anti progressive-discovery): an
  * unresolved prior finding, a NEW P0, or a finding that needs explicit human
  * agreement may block. Other new non-human P1 findings are demoted to P2 so a
@@ -302,12 +350,16 @@ async function runGapListGate(
   ) => string,
   purpose: string,
   inputs: GateInput[],
-  options?: { grantBudgetEvidence?: string },
+  options?: { grantBudgetEvidence?: string; assumeHumanEvidence?: string },
 ): Promise<GateCommandResult> {
   const store = new GateStore(projectRoot, topic);
   let state = store.load();
   if (options?.grantBudgetEvidence !== undefined) {
     state = grantGateBudget(store, state, gate, options.grantBudgetEvidence, config.judge.retryBudget);
+  }
+  const assumeEvidence = options?.assumeHumanEvidence?.trim();
+  if (assumeEvidence === "") {
+    throw new Error("--assume-human-findings requires the user's verbatim delegated invocation (e.g. their $please message)");
   }
   // Terminal-cause admission check, mirroring `implement verify`: a spent fix
   // budget or a judge-error streak refuses the run BEFORE any judge call.
@@ -352,7 +404,8 @@ async function runGapListGate(
       );
       records.push(outcome.record);
       const humanSafe = enforceHumanBlocking(outcome.value);
-      const converged = isRerun ? applyRerunConvergence(humanSafe) : { ...humanSafe, demotedCount: 0 };
+      const convergedRaw = isRerun ? applyRerunConvergence(humanSafe) : { ...humanSafe, demotedCount: 0 };
+      const converged = assumeEvidence !== undefined ? { ...convergedRaw, ...assumeHumanFindings(convergedRaw) } : { ...convergedRaw, assumed: [] };
       state = recordGateResult(
         store,
         state,
@@ -362,10 +415,12 @@ async function runGapListGate(
           verdict: converged.verdict,
           findings: converged.findings,
           inputs,
+          ...(assumeEvidence !== undefined ? { humanAssumption: { evidence: assumeEvidence, findings: converged.assumed } } : {}),
           artifactPayload: {
             verdict: converged.verdict,
             judgedVerdict: outcome.value.verdict,
             demotedCount: converged.demotedCount,
+            assumedHumanFindings: converged.assumed,
             findings: converged.findings,
             inputs,
             judge: outcome.record,
@@ -423,9 +478,10 @@ async function runGapListGate(
     const merged = mergeLaneFindings(
       settled.map((lane) => ({ laneId: lane.laneId, findings: lane.outcome!.value.findings })),
     );
-    const converged = isRerun
+    const convergedRaw = isRerun
       ? applyRerunConvergence({ verdict: merged.verdict, findings: merged.findings })
       : { verdict: merged.verdict, findings: merged.findings, demotedCount: 0 };
+    const converged = assumeEvidence !== undefined ? { ...convergedRaw, ...assumeHumanFindings(convergedRaw) } : { ...convergedRaw, assumed: [] };
     state = recordGateResult(
       store,
       state,
@@ -435,11 +491,13 @@ async function runGapListGate(
         verdict: converged.verdict,
         findings: converged.findings,
         inputs,
+        ...(assumeEvidence !== undefined ? { humanAssumption: { evidence: assumeEvidence, findings: converged.assumed } } : {}),
         artifactPayload: {
           verdict: converged.verdict,
           judgedVerdict: merged.verdict,
           demotedCount: converged.demotedCount,
           dedupedCount: merged.dedupedCount,
+          assumedHumanFindings: converged.assumed,
           findings: converged.findings,
           lanes: settled.map((lane) => ({
             laneId: lane.laneId,
@@ -464,7 +522,7 @@ export async function runGapAudit(
   config: SasuConfig,
   topic: string,
   qaLogPath: string,
-  gateOptions?: { grantBudgetEvidence?: string },
+  gateOptions?: { grantBudgetEvidence?: string; assumeHumanEvidence?: string },
 ): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   const prelint = runPrelint("qa-log", qaLog.content);
@@ -488,7 +546,7 @@ export async function runSpecGate(
   topic: string,
   prdPath: string,
   qaLogPath: string,
-  gateOptions?: { grantBudgetEvidence?: string },
+  gateOptions?: { grantBudgetEvidence?: string; assumeHumanEvidence?: string },
 ): Promise<GateCommandResult> {
   const prd = readInputFile(projectRoot, prdPath, "prd");
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");

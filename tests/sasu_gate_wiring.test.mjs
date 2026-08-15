@@ -44,7 +44,13 @@ test("please treats gate BLOCKs as fix-and-regate loops, stopping only for human
   assert.match(skill, /BLOCK is not a stop/);
   assert.match(skill, /sasu prd readiness --prd/);
   assert.doesNotMatch(skill, /plan-verification/);
-  assert.match(skill, /needs a human decision/);
+  // Delegated-run contract: human-consent findings become a recorded,
+  // veto-able ledger instead of a mid-run question; only P0 still stops.
+  assert.match(skill, /--assume-human-findings "<verbatim \$please invocation message>"/);
+  assert.match(skill, /P0 findings still block under this flag/);
+  assert.match(skill, /listed at the TOP of the final report/);
+  assert.match(skill, /only the user's own delegating message is valid evidence/);
+  assert.match(skill, /a P0 finding blocks under the delegated flag/);
   assert.match(skill, /budgetExhausted/);
   assert.match(skill, /judgeErrorLoop/);
   assert.match(skill, /Never run `sasu gate override` yourself/);

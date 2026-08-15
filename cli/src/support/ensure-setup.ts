@@ -6,7 +6,7 @@ import path from "node:path";
 // unattended: run state under agents/runs/ must never enter commits or PRs.
 // Config needs no provisioning (defaults apply while agents/config.json is
 // absent) and every other setup item is a human decision that stays in the
-// ho-setup interview, so this remains a single idempotent gitignore guard.
+// sasu-setup interview, so this remains a single idempotent gitignore guard.
 // It must stay cheap enough to run on every CLI entry: fs plus one git spawn.
 // Full doctor is not an entry check - binaryVersion() probes judge binaries
 // with 15s timeouts each.

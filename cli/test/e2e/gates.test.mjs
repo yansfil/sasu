@@ -841,3 +841,63 @@ test("verify short-circuit: an identical semantic FAIL rerun refuses; a correcte
   assert.equal(passed.verdict, "PASS");
   assert.equal(passed.diffSource, `git:${baseSha}`);
 });
+
+test("delegated run: --assume-human-findings converts non-P0 human findings to a recorded ledger and proceeds", () => {
+  const dir = makeProject();
+  const humanBlock = {
+    verdict: "BLOCK",
+    findings: [
+      {
+        area: "delivery",
+        severity: "P1",
+        missing: "delivery scope (receipt-only vs PR) unconfirmed",
+        recommendation: "confirm the delivery scope with the user",
+        requiresHuman: true,
+      },
+    ],
+  };
+  const invocation = "$please 대화한 대로 끝까지 구현해줘";
+  const assumed = runCli(
+    dir,
+    ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--assume-human-findings", invocation],
+    { stub: stubFile(dir, humanBlock) },
+  );
+  assert.equal(assumed.status, 0, assumed.stdout + assumed.stderr);
+  assert.match(assumed.stdout, /PASS/);
+  const record = gatesState(dir, "fixture").gates["gap-audit"];
+  assert.equal(record.verdict, "PASS");
+  assert.equal(record.humanAssumptions.length, 1);
+  assert.equal(record.humanAssumptions[0].evidence, invocation, "the ledger quotes the delegating message verbatim");
+  assert.equal(record.humanAssumptions[0].findings[0].missing, "delivery scope (receipt-only vs PR) unconfirmed");
+  assert.equal(record.humanAssumptions[0].findings[0].severity, "P1", "the ledger keeps the judged severity");
+  assert.equal(record.findings[0].severity, "P2", "the recorded finding is the demoted advisory");
+
+  // The substitution stays loud on every status read.
+  const status = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
+  assert.match(status.stdout, /ASSUMED HUMAN DECISIONS: 1 finding/);
+});
+
+test("delegated run: a P0 human finding still blocks under --assume-human-findings", () => {
+  const dir = makeProject();
+  const result = runCli(
+    dir,
+    ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--assume-human-findings", "$please go"],
+    { stub: stubFile(dir, BLOCK_RESPONSE) }, // BLOCK_RESPONSE carries a P0 requiresHuman finding
+  );
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /BLOCKED/);
+  const record = gatesState(dir, "fixture").gates["gap-audit"];
+  assert.equal(record.verdict, "BLOCK");
+  assert.equal(record.humanAssumptions, undefined, "nothing was assumed");
+});
+
+test("delegated run: empty --assume-human-findings evidence is refused before any judge call", () => {
+  const dir = makeProject();
+  const result = runCli(
+    dir,
+    ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--assume-human-findings", "  "],
+    { stub: stubFile(dir, { verdict: "PASS", findings: [] }) },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /verbatim delegated invocation/);
+});

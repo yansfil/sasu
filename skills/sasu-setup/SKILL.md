@@ -1,14 +1,14 @@
 ---
-name: ho-setup
+name: sasu-setup
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
-  "$ho-setup", asks to enable or change PR delivery mode, configure
+  "$sasu-setup", asks to enable or change PR delivery mode, configure
   worktree/secrets sync for implement, configure the agents/ namespace
   gitignore policy, inspect the current PRD pipeline settings, or diagnose why
   implement/ship delivery is not working.
 ---
 
-# ho-setup
+# sasu-setup
 
 Use this skill to inspect or configure how the PRD pipeline
 (`implement` and `ship`) behaves in the current repository.

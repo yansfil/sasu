@@ -40,7 +40,7 @@ remember = lessons land as enforcement, not notes
 | `implement` | Approved-PRD implementation with task closure, registered evidence, one unified verify, and a state-derived receipt |
 | `benchmark-implement` | Fixed-PRD harness benchmark: implement delegation, fresh session analysis, deterministic process reports, and baseline comparison |
 | `ship` | GitHub PR delivery: staging allowlist, generated evidence sections, CI watch, head-pinned merge, and a recorded delivery result |
-| `ho-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
+| `sasu-setup` | Pipeline configuration: delivery mode, worktree sync, gitignore policy, and a `doctor` that diagnoses the whole setup |
 | `quick` | Fast path for small work: compact conversation contract, mechanical checks, routine Luna judgment, and a pinned receipt |
 | `please` | All-in-one runner: conversation to PRD, implementation, verified receipt, and conditional PR delivery with no stage-approval round-trips |
 | `remember` | Learning that enforces: lessons land as docs-backed facts, machine-checked invariants (`agents/rules/**`), or regression tests, never as prose-only notes |
@@ -188,7 +188,7 @@ sasu doctor
 After changing installed skills, confirm visibility:
 
 - Codex: `codex debug prompt-input`
-- Claude Code: start a new session and check that `/interview-me`, `/gen-prd`, `/implement`, `/benchmark-implement`, `/ship`, `/ho-setup`, and `/please` appear in the skill list
+- Claude Code: start a new session and check that `/interview-me`, `/gen-prd`, `/implement`, `/benchmark-implement`, `/ship`, `/sasu-setup`, and `/please` appear in the skill list
 
 ## Repository Layout
 
@@ -199,7 +199,7 @@ skills/
   implement/  SKILL.md, removed-entrypoint tombstone, references/
   benchmark-implement/  SKILL.md, deterministic reporter, evaluator rubric
   ship/   SKILL.md, scripts/prd_ship.js
-  ho-setup/  SKILL.md
+  sasu-setup/  SKILL.md
   please/    SKILL.md
   remember/  SKILL.md
 scripts/

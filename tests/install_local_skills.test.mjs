@@ -63,7 +63,7 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.doesNotMatch(claudeText, /~\/\.codex\/skills\//);
   assert.doesNotMatch(
     claudeText,
-    /\$(interview-me|gen-prd|implement|ship|ho-setup|please|remember)\b/,
+    /\$(interview-me|gen-prd|implement|ship|sasu-setup|please|remember)\b/,
   );
 
   // remember installs on both runtimes with the public rules CLI.
@@ -105,7 +105,7 @@ test("installer installs canonical skills with correct substitutions and no alia
     if (!referenceName.endsWith(".md")) continue;
     const referenceText = fs.readFileSync(path.join(claudeReferences, referenceName), "utf8");
     assert.doesNotMatch(referenceText, /~\/\.codex\/skills\//, `${referenceName} keeps a Codex path`);
-    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|benchmark-implement|ship|ho-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
+    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|benchmark-implement|ship|sasu-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
   }
   // Codex references stay symlinked (verbatim source is correct there).
   assert.ok(fs.lstatSync(path.join(home, ".codex", "skills", "implement", "references")).isSymbolicLink());

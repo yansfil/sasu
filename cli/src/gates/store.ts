@@ -236,6 +236,19 @@ export interface GateRecord {
    * record the user can catch, not so the harness can catch it.
    */
   budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
+  /**
+   * Human-consent findings converted to recorded assumptions under a
+   * delegated run ($please): `evidence` quotes the user's invocation - the
+   * standing decision to trade questions for veto-able assumptions - and
+   * `findings` keeps each converted finding verbatim so the user can veto
+   * after the fact. Same trust model as budgetGrants: a record, NOT
+   * enforcement - nothing binds the evidence to a real invocation, and the
+   * quote exists so a fabricated delegation is falsifiable by the USER.
+   * P0 findings never land here; they still block (a P0 human finding means
+   * invented consent or an unimplementable document, and pushing through
+   * that is not an assumption).
+   */
+  humanAssumptions?: { at: string; evidence: string; findings: Finding[] }[];
 }
 
 export interface GatesState {
@@ -344,6 +357,8 @@ export interface GateStatusView {
   findings: Finding[];
   /** Count of user budget grants recorded on this gate (GateRecord.budgetGrants). */
   grants: number;
+  /** Human-consent findings assumed under a delegated run (GateRecord.humanAssumptions), summed across rounds. */
+  assumedHumanFindings: number;
 }
 
 /**
@@ -438,6 +453,7 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
     requiresHuman: record.findings.some((f) => f.requiresHuman),
     findings: record.findings,
     grants: record.budgetGrants?.length ?? 0,
+    assumedHumanFindings: (record.humanAssumptions ?? []).reduce((sum, entry) => sum + entry.findings.length, 0),
   };
 }
 
@@ -491,6 +507,8 @@ export function recordGateResult(
         usedLiveMaterial?: boolean;
         /** Verify gate only: which document the round judged (see GateRecord field). */
         docKind?: "prd" | "contract";
+        /** Delegated-run conversion this round performed (see GateRecord.humanAssumptions). */
+        humanAssumption?: { evidence: string; findings: Finding[] };
       }
     | { kind: "error"; message: string; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],
@@ -542,6 +560,12 @@ export function recordGateResult(
     // ANY judged verdict clears the error streak, FAIL and BLOCK included: the
     // judge answered the question, which is the whole thing the streak counts.
     record.consecutiveErrors = 0;
+    if (outcome.humanAssumption !== undefined && outcome.humanAssumption.findings.length > 0) {
+      record.humanAssumptions = [
+        ...(record.humanAssumptions ?? []),
+        { at, evidence: outcome.humanAssumption.evidence, findings: outcome.humanAssumption.findings },
+      ];
+    }
     summary = {
       at,
       verdict: outcome.verdict,
