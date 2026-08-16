@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acceptancePrompt, fidelityPrompt, fidelitySource } from "../../dist/implement/prompts.js";
+import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource } from "../../dist/implement/prompts.js";
 import { mechanicalBindings, parseImplementContract } from "../../dist/implement/contract.js";
 
 function contract(sourceIntake) {
@@ -128,6 +128,18 @@ test("implement contract parses 2.1 scenario cards and carries SC ids into V cov
   assert.equal(parsed.scenarios[0].id, "SC1");
   assert.match(parsed.scenarios[0].text, /expired link shows a notice/);
   assert.ok(parsed.verification[0].covers.includes("SC1"), JSON.stringify(parsed.verification[0].covers));
+});
+
+test("design prompt is advisory-only and scoped to what other lanes do not read", () => {
+  const prompt = designPrompt("PRD BODY", "CHANGE MATERIAL");
+  assert.match(prompt, /advisory design reviewer/);
+  assert.match(prompt, /never block the run/);
+  assert.match(prompt, /"verdict": "PASS"/);
+  assert.doesNotMatch(prompt, /"FAIL"/);
+  assert.match(prompt, /One cause patched as N symptoms/);
+  assert.match(prompt, /No style nitpicks/);
+  assert.match(prompt, /CHANGE MATERIAL/);
+  assert.match(prompt, /PRD BODY/);
 });
 
 test("implement contract extracts nested Decision Traceability content", () => {

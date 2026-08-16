@@ -203,6 +203,32 @@ CURATED RUN-OWNED CHANGE SUMMARY:
 ${clamp(changeMaterial)}`;
 }
 
+export function designPrompt(prdText: string, changeMaterial: string): string {
+  return `You are the advisory design reviewer for a completed implementation. You review the run-owned change material against engineering-quality principles. Your findings are recorded and reported to a human; they never block the run, and an empty findings list is a fully valid answer.
+
+CHARTER - report only what none of the other lanes see. The acceptance judge owns criterion correctness, the fidelity judge owns intent lineage, the risk judge owns ship-safety. You own the shape of the code:
+- One cause patched as N symptoms: the same fix repeated across sites where one concept is missing.
+- Patch-on-patch accretion: layered special cases where the surrounding design wanted a rewrite of one unit.
+- Structure drift: the diff quietly exceeds or contradicts the PRD's "Major Technical Structure Changes" section.
+- Needless complexity: abstractions, flags, or indirection the current requirements do not need.
+- Dead weight: unreachable code, unused parameters, stale comments introduced by this change.
+
+DISCIPLINE:
+- Loose by design: at most the findings that would change what a maintainer does next. No style nitpicks, no naming taste, no reformatting, no test-coverage accounting.
+- Every finding cites concrete evidence from the material below (file and what you saw). No finding without a cited site.
+- Suggest the smallest structural fix, not a rewrite plan.
+
+${JSON_RULE}
+{ "verdict": "PASS", "findings": [{ "area": "one-cause-n-symptoms | accretion | structure-drift | complexity | dead-weight", "text": "what and where", "suggestion": "smallest fix" }] }
+The verdict is always PASS: this lane is advisory and cannot fail the run.
+
+RUN-OWNED CHANGE MATERIAL:
+${clamp(changeMaterial)}
+
+PRD (for the structure-changes section and guardrails):
+${clamp(prdText)}`;
+}
+
 export function riskPrompt(
   prdText: string,
   changeMaterial: string,

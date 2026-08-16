@@ -7,14 +7,28 @@ Read this reference before unified verify, finalize, or a blocked handoff.
 | Profile | Unified lanes |
 | --- | --- |
 | `trivial` | acceptance and fidelity in parallel |
-| `standard` | acceptance and fidelity in parallel |
-| `high-risk` | acceptance and fidelity in parallel, then risk |
+| `standard` | acceptance, fidelity, and design (advisory) in parallel |
+| `high-risk` | acceptance, fidelity, and design (advisory) in parallel, then risk |
 
 The CLI executes these policies.
 There is no manual prompt generation or review-record step.
-Acceptance and fidelity use the project `routine` judge profile.
+Acceptance, fidelity, and design use the project `routine` judge profile.
 The additional risk lane uses the `high-risk` judge profile.
 By default those profiles are Codex Luna xhigh and Codex Sol xhigh, with Claude Sonnet 5 xhigh and Claude Opus 5 xhigh fallbacks respectively.
+
+## Design Lane (Advisory)
+
+The design lane reviews the shape of the code - one-cause-N-symptom patching, patch-on-patch accretion, structure drift against PRD §5, needless complexity, dead weight - the one failure class the other lanes explicitly do not read for.
+It is advisory by construction: its verdict is always PASS, it never blocks the run, never consumes fix budget, and a lane error leaves the attempt untouched.
+
+Consumption is mandatory even though blocking is not:
+
+- the `verify` response carries `designAdvisory.findings`; relay them in your report to the user instead of silently dropping them.
+- `implementation-result.md` records them under `## Design Advisory` for human review.
+- acting on a finding before finalize is your judgment call; re-run verify afterward as with any change.
+
+This lane owns quality review.
+Do not spawn ad-hoc adversarial review subagents on top of it: a prior run burned 92 minutes on five self-invoked review rounds against a verify gate that never returned a criterion FAIL.
 
 ## Fidelity Rubric
 

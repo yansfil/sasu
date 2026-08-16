@@ -10,7 +10,7 @@ import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateSemanticVerdict } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
-import { acceptancePrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
+import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
 import {
   artifactIntegrityProblems,
   captureBaselineSnapshot,
@@ -31,6 +31,7 @@ import {
   type AcceptanceCriterionInvocation,
   type AcLaneResult,
   type ContractItem,
+  type DesignFinding,
   type FidelityCheckResult,
   type ImplementCommandResult,
   type ImplementState,
@@ -659,6 +660,23 @@ function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: F
   return { verdict: raw.verdict, checks };
 }
 
+function validateDesign(value: unknown): { verdict: "PASS" | "FAIL"; findings: DesignFinding[] } | string {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
+  const raw = value as { verdict?: unknown; findings?: unknown };
+  if (raw.verdict !== "PASS") return "the design lane is advisory: verdict must be PASS";
+  if (!Array.isArray(raw.findings)) return "findings must be an array";
+  const findings: DesignFinding[] = [];
+  for (const [index, entry] of raw.findings.entries()) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return `findings[${index}] must be an object`;
+    const finding = entry as Record<string, unknown>;
+    if (typeof finding["area"] !== "string" || finding["area"].trim() === "") return `findings[${index}].area must be a non-empty string`;
+    if (typeof finding["text"] !== "string" || finding["text"].trim() === "") return `findings[${index}].text must be a non-empty string`;
+    if (typeof finding["suggestion"] !== "string") return `findings[${index}].suggestion must be a string`;
+    findings.push({ area: finding["area"], text: finding["text"], suggestion: finding["suggestion"] });
+  }
+  return { verdict: "PASS", findings };
+}
+
 function validateRisk(value: unknown): { verdict: "PASS" | "FAIL"; findings: RiskFinding[] } | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
   const raw = value as { verdict?: unknown; findings?: unknown };
@@ -1034,7 +1052,14 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityInvocationId = crypto.randomUUID();
   progress(`judging ${state.acceptanceCriteria.length} acceptance criteria and fidelity in parallel (profile: ${state.prd.reviewProfile})`);
   if (priorFidelity !== null) progress(`fidelity: ${priorFidelity.verdict} (reused from the ERROR'd attempt)`);
-  const [acceptance, fidelity] = await Promise.all([
+  // The design lane is advisory: always re-run (never reused - it is one cheap
+  // call and its findings should describe the current tree), skipped for
+  // trivial profiles, and excluded from the attempt verdict below. Its
+  // guaranteed consumption points are the verify command response (finding
+  // count) and the Design Advisory section of implementation-result.md -
+  // a lane whose output only lived inside a prompt would never be read.
+  const runDesignLane = state.prd.reviewProfile !== "trivial";
+  const [acceptance, fidelity, design] = await Promise.all([
     acceptanceLane(config, projectRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse),
     priorFidelity !== null
       ? Promise.resolve(priorFidelity)
@@ -1042,6 +1067,14 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
           runJudge(config, "implement:fidelity", "routine", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
         ).then((record) => {
           progress(`fidelity: ${record.verdict} (${(record.durationMs / 1000).toFixed(0)}s)`);
+          return record;
+        }),
+    !runDesignLane
+      ? Promise.resolve(null)
+      : judgeLane(crypto.randomUUID(), () =>
+          runJudge(config, "implement:design", "routine", designPrompt(prdText, material), validateDesign),
+        ).then((record) => {
+          progress(`design (advisory): ${record.result?.findings.length ?? 0} finding(s) (${(record.durationMs / 1000).toFixed(0)}s)`);
           return record;
         }),
   ]);
@@ -1081,7 +1114,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     verdict,
     prelint,
     mechanical,
-    lanes: { acceptance, fidelity, risk },
+    lanes: { acceptance, fidelity, risk, design },
     error: verdict === "ERROR"
       ? { stage: "judge", code: "judge-error", message: [acceptance.error?.message, fidelity.error?.message, risk?.error?.message].filter(Boolean).join("; ") }
       : null,
@@ -1095,6 +1128,11 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     attempt: attemptSummary(attempt),
     sourceRouting: sourceContext.routing,
     verificationBudget: budget,
+    // Guaranteed render point: the orchestrating agent sees advisory findings
+    // in this response without any prompt needing to be invoked.
+    designAdvisory: design === null
+      ? { ran: false, findings: [] }
+      : { ran: true, findings: design.result?.findings ?? [] },
   });
 }
 
@@ -1111,6 +1149,15 @@ function completionFingerprint(
     attemptId: attempt.id,
     attemptVerdict: attempt.verdict,
   }));
+}
+
+function designAdvisorySection(attempt: UnifiedVerificationAttempt): string {
+  const lane = attempt.lanes.design ?? null;
+  if (lane === null) return "Not run (trivial profile or pre-design-lane attempt).";
+  if (lane.verdict === "ERROR") return `Lane errored: ${lane.error?.message ?? "unknown"}. Advisory only; the run is unaffected.`;
+  const findings = lane.result?.findings ?? [];
+  if (findings.length === 0) return "No findings.";
+  return findings.map((entry) => `- [${entry.area}] ${entry.text}\n  Suggestion: ${entry.suggestion}`).join("\n");
 }
 
 function implementationReport(
@@ -1143,7 +1190,7 @@ function implementationReport(
   const openItemsSection = blocked === undefined
     ? ""
     : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design (advisory)", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Advisory\n\nAdvisory findings from the design lane. They never block the run; a human decides what is worth acting on.\n\n${designAdvisorySection(attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {

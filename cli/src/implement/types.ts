@@ -114,6 +114,16 @@ export interface RiskFinding {
   text: string;
 }
 
+// The design lane is advisory by construction: its verdict is always PASS
+// when it runs, its findings are recorded and reported, and nothing reads it
+// as a gate. Looseness is the convergence bound (PRINCIPLES 13): a lane that
+// cannot block cannot loop.
+export interface DesignFinding {
+  area: string;
+  text: string;
+  suggestion: string;
+}
+
 export interface FidelityCheckResult {
   id: "F1" | "F2" | "F3" | "F4" | "F5";
   verdict: "PASS" | "FAIL";
@@ -156,6 +166,8 @@ export interface UnifiedVerificationAttempt {
     }> | null;
     fidelity: LaneRecord<{ verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] }> | null;
     risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: RiskFinding[] }> | null;
+    // Optional: attempts recorded before the design lane existed lack the key.
+    design?: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: DesignFinding[] }> | null;
   };
   error: { stage: string; code: string; message: string } | null;
 }
