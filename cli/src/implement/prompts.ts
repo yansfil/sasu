@@ -32,6 +32,24 @@ export interface AcceptancePromptMaterial {
   checks: CheckResult[];
   evidence: EvidenceMaterial[];
   readableArtifacts: ReadableAcceptanceArtifact[];
+  /**
+   * §2.1 scenario cards covered by the same V rows that cover this criterion.
+   * The card body (primary path, failure state, recovery) travels to the judge
+   * so "half the scenario verified" is judgeable, not invisible.
+   */
+  scenarios: ContractItem[];
+}
+
+function scenarioSection(scenarios: ContractItem[]): string {
+  if (scenarios.length === 0) return "";
+  return `
+MAPPED USER SCENARIOS:
+The verification rows for this criterion also cover these approved user scenario cards. Where this
+criterion's obligations intersect a card, the evidence must exercise the card's stated paths
+(primary, failure, recovery) - a happy-path-only proof does not satisfy a card that declares a
+failure or recovery path.
+${scenarios.map((entry) => `- ${entry.id}: ${entry.text}`).join("\n")}
+`;
 }
 
 function readableArtifactSection(artifacts: ReadableAcceptanceArtifact[]): string {
@@ -81,7 +99,7 @@ ${requirements.length === 0 ? "- none" : requirements.map((entry) => `- ${entry.
 
 MAPPED VERIFICATION PASS INTENTS:
 ${verification.length === 0 ? "- none" : verification.map((entry) => `- ${entry.id}: ${entry.passIntent}`).join("\n")}
-${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
+${scenarioSection(material.scenarios)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
 RUN-OWNED CHANGED FILES:
 This is an allowlist, not an instruction to read every file. Prefer the smallest sufficient set.
 ---

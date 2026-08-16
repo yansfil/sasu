@@ -91,6 +91,7 @@ test("acceptance prompt is scoped to one criterion and its mapped proof", () => 
     checks: [{ criterionId: "AC2", command: "npm test", exitCode: 0, tail: "SECOND-MECHANICAL-PROOF" }],
     evidence: [{ criterionId: "AC2", path: "second.log", sha256: "b".repeat(64), bytes: 21, text: "SECOND-ARTIFACT-BODY" }],
     readableArtifacts: [{ path: "second.png", kind: "screenshot", sha256: "c".repeat(64), bytes: 42, description: "second screen" }],
+    scenarios: [],
   });
   assert.match(prompt, /AC2: second criterion/);
   assert.match(prompt, /"id": "AC2"/);
@@ -100,7 +101,33 @@ test("acceptance prompt is scoped to one criterion and its mapped proof", () => 
   assert.match(prompt, /SECOND-ARTIFACT-BODY/);
   assert.match(prompt, /second\.png/);
   assert.match(prompt, /src\/second\.ts \[text, 80 bytes\]/);
-  assert.doesNotMatch(prompt, /AC1:|R1:|V1:|first\.log|RUN-OWNED CHANGE MATERIAL/);
+  assert.doesNotMatch(prompt, /AC1:|R1:|V1:|first\.log|RUN-OWNED CHANGE MATERIAL|MAPPED USER SCENARIOS/);
+});
+
+test("mapped scenario cards travel to the acceptance judge with their full body", () => {
+  const scopedState = {
+    requirements: [],
+    verification: [{ id: "V1", covers: ["AC1", "SC1"], passIntent: "main flow works" }],
+  };
+  const criterion = { id: "AC1", text: "the flow completes", requirements: [] };
+  const prompt = acceptancePrompt(scopedState, criterion, {
+    changedFiles: "- none",
+    checks: [],
+    evidence: [],
+    readableArtifacts: [],
+    scenarios: [{ id: "SC1", text: "Invite: Primary path: B joins. Failure state: expired link notice. Recovery: reissue works." }],
+  });
+  assert.match(prompt, /MAPPED USER SCENARIOS/);
+  assert.match(prompt, /SC1: Invite: Primary path: B joins\. Failure state: expired link notice\. Recovery: reissue works\./);
+  assert.match(prompt, /happy-path-only proof does not satisfy/);
+});
+
+test("implement contract parses 2.1 scenario cards and carries SC ids into V covers", () => {
+  const parsed = parseImplementContract(`---\nstatus: ready\n---\n\n## 2. Problem, Goal, And Users\n\n### 2.1 User Scenarios\n\n- SC1. Invite flow: A invites, B joins.\n  Failure state: expired link shows a notice.\n\n## 6. Requirements\n\n- R1. inviting works. Covers AC1.\n\n## 7. Acceptance Criteria\n\n- AC1. B can join through a link.\n\n## 8. PRD-Level Tasks\n\n- T1. build it. Covers R1.\n\n## 9. Verification Contract\n\n| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |\n| --- | --- | --- | --- | --- | --- |\n| V1 | automated behavior | R1, AC1, SC1 | flow proven | yes | no |\n`);
+  assert.equal(parsed.scenarios.length, 1);
+  assert.equal(parsed.scenarios[0].id, "SC1");
+  assert.match(parsed.scenarios[0].text, /expired link shows a notice/);
+  assert.ok(parsed.verification[0].covers.includes("SC1"), JSON.stringify(parsed.verification[0].covers));
 });
 
 test("implement contract extracts nested Decision Traceability content", () => {

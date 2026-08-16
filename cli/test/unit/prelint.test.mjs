@@ -56,6 +56,7 @@ const PRD_CASES = [
   ["prd-section-missing.md", "prd-section-missing"],
   ["prd-dangling-ref.md", "prd-dangling-ref"],
   ["prd-uncovered-ac.md", "prd-uncovered-ac"],
+  ["prd-uncovered-scenario.md", "prd-uncovered-scenario"],
   ["prd-mode-mismatch.md", "prd-mode-mismatch"],
   ["prd-method-runner-unknown.md", "prd-implementation-binding"],
 ];
@@ -86,6 +87,19 @@ test("covers ranges expand: R1-R3 with a deleted member is a dangling reference"
   const danglingIds = result.findings.filter((f) => f.rule === "prd-dangling-ref").map((f) => f.missing);
   assert.ok(danglingIds.some((m) => m.includes("R2")), "R2 from the range must be flagged");
   assert.ok(danglingIds.some((m) => m.includes("R3")), "R3 from the range must be flagged");
+});
+
+test("a PRD with a covered SC scenario card passes with zero findings", () => {
+  const result = prelintPrd(fixture("prd-scenario-clean.md"));
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.findings.length, 0);
+});
+
+test("a Covers reference to an undefined SC card is a dangling reference", () => {
+  const prd = fixture("prd-scenario-clean.md").replace("R1, AC1, AC2, SC1", "R1, AC1, AC2, SC1, SC9");
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, false);
+  assert.ok(result.findings.some((f) => f.rule === "prd-dangling-ref" && f.missing.includes("SC9")));
 });
 
 test("ID numbering gaps alone are NOT flagged (continuity is an explicit non-goal)", () => {

@@ -233,8 +233,11 @@ export function prelintQaLog(content: string): PrelintResult {
 
 // --- PRD rules (spec and verify gate entrances) ---
 
-const ID_DEFINITION = /^\s*-\s*(R|AC|T|V)(\d+)[.:]\s/;
-const ID_TOKEN = /(R|AC|T|V)(\d+)(?:\s*-\s*(?:(R|AC|T|V))?(\d+))?/g;
+// SC = user scenario card (gen-prd §2.1). Alternation order matters only in
+// that no prefix is a prefix of another at the same start position; "SC1"
+// cannot half-match R/AC/T/V, and "AC1" cannot match SC.
+const ID_DEFINITION = /^\s*-\s*(R|AC|T|V|SC)(\d+)[.:]\s/;
+const ID_TOKEN = /(R|AC|T|V|SC)(\d+)(?:\s*-\s*(?:(R|AC|T|V|SC))?(\d+))?/g;
 
 /** Expand one Covers token, including same-prefix ranges like R1-R4 / R1-4. */
 function expandToken(match: RegExpMatchArray): string[] {
@@ -288,6 +291,7 @@ export function prelintPrd(content: string): PrelintResult {
   const defined = new Set<string>();
   const acDefinitionLines = new Map<string, number>();
   const acRequirementRefs = new Map<string, Set<string>>();
+  const scenarioDefinitionLines = new Map<string, number>();
   for (let i = 0; i < lines.length; i += 1) {
     const match = lines[i]!.match(ID_DEFINITION);
     if (!match) continue;
@@ -298,6 +302,9 @@ export function prelintPrd(content: string): PrelintResult {
       // The readiness planner counts an AC covered when a check covers any R#
       // the AC references; record those refs so both engines agree.
       acRequirementRefs.set(id, new Set(lines[i]!.match(/\bR\d+\b/g) ?? []));
+    }
+    if (match[1] === "SC" && !scenarioDefinitionLines.has(id)) {
+      scenarioDefinitionLines.set(id, i + 1);
     }
   }
 
@@ -318,12 +325,14 @@ export function prelintPrd(content: string): PrelintResult {
   }
   const coveredAcs = new Set<string>();
   const coveredRs = new Set<string>();
+  const coveredScs = new Set<string>();
   for (const row of vRows) {
     if (coversColumn === -1 || row.cells[coversColumn] === undefined) continue;
     for (const id of coversTokens(row.cells[coversColumn]!)) {
       references.push({ id, line: row.line });
       if (id.startsWith("AC")) coveredAcs.add(id);
-      if (id.startsWith("R")) coveredRs.add(id);
+      else if (id.startsWith("SC")) coveredScs.add(id);
+      else if (id.startsWith("R")) coveredRs.add(id);
     }
   }
   for (const ref of references) {
@@ -336,6 +345,16 @@ export function prelintPrd(content: string): PrelintResult {
     const viaRequirement = [...(acRequirementRefs.get(ac) ?? [])].some((r) => coveredRs.has(r));
     if (!coveredAcs.has(ac) && !viaRequirement) {
       findings.push(finding("prd-uncovered-ac", line, `${ac} is not covered by any V row in 9.2 Required Agent Verification (directly or via a covered R# it references)`, `Add ${ac} (or an R# it references) to a V row's Covers.`));
+    }
+  }
+
+  // A scenario card that no V row covers is a silent drop of an approved user
+  // flow: the interview produced it, the human approved it, and nothing would
+  // verify it. Only fires when the PRD defines SC cards, so scenario-less
+  // documents (CLI tools, libraries) are unaffected.
+  for (const [sc, line] of scenarioDefinitionLines) {
+    if (!coveredScs.has(sc)) {
+      findings.push(finding("prd-uncovered-scenario", line, `${sc} is not covered by any V row in 9.2 Required Agent Verification`, `Add ${sc} to a V row's Covers so the scenario is verified, or delete the card.`));
     }
   }
 

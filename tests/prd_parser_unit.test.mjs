@@ -195,9 +195,10 @@ test("coverage ranges expand identically for tasks and verification rows", () =>
   assert.deepEqual(tasks[0].requirements, ["R1", "R2", "R3"]);
   assert.deepEqual(tasks[0].acceptanceCriteria, ["AC2", "AC3", "AC4", "AC5"]);
   assert.equal(tasks[0].scopeGlobs, undefined);
-  assert.deepEqual(parser.coverageFromText("Covers T1-T2, AC7-AC9"), {
+  assert.deepEqual(parser.coverageFromText("Covers T1-T2, AC7-AC9, SC1-SC2"), {
     requirements: [],
     acceptanceCriteria: ["AC7", "AC8", "AC9"],
     tasks: ["T1", "T2"],
+    scenarios: ["SC1", "SC2"],
   });
 });

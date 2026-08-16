@@ -13,6 +13,7 @@ const expectedReferences = [
   "execution-planning.md",
   "reviews-and-finalization.md",
   "verification-and-evidence.md",
+  "verification-environments.md",
   "worktrees-and-delivery.md",
 ];
 

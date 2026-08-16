@@ -26,7 +26,7 @@ interface ParserLibrary {
   parseVerification(markdown: string): ParsedItem[];
   parseTestModeContract(markdown: string): unknown[];
   applyTestModeDefaults(items: ParsedItem[], modes: unknown[]): void;
-  coverageFromText(text: string): { requirements: string[]; acceptanceCriteria: string[] };
+  coverageFromText(text: string): { requirements: string[]; acceptanceCriteria: string[]; scenarios: string[] };
   extractSection(markdown: string, heading: string): string;
   extractNestedSection(markdown: string, heading: string): string;
 }
@@ -41,6 +41,8 @@ export interface ImplementContract {
   tasks: TaskItem[];
   requirements: ContractItem[];
   acceptanceCriteria: ContractItem[];
+  /** §2.1 user scenario cards (SC#). Optional: scenario-less PRDs parse to []. */
+  scenarios: ContractItem[];
   verification: VerificationItem[];
   decisionTraceability: string;
   scope: string;
@@ -116,6 +118,9 @@ export function parseImplementContract(markdown: string): ImplementContract {
   const acceptanceCriteria = parser
     .parseMarkdownItems(parser.extractFirstSection(parsed.body, ["7. Acceptance Criteria", "Acceptance Criteria"]), "AC", "AC")
     .map(item);
+  const scenarios = parser
+    .parseMarkdownItems(parser.extractFirstNestedSection(parsed.body, ["2.1 User Scenarios", "User Scenarios"]), "SC", "SC")
+    .map(item);
   const tasks = taskItems(
     parser.parseMarkdownItems(parser.extractFirstSection(parsed.body, ["8. PRD-Level Tasks", "PRD-Level Tasks"]), "T", "Task"),
   );
@@ -155,7 +160,9 @@ export function parseImplementContract(markdown: string): ImplementContract {
       text: entry.text,
       title: entry.title,
       mode: entry.matrix?.mode ?? "automated behavior",
-      covers: [...new Set([...covers.requirements, ...mappedAcs])],
+      // SC ids ride in covers so the acceptance lane can hand each judge the
+      // scenario cards its V rows are responsible for.
+      covers: [...new Set([...covers.requirements, ...mappedAcs, ...covers.scenarios])],
       requiredForDone: entry.matrix?.requiredForDone ?? true,
       canBeBlocked: entry.matrix?.canBeBlocked ?? false,
       passIntent: entry.matrix?.passCriteria ?? entry.title,
@@ -170,6 +177,7 @@ export function parseImplementContract(markdown: string): ImplementContract {
     tasks,
     requirements,
     acceptanceCriteria,
+    scenarios,
     verification,
     decisionTraceability: parser.extractNestedSection(parsed.body, "4.3 Decision Traceability For Fidelity Review"),
     scope: parser.extractFirstSection(parsed.body, ["3. Scope And Non-Goals", "Scope And Non-Goals"]),

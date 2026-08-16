@@ -33,6 +33,7 @@ Read each directly linked reference completely when its condition applies.
 | --- | --- |
 | [`references/execution-planning.md`](references/execution-planning.md) | Before implementation, while closing tasks, or when execution order is unclear. |
 | [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before capturing or registering final runtime evidence and before unified verify. |
+| [`references/verification-environments.md`](references/verification-environments.md) | When binding a browser/runtime, mobile, TUI, or desktop V row to a concrete driver. |
 | [`references/reviews-and-finalization.md`](references/reviews-and-finalization.md) | Before unified verify, finalize, or a blocked handoff. |
 | [`references/worktrees-and-delivery.md`](references/worktrees-and-delivery.md) | When delivery is `pr`, a worktree is configured, or post-receipt delivery is requested. |
 

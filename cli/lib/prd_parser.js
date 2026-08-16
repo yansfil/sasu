@@ -308,6 +308,7 @@ function coverageFromText(text) {
     requirements: expandCoverageIds(text, "R"),
     acceptanceCriteria: expandCoverageIds(text, "AC"),
     tasks: expandCoverageIds(text, "T"),
+    scenarios: expandCoverageIds(text, "SC"),
   };
 }
 

@@ -79,6 +79,8 @@ updated_at: "YYYY-MM-DD"
 
 ## 2. Problem, Goal, And Users
 
+### 2.1 User Scenarios
+
 ## 3. Scope And Non-Goals
 
 ## 4. Pre-Work And Required Decisions
@@ -161,6 +163,45 @@ described above.
 
 Put product reason near the top. A reviewer should understand the user and goal
 before reading technical or verification details.
+
+#### 2.1 User Scenarios
+
+Scenario cards are first-class PRD nodes with `SC#` IDs, carried into the PRD
+so they survive the interview boundary: the human approves them with the PRD,
+`9.2` V rows cover them, and the harness hands the card body to the judge that
+verifies those rows. A card that stays only in the qa-log is invisible to
+approval and verification.
+
+Distill each UX Scenario Card from the qa-log into one `- SC#.` list item
+(assign numbers here; qa-log cards carry no IDs). Write cards for user-facing
+flows; when the product has none, write `No user scenarios: <reason>` instead
+of inventing cards.
+
+```markdown
+- SC1. Friend invite: A creates an invite link, B joins through it.
+  Actors: A (workspace owner), B (invitee).
+  Primary path: B opens the link, signs up, and appears in A's member list.
+  Failure state: an expired link shows an expiration notice, not an error page.
+  Recovery: A reissues the link from settings; the new link works.
+  Reach: verification needs a workspace with an expirable invite; seeding it is a task, not a manual step.
+```
+
+Rules:
+
+- `Actors:` names every distinct user the scenario needs; multi-user flows say
+  what each actor observes.
+- `Primary path`, `Failure state`, and `Recovery` are the card's verification
+  obligations: a V row covering the card is judged against all three, so a
+  happy-path-only proof fails.
+- `Reach:` states how a verifier gets the product into the card's state
+  (seed data, fixture, entry point) in product terms - no commands or paths.
+  If reaching the state needs tooling, that tooling is a `T#` task. This line
+  exists because a real run failed exactly here: the proof mode was right, but
+  nothing declared how to reach the game state the evidence required, and the
+  run ended partial after hours of blind driving.
+- Every `SC#` must appear in at least one `9.2` V row's Covers
+  (`prd-uncovered-scenario` blocks otherwise). Scenario-less PRDs skip all of
+  this.
 
 ### 3. Scope And Non-Goals
 
@@ -390,6 +431,10 @@ Rules:
 - Optional or human-blockable checks must explicitly say `Required For Done:
   no` or inherit `no/blockable` from the matching Test Mode row.
 - Every `R#` and `AC#` should map to automated behavior verification or a clearly justified non-automated mode.
+- Covers may reference `SC#` scenario cards. Every defined `SC#` must be
+  covered by at least one V row; put each card on the row whose mode can
+  actually exercise the card's primary, failure, and recovery paths (usually
+  browser/runtime for UI flows).
 - Automated verification rows should state the regression risk they protect, not just the command they run.
 - Browser/UI work should include a browser/runtime mode unless impossible.
 - Server/API/DB/external work should include the relevant mode and side-effect
@@ -439,6 +484,9 @@ After drafting and before marking the PRD `ready`, verify inline:
   verification item, human verification item, risk, guardrail, deferred
   decision, or explicit context-only disposition, with meaning and provenance
   preserved and without treating silence as consent.
+  Every qa-log UX Scenario Card is either carried into `2.1` as an `SC#` card
+  or explicitly disposed of (out of scope, merged, deferred) - never silently
+  dropped.
 - Intent: every user decision and accepted proposal is represented in scope,
   non-goals, `R#`, `AC#`, `T#`, `V#`, or human verification; rejected and
   deferred options stayed rejected; the PRD does not quietly expand beyond
@@ -552,25 +600,34 @@ Require the implementing agent to report:
 2. Read source artifacts and directly relevant project docs.
    Read `agents/config.json` when it exists or when the user asks for PR
    delivery, worktrees, or CI automation.
-3. Draft `prd.md` with every required section, `human_approval: "pending"`, and a semantic review profile with rationale.
-4. Ask only contract-breaking questions; do not rerun intake inside PRD.
-5. Derive PRD-level tasks from requirements and acceptance criteria.
-6. Add the Test Mode Contract and Required Agent Verification matrix.
-7. Run the Inline Self-Check Before Ready (losslessness, intent, pass intent,
+3. Fan out pre-writing research, then draft alone. Before drafting, list the
+   independent factual questions the PRD depends on - current code structure,
+   existing schema or auth reality, whether a library supports what a
+   requirement assumes - and dispatch parallel read-only research subagents
+   for them; questions with real data dependencies stay sequential or are
+   answered inline. The main session reads the results and keeps sole
+   authorship of the PRD: research parallelizes, the pen does not, because
+   the document's value is one coherent R/AC/T/V/SC graph.
+4. Draft `prd.md` with every required section, `human_approval: "pending"`, and a semantic review profile with rationale.
+   Carry qa-log UX Scenario Cards into `2.1` as `SC#` cards and cover each in `9.2`.
+5. Ask only contract-breaking questions; do not rerun intake inside PRD.
+6. Derive PRD-level tasks from requirements and acceptance criteria.
+7. Add the Test Mode Contract and Required Agent Verification matrix.
+8. Run the Inline Self-Check Before Ready (losslessness, intent, pass intent,
    regression bias, product completeness, verification semantics, and review
    profile) and fix failures.
-8. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
+9. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
    blocking gaps.
-9. Run the sasu Spec Gate and fix findings until it passes or a
+10. Run the sasu Spec Gate and fix findings until it passes or a
    human-decision finding stops the loop. When the `sasu` binary or its judge
    backend is unavailable, record that limitation in the final report and
    proceed on the Harness Readiness Gate plus the inline self-check alone;
    that recorded limitation (or the documented no-qa-log skip) is the
-   "skip/fallback" step 10 refers to.
-10. Mark `status: ready` only when blocking decisions are resolved, the inline
+   "skip/fallback" step 11 refers to.
+11. Mark `status: ready` only when blocking decisions are resolved, the inline
    self-check passes, the Harness Readiness Gate reports zero blocking
    gaps, and the Spec Gate passes (or its skip/fallback is recorded).
-11. Ask the user to review the PRD using the Approval checklist. Set
+12. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.
 

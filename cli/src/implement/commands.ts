@@ -575,10 +575,15 @@ function acceptanceMaterial(
   criterion: ContractItem,
   changedFiles: string,
   runs: MechanicalRunRecord[],
+  scenarios: ContractItem[],
 ): AcceptancePromptMaterial {
-  const verificationIds = new Set(
-    state.verification.filter((entry) => entry.covers.includes(criterion.id)).map((entry) => entry.id),
-  );
+  const coveringRows = state.verification.filter((entry) => entry.covers.includes(criterion.id));
+  const verificationIds = new Set(coveringRows.map((entry) => entry.id));
+  // Scenario cards travel with the criterion: the cards a V row covers are
+  // judged alongside every criterion that same row covers. Derived from the
+  // pinned PRD at verify time, never persisted in state.
+  const coveredScenarioIds = new Set(coveringRows.flatMap((entry) => entry.covers.filter((id) => id.startsWith("SC"))));
+  const mappedScenarios = scenarios.filter((entry) => coveredScenarioIds.has(entry.id));
   const checks: CheckResult[] = runs
     .filter((run) => run.verificationIds.some((id) => verificationIds.has(id)))
     .map((run) => {
@@ -623,7 +628,7 @@ function acceptanceMaterial(
       ...(excerpt.truncated ? { truncated: true } : {}),
     });
   }
-  return { changedFiles, checks, evidence, readableArtifacts };
+  return { changedFiles, checks, evidence, readableArtifacts, scenarios: mappedScenarios };
 }
 
 function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | string {
@@ -762,6 +767,7 @@ async function acceptanceLane(
   config: ReturnType<typeof loadConfig>,
   projectRoot: string,
   state: ImplementState,
+  scenarios: ContractItem[],
   changedFiles: string,
   changedPaths: string[],
   mechanical: MechanicalRunRecord[],
@@ -783,7 +789,7 @@ async function acceptanceLane(
       };
     }
     const record = await judgeLane(crypto.randomUUID(), async () => {
-      const material = acceptanceMaterial(projectRoot, state, criterion, changedFiles, mechanical);
+      const material = acceptanceMaterial(projectRoot, state, criterion, changedFiles, mechanical, scenarios);
       // With no inlined check, artifact, or image, the only honest basis for
       // a PASS is the code itself - and the agentic probe measured judges
       // reading zero to two files, zero included. A PASS with a known-zero
@@ -1029,7 +1035,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   progress(`judging ${state.acceptanceCriteria.length} acceptance criteria and fidelity in parallel (profile: ${state.prd.reviewProfile})`);
   if (priorFidelity !== null) progress(`fidelity: ${priorFidelity.verdict} (reused from the ERROR'd attempt)`);
   const [acceptance, fidelity] = await Promise.all([
-    acceptanceLane(config, projectRoot, state, changedFiles, changedPaths, mechanical, reuse),
+    acceptanceLane(config, projectRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse),
     priorFidelity !== null
       ? Promise.resolve(priorFidelity)
       : judgeLane(fidelityInvocationId, () =>
