@@ -263,6 +263,23 @@ export function changedPathsSince(initial: SourceSnapshot, current: SourceSnapsh
   return [...paths].filter((entry) => before.get(entry) !== after.get(entry)).sort();
 }
 
+/**
+ * The freshness basis for one registered artifact: the judged tree minus the
+ * artifact's own file. An artifact's bytes are already pinned by its sha256,
+ * so counting them a second time inside the tree digest only creates a cycle -
+ * appending to an evidence document invalidates every artifact registered
+ * from that same document, including the ones just written.
+ * 2026-08-17 herdr-remote-handoff: V6-V12 all cited docs/evidence/e2e-run.md,
+ * so each evidence update staled the evidence, burning two verification
+ * rounds on bookkeeping. Registration and the integrity check must call this
+ * with the same path, or every artifact reads as stale the moment it lands.
+ */
+export function artifactSourceFingerprint(source: SourceSnapshot, artifactPath: string): string {
+  const entries = source.entries.filter((entry) => entry.path !== artifactPath);
+  if (entries.length === source.entries.length) return source.digest;
+  return sha256(JSON.stringify({ entries }));
+}
+
 export function artifactIntegrityProblems(projectRoot: string, state: ImplementState, currentSource: SourceSnapshot): string[] {
   const problems: string[] = [];
   for (const artifact of state.artifacts) {
@@ -284,7 +301,7 @@ export function artifactIntegrityProblems(projectRoot: string, state: ImplementS
     }
     const actual = sha256(fs.readFileSync(absolute));
     if (actual !== artifact.sha256) problems.push(`${artifact.verificationId}: artifact hash changed: ${artifact.path}`);
-    if (artifact.sourceFingerprint !== currentSource.digest) {
+    if (artifact.sourceFingerprint !== artifactSourceFingerprint(currentSource, artifact.path)) {
       problems.push(`${artifact.verificationId}: artifact is stale because the judged source changed: ${artifact.path}`);
     }
   }

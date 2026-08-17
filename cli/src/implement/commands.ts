@@ -15,6 +15,7 @@ import { mechanicalBindings, parseImplementContract, reviewProfile, type Impleme
 import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
 import {
   artifactIntegrityProblems,
+  artifactSourceFingerprint,
   captureBaselineSnapshot,
   captureSourceSnapshot,
   changedPathsSince,
@@ -33,6 +34,7 @@ import {
   IMPLEMENT_SCHEMA,
   type AcceptanceCriterionInvocation,
   type AcLaneResult,
+  type SourceSnapshot,
   type ContractItem,
   type DesignFinding,
   type FidelityCheckResult,
@@ -171,6 +173,16 @@ interface VerificationBudgetView {
   grants: number;
 }
 
+/**
+ * A round that never reached a judge. Prelint, a mechanical command, a stale
+ * or missing artifact - all settle before any lane is invoked, so the round
+ * cost no judge call and its failure is a deterministic exit code rather than
+ * a fresh generative opinion.
+ */
+function calledNoJudge(attempt: UnifiedVerificationAttempt): boolean {
+  return attempt.lanes.acceptance === null && attempt.lanes.fidelity === null && attempt.lanes.risk === null;
+}
+
 function verificationBudget(state: ImplementState, budget: number): VerificationBudgetView {
   let fixAttempts = 0;
   let consecutiveErrors = 0;
@@ -178,7 +190,8 @@ function verificationBudget(state: ImplementState, budget: number): Verification
   // A recorded user grant opens a fresh budget: attempts before the latest
   // grant no longer count against either gauge.
   const countFrom = grants.length === 0 ? 0 : grants[grants.length - 1]!.attemptCountBefore;
-  for (const attempt of state.verificationAttempts.slice(countFrom)) {
+  for (let index = countFrom; index < state.verificationAttempts.length; index += 1) {
+    const attempt = state.verificationAttempts[index]!;
     if (attempt.verdict === "PASS") {
       fixAttempts = 0;
       consecutiveErrors = 0;
@@ -188,9 +201,24 @@ function verificationBudget(state: ImplementState, budget: number): Verification
       consecutiveErrors += 1;
       continue;
     }
-    // Prelint is a free structural correction. Any other settled non-PASS
-    // gave the implementation session something concrete to fix.
+    // Prelint is a free structural correction.
     if (attempt.error?.stage === "prelint") continue;
+    // The budget exists to bound a stage that cannot converge: a fresh
+    // adversarial judge invents new findings every round (PRINCIPLES 13). A
+    // round that called no judge is not that stage - a failing test suite or
+    // a mis-declared binding converges on a fixed exit code - so it is free,
+    // provided the tree or the pinned inputs actually moved since the last
+    // attempt. That proviso is the whole bound: without new work there is no
+    // new answer, and the round is charged exactly like a judged one.
+    // 2026-08-17 herdr-remote-handoff: 3 of the 5 rounds that exhausted the
+    // budget called no judge (17ms mis-declared binding, 20ms stale artifact,
+    // 10.6s own test failure), leaving only 2 real judged rounds and closing
+    // an otherwise finished run as blocked.
+    const previous = index > 0 ? state.verificationAttempts[index - 1]! : null;
+    const advanced = previous !== null
+      && (previous.sourceFingerprint !== attempt.sourceFingerprint
+        || previous.inputFingerprint !== attempt.inputFingerprint);
+    if (calledNoJudge(attempt) && advanced) continue;
     fixAttempts += 1;
     consecutiveErrors = 0;
   }
@@ -470,9 +498,11 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     path: target.relative,
     description,
     ...inspected,
-    sourceFingerprint: source.digest,
+    sourceFingerprint: artifactSourceFingerprint(source, target.relative),
     registeredAt:
-      previous !== undefined && previous.sha256 === inspected.sha256 && previous.sourceFingerprint === source.digest
+      previous !== undefined
+        && previous.sha256 === inspected.sha256
+        && previous.sourceFingerprint === artifactSourceFingerprint(source, target.relative)
         ? previous.registeredAt
         : nowIso(),
   };
@@ -533,7 +563,7 @@ function writeMechanicalLog(
   return relative;
 }
 
-function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord, sourceFingerprint: string, projectRoot: string): void {
+function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord, source: SourceSnapshot, projectRoot: string): void {
   const inspected = inspectArtifactFile(path.join(projectRoot, run.logPath), "log");
   for (const verificationId of run.verificationIds) {
     const artifact: RegisteredArtifact = {
@@ -542,7 +572,7 @@ function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord,
       path: run.logPath,
       description: `mechanical ${run.status}: ${run.command}`,
       ...inspected,
-      sourceFingerprint,
+      sourceFingerprint: artifactSourceFingerprint(source, run.logPath),
       registeredAt: run.finishedAt,
       command: run.command,
       cwd: run.cwd,
@@ -566,7 +596,7 @@ function runMechanicalBindings(
   workRoot: string,
   state: ImplementState,
   bindings: MechanicalBinding[],
-  sourceFingerprint: string,
+  source: SourceSnapshot,
 ): MechanicalRunRecord[] {
   const records: MechanicalRunRecord[] = [];
   const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
@@ -604,7 +634,7 @@ function runMechanicalBindings(
     const record: MechanicalRunRecord = { ...base, logPath };
     progress(`mechanical ${record.status} in ${(record.durationMs / 1000).toFixed(1)}s: ${record.command}`);
     records.push(record);
-    upsertCommandArtifacts(state, record, sourceFingerprint, recordRoot);
+    upsertCommandArtifacts(state, record, source, recordRoot);
     if (record.status === "FAIL") break;
   }
   return records;
@@ -982,7 +1012,7 @@ function setVerificationStatuses(
   state: ImplementState,
   bindings: MechanicalBinding[],
   runs: MechanicalRunRecord[],
-  sourceDigest: string,
+  source: SourceSnapshot,
 ): string[] {
   const problems: string[] = [];
   for (const item of state.verification) {
@@ -998,7 +1028,7 @@ function setVerificationStatuses(
     if (artifacts.length === 0) {
       item.status = "NOT_RUN";
       if (item.requiredForDone) problems.push(`${item.id}: no command binding or registered runtime artifact proves ${item.passIntent}`);
-    } else if (artifacts.every((entry) => entry.sourceFingerprint === sourceDigest)) {
+    } else if (artifacts.every((entry) => entry.sourceFingerprint === artifactSourceFingerprint(source, entry.path))) {
       item.status = "PASS";
     } else {
       item.status = "STALE";
@@ -1114,9 +1144,9 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     });
   }
   const bindings = mechanicalBindings(recordRoot, workRoot, state.verification);
-  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings, source.digest);
+  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings, source);
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
-  const proofProblems = setVerificationStatuses(state, bindings, mechanical, source.digest);
+  const proofProblems = setVerificationStatuses(state, bindings, mechanical, source);
   if (failedMechanical !== undefined || proofProblems.length > 0) {
     const message = failedMechanical !== undefined
       ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`

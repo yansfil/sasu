@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince } from "../../dist/implement/store.js";
+import { artifactSourceFingerprint, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince } from "../../dist/implement/store.js";
 
 test("source freshness is commit-invariant when judged bytes do not change", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-fingerprint-"));
@@ -89,4 +89,27 @@ test("source snapshot excludes only the root agents bookkeeping namespace", () =
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("an artifact's freshness basis excludes its own bytes and nothing else", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-artifact-fingerprint-"));
+  fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(root, "code.txt"), "implementation\n");
+  fs.writeFileSync(path.join(root, "docs", "evidence.md"), "first observation\n");
+  const before = artifactSourceFingerprint(captureSourceSnapshot(root), "docs/evidence.md");
+
+  // The artifact's own file changing must not move its basis: its bytes are
+  // already pinned by the artifact's sha256, so counting them twice only makes
+  // evidence invalidate itself.
+  fs.appendFileSync(path.join(root, "docs", "evidence.md"), "second observation\n");
+  assert.equal(artifactSourceFingerprint(captureSourceSnapshot(root), "docs/evidence.md"), before);
+
+  // Any other file changing still moves it: the artifact proves something
+  // about the tree, and the tree moved.
+  fs.writeFileSync(path.join(root, "code.txt"), "implementation, revised\n");
+  assert.notEqual(artifactSourceFingerprint(captureSourceSnapshot(root), "docs/evidence.md"), before);
+
+  // A path that names no snapshot entry falls back to the whole-tree digest.
+  const snapshot = captureSourceSnapshot(root);
+  assert.equal(artifactSourceFingerprint(snapshot, "docs/never-registered.md"), snapshot.digest);
 });

@@ -433,18 +433,29 @@ test("lane failure and malformed judge output remain independent and block final
   assert.equal(malformed.json.detail.attempt.verdict, "ERROR");
 });
 
-test("registered runtime evidence becomes stale when either file or judged source changes", () => {
+test("registered runtime evidence becomes stale when the file or the rest of the judged source changes", () => {
   const root = makeProject();
   fs.writeFileSync(path.join(root, "runtime.log"), "runtime proof\n");
   startAndClose(root);
-  const registered = run(root, [
+  const register = () => run(root, [
     "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
   ]);
-  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+  assert.equal(register().status, 0);
+
+  // The artifact's own bytes moving is one fact, reported once, by its hash
+  // pin. It is not additionally "stale": an artifact that invalidates itself
+  // makes extending evidence cost a verification round for nothing.
   fs.writeFileSync(path.join(root, "runtime.log"), "changed proof\n");
-  const current = run(root, ["implement", "status"]);
-  assert.match(current.json.detail.artifactProblems.join("\n"), /artifact hash changed/);
-  assert.match(current.json.detail.artifactProblems.join("\n"), /artifact is stale/);
+  const ownChange = run(root, ["implement", "status"]).json.detail.artifactProblems.join("\n");
+  assert.match(ownChange, /artifact hash changed/);
+  assert.doesNotMatch(ownChange, /artifact is stale/);
+
+  // The rest of the judged tree moving still stales it: the artifact is proof
+  // about that tree.
+  assert.equal(register().status, 0);
+  fs.writeFileSync(path.join(root, "source.txt"), "judged source moved\n");
+  const sourceChange = run(root, ["implement", "status"]).json.detail.artifactProblems.join("\n");
+  assert.match(sourceChange, /artifact is stale/);
 });
 
 test("a source change after unified PASS makes finalize refuse the stale attempt", () => {
@@ -1056,4 +1067,64 @@ test("worktree.enabled isolates the first run too", () => {
   const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
   assert.ok(readState(root).worktree, "enabled=true must isolate without an occupant");
+});
+
+test("a round that called no judge is free once the tree moved, and charged when it did not", () => {
+  // 2026-08-17 herdr-remote-handoff: 3 of the 5 rounds that exhausted the
+  // budget never reached a lane (mis-declared binding, stale artifact, own
+  // test failure). Only 2 real judged rounds were spendable and an otherwise
+  // finished run closed as blocked. A failing test suite converges; the
+  // budget exists for the stage that does not (PRINCIPLES 13).
+  const root = makeProject({ testExit: 1 });
+  fs.mkdirSync(path.join(root, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  startAndClose(root);
+
+  // First round: nothing precedes it, so no progress can be proven - charged.
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  assert.equal(run(root, ["implement", "status"]).json.detail.verification.budget.fixAttempts, 1);
+
+  // A real fix lands in the judged tree; the next mechanical failure is free.
+  fs.writeFileSync(path.join(root, "fix-one.txt"), "a real change between rounds\n");
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  const afterFix = run(root, ["implement", "status"]).json.detail.verification.budget;
+  assert.equal(afterFix.fixAttempts, 1, "a no-judge round that followed real work spends nothing");
+  assert.equal(afterFix.budgetExhausted, false);
+
+  // Re-running the identical tree proves no new work, so it is charged and
+  // the loop still terminates.
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  const repeated = run(root, ["implement", "status"]).json.detail.verification.budget;
+  assert.equal(repeated.fixAttempts, 2, "an unchanged re-run is charged exactly like a judged round");
+  assert.equal(repeated.budgetExhausted, true);
+  assert.equal(run(root, ["implement", "verify"]).json.detail.terminalReason, "budget-exhausted");
+  assert.equal(readState(root).verificationAttempts.length, 3);
+});
+
+test("registering evidence does not stale the artifacts registered from the same file", () => {
+  // 2026-08-17 herdr-remote-handoff: V6-V12 all cited docs/evidence/e2e-run.md,
+  // so appending to that document invalidated every artifact drawn from it and
+  // burned two verification rounds on bookkeeping alone.
+  const root = makeProject();
+  const evidence = path.join(root, "docs", "evidence");
+  fs.mkdirSync(evidence, { recursive: true });
+  fs.writeFileSync(path.join(evidence, "run.md"), "first observation\n");
+  startAndClose(root);
+
+  const register = (id) => run(root, [
+    "implement", "artifact", "--id", id, "--kind", "log",
+    "--path", "docs/evidence/run.md", "--description", `runtime evidence for ${id}`,
+  ]);
+  assert.equal(register("V1").status, 0);
+
+  // The document grows, exactly as an implementation session extends its
+  // evidence, and both artifacts are re-registered from the new content.
+  fs.appendFileSync(path.join(evidence, "run.md"), "second observation\n");
+  assert.equal(register("V1").status, 0);
+  assert.equal(register("V2").status, 0);
+
+  const status = run(root, ["implement", "status"]);
+  assert.equal(status.status, 0, status.stderr + status.stdout);
+  const stale = (status.json.detail.artifactProblems ?? []).filter((problem) => problem.includes("stale"));
+  assert.deepEqual(stale, [], "an artifact must not invalidate itself");
 });
