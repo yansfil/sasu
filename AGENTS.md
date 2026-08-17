@@ -95,6 +95,16 @@ completion authority must not be added there.
 `skills/implement/scripts/prd_state_harness.js` is a removed-entrypoint
 tombstone, not an implementation surface.
 
+**Lifecycle hooks.** The pipeline is CLI-owned and registers exactly one hook:
+`scripts/challenge_trigger.mjs` on `UserPromptSubmit`, which turns the `!rv`
+token into a routing instruction for the `challenge` skill plus that skill's
+round budget. It reads the prompt, writes no state, blocks nothing, and exits 0
+on any payload it does not recognise. The adversarial round cap lives in that
+script rather than in the skill document because a bound that exists only as
+prose is a request for discipline, not a guard (items 7 and 13). Any hook this
+installer has ever registered must stay listed in `HARNESS_HOOK_MARKERS`, or a
+later run cannot retract it without disturbing a foreign hook.
+
 **Judge policy.** Judge model routing is project-configurable only through the
 `routine` and `high-risk` profiles in `agents/config.json`.
 Routine calls default to Codex Luna xhigh with Claude Sonnet 5 xhigh fallback.

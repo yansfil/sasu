@@ -30,8 +30,8 @@ test("installer installs canonical skills with correct substitutions and no alia
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
-  assert.equal(report.installed.codex.length, 9);
-  assert.equal(report.installed.claude.length, 9);
+  assert.equal(report.installed.codex.length, 10);
+  assert.equal(report.installed.claude.length, 10);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
@@ -112,9 +112,24 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.ok(fs.existsSync(path.join(home, ".codex", "skills", "implement", "agents")));
   assert.equal(fs.existsSync(path.join(home, ".claude", "skills", "implement", "agents")), false);
 
-  // The implement workflow is CLI-owned and installs no lifecycle hooks.
-  assert.equal(fs.existsSync(path.join(home, ".codex", "hooks.json")), false);
-  assert.equal(fs.existsSync(path.join(home, ".claude", "settings.json")), false);
+  // challenge installs on both runtimes with its harness-owned round cap.
+  const claudeChallenge = fs.readFileSync(path.join(home, ".claude", "skills", "challenge", "SKILL.md"), "utf8");
+  assert.match(claudeChallenge, /round cap \| 2/);
+  assert.match(claudeChallenge, /new \*\*evidence\*\*, never new opinion/);
+  assert.doesNotMatch(claudeChallenge, /\$challenge/);
+  assert.match(fs.readFileSync(path.join(home, ".codex", "skills", "challenge", "SKILL.md"), "utf8"), /\$challenge/);
+
+  // The implement workflow stays CLI-owned; the only lifecycle hook is the
+  // challenge trigger, registered once per runtime.
+  for (const [file, event] of [
+    [path.join(home, ".codex", "hooks.json"), "UserPromptSubmit"],
+    [path.join(home, ".claude", "settings.json"), "UserPromptSubmit"],
+  ]) {
+    const config = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.deepEqual(Object.keys(config.hooks), [event]);
+    assert.equal(config.hooks[event].length, 1);
+    assert.match(config.hooks[event][0].hooks[0].command, /challenge_trigger\.mjs$/);
+  }
 });
 
 test("installer removes owned legacy directories and keeps foreign ones", () => {
@@ -180,9 +195,31 @@ test("installer retires legacy harness hooks without touching foreign hooks", ()
   runInstaller(home);
 
   const codex = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
-  assert.deepEqual(codex.hooks, { Stop: [foreign] });
+  assert.deepEqual(codex.hooks.Stop, [foreign]);
+  assert.equal(codex.hooks.PreToolUse, undefined);
   const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.deepEqual(claude.hooks, { PostToolUse: [foreign] });
+  assert.deepEqual(claude.hooks.PostToolUse, [foreign]);
+  assert.equal(claude.hooks.Stop, undefined);
+});
+
+test("installer retracts a stale challenge trigger and keeps foreign UserPromptSubmit hooks", () => {
+  const home = freshHome();
+  fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+  const foreign = { hooks: [{ type: "command", command: "echo unrelated" }] };
+  // A trigger registered by an earlier checkout at a different path: ours by
+  // marker, so it must be replaced rather than duplicated.
+  const stale = { hooks: [{ type: "command", command: "node /old/checkout/scripts/challenge_trigger.mjs", timeout: 10 }] };
+  fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({
+    hooks: { UserPromptSubmit: [foreign, stale] },
+  }, null, 2));
+
+  runInstaller(home);
+
+  const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+  assert.equal(claude.hooks.UserPromptSubmit.length, 2);
+  assert.deepEqual(claude.hooks.UserPromptSubmit[0], foreign);
+  assert.match(claude.hooks.UserPromptSubmit[1].hooks[0].command, /challenge_trigger\.mjs$/);
+  assert.doesNotMatch(claude.hooks.UserPromptSubmit[1].hooks[0].command, /\/old\/checkout\//);
 });
 
 test("installer refuses to overwrite a foreign skill directory", () => {

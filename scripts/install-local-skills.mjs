@@ -29,7 +29,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
 
-const SKILL_NAMES = ["interview-me", "gen-prd", "implement", "benchmark-implement", "ship", "sasu-setup", "please", "remember", "quick"];
+const SKILL_NAMES = ["interview-me", "gen-prd", "implement", "benchmark-implement", "ship", "sasu-setup", "please", "remember", "quick", "challenge"];
 
 // Pre-rename install directories that this pipeline used to own, including
 // the retired ho-* compatibility aliases.
@@ -55,7 +55,7 @@ const TARGETS = {
 function substituteForClaude(text) {
   const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
   // Invocation tokens: $interview-me -> /interview-me.
-  return roots.replace(/\$(interview-me|gen-prd|implement|benchmark-implement|ship|sasu-setup|please|remember|quick)\b/g, "/$1");
+  return roots.replace(/\$(interview-me|gen-prd|implement|benchmark-implement|ship|sasu-setup|please|remember|quick|challenge)\b/g, "/$1");
 }
 
 function ensureDir(dir) {
@@ -154,6 +154,18 @@ function cleanupLegacyDirs(targetKey) {
   return removed;
 }
 
+// Script basenames that mark a hook entry as ours. Every hook this installer
+// has ever registered must stay listed here: the marker is the only way a
+// later run can retract an entry it no longer wants without touching a hook
+// somebody else installed.
+const HARNESS_HOOK_MARKERS = ["prd_state_harness.js", "challenge_trigger.mjs"];
+
+function isHarnessOwnedHook(matcher) {
+  if (!Array.isArray(matcher?.hooks)) return false;
+  return matcher.hooks.some(hook =>
+    typeof hook?.command === "string" && HARNESS_HOOK_MARKERS.some(marker => hook.command.includes(marker)));
+}
+
 // Idempotently reconcile harness hook entries in a Claude/Codex-style hooks
 // config. An empty desired set retires every legacy harness hook while
 // preserving foreign entries and unrelated settings.
@@ -169,9 +181,7 @@ function ensureHooks(file, entriesByEvent) {
   for (const event of Object.keys(config.hooks)) {
     if (Object.prototype.hasOwnProperty.call(entriesByEvent, event)) continue;
     const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter(matcher =>
-      !(Array.isArray(matcher.hooks) && matcher.hooks.some(hook =>
-        typeof hook.command === "string" && hook.command.includes("prd_state_harness.js"))));
+    const kept = existing.filter(matcher => !isHarnessOwnedHook(matcher));
     if (kept.length !== existing.length) {
       if (kept.length) config.hooks[event] = kept;
       else delete config.hooks[event];
@@ -180,9 +190,7 @@ function ensureHooks(file, entriesByEvent) {
   }
   for (const [event, command] of Object.entries(entriesByEvent)) {
     const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter(matcher =>
-      !(Array.isArray(matcher.hooks) && matcher.hooks.some(hook =>
-        typeof hook.command === "string" && hook.command.includes("prd_state_harness.js"))));
+    const kept = existing.filter(matcher => !isHarnessOwnedHook(matcher));
     const desired = { hooks: [{ type: "command", command, timeout: 10 }] };
     const next = [...kept, desired];
     if (JSON.stringify(next) !== JSON.stringify(existing)) {
@@ -240,9 +248,17 @@ const removedLegacy = {
   claude: cleanupLegacyDirs("claude"),
 };
 
+// The implement pipeline stays CLI-owned and registers no lifecycle hooks. The
+// one exception is the challenge trigger: it is a UserPromptSubmit reader that
+// writes nothing and blocks nothing, and it exists in the harness rather than
+// in a skill document because the adversarial round cap must be a guard, not a
+// request for discipline (PRINCIPLES items 7 and 13).
+const challengeTriggerCommand = `node ${path.join(repoRoot, "scripts", "challenge_trigger.mjs")}`;
+const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand };
+
 const hooks = {
-  codex: ensureHooks(path.join(home, ".codex", "hooks.json"), {}),
-  claude: ensureHooks(path.join(home, ".claude", "settings.json"), {}),
+  codex: ensureHooks(path.join(home, ".codex", "hooks.json"), lifecycleHooks),
+  claude: ensureHooks(path.join(home, ".claude", "settings.json"), lifecycleHooks),
 };
 
 process.stdout.write(JSON.stringify({
