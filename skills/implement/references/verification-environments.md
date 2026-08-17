@@ -15,7 +15,7 @@ Pick the driver, wrap it in a command, register the artifacts - the verify pipel
 | Terminal TUI | tmux scripting | `tmux send-keys` for input, `capture-pane` output saved to a file as evidence; the script creates and kills its own session. |
 | Electron app | playwright's Electron driver | Same shape as Web UI; no separate tool. |
 | Mobile app | maestro YAML flows | `maestro test flow.yaml` against a simulator/emulator the script boots; YAML flows live in the repo as test assets. |
-| Native desktop app | none scriptable - last resort below | Prefer extracting logic behind a testable boundary; a computer-use agent is evidence collection for human review, never a `check` oracle. |
+| Native desktop app | none scriptable - last resort below | Prefer extracting logic behind a testable boundary; a computer-use agent is evidence collection for human review, never a `check` oracle. Pin which build the capture came from - see Which Build Am I Looking At. |
 
 Rules that hold across every row:
 
@@ -27,6 +27,24 @@ Rules that hold across every row:
 - A "zero-dependency" product guardrail covers runtime dependencies, not test tooling; a playwright devDependency does not violate it.
 - Nondeterministic drivers (computer-use, screen-reading agents) cannot be `check` oracles.
   Their output may be registered as evidence for a human-verification row, nothing stronger.
+
+## Which Build Am I Looking At
+
+A desktop app has no URL, so a capture carries no proof of which binary produced it.
+Two failure modes, both observed on 2026-08-17 (herdr-pet):
+
+- A stale installed bundle (`/Applications/<App>.app`) running next to a dev build.
+  Tray actions, window state, and show/hide cross-talk between the instances, and every source fix looks like it never applied.
+  That session burned three rounds on "the pet is not visible" and "a big window opens instead of the pet"; neither was a code bug.
+- Code existence reported as render evidence.
+  "The menu bar icon exists in the code" is not a capture of the icon on screen.
+
+So for any desktop V row whose evidence is a capture:
+
+- Assert a single running instance before capturing (`pgrep -fl <executable>` must return one line), and kill the rest.
+- Capture against the build the acceptance criterion is about.
+  If the criterion is about the shipped app, build and replace the installed bundle first; a dev-build capture does not close it.
+- Record which build the artifact came from in the artifact description, not just what it shows.
 
 ## Reaching The Evidence State
 
