@@ -1,7 +1,7 @@
 // Session-identity hygiene for tests that spawn the harness.
 //
 // The harness resolves "which session am I?" from the environment
-// (state_store.js SESSION_ID_ENV_KEYS), so a spawn that inherits the
+// (cli/src/runs/session.ts SESSION_ID_ENV_KEYS), so a spawn that inherits the
 // developer's shell runs as the developer's session. That made suite results
 // depend on who ran them: a run bound to "session-a" was mutated without
 // refusal by whatever ambient identity happened to be exported, and the

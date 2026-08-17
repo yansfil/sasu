@@ -127,8 +127,14 @@ function stub(root, profile = "standard") {
   return { file, capture };
 }
 
+// Spawns must not inherit the developer's own session identity: ownership is
+// derived from these env keys (cli/src/runs/session.ts), and an ambient id
+// once let 33 tests pass by accident (tests/helpers/session_env.mjs).
+const SESSION_ID_ENV_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
+
 function run(root, args, options = {}) {
   const env = { ...process.env, ...(options.env ?? {}) };
+  for (const key of SESSION_ID_ENV_KEYS) if (!(key in (options.env ?? {}))) delete env[key];
   const executed = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd: root, encoding: "utf8", env });
   let json = null;
   try {
@@ -924,4 +930,130 @@ test("an unbacked acceptance PASS with a known-zero read trace is invalidated", 
   const attested = run(root, ["implement", "verify"], { env: { ...env, SASU_JUDGE_STUB_TOOL_ROUNDS: "1" } });
   assert.equal(attested.status, 0, attested.stderr + attested.stdout);
   assert.equal(attested.json.detail.attempt.verdict, "PASS");
+});
+
+test("per-session pointers keep two sessions' bare commands on their own runs", () => {
+  const root = makeProject();
+  fs.mkdirSync(path.join(root, "agents", "prd", "fixture-b"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "prd", "fixture-b", "prd.md"), prd());
+  const sessionA = { CLAUDE_CODE_SESSION_ID: "session-a" };
+  const sessionB = { CLAUDE_CODE_SESSION_ID: "session-b" };
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: sessionA }).status, 0);
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture-b/prd.md"], { env: sessionB }).status, 0);
+  // Each session's bare status resolves its own run, not the last one started.
+  const statusA = run(root, ["implement", "status"], { env: sessionA });
+  assert.equal(statusA.status, 0, statusA.stderr + statusA.stdout);
+  assert.match(statusA.json.message, /^fixture:/);
+  const statusB = run(root, ["implement", "status"], { env: sessionB });
+  assert.match(statusB.json.message, /^fixture-b:/);
+  assert.ok(fs.existsSync(path.join(root, "agents", "runs", ".active", "session-a.json")));
+  // No shared singleton is written by session-scoped starts, so there is
+  // nothing for a later session to steal.
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", ".prd-implement-active.json")), false);
+  // A session with no run of its own gets an explicit menu, never a guess.
+  const statusC = run(root, ["implement", "status"], { env: { CLAUDE_CODE_SESSION_ID: "session-c" } });
+  assert.equal(statusC.status, 2);
+  assert.match(statusC.json.message, /existing runs: fixture, fixture-b/);
+});
+
+test("a run owned by another session refuses mutation without --adopt and records the takeover with it", () => {
+  const root = makeProject();
+  const sessionA = { CLAUDE_CODE_SESSION_ID: "session-a" };
+  const sessionB = { CLAUDE_CODE_SESSION_ID: "session-b" };
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: sessionA }).status, 0);
+  const refused = run(root, ["implement", "task", "--id", "T1", "--evidence", "done", "--slug", "fixture"], { env: sessionB });
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /owned by another session \(session-a\)/);
+  assert.equal(readState(root).ownerSessionId, "session-a");
+  const adopted = run(
+    root,
+    ["implement", "task", "--id", "T1", "--evidence", "done", "--slug", "fixture", "--adopt", "user said take it over"],
+    { env: sessionB },
+  );
+  assert.equal(adopted.status, 0, adopted.stderr + adopted.stdout);
+  const state = readState(root);
+  assert.equal(state.ownerSessionId, "session-b");
+  assert.deepEqual(
+    state.adoptions.map((entry) => [entry.fromSessionId, entry.evidence]),
+    [["session-a", "user said take it over"]],
+  );
+  // Reads stay open to every session: ownership guards mutation only.
+  assert.equal(run(root, ["implement", "status", "--slug", "fixture"], { env: sessionA }).status, 0);
+  // The adoption reaches both human surfaces of the close: fingerprints
+  // deliberately ignore ownership, so receipt + report are where it shows.
+  const { file, capture } = stub(root);
+  const judgeEnv = { ...sessionB, SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  const verified = run(root, ["implement", "verify"], { env: judgeEnv });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  const finalized = run(root, ["implement", "finalize"], { env: sessionB });
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", "fixture", "receipt.json"), "utf8"));
+  assert.equal(receipt.adoptions.length, 1);
+  assert.equal(receipt.adoptions[0].fromSessionId, "session-a");
+  const report = fs.readFileSync(path.join(root, "agents", "runs", "fixture", "implementation-result.md"), "utf8");
+  assert.match(report, /ownership-adopted: taken over from session session-a/);
+});
+
+test("a sessionless run stays on the shared pointer and is claimed by its first mutating session", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]).status, 0);
+  assert.ok(fs.existsSync(path.join(root, "agents", "runs", ".prd-implement-active.json")));
+  assert.equal(readState(root).ownerSessionId, null);
+  // A session with no pointer of its own falls back to the sessionless run,
+  // and its first mutation claims ownership, closing the unowned window that
+  // let a bystander session become a run's owner (pokemon-rpg-run-1).
+  const claimed = run(root, ["implement", "task", "--id", "T1", "--evidence", "done"], { env: { CLAUDE_CODE_SESSION_ID: "session-c" } });
+  assert.equal(claimed.status, 0, claimed.stderr + claimed.stdout);
+  assert.equal(readState(root).ownerSessionId, "session-c");
+});
+
+test("a second start in an occupied tree diverts to an isolated worktree and completes there", () => {
+  const root = makeProject();
+  fs.mkdirSync(path.join(root, "agents", "prd", "fixture-b"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "prd", "fixture-b", "prd.md"), prd());
+  const a = { CLAUDE_CODE_SESSION_ID: "session-a" };
+  const b = { CLAUDE_CODE_SESSION_ID: "session-b" };
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: a }).status, 0);
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture-b/prd.md"], { env: b });
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  assert.match(started.json.message, /isolated worktree/);
+  const stateB = readState(root, "fixture-b");
+  assert.ok(stateB.worktree, "second run must be isolated");
+  const wt = stateB.worktree.path;
+  assert.equal(stateB.worktree.branch, "prd/fixture-b");
+  assert.ok(fs.existsSync(path.join(wt, "package.json")), "worktree carries committed sources");
+  // Records live in the record tree, never in the worktree.
+  assert.ok(fs.existsSync(path.join(root, "agents", "runs", "fixture-b", "state.json")));
+  assert.equal(fs.existsSync(path.join(wt, "agents", "runs", "fixture-b")), false);
+  // Bare commands typed from inside the worktree resolve the record tree.
+  const inside = run(wt, ["implement", "status"], { env: b });
+  assert.equal(inside.status, 0, inside.stderr + inside.stdout);
+  assert.match(inside.json.message, /^fixture-b:/);
+  // Session B implements in the worktree while the record tree keeps churning.
+  fs.writeFileSync(path.join(wt, "beta.txt"), "beta implementation\n");
+  fs.writeFileSync(path.join(root, "alpha.txt"), "concurrent unrelated edit in the record tree\n");
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented in worktree"], { env: b }).status, 0);
+  const { file, capture } = stub(root);
+  const env = { ...b, SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  assert.equal(verified.json.detail.attempt.verdict, "PASS", "record-tree churn must not stale the isolated run");
+  const finalized = run(root, ["implement", "finalize"], { env: b });
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  assert.match(finalized.json.message, /branch prd\/fixture-b/);
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", "fixture-b", "receipt.json"), "utf8"));
+  assert.equal(receipt.worktree.branch, "prd/fixture-b");
+  // A removed worktree fails loudly instead of silently judging the record tree.
+  fs.rmSync(wt, { recursive: true, force: true });
+  const missing = run(root, ["implement", "status"], { env: b });
+  assert.equal(missing.status, 2);
+  assert.match(missing.json.message, /worktree missing/);
+});
+
+test("worktree.enabled isolates the first run too", () => {
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: true } }));
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  assert.ok(readState(root).worktree, "enabled=true must isolate without an occupant");
 });

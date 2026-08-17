@@ -1,6 +1,21 @@
 # Worktrees And Delivery
 
-Read this reference when delivery is `pr`, a worktree is configured, or post-receipt delivery is requested.
+Read this reference when delivery is `pr`, a run reports a worktree, or post-receipt delivery is requested.
+
+## Worktree Isolation
+
+The harness, not the agent, decides and creates worktrees at `sasu implement start`:
+
+- One working tree hosts at most one active in-place run.
+  A start in an occupied tree is automatically isolated into a fresh git worktree (branch `prd/<slug>` at HEAD), with the configured `worktree.link`/`copy`/`setup` preparation applied.
+- `worktree.enabled: true` isolates every run from the start.
+- The start response reports `workingRoot`.
+  Edit files there; `sasu` commands work from either tree and always operate on the run's own trees.
+
+Records never move: `state.json`, receipt, PRD, config, and rules stay in the record tree's `agents/` namespace.
+The worktree holds only the judged source.
+Do not remove a run's worktree before its branch is merged or shipped; uncommitted work there is not recoverable, while the run record survives regardless.
+A local-delivery run ends on its branch - the finalize response names it and the merge command.
 
 ## Boundary
 

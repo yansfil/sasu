@@ -247,12 +247,14 @@ function commandsForVerification(entry: VerificationItem, commands: DetectedComm
   return [];
 }
 
-export function mechanicalBindings(projectRoot: string, verification: VerificationItem[]): MechanicalBinding[] {
+export function mechanicalBindings(configRoot: string, treeRoot: string, verification: VerificationItem[]): MechanicalBinding[] {
   const byKey = new Map<string, MechanicalBinding>();
   // An explicit project config is the only reliable way to bind a nested
   // product's checks when the repository also contains harness checks.
-  const commands = configuredCommands(projectRoot);
-  const resolvedCommands = commands.length > 0 ? commands : detectedCommands(projectRoot);
+  // Config lives in the record tree; command detection inspects the tree the
+  // commands will actually run in (the run's worktree when isolated).
+  const commands = configuredCommands(configRoot);
+  const resolvedCommands = commands.length > 0 ? commands : detectedCommands(treeRoot);
   for (const item of verification) {
     for (const command of commandsForVerification(item, resolvedCommands)) {
       const key = `${command.cwd}\0${command.command}`;

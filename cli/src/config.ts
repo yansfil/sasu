@@ -30,9 +30,30 @@ export interface VerifyConfig {
   commandTimeoutMs: number;
 }
 
+/**
+ * Worktree isolation for implement runs. This is the SAME config surface the
+ * ship/sasu-setup skills already interview for (worktree.enabled/root/link/
+ * copy/setup) - promoted from skill-doc prose to code so the harness, not the
+ * agent, creates and prepares the worktree (PRINCIPLES 7). `enabled: true`
+ * isolates every run; `false` still isolates a run whose target tree already
+ * hosts an active in-place run (one working tree, one active run).
+ */
+export interface WorktreeConfig {
+  enabled: boolean;
+  /** Worktree parent directory; null means `../<repo-basename>.worktrees`. */
+  root: string | null;
+  /** Read-only shared files symlinked from the record tree (.env, certs). */
+  link: string[];
+  /** Files the app writes to, copied per worktree (.dev.vars, local DBs). */
+  copy: string[];
+  /** One-time preparation commands run in the new worktree (pnpm install). */
+  setup: string[];
+}
+
 export interface SasuConfig {
   judge: JudgeConfig;
   verify: VerifyConfig;
+  worktree: WorktreeConfig;
   configPath: string | null;
 }
 
@@ -136,9 +157,29 @@ export function loadConfig(projectRoot: string): SasuConfig {
   if (!Number.isInteger(commandTimeoutMs) || commandTimeoutMs <= 0) {
     throw new Error(`verify.commandTimeoutMs must be a positive integer, got: ${String(commandTimeoutMs)}`);
   }
+  const worktreeRaw = (raw["worktree"] ?? {}) as Partial<WorktreeConfig>;
+  const stringList = (value: unknown, label: string): string[] => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
+      throw new Error(`${label} must be an array of non-empty strings`);
+    }
+    return value as string[];
+  };
+  const worktree: WorktreeConfig = {
+    enabled: worktreeRaw.enabled ?? false,
+    root: worktreeRaw.root ?? null,
+    link: stringList(worktreeRaw.link, "worktree.link"),
+    copy: stringList(worktreeRaw.copy, "worktree.copy"),
+    setup: stringList(worktreeRaw.setup, "worktree.setup"),
+  };
+  if (typeof worktree.enabled !== "boolean") throw new Error("worktree.enabled must be a boolean");
+  if (worktree.root !== null && (typeof worktree.root !== "string" || worktree.root.trim() === "")) {
+    throw new Error("worktree.root must be a non-empty string or null");
+  }
   return {
     judge,
     verify: { commands: { ...(verifyRaw.commands ?? {}) }, commandTimeoutMs },
+    worktree,
     configPath: found,
   };
 }

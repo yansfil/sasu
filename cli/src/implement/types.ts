@@ -176,7 +176,19 @@ export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   status: "active" | "complete" | "blocked";
   topicSlug: string;
+  /**
+   * The RECORD tree: where agents/ bookkeeping (this state, receipt, PRD,
+   * config, rules) lives and where judges read their pinned inputs from.
+   */
   projectRoot: string;
+  /**
+   * The JUDGED tree, when the run is isolated into a git worktree. Snapshots,
+   * baselines, mechanical commands, and judged diffs all read this tree;
+   * `null` means the run works in place and the record tree is also the
+   * judged tree. Records never live here: removing the worktree may lose
+   * uncommitted code but never the run's record.
+   */
+  worktree?: { path: string; branch: string } | null;
   runDir: string;
   prdPath: string;
   prd: {
@@ -188,6 +200,18 @@ export interface ImplementState {
     sourceIntake: string;
   };
   initialSource: SourceSnapshot;
+  // Session allowed to mutate this run, stamped at start from the shared
+  // resolver (runs/session.ts). This is the ONLY record of ownership: the v2
+  // guard kept three copies and an `||` fallback, and one env-less write was
+  // enough to silently move authority between them (2026-08-12
+  // pokemon-rpg-run-1). `null` means started without a session identity; the
+  // first mutating session claims such a run so bare-shell/CI runs stay
+  // finishable. Absent on states recorded before ownership existed (= null).
+  ownerSessionId?: string | null;
+  // User-approved takeovers of a run owned by another session, evidence
+  // verbatim like budgetGrants. Not a deviation: ownership is process
+  // metadata, not judged material, and must not stale a settled verdict.
+  adoptions?: { at: string; fromSessionId: string; evidence: string }[];
   tasks: TaskItem[];
   requirements: ContractItem[];
   acceptanceCriteria: ContractItem[];
@@ -215,6 +239,14 @@ export interface ImplementActivePointer {
   schema: typeof IMPLEMENT_ACTIVE_SCHEMA;
   statePath: string;
   topicSlug: string;
+  /**
+   * Absolute record-tree root, present only on pointers written OUTSIDE the
+   * record tree (the copy inside a run's worktree): `statePath` then resolves
+   * against it, so bare commands typed from inside the worktree reach the
+   * same record every other surface reads. Pointers inside the record tree
+   * omit it and keep resolving relative to their own tree.
+   */
+  projectRoot?: string;
   updatedAt: string;
 }
 

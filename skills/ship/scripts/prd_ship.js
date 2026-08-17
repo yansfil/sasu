@@ -30,6 +30,19 @@ const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
 const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
 const ACTIVE_PATH = path.join(RUNS_ROOT_REL, ".prd-implement-active.json");
 const LEGACY_ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
+const SESSION_POINTER_DIR_REL = path.join(RUNS_ROOT_REL, ".active");
+
+// Session-scoped pointer mirror of cli/src/runs/session.ts + runs/paths.ts;
+// the key list and sanitizer must match SESSION_ID_ENV_KEYS there. Kept local
+// so the ship skill stays installable without an implement checkout.
+const SESSION_ID_ENV_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
+function currentSessionId() {
+  for (const key of SESSION_ID_ENV_KEYS) {
+    const value = (process.env[key] || "").trim();
+    if (value) return value.replace(/[^A-Za-z0-9._-]/g, "-");
+  }
+  return null;
+}
 
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
@@ -243,11 +256,14 @@ function resolveState(options) {
   const repoRoot = findGitRoot(process.cwd());
   let statePath = options.state ? resolveInput(options.state, repoRoot) : null;
   if (!statePath) {
-    let activePath = path.join(repoRoot, ACTIVE_PATH);
+    const sessionId = currentSessionId();
+    let activePath = sessionId === null ? null : path.join(repoRoot, SESSION_POINTER_DIR_REL, `${sessionId}.json`);
+    if (activePath === null || !fs.existsSync(activePath)) activePath = path.join(repoRoot, ACTIVE_PATH);
     if (!fs.existsSync(activePath)) activePath = path.join(repoRoot, LEGACY_ACTIVE_PATH);
-    if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active file at ${ACTIVE_PATH}`);
+    if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active pointer for this session; pass --state <path>`);
     const active = readJson(activePath);
-    statePath = resolveInput(active.statePath, repoRoot);
+    // A pointer inside a run's worktree names its record tree explicitly.
+    statePath = resolveInput(active.statePath, active.projectRoot || repoRoot);
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
@@ -257,7 +273,14 @@ function resolveState(options) {
   if (!fs.existsSync(receiptPath)) throw new Error(`Receipt file not found: ${receiptPath}`);
   const receipt = readJson(receiptPath);
   return {
-    repoRoot: state.projectRoot ? resolveInput(state.projectRoot, repoRoot) : repoRoot,
+    // Git operations (staging, commit, push) happen in the JUDGED tree: the
+    // run's worktree when isolated, else the record tree. Records (state,
+    // receipt, result) are always read from the record tree via statePath.
+    repoRoot: state.worktree && state.worktree.path
+      ? resolveInput(state.worktree.path, repoRoot)
+      : state.projectRoot
+        ? resolveInput(state.projectRoot, repoRoot)
+        : repoRoot,
     statePath,
     stateDir,
     state,

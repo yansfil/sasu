@@ -9,6 +9,8 @@ import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResul
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateSemanticVerdict } from "../judge/types";
 import { runDirRel } from "../runs/paths";
+import { currentSessionId } from "../runs/session";
+import { provisionWorktree } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
 import {
@@ -20,6 +22,7 @@ import {
   normalizeProjectPath,
   nowIso,
   persistState,
+  requireWorkRoot,
   sha256,
   statePathFor,
   writeActivePointer,
@@ -235,6 +238,9 @@ function publicState(
     status: state.status,
     topicSlug: state.topicSlug,
     prdPath: state.prdPath,
+    // The judged tree: agents edit files here, never in the record tree.
+    workingRoot: state.worktree?.path ?? state.projectRoot,
+    worktree: state.worktree ?? null,
     reviewProfile: state.prd.reviewProfile,
     counts: {
       tasksOpen: state.tasks.filter((entry) => entry.status !== "complete").length,
@@ -250,6 +256,30 @@ function publicState(
     artifacts: state.artifacts,
     completion: state.completion,
   };
+}
+
+/**
+ * One working tree hosts at most one active in-place run: a second run in
+ * the same tree shares its freshness digests and judged diff, so both runs'
+ * verifications poison each other (2026-08-17 dual-implement live run: two
+ * concurrent codex sessions, both FAILed fidelity on each other's files).
+ * The occupant is read from the harness's own records, never guessed.
+ */
+function activeInPlaceRun(projectRoot: string): string | null {
+  const runsDir = path.join(projectRoot, "agents", "runs");
+  if (!fs.existsSync(runsDir)) return null;
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const statePath = path.join(runsDir, entry.name, "state.json");
+    if (!fs.existsSync(statePath)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(statePath, "utf8")) as Partial<ImplementState>;
+      if (parsed.schema === IMPLEMENT_SCHEMA && parsed.status === "active" && (parsed.worktree ?? null) === null) return entry.name;
+    } catch {
+      // A malformed state is not an occupancy signal.
+    }
+  }
+  return null;
 }
 
 function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -279,12 +309,21 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     }
     throw new Error(`implement state already exists for ${slug} (${existingSchema}); choose a new slug or remove the obsolete run explicitly`);
   }
+  // Isolation decision: worktree.enabled isolates every run; otherwise a run
+  // only diverts when this tree already hosts an active in-place run.
+  const occupant = activeInPlaceRun(projectRoot);
+  const isolate = config.worktree.enabled || occupant !== null;
+  const runDirAbsolute = path.join(projectRoot, runDirRel(slug));
+  const worktree = isolate
+    ? provisionWorktree(projectRoot, slug, runDirAbsolute, config.worktree, config.verify.commandTimeoutMs)
+    : null;
   const createdAt = nowIso();
   const state: ImplementState = {
     schema: IMPLEMENT_SCHEMA,
     status: "active",
     topicSlug: slug,
     projectRoot,
+    worktree,
     runDir: runDirRel(slug),
     prdPath: prd.relative,
     prd: {
@@ -297,7 +336,9 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       reviewRationale: contract.frontmatter["review_rationale"] ?? "",
       sourceIntake: contract.frontmatter["source_intake"] ?? "",
     },
-    initialSource: captureBaselineSnapshot(projectRoot),
+    initialSource: captureBaselineSnapshot(worktree?.path ?? projectRoot),
+    ownerSessionId: currentSessionId(),
+    adoptions: [],
     tasks: contract.tasks,
     requirements: contract.requirements,
     acceptanceCriteria: contract.acceptanceCriteria,
@@ -313,12 +354,45 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   fs.mkdirSync(path.join(projectRoot, state.runDir, "artifacts", "logs"), { recursive: true });
   writeJsonAtomic(statePath, state);
   writeActivePointer(projectRoot, state);
-  return result("start", true, `implement run started: ${slug}`, publicState(state, config.judge.retryBudget));
+  const message = worktree === null
+    ? `implement run started: ${slug}`
+    : `implement run started: ${slug} in isolated worktree ${worktree.path} (branch ${worktree.branch})` +
+      `${occupant !== null ? ` because run '${occupant}' is active in this tree` : ""} - implement the tasks there; records stay in this tree's agents/`;
+  return result("start", true, message, publicState(state, config.judge.retryBudget));
+}
+
+/**
+ * Ownership guard for every mutating command; `status` stays open. The run's
+ * owner is `state.ownerSessionId` alone (see types.ts for the incident that
+ * bans a second copy). An unowned run is claimed by the first mutating
+ * session - the claim rides the command's own persist, so a command that
+ * fails leaves no trace. A run owned by another session is refused unless
+ * the user's approval arrives verbatim via --adopt, the same shape as every
+ * other user-granted waiver (--grant-budget, --allow-unapproved-prd).
+ */
+function assertRunOwnership(statePath: string, state: ImplementState, args: ImplementArgs): void {
+  const sessionId = currentSessionId();
+  const owner = state.ownerSessionId ?? null;
+  if (owner === sessionId) return;
+  if (owner === null) {
+    state.ownerSessionId = sessionId;
+    return;
+  }
+  const evidence = flag(args, "adopt")?.trim() ?? "";
+  if (evidence === "") {
+    throw new Error(
+      `run '${state.topicSlug}' is owned by another session (${owner}); if the user approved taking it over, re-run with --adopt "<the user's verbatim words>"`,
+    );
+  }
+  state.adoptions = [...(state.adoptions ?? []), { at: nowIso(), fromSessionId: owner, evidence }];
+  state.ownerSessionId = sessionId;
+  persistState(statePath, state);
 }
 
 function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  const config = loadConfig(projectRoot);
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  const config = loadConfig(state.projectRoot);
+  assertRunOwnership(statePath, state, args);
   if (state.status === "complete") throw new Error("implement run is already complete");
   const id = requiredFlag(args, "id").toUpperCase();
   const nextStatus = flag(args, "status") ?? "complete";
@@ -377,15 +451,18 @@ function inspectArtifactFile(absolute: string, kind: string): { sha256: string; 
 
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOwnership(statePath, state, args);
   if (state.status === "complete") throw new Error("implement run is already complete");
   const verificationId = requiredFlag(args, "id").toUpperCase();
   if (!state.verification.some((entry) => entry.id === verificationId)) throw new Error(`unknown verification item: ${verificationId}`);
   const kind = requiredFlag(args, "kind").toLowerCase();
   if (!ARTIFACT_KINDS.has(kind) || kind === "command-log") throw new Error(`--kind must be one of: screenshot, image, browser, api, db, log, file`);
-  const target = normalizeProjectPath(projectRoot, requiredFlag(args, "path"));
+  // Artifact paths live in the RECORD tree (normally under the run dir):
+  // the receipt cites them, and the record must outlive the worktree.
+  const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
   const description = requiredFlag(args, "description").trim();
   const inspected = inspectArtifactFile(target.absolute, kind);
-  const source = captureSourceSnapshot(projectRoot);
+  const source = captureSourceSnapshot(requireWorkRoot(state));
   const previous = state.artifacts.find((entry) => entry.verificationId === verificationId && entry.path === target.relative);
   const registered: RegisteredArtifact = {
     verificationId,
@@ -406,16 +483,17 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 }
 
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  const config = loadConfig(projectRoot);
   const { state } = loadState(projectRoot, stateOptions(args));
-  const source = captureSourceSnapshot(projectRoot);
-  const problems = artifactIntegrityProblems(projectRoot, state, source);
-  const prdAbsolute = normalizeProjectPath(projectRoot, state.prdPath).absolute;
+  const recordRoot = state.projectRoot;
+  const config = loadConfig(recordRoot);
+  const source = captureSourceSnapshot(requireWorkRoot(state));
+  const problems = artifactIntegrityProblems(recordRoot, state, source);
+  const prdAbsolute = normalizeProjectPath(recordRoot, state.prdPath).absolute;
   if (!fs.existsSync(prdAbsolute)) throw new Error(`PRD missing: ${state.prdPath}`);
   const prdText = fs.readFileSync(prdAbsolute, "utf8");
   const prdStale = sha256(prdText) !== state.prd.sha256;
   const contract = parseImplementContract(prdText);
-  const sourceContext = fidelitySource(projectRoot, contract, specGateIsFresh(projectRoot, state));
+  const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const currentInput = inputFingerprint(state, source.digest, fidelityInput);
   return result("status", true, `${state.topicSlug}: ${state.status}`, {
@@ -483,14 +561,20 @@ function progress(line: string): void {
   process.stderr.write(`[implement:verify] ${line}\n`);
 }
 
-function runMechanicalBindings(projectRoot: string, state: ImplementState, bindings: MechanicalBinding[], sourceFingerprint: string): MechanicalRunRecord[] {
+function runMechanicalBindings(
+  recordRoot: string,
+  workRoot: string,
+  state: ImplementState,
+  bindings: MechanicalBinding[],
+  sourceFingerprint: string,
+): MechanicalRunRecord[] {
   const records: MechanicalRunRecord[] = [];
-  const timeoutMs = loadConfig(projectRoot).verify.commandTimeoutMs;
+  const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
   for (const binding of bindings) {
-    const before = captureSourceSnapshot(projectRoot);
+    const before = captureSourceSnapshot(workRoot);
     const started = Date.now();
     const startedAt = nowIso();
-    const commandCwd = normalizeProjectPath(projectRoot, binding.cwd).absolute;
+    const commandCwd = normalizeProjectPath(workRoot, binding.cwd).absolute;
     const executed = spawnSync(binding.command, {
       cwd: commandCwd,
       shell: true,
@@ -499,7 +583,7 @@ function runMechanicalBindings(projectRoot: string, state: ImplementState, bindi
       timeout: timeoutMs,
       env: process.env,
     });
-    const after = captureSourceSnapshot(projectRoot);
+    const after = captureSourceSnapshot(workRoot);
     const timedOut = (executed.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || executed.signal === "SIGTERM";
     const mutated = before.digest !== after.digest;
     const exitCode = timedOut ? 124 : (executed.status ?? 1);
@@ -516,11 +600,11 @@ function runMechanicalBindings(projectRoot: string, state: ImplementState, bindi
       timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : "",
       mutated ? "\n[sasu] command changed judged source files and was rejected" : "",
     ].join("");
-    const logPath = writeMechanicalLog(projectRoot, state, binding, base, executed.stdout ?? "", `${executed.stderr ?? ""}${extra}`);
+    const logPath = writeMechanicalLog(recordRoot, state, binding, base, executed.stdout ?? "", `${executed.stderr ?? ""}${extra}`);
     const record: MechanicalRunRecord = { ...base, logPath };
     progress(`mechanical ${record.status} in ${(record.durationMs / 1000).toFixed(1)}s: ${record.command}`);
     records.push(record);
-    upsertCommandArtifacts(state, record, sourceFingerprint, projectRoot);
+    upsertCommandArtifacts(state, record, sourceFingerprint, recordRoot);
     if (record.status === "FAIL") break;
   }
   return records;
@@ -783,7 +867,8 @@ function settledAcceptanceInvocations(
 
 async function acceptanceLane(
   config: ReturnType<typeof loadConfig>,
-  projectRoot: string,
+  recordRoot: string,
+  workRoot: string,
   state: ImplementState,
   scenarios: ContractItem[],
   changedFiles: string,
@@ -807,7 +892,7 @@ async function acceptanceLane(
       };
     }
     const record = await judgeLane(crypto.randomUUID(), async () => {
-      const material = acceptanceMaterial(projectRoot, state, criterion, changedFiles, mechanical, scenarios);
+      const material = acceptanceMaterial(recordRoot, state, criterion, changedFiles, mechanical, scenarios);
       // With no inlined check, artifact, or image, the only honest basis for
       // a PASS is the code itself - and the agentic probe measured judges
       // reading zero to two files, zero included. A PASS with a known-zero
@@ -835,10 +920,13 @@ async function acceptanceLane(
         // and prompt injection were correct with zero to two exact-path reads.
         {
           agentic: true,
-          cwd: projectRoot,
+          // Judges read the JUDGED tree; registered artifacts live in the
+          // record tree and reach the judge inlined (text) or as absolute
+          // image paths, so a missing copy in the work tree is expected.
+          cwd: workRoot,
           evidencePaths: [...changedPaths, ...material.readableArtifacts.map((artifact) => artifact.path)],
           ...(material.readableArtifacts.length > 0
-            ? { images: material.readableArtifacts.map((artifact) => normalizeProjectPath(projectRoot, artifact.path).absolute) }
+            ? { images: material.readableArtifacts.map((artifact) => normalizeProjectPath(recordRoot, artifact.path).absolute) }
             : {}),
         },
       );
@@ -951,10 +1039,13 @@ function failedAttempt(
 
 async function verify(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOwnership(statePath, state, args);
   if (state.status === "complete") throw new Error("implement run is already complete");
   const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
   if (openTasks.length > 0) throw new Error(`verify requires all tasks complete; open: ${openTasks.map((entry) => entry.id).join(", ")}`);
-  const config = loadConfig(projectRoot);
+  const recordRoot = state.projectRoot;
+  const workRoot = requireWorkRoot(state);
+  const config = loadConfig(recordRoot);
   if (args.flags.has("grant-budget")) {
     const evidence = flag(args, "grant-budget")?.trim() ?? "";
     if (evidence === "") throw new Error("--grant-budget requires the user's verbatim approval text");
@@ -990,16 +1081,16 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
   const started = Date.now();
   const startedAt = nowIso();
-  const prdAbsolute = normalizeProjectPath(projectRoot, state.prdPath).absolute;
+  const prdAbsolute = normalizeProjectPath(recordRoot, state.prdPath).absolute;
   if (!fs.existsSync(prdAbsolute)) throw new Error(`PRD missing: ${state.prdPath}`);
   const prdText = fs.readFileSync(prdAbsolute, "utf8");
   if (sha256(prdText) !== state.prd.sha256) throw new Error("PRD changed after implement start; start a new run with the approved PRD");
   const contract = parseImplementContract(prdText);
-  const sourceContext = fidelitySource(projectRoot, contract, specGateIsFresh(projectRoot, state));
+  const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const lint = prelintPrd(prdText);
   const prelint = { ok: lint.ok, findings: lint.findings };
-  const source = captureSourceSnapshot(projectRoot);
+  const source = captureSourceSnapshot(workRoot);
   if (!lint.ok) {
     const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
     state.verificationAttempts.push(attempt);
@@ -1009,7 +1100,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       verificationBudget: verificationBudget(state, config.judge.retryBudget),
     });
   }
-  const runtimeArtifactProblems = artifactIntegrityProblems(projectRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) }, source);
+  const runtimeArtifactProblems = artifactIntegrityProblems(recordRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) }, source);
   if (runtimeArtifactProblems.length > 0) {
     const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, [], "artifact", "artifact-stale", runtimeArtifactProblems.join("; "), "STALE");
     state.verificationAttempts.push(attempt);
@@ -1022,8 +1113,8 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       verificationBudget: budget,
     });
   }
-  const bindings = mechanicalBindings(projectRoot, state.verification);
-  const mechanical = runMechanicalBindings(projectRoot, state, bindings, source.digest);
+  const bindings = mechanicalBindings(recordRoot, workRoot, state.verification);
+  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings, source.digest);
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
   const proofProblems = setVerificationStatuses(state, bindings, mechanical, source.digest);
   if (failedMechanical !== undefined || proofProblems.length > 0) {
@@ -1042,9 +1133,9 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     });
   }
 
-  const material = changeMaterial(projectRoot, state, source);
+  const material = changeMaterial(workRoot, state, source);
   const changedPaths = changedPathsSince(state.initialSource, source);
-  const changedFiles = changedFileManifest(projectRoot, changedPaths);
+  const changedFiles = changedFileManifest(workRoot, changedPaths);
   const reuse = reusableErrorAttempt(state, inputFingerprint(state, source.digest, fidelityInput), source.digest, mechanical);
   const priorFidelity = reuse !== null && reuse.lanes.fidelity !== null && reuse.lanes.fidelity.verdict !== "ERROR"
     ? { ...reuse.lanes.fidelity, reusedFrom: reuse.id }
@@ -1060,7 +1151,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   // a lane whose output only lived inside a prompt would never be read.
   const runDesignLane = state.prd.reviewProfile !== "trivial";
   const [acceptance, fidelity, design] = await Promise.all([
-    acceptanceLane(config, projectRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse),
+    acceptanceLane(config, recordRoot, workRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse),
     priorFidelity !== null
       ? Promise.resolve(priorFidelity)
       : judgeLane(fidelityInvocationId, () =>
@@ -1187,10 +1278,18 @@ function implementationReport(
     ? `- ${name}: NOT_REQUIRED`
     : `- ${name}: ${lane.verdict}, invocation ${lane.invocationId}, ${lane.startedAt} to ${lane.finishedAt}, ${lane.durationMs}ms`;
   const statusLine = blocked === undefined ? "Status: Done" : `Status: Blocked (${blocked.terminalReason})`;
+  // Adoptions must reach a human surface: they deliberately do not move the
+  // input fingerprint (ownership is process metadata, not judged material),
+  // so this report and the receipt are the only places a reader learns the
+  // close was delivered by a different session than the one that started it.
+  const followUpLines = [
+    ...(state.adoptions ?? []).map((entry) => `- ownership-adopted: taken over from session ${entry.fromSessionId} at ${entry.at} - "${entry.evidence}"`),
+    ...state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`),
+  ];
   const openItemsSection = blocked === undefined
     ? ""
     : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design (advisory)", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Advisory\n\nAdvisory findings from the design lane. They never block the run; a human decides what is worth acting on.\n\n${designAdvisorySection(attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${state.deviations.length === 0 ? "None." : state.deviations.map((entry) => `- ${entry.type}: ${entry.summary}`).join("\n")}\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design (advisory)", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Advisory\n\nAdvisory findings from the design lane. They never block the run; a human decides what is worth acting on.\n\n${designAdvisorySection(attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1199,15 +1298,17 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     throw new Error("finalize --status must be complete or blocked");
   }
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
-  const source = captureSourceSnapshot(projectRoot);
+  assertRunOwnership(statePath, state, args);
+  const recordRoot = state.projectRoot;
+  const source = captureSourceSnapshot(requireWorkRoot(state));
   const latest = state.verificationAttempts.at(-1);
   if (latest === undefined) throw new Error("finalize requires a unified verify attempt");
-  const prdAbsolute = normalizeProjectPath(projectRoot, state.prdPath).absolute;
+  const prdAbsolute = normalizeProjectPath(recordRoot, state.prdPath).absolute;
   if (!fs.existsSync(prdAbsolute)) throw new Error(`PRD missing: ${state.prdPath}`);
   const prdText = fs.readFileSync(prdAbsolute, "utf8");
   const prdStale = sha256(prdText) !== state.prd.sha256;
   const contract = parseImplementContract(prdText);
-  const sourceContext = fidelitySource(projectRoot, contract, specGateIsFresh(projectRoot, state));
+  const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const currentFidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const fingerprint = completionFingerprint(state, source.digest, latest, currentFidelityInput);
   const blockers: string[] = [];
@@ -1215,7 +1316,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   blockers.push(...state.tasks.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.acceptanceCriteria.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").map((entry) => `${entry.id} is ${entry.status}`));
-  blockers.push(...artifactIntegrityProblems(projectRoot, state, source));
+  blockers.push(...artifactIntegrityProblems(recordRoot, state, source));
   if (latest.verdict !== "PASS") blockers.push(`unified verify is ${latest.verdict}`);
   if (latest.sourceFingerprint !== source.digest) blockers.push("unified verify is STALE because judged source changed");
   if (latest.inputFingerprint !== inputFingerprint(state, source.digest, currentFidelityInput)) {
@@ -1226,7 +1327,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     // The blocked close exists for runs whose verification machinery is
     // terminally stuck, never as a shortcut past fixable findings: it stays
     // refused while the budget predicate says another verify could run.
-    const view = verificationBudget(state, loadConfig(projectRoot).judge.retryBudget);
+    const view = verificationBudget(state, loadConfig(recordRoot).judge.retryBudget);
     if (!view.budgetExhausted && !view.judgeErrorLoop) {
       throw new Error(
         "finalize --status blocked refused: verification can still run - fix the recorded findings and re-run `sasu implement verify`",
@@ -1234,8 +1335,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     }
     const terminalReason = view.budgetExhausted ? "budget-exhausted" : "judge-error-loop";
     if (state.status === "blocked" && state.completion?.fingerprint === fingerprint) {
-      const receipt = path.join(projectRoot, state.completion.receiptPath);
-      const report = path.join(projectRoot, state.completion.implementationResultPath);
+      const receipt = path.join(recordRoot, state.completion.receiptPath);
+      const report = path.join(recordRoot, state.completion.implementationResultPath);
       if (!fs.existsSync(receipt) || !fs.existsSync(report)) throw new Error("blocked state is missing a derived receipt or implementation result");
       return result("finalize", true, "already closed blocked with the same completion fingerprint", { completion: state.completion, executionCalls: 0 });
     }
@@ -1260,11 +1361,13 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       },
       verificationBudget: { fixAttempts: view.fixAttempts, budget: view.budget, consecutiveErrors: view.consecutiveErrors, grants: view.grants },
       openItems: blockers,
+      ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
+      ...(state.worktree ? { worktree: state.worktree } : {}),
       executionCallsDuringFinalize: 0,
     };
-    writeJsonAtomic(path.join(projectRoot, receiptPath), receipt);
+    writeJsonAtomic(path.join(recordRoot, receiptPath), receipt);
     writeTextAtomic(
-      path.join(projectRoot, implementationResultPath),
+      path.join(recordRoot, implementationResultPath),
       implementationReport(state, latest, fingerprint, { terminalReason, openItems: blockers }),
     );
     state.status = "blocked";
@@ -1279,8 +1382,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   }
   if (blockers.length > 0) throw new Error(`finalize refused:\n- ${blockers.join("\n- ")}`);
   if (state.status === "complete" && state.completion?.fingerprint === fingerprint) {
-    const receipt = path.join(projectRoot, state.completion.receiptPath);
-    const report = path.join(projectRoot, state.completion.implementationResultPath);
+    const receipt = path.join(recordRoot, state.completion.receiptPath);
+    const report = path.join(recordRoot, state.completion.implementationResultPath);
     if (!fs.existsSync(receipt) || !fs.existsSync(report)) throw new Error("completed state is missing a derived receipt or implementation result");
     return result("finalize", true, "already finalized with the same completion fingerprint", { completion: state.completion, executionCalls: 0 });
   }
@@ -1302,14 +1405,21 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       fidelity: latest.lanes.fidelity?.verdict ?? "NOT_RUN",
       risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
     },
+    ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
+    ...(state.worktree ? { worktree: state.worktree } : {}),
     executionCallsDuringFinalize: 0,
   };
-  writeJsonAtomic(path.join(projectRoot, receiptPath), receipt);
-  writeTextAtomic(path.join(projectRoot, implementationResultPath), implementationReport(state, latest, fingerprint));
+  writeJsonAtomic(path.join(recordRoot, receiptPath), receipt);
+  writeTextAtomic(path.join(recordRoot, implementationResultPath), implementationReport(state, latest, fingerprint));
   state.status = "complete";
   state.completion = { fingerprint, completedAt, receiptPath, implementationResultPath };
   persistState(statePath, state);
-  return result("finalize", true, "implementation finalized from fresh unified PASS", { completion: state.completion, receipt, executionCalls: 0 });
+  // A worktree run's code lives only on its branch until someone collects it;
+  // the close must say so or the work silently strands in the worktree.
+  const handoff = state.worktree
+    ? `; the implementation lives on branch ${state.worktree.branch} at ${state.worktree.path} - merge it (\`git merge ${state.worktree.branch}\`) or deliver with $ship, and keep the worktree until then`
+    : "";
+  return result("finalize", true, `implementation finalized from fresh unified PASS${handoff}`, { completion: state.completion, receipt, executionCalls: 0 });
 }
 
 export async function runImplementCommand(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {

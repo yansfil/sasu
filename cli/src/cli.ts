@@ -42,6 +42,7 @@ Usage:
   sasu implement status   [--slug <topic> | --state <path>] [--json]
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
+    (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>")
   sasu prd readiness       --prd <path> [--json]
   sasu rules <add|check|relevant> [...]
   sasu setup seed-agents-md [--project-root <path>] [--adopt-claude-md]

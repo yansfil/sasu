@@ -71,8 +71,12 @@ Optional project config:
 }
 ```
 
-`worktree.enabled` is opt-in. Do not create worktrees merely because delivery
-mode is `pr`.
+Worktrees are created by the harness at `sasu implement start` (always when
+`worktree.enabled` is true, and automatically when the target tree already
+hosts an active in-place run). Do not create worktrees yourself, and do not
+create one merely because delivery mode is `pr`. A worktree run's records
+(state, receipt) live in the record tree's `agents/`; its code lives on the
+run branch in the worktree, which is where ship stages and commits.
 
 `delivery.staging.include` and `delivery.staging.exclude` are optional repo
 relative path prefixes.

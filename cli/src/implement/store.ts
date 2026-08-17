@@ -10,7 +10,8 @@ import {
   type SourceEntry,
   type SourceSnapshot,
 } from "./types";
-import { ACTIVE_POINTER_REL, activePointerReadPath, implementStatePathFor } from "../runs/paths";
+import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
+import { currentSessionId } from "../runs/session";
 
 export const ACTIVE_POINTER = ACTIVE_POINTER_REL;
 
@@ -46,28 +47,71 @@ export function statePathFor(projectRoot: string, slug: string): string {
   return implementStatePathFor(projectRoot, slug);
 }
 
-export function writeActivePointer(projectRoot: string, state: ImplementState): void {
+export function writeActivePointer(projectRoot: string, state: ImplementState, sessionId: string | null = currentSessionId()): void {
+  const statePathRel = path.relative(projectRoot, statePathFor(projectRoot, state.topicSlug)).split(path.sep).join("/");
   const pointer: ImplementActivePointer = {
     schema: IMPLEMENT_ACTIVE_SCHEMA,
-    statePath: path.relative(projectRoot, statePathFor(projectRoot, state.topicSlug)).split(path.sep).join("/"),
+    statePath: statePathRel,
     topicSlug: state.topicSlug,
     updatedAt: nowIso(),
   };
-  writeJsonAtomic(path.join(projectRoot, ACTIVE_POINTER), pointer);
+  writeJsonAtomic(path.join(projectRoot, activePointerWriteRel(sessionId)), pointer);
+  // A worktree run gets a second bookmark inside its judged tree, carrying an
+  // explicit record-tree root: bare commands typed from either tree then
+  // resolve the same record. Bookmarks are navigation, not authority, so the
+  // duplicate is harmless; ownership lives in state.json alone.
+  const worktreePath = state.worktree?.path;
+  if (worktreePath !== undefined && fs.existsSync(worktreePath)) {
+    writeJsonAtomic(path.join(worktreePath, activePointerWriteRel(sessionId)), { ...pointer, projectRoot });
+  }
+}
+
+/** Slugs with a recorded run, unified or legacy - the `--slug` menu for a session with no pointer. */
+function runCandidates(projectRoot: string): string[] {
+  const slugs = new Set<string>();
+  for (const namespace of [path.join("agents", "runs"), path.join("agents", "implement")]) {
+    const dir = path.join(projectRoot, namespace);
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && fs.existsSync(path.join(dir, entry.name, "state.json"))) slugs.add(entry.name);
+    }
+  }
+  return [...slugs].sort();
 }
 
 export function resolveStatePath(projectRoot: string, options: { slug?: string; state?: string } = {}): string {
   if (options.state !== undefined) return normalizeProjectPath(projectRoot, options.state).absolute;
   if (options.slug !== undefined) return statePathFor(projectRoot, options.slug);
-  const pointerPath = activePointerReadPath(projectRoot);
+  const pointerPath = activePointerReadPath(projectRoot, currentSessionId());
   if (!fs.existsSync(pointerPath)) {
-    throw new Error("no active implement run; pass --slug <topic> or start one with `sasu implement start --prd <path>`");
+    const candidates = runCandidates(projectRoot);
+    const menu = candidates.length === 0 ? "" : ` (existing runs: ${candidates.join(", ")})`;
+    throw new Error(`no active implement run for this session; pass --slug <topic>${menu} or start one with \`sasu implement start --prd <path>\``);
   }
   const parsed = JSON.parse(fs.readFileSync(pointerPath, "utf8")) as Partial<ImplementActivePointer>;
   if (parsed.schema !== IMPLEMENT_ACTIVE_SCHEMA || typeof parsed.statePath !== "string") {
     throw new Error(`unsupported active pointer schema in ${ACTIVE_POINTER}; start a new run with \`sasu implement start --prd <path>\``);
   }
-  return normalizeProjectPath(projectRoot, parsed.statePath).absolute;
+  // A redirect bookmark (inside a run's worktree) names its record tree.
+  const recordRoot = typeof parsed.projectRoot === "string" && parsed.projectRoot !== "" ? parsed.projectRoot : projectRoot;
+  return normalizeProjectPath(recordRoot, parsed.statePath).absolute;
+}
+
+/**
+ * The tree whose bytes are judged: the run's worktree when isolated, else
+ * the record tree. Fails loudly when the worktree is gone - a silently
+ * substituted record tree would judge the wrong bytes and stale every proof.
+ */
+export function requireWorkRoot(state: ImplementState): string {
+  const worktree = state.worktree ?? null;
+  if (worktree === null) return state.projectRoot;
+  if (!fs.existsSync(worktree.path)) {
+    throw new Error(
+      `worktree missing: ${worktree.path}. Recreate it with \`git worktree add ${worktree.path} ${worktree.branch}\` ` +
+        "(uncommitted work in the removed worktree is lost) and continue, or close the run honestly",
+    );
+  }
+  return worktree.path;
 }
 
 function assertString(value: unknown, label: string): asserts value is string {

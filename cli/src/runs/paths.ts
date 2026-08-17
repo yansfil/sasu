@@ -51,11 +51,35 @@ export function implementStatePathFor(projectRoot: string, slug: string): string
 
 export const ACTIVE_POINTER_REL = path.join("agents", "runs", ".prd-implement-active.json");
 export const LEGACY_ACTIVE_POINTER_REL = path.join("agents", "implement", ".prd-implement-active.json");
+export const SESSION_POINTER_DIR_REL = path.join("agents", "runs", ".active");
 
-/** Where to READ the active pointer: unified when present, else a surviving legacy pointer. */
-export function activePointerReadPath(projectRoot: string): string {
-  const unified = path.join(projectRoot, ACTIVE_POINTER_REL);
-  const legacy = path.join(projectRoot, LEGACY_ACTIVE_POINTER_REL);
-  if (!fs.existsSync(unified) && fs.existsSync(legacy)) return legacy;
-  return unified;
+/**
+ * The active pointer is per session: one shared singleton meant one project-
+ * wide "current run", so a second session's `implement start` silently stole
+ * every bare `status`/`verify`/`finalize` from the first. A session writes
+ * its own bookmark under `.active/<sessionId>.json`; the singleton remains
+ * only for sessionless contexts (bare shell, CI) and legacy runs.
+ */
+export function sessionPointerRel(sessionId: string): string {
+  return path.join(SESSION_POINTER_DIR_REL, `${sessionId}.json`);
+}
+
+/** Where this invocation WRITES its active pointer. */
+export function activePointerWriteRel(sessionId: string | null): string {
+  return sessionId === null ? ACTIVE_POINTER_REL : sessionPointerRel(sessionId);
+}
+
+/**
+ * Where to READ the active pointer: this session's own bookmark first, then
+ * the sessionless singleton, then a surviving legacy pointer. The singleton
+ * fallback keeps runs started without a session identity reachable from any
+ * session; runs started by another session are never resolved implicitly.
+ */
+export function activePointerReadPath(projectRoot: string, sessionId: string | null): string {
+  const candidates = [
+    ...(sessionId === null ? [] : [path.join(projectRoot, sessionPointerRel(sessionId))]),
+    path.join(projectRoot, ACTIVE_POINTER_REL),
+    path.join(projectRoot, LEGACY_ACTIVE_POINTER_REL),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? path.join(projectRoot, ACTIVE_POINTER_REL);
 }

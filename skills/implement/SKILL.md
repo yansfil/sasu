@@ -82,6 +82,9 @@ sasu implement start \
   --allow-unapproved-prd '<verbatim user approval>'
 ```
 
+Read `workingRoot` from the start response.
+When the harness isolated the run into a worktree, implement the tasks in that directory; the worktrees reference above covers the details.
+
 Inspect current state with:
 
 ```sh

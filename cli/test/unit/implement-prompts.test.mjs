@@ -64,7 +64,7 @@ test("explicit verify commands bind nested product checks instead of detected ha
     path.join(root, "agents", "config.json"),
     JSON.stringify({ verify: { commands: { test: "node pokemon-rpg/test/rules.test.mjs", build: "node pokemon-rpg/test/static-check.mjs" } } }),
   );
-  const bindings = mechanicalBindings(root, [
+  const bindings = mechanicalBindings(root, root, [
     { id: "V1", mode: "build/static", passIntent: "product static proof", covers: [], requiredForDone: true, canBeBlocked: false, text: "", title: "", status: "NOT_RUN", evidence: [] },
     { id: "V2", mode: "automated behavior", passIntent: "product rules proof", covers: [], requiredForDone: true, canBeBlocked: false, text: "", title: "", status: "NOT_RUN", evidence: [] },
   ]);

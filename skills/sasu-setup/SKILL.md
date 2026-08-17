@@ -69,7 +69,10 @@ Then interview:
    `main`, so a run started from a feature branch would open its PR against
    that feature branch.
 3. Worktree isolation: `worktree.enabled` (default false).
-   When enabled, ask which gitignored local files the app needs:
+   The harness always isolates a run whose target tree already hosts an
+   active in-place run; `enabled: true` additionally isolates every run from
+   the start (the human keeps using the main checkout while runs work in
+   worktrees). Either way ask which gitignored local files the app needs:
    - `link`: read-only shared files (`.env`, certs).
    - `copy`: files the app writes to (`.dev.vars`, local DBs).
    - `setup`: install commands to run once in the new worktree
