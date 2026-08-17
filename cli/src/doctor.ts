@@ -87,7 +87,7 @@ export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorS
     namespaceLines.push("agents/runs/ is gitignored");
   } else {
     namespaceOk = false;
-    namespaceLines.push('agents/runs/ is NOT gitignored: run state would enter commits and PRs. Add the line "agents/runs/" to .gitignore');
+    namespaceLines.push('agents/runs/ is NOT gitignored: run state would enter commits and PRs. Any sasu command auto-provisions .git/info/exclude; a committed .gitignore line is a project decision.');
   }
   sections.push({ section: "namespace", ok: namespaceOk, lines: namespaceLines });
 
