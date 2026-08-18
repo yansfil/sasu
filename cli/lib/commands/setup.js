@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { NAMESPACE_ROOT, PRD_ROOT_REL, RUNS_ROOT_REL, RULES_ROOT_REL, PROJECT_CONFIG_PATH, cwd, resolveProjectPath, harnessCommand } = require("../util");
+const { NAMESPACE_ROOT, PRD_ROOT_REL, RUNS_ROOT_REL, QUICK_ROOT_REL, RULES_ROOT_REL, PROJECT_CONFIG_PATH, cwd, resolveProjectPath, harnessCommand } = require("../util");
 
 const MARKER_START = "<!-- harness:agents-namespace:start -->";
 const MARKER_END = "<!-- harness:agents-namespace:end -->";
@@ -102,6 +102,7 @@ This project uses the engineering-harness PRD pipeline. Agent-facing assets live
 - \`${PRD_ROOT_REL}/\` - PRD contracts, committed and human-approved before implementation.
 - \`${RULES_ROOT_REL}/\` - learned rules: \`INDEX.md\` is the ledger, \`invariants/\` hold machine-checked rules (trigger globs + executable check) that gate delivery, \`pending/\` holds lessons that have not landed yet.
 - \`${RUNS_ROOT_REL}/\` - per-run state and evidence (gate verdicts + implement state under one \`${RUNS_ROOT_REL}/<slug>/\`), gitignored (policy: one line \`${RUNS_ROOT_REL}/\`), never hand-edited.
+- \`${QUICK_ROOT_REL}/\` - quick lane state and evidence (generated contract, receipt, verify verdict, evidence blobs), gitignored (policy: one line \`${QUICK_ROOT_REL}/\`), never hand-edited.
 - \`${PROJECT_CONFIG_PATH}\` - pipeline configuration, committed.
 
 Conventions:

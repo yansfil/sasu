@@ -28,20 +28,35 @@ test("doctor namespace: a git checkout without the ignore rule fails with the on
   assert.equal(section.ok, false);
   assert.match(section.lines[0], /NOT gitignored/);
   assert.match(section.lines[0], /agents\/runs\//);
+  assert.match(section.lines[1], /agents\/quick\/ is NOT gitignored/);
   assert.equal(runDoctor(dir).ok, false, "an unignored runs namespace must fail doctor overall");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("doctor namespace: an ignored runs namespace passes, whole-namespace rules included", () => {
-  for (const rule of ["agents/runs/\n", "/agents/\n"]) {
+test("doctor namespace: ignored runtime namespaces pass, whole-namespace rules included", () => {
+  for (const rule of ["agents/runs/\nagents/quick/\n", "/agents/\n"]) {
     const dir = makeDir();
     gitInit(dir);
     fs.writeFileSync(path.join(dir, ".gitignore"), rule);
     const section = namespaceSection(dir);
     assert.equal(section.ok, true, `rule ${JSON.stringify(rule)} must satisfy the check`);
     assert.match(section.lines[0], /is gitignored/);
+    assert.match(section.lines[1], /agents\/quick\/ is gitignored/);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Regression: only agents/runs/ was checked, so a project could pass doctor
+// while every quick run's contract, receipt and evidence entered its commits.
+test("doctor namespace: ignoring agents/runs/ alone still fails on agents/quick/", () => {
+  const dir = makeDir();
+  gitInit(dir);
+  fs.writeFileSync(path.join(dir, ".gitignore"), "agents/runs/\n");
+  const section = namespaceSection(dir);
+  assert.equal(section.ok, false);
+  assert.match(section.lines[0], /agents\/runs\/ is gitignored/);
+  assert.match(section.lines[1], /agents\/quick\/ is NOT gitignored/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("doctor namespace: outside a git checkout the check reports not-checkable and does not fail", () => {
@@ -49,5 +64,6 @@ test("doctor namespace: outside a git checkout the check reports not-checkable a
   const section = namespaceSection(dir);
   assert.equal(section.ok, true);
   assert.match(section.lines[0], /not checkable/);
+  assert.match(section.lines[1], /agents\/quick\/ gitignore: not checkable/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

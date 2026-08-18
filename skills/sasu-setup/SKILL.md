@@ -80,12 +80,16 @@ Then interview:
    Warn that dev servers in two checkouts share ports and linked local DBs.
 4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
 5. `agents/` tracking policy:
-   - Everything under `agents/` is committed and reviewable by default:
-     `agents/prd/**`, `agents/rules/**`, `agents/config.json`.
-   - Only runtime state is ignored: `agents/runs/**` (one run dir per slug
-     holding gate verdicts and implement state), plus the legacy
-     `agents/implement/**` and `agents/gates/**` in projects that still carry
-     old-layout runs.
+   - Human-approved assets are committed and reviewable: `agents/prd/**`,
+     `agents/rules/**`, `agents/config.json`.
+   - Generated run state is ignored: `agents/runs/**` (one run dir per slug
+     holding gate verdicts and implement state) and `agents/quick/**` (a quick
+     lane's generated contract, receipt, verify verdict and evidence blobs),
+     plus the legacy `agents/implement/**` and `agents/gates/**` in projects
+     that still carry old-layout runs.
+   - Any sasu command auto-provisions both runtime roots into
+     `.git/info/exclude`; a committed `.gitignore` line is the project's
+     decision and is what a team shares.
 6. Sasu judge gates (optional; defaults work without config):
    - `judge.profiles.routine`: primary and fallback target for interview,
      document-gate, acceptance, fidelity, and normal semantic judgment.
@@ -118,11 +122,12 @@ Then interview:
    criteria before drafting. Declining the question writes no key and changes
    nothing; verify with `sasu principles list` after declaring.
 
-Recommended `.gitignore` block (one line):
+Recommended `.gitignore` block:
 
 ```gitignore
 # PRD pipeline runtime state
 agents/runs/
+agents/quick/
 ```
 
 Projects that still carry legacy-layout runs also keep the old lines

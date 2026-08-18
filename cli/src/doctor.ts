@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { loadConfig, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
+import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
 
 export interface DoctorSection {
   section: "judge" | "verify" | "namespace" | "contract";
@@ -70,24 +71,22 @@ export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorS
 
   // Run state must never enter commits or PRs. The skill docs claimed "the
   // doctor enforces this" while no code checked it (a prose-only rule,
-  // PRINCIPLES item 7); this makes the claim true. A probe under the runs
+  // PRINCIPLES item 7); this makes the claim true. A probe under each runtime
   // root is what check-ignore is asked about, so both `agents/runs/` and
   // glob-style ignore rules match; outside a git checkout there is nothing
   // to enforce and the section reports that honestly.
   const namespaceLines: string[] = [];
   let namespaceOk = true;
-  const checkIgnore = spawnSync("git", ["check-ignore", "-q", "agents/runs/probe"], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    timeout: 15_000,
-  });
-  if (checkIgnore.error !== undefined || checkIgnore.status === null || checkIgnore.status >= 2) {
-    namespaceLines.push("agents/runs/ gitignore: not checkable (no git checkout)");
-  } else if (checkIgnore.status === 0) {
-    namespaceLines.push("agents/runs/ is gitignored");
-  } else {
-    namespaceOk = false;
-    namespaceLines.push('agents/runs/ is NOT gitignored: run state would enter commits and PRs. Any sasu command auto-provisions .git/info/exclude; a committed .gitignore line is a project decision.');
+  for (const root of RUNTIME_IGNORE_ROOTS) {
+    const state = ignoreState(projectRoot, root);
+    if (state === null) {
+      namespaceLines.push(`${root} gitignore: not checkable (no git checkout)`);
+    } else if (state) {
+      namespaceLines.push(`${root} is gitignored`);
+    } else {
+      namespaceOk = false;
+      namespaceLines.push(`${root} is NOT gitignored: run state would enter commits and PRs. Any sasu command auto-provisions .git/info/exclude; a committed .gitignore line is a project decision.`);
+    }
   }
   sections.push({ section: "namespace", ok: namespaceOk, lines: namespaceLines });
 
