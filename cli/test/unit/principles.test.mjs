@@ -128,6 +128,38 @@ test("a broken declaration fails loudly and names the offending path", () => {
   assert.match(danglingResult.message, /points at a missing document/);
 });
 
+test("one broken repository never hides the domains a sibling repository declared correctly", () => {
+  const goodRepo = principleRepo({ rootDoc: GOOD_ROOT, docs: GOOD_DOCS });
+  const brokenRepo = principleRepo({ rootDoc: "# Root\n\nno table here\n" });
+  const project = tempProject({ principles: [brokenRepo, goodRepo] });
+
+  const result = runPrinciplesCommand(project, "list", flags());
+  assert.equal(result.ok, true);
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(
+    result.detail.domains.map((domain) => domain.name),
+    ["engineering", "design"],
+  );
+  assert.equal(result.detail.errors.length, 1);
+  assert.equal(result.detail.errors[0].source, brokenRepo);
+  assert.match(result.detail.errors[0].message, /no domain table/);
+  // The broken repository is still named in the summary, not swallowed.
+  assert.match(result.message, /1 repository failed to read/);
+  assert.ok(result.message.includes(brokenRepo));
+});
+
+test("when every declared repository is broken, there is nothing usable and the command fails", () => {
+  const brokenA = principleRepo({ rootDoc: "# Root\n\nno table here\n" });
+  const brokenB = principleRepo({});
+  const project = tempProject({ principles: [brokenA, brokenB] });
+
+  const result = runPrinciplesCommand(project, "list", flags());
+  assert.equal(result.ok, false);
+  assert.equal(result.exitCode, 1);
+  assert.match(result.message, /every declared principle repository failed to read/);
+  assert.equal(result.detail.errors.length, 2);
+});
+
 test("a subcommand other than list is a usage error", () => {
   const result = runPrinciplesCommand(tempProject(), "show", flags());
   assert.equal(result.ok, false);

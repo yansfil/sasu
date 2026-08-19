@@ -27,6 +27,22 @@ export interface PrinciplesCommandResult {
   detail?: unknown;
 }
 
+export interface PrincipleSourceError {
+  /** The declared repository path this error came from. */
+  source: string;
+  message: string;
+}
+
+export interface PrincipleListing {
+  domains: PrincipleDomain[];
+  /**
+   * One entry per declared repository that could not be read. A broken
+   * repository never silences the others (engineering principle 4: surface
+   * failures explicitly, without letting one failure hide a working result).
+   */
+  errors: PrincipleSourceError[];
+}
+
 // The domain table is the consumption contract with a principle repository
 // (oh-my-principle ROOT.md is the canonical producer). Parsing failures are
 // loud: a declared repository that cannot be read is a broken declaration,
@@ -76,23 +92,38 @@ function headCommit(repoRoot: string): string | null {
   }
 }
 
-export function listPrincipleDomains(projectRoot: string): PrincipleDomain[] {
+/**
+ * Reads every declared principle repository independently. A repository whose
+ * ROOT.md is missing, malformed, or points at a missing document is recorded
+ * in `errors` and skipped; it never hides the domains a sibling repository
+ * declared correctly, and it never gets silently dropped either.
+ */
+export function listPrincipleDomains(projectRoot: string): PrincipleListing {
   const config = loadConfig(projectRoot);
   const domains: PrincipleDomain[] = [];
+  const errors: PrincipleSourceError[] = [];
   for (const source of config.principles) {
-    if (!fs.existsSync(source)) throw new Error(`declared principle repository does not exist: ${source}`);
-    const rootDoc = path.join(source, "ROOT.md");
-    if (!fs.existsSync(rootDoc)) throw new Error(`declared principle repository has no ROOT.md: ${source}`);
-    const commit = headCommit(source);
-    for (const row of parseDomainTable(rootDoc)) {
-      const doc = path.resolve(source, row.docRel);
-      if (!fs.existsSync(doc)) {
-        throw new Error(`domain "${row.name}" in ${rootDoc} points at a missing document: ${doc}`);
-      }
-      domains.push({ name: row.name, trigger: row.trigger, doc, rules: ruleTitles(doc), source, commit });
+    try {
+      domains.push(...readPrincipleSource(source));
+    } catch (error) {
+      errors.push({ source, message: error instanceof Error ? error.message : String(error) });
     }
   }
-  return domains;
+  return { domains, errors };
+}
+
+function readPrincipleSource(source: string): PrincipleDomain[] {
+  if (!fs.existsSync(source)) throw new Error(`declared principle repository does not exist: ${source}`);
+  const rootDoc = path.join(source, "ROOT.md");
+  if (!fs.existsSync(rootDoc)) throw new Error(`declared principle repository has no ROOT.md: ${source}`);
+  const commit = headCommit(source);
+  return parseDomainTable(rootDoc).map((row) => {
+    const doc = path.resolve(source, row.docRel);
+    if (!fs.existsSync(doc)) {
+      throw new Error(`domain "${row.name}" in ${rootDoc} points at a missing document: ${doc}`);
+    }
+    return { name: row.name, trigger: row.trigger, doc, rules: ruleTitles(doc), source, commit };
+  });
 }
 
 export function runPrinciplesCommand(
@@ -103,26 +134,46 @@ export function runPrinciplesCommand(
   if (subcommand !== "list") {
     return { ok: false, action: subcommand ?? "(none)", exitCode: 2, message: "unknown principles subcommand; use: sasu principles list [--domain <name>] [--json]" };
   }
-  let domains: PrincipleDomain[];
+  let listing: PrincipleListing;
   try {
-    domains = listPrincipleDomains(projectRoot);
+    listing = listPrincipleDomains(projectRoot);
   } catch (error) {
+    // loadConfig itself failed (invalid agents/config.json): nothing is readable at all.
     return { ok: false, action: "list", exitCode: 1, message: error instanceof Error ? error.message : String(error) };
   }
+  let domains = listing.domains;
+  const { errors } = listing;
+
+  if (domains.length === 0 && errors.length > 0) {
+    // Every declared repository was broken: there is nothing usable to return,
+    // so this is a hard failure rather than a quiet empty listing.
+    return {
+      ok: false,
+      action: "list",
+      exitCode: 1,
+      message: `every declared principle repository failed to read: ${errors.map((entry) => entry.message).join("; ")}`,
+      detail: { errors },
+    };
+  }
+
   const domainFlag = flags.get("domain");
   if (typeof domainFlag === "string") {
     const filtered = domains.filter((domain) => domain.name === domainFlag);
     if (filtered.length === 0) {
       const known = domains.map((domain) => domain.name).join(", ") || "(none declared)";
-      return { ok: false, action: "list", exitCode: 1, message: `unknown principle domain: ${domainFlag} (declared domains: ${known})` };
+      return { ok: false, action: "list", exitCode: 1, message: `unknown principle domain: ${domainFlag} (declared domains: ${known})`, detail: { errors } };
     }
     domains = filtered;
   } else if (domainFlag === true) {
     return { ok: false, action: "list", exitCode: 2, message: "--domain needs a value" };
   }
-  const message =
+
+  // A broken sibling repository never hides the domains a working one declared;
+  // it is still named so it does not silently go unnoticed either.
+  const domainSummary =
     domains.length === 0
       ? "no principle repositories declared (agents/config.json `principles` is empty); nothing to apply"
       : `${domains.length} principle domain(s)`;
-  return { ok: true, action: "list", exitCode: 0, message, detail: { domains } };
+  const errorSummary = errors.length > 0 ? ` (${errors.length} repository failed to read: ${errors.map((entry) => entry.source).join(", ")})` : "";
+  return { ok: true, action: "list", exitCode: 0, message: `${domainSummary}${errorSummary}`, detail: { domains, errors } };
 }

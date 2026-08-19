@@ -312,10 +312,15 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...principlesResult }, null, 2)}\n`);
     } else {
       process.stdout.write(`[principles:${principlesResult.action}] ${principlesResult.ok ? "ok" : "FAIL"} - ${principlesResult.message}\n`);
-      const detail = principlesResult.detail as { domains?: Array<{ name: string; trigger: string; doc: string; rules: string[]; commit: string | null }> } | undefined;
+      const detail = principlesResult.detail as
+        | { domains?: Array<{ name: string; trigger: string; doc: string; rules: string[]; commit: string | null }>; errors?: Array<{ source: string; message: string }> }
+        | undefined;
       for (const domain of detail?.domains ?? []) {
         process.stdout.write(`  ${domain.name}: read ${domain.doc} when ${domain.trigger}${domain.commit ? ` [${domain.commit.slice(0, 7)}]` : ""}\n`);
         for (const rule of domain.rules) process.stdout.write(`    - ${rule}\n`);
+      }
+      for (const failed of detail?.errors ?? []) {
+        process.stdout.write(`  ! ${failed.source}: ${failed.message}\n`);
       }
     }
     process.exit(principlesResult.exitCode);
