@@ -111,6 +111,12 @@ Then interview:
    - `verify.commandTimeoutMs`: per-command timeout for mechanical verify
      runs (default 600000 = 10 minutes); a hung suite fails closed at the
      timeout instead of hanging the gate.
+7. Principles: `principles` (default `[]`). Paths to principle repositories
+   whose ROOT.md domain table names the rule documents (`~` expands). When
+   declared, `sasu principles list` serves the domains and the gen-prd/quick
+   skills translate matching rules into PRD guardrails and acceptance
+   criteria before drafting. Declining the question writes no key and changes
+   nothing; verify with `sasu principles list` after declaring.
 
 Recommended `.gitignore` block (one line):
 
@@ -159,7 +165,8 @@ Reference shape:
   "verify": {
     "commands": { "test": "pnpm test", "lint": "pnpm lint" },
     "commandTimeoutMs": 600000
-  }
+  },
+  "principles": ["~/projects/oh-my-principle"]
 }
 ```
 

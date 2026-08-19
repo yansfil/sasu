@@ -43,6 +43,17 @@ After that message, do not ask again mid-run; the only later stops are the ones 
 
 ## Stage 1: Contract
 
+Before writing the contract, run `sasu principles list --json`. An empty
+`domains` list means no principles are declared: skip this silently. For each
+domain whose trigger matches this change, read its document in full and
+translate the rules that this diff or its declared evidence can prove into
+proposition-form acceptance criteria. This is the only way a principle gets
+enforced here: the judge refuses taste criteria, so a rule enters the contract
+as an observable proposition ("the list renders without an open edit form"),
+never as its abstract wording. Rules this change cannot prove stay out of the
+contract; note them for the final report's human-review items instead. A
+failing principles command is reported, never silently skipped.
+
 Write `agents/quick/<slug>/contract.md`:
 
 ```markdown

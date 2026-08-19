@@ -24,6 +24,7 @@ import { runInterviewCoherence, type CoherenceResult } from "./interview/coheren
 import { contractVersion } from "./version";
 import { runImplementCommand, type ImplementArgs } from "./implement/commands";
 import { runPrdCommand } from "./prd/commands";
+import { runPrinciplesCommand } from "./principles/commands";
 import { runRulesCommand, runSetupCommand } from "./support/commands";
 import { ensureSetup } from "./support/ensure-setup";
 
@@ -44,6 +45,7 @@ Usage:
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
     (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>")
   sasu prd readiness       --prd <path> [--json]
+  sasu principles list     [--domain <name>] [--json]
   sasu rules <add|check|relevant> [...]
   sasu setup seed-agents-md [--project-root <path>] [--adopt-claude-md]
   sasu interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
@@ -302,6 +304,21 @@ async function main(): Promise<void> {
       }
     }
     process.exit(report.ok ? 0 : 1);
+  }
+
+  if (command === "principles") {
+    const principlesResult = runPrinciplesCommand(projectRoot, subcommand, args.flags);
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...principlesResult }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`[principles:${principlesResult.action}] ${principlesResult.ok ? "ok" : "FAIL"} - ${principlesResult.message}\n`);
+      const detail = principlesResult.detail as { domains?: Array<{ name: string; trigger: string; doc: string; rules: string[]; commit: string | null }> } | undefined;
+      for (const domain of detail?.domains ?? []) {
+        process.stdout.write(`  ${domain.name}: read ${domain.doc} when ${domain.trigger}${domain.commit ? ` [${domain.commit.slice(0, 7)}]` : ""}\n`);
+        for (const rule of domain.rules) process.stdout.write(`    - ${rule}\n`);
+      }
+    }
+    process.exit(principlesResult.exitCode);
   }
 
   // Every skill funnels through this CLI, so one guard here auto-provisions

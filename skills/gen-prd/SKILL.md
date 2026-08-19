@@ -594,12 +594,45 @@ Require the implementing agent to report:
 - remaining human review.
 - not-done items and follow-up candidates.
 
+### Principles Intake
+
+Declared principles are contract input, not ambient advice. Before drafting,
+query the project's declared principle repositories:
+
+```sh
+sasu principles list --json
+```
+
+An empty `domains` list means the project declares no principles: skip this
+intake silently and write nothing about it. A command failure (a declared
+repository that cannot be read) is reported in the final report, never
+silently skipped.
+
+For each returned domain whose trigger matches the work this PRD covers, read
+the domain's document in full - a matching domain applies as a whole, never as
+a keyword-filtered subset. Then translate:
+
+- Every applicable rule becomes a `## 11` guardrail, stated as the prohibition
+  or obligation it already is, with its source named
+  (`design/principles.md rule 1`).
+- A rule whose compliance is observable in the product becomes (or sharpens) an
+  acceptance criterion: an observable proposition, never the rule's abstract
+  wording.
+- Record the intake in Decision Traceability: which documents were read, at
+  which source commit, and any applicable rule deliberately not translated,
+  with the reason.
+
+Project-local instructions and rules override declared principles; when one
+wins, name the principle it overrides.
+
 ## Workflow
 
 1. Locate the intake qa-log or infer the topic from the request.
 2. Read source artifacts and directly relevant project docs.
    Read `agents/config.json` when it exists or when the user asks for PR
    delivery, worktrees, or CI automation.
+   Run `sasu principles list --json` and perform the Principles Intake above
+   for every domain whose trigger matches this PRD's work.
 3. Fan out pre-writing research, then draft alone. Before drafting, list the
    independent factual questions the PRD depends on - current code structure,
    existing schema or auth reality, whether a library supports what a

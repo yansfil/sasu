@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export type JudgeProfile = "routine" | "high-risk";
@@ -54,6 +55,14 @@ export interface SasuConfig {
   judge: JudgeConfig;
   verify: VerifyConfig;
   worktree: WorktreeConfig;
+  /**
+   * Principle repository roots declared by the project (each contains a
+   * ROOT.md whose domain table names the principle documents). Paths are
+   * expanded (`~`) and normalized at load time; an empty list means the
+   * project declares no principles and `sasu principles list` returns no
+   * domains rather than failing.
+   */
+  principles: string[];
   configPath: string | null;
 }
 
@@ -165,6 +174,8 @@ export function loadConfig(projectRoot: string): SasuConfig {
     }
     return value as string[];
   };
+  const principlesRaw = raw["principles"];
+  const principles = stringList(principlesRaw, "principles").map((entry) => expandHomePath(entry));
   const worktree: WorktreeConfig = {
     enabled: worktreeRaw.enabled ?? false,
     root: worktreeRaw.root ?? null,
@@ -180,8 +191,15 @@ export function loadConfig(projectRoot: string): SasuConfig {
     judge,
     verify: { commands: { ...(verifyRaw.commands ?? {}) }, commandTimeoutMs },
     worktree,
+    principles,
     configPath: found,
   };
+}
+
+export function expandHomePath(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+  return value;
 }
 
 export function judgeProfileFor(config: SasuConfig, profile: JudgeProfile): JudgeProfileConfig {
