@@ -36,6 +36,8 @@ const QA_CASES = [
   ["qa-register-open.md", "qa-register-open"],
   ["qa-resolved-material-assumption.md", "qa-resolved-material-assumption"],
   ["qa-dangling-decision-id.md", "qa-dangling-decision-id"],
+  ["qa-dangling-q-reference.md", "qa-dangling-q-reference"],
+  ["qa-unanchored-user-decision.md", "qa-unanchored-user-decision"],
 ];
 
 for (const [file, rule] of QA_CASES) {

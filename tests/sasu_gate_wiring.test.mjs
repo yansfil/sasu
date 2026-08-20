@@ -46,7 +46,11 @@ test("please treats gate BLOCKs as fix-and-regate loops, stopping only for human
   assert.doesNotMatch(skill, /plan-verification/);
   // Delegated-run contract: human-consent findings become a recorded,
   // veto-able ledger instead of a mid-run question; only P0 still stops.
-  assert.match(skill, /--assume-human-findings "<verbatim \$please invocation message>"/);
+  // The delegation is recorded ONCE as run state (sasu gate delegate), not
+  // re-passed per call - 2026-08-20: two of three real runs omitted the
+  // per-call flag and burned blocked rounds the delegation had answered.
+  assert.match(skill, /sasu gate delegate --slug <topic-slug>/);
+  assert.match(skill, /--evidence "<verbatim \$please invocation message>"/);
   assert.match(skill, /P0 findings still block under this flag/);
   assert.match(skill, /listed at the TOP of the final report/);
   assert.match(skill, /only the user's own delegating message is valid evidence/);

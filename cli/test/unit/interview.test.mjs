@@ -100,7 +100,15 @@ test("upsertRegisterRow creates, patches, and validates enums", () => {
   assert.equal(patched.created, false);
   assert.equal(patched.row.status, "resolved");
   assert.equal(patched.row.text, "cells / with pipes and newlines");
-  assert.deepEqual(runPrelint("qa-log", patched.content).findings, []);
+  // Closure-clean only once the citing Q&A turn lands: a resolved user
+  // decision with no Raw Q&A anchor is exactly what qa-unanchored-user-decision
+  // exists to block at gap-audit time.
+  assert.deepEqual(
+    runPrelint("qa-log", patched.content).findings.map((f) => f.rule),
+    ["qa-unanchored-user-decision"],
+  );
+  const closed = appendQaEntry(patched.content, { ...ENTRY, decisionIds: ["D-01"] }).content;
+  assert.deepEqual(runPrelint("qa-log", closed).findings, []);
 });
 
 test("markNormalized flips only the addressed block", () => {

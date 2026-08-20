@@ -877,6 +877,42 @@ test("delegated run: --assume-human-findings converts non-P0 human findings to a
   assert.match(status.stdout, /ASSUMED HUMAN DECISIONS: 1 finding/);
 });
 
+test("delegated run: a stored `gate delegate` record applies without the per-call flag", () => {
+  // 2026-08-20: two of three real $please runs omitted --assume-human-findings
+  // (it lived only as skill prose) and burned 4+ blocked rounds on findings
+  // the delegation had already answered. The stored record makes the
+  // delegation run state, not agent discipline.
+  const dir = makeProject();
+  const humanBlock = {
+    verdict: "BLOCK",
+    findings: [
+      {
+        area: "delivery",
+        severity: "P1",
+        missing: "delivery scope unconfirmed",
+        recommendation: "confirm with the user",
+        requiresHuman: true,
+      },
+    ],
+  };
+  const invocation = "그냥 끝까지 해줘 /please";
+  const delegated = runCli(dir, ["gate", "delegate", "--slug", "fixture", "--evidence", invocation], {});
+  assert.equal(delegated.status, 0, delegated.stdout + delegated.stderr);
+
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
+    stub: stubFile(dir, humanBlock),
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const record = gatesState(dir, "fixture").gates["gap-audit"];
+  assert.equal(record.verdict, "PASS");
+  assert.equal(record.humanAssumptions.length, 1);
+  assert.equal(record.humanAssumptions[0].evidence, invocation, "the ledger quotes the stored delegation");
+
+  // The stored delegation stays loud on status.
+  const status = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
+  assert.match(status.stdout, /delegated run \(recorded /);
+});
+
 test("delegated run: a P0 human finding still blocks under --assume-human-findings", () => {
   const dir = makeProject();
   const result = runCli(

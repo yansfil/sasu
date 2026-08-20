@@ -5,6 +5,7 @@ import { loadConfig } from "./config";
 import { runDoctor } from "./doctor";
 import {
   readGateStatus,
+  runDelegate,
   runGapAudit,
   runOverride,
   runSpecGate,
@@ -35,6 +36,7 @@ Usage:
   sasu gate gap-audit --slug <topic> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate status    --slug <topic> [--json]
+  sasu gate delegate  --slug <topic> --evidence "<verbatim delegating user message>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--json]
@@ -87,6 +89,13 @@ or equivalently handed the whole pipeline over): it converts non-P0 human-consen
 findings into a recorded, veto-able assumption ledger instead of a block, quoting
 the user's delegating message verbatim. P0 findings still block. Passing it
 without such a delegating user message is inventing consent.
+'gate delegate' records that same delegation ONCE as run state: every later
+gap-audit/spec run on the slug then applies it automatically, so a delegated
+run cannot lose its delegation by omitting a per-call flag. A per-call
+--assume-human-findings still wins over the stored record.
+Gates also carry a cycle cap (3x the fix budget) counting ALL judged rounds
+since the last user grant, PASSes included: a PASS->stale->re-judge loop that
+never converges stops there and hands its findings to the user.
 Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
 executes implementation work.`;
 
@@ -149,7 +158,9 @@ function printStatusView(view: GateStatusView): void {
     ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (only their verbatim approval, recorded via --grant-budget, reopens the budget)"
     : view.judgeErrorLoop
       ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge, then a user-granted --grant-budget re-run may continue, or close the run out blocked`
-      : "";
+      : view.cycleExhausted
+        ? ` - CYCLE CAP REACHED: ${view.roundsSinceGrant}/${view.cycleCap} judged rounds (PASSes included) since the last grant; the fix loop is not converging - report the findings to the user (their verbatim approval via --grant-budget reopens it)`
+        : "";
   const grants = view.grants > 0 ? ` | grants ${view.grants}` : "";
   // Assumed human findings must stay loud on every status read: a PASS earned
   // by delegation is honest only while the substitution is visible (item 10).
@@ -473,10 +484,26 @@ async function main(): Promise<void> {
       if (asJson) {
         process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...status }, null, 2)}\n`);
       } else {
+        // A stored delegation changes how the next gate run disposes of
+        // human findings, so status must say it before the per-gate lines.
+        if (status.delegation) {
+          process.stdout.write(`delegated run (recorded ${status.delegation.at}): "${status.delegation.evidence}"\n`);
+        }
         printStatusView(status["gap-audit"]);
         printStatusView(status.spec);
         printStatusView(status.verify);
         process.stdout.write(`judge calls recorded: ${status.judgeCallCount}\n`);
+      }
+      process.exit(0);
+    }
+    if (subcommand === "delegate") {
+      const delegation = runDelegate(projectRoot, requireFlag(args, "slug"), requireFlag(args, "evidence"));
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), delegation }, null, 2)}\n`);
+      } else {
+        process.stdout.write(
+          `delegation recorded. Every gap-audit/spec run on this slug now converts non-P0 human-consent findings into recorded assumptions (P0 still blocks).\n`,
+        );
       }
       process.exit(0);
     }

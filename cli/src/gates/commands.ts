@@ -36,6 +36,7 @@ import {
   GateStore,
   gateStatus,
   grantGateBudget,
+  recordDelegation,
   hashGateInput,
   overrideGate,
   recordGateResult,
@@ -43,6 +44,7 @@ import {
   staleInputsFor,
   type GateId,
   type GateInput,
+  type GatesState,
   type GateRecord,
   type GateStatusView,
   type VouchedTreeFingerprint,
@@ -357,10 +359,13 @@ async function runGapListGate(
   if (options?.grantBudgetEvidence !== undefined) {
     state = grantGateBudget(store, state, gate, options.grantBudgetEvidence, config.judge.retryBudget);
   }
-  const assumeEvidence = options?.assumeHumanEvidence?.trim();
-  if (assumeEvidence === "") {
+  if (options?.assumeHumanEvidence?.trim() === "") {
     throw new Error("--assume-human-findings requires the user's verbatim delegated invocation (e.g. their $please message)");
   }
+  // Standing delegation recorded via `sasu gate delegate` applies to every
+  // run on the topic; an explicit per-call flag still wins so a one-off
+  // invocation can carry fresher evidence.
+  const assumeEvidence = options?.assumeHumanEvidence?.trim() ?? state.delegation?.evidence;
   // Terminal-cause admission check, mirroring `implement verify`: a spent fix
   // budget or a judge-error streak refuses the run BEFORE any judge call.
   // Without it the budget was a status flag the loop never read - measured
@@ -369,16 +374,18 @@ async function runGapListGate(
   // fresh requiresHuman findings, so the round cap PRINCIPLES item 13
   // demands existed on paper and bounded nothing.
   const before = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
-  if (before.budgetExhausted || before.judgeErrorLoop) {
+  if (before.budgetExhausted || before.judgeErrorLoop || before.cycleExhausted) {
     const cause = before.budgetExhausted
       ? `fix budget exhausted (${before.attempts}/${before.budget} judged non-PASS rounds)`
-      : `judge failed ${before.consecutiveErrors} times in a row without a verdict`;
+      : before.judgeErrorLoop
+        ? `judge failed ${before.consecutiveErrors} times in a row without a verdict`
+        : `cycle cap reached (${before.roundsSinceGrant}/${before.cycleCap} judged rounds, PASSes included): the fix loop is not converging`;
     return {
       ok: false,
       status: before,
       zeroJudgeCalls: true,
       error: {
-        code: before.budgetExhausted ? "budget-exhausted" : "judge-error-loop",
+        code: before.budgetExhausted ? "budget-exhausted" : before.judgeErrorLoop ? "judge-error-loop" : "cycle-exhausted",
         message: `${gate} refused: ${cause}; no judge was called`,
         recovery:
           `hand the recorded findings to the user. If the user explicitly approves another round, record their words verbatim: `
@@ -945,8 +952,8 @@ async function settleVerifyLanes(
               agentic: true,
               evidencePaths: splitDiffByFile(vl.laneDiff).map((block) => block.path),
             } : {}),
-            // Anchor evidence resolution to the project root. Claude uses it
-            // as cwd; Codex copies the exact evidencePaths into isolation.
+            // Anchor evidence resolution to the project root. Agentic
+            // backends copy exact evidencePaths into isolation.
             cwd: projectRoot,
           },
         );
@@ -1806,6 +1813,7 @@ function recordJudgeFailure(
     "judge-binary-missing": "Install the configured judge CLI or change the profile primary/fallback in agents/config.json.",
     "judge-auth": "The Claude judge was not authenticated and Codex fallback was unavailable. Log in to Claude or install/log in to Codex, then re-run.",
     "judge-auth-or-runtime": "Check the judge CLI login/auth status and re-run.",
+    "judge-context-overflow": "The judge prompt exceeded its context window. Reduce the evidence or prompt scope, then re-run.",
     "judge-timeout": "Re-run; if it persists, raise judge.timeoutMs in agents/config.json.",
     "judge-invalid-output": "Re-run; if it persists, change the model in judge.profiles.routine or judge.profiles.high-risk.",
   };
@@ -1844,7 +1852,7 @@ export function readGateStatus(
   projectRoot: string,
   config: SasuConfig,
   topic: string,
-): Record<GateId, GateStatusView> & { judgeCallCount: number } {
+): Record<GateId, GateStatusView> & { judgeCallCount: number; delegation: GatesState["delegation"] | null } {
   const store = new GateStore(projectRoot, topic);
   const state = store.load();
   return {
@@ -1852,7 +1860,15 @@ export function readGateStatus(
     spec: gateStatus(state, "spec", config.judge.retryBudget, projectRoot),
     verify: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
     judgeCallCount: state.judgeCalls.length,
+    delegation: state.delegation ?? null,
   };
+}
+
+/** CLI seam for `sasu gate delegate`: record the standing delegated-run evidence. */
+export function runDelegate(projectRoot: string, topic: string, evidence: string): { at: string; evidence: string } {
+  const store = new GateStore(projectRoot, topic);
+  const state = recordDelegation(store, store.load(), evidence);
+  return state.delegation!;
 }
 
 export function extractAcceptanceCriteria(prdContent: string): { id: string; text: string }[] {

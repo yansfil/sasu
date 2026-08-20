@@ -164,6 +164,30 @@ export function prelintQaLog(content: string): PrelintResult {
     }
   }
 
+  // Raw Q&A is parsed BEFORE the register loop because two register rules
+  // consume it: fabricated-consent detection needs to know which decisions a
+  // real Q&A turn actually cites, and Q-reference checks need the set of
+  // anchors that exist. Measured motivation (2026-08-20, 3 please runs): the
+  // spec judge's dominant P0 class was "decision cites a nonexistent Q" /
+  // "user-approved decision with no Raw Q&A evidence" - each instance cost a
+  // full judge round (1-6 min) plus a fix round, and in one run six rounds in
+  // a row were this same defect resurfacing in different rows. A $0
+  // deterministic check catches the whole class before any judge call
+  // (PRINCIPLES items 3 and 7).
+  const rawQaRange = sectionRange(lines, "## Raw Q&A");
+  /** Q&A anchor numbers that exist, e.g. "Q16" from "### Q16: label". */
+  const qaAnchors = new Set<string>();
+  /** Decision IDs cited by at least one Raw Q&A turn's decision_ids line. */
+  const qaCitedIds = new Set<string>();
+  if (rawQaRange) {
+    for (let i = rawQaRange.start + 1; i < rawQaRange.end; i += 1) {
+      const anchor = lines[i]!.match(/^###\s*Q(\d+)\b/);
+      if (anchor) qaAnchors.add(`Q${anchor[1]!}`);
+      const cited = lines[i]!.match(/^\s*-\s*decision_ids:\s*(.*)$/);
+      if (cited) for (const token of cited[1]!.match(/D-\d+/g) ?? []) qaCitedIds.add(token);
+    }
+  }
+
   const registerIds = new Set<string>();
   const register = sectionRange(lines, "## Decision Register");
   if (register) {
@@ -200,7 +224,39 @@ export function prelintQaLog(content: string): PrelintResult {
             findings.push(
               finding("qa-register-open", row.line, `${id || "row"} is ${priority} and still open`, "Resolve the node with the user or classify it as deferred/blocking/rejected before closure."),
             );
-          } else if (kind === "assumption" && status === "resolved" && (priority === "P0" || priority === "P1")) {
+          }
+          const source = row.cells[col("Source / owner")]!;
+          const mapping = row.cells[col("PRD mapping / revisit")]!;
+          // Q-references live in the Source and mapping cells; the free-text
+          // Decision cell is skipped so a "Q4 2026"-style quarter can never
+          // false-positive (prelint's zero-false-positive contract, D-04).
+          if (rawQaRange) {
+            for (const cell of [source, mapping]) {
+              for (const token of cell.match(/\bQ\d+\b/g) ?? []) {
+                if (!qaAnchors.has(token)) {
+                  findings.push(
+                    finding(
+                      "qa-dangling-q-reference",
+                      row.line,
+                      `${id || "row"} cites ${token}, but no "### ${token}:" entry exists in Raw Q&A`,
+                      `Record the real Q&A turn as ${token} or fix the citation; a decision must never cite evidence that does not exist.`,
+                    ),
+                  );
+                }
+              }
+            }
+            if (kind === "decision" && status === "resolved" && /(\buser\b|사용자)/iu.test(source) && id !== "" && !qaCitedIds.has(id)) {
+              findings.push(
+                finding(
+                  "qa-unanchored-user-decision",
+                  row.line,
+                  `${id} is a resolved user-sourced decision, but no Raw Q&A turn's decision_ids cites it - there is no recorded user answer behind it`,
+                  `Log the actual user exchange (sasu interview log --decision-ids ${id}) or change the Source to what really decided it.`,
+                ),
+              );
+            }
+          }
+          if (kind === "assumption" && status === "resolved" && (priority === "P0" || priority === "P1")) {
             findings.push(
               finding(
                 "qa-resolved-material-assumption",
@@ -215,9 +271,8 @@ export function prelintQaLog(content: string): PrelintResult {
     }
   }
 
-  const rawQa = sectionRange(lines, "## Raw Q&A");
-  if (rawQa && registerIds.size > 0) {
-    for (let i = rawQa.start + 1; i < rawQa.end; i += 1) {
+  if (rawQaRange && registerIds.size > 0) {
+    for (let i = rawQaRange.start + 1; i < rawQaRange.end; i += 1) {
       const match = lines[i]!.match(/^\s*-\s*decision_ids:\s*(.*)$/);
       if (!match) continue;
       for (const token of match[1]!.match(/D-\d+/g) ?? []) {

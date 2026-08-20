@@ -257,6 +257,19 @@ export interface GatesState {
   gates: Record<GateId, GateRecord>;
   deviations: GateDeviation[];
   judgeCalls: JudgeCallRecord[];
+  /**
+   * Standing delegated-run record ($please): once written, every gap-audit
+   * and spec run on this topic behaves as if --assume-human-findings carried
+   * this evidence, without the agent re-passing the flag per call. Motivated
+   * by measurement (2026-08-20, 3 please runs): the flag lived only as skill
+   * prose, 2 of 3 runs omitted it, and each omission cost 4+ blocked judge
+   * rounds on findings the delegation had already answered - a prose rule is
+   * a request for discipline, not a guard (PRINCIPLES item 7). Same trust
+   * model as budgetGrants: `evidence` quotes the user's own delegating
+   * message so a fabricated delegation is falsifiable by the user; the
+   * harness records, it does not verify.
+   */
+  delegation?: { at: string; evidence: string };
 }
 
 const EMPTY_GATE: GateRecord = {
@@ -353,6 +366,24 @@ export interface GateStatusView {
    * exhaustion, exactly as `rerunRefused` is.
    */
   judgeErrorLoop: boolean;
+  /** Judged rounds since the last user grant (or ever): the cycle-cap gauge. */
+  roundsSinceGrant: number;
+  /** Hard bound on roundsSinceGrant, derived as 3x the fix budget - not a knob. */
+  cycleCap: number;
+  /**
+   * Fourth terminal cause: the gate has been judged cycleCap times since the
+   * last user grant, PASSes included. The fix budget cannot bound this loop
+   * because a PASS resets `attempts` - measured 2026-08-20 (3 please runs,
+   * gap-audit 7-11 rounds each): PASS -> cross-gate fix -> STALE -> re-judge
+   * -> fresh findings cycled indefinitely, every individual round lawful.
+   * PRINCIPLES item 13: a generative stage paired with whole-run invalidation
+   * needs a harness-owned round cap. The cap is 3x the fix budget rather than
+   * a new config value so an addition ships no knob (item 4): the budget
+   * already answers "how long may one gate fail", and a full run has room for
+   * roughly three such lives (pre-PASS, post-STALE, post-grant) before the
+   * loop is evidently not converging and a human should see the findings.
+   */
+  cycleExhausted: boolean;
   requiresHuman: boolean;
   findings: Finding[];
   /** Count of user budget grants recorded on this gate (GateRecord.budgetGrants). */
@@ -437,6 +468,14 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
   // gauges, one bound; `verdict === "ERROR"` keeps a streak written by one dist
   // from being read as terminal under a verdict written by another.
   const consecutiveErrors = Number.isInteger(record.consecutiveErrors) ? (record.consecutiveErrors as number) : 0;
+  // Cycle gauge: judged rounds since the last grant, PASSes included, so a
+  // PASS->STALE->re-judge loop is bounded even though each PASS resets
+  // `attempts`. A user grant reopens headroom via attemptCountBefore, the
+  // baseline it already records.
+  const totalAttempts = Number.isInteger(record.totalAttempts) ? (record.totalAttempts as number) : 0;
+  const grantBase = record.budgetGrants?.length ? record.budgetGrants[record.budgetGrants.length - 1]!.attemptCountBefore : 0;
+  const roundsSinceGrant = Math.max(0, totalAttempts - grantBase);
+  const cycleCap = budget * 3;
   return {
     gate,
     verdict: record.verdict,
@@ -450,6 +489,9 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
     budgetExhausted: !passed && record.attempts >= budget && record.verdict !== null,
     consecutiveErrors,
     judgeErrorLoop: !passed && record.verdict === "ERROR" && consecutiveErrors > 0 && consecutiveErrors >= budget,
+    roundsSinceGrant,
+    cycleCap,
+    cycleExhausted: budget > 0 && record.verdict !== null && roundsSinceGrant >= cycleCap,
     requiresHuman: record.findings.some((f) => f.requiresHuman),
     findings: record.findings,
     grants: record.budgetGrants?.length ?? 0,
@@ -465,13 +507,29 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
  * CLI flag that reaches here requires the user's verbatim words as evidence,
  * the same contract as `implement verify --grant-budget`.
  */
+/**
+ * Record the user's delegating invocation once for the whole run. Overwriting
+ * an existing record is allowed (a re-invocation supersedes), but empty
+ * evidence is refused for the same reason --assume-human-findings refuses it:
+ * the quote is the only thing that makes a fabricated delegation falsifiable.
+ */
+export function recordDelegation(store: GateStore, state: GatesState, evidence: string): GatesState {
+  const trimmed = evidence.trim();
+  if (trimmed === "") {
+    throw new Error("gate delegate requires the user's verbatim delegating message (e.g. their $please invocation)");
+  }
+  state.delegation = { at: new Date().toISOString(), evidence: trimmed };
+  store.save(state);
+  return state;
+}
+
 export function grantGateBudget(store: GateStore, state: GatesState, gate: GateId, evidence: string, budget: number): GatesState {
   const trimmed = evidence.trim();
   if (trimmed === "") {
     throw new Error("--grant-budget requires the user's verbatim approval text");
   }
   const view = gateStatus(state, gate, budget);
-  if (!view.budgetExhausted && !view.judgeErrorLoop) {
+  if (!view.budgetExhausted && !view.judgeErrorLoop && !view.cycleExhausted) {
     throw new Error(`--grant-budget refused: the ${gate} fix budget is not exhausted; run the gate without it`);
   }
   const record = state.gates[gate]!;

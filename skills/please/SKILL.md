@@ -123,12 +123,14 @@ Stop and ask only when:
 
 ## Sasu Gates In The Autonomous Loop
 
-Run gap-audit and spec with the delegated-run flag, quoting the invocation you already captured for `--allow-unapproved-prd`:
+Record the delegation once, before the first gate run, quoting the invocation you already captured for `--allow-unapproved-prd`:
 
 ```sh
-sasu gate gap-audit --slug <topic-slug> --qa-log <path> \
-  --assume-human-findings "<verbatim $please invocation message>"
+sasu gate delegate --slug <topic-slug> \
+  --evidence "<verbatim $please invocation message>"
 ```
+
+Every later gap-audit/spec run on the slug then applies the delegated-run disposition automatically; the per-call `--assume-human-findings` flag still exists and wins over the stored record, but a `$please` run must not depend on remembering it (2026-08-20: two of three delegated runs omitted the flag and burned 4+ blocked rounds on findings the delegation had already answered).
 
 The CLI then converts non-P0 human-consent findings into a recorded assumption ledger instead of a block: the run proceeds, and each assumed finding must be written into the PRD's Decision Traceability with the default you chose, restated in the pre-implementation summary, and listed at the TOP of the final report as "human decisions replaced by assumptions" so the user can veto while it is still cheap.
 P0 findings still block under this flag; they mean invented consent or an unimplementable document, and no delegation covers that.
@@ -138,8 +140,8 @@ A BLOCK is not a stop until the CLI reports a terminal cause: first fix the repo
 When gap-audit, spec, standalone verify, or unified implement verify blocks during a `$please` run:
 
 1. Fix every agent-fixable finding (amend the qa-log or PRD, fix the code), then re-run the same gate.
-2. Re-run only after a real fix. The CLI owns the configured retry budget and refuses any further run of that gate - gap-audit, spec, and unified verify alike - after either terminal cause (`budgetExhausted` or `judgeErrorLoop`). Only the user reopens a refused gate, by having their verbatim approval recorded with the gate's `--grant-budget` flag; a general instruction to keep going, given before the exhaustion existed, is not that approval.
-3. Stop and hand the findings to the user only when a P0 finding blocks under the delegated flag, the CLI reports a terminal budget cause, or a standalone gate refuses an identical re-run.
+2. Re-run only after a real fix. The CLI owns the configured retry budget and refuses any further run of that gate - gap-audit, spec, and unified verify alike - after any terminal cause (`budgetExhausted`, `judgeErrorLoop`, or `cycleExhausted` - the cap on total judged rounds, PASSes included, that bounds a stale-re-judge loop). Only the user reopens a refused gate, by having their verbatim approval recorded with the gate's `--grant-budget` flag; a general instruction to keep going, given before the exhaustion existed, is not that approval.
+3. Stop and hand the findings to the user only when a P0 finding blocks under the delegated flag, the CLI reports a terminal budget or cycle cause, or a standalone gate refuses an identical re-run.
 
 Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
 A gate PASS is pinned to the input document's content hash: if you edit the qa-log or PRD after its gate passed, `sasu gate status` reports the gate `STALE`, and you must re-run that gate on the current document before treating it as passed.
