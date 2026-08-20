@@ -560,7 +560,7 @@ test("the config pin covers absence: a config CREATED after a PASS stales it too
 function makeGitDir() {
   const dir = makeDir();
   fs.writeFileSync(path.join(dir, "widget.js"), "module.exports = () => null;\n");
-  for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]]) {
+  for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"]]) {
     const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
     assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
   }
@@ -577,7 +577,7 @@ function gitHead(dir) {
 }
 
 function gitCommitAll(dir, message) {
-  for (const args of [["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message]]) {
+  for (const args of [["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]]) {
     const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
     assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
   }
@@ -699,11 +699,11 @@ test("short-circuit: a moved base ref re-runs even though the worktree never mov
   fs.writeFileSync(path.join(dir, "extra.js"), "// v0\n");
   git("init", "-q");
   git("add", "-A");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c0");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "c0");
   const c0 = gitHead(dir);
   fs.writeFileSync(path.join(dir, "extra.js"), "// v1\n");
   git("add", "-A");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c1");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "c1");
   const c1 = gitHead(dir);
   // The work under judgment stays dirty in the worktree from here on.
   fs.appendFileSync(path.join(dir, "widget.js"), "render();\n");

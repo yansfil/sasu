@@ -101,7 +101,7 @@ function makeProject({ profile = "standard", testExit = 0, sourceIntake = "curre
   fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd(profile, sourceIntake));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `node -e "console.log('MECHANICAL-PROOF'); process.exit(${testExit})"` } }));
-  for (const args of [["init", "-q"], ["add", "package.json"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]]) {
+  for (const args of [["init", "-q"], ["add", "package.json"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"]]) {
     const run = spawnSync("git", args, { cwd: root, encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
   }
@@ -121,6 +121,10 @@ function stub(root, profile = "standard") {
         verdict: "PASS",
         checks: ["F1", "F2", "F3", "F4", "F5"].map((id) => ({ id, verdict: "PASS", reason: "preserved", evidence: "D-01" })),
       },
+      // The design lane runs on every non-trivial profile. Silent by default:
+      // a fixture that always leaves a comment would block every finalize
+      // assertion in this file behind a disposition.
+      "implement:design": { comments: [] },
       ...(profile === "high-risk" ? { "implement:risk": { verdict: "PASS", findings: [] } } : {}),
     },
   }));
@@ -1127,4 +1131,208 @@ test("registering evidence does not stale the artifacts registered from the same
   assert.equal(status.status, 0, status.stderr + status.stdout);
   const stale = (status.json.detail.artifactProblems ?? []).filter((problem) => problem.includes("stale"));
   assert.deepEqual(stale, [], "an artifact must not invalidate itself");
+});
+
+// --- design comments: the lane's only consequence is disposition -----------
+//
+// 2026-08-20, herdr-remote-handoff: the design lane ran 12 times in one run and
+// reported the same duplicated remote-boundary check every time, in two
+// languages and four phrasings. Nothing required an answer, so none of the 12
+// was ever answered. These tests pin the two properties that fix that: a
+// re-worded repeat is the SAME comment, and an unanswered comment stops
+// finalize.
+
+function designStub(root, comments) {
+  const file = path.join(root, "agents", "judge.json");
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:design"] = { comments };
+  fs.writeFileSync(file, JSON.stringify(configured));
+}
+
+const DUPLICATE_COMMENT = {
+  area: "one-cause-n-symptoms",
+  path: "lib/remote.sh",
+  text: "the remote-boundary check is copied into three commands",
+  suggestion: "extract one helper and call it from each",
+};
+
+test("an unanswered design comment blocks finalize, and accepting it with a reason releases the run", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  designStub(root, [DUPLICATE_COMMENT]);
+  startAndClose(root);
+
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  // The lane has no verdict of its own and never touches the unified one.
+  assert.equal(verified.json.detail.attempt.verdict, "PASS");
+  assert.equal(verified.json.detail.attempt.lanes.design, undefined);
+
+  // The agent sees the debt without reading any file: in the response body...
+  const design = verified.json.detail.design;
+  assert.equal(design.ran, true);
+  assert.equal(design.open.length, 1);
+  assert.equal(design.open[0].id, "D1");
+  assert.equal(design.open[0].path, "lib/remote.sh");
+  assert.match(design.howToAnswer, /sasu implement design --id/);
+  // ...and in the one line a caller reading only `message` cannot skip.
+  assert.match(verified.json.message, /1 design comment\(s\) await a disposition/);
+  assert.match(verified.stderr, /design: 1 comment\(s\) await a disposition before finalize/);
+
+  const refused = run(root, ["implement", "finalize"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /design comment D1 \(one-cause-n-symptoms @ lib\/remote\.sh\) has no disposition/);
+
+  // Accepting demands a reason, and the reason lands in the record.
+  const bare = run(root, ["implement", "design", "--id", "D1"]);
+  assert.equal(bare.status, 2);
+  assert.match(bare.json.message, /missing required --accept/);
+  const unknown = run(root, ["implement", "design", "--id", "D9", "--accept", "x"]);
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.json.message, /unknown design comment: D9 \(open: D1\)/);
+
+  const accepted = run(root, ["implement", "design", "--id", "D1", "--accept", "the third caller ships next week and takes the helper with it"]);
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  assert.equal(accepted.json.detail.open.length, 0);
+  const tracked = readState(root).designComments;
+  assert.equal(tracked.length, 1);
+  assert.equal(tracked[0].accepted.note, "the third caller ships next week and takes the helper with it");
+  assert.equal(tracked[0].status, "open");
+
+  const finalized = run(root, ["implement", "finalize"]);
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  // The acceptance survives into the human-readable record, next to the comment.
+  const report = fs.readFileSync(path.join(root, finalized.json.detail.completion.implementationResultPath), "utf8");
+  assert.match(report, /## Design Comments/);
+  assert.match(report, /D1 \[one-cause-n-symptoms\] lib\/remote\.sh/);
+  assert.match(report, /Disposition: accepted .*the third caller ships next week/);
+});
+
+test("a re-worded repeat is the same comment; a fixed one resolves itself without anyone claiming a fix", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  designStub(root, [DUPLICATE_COMMENT]);
+  startAndClose(root);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+
+  // Same defect, different words, different language, and a different area
+  // label - all three drift in practice. Measured on gpt-5.6-luna, `area`
+  // split 5/5 across 10 calls on one fixed diff, so only `path` is identity.
+  designStub(root, [{
+    ...DUPLICATE_COMMENT,
+    area: "structure-drift",
+    text: "원격 경계 검사가 세 개 명령에 각각 중복되어 있습니다",
+    suggestion: "공통 헬퍼로 추출하세요",
+  }]);
+  const second = run(root, ["implement", "verify"], { env });
+  assert.equal(second.status, 0, second.stderr + second.stdout);
+  const afterRepeat = readState(root).designComments;
+  assert.equal(afterRepeat.length, 1, "a re-wording must not mint a second comment");
+  assert.equal(afterRepeat[0].id, "D1");
+  assert.match(afterRepeat[0].text, /원격 경계 검사/, "the tracked text follows the latest wording");
+  assert.equal(afterRepeat[0].area, "structure-drift", "a re-labelled area updates the comment, never forks it");
+  assert.notEqual(afterRepeat[0].firstSeenAt, undefined);
+
+  // A genuinely new defect in a different file does get its own id.
+  designStub(root, [DUPLICATE_COMMENT, { ...DUPLICATE_COMMENT, area: "dead-weight", path: "lib/common.sh" }]);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+  assert.deepEqual(readState(root).designComments.map((entry) => entry.id), ["D1", "D2"]);
+
+  // Fixing is proved by the lane going quiet, never by a hand-typed claim:
+  // D1 resolves on its own and stops blocking, and there is no --fixed flag.
+  designStub(root, [{ ...DUPLICATE_COMMENT, area: "dead-weight", path: "lib/common.sh" }]);
+  const third = run(root, ["implement", "verify"], { env });
+  assert.equal(third.status, 0, third.stderr + third.stdout);
+  const afterFix = readState(root).designComments;
+  assert.equal(afterFix.find((entry) => entry.id === "D1").status, "resolved");
+  assert.deepEqual(third.json.detail.design.open.map((entry) => entry.id), ["D2"]);
+  assert.equal(third.json.detail.design.resolvedCount, 1);
+  const resolvedAccept = run(root, ["implement", "design", "--id", "D1", "--accept", "moot"]);
+  assert.equal(resolvedAccept.status, 2);
+  assert.match(resolvedAccept.json.message, /already resolved/);
+
+  // A resolved comment that comes back keeps its original id, so a defect
+  // cannot launder itself into a fresh unanswered slot - or out of an old
+  // acceptance.
+  designStub(root, [DUPLICATE_COMMENT]);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+  const reopened = readState(root).designComments.find((entry) => entry.key === "lib/remote.sh");
+  assert.equal(reopened.id, "D1");
+  assert.equal(reopened.status, "open");
+});
+
+test("the design lane is shown the run's own diff and cannot answer with a verdict", () => {
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "impl.txt"), "DIFF-ONLY-LINE\n");
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+  const prompt = fs.readFileSync(path.join(capture, "implement_design.prompt.txt"), "utf8");
+  assert.match(prompt, /RUN-OWNED DIFF/);
+  // A real unified diff of the run's work, not just the file body: without the
+  // +/- the lane cannot tell this run's accretion from pre-existing shape.
+  assert.match(prompt, /\+DIFF-ONLY-LINE/);
+  assert.match(prompt, /^--- \/dev\/null$/m);
+
+  // Verdict-shaped output is rejected rather than quietly reinterpreted: the
+  // lane that could emit a verdict is the lane that had to be hardwired PASS.
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:design"] = { verdict: "FAIL", findings: [] };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const malformed = run(root, ["implement", "verify"], { env });
+  assert.equal(malformed.status, 0, "a broken design lane must not fail the run");
+  assert.equal(malformed.json.detail.attempt.verdict, "PASS");
+  // A broken lane is observable, not silent: it errored, so it reported nothing.
+  assert.match(malformed.json.detail.design.error, /comments must be an array/);
+  assert.deepEqual(malformed.json.detail.design.open, []);
+  assert.match(malformed.stderr, /design: ERROR/);
+  assert.equal(readState(root).verificationAttempts.at(-1).lanes.design.error.code, "judge-invalid-output");
+
+  // Two comments on one file would collide into a single tracked entry,
+  // silently discarding one before anyone could answer it. Note the differing
+  // area: identity is the path, so a second area does not buy a second slot.
+  configured.byPurpose["implement:design"] = { comments: [DUPLICATE_COMMENT, { ...DUPLICATE_COMMENT, area: "dead-weight", text: "different words" }] };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  run(root, ["implement", "verify"], { env });
+  assert.match(
+    readState(root).verificationAttempts.at(-1).lanes.design.error.message,
+    /two comments target the same file \(lib\/remote\.sh\)/,
+  );
+});
+
+test("an ERROR'd design lane never resolves the comments it failed to look at", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  designStub(root, [DUPLICATE_COMMENT]);
+  startAndClose(root);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:design"] = "not json at all";
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const errored = run(root, ["implement", "verify"], { env });
+  assert.equal(errored.status, 0, errored.stderr + errored.stdout);
+  // "saw nothing" is not "reported nothing": D1 stays open and finalize stays shut.
+  assert.equal(readState(root).designComments[0].status, "open");
+  const refused = run(root, ["implement", "finalize"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /design comment D1/);
+});
+
+test("a trivial-profile run skips the design lane entirely and finalizes with no comments to answer", () => {
+  const root = makeProject({ profile: "trivial" });
+  const { file, capture } = stub(root, "trivial");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  designStub(root, [DUPLICATE_COMMENT]);
+  startAndClose(root);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  assert.equal(verified.json.detail.design.ran, false);
+  assert.equal(fs.existsSync(path.join(capture, "implement_design.prompt.txt")), false);
+  assert.equal(readState(root).designComments, undefined);
+  assert.equal(run(root, ["implement", "finalize"]).status, 0);
 });

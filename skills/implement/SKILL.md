@@ -190,7 +190,7 @@ sasu implement finalize
 ```
 
 Finalize reads state and hashes only.
-It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale source, stale artifacts, missing high-risk risk PASS, and malformed state.
+It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale source, stale artifacts, missing high-risk risk PASS, unanswered design comments, and malformed state.
 It does not run tests, judges, browser tools, capture tools, or other subprocesses.
 
 Running finalize twice with the same input returns the same completed result without creating another verification attempt.

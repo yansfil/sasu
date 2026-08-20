@@ -203,8 +203,10 @@ CURATED RUN-OWNED CHANGE SUMMARY:
 ${clamp(changeMaterial)}`;
 }
 
-export function designPrompt(prdText: string, changeMaterial: string): string {
-  return `You are the advisory design reviewer for a completed implementation. You review the run-owned change material against engineering-quality principles. Your findings are recorded and reported to a human; they never block the run, and an empty findings list is a fully valid answer.
+export function designPrompt(prdText: string, changeMaterial: string, runOwnedDiff: string): string {
+  return `You are the design reviewer for a completed implementation. You leave comments on the shape of the code. You have no verdict: you cannot pass or fail this run, and an empty comment list is a fully valid answer.
+
+Every comment you leave must be answered before the run can be finalized - either by the defect being fixed (you will simply stop seeing it) or by a human recording why it is being left alone. So a comment is a bill someone has to pay. Leave the ones worth paying.
 
 CHARTER - report only what none of the other lanes see. The acceptance judge owns criterion correctness, the fidelity judge owns intent lineage, the risk judge owns ship-safety. You own the shape of the code:
 - One cause patched as N symptoms: the same fix repeated across sites where one concept is missing.
@@ -214,15 +216,21 @@ CHARTER - report only what none of the other lanes see. The acceptance judge own
 - Dead weight: unreachable code, unused parameters, stale comments introduced by this change.
 
 DISCIPLINE:
-- Loose by design: at most the findings that would change what a maintainer does next. No style nitpicks, no naming taste, no reformatting, no test-coverage accounting.
-- Every finding cites concrete evidence from the material below (file and what you saw). No finding without a cited site.
+- Loose by design: at most the comments that would change what a maintainer does next. No style nitpicks, no naming taste, no reformatting, no test-coverage accounting.
+- Judge what THIS RUN did. The diff below is the run's own work; the full file bodies are context for reading it. A defect that predates the diff is not yours to report.
+- Generated or vendored output (build directories, lockfile churn, compiled artifacts) is not implementation shape. Never spend a comment on it.
+- "path" is the comment's identity across re-runs, so there is AT MOST ONE COMMENT PER FILE. Anchor to the project-relative file where the fix belongs, not every site that shows the symptom, and report the same defect at the same path each time you still see it. If one file has several shape problems, describe them in that file's single comment.
+- "area" is a label for the reader, not part of the identity. Pick the closest one and do not agonize over it.
 - Suggest the smallest structural fix, not a rewrite plan.
 
 ${JSON_RULE}
-{ "verdict": "PASS", "findings": [{ "area": "one-cause-n-symptoms | accretion | structure-drift | complexity | dead-weight", "text": "what and where", "suggestion": "smallest fix" }] }
-The verdict is always PASS: this lane is advisory and cannot fail the run.
+{ "comments": [{ "area": "one-cause-n-symptoms | accretion | structure-drift | complexity | dead-weight", "path": "project/relative/file", "text": "what and where", "suggestion": "smallest fix" }] }
+There is no verdict field. Do not emit one.
 
-RUN-OWNED CHANGE MATERIAL:
+RUN-OWNED DIFF (what this run changed, against the pre-run commit):
+${clamp(runOwnedDiff, 60_000)}
+
+FULL BODIES OF THE CHANGED FILES (context for reading the diff above):
 ${clamp(changeMaterial)}
 
 PRD (for the structure-changes section and guardrails):

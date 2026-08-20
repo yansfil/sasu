@@ -114,14 +114,51 @@ export interface RiskFinding {
   text: string;
 }
 
-// The design lane is advisory by construction: its verdict is always PASS
-// when it runs, its findings are recorded and reported, and nothing reads it
-// as a gate. Looseness is the convergence bound (PRINCIPLES 13): a lane that
-// cannot block cannot loop.
-export interface DesignFinding {
+// The design lane is a reviewer, not a judge: it returns comments and no
+// verdict, so there is nothing for it to pass or fail. What replaces the
+// verdict is disposition - `finalize --status complete` refuses while an open
+// comment has no answer (see DesignComment). The convergence bound
+// (PRINCIPLES 13) is structural rather than a severity floor: a comment is
+// keyed by `area::path`, so re-wording the same defect cannot mint a new one,
+// and the only way to open work is for the lane to still see the defect.
+//
+// 2026-08-20, herdr-remote-handoff: 12 design lanes across one run reported
+// the same duplicated remote-boundary check, in two languages and four
+// phrasings, and none of the 12 was ever answered. An advisory lane that
+// nothing must reply to is a wall poster, not a reviewer.
+export interface DesignComment {
   area: string;
+  /**
+   * Project-relative file the comment is anchored to. Structured rather than
+   * left inside `text` because it is half the identity key: prose matching
+   * across re-runs is a coin flip (PRINCIPLES 11), a path is not.
+   */
+  path: string;
   text: string;
   suggestion: string;
+}
+
+/**
+ * One design comment tracked across attempts, with its answer.
+ *
+ * `fixed` is deliberately not a disposition anyone records. Fixing is proved
+ * by the lane no longer seeing the defect, which flips `status` to "resolved"
+ * on its own; a hand-typed "fixed" would be an unverified claim competing
+ * with a measurement. That leaves exactly one thing a human or agent writes:
+ * why a comment is being left alone.
+ */
+export interface TrackedDesignComment extends DesignComment {
+  /** Stable `D<n>`, assigned once per key and never reused. */
+  id: string;
+  /** `${area}::${path}` - the identity that survives re-wording. */
+  key: string;
+  /** "open" while the lane still reports it; "resolved" once it stops. */
+  status: "open" | "resolved";
+  /** Non-null once someone answered "not fixing, because ..."; carried across attempts. */
+  accepted: { at: string; note: string } | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastSeenAttemptId: string;
 }
 
 export interface FidelityCheckResult {
@@ -167,7 +204,7 @@ export interface UnifiedVerificationAttempt {
     fidelity: LaneRecord<{ verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] }> | null;
     risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: RiskFinding[] }> | null;
     // Optional: attempts recorded before the design lane existed lack the key.
-    design?: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: DesignFinding[] }> | null;
+    design?: LaneRecord<{ comments: DesignComment[] }> | null;
   };
   error: { stage: string; code: string; message: string } | null;
 }
@@ -225,6 +262,9 @@ export interface ImplementState {
   // each new run re-judging every criterion from zero).
   budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
   deviations: { at: string; type: string; summary: string }[];
+  // Design comments tracked across attempts with their dispositions. Absent on
+  // states recorded before dispositions existed (= no tracked comments).
+  designComments?: TrackedDesignComment[];
   completion: {
     fingerprint: string;
     completedAt: string;

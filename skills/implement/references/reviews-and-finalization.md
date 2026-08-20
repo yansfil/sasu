@@ -7,28 +7,30 @@ Read this reference before unified verify, finalize, or a blocked handoff.
 | Profile | Unified lanes |
 | --- | --- |
 | `trivial` | acceptance and fidelity in parallel |
-| `standard` | acceptance, fidelity, and design (advisory) in parallel |
-| `high-risk` | acceptance, fidelity, and design (advisory) in parallel, then risk |
+| `standard` | acceptance, fidelity, and design in parallel |
+| `high-risk` | acceptance, fidelity, and design in parallel, then risk |
 
-The CLI executes these policies.
-There is no manual prompt generation or review-record step.
+The CLI executes these policies; there is no manual prompt generation or review-record step.
 Acceptance, fidelity, and design use the project `routine` judge profile.
 The additional risk lane uses the `high-risk` judge profile.
 By default those profiles are Codex Luna xhigh and Codex Sol xhigh, with Claude Sonnet 5 xhigh and Claude Opus 5 xhigh fallbacks respectively.
 
-## Design Lane (Advisory)
+## Design Lane
 
 The design lane reviews the shape of the code - one-cause-N-symptom patching, patch-on-patch accretion, structure drift against PRD §5, needless complexity, dead weight - the one failure class the other lanes explicitly do not read for.
-It is advisory by construction: its verdict is always PASS, it never blocks the run, never consumes fix budget, and a lane error leaves the attempt untouched.
+It reads this run's own diff against the pre-run commit, so it judges what the run did, not what the repository already looked like.
 
-Consumption is mandatory even though blocking is not:
+It has no verdict: it never fails the run, never consumes fix budget, and a lane error leaves the attempt untouched.
+It produces comments, `finalize --status complete` refuses while any is unanswered, and a comment is answered in exactly one of two ways:
 
-- the `verify` response carries `designAdvisory.findings`; relay them in your report to the user instead of silently dropping them.
-- `implementation-result.md` records them under `## Design Advisory` for human review.
-- acting on a finding before finalize is your judgment call; re-run verify afterward as with any change.
+- **Fix it**, then re-run `sasu implement verify`; the lane stops reporting it and the comment resolves itself. No flag claims a fix, because a claim is not a measurement.
+- **Accept it**: `sasu implement design --id <D#> --accept "<why it is being left alone>"`, recorded beside the comment in `state.json` and `implementation-result.md`.
 
-This lane owns quality review.
-Do not spawn ad-hoc adversarial review subagents on top of it: a prior run burned 92 minutes on five self-invoked review rounds against a verify gate that never returned a criterion FAIL.
+Identity is the file path - one comment per file - so re-wording or re-labelling one defect keeps one comment with one id, which is what bounds the loop (PRINCIPLES 13).
+The `verify` response carries `design.open` in full plus the count in `message`; relay open comments to the user rather than accepting them all to clear the gate.
+
+This lane owns quality review; do not spawn ad-hoc adversarial review subagents on top of it.
+A prior run burned 92 minutes on five self-invoked review rounds against a verify gate that never returned a criterion FAIL.
 
 ## Fidelity Rubric
 

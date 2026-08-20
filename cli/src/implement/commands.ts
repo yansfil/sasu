@@ -36,7 +36,8 @@ import {
   type AcLaneResult,
   type SourceSnapshot,
   type ContractItem,
-  type DesignFinding,
+  type DesignComment,
+  type TrackedDesignComment,
   type FidelityCheckResult,
   type ImplementCommandResult,
   type ImplementState,
@@ -512,6 +513,37 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   return result("artifact", true, `artifact registered for ${verificationId}: ${target.relative}`, { artifact: registered });
 }
 
+/**
+ * Records the one disposition a human or agent writes by hand: why a design
+ * comment is being left alone. There is deliberately no `--fixed`: a claimed
+ * fix is an assertion, while a comment the lane stops reporting is a
+ * measurement, and only one of those belongs in the record (PRINCIPLES 1, 10).
+ */
+function design(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOwnership(statePath, state, args);
+  const id = requiredFlag(args, "id").toUpperCase();
+  const note = requiredFlag(args, "accept").trim();
+  if (note === "") throw new Error("--accept requires the reason the comment is being left alone");
+  const tracked = state.designComments ?? [];
+  const entry = tracked.find((candidate) => candidate.id === id);
+  if (entry === undefined) {
+    const known = tracked.filter((candidate) => candidate.status === "open").map((candidate) => candidate.id);
+    throw new Error(`unknown design comment: ${id}${known.length === 0 ? "" : ` (open: ${known.join(", ")})`}`);
+  }
+  if (entry.status === "resolved") {
+    throw new Error(`${id} is already resolved: the design lane no longer reports it, so there is nothing to accept`);
+  }
+  entry.accepted = { at: nowIso(), note };
+  state.designComments = tracked;
+  persistState(statePath, state);
+  const open = openDesignComments(state);
+  return result("design", true, `${id} accepted; ${open.length} design comment(s) still await a disposition`, {
+    comment: entry,
+    open,
+  });
+}
+
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { state } = loadState(projectRoot, stateOptions(args));
   const recordRoot = state.projectRoot;
@@ -661,6 +693,58 @@ function changeMaterial(projectRoot: string, state: ImplementState, current: Ret
   return sections.join("\n\n");
 }
 
+/**
+ * The run's own changes as a real diff, against the commit HEAD pointed at
+ * when the run started. The design lane cannot do its job without this: shown
+ * only whole current files, it has no way to tell a duplication this run
+ * introduced from one that predates the run, so it reports both and its
+ * accretion charter degrades into whole-repository commentary.
+ *
+ * Bounded by `--stat`-free plain diff over exactly the changed paths, so
+ * generated trees excluded from the snapshot stay excluded here too. Without
+ * git (or when git fails) there is no diff to show and the lane falls back to
+ * the file bodies alone, which is what it always had.
+ */
+function runOwnedDiff(projectRoot: string, state: ImplementState, paths: string[]): string {
+  const head = state.initialSource.head;
+  if (head === null || paths.length === 0) return "No diff available (the project is not a git repository, or nothing changed).";
+  const tracked = spawnSync("git", ["ls-tree", "-r", "--name-only", head], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (tracked.error !== undefined || tracked.status !== 0) return `No diff available (git ls-tree ${head} failed).`;
+  const atHead = new Set(tracked.stdout.split("\n").filter((entry) => entry !== ""));
+  const sections: string[] = [];
+  const known = paths.filter((entry) => atHead.has(entry));
+  if (known.length > 0) {
+    const executed = spawnSync("git", ["diff", head, "--", ...known], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    if (executed.error !== undefined || executed.status !== 0) return `No diff available (git diff against ${head} failed).`;
+    if (executed.stdout.trim() !== "") sections.push(executed.stdout.trimEnd());
+  }
+  // Files absent from the pre-run commit are the run's newest work and the
+  // most likely place for accretion, yet `git diff <head>` never shows them:
+  // untracked paths are invisible to it, and `git add -N` would buy their
+  // visibility by mutating the index of a tree under judgment. --no-index
+  // against /dev/null reads the same diff without touching any repository state.
+  for (const relative of paths) {
+    if (atHead.has(relative)) continue;
+    if (!fs.existsSync(path.join(projectRoot, relative))) continue;
+    const added = spawnSync("git", ["diff", "--no-index", "--", "/dev/null", relative], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    // --no-index exits 1 when the inputs differ, which is the normal case here.
+    if (added.error === undefined && added.stdout.trim() !== "") sections.push(added.stdout.trimEnd());
+  }
+  return sections.length === 0 ? "The changed files are byte-identical to the pre-run commit." : sections.join("\n");
+}
+
 function changedFileManifest(projectRoot: string, paths: string[]): string {
   if (paths.length === 0) return "- none";
   return paths.map((relative) => {
@@ -774,21 +858,107 @@ function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: F
   return { verdict: raw.verdict, checks };
 }
 
-function validateDesign(value: unknown): { verdict: "PASS" | "FAIL"; findings: DesignFinding[] } | string {
+function validateDesign(value: unknown): { comments: DesignComment[] } | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
-  const raw = value as { verdict?: unknown; findings?: unknown };
-  if (raw.verdict !== "PASS") return "the design lane is advisory: verdict must be PASS";
-  if (!Array.isArray(raw.findings)) return "findings must be an array";
-  const findings: DesignFinding[] = [];
-  for (const [index, entry] of raw.findings.entries()) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return `findings[${index}] must be an object`;
-    const finding = entry as Record<string, unknown>;
-    if (typeof finding["area"] !== "string" || finding["area"].trim() === "") return `findings[${index}].area must be a non-empty string`;
-    if (typeof finding["text"] !== "string" || finding["text"].trim() === "") return `findings[${index}].text must be a non-empty string`;
-    if (typeof finding["suggestion"] !== "string") return `findings[${index}].suggestion must be a string`;
-    findings.push({ area: finding["area"], text: finding["text"], suggestion: finding["suggestion"] });
+  const raw = value as { comments?: unknown };
+  if (!Array.isArray(raw.comments)) return "comments must be an array";
+  const comments: DesignComment[] = [];
+  for (const [index, entry] of raw.comments.entries()) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return `comments[${index}] must be an object`;
+    const comment = entry as Record<string, unknown>;
+    for (const field of ["area", "path", "text"]) {
+      const held = comment[field];
+      if (typeof held !== "string" || held.trim() === "") return `comments[${index}].${field} must be a non-empty string`;
+    }
+    if (typeof comment["suggestion"] !== "string") return `comments[${index}].suggestion must be a string`;
+    comments.push({
+      area: (comment["area"] as string).trim(),
+      // Normalized here and nowhere else: `path` is half the identity key, so
+      // a leading "./" would silently fork one comment into two.
+      path: (comment["path"] as string).trim().replace(/^\.\//, ""),
+      text: (comment["text"] as string).trim(),
+      suggestion: comment["suggestion"] as string,
+    });
   }
-  return { verdict: "PASS", findings };
+  // Two comments on one file would collide into a single tracked entry and one
+  // of them would vanish without ever being answered. Reject at the boundary
+  // instead of picking a winner; the prompt asks for one comment per file.
+  const keys = comments.map(designCommentKey);
+  const duplicate = keys.find((key, index) => keys.indexOf(key) !== index);
+  if (duplicate !== undefined) return `two comments target the same file (${duplicate}); report one comment per file`;
+  return { comments };
+}
+
+/**
+ * A comment's identity across attempts. `path` alone, deliberately.
+ *
+ * Measured 2026-08-20 on gpt-5.6-luna xhigh, 10 live calls on one fixed diff:
+ * the path was identical in 10/10, while `area` split 5/5 between
+ * "structure-drift" and "one-cause-n-symptoms" for the same duplication. An
+ * area in the key would therefore have re-minted that comment on roughly every
+ * other attempt, dropping its recorded acceptance each time - a guard that
+ * behaves like a coin flip (PRINCIPLES 11). `area` stays a descriptive label
+ * and is free to drift.
+ */
+export function designCommentKey(comment: DesignComment): string {
+  return comment.path;
+}
+
+/**
+ * Folds one attempt's comments into the tracked list. Identity is the key, so
+ * a re-worded repeat keeps its id and its recorded acceptance; a comment the
+ * lane stopped reporting becomes "resolved" without anyone claiming a fix.
+ *
+ * Silence is trusted on a single attempt, which is a deliberate looseness, not
+ * an oversight: measured 2026-08-20 on gpt-5.6-luna xhigh over 8 live calls on
+ * one fixed diff, the lane reported both real defects 7 times and dropped the
+ * minor one once. So roughly one attempt in eight can resolve a comment nobody
+ * answered. Requiring K consecutive silences would close that at the cost of
+ * keeping genuinely fixed comments open for K more rounds - a worse trade for a
+ * gate whose job is to force an answer, not to prove a defect's absence.
+ */
+export function reconcileDesignComments(
+  tracked: TrackedDesignComment[],
+  comments: DesignComment[],
+  attemptId: string,
+  at: string,
+): TrackedDesignComment[] {
+  const next = tracked.map((entry) => ({ ...entry }));
+  const seen = new Set<string>();
+  for (const comment of comments) {
+    const key = designCommentKey(comment);
+    seen.add(key);
+    const existing = next.find((entry) => entry.key === key);
+    if (existing === undefined) {
+      next.push({
+        ...comment,
+        // Ids are minted from the high-water mark, never from the array
+        // length: a numbering that reuses a resolved comment's id would make
+        // an old acceptance note read as an answer to a new comment.
+        id: `D${next.reduce((high, entry) => Math.max(high, Number(entry.id.slice(1)) || 0), 0) + 1}`,
+        key,
+        status: "open",
+        accepted: null,
+        firstSeenAt: at,
+        lastSeenAt: at,
+        lastSeenAttemptId: attemptId,
+      });
+      continue;
+    }
+    existing.area = comment.area;
+    existing.path = comment.path;
+    existing.text = comment.text;
+    existing.suggestion = comment.suggestion;
+    existing.status = "open";
+    existing.lastSeenAt = at;
+    existing.lastSeenAttemptId = attemptId;
+  }
+  for (const entry of next) if (!seen.has(entry.key)) entry.status = "resolved";
+  return next;
+}
+
+export function openDesignComments(state: ImplementState): TrackedDesignComment[] {
+  return (state.designComments ?? []).filter((entry) => entry.status === "open" && entry.accepted === null);
 }
 
 function validateRisk(value: unknown): { verdict: "PASS" | "FAIL"; findings: RiskFinding[] } | string {
@@ -1173,12 +1343,12 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityInvocationId = crypto.randomUUID();
   progress(`judging ${state.acceptanceCriteria.length} acceptance criteria and fidelity in parallel (profile: ${state.prd.reviewProfile})`);
   if (priorFidelity !== null) progress(`fidelity: ${priorFidelity.verdict} (reused from the ERROR'd attempt)`);
-  // The design lane is advisory: always re-run (never reused - it is one cheap
-  // call and its findings should describe the current tree), skipped for
-  // trivial profiles, and excluded from the attempt verdict below. Its
-  // guaranteed consumption points are the verify command response (finding
-  // count) and the Design Advisory section of implementation-result.md -
-  // a lane whose output only lived inside a prompt would never be read.
+  // The design lane always re-runs (never reused - it is one cheap call and
+  // its comments must describe the CURRENT tree: a reused comment set would
+  // let a fixed defect keep blocking finalize, and a fresh one keep passing).
+  // Skipped for trivial profiles and excluded from the attempt verdict: it
+  // has no verdict to contribute. What makes it consequential is disposition,
+  // not a vote - see reconcileDesignComments and the finalize blocker.
   const runDesignLane = state.prd.reviewProfile !== "trivial";
   const [acceptance, fidelity, design] = await Promise.all([
     acceptanceLane(config, recordRoot, workRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse),
@@ -1193,9 +1363,12 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     !runDesignLane
       ? Promise.resolve(null)
       : judgeLane(crypto.randomUUID(), () =>
-          runJudge(config, "implement:design", "routine", designPrompt(prdText, material), validateDesign),
+          runJudge(config, "implement:design", "routine", designPrompt(prdText, material, runOwnedDiff(workRoot, state, changedPaths)), validateDesign),
         ).then((record) => {
-          progress(`design (advisory): ${record.result?.findings.length ?? 0} finding(s) (${(record.durationMs / 1000).toFixed(0)}s)`);
+          const summary = record.verdict === "ERROR"
+            ? `ERROR (${record.error?.message ?? "unknown"})`
+            : `${record.result?.comments.length ?? 0} comment(s)`;
+          progress(`design: ${summary} (${(record.durationMs / 1000).toFixed(0)}s)`);
           return record;
         }),
   ]);
@@ -1241,19 +1414,39 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       : null,
   };
   state.verificationAttempts.push(attempt);
+  // Only a lane that actually produced a comment set may reconcile. On ERROR
+  // the lane saw nothing, and treating "saw nothing" as "reported nothing"
+  // would silently resolve every open comment.
+  if (design?.result != null) {
+    state.designComments = reconcileDesignComments(state.designComments ?? [], design.result.comments, attempt.id, nowIso());
+  }
   persistState(statePath, state);
   progress(`unified verification ${verdict} in ${((Date.now() - started) / 1000).toFixed(0)}s`);
+  const open = openDesignComments(state);
+  if (open.length > 0) progress(`design: ${open.length} comment(s) await a disposition before finalize`);
   const budget = verificationBudget(state, config.judge.retryBudget);
   const terminal = terminalBudgetMessage(budget);
-  return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}`, {
+  const designNote = open.length === 0 ? "" : `; ${open.length} design comment(s) await a disposition`;
+  return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}${designNote}`, {
     attempt: attemptSummary(attempt),
     sourceRouting: sourceContext.routing,
     verificationBudget: budget,
-    // Guaranteed render point: the orchestrating agent sees advisory findings
-    // in this response without any prompt needing to be invoked.
-    designAdvisory: design === null
-      ? { ran: false, findings: [] }
-      : { ran: true, findings: design.result?.findings ?? [] },
+    // Guaranteed render point: the orchestrating agent sees the comments it
+    // owes an answer for in this response, in full, without any prompt needing
+    // to be invoked - and the message line above repeats the count so a caller
+    // reading only `message` cannot miss the debt.
+    design: design === null
+      ? { ran: false, open: [], acceptedCount: 0, resolvedCount: 0 }
+      : {
+          ran: true,
+          ...(design.verdict === "ERROR" ? { error: design.error?.message ?? "unknown" } : {}),
+          open,
+          acceptedCount: (state.designComments ?? []).filter((entry) => entry.status === "open" && entry.accepted !== null).length,
+          resolvedCount: (state.designComments ?? []).filter((entry) => entry.status === "resolved").length,
+          howToAnswer: open.length === 0
+            ? null
+            : "fix it and re-run `sasu implement verify` (the comment disappears on its own), or record `sasu implement design --id <D#> --accept \"<why it is being left alone>\"`",
+        },
   });
 }
 
@@ -1272,13 +1465,21 @@ function completionFingerprint(
   }));
 }
 
-function designAdvisorySection(attempt: UnifiedVerificationAttempt): string {
+function designSection(state: ImplementState, attempt: UnifiedVerificationAttempt): string {
   const lane = attempt.lanes.design ?? null;
   if (lane === null) return "Not run (trivial profile or pre-design-lane attempt).";
-  if (lane.verdict === "ERROR") return `Lane errored: ${lane.error?.message ?? "unknown"}. Advisory only; the run is unaffected.`;
-  const findings = lane.result?.findings ?? [];
-  if (findings.length === 0) return "No findings.";
-  return findings.map((entry) => `- [${entry.area}] ${entry.text}\n  Suggestion: ${entry.suggestion}`).join("\n");
+  if (lane.verdict === "ERROR") return `Lane errored: ${lane.error?.message ?? "unknown"}. No comments were reconciled from this attempt.`;
+  const tracked = state.designComments ?? [];
+  if (tracked.length === 0) return "No comments.";
+  const line = (entry: TrackedDesignComment): string => {
+    const disposition = entry.status === "resolved"
+      ? "resolved (the lane no longer reports it)"
+      : entry.accepted !== null
+        ? `accepted ${entry.accepted.at}: ${entry.accepted.note}`
+        : "OPEN - no disposition";
+    return `- ${entry.id} [${entry.area}] ${entry.path}\n  ${entry.text}\n  Suggestion: ${entry.suggestion}\n  Disposition: ${disposition}`;
+  };
+  return tracked.map(line).join("\n");
 }
 
 function implementationReport(
@@ -1319,7 +1520,7 @@ function implementationReport(
   const openItemsSection = blocked === undefined
     ? ""
     : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design (advisory)", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Advisory\n\nAdvisory findings from the design lane. They never block the run; a human decides what is worth acting on.\n\n${designAdvisorySection(attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1353,6 +1554,13 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     blockers.push("unified verify input fingerprint no longer matches current state, artifacts, or fidelity source");
   }
   if (state.prd.reviewProfile === "high-risk" && latest.lanes.risk?.verdict !== "PASS") blockers.push("high-risk final judge is not PASS");
+  // The design lane's whole consequence. Not a verdict: the comment does not
+  // have to be fixed, it has to be answered. Fixing answers it by making the
+  // lane stop reporting it; the escape hatch is one recorded sentence, and
+  // the record keeps that sentence next to the run forever.
+  blockers.push(...openDesignComments(state).map(
+    (entry) => `design comment ${entry.id} (${entry.area} @ ${entry.path}) has no disposition: fix it and re-verify, or \`sasu implement design --id ${entry.id} --accept "<why>"\``,
+  ));
   if (requestedStatus === "blocked") {
     // The blocked close exists for runs whose verification machinery is
     // terminally stuck, never as a shortcut past fixable findings: it stays
@@ -1460,8 +1668,9 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
+    if (subcommand === "design") return design(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use start, task, artifact, status, verify, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use start, task, artifact, status, design, verify, or finalize" };
   } catch (error) {
     return {
       ok: false,

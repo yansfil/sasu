@@ -497,7 +497,7 @@ function makeGitStore() {
   fs.writeFileSync(path.join(store.projectRoot, "app.js"), "render()\n");
   git("init", "-q");
   git("add", "-A");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base");
   return store;
 }
 
@@ -542,7 +542,7 @@ test("judged-diff freshness: a verify PASS stays live on the unchanged tree and 
   // resurrects the materialize-in-HEAD rescue machinery it deleted.
   const git = (...args) => spawnSync("git", args, { cwd: store.projectRoot, encoding: "utf8" });
   git("add", "-A");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "land");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "land");
   assert.equal(gateStatus(state, "verify", 2, store.projectRoot).effective, "PASS");
 });
 

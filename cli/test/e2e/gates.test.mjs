@@ -15,7 +15,7 @@ const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "
 const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8");
 
 function gitCommitAll(dir, message, paths = ["-A"]) {
-  for (const args of [["init", "-q"], ["add", ...paths], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message]]) {
+  for (const args of [["init", "-q"], ["add", ...paths], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]]) {
     const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
     assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
   }

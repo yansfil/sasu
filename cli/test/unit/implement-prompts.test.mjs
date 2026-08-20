@@ -130,16 +130,28 @@ test("implement contract parses 2.1 scenario cards and carries SC ids into V cov
   assert.ok(parsed.verification[0].covers.includes("SC1"), JSON.stringify(parsed.verification[0].covers));
 });
 
-test("design prompt is advisory-only and scoped to what other lanes do not read", () => {
-  const prompt = designPrompt("PRD BODY", "CHANGE MATERIAL");
-  assert.match(prompt, /advisory design reviewer/);
-  assert.match(prompt, /never block the run/);
-  assert.match(prompt, /"verdict": "PASS"/);
-  assert.doesNotMatch(prompt, /"FAIL"/);
+test("design prompt carries no verdict, anchors every comment to a path, and shows the run's own diff", () => {
+  const prompt = designPrompt("PRD BODY", "CHANGE MATERIAL", "RUN OWNED DIFF");
+  assert.match(prompt, /design reviewer/);
+  assert.match(prompt, /You have no verdict/);
+  // The lane must not be able to emit a verdict at all: a verdict field in the
+  // schema is what made the old lane a judge whose ruling was hardwired shut.
+  assert.doesNotMatch(prompt, /"verdict"/);
+  assert.match(prompt, /There is no verdict field\. Do not emit one\./);
+  // Comments cost someone an answer, and the prompt must say so - looseness is
+  // otherwise unpriced and the lane drifts into style commentary.
+  assert.match(prompt, /must be answered before the run can be finalized/);
+  assert.match(prompt, /"path": "project\/relative\/file"/);
+  assert.match(prompt, /AT MOST ONE COMMENT PER FILE/);
+  assert.match(prompt, /"area" is a label for the reader, not part of the identity/);
   assert.match(prompt, /One cause patched as N symptoms/);
   assert.match(prompt, /No style nitpicks/);
+  // The diff is the material the accretion charter needs; the bodies are context.
+  assert.match(prompt, /RUN OWNED DIFF/);
+  assert.match(prompt, /Judge what THIS RUN did/);
   assert.match(prompt, /CHANGE MATERIAL/);
   assert.match(prompt, /PRD BODY/);
+  assert.ok(prompt.indexOf("RUN OWNED DIFF") < prompt.indexOf("CHANGE MATERIAL"));
 });
 
 test("implement contract extracts nested Decision Traceability content", () => {

@@ -43,7 +43,7 @@ function write(dir, rel, content) {
 
 function commit(dir, message) {
   git(dir, "add", "-A");
-  git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message);
+  git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message);
 }
 
 test("vouched fingerprint: committing dirty work does not move it (commit-invariance)", () => {
