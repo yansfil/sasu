@@ -129,6 +129,13 @@ export interface GateRecord {
    */
   totalAttempts?: number;
   /**
+   * Cumulative judged non-PASS rounds (BLOCK/FAIL; declared-gap and judge
+   * ERROR excluded), never reset. The cycle cap reads this instead of
+   * `history` because history keeps only the last 20 rows. Absent on files
+   * from before the cap existed; consumers read 0 (fail-open).
+   */
+  totalNonPassAttempts?: number;
+  /**
    * Judge ERRORs since the last real verdict; ANY judged verdict (PASS, FAIL,
    * BLOCK) resets it to 0.
    *
@@ -235,7 +242,7 @@ export interface GateRecord {
    * and the verbatim quote exists so a fabricated approval is a falsifiable
    * record the user can catch, not so the harness can catch it.
    */
-  budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
+  budgetGrants?: { at: string; evidence: string; attemptCountBefore: number; nonPassCountBefore?: number }[];
   /**
    * Human-consent findings converted to recorded assumptions under a
    * delegated run ($please): `evidence` quotes the user's invocation - the
@@ -366,13 +373,13 @@ export interface GateStatusView {
    * exhaustion, exactly as `rerunRefused` is.
    */
   judgeErrorLoop: boolean;
-  /** Judged rounds since the last user grant (or ever): the cycle-cap gauge. */
+  /** Judged non-PASS rounds since the last user grant (or ever): the cycle-cap gauge. */
   roundsSinceGrant: number;
   /** Hard bound on roundsSinceGrant, derived as 3x the fix budget - not a knob. */
   cycleCap: number;
   /**
-   * Fourth terminal cause: the gate has been judged cycleCap times since the
-   * last user grant, PASSes included. The fix budget cannot bound this loop
+   * Fourth terminal cause: the gate has produced cycleCap judged non-PASS
+   * rounds since the last user grant. The fix budget cannot bound this loop
    * because a PASS resets `attempts` - measured 2026-08-20 (3 please runs,
    * gap-audit 7-11 rounds each): PASS -> cross-gate fix -> STALE -> re-judge
    * -> fresh findings cycled indefinitely, every individual round lawful.
@@ -468,13 +475,22 @@ export function gateStatus(state: GatesState, gate: GateId, budget: number, proj
   // gauges, one bound; `verdict === "ERROR"` keeps a streak written by one dist
   // from being read as terminal under a verdict written by another.
   const consecutiveErrors = Number.isInteger(record.consecutiveErrors) ? (record.consecutiveErrors as number) : 0;
-  // Cycle gauge: judged rounds since the last grant, PASSes included, so a
-  // PASS->STALE->re-judge loop is bounded even though each PASS resets
-  // `attempts`. A user grant reopens headroom via attemptCountBefore, the
-  // baseline it already records.
-  const totalAttempts = Number.isInteger(record.totalAttempts) ? (record.totalAttempts as number) : 0;
-  const grantBase = record.budgetGrants?.length ? record.budgetGrants[record.budgetGrants.length - 1]!.attemptCountBefore : 0;
-  const roundsSinceGrant = Math.max(0, totalAttempts - grantBase);
+  // Cycle gauge: judged NON-PASS rounds since the last grant. Counting only
+  // non-PASS rounds (unlike `attempts`, which a PASS resets) bounds the
+  // PASS->STALE->re-judge livelock - its blocked rounds accumulate across the
+  // PASSes - while a healthy slug whose every re-run PASSes never trips
+  // (red-team 2026-08-20: the first cut counted PASSes too, so a long-lived
+  // document re-verified ~15 times would have been refused as "not
+  // converging" on a history that converged every time). Read from the
+  // dedicated cumulative counter, NOT from `history`: history keeps 20 rows,
+  // so a history-derived gauge saturates below the cap and bounds nothing.
+  // A legacy grant without nonPassCountBefore falls back to
+  // attemptCountBefore, which counts MORE rounds (PASSes too) and therefore
+  // only ever under-counts the gauge - fail-open, never a false terminal.
+  const totalNonPass = Number.isInteger(record.totalNonPassAttempts) ? (record.totalNonPassAttempts as number) : 0;
+  const lastGrant = record.budgetGrants?.length ? record.budgetGrants[record.budgetGrants.length - 1]! : null;
+  const grantBase = lastGrant === null ? 0 : Number.isInteger(lastGrant.nonPassCountBefore) ? (lastGrant.nonPassCountBefore as number) : Math.min(lastGrant.attemptCountBefore, totalNonPass);
+  const roundsSinceGrant = Math.max(0, totalNonPass - grantBase);
   const cycleCap = budget * 3;
   return {
     gate,
@@ -523,6 +539,13 @@ export function recordDelegation(store: GateStore, state: GatesState, evidence: 
   return state;
 }
 
+/** Revoke a stored delegation: later runs ask again instead of assuming. */
+export function clearDelegation(store: GateStore, state: GatesState): GatesState {
+  delete state.delegation;
+  store.save(state);
+  return state;
+}
+
 export function grantGateBudget(store: GateStore, state: GatesState, gate: GateId, evidence: string, budget: number): GatesState {
   const trimmed = evidence.trim();
   if (trimmed === "") {
@@ -535,7 +558,12 @@ export function grantGateBudget(store: GateStore, state: GatesState, gate: GateI
   const record = state.gates[gate]!;
   record.budgetGrants = [
     ...(record.budgetGrants ?? []),
-    { at: new Date().toISOString(), evidence: trimmed, attemptCountBefore: record.totalAttempts ?? 0 },
+    {
+      at: new Date().toISOString(),
+      evidence: trimmed,
+      attemptCountBefore: record.totalAttempts ?? 0,
+      nonPassCountBefore: record.totalNonPassAttempts ?? 0,
+    },
   ];
   record.attempts = 0;
   record.consecutiveErrors = 0;
@@ -615,6 +643,14 @@ export function recordGateResult(
     // Cumulative twin of the gauge above: every real run counts, PASS included,
     // and nothing resets it (see the GateRecord field comment).
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
+    // Cycle-cap ledger: cumulative judged non-PASS rounds, never reset. Kept
+    // as its own counter because `history` is capped at 20 rows (below), so a
+    // gauge derived from history saturates and the cap silently stops
+    // bounding anything past 20 rounds - measured during this change's own
+    // red-team fix (101 alternating rounds plateaued at 14/15).
+    if (outcome.verdict !== "PASS" && failedStage !== "declared-gap") {
+      record.totalNonPassAttempts = (record.totalNonPassAttempts ?? 0) + 1;
+    }
     // ANY judged verdict clears the error streak, FAIL and BLOCK included: the
     // judge answered the question, which is the whole thing the streak counts.
     record.consecutiveErrors = 0;

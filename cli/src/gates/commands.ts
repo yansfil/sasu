@@ -17,7 +17,7 @@ import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../m
 import type { ImplementState } from "../implement/types";
 import { implementStatePathFor } from "../runs/paths";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
-import { runPrelint, type PrelintResult } from "./prelint";
+import { prelintPrdDecisionIds, runPrelint, type PrelintResult } from "./prelint";
 import {
   GAP_AUDIT_LANES,
   SPEC_LANES,
@@ -32,6 +32,7 @@ import {
   type PriorFinding,
 } from "./prompts";
 import {
+  clearDelegation,
   freshnessHash,
   GateStore,
   gateStatus,
@@ -379,7 +380,7 @@ async function runGapListGate(
       ? `fix budget exhausted (${before.attempts}/${before.budget} judged non-PASS rounds)`
       : before.judgeErrorLoop
         ? `judge failed ${before.consecutiveErrors} times in a row without a verdict`
-        : `cycle cap reached (${before.roundsSinceGrant}/${before.cycleCap} judged rounds, PASSes included): the fix loop is not converging`;
+        : `cycle cap reached (${before.roundsSinceGrant}/${before.cycleCap} judged non-PASS rounds since the last user grant): the fix loop is not converging`;
     return {
       ok: false,
       status: before,
@@ -534,6 +535,7 @@ export async function runGapAudit(
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   const prelint = runPrelint("qa-log", qaLog.content);
   if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "gap-audit", prelint);
+  emitPrelintWarnings(prelint);
   const result = await runGapListGate(
     projectRoot,
     config,
@@ -559,6 +561,12 @@ export async function runSpecGate(
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   const prelint = runPrelint("prd", prd.content);
   if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "spec", prelint);
+  // Cross-document rule: the spec gate alone holds both documents, and the
+  // judge's dominant P0 class was a PRD citing an invented D-id (red-team
+  // 2026-08-20, 6 real spec P0s). A dangling citation blocks here at $0
+  // instead of costing a judge round.
+  const cross = prelintPrdDecisionIds(prd.content, qaLog.content);
+  if (!cross.ok) return prelintBlock(projectRoot, config, topic, "spec", cross);
   emitPrelintWarnings(prelint);
   const result = await runGapListGate(
     projectRoot,
@@ -1869,6 +1877,15 @@ export function runDelegate(projectRoot: string, topic: string, evidence: string
   const store = new GateStore(projectRoot, topic);
   const state = recordDelegation(store, store.load(), evidence);
   return state.delegation!;
+}
+
+/** CLI seam for `sasu gate delegate --clear`: revoke the stored delegation. */
+export function runDelegateClear(projectRoot: string, topic: string): { cleared: boolean } {
+  const store = new GateStore(projectRoot, topic);
+  const state = store.load();
+  const had = state.delegation !== undefined;
+  clearDelegation(store, state);
+  return { cleared: had };
 }
 
 export function extractAcceptanceCriteria(prdContent: string): { id: string; text: string }[] {

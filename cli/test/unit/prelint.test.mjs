@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { prelintQaLog, prelintPrd, prelintContract, runPrelint } from "../../dist/gates/prelint.js";
+import { prelintQaLog, prelintPrd, prelintPrdDecisionIds, prelintContract, runPrelint } from "../../dist/gates/prelint.js";
 
 const FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
 
@@ -36,8 +36,6 @@ const QA_CASES = [
   ["qa-register-open.md", "qa-register-open"],
   ["qa-resolved-material-assumption.md", "qa-resolved-material-assumption"],
   ["qa-dangling-decision-id.md", "qa-dangling-decision-id"],
-  ["qa-dangling-q-reference.md", "qa-dangling-q-reference"],
-  ["qa-unanchored-user-decision.md", "qa-unanchored-user-decision"],
 ];
 
 for (const [file, rule] of QA_CASES) {
@@ -187,4 +185,45 @@ test("an AC with a Check tail still requires V coverage", () => {
   assert.equal(result.ok, false);
   assert.ok(result.findings.some((entry) => entry.rule === "prd-uncovered-ac"));
   assert.ok(result.findings.some((entry) => entry.rule === "prd-implementation-binding"));
+});
+
+// Citation ADVISORIES (red-team 2026-08-20): the blocking versions
+// false-positived on 8 real judge-passed documents (answer-count vs
+// heading-count numbering divergence; pre-interview consent), so these warn
+// without blocking - ok stays true, the rule lands in warnings only.
+test("qa-dangling-q-reference warns without blocking", () => {
+  const result = prelintQaLog(fixture("qa-dangling-q-reference.md"));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.warnings.map((w) => w.rule), ["qa-dangling-q-reference"]);
+});
+
+test("qa-unanchored-user-decision warns without blocking", () => {
+  const result = prelintQaLog(fixture("qa-unanchored-user-decision.md"));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.warnings.map((w) => w.rule), ["qa-unanchored-user-decision"]);
+});
+
+test("clean qa-log carries zero citation warnings", () => {
+  const result = prelintQaLog(fixture("qa-clean.md"));
+  assert.deepEqual(result.warnings, []);
+});
+
+// Cross-document spec-gate rule: a PRD citing a D-id absent from the
+// interview register is the judge's dominant P0 class ("invented D-40") and
+// blocks at $0. Calibrated 2026-08-20: zero missing D-ids across all 30 real
+// PRD+qa-log pairs on this machine.
+test("prd-dangling-decision-id blocks a PRD citing an unregistered decision", () => {
+  const qaLog = fixture("qa-clean.md"); // register holds D-01, D-02
+  const result = prelintPrdDecisionIds("The user approved PR delivery (D-40) and D-01 covers the rest.", qaLog);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.findings.map((f) => f.rule), ["prd-dangling-decision-id"]);
+  assert.match(result.findings[0].missing, /D-40/);
+});
+
+test("prd-dangling-decision-id passes when every cited D-id is registered", () => {
+  const qaLog = fixture("qa-clean.md");
+  const result = prelintPrdDecisionIds("Decisions D-01 and D-02 trace to the interview.", qaLog);
+  assert.equal(result.ok, true);
 });

@@ -80,18 +80,15 @@ function readQaLog(projectRoot: string, slug: string): { file: string; content: 
 }
 
 /**
- * Mid-interview drift check. Closure-gate rules are excluded here because
- * their defect is the normal state of an active interview, not breakage:
- * `qa-register-open` (open P0/P1 nodes are what an interview works through)
- * and `qa-unanchored-user-decision` (the command chain registers the decision
- * row BEFORE `interview log` appends the Q&A turn that cites it, so within a
- * turn the row is legitimately uncited). Everything else failing means the
- * document structure broke.
+ * Mid-interview drift check. The `qa-register-open` rule is a closure gate
+ * (open P0/P1 nodes are the normal state of an active interview), so it is
+ * excluded here; everything else failing means the document structure broke.
+ * The citation advisories (qa-dangling-q-reference, qa-unanchored-user-
+ * decision) live in `warnings`, which drift never reads, so the
+ * decision-before-log ordering inside a turn cannot produce drift noise.
  */
-const CLOSURE_ONLY_RULES = new Set(["qa-register-open", "qa-unanchored-user-decision"]);
-
 function driftFindings(content: string): PrelintFinding[] {
-  return runPrelint("qa-log", content).findings.filter((finding) => !CLOSURE_ONLY_RULES.has(finding.rule));
+  return runPrelint("qa-log", content).findings.filter((finding) => finding.rule !== "qa-register-open");
 }
 
 function result(

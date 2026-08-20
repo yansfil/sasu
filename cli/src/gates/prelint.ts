@@ -148,6 +148,7 @@ const QA_STATUSES = ["open", "resolved", "deferred", "blocking", "rejected"];
 
 export function prelintQaLog(content: string): PrelintResult {
   const findings: PrelintFinding[] = [];
+  const warnings: PrelintFinding[] = [];
   const lines = content.split("\n");
 
   const fm = parseFrontmatter(lines);
@@ -227,31 +228,42 @@ export function prelintQaLog(content: string): PrelintResult {
           }
           const source = row.cells[col("Source / owner")]!;
           const mapping = row.cells[col("PRD mapping / revisit")]!;
-          // Q-references live in the Source and mapping cells; the free-text
-          // Decision cell is skipped so a "Q4 2026"-style quarter can never
-          // false-positive (prelint's zero-false-positive contract, D-04).
+          // Both citation rules below are ADVISORIES, not blocks: red-teamed
+          // 2026-08-20 against every qa-log on this machine, the blocking
+          // versions false-positived on 8 completed, judge-passed documents -
+          // (a) Source cells count user answers while `interview log`
+          // auto-assigns heading numbers (qalog.ts max+1), so batched turns
+          // legitimately cite Q-numbers that exist as answers under another
+          // heading (herdr-pet Q16 body carries "source: user, Q21"); and
+          // (b) consent that predates the interview ("user, 사전대화",
+          // session-handoff-mini D-04/D-05) has no turn to cite yet its
+          // gap-audit PASSed. A warning keeps the $0 pre-judge signal (the
+          // judge blocks on the real fabrication cases) without violating the
+          // zero-false-positive contract above. Q-references are read from
+          // the Source and mapping cells only; the free-text Decision cell is
+          // skipped so a "Q4 2026"-style quarter can never fire at all.
           if (rawQaRange) {
             for (const cell of [source, mapping]) {
               for (const token of cell.match(/\bQ\d+\b/g) ?? []) {
                 if (!qaAnchors.has(token)) {
-                  findings.push(
-                    finding(
+                  warnings.push(
+                    warning(
                       "qa-dangling-q-reference",
                       row.line,
                       `${id || "row"} cites ${token}, but no "### ${token}:" entry exists in Raw Q&A`,
-                      `Record the real Q&A turn as ${token} or fix the citation; a decision must never cite evidence that does not exist.`,
+                      `If the exchange is real, fix the citation to the heading that holds it; if it is not, the judge will block on it.`,
                     ),
                   );
                 }
               }
             }
             if (kind === "decision" && status === "resolved" && /(\buser\b|사용자)/iu.test(source) && id !== "" && !qaCitedIds.has(id)) {
-              findings.push(
-                finding(
+              warnings.push(
+                warning(
                   "qa-unanchored-user-decision",
                   row.line,
-                  `${id} is a resolved user-sourced decision, but no Raw Q&A turn's decision_ids cites it - there is no recorded user answer behind it`,
-                  `Log the actual user exchange (sasu interview log --decision-ids ${id}) or change the Source to what really decided it.`,
+                  `${id} is a resolved user-sourced decision, but no Raw Q&A turn's decision_ids cites it`,
+                  `If a real exchange decided it, log it (sasu interview log --decision-ids ${id}); the judge blocks on unrecorded consent.`,
                 ),
               );
             }
@@ -283,7 +295,42 @@ export function prelintQaLog(content: string): PrelintResult {
     }
   }
 
-  return { ok: findings.length === 0, doc: "qa-log", findings };
+  return { ok: findings.length === 0, doc: "qa-log", findings, warnings };
+}
+
+/**
+ * Cross-document rule for the spec gate (which alone holds both documents):
+ * every D-id the PRD cites must exist in the interview log's Decision
+ * Register. Measured motivation (2026-08-20 red-team of 6 real spec-gate P0
+ * findings): the judge's dominant P0 class was a PRD citing an INVENTED
+ * decision ("approved PR delivery via invented D-40"), i.e. the fabrication
+ * lives in the PRD where the qa-log rules never run. Calibration across all
+ * 30 real PRD+qa-log pairs on this machine: zero missing D-ids on healthy
+ * documents, so this blocks (P0) under the zero-false-positive contract.
+ */
+export function prelintPrdDecisionIds(prdContent: string, qaLogContent: string): PrelintResult {
+  const findings: PrelintFinding[] = [];
+  const registerIds = new Set<string>();
+  for (const line of qaLogContent.split("\n")) {
+    const match = line.match(/^\|\s*(D-\d+)\s*\|/);
+    if (match) registerIds.add(match[1]!);
+  }
+  const seen = new Set<string>();
+  prdContent.split("\n").forEach((line, index) => {
+    for (const token of line.match(/\bD-\d+\b/g) ?? []) {
+      if (registerIds.has(token) || seen.has(token)) continue;
+      seen.add(token);
+      findings.push(
+        finding(
+          "prd-dangling-decision-id",
+          index + 1,
+          `PRD cites ${token}, which does not exist in the interview log's Decision Register`,
+          `Register the real decision first (sasu interview decision --id ${token} ... plus the citing interview log turn) or remove the fabricated reference.`,
+        ),
+      );
+    }
+  });
+  return { ok: findings.length === 0, doc: "prd", findings };
 }
 
 // --- PRD rules (spec and verify gate entrances) ---

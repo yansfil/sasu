@@ -5,7 +5,7 @@
 // (PRINCIPLES item 7); (b) gap-audit cycled 7-11 judged rounds per run
 // because a PASS resets `attempts`, so a PASS -> cross-gate fix -> STALE ->
 // re-judge loop was bounded by nothing (item 13). These tests pin the fixes:
-// delegation recorded once as run state, and a cycle cap over ALL judged
+// delegation recorded once as run state, and a cycle cap over judged non-PASS
 // rounds that only a user grant reopens.
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -44,20 +44,32 @@ test("delegate: records once, persists, and is visible to a reloaded store", () 
   assert.equal(new GateStore(projectRoot, "topic-a").load().delegation.evidence, "second invocation /please");
 });
 
-test("cycle cap: PASS rounds count, so a stale-re-judge loop reaches a terminal cause", () => {
+test("cycle cap: non-PASS rounds accumulate across PASS resets, so a stale-re-judge loop reaches a terminal cause", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
   const budget = 2; // cap = 6
   // Alternate BLOCK/PASS: `attempts` keeps resetting, so budgetExhausted
-  // never fires - exactly the measured livelock shape.
-  for (let i = 0; i < 6; i += 1) {
+  // never fires - exactly the measured livelock shape. Only the BLOCK
+  // rounds count toward the cap.
+  for (let i = 0; i < 12; i += 1) {
     state = recordGateResult(store, state, "gap-audit", outcome(i % 2 === 0 ? "BLOCK" : "PASS"), []);
     assert.equal(gateStatus(state, "gap-audit", budget).budgetExhausted, false);
   }
   const view = gateStatus(state, "gap-audit", budget);
-  assert.equal(view.roundsSinceGrant, 6);
+  assert.equal(view.roundsSinceGrant, 6, "only the 6 BLOCK rounds count");
   assert.equal(view.cycleCap, 6);
   assert.equal(view.cycleExhausted, true);
+});
+
+test("cycle cap: a healthy always-PASS history never trips (red-team 2026-08-20)", () => {
+  const store = new GateStore(makeProject(), "topic-a");
+  let state = store.load();
+  for (let i = 0; i < 10; i += 1) {
+    state = recordGateResult(store, state, "gap-audit", outcome("PASS"), []);
+  }
+  const view = gateStatus(state, "gap-audit", 2);
+  assert.equal(view.roundsSinceGrant, 0);
+  assert.equal(view.cycleExhausted, false);
 });
 
 test("cycle cap: admission refuses at $0 with its own cause, and records nothing", async () => {
@@ -65,8 +77,11 @@ test("cycle cap: admission refuses at $0 with its own cause, and records nothing
   const store = new GateStore(projectRoot, "topic-a");
   const config = loadConfig(projectRoot);
   let state = store.load();
-  for (let i = 0; i < config.judge.retryBudget * 3; i += 1) {
-    state = recordGateResult(store, state, "gap-audit", outcome(i % 2 === 0 ? "BLOCK" : "PASS"), []);
+  // BLOCK,BLOCK,PASS cycles: attempts never reaches the fix budget, but the
+  // non-PASS rounds accumulate to the cycle cap.
+  for (let i = 0; gateStatus(state, "gap-audit", config.judge.retryBudget).roundsSinceGrant < config.judge.retryBudget * 3; i += 1) {
+    assert.ok(i < 100, "cycle gauge must reach the cap - saturation here means it stopped counting");
+    state = recordGateResult(store, state, "gap-audit", outcome(i % 3 === 2 ? "PASS" : "BLOCK"), []);
   }
   const qaLogPath = path.join(projectRoot, "qa-log.md");
   fs.copyFileSync(path.join(FIXTURES, "qa-clean.md"), qaLogPath);
@@ -79,11 +94,11 @@ test("cycle cap: admission refuses at $0 with its own cause, and records nothing
   assert.equal(JSON.stringify(new GateStore(projectRoot, "topic-a").load()), before);
 });
 
-test("cycle cap: a user grant reopens headroom - roundsSinceGrant restarts at the grant baseline", () => {
+test("cycle cap: a user grant reopens headroom - rounds before the grant stop counting", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
   const budget = 2;
-  for (let i = 0; i < 6; i += 1) {
+  for (let i = 0; i < 12; i += 1) {
     state = recordGateResult(store, state, "gap-audit", outcome(i % 2 === 0 ? "BLOCK" : "PASS"), []);
   }
   assert.equal(gateStatus(state, "gap-audit", budget).cycleExhausted, true);
