@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { loadConfig } from "./config";
 import { runDoctor } from "./doctor";
+import { runAudit } from "./audit/runs";
 import {
   readGateStatus,
   runDelegate,
@@ -58,6 +59,7 @@ Usage:
   sasu interview checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
+  sasu audit runs [--project-root <path>] [--include-seen] [--json]
   sasu doctor [--json]
 
 Interview commands own the qa-log's mechanical bookkeeping (counters, cursor,
@@ -100,7 +102,15 @@ rounds since the last user grant, PASSes never resetting it: a
 PASS->stale->re-judge loop that keeps re-blocking stops there and hands its
 findings to the user, while a slug whose re-runs keep passing never trips.
 Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
-executes implementation work.`;
+executes implementation work.
+
+'audit runs' is the L1 run auditor: a read-only sweep of every recorded run's
+gate state against the behavior the skills promise, built to be driven
+periodically by an agent loop. Each finding names the PRINCIPLES item it leans
+on and whether it is a mechanical-fix candidate, a design question, or
+informational. A fingerprint ledger (agents/runs/.audit/ledger.json) reports
+each structural finding once and then only tracks it, so the loop converges;
+--include-seen re-prints tracked ones. Exit 1 when NEW findings exist, else 0.`;
 
 interface Args {
   positional: string[];
@@ -446,6 +456,25 @@ async function main(): Promise<void> {
       fail(`unknown interview subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
     }
     emitInterviewResult(interviewResult, asJson);
+  }
+
+  if (command === "audit") {
+    if (subcommand !== "runs") fail(`unknown audit subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
+    const config = loadConfig(projectRoot);
+    const rootFlag = args.flags.get("project-root");
+    const root = typeof rootFlag === "string" ? path.resolve(rootFlag) : projectRoot;
+    const result = runAudit(root, config, { includeSeen: args.flags.get("include-seen") === true });
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`audited ${result.scannedSlugs.length} run(s) in ${root}\n`);
+      for (const f of result.findings) {
+        const badge = f.classification === "mechanical-fix-candidate" ? "FIX?" : f.classification === "design-question" ? "ASK" : "info";
+        process.stdout.write(`[${badge}] ${f.fingerprint}${f.seen ? " (seen)" : ""} - ${f.summary} (PRINCIPLES ${f.principles.join(",")})\n`);
+      }
+      process.stdout.write(`${result.newFindings} new finding(s); ledger: ${path.relative(root, result.ledgerPath)}\n`);
+    }
+    process.exit(result.newFindings > 0 ? 1 : 0);
   }
 
   if (command === "gate") {
