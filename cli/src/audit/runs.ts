@@ -43,12 +43,32 @@ export interface AuditFinding {
   seen: boolean;
 }
 
+/**
+ * Per-gate wall-clock shape, reported unconditionally for every judged gate
+ * regardless of verdict or exit code (2026-08-21: "exit 1 only" misses a run
+ * that PASSed but took far longer than a healthy run of the same gate type -
+ * a single slow round trips none of the round-count rules). `durationMinutes`
+ * spans the first recorded round to the PASS round, or to the last round if
+ * the gate never passed.
+ */
+export interface GateTimeline {
+  slug: string;
+  gate: GateId;
+  verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
+  rounds: number;
+  durationMinutes: number;
+  startedAt: string;
+  endedAt: string;
+}
+
 export interface AuditResult {
   projectRoot: string;
   scannedSlugs: string[];
   findings: AuditFinding[];
   newFindings: number;
   ledgerPath: string;
+  /** Every judged gate's timeline, unconditionally - not filtered by finding/seen status. */
+  timelines: GateTimeline[];
 }
 
 interface LedgerEntry {
@@ -120,9 +140,17 @@ interface ImplementStateSlice {
   prd?: { approval?: { source?: string; evidence?: string } };
 }
 
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+}
+
 export function auditProject(projectRoot: string, config: SasuConfig): Omit<AuditResult, "ledgerPath" | "newFindings"> {
   const budget = config.judge.retryBudget;
   const findings: AuditFinding[] = [];
+  const timelines: GateTimeline[] = [];
   const slugs = slugsWithGates(projectRoot);
 
   for (const { slug, gatesFile } of slugs) {
@@ -150,6 +178,18 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
       const nonPass = Number.isInteger(record.totalNonPassAttempts)
         ? (record.totalNonPassAttempts as number)
         : history.filter((h) => h.verdict !== "PASS").length;
+
+      // Timeline: unconditional, every judged gate, verdict and round-count
+      // irrelevant. This is the "look at the process even when it finished"
+      // view - a rule below flags outliers against it, but the raw shape is
+      // always available to the reporting loop even when nothing trips.
+      if (history.length > 0) {
+        const passIdx = history.findIndex((h) => h.verdict === "PASS");
+        const endEntry = passIdx >= 0 ? history[passIdx]! : history[history.length - 1]!;
+        const startedAt = history[0]!.at;
+        const durationMinutes = (new Date(endEntry.at).getTime() - new Date(startedAt).getTime()) / 60000;
+        timelines.push({ slug, gate, verdict: record.verdict, rounds: history.length, durationMinutes: Math.round(durationMinutes * 10) / 10, startedAt, endedAt: endEntry.at });
+      }
 
       // Rule: excessive-rounds. The fix budget bounds CONSECUTIVE failures;
       // total failed rounds past the budget means the loop converged only by
@@ -233,7 +273,39 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
     }
   }
 
-  return { projectRoot, scannedSlugs: slugs.map((s) => s.slug), findings };
+  // Rule: slow-gate-timeline. Relative outlier detection, not an absolute
+  // threshold (PRINCIPLES item 11 - a fixed minute count overfits to
+  // whichever incident happened to motivate it, and real data has no clean
+  // "1 round PASS" gap-audit baseline to hardcode against yet). A gate whose
+  // wall-clock time is 3x+ the median for its OWN gate type across this scan
+  // is worth a look even when its round count is fine - the case a pure
+  // round-count rule cannot see. Needs at least 3 samples of that gate type
+  // to compute a meaningful median; skipped below that.
+  const byGate = new Map<GateId, GateTimeline[]>();
+  for (const t of timelines) byGate.set(t.gate, [...(byGate.get(t.gate) ?? []), t]);
+  for (const [gate, entries] of byGate) {
+    if (entries.length < 3) continue;
+    const baseline = median(entries.map((e) => e.durationMinutes));
+    if (baseline <= 0) continue;
+    for (const entry of entries) {
+      const ratio = entry.durationMinutes / baseline;
+      if (ratio >= 3 && entry.durationMinutes >= 5) {
+        findings.push({
+          fingerprint: `${entry.slug}:${gate}:slow-gate-timeline`,
+          rule: "slow-gate-timeline",
+          slug: entry.slug,
+          gate,
+          classification: "design-question",
+          principles: [2, 9],
+          summary: `${gate} on ${entry.slug} took ${entry.durationMinutes}min (${ratio.toFixed(1)}x this scan's ${gate} median of ${baseline}min) over ${entry.rounds} round(s)`,
+          evidence: { durationMinutes: entry.durationMinutes, medianMinutes: baseline, ratio: Math.round(ratio * 10) / 10, rounds: entry.rounds, verdict: entry.verdict },
+          seen: false,
+        });
+      }
+    }
+  }
+
+  return { projectRoot, scannedSlugs: slugs.map((s) => s.slug), findings, timelines };
 }
 
 export function runAudit(projectRoot: string, config: SasuConfig, options: { includeSeen?: boolean } = {}): AuditResult {
@@ -253,5 +325,5 @@ export function runAudit(projectRoot: string, config: SasuConfig, options: { inc
   }
   saveLedger(projectRoot, ledger);
   const findings = options.includeSeen ? scanned.findings : scanned.findings.filter((f) => !f.seen);
-  return { ...scanned, findings, newFindings, ledgerPath: path.join(projectRoot, LEDGER_REL) };
+  return { ...scanned, findings, newFindings, ledgerPath: path.join(projectRoot, LEDGER_REL), timelines: scanned.timelines };
 }

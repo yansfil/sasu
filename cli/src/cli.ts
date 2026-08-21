@@ -106,7 +106,11 @@ executes implementation work.
 
 'audit runs' is the L1 run auditor: a read-only sweep of every recorded run's
 gate state against the behavior the skills promise, built to be driven
-periodically by an agent loop. Each finding names the PRINCIPLES item it leans
+periodically by an agent loop. It always reports every judged gate's timeline
+(rounds, wall-clock duration) unconditionally - exit 0 means no KNOWN bad
+pattern tripped, not that every run was fast, and a slow-gate-timeline finding
+flags any gate whose duration is 3x+ its own gate type's median in this scan.
+Each finding names the PRINCIPLES item it leans
 on and whether it is a mechanical-fix candidate, a design question, or
 informational. A fingerprint ledger (agents/runs/.audit/ledger.json) reports
 each structural finding once and then only tracks it, so the loop converges;
@@ -473,6 +477,15 @@ async function main(): Promise<void> {
         process.stdout.write(`[${badge}] ${f.fingerprint}${f.seen ? " (seen)" : ""} - ${f.summary} (PRINCIPLES ${f.principles.join(",")})\n`);
       }
       process.stdout.write(`${result.newFindings} new finding(s); ledger: ${path.relative(root, result.ledgerPath)}\n`);
+      // Timelines print unconditionally: exit 0 means no KNOWN bad pattern
+      // tripped, not that every run was fast - a single-round PASS with a
+      // 20-minute wall clock trips no round-count rule.
+      if (result.timelines.length > 0) {
+        process.stdout.write(`timelines:\n`);
+        for (const t of result.timelines) {
+          process.stdout.write(`  ${t.slug}:${t.gate} ${t.verdict ?? "?"} ${t.rounds}rd ${t.durationMinutes}min (${t.startedAt} -> ${t.endedAt})\n`);
+        }
+      }
     }
     process.exit(result.newFindings > 0 ? 1 : 0);
   }

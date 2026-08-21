@@ -104,3 +104,65 @@ test("ledger: a fingerprint is reported once, tracked afterwards, and --include-
   const ledger = JSON.parse(fs.readFileSync(path.join(dir, "agents", "runs", ".audit", "ledger.json"), "utf8"));
   for (const entry of Object.values(ledger.findings)) assert.equal(entry.status, "reported");
 });
+
+/** Rewrites a 1-round gap-audit gate's recorded start/end timestamps to a synthetic wall-clock span, in minutes. */
+function stampSingleRoundDuration(dir, slug, minutes) {
+  const file = path.join(dir, "agents", "runs", slug, "gates", "gates.json");
+  const state = JSON.parse(fs.readFileSync(file, "utf8"));
+  // A single-round PASS timeline reads history[0] as BOTH start and end
+  // (passIdx === 0, so startedAt === endedAt), which always computes to 0
+  // duration - so a synthetic minutes-apart span needs a phantom round 0
+  // (a non-PASS placeholder) ahead of the real PASS round.
+  const start = new Date("2026-08-01T00:00:00.000Z");
+  const end = new Date(start.getTime() + minutes * 60_000);
+  const passRound = state.gates["gap-audit"].history[0];
+  state.gates["gap-audit"].history = [{ ...passRound, verdict: "BLOCK", at: start.toISOString() }, { ...passRound, at: end.toISOString() }];
+  state.gates["gap-audit"].lastRunAt = end.toISOString();
+  fs.writeFileSync(file, JSON.stringify(state));
+}
+
+test("timelines report unconditionally, even on a run with zero findings", () => {
+  const dir = makeProject();
+  record(dir, "quiet", "gap-audit", ["PASS"]);
+  const config = loadConfig(dir);
+  const result = runAudit(dir, config);
+  assert.equal(result.findings.length, 0, "no rule tripped");
+  assert.equal(result.timelines.length, 1, "the timeline is still reported");
+  assert.equal(result.timelines[0].slug, "quiet");
+  assert.equal(result.timelines[0].gate, "gap-audit");
+  assert.equal(result.timelines[0].verdict, "PASS");
+  assert.equal(result.timelines[0].rounds, 1);
+});
+
+test("slow-gate-timeline: a gate 3x+ this scan's median for its type fires even with a healthy round count", () => {
+  const dir = makeProject();
+  const config = loadConfig(dir);
+  // Four single-round PASSes: three fast, one 6x the group's median - the
+  // "completed fine but took forever" case no round-count rule can see.
+  for (const slug of ["fast-a", "fast-b", "fast-c", "slow-one"]) {
+    record(dir, slug, "gap-audit", ["PASS"]);
+  }
+  stampSingleRoundDuration(dir, "fast-a", 5);
+  stampSingleRoundDuration(dir, "fast-b", 5);
+  stampSingleRoundDuration(dir, "fast-c", 5);
+  stampSingleRoundDuration(dir, "slow-one", 30);
+
+  const result = runAudit(dir, config, { includeSeen: true });
+  const hit = result.findings.find((f) => f.rule === "slow-gate-timeline" && f.slug === "slow-one");
+  assert.ok(hit, result.findings.map((f) => `${f.slug}:${f.rule}`).join(","));
+  assert.equal(hit.classification, "design-question");
+  assert.deepEqual(hit.principles, [2, 9]);
+  assert.equal(hit.evidence.ratio, 6);
+  assert.equal(result.findings.some((f) => f.rule === "slow-gate-timeline" && f.slug !== "slow-one"), false, "the fast ones must not also fire");
+});
+
+test("slow-gate-timeline needs at least 3 same-gate samples before computing a median", () => {
+  const dir = makeProject();
+  const config = loadConfig(dir);
+  record(dir, "alone-a", "gap-audit", ["PASS"]);
+  record(dir, "alone-b", "gap-audit", ["PASS"]);
+  stampSingleRoundDuration(dir, "alone-a", 5);
+  stampSingleRoundDuration(dir, "alone-b", 60);
+  const result = runAudit(dir, config, { includeSeen: true });
+  assert.equal(result.findings.some((f) => f.rule === "slow-gate-timeline"), false, "only 2 samples - no baseline yet");
+});
