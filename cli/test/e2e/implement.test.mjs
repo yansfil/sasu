@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
+const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
+const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "utf8");
 
 function prd(profile = "standard", sourceIntake = "current conversation") {
   return `---
@@ -161,6 +163,20 @@ function startAndClose(root) {
   const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
 }
+
+test("a qa-log-backed PRD cannot start before both PRD review gates pass", () => {
+  const qaLog = "agents/interview/fixture/qa-log.md";
+  const root = makeProject({ sourceIntake: qaLog });
+  fs.mkdirSync(path.join(root, "agents", "interview", "fixture"), { recursive: true });
+  fs.writeFileSync(path.join(root, qaLog), QA_FIXTURE);
+
+  const refused = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /qa-log-backed PRD requires live PASS/);
+  assert.match(refused.json.message, /gap-audit=NOT_RUN/);
+  assert.match(refused.json.message, /spec=NOT_RUN/);
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "state.json")), false);
+});
 
 test("a legacy agents/implement/<slug> run resolves by slug and by legacy active pointer", () => {
   const root = makeProject();
@@ -482,13 +498,20 @@ test("a routed qa-log change after PASS stales status and blocks finalize", () =
   const qaLog = "agents/interview/fixture/qa-log.md";
   const root = makeProject({ sourceIntake: qaLog });
   fs.mkdirSync(path.join(root, "agents", "interview", "fixture"), { recursive: true });
-  fs.writeFileSync(path.join(root, qaLog), "original user decisions\n");
+  fs.writeFileSync(path.join(root, qaLog), QA_FIXTURE);
+  const gateFile = path.join(root, "agents", "gate-judge.json");
+  fs.writeFileSync(gateFile, JSON.stringify({ verdict: "PASS", findings: [] }));
+  const gateEnv = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: gateFile };
+  const gap = run(root, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", qaLog], { env: gateEnv });
+  assert.equal(gap.status, 0, gap.stderr + gap.stdout);
+  const spec = run(root, ["gate", "spec", "--slug", "fixture", "--prd", "agents/prd/fixture/prd.md", "--qa-log", qaLog], { env: gateEnv });
+  assert.equal(spec.status, 0, spec.stderr + spec.stdout);
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   startAndClose(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  assert.equal(verified.json.detail.attempt.fidelityInput.routing, "full-qa-log");
+  assert.equal(verified.json.detail.attempt.fidelityInput.routing, "decision-traceability");
 
   fs.writeFileSync(path.join(root, qaLog), "changed user decisions\n");
   const stale = run(root, ["implement", "status"]);

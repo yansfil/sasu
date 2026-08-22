@@ -16,7 +16,8 @@ function readSkill(name) {
 test("interview-me routes closure through the gap-audit gate", () => {
   const skill = readSkill("interview-me");
   assert.match(skill, /sasu gate gap-audit --slug <topic-slug> --qa-log/);
-  assert.match(skill, /hard block/i);
+  assert.match(skill, /closure BLOCK is terminal/i);
+  assert.match(skill, /sasu gate reopen --slug <topic-slug> --gate gap-audit/);
   assert.match(skill, /Never run `sasu gate override` yourself/);
   assert.match(skill, /never a numeric score/i, "the numeric-gate ban must survive the gate integration");
   assert.match(skill, /A gap finding is not an answer/);
@@ -39,9 +40,12 @@ test("implement routes changed-code tasks through unified implement verify", () 
   assert.match(skill, /Do not use overrides on the user's behalf/);
 });
 
-test("please treats gate BLOCKs as fix-and-regate loops, stopping only for humans or budget", () => {
+test("please bounds each PRD gate to a full review and one closure review", () => {
   const skill = readSkill("please");
-  assert.match(skill, /BLOCK is not a stop/);
+  assert.match(skill, /Run the full review once/);
+  assert.match(skill, /one allowed closure review/);
+  assert.match(skill, /A third autonomous judgment is forbidden/);
+  assert.match(skill, /sasu gate reopen --slug <topic-slug> --gate <gap-audit\|spec>/);
   assert.match(skill, /sasu prd readiness --prd/);
   assert.doesNotMatch(skill, /plan-verification/);
   // Delegated-run contract: human-consent findings become a recorded,
@@ -51,13 +55,22 @@ test("please treats gate BLOCKs as fix-and-regate loops, stopping only for human
   // per-call flag and burned blocked rounds the delegation had answered.
   assert.match(skill, /sasu gate delegate --slug <topic-slug>/);
   assert.match(skill, /--evidence "<verbatim \$please invocation message>"/);
+  assert.ok(
+    skill.indexOf("sasu gate delegate --slug <topic-slug>") < skill.indexOf("sasu gate gap-audit --slug <topic-slug>"),
+    "delegation must be bound before the first gap-audit command",
+  );
+  assert.match(skill, /Do not run gap-audit or spec until this command succeeds/);
+  assert.match(skill, /Do not draft the PRD until gap-audit is PASS/);
+  assert.match(skill, /Never overwrite it, clear it, pass `--assume-human-findings` again/);
   assert.match(skill, /P0 findings still block under this flag/);
   assert.match(skill, /listed at the TOP of the final report/);
   assert.match(skill, /only the user's own delegating message is valid evidence/);
-  assert.match(skill, /a P0 finding blocks under the delegated flag/);
-  assert.match(skill, /budgetExhausted/);
-  assert.match(skill, /judgeErrorLoop/);
+  assert.match(skill, /P0 finding blocks under the delegated disposition/);
+  assert.match(skill, /`--grant-budget` only with the user's verbatim approval to retry that broken backend/);
+  assert.match(skill, /when closure is exhausted/);
   assert.match(skill, /Never run `sasu gate override` yourself/);
+  assert.match(skill, /authorizes making reversible choices; it does not turn those choices into user-approved scope/);
+  assert.doesNotMatch(skill, /already carries the user's approval of scope, structure, verification modes/);
 });
 
 test("quick documents its fast single-lane path and bounded large-input fallback", () => {

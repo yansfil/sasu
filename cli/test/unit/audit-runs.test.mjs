@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runAudit } from "../../dist/audit/runs.js";
-import { GateStore, recordGateResult, grantGateBudget } from "../../dist/gates/store.js";
+import { GateStore, freshnessHash, recordGateResult, grantGateBudget } from "../../dist/gates/store.js";
 import { loadConfig } from "../../dist/config.js";
 
 const FINDING = { area: "data", severity: "P1", missing: "m", recommendation: "r", requiresHuman: true };
@@ -26,8 +26,15 @@ function makeProject() {
 
 function record(dir, slug, gate, verdicts) {
   const store = new GateStore(dir, slug);
+  const inputPath = `${slug}-${gate}.md`;
+  fs.writeFileSync(path.join(dir, inputPath), "stable input\n");
   let state = store.load();
-  for (const v of verdicts) state = recordGateResult(store, state, gate, outcome(v), []);
+  for (const v of verdicts) {
+    state = recordGateResult(store, state, gate, {
+      ...outcome(v),
+      inputs: [{ path: inputPath, sha256: freshnessHash("stable input\n"), kind: "document" }],
+    }, []);
+  }
   return state;
 }
 
@@ -43,15 +50,19 @@ test("healthy run: first-try PASSes produce zero findings", () => {
 test("excessive-rounds and post-pass-reblock fire on the measured livelock shape", () => {
   const dir = makeProject();
   const config = loadConfig(dir);
-  // 6 BLOCKs, PASS, 4 BLOCKs - the ai-creators-night-waitlist shape.
+  // A legacy gates.json with 6 BLOCKs, PASS, 5 BLOCKs - the historical shape
+  // the new writer prevents but the read-only auditor must still diagnose.
   const store = new GateStore(dir, "livelock");
-  let state = store.load();
-  for (const v of ["BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK", "PASS", "BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK"]) {
-    if (state.gates["gap-audit"].attempts >= config.judge.retryBudget) {
-      state = grantGateBudget(store, state, "gap-audit", "keep going", config.judge.retryBudget);
-    }
-    state = recordGateResult(store, state, "gap-audit", outcome(v), []);
-  }
+  let state = recordGateResult(store, store.load(), "gap-audit", outcome("PASS"), []);
+  const row = state.gates["gap-audit"].history[0];
+  const verdicts = ["BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK", "PASS", "BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK"];
+  state.gates["gap-audit"].history = verdicts.map((verdict, index) => ({ ...row, verdict, at: new Date(Date.UTC(2026, 7, 1, 0, index)).toISOString() }));
+  state.gates["gap-audit"].verdict = "BLOCK";
+  state.gates["gap-audit"].totalAttempts = verdicts.length;
+  state.gates["gap-audit"].totalNonPassAttempts = verdicts.filter((verdict) => verdict !== "PASS").length;
+  state.gates["gap-audit"].budgetGrants = [{ at: row.at, evidence: "keep going", attemptCountBefore: 5, nonPassCountBefore: 5 }];
+  delete state.gates["gap-audit"].review;
+  store.save(state);
   const result = runAudit(dir, config);
   const rules = result.findings.map((f) => f.rule).sort();
   assert.ok(rules.includes("excessive-rounds"), rules.join(","));
@@ -79,6 +90,7 @@ test("delegation-not-recorded fires only for a conversation-approved run without
   const store2 = new GateStore(dir2, "delegated");
   let s2 = store2.load();
   s2.delegation = { at: new Date().toISOString(), evidence: "그냥 끝까지 해줘 /please" };
+  store2.save(s2);
   s2 = recordGateResult(store2, s2, "gap-audit", outcome("BLOCK"), []);
   fs.writeFileSync(path.join(dir2, "agents", "runs", "delegated", "state.json"), JSON.stringify({ schema: 3, status: "in_progress", prd: { approval: { source: "conversation", evidence: "x" } } }));
   const result2 = runAudit(dir2, config);
@@ -88,9 +100,12 @@ test("delegation-not-recorded fires only for a conversation-approved run without
 test("ledger: a fingerprint is reported once, tracked afterwards, and --include-seen re-prints it", () => {
   const dir = makeProject();
   const config = loadConfig(dir);
-  record(dir, "grants", "spec", ["BLOCK", "BLOCK", "BLOCK", "BLOCK", "BLOCK"]);
   const store = new GateStore(dir, "grants");
-  grantGateBudget(store, store.load(), "spec", "go on", config.judge.retryBudget);
+  let state = store.load();
+  for (let i = 0; i < config.judge.retryBudget; i += 1) {
+    state = recordGateResult(store, state, "spec", { kind: "error", message: "backend down" }, []);
+  }
+  grantGateBudget(store, state, "spec", "backend fixed; go on", config.judge.retryBudget);
 
   const first = runAudit(dir, config);
   assert.ok(first.newFindings > 0);
@@ -105,19 +120,14 @@ test("ledger: a fingerprint is reported once, tracked afterwards, and --include-
   for (const entry of Object.values(ledger.findings)) assert.equal(entry.status, "reported");
 });
 
-/** Rewrites a 1-round gap-audit gate's recorded start/end timestamps to a synthetic wall-clock span, in minutes. */
-function stampSingleRoundDuration(dir, slug, minutes) {
+/** Gives a single-round gate real judge timing; its verdict timestamp span stays zero. */
+function stampSingleRoundJudgeDuration(dir, slug, minutes) {
   const file = path.join(dir, "agents", "runs", slug, "gates", "gates.json");
   const state = JSON.parse(fs.readFileSync(file, "utf8"));
-  // A single-round PASS timeline reads history[0] as BOTH start and end
-  // (passIdx === 0, so startedAt === endedAt), which always computes to 0
-  // duration - so a synthetic minutes-apart span needs a phantom round 0
-  // (a non-PASS placeholder) ahead of the real PASS round.
-  const start = new Date("2026-08-01T00:00:00.000Z");
-  const end = new Date(start.getTime() + minutes * 60_000);
   const passRound = state.gates["gap-audit"].history[0];
-  state.gates["gap-audit"].history = [{ ...passRound, verdict: "BLOCK", at: start.toISOString() }, { ...passRound, at: end.toISOString() }];
-  state.gates["gap-audit"].lastRunAt = end.toISOString();
+  const artifact = JSON.parse(fs.readFileSync(path.join(dir, passRound.artifact), "utf8"));
+  artifact.judge = { durationMs: minutes * 60_000 };
+  fs.writeFileSync(path.join(dir, passRound.artifact), JSON.stringify(artifact));
   fs.writeFileSync(file, JSON.stringify(state));
 }
 
@@ -134,18 +144,41 @@ test("timelines report unconditionally, even on a run with zero findings", () =>
   assert.equal(result.timelines[0].rounds, 1);
 });
 
+test("timeline keeps the post-PASS tail visible instead of ending at first PASS", () => {
+  const dir = makeProject();
+  const store = new GateStore(dir, "tail");
+  const state = recordGateResult(store, store.load(), "gap-audit", outcome("PASS"), []);
+  const row = state.gates["gap-audit"].history[0];
+  const start = new Date("2026-08-01T00:00:00.000Z");
+  state.gates["gap-audit"].history = [
+    { ...row, verdict: "BLOCK", at: start.toISOString() },
+    { ...row, verdict: "PASS", at: new Date(start.getTime() + 5 * 60_000).toISOString() },
+    { ...row, verdict: "BLOCK", at: new Date(start.getTime() + 20 * 60_000).toISOString() },
+  ];
+  state.gates["gap-audit"].verdict = "BLOCK";
+  state.gates["gap-audit"].totalAttempts = 3;
+  state.gates["gap-audit"].totalNonPassAttempts = 2;
+  delete state.gates["gap-audit"].review;
+  store.save(state);
+  const result = runAudit(dir, loadConfig(dir), { includeSeen: true });
+  const timeline = result.timelines[0];
+  assert.equal(timeline.firstPassDurationMinutes, 5);
+  assert.equal(timeline.durationMinutes, 20, "the 15-minute post-PASS tail remains visible");
+  assert.ok(result.findings.some((finding) => finding.rule === "post-pass-reblock"), "one post-PASS reblock now trips the rule");
+});
+
 test("slow-gate-timeline: a gate 3x+ this scan's median for its type fires even with a healthy round count", () => {
   const dir = makeProject();
   const config = loadConfig(dir);
-  // Four single-round PASSes: three fast, one 6x the group's median - the
-  // "completed fine but took forever" case no round-count rule can see.
+  // Four single-round PASSes: three fast, one 6x the group's median. Verdict
+  // timestamps alone are all 0-minute spans; artifact judge timing catches it.
   for (const slug of ["fast-a", "fast-b", "fast-c", "slow-one"]) {
     record(dir, slug, "gap-audit", ["PASS"]);
   }
-  stampSingleRoundDuration(dir, "fast-a", 5);
-  stampSingleRoundDuration(dir, "fast-b", 5);
-  stampSingleRoundDuration(dir, "fast-c", 5);
-  stampSingleRoundDuration(dir, "slow-one", 30);
+  stampSingleRoundJudgeDuration(dir, "fast-a", 5);
+  stampSingleRoundJudgeDuration(dir, "fast-b", 5);
+  stampSingleRoundJudgeDuration(dir, "fast-c", 5);
+  stampSingleRoundJudgeDuration(dir, "slow-one", 30);
 
   const result = runAudit(dir, config, { includeSeen: true });
   const hit = result.findings.find((f) => f.rule === "slow-gate-timeline" && f.slug === "slow-one");
@@ -161,8 +194,8 @@ test("slow-gate-timeline needs at least 3 same-gate samples before computing a m
   const config = loadConfig(dir);
   record(dir, "alone-a", "gap-audit", ["PASS"]);
   record(dir, "alone-b", "gap-audit", ["PASS"]);
-  stampSingleRoundDuration(dir, "alone-a", 5);
-  stampSingleRoundDuration(dir, "alone-b", 60);
+  stampSingleRoundJudgeDuration(dir, "alone-a", 5);
+  stampSingleRoundJudgeDuration(dir, "alone-b", 60);
   const result = runAudit(dir, config, { includeSeen: true });
   assert.equal(result.findings.some((f) => f.rule === "slow-gate-timeline"), false, "only 2 samples - no baseline yet");
 });

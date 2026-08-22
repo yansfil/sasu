@@ -1,7 +1,7 @@
 ---
 name: implement
 description: |
-  Project-local approved-PRD implementation orchestrator.
+  Project-local approved-PRD implementation executor and Observer entrypoint.
   Use when the user invokes "$implement", explicitly asks to execute an approved
   PRD through the receipt-backed workflow, or wants PRD tasks implemented and
   proven through one unified verification command.
@@ -12,6 +12,11 @@ description: |
 
 Use this skill to implement an approved PRD end to end.
 Match the user's language by default.
+
+Before any repository write or mutating `sasu` command, resolve the session role.
+When a direct invocation runs in Herdr, or when this skill is the nested stage of a delegated `$please` run, read `references/observer-and-herdr.md` completely and apply it.
+The user-facing Observer dispatches and monitors; the marked Implementor executes sections 1 through 7 below.
+The `benchmark-implement` coordinator remains an explicit in-session Implementor as required by that benchmark.
 
 The public closing flow is intentionally small:
 
@@ -31,6 +36,7 @@ Read each directly linked reference completely when its condition applies.
 
 | Reference | Read when |
 | --- | --- |
+| [`references/observer-and-herdr.md`](references/observer-and-herdr.md) | Before a direct Herdr invocation, when delegated by `$please`, or when an Implementor blocks or needs recovery. |
 | [`references/execution-planning.md`](references/execution-planning.md) | Before implementation, while closing tasks, or when execution order is unclear. |
 | [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before capturing or registering final runtime evidence and before unified verify. |
 | [`references/verification-environments.md`](references/verification-environments.md) | When binding a browser/runtime, mobile, TUI, or desktop V row to a concrete driver. |
@@ -48,6 +54,7 @@ Read each directly linked reference completely when its condition applies.
 - Required verification must be a fresh PASS on the current source and registered evidence.
 - `sasu implement finalize` never runs tests, judges, capture tools, or external commands.
 - `state.json` is the completion authority; the receipt is its portable derived proof.
+- The marked Implementor is the only project and `state.json` writer; the Observer stays read-only after dispatch.
 - Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.
 
 ## 1. Confirm Readiness
@@ -101,8 +108,9 @@ A task without a `Depends on:` clause depends on the previous task, so a plain t
 The CLI rejects closing a task before its dependencies are complete, and each close response lists the remaining tasks with which are `ready`.
 
 Tasks whose dependencies are all complete may be implemented in any order, including concurrently through worker subagents.
-When fanning out, this session remains the orchestrator: brief each worker with the mapped requirement, acceptance criteria, and file scope directly; workers return changed files, focused check results, and evidence text.
-Workers never run `sasu` commands — the orchestrating session reviews each result and closes the task itself, staying the only writer of `state.json`.
+When fanning out, the Implementor session remains the execution coordinator: brief each worker with the mapped requirement, acceptance criteria, and file scope directly; workers return changed files, focused check results, and evidence text.
+Workers never run `sasu` commands.
+The Implementor reviews each result and closes the task itself, staying the only writer of `state.json`.
 
 For each task:
 
@@ -205,6 +213,7 @@ Do not report Done until:
 ## 7. Blocked Handoff
 
 If required proof cannot pass, do not finalize and do not claim completion.
+When an Observer owns the user-facing session, emit the `OBSERVER_BLOCK` packet defined in `references/observer-and-herdr.md` before waiting.
 Report:
 
 - the failed stage.

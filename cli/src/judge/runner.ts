@@ -62,6 +62,20 @@ export async function runJudge<T>(
   const selected = effectiveJudgeProfile(config, profile);
   let target: JudgeTarget = selected.primary;
   let backend = resolveBackend(target.backend);
+  // An image must be an attachment, not bytes emitted by a Read tool. Claude
+  // has no attachment surface, so choose the configured attachment-capable
+  // fallback before the call rather than exposing a context-size lottery.
+  const visualEvidence = (options.images?.length ?? 0) > 0;
+  if (visualEvidence && !backend.attachments) {
+    const attachmentFallback = selected.fallback !== null && resolveBackend(selected.fallback.backend).attachments
+      ? selected.fallback
+      : null;
+    if (attachmentFallback === null) {
+      throw new JudgeError("judge-invalid-output", backend.name, "visual evidence requires an attachment-capable judge; configure Codex for this profile");
+    }
+    target = attachmentFallback;
+    backend = resolveBackend(target.backend);
+  }
   if (options.agentic === true && !backend.agentic) {
     throw new Error(`judge requires isolated read-only evidence access; ${backend.name} cannot provide it for profile ${profile}`);
   }
@@ -70,7 +84,7 @@ export async function runJudge<T>(
   let lastProblem = "";
   let activityCommands: string[] = [];
   let fallback: JudgeCallRecord["fallback"];
-  let fallbackUsed = false;
+  let fallbackUsed = target.backend !== selected.primary.backend;
   const useFallback = (outcome: Exclude<JudgeCallRecord["outcome"], "ok">): boolean => {
     const fallbackTarget = !fallbackUsed ? selected.fallback : null;
     if (fallbackTarget === null) return false;
@@ -80,7 +94,7 @@ export async function runJudge<T>(
     // evidence access or image visibility would turn backend recovery into a
     // different judgment with missing inputs.
     if (options.agentic === true && !fallbackBackend.agentic) return false;
-    if ((options.images?.length ?? 0) > 0 && !fallbackBackend.attachments && !(options.agentic === true && fallbackBackend.agentic)) return false;
+    if ((options.images?.length ?? 0) > 0 && !fallbackBackend.attachments) return false;
     fallbackUsed = true;
     fallback = {
       at: new Date(startedAt).toISOString(),

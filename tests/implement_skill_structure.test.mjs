@@ -11,6 +11,7 @@ const referencesDir = path.join(skillDir, "references");
 
 const expectedReferences = [
   "execution-planning.md",
+  "observer-and-herdr.md",
   "reviews-and-finalization.md",
   "verification-and-evidence.md",
   "verification-environments.md",

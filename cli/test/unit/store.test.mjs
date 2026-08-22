@@ -37,16 +37,27 @@ test("state machine: BLOCK increments attempts and stays blocked", () => {
   assert.equal(view.effective, "BLOCKED");
   assert.equal(view.attempts, 1);
   assert.equal(view.budgetExhausted, false);
+  assert.equal(view.cycleCap, null, "the removed PRD cycle cap must not remain as a misleading JSON number");
   assert.equal(view.requiresHuman, true);
 });
 
-test("state machine: retry budget exhaustion is flagged after budget BLOCKs", () => {
+test("state machine: a second PRD BLOCK exhausts the one closure round", () => {
   const store = makeStore();
   let state = store.load();
   state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
   state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
   const view = gateStatus(state, "gap-audit", 2);
-  assert.equal(view.budgetExhausted, true);
+  assert.equal(view.budgetExhausted, false, "numeric budget does not govern PRD semantics");
+  assert.equal(view.reviewPhase, "closure-blocked");
+  assert.equal(view.closureExhausted, true);
+  const before = JSON.stringify(store.load());
+  const artifactsBefore = fs.readdirSync(store.artifactsDir).sort();
+  assert.throws(
+    () => recordGateResult(store, state, "gap-audit", blockOutcome(), []),
+    /reopen it before recording another result/,
+  );
+  assert.equal(JSON.stringify(store.load()), before, "a terminal direct write cannot mutate the ledger");
+  assert.deepEqual(fs.readdirSync(store.artifactsDir).sort(), artifactsBefore, "a refused direct write cannot orphan an artifact");
 });
 
 test("state machine: PASS resets attempts and closes the gate", () => {
@@ -71,6 +82,7 @@ test("a declared gap closes the gate without spending the fix budget", () => {
   const view = gateStatus(state, "verify", 2);
   assert.equal(view.effective, "BLOCKED");
   assert.equal(view.attempts, 0, "an already-evidenced blocker is not a failed fix attempt");
+  assert.equal(view.cycleCap, 6, "verify retains its independent convergence cap");
   assert.equal(view.requiresHuman, true);
   assert.equal(state.gates.verify.totalAttempts, 1, "the run remains visible in the cumulative ledger");
 });

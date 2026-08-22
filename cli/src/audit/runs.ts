@@ -45,20 +45,24 @@ export interface AuditFinding {
 
 /**
  * Per-gate wall-clock shape, reported unconditionally for every judged gate
- * regardless of verdict or exit code (2026-08-21: "exit 1 only" misses a run
- * that PASSed but took far longer than a healthy run of the same gate type -
- * a single slow round trips none of the round-count rules). `durationMinutes`
- * spans the first recorded round to the PASS round, or to the last round if
- * the gate never passed.
+ * regardless of verdict or exit code. `durationMinutes` is the span between
+ * the first and latest retained verdict timestamps; `judgeCriticalPathMinutes`
+ * carries the actual judge time that verdict timestamps cannot show for a
+ * single round. First-PASS timing stays separate so post-PASS work is visible.
  */
 export interface GateTimeline {
   slug: string;
   gate: GateId;
   verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
   rounds: number;
+  /** Span from the first retained verdict timestamp through the latest one. */
   durationMinutes: number;
   startedAt: string;
   endedAt: string;
+  firstPassAt: string | null;
+  firstPassDurationMinutes: number | null;
+  /** Sum of each round's longest parallel judge lane, when artifacts expose it. */
+  judgeCriticalPathMinutes: number | null;
 }
 
 export interface AuditResult {
@@ -147,6 +151,39 @@ function median(values: number[]): number {
   return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
+function roundedMinutes(milliseconds: number): number {
+  return Math.round((milliseconds / 60000) * 10) / 10;
+}
+
+function judgeCriticalPathMinutes(projectRoot: string, history: GatesState["gates"][GateId]["history"]): number | null {
+  let totalMs = 0;
+  let found = false;
+  for (const row of history) {
+    if (row.artifact === null) continue;
+    const payload = readJson<Record<string, unknown>>(path.join(projectRoot, row.artifact));
+    if (payload === null) continue;
+    const durations: number[] = [];
+    const direct = (payload.judge as { durationMs?: unknown } | undefined)?.durationMs;
+    if (typeof direct === "number" && Number.isFinite(direct)) durations.push(direct);
+    if (Array.isArray(payload.lanes)) {
+      for (const lane of payload.lanes) {
+        const duration = (lane as { judge?: { durationMs?: unknown } }).judge?.durationMs;
+        if (typeof duration === "number" && Number.isFinite(duration)) durations.push(duration);
+      }
+    }
+    if (durations.length > 0) {
+      found = true;
+      totalMs += Math.max(...durations);
+    }
+  }
+  return found ? roundedMinutes(totalMs) : null;
+}
+
+/** Lower-bound observed gate time that also works for a single slow round. */
+function observedGateMinutes(timeline: GateTimeline): number {
+  return Math.max(timeline.durationMinutes, timeline.judgeCriticalPathMinutes ?? 0);
+}
+
 export function auditProject(projectRoot: string, config: SasuConfig): Omit<AuditResult, "ledgerPath" | "newFindings"> {
   const budget = config.judge.retryBudget;
   const findings: AuditFinding[] = [];
@@ -185,28 +222,41 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
       // always available to the reporting loop even when nothing trips.
       if (history.length > 0) {
         const passIdx = history.findIndex((h) => h.verdict === "PASS");
-        const endEntry = passIdx >= 0 ? history[passIdx]! : history[history.length - 1]!;
+        const endEntry = history[history.length - 1]!;
         const startedAt = history[0]!.at;
-        const durationMinutes = (new Date(endEntry.at).getTime() - new Date(startedAt).getTime()) / 60000;
-        timelines.push({ slug, gate, verdict: record.verdict, rounds: history.length, durationMinutes: Math.round(durationMinutes * 10) / 10, startedAt, endedAt: endEntry.at });
+        const startedMs = new Date(startedAt).getTime();
+        const firstPass = passIdx >= 0 ? history[passIdx]! : null;
+        timelines.push({
+          slug,
+          gate,
+          verdict: record.verdict,
+          rounds: record.totalAttempts ?? history.length,
+          durationMinutes: roundedMinutes(new Date(endEntry.at).getTime() - startedMs),
+          startedAt,
+          endedAt: endEntry.at,
+          firstPassAt: firstPass?.at ?? null,
+          firstPassDurationMinutes: firstPass === null ? null : roundedMinutes(new Date(firstPass.at).getTime() - startedMs),
+          judgeCriticalPathMinutes: judgeCriticalPathMinutes(projectRoot, history),
+        });
       }
 
       // Rule: excessive-rounds. The fix budget bounds CONSECUTIVE failures;
       // total failed rounds past the budget means the loop converged only by
       // grinding (2026-08-20: 10-11 failed rounds per run went unnoticed).
-      if (nonPass > budget) {
-        add("excessive-rounds", gate, "design-question", [2, 13], `${gate} accumulated ${nonPass} judged non-PASS rounds (fix budget ${budget})`, {
+      const semanticLimit = gate === "verify" ? budget : 2;
+      if (nonPass > semanticLimit) {
+        add("excessive-rounds", gate, "design-question", [2, 13], `${gate} accumulated ${nonPass} judged non-PASS rounds (current limit ${semanticLimit})`, {
           nonPassRounds: nonPass,
-          budget,
+          limit: semanticLimit,
           historyVerdicts: history.map((h) => h.verdict),
         });
       }
 
-      // Rule: post-pass-reblock. A PASS followed by 2+ non-PASS rounds is the
+      // Rule: post-pass-reblock. Any verdict after a sealed PASS is the
       // PASS->cross-gate-fix->STALE->re-judge ping-pong shape.
       const firstPass = history.findIndex((h) => h.verdict === "PASS");
       const reblocks = firstPass === -1 ? 0 : history.slice(firstPass + 1).filter((h) => h.verdict !== "PASS").length;
-      if (reblocks >= 2) {
+      if (reblocks >= 1) {
         add("post-pass-reblock", gate, "design-question", [5, 13], `${gate} re-blocked ${reblocks} times after its first PASS (staleness ping-pong)`, {
           reblocks,
           historyVerdicts: history.map((h) => h.verdict),
@@ -221,10 +271,25 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
         });
       }
 
+      if ((record.reviewReopens?.length ?? 0) > 0) {
+        add("review-reopened", gate, "info", [10, 13], `${gate} opened ${record.reviewReopens!.length} additional user-authorized review cycle(s)`, {
+          reopens: record.reviewReopens,
+        });
+      }
+
       // Rule: stalled-at-terminal-cause. A gate parked at a terminal gauge
       // with the run not finalized is work silently waiting on a human.
-      if ((view.budgetExhausted || view.judgeErrorLoop || view.cycleExhausted) && implementState?.status !== "complete" && implementState?.status !== "blocked") {
-        add("stalled-at-terminal-cause", gate, "info", [10], `${gate} sits at a terminal cause (${view.budgetExhausted ? "budget" : view.judgeErrorLoop ? "judge-error" : "cycle"}) and the run is not finalized`, {
+      if ((view.budgetExhausted || view.judgeErrorLoop || view.cycleExhausted || view.closureExhausted || view.reopenRequired) && implementState?.status !== "complete" && implementState?.status !== "blocked") {
+        const terminalCause = view.closureExhausted
+          ? "closure"
+          : view.reopenRequired
+            ? "reopen-required"
+            : view.budgetExhausted
+              ? "budget"
+              : view.judgeErrorLoop
+                ? "judge-error"
+                : "cycle";
+        add("stalled-at-terminal-cause", gate, "info", [10], `${gate} sits at a terminal cause (${terminalCause}) and the run is not finalized`, {
           attempts: view.attempts,
           budget: view.budget,
           roundsSinceGrant: view.roundsSinceGrant,
@@ -277,7 +342,7 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
   // threshold (PRINCIPLES item 11 - a fixed minute count overfits to
   // whichever incident happened to motivate it, and real data has no clean
   // "1 round PASS" gap-audit baseline to hardcode against yet). A gate whose
-  // wall-clock time is 3x+ the median for its OWN gate type across this scan
+  // observed time is 3x+ the median for its OWN gate type across this scan
   // is worth a look even when its round count is fine - the case a pure
   // round-count rule cannot see. Needs at least 3 samples of that gate type
   // to compute a meaningful median; skipped below that.
@@ -285,11 +350,12 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
   for (const t of timelines) byGate.set(t.gate, [...(byGate.get(t.gate) ?? []), t]);
   for (const [gate, entries] of byGate) {
     if (entries.length < 3) continue;
-    const baseline = median(entries.map((e) => e.durationMinutes));
+    const baseline = median(entries.map(observedGateMinutes));
     if (baseline <= 0) continue;
     for (const entry of entries) {
-      const ratio = entry.durationMinutes / baseline;
-      if (ratio >= 3 && entry.durationMinutes >= 5) {
+      const observedMinutes = observedGateMinutes(entry);
+      const ratio = observedMinutes / baseline;
+      if (ratio >= 3 && observedMinutes >= 5) {
         findings.push({
           fingerprint: `${entry.slug}:${gate}:slow-gate-timeline`,
           rule: "slow-gate-timeline",
@@ -297,8 +363,16 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
           gate,
           classification: "design-question",
           principles: [2, 9],
-          summary: `${gate} on ${entry.slug} took ${entry.durationMinutes}min (${ratio.toFixed(1)}x this scan's ${gate} median of ${baseline}min) over ${entry.rounds} round(s)`,
-          evidence: { durationMinutes: entry.durationMinutes, medianMinutes: baseline, ratio: Math.round(ratio * 10) / 10, rounds: entry.rounds, verdict: entry.verdict },
+          summary: `${gate} on ${entry.slug} took at least ${observedMinutes}min (${ratio.toFixed(1)}x this scan's ${gate} median of ${baseline}min) over ${entry.rounds} round(s)`,
+          evidence: {
+            observedMinutes,
+            recordedSpanMinutes: entry.durationMinutes,
+            judgeCriticalPathMinutes: entry.judgeCriticalPathMinutes,
+            medianMinutes: baseline,
+            ratio: Math.round(ratio * 10) / 10,
+            rounds: entry.rounds,
+            verdict: entry.verdict,
+          },
           seen: false,
         });
       }

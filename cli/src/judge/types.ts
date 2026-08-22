@@ -4,6 +4,7 @@ export type JudgeErrorCode =
   | "judge-binary-missing"
   | "judge-auth"
   | "judge-auth-or-runtime"
+  | "judge-context-overflow"
   | "judge-timeout"
   | "judge-invalid-output";
 

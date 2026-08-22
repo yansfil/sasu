@@ -106,6 +106,126 @@ test("runJudge enforces judge.timeoutMs per call after the async refactor", asyn
   }
 });
 
+test("Claude JSON context overflow on exit 1 preserves its detail and is not classified as auth", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const fakeClaude = path.join(binDir, "claude");
+  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"Prompt is too long","subtype":"success"}\\n\'\nexit 1\n');
+  fs.chmodSync(fakeClaude, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "claude";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}`;
+  try {
+    await assert.rejects(
+      () => runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict),
+      (error) => error.code === "judge-context-overflow"
+        && error.detail === "Prompt is too long"
+        && !error.message.includes("exit code 1"),
+    );
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+test("agentic Claude receives a disposable evidence workspace instead of the project tree", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-"));
+  const marker = path.join(binDir, "cwd.txt");
+  const fakeClaude = path.join(binDir, "claude");
+  fs.writeFileSync(path.join(source, "allowed.txt"), "allowed evidence\n");
+  const response = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 1 });
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\npwd > ${JSON.stringify(marker)}\nprintf '%s\\n' '${response}'\n`);
+  fs.chmodSync(fakeClaude, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "claude";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}`;
+  try {
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict, {
+      agentic: true,
+      cwd: source,
+      evidencePaths: ["allowed.txt"],
+    });
+    assert.equal(outcome.value.verdict, "PASS");
+    const workspace = fs.readFileSync(marker, "utf8").trim();
+    assert.notEqual(workspace, source, "Claude must not receive the complete project tree as cwd");
+    assert.match(workspace, /sasu-claude-evidence-/);
+    assert.equal(fs.existsSync(workspace), false, "the disposable evidence workspace must be removed after the call");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+test("visual evidence routes a Claude-primary profile to its attachment-capable fallback", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const claudeMarker = path.join(binDir, "claude-ran");
+  const fakeClaude = path.join(binDir, "claude");
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\ntouch ${JSON.stringify(claudeMarker)}\nexit 1\n`);
+  fs.writeFileSync(
+    fakeCodex,
+    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+  );
+  fs.chmodSync(fakeClaude, 0o755);
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}`;
+  const claudePrimary = {
+    ...config,
+    judge: {
+      ...config.judge,
+      profiles: {
+        ...config.judge.profiles,
+        routine: {
+          primary: { backend: "claude", model: "claude-sonnet-5", effort: "xhigh" },
+          fallback: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" },
+        },
+      },
+    },
+  };
+  try {
+    const outcome = await runJudge(claudePrimary, "gate:test", "routine", "prompt", validateGapVerdict, { images: [path.join(binDir, "proof.png")] });
+    assert.equal(outcome.record.backend, "codex");
+    assert.equal(fs.existsSync(claudeMarker), false, "visual evidence must never be delivered to Claude through Read");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+test("a failed visual judge does not fall back to Claude without image attachments", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const claudeMarker = path.join(binDir, "claude-ran");
+  const fakeClaude = path.join(binDir, "claude");
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\ntouch ${JSON.stringify(claudeMarker)}\nexit 1\n`);
+  fs.writeFileSync(fakeCodex, "#!/bin/sh\nexit 1\n");
+  fs.chmodSync(fakeClaude, 0o755);
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}`;
+  try {
+    await assert.rejects(
+      () => runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict, { images: [path.join(binDir, "proof.png")] }),
+      (error) => error.code === "judge-auth-or-runtime",
+    );
+    assert.equal(fs.existsSync(claudeMarker), false, "a fallback without image attachments cannot judge the same evidence");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
 test("runJudge falls back from a Claude timeout to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");

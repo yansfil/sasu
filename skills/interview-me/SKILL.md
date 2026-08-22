@@ -380,19 +380,24 @@ A `[prelint]` failure is a $0 structural defect with a rule ID and line
 number: fix the document and re-run freely - prelint failures never call the
 judge and never consume the retry budget.
 
-- The gate is a hard block: exit 1 means closure is blocked and the findings list the material gaps.
+- The first run is the one exhaustive gap review.
+  If it BLOCKs, resolve all agent-fixable findings together and run exactly one closure review.
+  A closure BLOCK is terminal for that cycle; do not call the judge a third time.
 - A gap finding is not an answer; treat it only as evidence that a decision or source is missing.
 - `requiresHuman: false` does not authorize resolution.
   Close such a finding only with an explicit user answer, exact repository evidence recorded as a fact, or a reversible P2 internal default that satisfies the silent-default rule.
-  Otherwise ask one focused question or defer it with an owner and revisit trigger, then re-run the gate.
+  Otherwise ask one focused question or defer it with an owner and revisit trigger, then use the one closure run.
 - Never promote a judge recommendation into a user decision or strengthen its scope, duration, lifecycle, compatibility, security, cost, or launch policy beyond the cited answer.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
-- When the output says the retry budget is exhausted, stop and hand the findings to the user instead of re-running.
+- Only a later explicit user change request may open another bounded cycle with
+  `sasu gate reopen --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
+  `--grant-budget` retries only a repaired judge backend after its error streak; it never adds semantic rounds.
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback as the closure audit.
 - Never run `sasu gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
 - Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.
-- The PASS is pinned to the qa-log's content hash (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit after the gate passed makes `sasu gate status` report `STALE`, and a stale gate must be re-run before handoff.
+- The PASS is pinned to the qa-log's content hash and seals the review cycle (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit afterwards makes `sasu gate status` report `STALE`, and the CLI refuses automatic re-judgment until the input is restored or the user explicitly authorizes `gate reopen`.
+- PASS may retain P2 advisory notes; record them without editing the qa-log merely to chase them.
 - The gate returns a findings list, never a numeric score; the numeric-gate ban in the Core Contract stands.
 
 ## Final Quality Gate

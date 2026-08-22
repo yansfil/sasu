@@ -35,8 +35,8 @@ export interface BackendRunOptions {
    */
   agentic?: boolean;
   /**
-   * Project root for evidence resolution. Claude uses it as cwd; Codex copies
-   * exact evidencePaths from it into a disposable workspace.
+   * Project root for evidence resolution. Agentic backends copy exact
+   * evidencePaths from it into a disposable workspace.
    */
   cwd?: string;
   /** Exact project-relative files copied into Codex's scoped evidence workspace. */
@@ -107,9 +107,9 @@ interface ProcessOutcome {
  */
 /**
  * Spawn options for a judge process, extracted so the cwd contract is unit-
- * assertable (the stub backend bypasses spawning entirely): a caller-provided
- * cwd must reach the spawned process, and an absent one must leave the
- * inherited working directory untouched.
+ * assertable (the stub backend bypasses spawning entirely): the chosen
+ * isolated workspace must reach the spawned process, and an absent cwd must
+ * leave the inherited working directory untouched.
  */
 export function processSpawnOptions(options: { env?: NodeJS.ProcessEnv; cwd?: string }): {
   env: NodeJS.ProcessEnv;
@@ -220,38 +220,50 @@ export class ClaudeBackend implements JudgeBackend {
   async run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult> {
     const { model, timeoutMs, effort, agentic, cwd } = options;
     const args = claudePrintArgs({ model, ...(effort !== undefined ? { effort } : {}), ...(agentic !== undefined ? { agentic } : {}) });
-    const result = await runProcess(this.binary, args, {
-      input: prompt,
-      timeoutMs,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
-      // See BackendRunOptions.cwd: the agentic judge's Read/Grep/Glob resolve
-      // repo-relative paths against this.
-      ...(cwd !== undefined ? { cwd } : {}),
-    });
-    interpretSpawnFailure(this.name, result);
-    const envelope = safeParse(result.stdout);
-    if (envelope && typeof envelope === "object" && !Array.isArray(envelope)) {
-      const rec = envelope as Record<string, unknown>;
-      if (rec["is_error"] === true) {
-        const detail = String(rec["result"] ?? "claude reported an error");
-        throw new JudgeError(classifyFailure(this.name, detail), this.name, detail);
+    // Claude has no image attachment flag. Its Read tool expands binary images
+    // into the conversation, so an agentic judge gets a disposable workspace
+    // containing only the caller's explicit text evidence, never the entire
+    // project tree. Visual evidence is routed to an attachment-capable backend
+    // by runJudge before this point.
+    const evidenceRoot = agentic ? fs.mkdtempSync(path.join(os.tmpdir(), "sasu-claude-evidence-")) : undefined;
+    try {
+      if (agentic) {
+        if (cwd === undefined) throw new JudgeError("judge-invalid-output", this.name, "isolated evidence access requires cwd");
+        copyEvidenceFiles(cwd, evidenceRoot!, options.evidencePaths ?? [], this.name);
       }
-      if (typeof rec["result"] === "string") {
-        // num_turns 1 = one-shot reply with zero tool rounds (verified
-        // 2026-08-13 against a no-tool -p call). Reported only when parseable
-        // so a missing field stays "unknown" instead of a false zero.
-        const numTurns = rec["num_turns"];
-        return {
-          text: rec["result"],
-          ...(typeof numTurns === "number" && Number.isFinite(numTurns)
-            ? { activity: { commands: [], toolRounds: Math.max(0, numTurns - 1) } }
-            : {}),
-        };
+      const result = await runProcess(this.binary, args, {
+        input: prompt,
+        timeoutMs,
+        env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
+        ...(evidenceRoot !== undefined ? { cwd: evidenceRoot } : cwd !== undefined ? { cwd } : {}),
+      });
+      interpretSpawnFailure(this.name, result);
+      const envelope = safeParse(result.stdout);
+      if (envelope && typeof envelope === "object" && !Array.isArray(envelope)) {
+        const rec = envelope as Record<string, unknown>;
+        if (rec["is_error"] === true) {
+          const detail = String(rec["result"] ?? "claude reported an error");
+          throw new JudgeError(classifyFailure(this.name, detail), this.name, detail);
+        }
+        if (typeof rec["result"] === "string") {
+          // num_turns 1 = one-shot reply with zero tool rounds (verified
+          // 2026-08-13 against a no-tool -p call). Reported only when parseable
+          // so a missing field stays "unknown" instead of a false zero.
+          const numTurns = rec["num_turns"];
+          return {
+            text: rec["result"],
+            ...(typeof numTurns === "number" && Number.isFinite(numTurns)
+              ? { activity: { commands: [], toolRounds: Math.max(0, numTurns - 1) } }
+              : {}),
+          };
+        }
       }
+      // Fall back to raw stdout when the envelope shape changes across CLI versions.
+      if (result.stdout.trim() !== "") return { text: result.stdout };
+      throw new JudgeError("judge-invalid-output", this.name, "empty stdout from claude -p");
+    } finally {
+      if (evidenceRoot !== undefined) fs.rmSync(evidenceRoot, { recursive: true, force: true });
     }
-    // Fall back to raw stdout when the envelope shape changes across CLI versions.
-    if (result.stdout.trim() !== "") return { text: result.stdout };
-    throw new JudgeError("judge-invalid-output", this.name, "empty stdout from claude -p");
   }
 }
 
@@ -301,22 +313,22 @@ If supplied evidence already settles the question, use no command.
 
 `;
 
-function copyEvidenceFiles(sourceRoot: string, workRoot: string, paths: string[]): void {
+function copyEvidenceFiles(sourceRoot: string, workRoot: string, paths: string[], backend: BackendName = "codex"): void {
   const root = path.resolve(sourceRoot);
   for (const relative of [...new Set(paths)]) {
-    if (path.isAbsolute(relative)) throw new JudgeError("judge-invalid-output", "codex", `evidence path must be relative: ${relative}`);
+    if (path.isAbsolute(relative)) throw new JudgeError("judge-invalid-output", backend, `evidence path must be relative: ${relative}`);
     const source = path.resolve(root, relative);
     if (source === root || !source.startsWith(`${root}${path.sep}`)) {
-      throw new JudgeError("judge-invalid-output", "codex", `evidence path escapes project root: ${relative}`);
+      throw new JudgeError("judge-invalid-output", backend, `evidence path escapes project root: ${relative}`);
     }
     if (!fs.existsSync(source)) continue;
     const stat = fs.lstatSync(source);
     if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new JudgeError("judge-invalid-output", "codex", `evidence path is not a regular file: ${relative}`);
+      throw new JudgeError("judge-invalid-output", backend, `evidence path is not a regular file: ${relative}`);
     }
     const destination = path.resolve(workRoot, relative);
     if (!destination.startsWith(`${workRoot}${path.sep}`)) {
-      throw new JudgeError("judge-invalid-output", "codex", `evidence destination escapes workspace: ${relative}`);
+      throw new JudgeError("judge-invalid-output", backend, `evidence destination escapes workspace: ${relative}`);
     }
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(source, destination);
@@ -523,6 +535,7 @@ interface SpawnOutcome {
   error?: Error;
   signal?: NodeJS.Signals | null;
   status?: number | null;
+  stdout?: string;
   stderr?: string;
 }
 
@@ -541,14 +554,27 @@ function interpretSpawnFailure(backend: BackendName, result: SpawnOutcome): void
     throw new JudgeError("judge-timeout", backend, "judge call timed out");
   }
   if (result.status !== 0) {
+    // Claude reports some command failures as a JSON envelope on stdout with
+    // exit 1 and an empty stderr. Prefer that structured failure over the
+    // transport status so context overflow cannot masquerade as auth/runtime.
+    const envelope = safeParse(result.stdout ?? "");
+    const reported = envelope !== null && typeof envelope === "object" && !Array.isArray(envelope)
+      ? envelope as Record<string, unknown>
+      : null;
+    const stdoutDetail = reported?.["is_error"] === true && typeof reported["result"] === "string"
+      ? reported["result"].trim()
+      : "";
     const stderr = (result.stderr ?? "").trim().slice(0, 800);
-    const detail = stderr || `exit code ${String(result.status)}`;
+    const detail = stdoutDetail || stderr || `exit code ${String(result.status)}`;
     throw new JudgeError(classifyFailure(backend, detail), backend, detail);
   }
 }
 
-function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "judge-auth-or-runtime" {
+function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "judge-auth-or-runtime" | "judge-context-overflow" {
   if (backend !== "claude") return "judge-auth-or-runtime";
+  if (/(?:prompt|context).{0,80}(?:too\s+long|length|window|limit|exceed)|(?:too\s+long|maximum).{0,80}(?:prompt|context)/i.test(detail)) {
+    return "judge-context-overflow";
+  }
   return /(?:not\s+logged\s+in|log\s*in|auth(?:entication|orization)?|api\s*key|unauthori[sz]ed|\b401\b|credential|oauth|access\s+token|token\s+expired|expired\s+token)/i.test(detail)
     ? "judge-auth"
     : "judge-auth-or-runtime";

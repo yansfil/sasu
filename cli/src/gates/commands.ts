@@ -40,6 +40,7 @@ import {
   recordDelegation,
   hashGateInput,
   overrideGate,
+  reopenPrdGate,
   recordGateResult,
   sha256Of,
   staleInputsFor,
@@ -349,70 +350,189 @@ async function runGapListGate(
   gate: Extract<GateId, "gap-audit" | "spec">,
   buildPrompt: (
     priorFindings: PriorFinding[],
-    options: { lane?: JudgeLane; laneCount?: number; rerun?: boolean },
+    options: { lane?: JudgeLane; laneCount?: number; rerun?: boolean; delegationEvidence?: string },
   ) => string,
   purpose: string,
   inputs: GateInput[],
   options?: { grantBudgetEvidence?: string; assumeHumanEvidence?: string },
 ): Promise<GateCommandResult> {
   const store = new GateStore(projectRoot, topic);
-  let state = store.load();
-  if (options?.grantBudgetEvidence !== undefined) {
-    state = grantGateBudget(store, state, gate, options.grantBudgetEvidence, config.judge.retryBudget);
-  }
-  if (options?.assumeHumanEvidence?.trim() === "") {
+  const explicitAssumptionEvidence = options?.assumeHumanEvidence?.trim();
+  if (explicitAssumptionEvidence === "") {
     throw new Error("--assume-human-findings requires the user's verbatim delegated invocation (e.g. their $please message)");
   }
-  // Standing delegation recorded via `sasu gate delegate` applies to every
-  // run on the topic; an explicit per-call flag still wins so a one-off
-  // invocation can carry fresher evidence.
-  const assumeEvidence = options?.assumeHumanEvidence?.trim() ?? state.delegation?.evidence;
-  // Terminal-cause admission check, mirroring `implement verify`: a spent fix
-  // budget or a judge-error streak refuses the run BEFORE any judge call.
-  // Without it the budget was a status flag the loop never read - measured
-  // 2026-08-14 (creator-assist, exploration-collection-depth): gap-audit ran
-  // 9 attempts against retryBudget 8, each rerun lawfully re-blocking on
-  // fresh requiresHuman findings, so the round cap PRINCIPLES item 13
-  // demands existed on paper and bounded nothing.
-  const before = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
-  if (before.budgetExhausted || before.judgeErrorLoop || before.cycleExhausted) {
-    const cause = before.budgetExhausted
-      ? `fix budget exhausted (${before.attempts}/${before.budget} judged non-PASS rounds)`
-      : before.judgeErrorLoop
-        ? `judge failed ${before.consecutiveErrors} times in a row without a verdict`
-        : `cycle cap reached (${before.roundsSinceGrant}/${before.cycleCap} judged non-PASS rounds since the last user grant): the fix loop is not converging`;
+  const delegationAtAdmission = store.load().delegation?.evidence;
+  if (
+    explicitAssumptionEvidence !== undefined
+    && delegationAtAdmission !== undefined
+    && explicitAssumptionEvidence !== delegationAtAdmission
+  ) {
+    throw new Error(
+      "--assume-human-findings conflicts with the topic's stored delegation; omit the flag and use the original recorded invocation",
+    );
+  }
+  const releaseRunLock = store.tryAcquireRunLock(gate);
+  if (releaseRunLock === null) {
+    const state = store.load();
     return {
       ok: false,
-      status: before,
+      status: gateStatus(state, gate, config.judge.retryBudget, projectRoot, true),
       zeroJudgeCalls: true,
       error: {
-        code: before.budgetExhausted ? "budget-exhausted" : before.judgeErrorLoop ? "judge-error-loop" : "cycle-exhausted",
-        message: `${gate} refused: ${cause}; no judge was called`,
-        recovery:
-          `hand the recorded findings to the user. If the user explicitly approves another round, record their words verbatim: `
-          + `sasu gate ${gate} ... --grant-budget "<the user's words>". `
-          + overrideRecovery(topic, gate),
+        code: "gate-in-flight",
+        message: `${gate} refused: another judge run already owns this topic/gate; no judge was called`,
+        recovery: "Wait for the in-flight gate to finish, then read `sasu gate status` before deciding whether another command is needed.",
       },
     };
   }
-  const records: JudgeCallRecord[] = [];
   try {
-    const priorFindings = priorFindingsFor(state, gate);
-    // Convergence applies to EVERY re-run, including one after a PASS went
-    // STALE: the E2E rehearsal (2026-07-17) showed a harmless post-PASS
-    // append producing fresh P1 blockers on re-judgment. Once a document has
-    // passed, only an unresolved prior finding, a new P0, or a finding that
-    // requires explicit human agreement may re-block it.
-    const isRerun = state.gates[gate] !== undefined && state.gates[gate].verdict !== null;
+    let state = store.load();
+    if (options?.grantBudgetEvidence !== undefined) {
+      state = grantGateBudget(store, state, gate, options.grantBudgetEvidence, config.judge.retryBudget);
+    }
+    // The standing record is the one semantic source for the whole topic. A
+    // per-call flag may repeat it for an older caller, but must never replace
+    // it (2026-08-23 live Observer drive: the agent passed fabricated "dummy"
+    // evidence during spec closure and otherwise would have erased the user's
+    // no-commit constraint).
+    const assumeEvidence = state.delegation?.evidence ?? explicitAssumptionEvidence;
+    const delegationEvidence = state.delegation?.evidence;
+    const delegationSha256 = delegationEvidence === undefined ? undefined : sha256Of(delegationEvidence);
+    // PRD review has two semantic phases: one exhaustive pass and, only after a
+    // BLOCK, one closure pass. Numeric budget still bounds broken judge calls,
+    // but never widens semantic review (PRINCIPLES 2, 4, 13).
+    const before = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
+    if (before.reviewPhase === "sealed") {
+      if (!before.stale) return { ok: true, status: before, zeroJudgeCalls: true };
+      return {
+        ok: false,
+        status: before,
+        zeroJudgeCalls: true,
+        error: {
+          code: "reopen-required",
+          message: `${gate} cycle ${before.reviewCycle} is sealed but its judged input changed; no judge was called`,
+          recovery: `If the user wants the changed document reviewed, record their words with: sasu gate reopen --slug ${topic} --gate ${gate} --evidence "<the user's words>". Otherwise restore the sealed input.`,
+        },
+      };
+    }
+    if (before.closureExhausted) {
+      return {
+        ok: false,
+        status: before,
+        zeroJudgeCalls: true,
+        error: {
+          code: "closure-exhausted",
+          message: `${gate} cycle ${before.reviewCycle} used its full and closure verdicts and remains blocked; no judge was called`,
+          recovery: `Hand the remaining findings to the user. Only a new user decision opens another cycle: sasu gate reopen --slug ${topic} --gate ${gate} --evidence "<the user's words>". ${overrideRecovery(topic, gate)}`,
+        },
+      };
+    }
+    if (before.judgeErrorLoop) {
+      return {
+        ok: false,
+        status: before,
+        zeroJudgeCalls: true,
+        error: {
+          code: "judge-error-loop",
+          message: `${gate} refused: judge failed ${before.consecutiveErrors} times in a row without a verdict; no judge was called`,
+          recovery: `Repair the judge, then record the user's approval to retry the broken backend with --grant-budget. ${overrideRecovery(topic, gate)}`,
+        },
+      };
+    }
+    const records: JudgeCallRecord[] = [];
+    try {
+      const priorFindings = priorFindingsFor(state, gate);
+      // Convergence applies only to the one closure review. A PASS is sealed and
+      // cannot reach this path again without an explicit user-evidenced reopen,
+      // which starts a genuinely fresh full review cycle.
+      const isRerun = before.reviewPhase === "closure";
 
-    if (!config.judge.fanout) {
-      // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).
-      const outcome = await runJudge(config, purpose, "routine", buildPrompt(priorFindings, { rerun: isRerun }), (value) =>
-        validateGapVerdict(value, { requireOrigin: isRerun }),
+      if (!config.judge.fanout) {
+        // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).
+        const outcome = await runJudge(config, purpose, "routine", buildPrompt(priorFindings, { rerun: isRerun, delegationEvidence }), (value) =>
+          validateGapVerdict(value, { requireOrigin: isRerun }),
+        );
+        records.push(outcome.record);
+        const humanSafe = enforceHumanBlocking(outcome.value);
+        const convergedRaw = isRerun ? applyRerunConvergence(humanSafe) : { ...humanSafe, demotedCount: 0 };
+        const converged = assumeEvidence !== undefined ? { ...convergedRaw, ...assumeHumanFindings(convergedRaw) } : { ...convergedRaw, assumed: [] };
+        state = recordGateResult(
+          store,
+          state,
+          gate,
+          {
+            kind: "verdict",
+            verdict: converged.verdict,
+            findings: converged.findings,
+            inputs,
+            ...(delegationSha256 !== undefined ? { delegationSha256 } : {}),
+            ...(assumeEvidence !== undefined ? { humanAssumption: { evidence: assumeEvidence, findings: converged.assumed } } : {}),
+            artifactPayload: {
+              verdict: converged.verdict,
+              judgedVerdict: outcome.value.verdict,
+              demotedCount: converged.demotedCount,
+              assumedHumanFindings: converged.assumed,
+              findings: converged.findings,
+              inputs,
+              ...(delegationSha256 !== undefined ? { delegationSha256 } : {}),
+              judge: outcome.record,
+            },
+          },
+          records,
+        );
+        const status = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
+        return { ok: status.effective === "PASS", status };
+      }
+
+      // Lane-parallel fan-out (R1/R2): narrow judges run concurrently and the
+      // CLI merges mechanically. One fan-out round is one gate attempt.
+      // Lanes run at low effort: calibration showed judge wall time is a flat
+      // per-call reasoning budget (a full-effort lane costs as much as the
+      // exhaustive single judge), so the narrow scope is paired with a small
+      // budget - that pairing, not parallelism alone, is what halves the gate.
+      const lanes = gate === "gap-audit" ? GAP_AUDIT_LANES : SPEC_LANES;
+      const routedPrior = routePriorFindings(priorFindings, lanes);
+      const settled = await Promise.all(
+        lanes.map(async (lane) => {
+          try {
+            const outcome = await runJudge(
+              config,
+              `${purpose}:lane:${lane.id}`,
+              "routine",
+              buildPrompt(routedPrior.get(lane.id) ?? [], { lane, laneCount: lanes.length, rerun: isRerun, delegationEvidence }),
+              (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
+            );
+            return { laneId: lane.id, outcome, error: null };
+          } catch (error) {
+            return { laneId: lane.id, outcome: null, error };
+          }
+        }),
       );
-      records.push(outcome.record);
-      const humanSafe = enforceHumanBlocking(outcome.value);
-      const convergedRaw = isRerun ? applyRerunConvergence(humanSafe) : { ...humanSafe, demotedCount: 0 };
+      for (const lane of settled) {
+        if (lane.outcome) records.push(lane.outcome.record);
+        else {
+          const failureRecord = judgeCallRecordFrom(lane.error);
+          if (failureRecord) records.push(failureRecord);
+        }
+      }
+      const failures = settled.filter((lane) => lane.error !== null);
+      if (failures.length > 0) {
+        // Fail-closed on any lane failure (D-08/D-13/D-14): rate limits,
+        // timeouts, and invalid output all land here, named by lane.
+        const first = failures[0]!.error;
+        const code = first instanceof JudgeError ? first.code : "judge-auth-or-runtime";
+        const backend = first instanceof JudgeError ? first.backend : "claude";
+        const detail = first instanceof Error ? first.message : String(first);
+        const laneList = failures.map((lane) => lane.laneId).join(", ");
+        const laneError = new JudgeError(code, backend, `lane failed [${laneList}]: ${detail}`);
+        return recordJudgeFailure(store, state, gate, config, laneError, records, topic);
+      }
+      const merged = mergeLaneFindings(
+        settled.map((lane) => ({ laneId: lane.laneId, findings: lane.outcome!.value.findings })),
+      );
+      const convergedRaw = isRerun
+        ? applyRerunConvergence({ verdict: merged.verdict, findings: merged.findings })
+        : { verdict: merged.verdict, findings: merged.findings, demotedCount: 0 };
       const converged = assumeEvidence !== undefined ? { ...convergedRaw, ...assumeHumanFindings(convergedRaw) } : { ...convergedRaw, assumed: [] };
       state = recordGateResult(
         store,
@@ -423,105 +543,34 @@ async function runGapListGate(
           verdict: converged.verdict,
           findings: converged.findings,
           inputs,
+          ...(delegationSha256 !== undefined ? { delegationSha256 } : {}),
           ...(assumeEvidence !== undefined ? { humanAssumption: { evidence: assumeEvidence, findings: converged.assumed } } : {}),
           artifactPayload: {
             verdict: converged.verdict,
-            judgedVerdict: outcome.value.verdict,
+            judgedVerdict: merged.verdict,
             demotedCount: converged.demotedCount,
+            dedupedCount: merged.dedupedCount,
             assumedHumanFindings: converged.assumed,
             findings: converged.findings,
+            lanes: settled.map((lane) => ({
+              laneId: lane.laneId,
+              verdict: lane.outcome!.value.verdict,
+              findingCount: lane.outcome!.value.findings.length,
+              judge: lane.outcome!.record,
+            })),
             inputs,
-            judge: outcome.record,
+            ...(delegationSha256 !== undefined ? { delegationSha256 } : {}),
           },
         },
         records,
       );
       const status = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
       return { ok: status.effective === "PASS", status };
+    } catch (error) {
+      return recordJudgeFailure(store, state, gate, config, error, records, topic);
     }
-
-    // Lane-parallel fan-out (R1/R2): narrow judges run concurrently and the
-    // CLI merges mechanically. One fan-out round is one gate attempt.
-    // Lanes run at low effort: calibration showed judge wall time is a flat
-    // per-call reasoning budget (a full-effort lane costs as much as the
-    // exhaustive single judge), so the narrow scope is paired with a small
-    // budget - that pairing, not parallelism alone, is what halves the gate.
-    const lanes = gate === "gap-audit" ? GAP_AUDIT_LANES : SPEC_LANES;
-    const routedPrior = routePriorFindings(priorFindings, lanes);
-    const settled = await Promise.all(
-      lanes.map(async (lane) => {
-        try {
-          const outcome = await runJudge(
-            config,
-            `${purpose}:lane:${lane.id}`,
-            "routine",
-            buildPrompt(routedPrior.get(lane.id) ?? [], { lane, laneCount: lanes.length, rerun: isRerun }),
-            (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
-          );
-          return { laneId: lane.id, outcome, error: null };
-        } catch (error) {
-          return { laneId: lane.id, outcome: null, error };
-        }
-      }),
-    );
-    for (const lane of settled) {
-      if (lane.outcome) records.push(lane.outcome.record);
-      else {
-        const failureRecord = judgeCallRecordFrom(lane.error);
-        if (failureRecord) records.push(failureRecord);
-      }
-    }
-    const failures = settled.filter((lane) => lane.error !== null);
-    if (failures.length > 0) {
-      // Fail-closed on any lane failure (D-08/D-13/D-14): rate limits,
-      // timeouts, and invalid output all land here, named by lane.
-      const first = failures[0]!.error;
-      const code = first instanceof JudgeError ? first.code : "judge-auth-or-runtime";
-      const backend = first instanceof JudgeError ? first.backend : "claude";
-      const detail = first instanceof Error ? first.message : String(first);
-      const laneList = failures.map((lane) => lane.laneId).join(", ");
-      const laneError = new JudgeError(code, backend, `lane failed [${laneList}]: ${detail}`);
-      return recordJudgeFailure(store, state, gate, config, laneError, records, topic);
-    }
-    const merged = mergeLaneFindings(
-      settled.map((lane) => ({ laneId: lane.laneId, findings: lane.outcome!.value.findings })),
-    );
-    const convergedRaw = isRerun
-      ? applyRerunConvergence({ verdict: merged.verdict, findings: merged.findings })
-      : { verdict: merged.verdict, findings: merged.findings, demotedCount: 0 };
-    const converged = assumeEvidence !== undefined ? { ...convergedRaw, ...assumeHumanFindings(convergedRaw) } : { ...convergedRaw, assumed: [] };
-    state = recordGateResult(
-      store,
-      state,
-      gate,
-      {
-        kind: "verdict",
-        verdict: converged.verdict,
-        findings: converged.findings,
-        inputs,
-        ...(assumeEvidence !== undefined ? { humanAssumption: { evidence: assumeEvidence, findings: converged.assumed } } : {}),
-        artifactPayload: {
-          verdict: converged.verdict,
-          judgedVerdict: merged.verdict,
-          demotedCount: converged.demotedCount,
-          dedupedCount: merged.dedupedCount,
-          assumedHumanFindings: converged.assumed,
-          findings: converged.findings,
-          lanes: settled.map((lane) => ({
-            laneId: lane.laneId,
-            verdict: lane.outcome!.value.verdict,
-            findingCount: lane.outcome!.value.findings.length,
-            judge: lane.outcome!.record,
-          })),
-          inputs,
-        },
-      },
-      records,
-    );
-    const status = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
-    return { ok: status.effective === "PASS", status };
-  } catch (error) {
-    return recordJudgeFailure(store, state, gate, config, error, records, topic);
+  } finally {
+    releaseRunLock();
   }
 }
 
@@ -1856,6 +1905,19 @@ export function runOverride(
   return gateStatus(state, gate, Number.MAX_SAFE_INTEGER, projectRoot);
 }
 
+/** CLI seam for the only operation that opens a new gap/spec review cycle. */
+export function runReopen(
+  projectRoot: string,
+  config: SasuConfig,
+  topic: string,
+  gate: Extract<GateId, "gap-audit" | "spec">,
+  evidence: string,
+): GateStatusView {
+  const store = new GateStore(projectRoot, topic);
+  const state = reopenPrdGate(store, gate, evidence);
+  return gateStatus(state, gate, config.judge.retryBudget, projectRoot);
+}
+
 export function readGateStatus(
   projectRoot: string,
   config: SasuConfig,
@@ -1864,9 +1926,9 @@ export function readGateStatus(
   const store = new GateStore(projectRoot, topic);
   const state = store.load();
   return {
-    "gap-audit": gateStatus(state, "gap-audit", config.judge.retryBudget, projectRoot),
-    spec: gateStatus(state, "spec", config.judge.retryBudget, projectRoot),
-    verify: gateStatus(state, "verify", config.judge.retryBudget, projectRoot),
+    "gap-audit": gateStatus(state, "gap-audit", config.judge.retryBudget, projectRoot, store.isGateInFlight("gap-audit")),
+    spec: gateStatus(state, "spec", config.judge.retryBudget, projectRoot, store.isGateInFlight("spec")),
+    verify: gateStatus(state, "verify", config.judge.retryBudget, projectRoot, store.isGateInFlight("verify")),
     judgeCallCount: state.judgeCalls.length,
     delegation: state.delegation ?? null,
   };

@@ -328,6 +328,23 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     throw new Error("PRD is missing tasks, acceptance criteria, or verification items");
   }
   const slug = slugFromPrd(prd.absolute);
+  const sourceIntake = contract.frontmatter["source_intake"] ?? "";
+  const gateViews = readGateStatus(projectRoot, config, slug);
+  const activePrdGates = (["gap-audit", "spec"] as const).filter((gate) => gateViews[gate].inFlight);
+  if (activePrdGates.length > 0) {
+    throw new Error(
+      `implement start refused: PRD review still in flight (${activePrdGates.join(", ")}); wait for the gate to finish and inspect its final status`,
+    );
+  }
+  if (sourceIntake !== "" && path.basename(sourceIntake) === "qa-log.md") {
+    const incomplete = (["gap-audit", "spec"] as const).filter((gate) => gateViews[gate].effective !== "PASS");
+    if (incomplete.length > 0) {
+      const statuses = incomplete.map((gate) => `${gate}=${gateViews[gate].effective}`).join(", ");
+      throw new Error(
+        `implement start refused: qa-log-backed PRD requires live PASS for gap-audit and spec; got ${statuses}`,
+      );
+    }
+  }
   const statePath = statePathFor(projectRoot, slug);
   if (fs.existsSync(statePath)) {
     let existingSchema = "unknown";
@@ -363,7 +380,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
         : { source: "conversation", evidence: approval },
       reviewProfile: reviewProfile(contract),
       reviewRationale: contract.frontmatter["review_rationale"] ?? "",
-      sourceIntake: contract.frontmatter["source_intake"] ?? "",
+      sourceIntake,
     },
     initialSource: captureBaselineSnapshot(worktree?.path ?? projectRoot),
     ownerSessionId: currentSessionId(),
@@ -768,6 +785,16 @@ function isImageBytes(buffer: Buffer): boolean {
   return png || jpeg;
 }
 
+function textEvidencePaths(projectRoot: string, paths: string[]): string[] {
+  // Binary images are visual evidence, not source text. Passing them to a
+  // read-only judge lets a tool response inflate the model context by their
+  // raw bytes. Registered visual artifacts travel through `images` instead.
+  return paths.filter((relative) => {
+    const absolute = path.join(projectRoot, relative);
+    return !fs.existsSync(absolute) || !isImageBytes(fs.readFileSync(absolute));
+  });
+}
+
 function acceptanceMaterial(
   projectRoot: string,
   state: ImplementState,
@@ -1124,7 +1151,7 @@ async function acceptanceLane(
           // record tree and reach the judge inlined (text) or as absolute
           // image paths, so a missing copy in the work tree is expected.
           cwd: workRoot,
-          evidencePaths: [...changedPaths, ...material.readableArtifacts.map((artifact) => artifact.path)],
+          evidencePaths: textEvidencePaths(workRoot, changedPaths),
           ...(material.readableArtifacts.length > 0
             ? { images: material.readableArtifacts.map((artifact) => normalizeProjectPath(recordRoot, artifact.path).absolute) }
             : {}),

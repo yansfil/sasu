@@ -10,6 +10,7 @@ import {
   runDelegateClear,
   runGapAudit,
   runOverride,
+  runReopen,
   runSpecGate,
   runVerifyGate,
   type GateCommandResult,
@@ -38,7 +39,8 @@ Usage:
   sasu gate gap-audit --slug <topic> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate status    --slug <topic> [--json]
-  sasu gate delegate  --slug <topic> (--evidence "<verbatim delegating user message>" | --clear) [--json]
+  sasu gate delegate  --slug <topic> --evidence "<verbatim delegating user message>" [--json]
+  sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--json]
@@ -81,10 +83,11 @@ identical in both modes (0 pass, 1 block/fail, 2 usage error).
 Gates run a deterministic document prelint before the judge: a structural defect
 blocks at $0 with [prelint] findings - no judge call, no retry-budget attempt.
 
-Gates own their retry budget: after judge.retryBudget judged non-PASS rounds
-(or an equal streak of judge errors) the gate refuses further runs at $0 and the
-findings go to the user. Only the user reopens it - their verbatim approval
-recorded via --grant-budget, or a recorded 'gate override'.
+Gap-audit and spec each get one exhaustive verdict. A BLOCK permits exactly one
+closure verdict after the document is fixed. PASS seals that cycle; a sealed
+input change or a second BLOCK stops at $0 until the user explicitly opens a
+new cycle with 'gate reopen'. --grant-budget only retries a judge backend that
+failed without returning a verdict. Verify keeps its configured retry budget.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
 --assume-human-findings exists for delegated runs only (the user invoked $please
@@ -92,15 +95,10 @@ or equivalently handed the whole pipeline over): it converts non-P0 human-consen
 findings into a recorded, veto-able assumption ledger instead of a block, quoting
 the user's delegating message verbatim. P0 findings still block. Passing it
 without such a delegating user message is inventing consent.
-'gate delegate' records that same delegation ONCE as run state: every later
-gap-audit/spec run on the slug then applies it automatically, so a delegated
-run cannot lose its delegation by omitting a per-call flag. A per-call
---assume-human-findings still wins over the stored record; 'gate delegate
---clear' revokes it so later runs ask again.
-Gates also carry a cycle cap (3x the fix budget) counting judged non-PASS
-rounds since the last user grant, PASSes never resetting it: a
-PASS->stale->re-judge loop that keeps re-blocking stops there and hands its
-findings to the user, while a slug whose re-runs keep passing never trips.
+'gate delegate' records that same delegation ONCE as immutable run state:
+every later gap-audit/spec run on the slug then applies it automatically, so a
+delegated run cannot lose or replace the user's invocation. A repeated
+per-call --assume-human-findings value must exactly match the stored record.
 Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
 executes implementation work.
 
@@ -171,7 +169,11 @@ function printStatusView(view: GateStatusView): void {
   // attempts left" while every one of them is a broken backend call. The flag has
   // to say so here, or `sasu gate status` is the one surface that hides the
   // terminal cause the receipt and the Stop hook both report.
-  const terminal = view.budgetExhausted
+  const terminal = view.closureExhausted
+    ? ` - CLOSURE EXHAUSTED: cycle ${view.reviewCycle} remains blocked after its one closure verdict; report the findings and require an explicit gate reopen`
+    : view.reopenRequired
+      ? ` - REOPEN REQUIRED: this sealed review's input changed; restore it or record the user's change request with gate reopen`
+    : view.budgetExhausted
     ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (only their verbatim approval, recorded via --grant-budget, reopens the budget)"
     : view.judgeErrorLoop
       ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge, then a user-granted --grant-budget re-run may continue, or close the run out blocked`
@@ -184,10 +186,14 @@ function printStatusView(view: GateStatusView): void {
   const assumed = view.assumedHumanFindings > 0
     ? ` | ASSUMED HUMAN DECISIONS: ${view.assumedHumanFindings} finding(s) converted to recorded assumptions under the delegated invocation - the user may veto (see the gate record's humanAssumptions)`
     : "";
-  const meta = `attempts ${view.attempts}/${view.budget}${grants}${assumed}${terminal}`;
+  const review = view.reviewPhase === null
+    ? `attempts ${view.attempts}/${view.budget}`
+    : `review cycle ${view.reviewCycle} | ${view.reviewPhase} | semantic rounds ${view.reviewRound}/2`;
+  const active = view.inFlight ? " | IN FLIGHT" : "";
+  const meta = `${review}${grants}${assumed}${active}${terminal}`;
   process.stdout.write(`${head} | ${meta}\n`);
   for (const input of view.staleInputs) {
-    process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - re-run the gate on the current document\n`);
+    process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - restore it or explicitly reopen the review cycle\n`);
   }
   for (const finding of view.findings) {
     const human = finding.requiresHuman ? " [needs human decision]" : "";
@@ -240,7 +246,9 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
       }
     }
     if (result.error) {
-      process.stdout.write(`[judge error: ${result.error.code}] ${result.error.message}\n`);
+      const structuralRefusal = new Set(["gate-in-flight", "reopen-required", "closure-exhausted"]);
+      const label = structuralRefusal.has(result.error.code) ? "gate refusal" : "judge error";
+      process.stdout.write(`[${label}: ${result.error.code}] ${result.error.message}\n`);
       process.stdout.write(`recovery: ${result.error.recovery}\n`);
     }
     printStatusView(result.status);
@@ -483,7 +491,9 @@ async function main(): Promise<void> {
       if (result.timelines.length > 0) {
         process.stdout.write(`timelines:\n`);
         for (const t of result.timelines) {
-          process.stdout.write(`  ${t.slug}:${t.gate} ${t.verdict ?? "?"} ${t.rounds}rd ${t.durationMinutes}min (${t.startedAt} -> ${t.endedAt})\n`);
+          const firstPass = t.firstPassAt === null ? "no PASS" : `first PASS ${t.firstPassDurationMinutes}min`;
+          const judge = t.judgeCriticalPathMinutes === null ? "judge n/a" : `judge critical path ${t.judgeCriticalPathMinutes}min`;
+          process.stdout.write(`  ${t.slug}:${t.gate} ${t.verdict ?? "?"} ${t.rounds}rd recorded span ${t.durationMinutes}min | ${firstPass} | ${judge} (${t.startedAt} -> ${t.endedAt})\n`);
         }
       }
     }
@@ -558,6 +568,24 @@ async function main(): Promise<void> {
         process.stdout.write(
           `delegation recorded. Every gap-audit/spec run on this slug now converts non-P0 human-consent findings into recorded assumptions (P0 still blocks).\n`,
         );
+      }
+      process.exit(0);
+    }
+    if (subcommand === "reopen") {
+      const gate = requireFlag(args, "gate");
+      if (gate !== "gap-audit" && gate !== "spec") fail("--gate must be one of: gap-audit, spec");
+      const view = runReopen(
+        projectRoot,
+        config,
+        requireFlag(args, "slug"),
+        gate as "gap-audit" | "spec",
+        requireFlag(args, "evidence"),
+      );
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), status: view }, null, 2)}\n`);
+      } else {
+        process.stdout.write(`${gate} review reopened with recorded user evidence.\n`);
+        printStatusView(view);
       }
       process.exit(0);
     }

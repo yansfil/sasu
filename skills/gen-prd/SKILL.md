@@ -547,21 +547,27 @@ represented without distortion) and testability plus verification intent
 intents, genuine human-verification/non-goal dispositions); the deterministic
 prelint already reports uncovered ACs and dangling Covers references at $0.
 
-- The gate is a hard block: exit 1 means the PRD is not `ready`. Fix the PRD
-  per finding and re-run.
+- The first run is the one exhaustive spec review.
+  If it BLOCKs, fix all agent-fixable findings together and run exactly one closure review.
+  A closure BLOCK is terminal for that cycle; do not call the judge a third time.
 - A finding marked `needs human decision` goes to the user; do not resolve it
   by editing the PRD toward your own guess.
-- When the retry budget is exhausted, the CLI refuses further runs of the gate
-  at $0: stop revising, hand the findings to the user, and re-run only after
-  the user's verbatim approval is recorded with `--grant-budget`.
+- Only a new explicit user change request may open another bounded cycle:
+  `sasu gate reopen --slug <topic-slug> --gate spec --evidence "<the user's words>"`.
+  `--grant-budget` does not widen semantic review; it is only for a bounded
+  judge backend error streak after the backend is repaired.
 - If the judge backend is unavailable, the gate fails closed; report the cause
   and recovery, and treat the PRD as not `ready` until the user decides.
 - Never run `sasu gate override` yourself; it is user-only, and the
   recorded deviation must carry the user's own reason.
-- The PASS is pinned to the content hash of the PRD and qa-log bodies
+- The PASS is pinned to the content hash of the PRD and qa-log bodies and seals
+  the review cycle.
   (frontmatter is exempt, so flipping `status`/`human_approval` after the gate
   is fine): any body edit afterwards makes `sasu gate status` report
-  `STALE`, and a stale spec gate must be re-run before implementation.
+  `STALE`; the CLI refuses automatic re-judgment until the input is restored or
+  the user explicitly authorizes `gate reopen`.
+- PASS may retain P2 advisory notes.
+  Do not edit the PRD and invalidate the seal merely to remove those notes.
 - When no intake qa-log exists (conversation-only PRD), record that the spec
   gate was skipped for lack of a source document.
 

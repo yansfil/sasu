@@ -80,13 +80,10 @@ test("codex activity audit accepts narrow reads and rejects scope escape or tool
   );
 });
 
-// The agentic judge resolves the diff-stat's repo-relative paths against its
-// working directory, so the verify gate threads the project root through
-// BackendRunOptions.cwd - `sasu verify` from a subdirectory used to hand the
-// judge the caller's cwd and every Read/Grep missed. The stub backend never
-// spawns, so the contract is pinned at the spawn-options builder (mirrors the
-// codexExecArgs tests above).
-test("judge spawn options carry the caller-threaded cwd, and omit it when absent", () => {
+// Agentic judges resolve repo-relative evidence paths in a harness-owned
+// workspace, so the backend must be able to thread that selected cwd through
+// spawn. The stub backend never spawns, so this helper pins the contract.
+test("judge spawn options carry the selected workspace cwd, and omit it when absent", () => {
   const withCwd = processSpawnOptions({ cwd: "/repo/root" });
   assert.equal(withCwd.cwd, "/repo/root", "the provided project root must reach the spawned judge");
   const without = processSpawnOptions({});

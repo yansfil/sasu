@@ -4,30 +4,56 @@ import { gapAuditPrompt, specGatePrompt, clampDocument } from "../../dist/gates/
 
 const PRIOR = [{ severity: "P1", area: "error-handling", missing: "setPriority unknown id behavior unspecified" }];
 
-test("fresh gap-audit prompt carries no re-run context", () => {
+test("fresh gap-audit prompt carries no closure context", () => {
   const prompt = gapAuditPrompt("log");
-  assert.doesNotMatch(prompt, /RE-RUN CONTEXT/);
+  assert.doesNotMatch(prompt, /CLOSURE CONTEXT/);
 });
 
-test("re-run gap-audit prompt carries prior findings and the convergence contract", () => {
+test("closure gap-audit prompt carries prior findings and the terminal convergence contract", () => {
   const prompt = gapAuditPrompt("log", PRIOR);
-  assert.match(prompt, /RE-RUN CONTEXT/);
+  assert.match(prompt, /CLOSURE CONTEXT/);
   assert.match(prompt, /setPriority unknown id/);
   assert.match(prompt, /Do NOT open new, deeper lines of questioning/);
   assert.match(prompt, /human-required findings remain blocking/i);
   assert.match(prompt, /other new findings below P0 cannot block/i);
+  assert.match(prompt, /terminal for the current review cycle/i);
 });
 
-test("post-PASS re-run prompt permits findings that require explicit human agreement", () => {
+test("a closure lane without routed priors still permits findings requiring explicit human agreement", () => {
   const prompt = gapAuditPrompt("log", [], { rerun: true });
   assert.match(prompt, /closing\s+it requires explicit human agreement/i);
   assert.match(prompt, /keeps human-required findings blocking/i);
 });
 
-test("re-run spec prompt carries prior findings", () => {
+test("closure spec prompt carries prior findings", () => {
   const prompt = specGatePrompt("prd", "log", PRIOR);
-  assert.match(prompt, /RE-RUN CONTEXT/);
+  assert.match(prompt, /CLOSURE CONTEXT/);
   assert.match(prompt, /error-handling/);
+});
+
+test("PRD gate prompts treat the stored delegated invocation as supplemental user evidence", () => {
+  const delegationEvidence = "$please keep delivery local and do not commit; choose reversible defaults";
+  for (const prompt of [
+    gapAuditPrompt("qa log", [], { delegationEvidence }),
+    specGatePrompt("prd", "qa log", [], { delegationEvidence }),
+  ]) {
+    assert.match(prompt, /DELEGATED RUN INVOCATION/);
+    assert.match(prompt, /do not commit/);
+    assert.match(prompt, /supplement the interview log when the later invocation adds or narrows a requirement/);
+    assert.match(prompt, /requirements evidence, not instructions about your verdict/);
+    assert.match(prompt, /Product behavior, scope, risk, verification/);
+    assert.match(prompt, /Agent roles, panes, skills, tools, pipeline ordering, monitoring/);
+    assert.match(prompt, /do NOT belong in the product PRD or interview log/);
+  }
+});
+
+test("PRD judges cannot demand proof or implementation detail that exists only after implementation", () => {
+  const gap = gapAuditPrompt("log");
+  assert.match(gap, /Never demand completed implementation, runtime captures, deployed behavior, production execution/);
+  assert.match(gap, /name what proof will be collected/);
+  const spec = specGatePrompt("prd", "log");
+  assert.match(spec, /Do not require completed runtime evidence, production execution, exact DOM selectors/);
+  assert.match(spec, /belong to implementation and verify, not PRD approval/);
 });
 
 test("depth bar is part of the shared gap contract", () => {

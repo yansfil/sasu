@@ -1,18 +1,14 @@
-// Standing delegation record + gate cycle cap.
-// Measured 2026-08-20 (3 real $please runs): (a) two of three runs omitted
-// the per-call --assume-human-findings flag, so gates blocked on findings the
-// delegation had already answered - the flag lived only as skill prose
-// (PRINCIPLES item 7); (b) gap-audit cycled 7-11 judged rounds per run
-// because a PASS resets `attempts`, so a PASS -> cross-gate fix -> STALE ->
-// re-judge loop was bounded by nothing (item 13). These tests pin the fixes:
-// delegation recorded once as run state, and a cycle cap over judged non-PASS
-// rounds that only a user grant reopens.
+// Standing delegation record + bounded PRD review cycles.
+// Measured 2026-08-20: delegated runs lost their assumption mode and PRD
+// gates cycled 7-15 times. The product contract now permits one exhaustive
+// verdict and, only after BLOCK, one closure verdict. PASS seals the cycle;
+// only user-evidenced reopen starts another one (PRINCIPLES 2, 7, 10, 13).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { GateStore, gateStatus, grantGateBudget, recordDelegation, recordGateResult } from "../../dist/gates/store.js";
+import { GateStore, gateStatus, recordDelegation, recordGateResult, reopenPrdGate, sha256Of } from "../../dist/gates/store.js";
 import { runDelegate, runGapAudit } from "../../dist/gates/commands.js";
 import { loadConfig } from "../../dist/config.js";
 
@@ -39,77 +35,91 @@ test("delegate: records once, persists, and is visible to a reloaded store", () 
   assert.equal(delegation.evidence, "그냥 끝까지 해줘 /please");
   const reloaded = new GateStore(projectRoot, "topic-a").load();
   assert.equal(reloaded.delegation.evidence, "그냥 끝까지 해줘 /please");
-  // A re-invocation supersedes the record instead of stacking.
-  runDelegate(projectRoot, "topic-a", "second invocation /please");
-  assert.equal(new GateStore(projectRoot, "topic-a").load().delegation.evidence, "second invocation /please");
+  const retried = runDelegate(projectRoot, "topic-a", "그냥 끝까지 해줘 /please");
+  assert.deepEqual(retried, delegation, "same-value retries preserve the original record and timestamp");
+  assert.throws(
+    () => runDelegate(projectRoot, "topic-a", "second invocation /please"),
+    /already bound.*original invocation/,
+  );
+  assert.equal(new GateStore(projectRoot, "topic-a").load().delegation.evidence, "그냥 끝까지 해줘 /please");
 });
 
-test("cycle cap: non-PASS rounds accumulate across PASS resets, so a stale-re-judge loop reaches a terminal cause", () => {
+test("a delegated PRD verdict is pinned to the invocation that the judge received", () => {
+  const projectRoot = makeProject();
+  const store = new GateStore(projectRoot, "topic-a");
+  recordDelegation(store, store.load(), "$please first constraint");
+  let state = recordGateResult(store, store.load(), "spec", {
+    kind: "verdict",
+    verdict: "PASS",
+    findings: [],
+    inputs: [],
+    delegationSha256: sha256Of("$please first constraint"),
+    artifactPayload: {},
+  }, []);
+
+  assert.equal(gateStatus(state, "spec", 3).stale, false);
+  state = store.update((current) => {
+    current.delegation = { at: new Date().toISOString(), evidence: "$please changed constraint" };
+  });
+  const changed = gateStatus(state, "spec", 3);
+  assert.equal(changed.stale, true);
+  assert.deepEqual(changed.staleInputs, [{ path: "<delegated-invocation>", reason: "changed" }]);
+});
+
+test("review cycle: a first-pass PASS seals after one semantic round", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
-  const budget = 2; // cap = 6
-  // Alternate BLOCK/PASS: `attempts` keeps resetting, so budgetExhausted
-  // never fires - exactly the measured livelock shape. Only the BLOCK
-  // rounds count toward the cap.
-  for (let i = 0; i < 12; i += 1) {
-    state = recordGateResult(store, state, "gap-audit", outcome(i % 2 === 0 ? "BLOCK" : "PASS"), []);
-    assert.equal(gateStatus(state, "gap-audit", budget).budgetExhausted, false);
-  }
-  const view = gateStatus(state, "gap-audit", budget);
-  assert.equal(view.roundsSinceGrant, 6, "only the 6 BLOCK rounds count");
-  assert.equal(view.cycleCap, 6);
-  assert.equal(view.cycleExhausted, true);
+  state = recordGateResult(store, state, "gap-audit", outcome("PASS"), []);
+  const view = gateStatus(state, "gap-audit", 5);
+  assert.equal(view.reviewPhase, "sealed");
+  assert.equal(view.reviewRound, 1);
+  assert.equal(view.sealed, true);
 });
 
-test("cycle cap: a healthy always-PASS history never trips (red-team 2026-08-20)", () => {
+test("review cycle: BLOCK opens one closure round and closure PASS seals", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
-  for (let i = 0; i < 10; i += 1) {
-    state = recordGateResult(store, state, "gap-audit", outcome("PASS"), []);
-  }
-  const view = gateStatus(state, "gap-audit", 2);
-  assert.equal(view.roundsSinceGrant, 0);
-  assert.equal(view.cycleExhausted, false);
+  state = recordGateResult(store, state, "spec", outcome("BLOCK"), []);
+  assert.equal(gateStatus(state, "spec", 5).reviewPhase, "closure");
+  state = recordGateResult(store, state, "spec", outcome("PASS"), []);
+  const view = gateStatus(state, "spec", 5);
+  assert.equal(view.reviewPhase, "sealed");
+  assert.equal(view.reviewRound, 2);
 });
 
-test("cycle cap: admission refuses at $0 with its own cause, and records nothing", async () => {
+test("review cycle: closure BLOCK is terminal and a third command costs zero judge calls", async () => {
   const projectRoot = makeProject();
   const store = new GateStore(projectRoot, "topic-a");
   const config = loadConfig(projectRoot);
   let state = store.load();
-  // BLOCK,BLOCK,PASS cycles: attempts never reaches the fix budget, but the
-  // non-PASS rounds accumulate to the cycle cap.
-  for (let i = 0; gateStatus(state, "gap-audit", config.judge.retryBudget).roundsSinceGrant < config.judge.retryBudget * 3; i += 1) {
-    assert.ok(i < 100, "cycle gauge must reach the cap - saturation here means it stopped counting");
-    state = recordGateResult(store, state, "gap-audit", outcome(i % 3 === 2 ? "PASS" : "BLOCK"), []);
-  }
+  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
+  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
   const qaLogPath = path.join(projectRoot, "qa-log.md");
   fs.copyFileSync(path.join(FIXTURES, "qa-clean.md"), qaLogPath);
   const before = JSON.stringify(new GateStore(projectRoot, "topic-a").load());
   const result = await runGapAudit(projectRoot, config, "topic-a", qaLogPath);
   assert.equal(result.ok, false);
   assert.equal(result.zeroJudgeCalls, true);
-  assert.equal(result.error.code, "cycle-exhausted");
-  assert.match(result.error.message, /not converging/);
+  assert.equal(result.error.code, "closure-exhausted");
+  assert.match(result.error.message, /no judge was called/);
   assert.equal(JSON.stringify(new GateStore(projectRoot, "topic-a").load()), before);
 });
 
-test("cycle cap: a user grant reopens headroom - rounds before the grant stop counting", () => {
+test("review cycle: user-evidenced reopen starts a fresh cycle and preserves its ledger", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
-  const budget = 2;
-  for (let i = 0; i < 12; i += 1) {
-    state = recordGateResult(store, state, "gap-audit", outcome(i % 2 === 0 ? "BLOCK" : "PASS"), []);
-  }
-  assert.equal(gateStatus(state, "gap-audit", budget).cycleExhausted, true);
-  state = grantGateBudget(store, state, "gap-audit", "ㅇㅇ 계속 진행해", budget);
-  const view = gateStatus(state, "gap-audit", budget);
-  assert.equal(view.cycleExhausted, false);
-  assert.equal(view.roundsSinceGrant, 0);
+  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
+  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
+  state = reopenPrdGate(store, "gap-audit", "요구사항을 바꿨으니 다시 봐줘");
+  const view = gateStatus(state, "gap-audit", 5);
+  assert.equal(view.reviewCycle, 2);
+  assert.equal(view.reviewPhase, "full");
+  assert.equal(view.reviewRound, 0);
+  assert.equal(view.effective, "NOT_RUN");
+  assert.equal(state.gates["gap-audit"].reviewReopens[0].evidence, "요구사항을 바꿨으니 다시 봐줘");
 });
 
-test("cycle cap: an unjudged gate never trips - the cap gauges rounds, not existence", () => {
+test("review cycle: reopen is refused before a cycle is terminal", () => {
   const store = new GateStore(makeProject(), "topic-a");
-  const view = gateStatus(store.load(), "gap-audit", 0);
-  assert.equal(view.cycleExhausted, false, "budget 0 must not make NOT_RUN terminal");
+  assert.throws(() => reopenPrdGate(store, "gap-audit", "다시 봐줘"), /not terminal/);
 });
