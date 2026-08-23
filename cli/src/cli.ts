@@ -21,7 +21,7 @@ import {
   runInterviewCheckpoint,
   runInterviewDecision,
   runInterviewInit,
-  runInterviewLog,
+  runInterviewSync,
   type InterviewResult,
 } from "./interview/commands";
 import { runInterviewCoherence, type CoherenceResult } from "./interview/coherence";
@@ -55,20 +55,20 @@ Usage:
   sasu principles list     [--domain <name>] [--json]
   sasu rules <add|check|relevant> [...]
   sasu setup seed-agents-md [--project-root <path>] [--adopt-claude-md]
-  sasu interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--json]
-  sasu interview log        --slug <topic> --label "<short>" --asked "<question>" --answer "<raw answer>" [--route <fact|user-decision|mixed|research>] [--recommended "<text>"] [--decision-ids "D-01,D-02"] [--notes "<text>"] [--next-question "<text>"] [--json]
+  sasu interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--question-limit <n>] [--transcript <session.jsonl>] [--json]
+  sasu interview sync       --slug <topic> [--transcript <session.jsonl>] [--json]
   sasu interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
-  sasu interview checkpoint --slug <topic> --normalized "Q1,Q2" [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
+  sasu interview checkpoint --slug <topic> --normalized <pending|"Q1,Q2"> [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
   sasu audit runs [--project-root <path>] [--include-seen] [--json]
   sasu doctor [--json]
 
-Interview commands own the qa-log's mechanical bookkeeping (counters, cursor,
-Raw Q&A appends, Decision Register upserts, needs_normalization flips) so the
-interviewing agent records a full turn with one short command. Question choice
-and semantic normalization prose stay with the agent. Register a decision row
-before referencing it from interview log (chain: decision && log).
+Interview commands own the qa-log's mechanical bookkeeping (transcript source
+bindings, counters, Raw Q&A imports, Decision Register upserts, and
+needs_normalization flips). Ordinary turns stay in the live conversation;
+interview sync batches completed assistant-text -> human-answer pairs from
+the current Claude or Codex JSONL. Semantic normalization stays with the agent.
 
 interview coherence is an advisory mid-interview judge: an independent check that
 the RESOLVED decisions cohere and stay on the stated goal (contradiction and
@@ -263,14 +263,17 @@ function emitInterviewResult(result: InterviewResult, asJson: boolean): never {
     const c = result.cursor;
     const summary: Record<InterviewResult["action"], () => string> = {
       init: () => `created ${result.qaLog}`,
-      log: () => `logged ${String(result.detail.logged)} (decision_ids: ${(result.detail.decisionIds as string[]).join(", ") || "none"})`,
+      sync: () => `synced ${(result.detail.imported as string[]).join(", ") || "no new turns"} (${String(result.detail.alreadyImported)} already present)`,
       decision: () => `register ${String(result.detail.id)} ${result.detail.created ? "created" : "updated"}`,
       checkpoint: () => `checkpoint ${String(result.detail.checkpoint)} recorded (normalized: ${(result.detail.normalized as string[]).join(", ") || "none"})`,
       status: () => `qa-log: ${result.qaLog}`,
     };
     process.stdout.write(`[interview:${result.action}] ${summary[result.action]()}\n`);
+    const questionBudget = c.questionLimit === null
+      ? String(c.questionCount)
+      : `${c.questionCount}/${c.questionLimit}${c.questionBudgetExceeded ? " (LIMIT EXCEEDED)" : c.questionBudgetReached ? " (LIMIT REACHED)" : ""}`;
     process.stdout.write(
-      `  questions: ${c.questionCount} | outstanding normalization: ${c.outstandingNormalization.join(", ") || "none"} | next checkpoint: ${c.nextCheckpointAt}${c.checkpointDue ? " (DUE - run interview checkpoint after normalizing)" : ""} | next decision id: ${c.nextDecisionId}\n`,
+      `  questions: ${questionBudget} | outstanding normalization: ${c.outstandingNormalization.join(", ") || "none"} | next checkpoint: ${c.nextCheckpointAt}${c.checkpointDue ? " (DUE - run interview checkpoint after normalizing)" : ""} | next decision id: ${c.nextDecisionId}\n`,
     );
     if (result.action === "status") {
       const open = result.detail.openMaterial as { id: string; area: string; priority: string; status: string }[];
@@ -283,7 +286,7 @@ function emitInterviewResult(result: InterviewResult, asJson: boolean): never {
       process.stdout.write(`  [drift] ${finding.rule}${where}: ${finding.missing}\n    fix: ${finding.recommendation}\n`);
     }
   }
-  process.exit(0);
+  process.exit(result.ok ? 0 : 1);
 }
 
 function emitCoherenceResult(result: CoherenceResult, asJson: boolean): never {
@@ -423,24 +426,24 @@ async function main(): Promise<void> {
     }
     let interviewResult: InterviewResult;
     if (subcommand === "init") {
-      interviewResult = runInterviewInit(projectRoot, {
+      const questionLimitRaw = optional("question-limit");
+      const questionLimit = questionLimitRaw === undefined ? undefined : Number(questionLimitRaw);
+      if (questionLimit !== undefined && (!Number.isInteger(questionLimit) || questionLimit < 1)) {
+        fail("--question-limit must be a positive integer");
+      }
+      interviewResult = await runInterviewInit(projectRoot, {
         slug,
         topic: requireFlag(args, "topic"),
         where: requireFlag(args, "where"),
         packs: requireFlag(args, "packs"),
         understanding: (optional("understanding") ?? "").split("\n").filter((line) => line.trim() !== ""),
+        questionLimit,
+        transcriptPath: optional("transcript"),
       });
-    } else if (subcommand === "log") {
-      interviewResult = runInterviewLog(projectRoot, {
+    } else if (subcommand === "sync") {
+      interviewResult = await runInterviewSync(projectRoot, {
         slug,
-        label: requireFlag(args, "label"),
-        asked: requireFlag(args, "asked"),
-        answer: requireFlag(args, "answer"),
-        route: optional("route") ?? "user-decision",
-        recommended: optional("recommended") ?? "",
-        decisionIds: csv(optional("decision-ids")),
-        notes: optional("notes") ?? "",
-        nextQuestion: optional("next-question"),
+        transcriptPath: optional("transcript"),
       });
     } else if (subcommand === "decision") {
       interviewResult = runInterviewDecision(projectRoot, {

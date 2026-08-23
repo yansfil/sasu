@@ -21,6 +21,15 @@ test("clean qa-log passes with zero findings (false-positive zero)", () => {
   assert.equal(result.findings.length, 0);
 });
 
+test("qa question limits reject invalid values and the first over-budget heading", () => {
+  const clean = fixture("qa-clean.md");
+  const invalid = prelintQaLog(clean.replace('where: "greenfield"', 'where: "greenfield"\nquestion_limit: 0'));
+  assert.deepEqual(invalid.findings.map((finding) => finding.rule), ["qa-question-limit-invalid"]);
+  const exceeded = prelintQaLog(clean.replace('where: "greenfield"', 'where: "greenfield"\nquestion_limit: 1'));
+  assert.deepEqual(exceeded.findings.map((finding) => finding.rule), ["qa-question-limit-exceeded"]);
+  assert.match(exceeded.findings[0].missing, /Q2/);
+});
+
 test("clean PRD passes with zero findings (false-positive zero)", () => {
   const result = prelintPrd(fixture("prd-clean.md"));
   assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
@@ -203,6 +212,22 @@ test("qa-unanchored-user-decision warns without blocking", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.findings, []);
   assert.deepEqual(result.warnings.map((w) => w.rule), ["qa-unanchored-user-decision"]);
+});
+
+test("a user invocation decision is anchored by a transcript start boundary", () => {
+  const content = fixture("qa-unanchored-user-decision.md")
+    .replace("| D-01 | decision | ux | widget renders a list | P1 | user | resolved | R1 |", "| D-01 | decision | ux | widget renders a list | P1 | user invocation: codex:session-1:msg-start | resolved | R1 |")
+    .replace(
+      "## Decision Register",
+      "## Transcript Sources\n\n| Runtime | Session ID | Start ref |\n| --- | --- | --- |\n| codex | session-1 | msg-start |\n\n## Decision Register",
+    );
+  const result = prelintQaLog(content);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.warnings, []);
+
+  const mismatched = prelintQaLog(content.replace("msg-start | resolved", "msg-other | resolved"));
+  assert.deepEqual(mismatched.warnings.map((w) => w.rule), ["qa-unanchored-user-decision"]);
 });
 
 test("clean qa-log carries zero citation warnings", () => {

@@ -12,26 +12,30 @@ description: |
 
 Use this skill to run the full PRD pipeline from the current conversation to a finished implementation in a single invocation, with no human approval round-trips except for risky work.
 
-This skill is an Observer entrypoint around the existing pipeline, not a new pipeline.
-In a direct Herdr invocation, the main session observes while one fresh Implementor pane runs the existing `gen-prd`, `implement`, and `ship` skills and their harnesses exactly as written.
-In a delegated Implementor pane or outside Herdr, the current session runs that same chain locally.
+This skill is a two-phase coordinator around the existing pipeline, not a new pipeline.
+In a direct Herdr invocation, the user-facing main session is the Spec Owner through interview closure and PRD readiness.
+Only after the PRD is `ready` does it dispatch one fresh Implementor pane for the existing `implement` and `ship` stages, then become the Observer.
+Outside Herdr, the current session runs the same stages locally without a role handoff.
+A marked Implementor pane runs implementation and conditional delivery only from the ready PRD it received; it never authors or repairs the qa-log or PRD.
 Where this document is silent, the chained skill's own rules apply unchanged.
-Read `~/.codex/skills/gen-prd/SKILL.md`, `~/.codex/skills/implement/SKILL.md`, and (when delivery mode is `pr`) `~/.codex/skills/ship/SKILL.md` before executing their stages.
+Read `~/.codex/skills/interview-me/SKILL.md` when an existing qa-log still needs closure, `~/.codex/skills/gen-prd/SKILL.md` before authoring the PRD, `~/.codex/skills/implement/SKILL.md` before dispatch or inline implementation, and (when delivery mode is `pr`) `~/.codex/skills/ship/SKILL.md` before delivery.
 
 Match the user's language by default.
 
 ## Session Entry
 
-Before any repository write or mutating `sasu` command, read `~/.codex/skills/implement/references/observer-and-herdr.md` completely and apply its role router.
+Before any repository write or mutating `sasu` command, read `~/.codex/skills/implement/references/observer-and-herdr.md` completely and apply its phase-aware role router.
 
-- A direct invocation in Herdr without the Implementor pane marker remains the user-facing Observer, opens exactly one right-side sibling Implementor pane, sends a lossless handoff, and does not execute the pipeline itself.
-- A pane marked `SASU_HERDR_ROLE=implementor` executes every stage below in the current pane and never opens another Implementor.
-- The nested `implement` stage of this run remains in this same Implementor pane.
-- Outside Herdr, execute inline and state once that Observer isolation was unavailable.
+- A direct invocation in Herdr without the Implementor pane marker remains the user-facing Spec Owner through Inputs, ambiguity resolution, qa-log closure when applicable, and Stage 1.
+  It must not open an Implementor or become read-only before the PRD reaches `status: ready`.
+- Once Stage 1 is sealed, that same main session dispatches exactly one right-side sibling Implementor with the ready PRD path and `PIPELINE: implement`, then becomes the Observer.
+- A pane marked `SASU_HERDR_ROLE=implementor` requires that ready PRD handoff, skips Inputs and Stage 1, executes Stages 2 and 3 only, and never opens another Implementor.
+- Outside Herdr, execute every stage inline and state once that Observer isolation was unavailable.
 
-After dispatch, the Observer is read-only for project files and Sasu state.
+While the implementation phase is active after dispatch, the Observer is read-only for project files and Sasu state.
+Only an explicit user-evidenced specification change may pause implementation and return the main session to the Spec Owner phase under the gate-reopen contract below.
 It monitors lifecycle and receipts, resolves reversible in-scope blocks under the Ambiguity Policy, asks the user only for hard stops, and returns the final report.
-If Herdr dispatch fails, the unmarked session remains the Observer and reports the dispatch failure.
+If Herdr dispatch fails, the unmarked session keeps the sealed PRD, remains the user-facing session, and reports the dispatch failure without implementing inline.
 It must never turn itself into an inline Implementor while `HERDR_ENV=1`.
 The dispatch helper is the only allowed pane-creation path for this workflow.
 Pass the lossless handoff on its stdin and call it exactly once.
@@ -44,7 +48,7 @@ Only four things differ from running the skills by hand:
 1. The PRD source is the current conversation, not a required intake artifact.
 2. The human PRD-approval round-trip is replaced by recording the user's `$please` invocation as the approval deviation.
 3. The stage transitions (PRD ready -> implement -> ship) happen automatically instead of waiting for the user to invoke the next skill.
-4. In Herdr, the user-facing session observes one fresh Implementor pane instead of writing code or Sasu state itself.
+4. In Herdr, the user-facing session owns the qa-log and PRD, then observes one fresh Implementor pane for code, run state, verification, and delivery.
 
 Everything else stays identical: harness state files, review profiles, audits, verification evidence, receipts, delivery config, and hard stops.
 Do not weaken any gate because this is the automated path.
@@ -53,6 +57,8 @@ Do not weaken any gate because this is the automated path.
 
 The requirement source is the current conversation.
 An argument after `$please` is a topic brief or emphasis, not a replacement for the conversation.
+In a direct Herdr run, the unmarked main session owns every command and artifact in this section and Stage 1.
+Never put interview closure, gate delegation, gap-audit, or PRD authoring into the Implementor handoff.
 
 Before starting, capture verbatim the user message that invoked `$please` (including any argument).
 This exact text is passed to `sasu implement start --allow-unapproved-prd` later; losing it forces a stop to re-ask.
@@ -68,6 +74,11 @@ Do not run gap-audit or spec until this command succeeds.
 The record is immutable and same-value retries are idempotent.
 
 If `agents/interview/<topic-slug>/qa-log.md` exists for the same topic (or the legacy `agents/intake/<topic-slug>/qa-log.md` from before the rename), use it as an additional canonical interview source per the `gen-prd` skill's normal input rules.
+The main session is the sole qa-log writer for this run.
+When that qa-log is not complete, read the `interview-me` skill, run `sasu interview sync --slug <topic-slug>` before interpreting its outstanding state, and finish its raw capture, full normalization, closure, and audit bookkeeping in the current main session before drafting the PRD.
+Run `interview sync` once more immediately before the final normalization and gap-audit so the last human answer cannot be omitted.
+Do not bind or sync a qa-log that is already complete and sealed.
+Do not dispatch an Implementor to finish or reinterpret an active qa-log.
 
 Before authoring a PRD from a real qa-log, require its live closure verdict:
 
@@ -76,7 +87,7 @@ sasu gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/q
 ```
 
 Run the full gap-audit once and, only after an agent-fixable BLOCK, its one closure review under the bounded gate rules below.
-Do not draft the PRD until gap-audit is PASS.
+Do not draft the PRD until gap-audit is PASS and the qa-log is marked `status: complete` under the `interview-me` closure contract.
 Conversation-only PRDs have no qa-log and skip this gate rather than manufacturing an intake artifact.
 
 ## Ambiguity Policy
@@ -101,7 +112,8 @@ Do not silently reduce the product to an MVP because the pipeline is automated.
 
 ## Stage 1: PRD
 
-Write the PRD by following the `gen-prd` skill in full:
+The user-facing main session writes and seals the PRD by following the `gen-prd` skill in full.
+The Implementor never runs this stage.
 
 - Output to `agents/prd/<topic-slug>/prd.md` with every required section.
 - `source_intake: "current conversation"` unless a real intake file exists.
@@ -119,11 +131,49 @@ Write the PRD by following the `gen-prd` skill in full:
 
 Emit a compact summary of the PRD in chat before implementing: scope, non-goals, PRD-level tasks, verification modes, delivery mode, and the assumptions made.
 This is informational, not a blocking approval request.
-Continue immediately; the user can interrupt.
+Continue immediately to the implementation dispatch below; the user can interrupt.
+
+## Implementation Dispatch
+
+This is the only transition from specification work to implementation work.
+
+In a direct Herdr run, dispatch only after all of these are true:
+
+- the qa-log is complete and its gap-audit PASS is current, when a qa-log exists.
+- the PRD body is complete, `sasu prd readiness --prd` passes, and the applicable spec gate is current.
+- the PRD frontmatter says `status: ready`.
+- every section 4 human-owned blocker and pre-work item required before implementation is resolved.
+
+Use the `Dispatch One Implementor` and `Handoff Packet` contracts in the Observer reference.
+Call the deterministic helper exactly once with the ready PRD path:
+
+```sh
+node ~/.codex/skills/implement/scripts/herdr_observer.js dispatch \
+  --name <unique-name> \
+  --cwd "$PWD" \
+  --prd agents/prd/<topic-slug>/prd.md <<'SASU_HANDOFF'
+ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
+PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
+ORIGINAL INVOCATION: <verbatim $please invocation message>
+GOAL AND CONTEXT: Implement the sealed PRD; include only operational context not represented there.
+AUTHORITY: Reversible in-contract implementation defaults are autonomous; contract changes and hard stops return to the Observer.
+SOURCE: <cwd>; agents/prd/<topic-slug>/prd.md
+RETURN CONTRACT: Status, changed paths, assumptions, verdicts, timing, and unresolved items.
+SASU_HANDOFF
+```
+
+Do not send `PIPELINE: please`.
+The ready PRD is the canonical implementation contract, so do not duplicate or reinterpret the full conversation in the handoff.
+After successful dispatch, the main session becomes the read-only Observer and starts the lifecycle monitor from the Observer reference.
+
+A marked Implementor starts here, verifies that the helper supplied a ready PRD, and proceeds to Stage 2.
+It must emit `OBSERVER_BLOCK` instead of creating or repairing a missing, draft, or stale PRD.
+
+Outside Herdr, skip dispatch and continue inline to Stage 2.
 
 ## Stage 2: Implement
 
-Run the `implement` skill in full, with conversational approval recorded at start:
+Only the marked Implementor, or the same inline session outside Herdr, runs the `implement` skill in full with conversational approval recorded at start:
 
 ```sh
 sasu implement start \
@@ -133,12 +183,17 @@ sasu implement start \
 
 Rules:
 
+- Treat the qa-log and PRD body as sealed, read-only inputs.
+  The Implementor must not amend their decisions, traceability, scope, or acceptance criteria.
+- A reversible implementation choice that stays within the contract may proceed and must be listed in the final report.
+  A discovery that changes scope, an acceptance criterion, major structure, or product behavior must emit `OBSERVER_BLOCK`; it is never repaired by silently editing the specification from the Implementor pane.
 - The PRD declares the review profile; a missing or invalid value safely defaults to `standard`.
 - Task order follows the PRD dependencies. Independent ready tasks may run concurrently; only this Implementor session closes tasks in `state.json`.
 - If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$sasu-setup` once in the final report.
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - Existing or old-schema runs are not resumed or migrated. Start a new topic slug after explicitly retiring obsolete state.
-- Resolve section 4 before start. Ask all user-owned blocking items in one message.
+- Require section 4 to have been resolved by the main session before dispatch.
+  If a human-owned blocker remains, emit `OBSERVER_BLOCK`; do not ask from the Implementor pane.
 - Final evidence registration, unified verify, and state-only finalize requirements apply unchanged.
 
 ## Stage 3: Ship (Conditional)
@@ -168,6 +223,9 @@ Every later gap-audit/spec run on the slug then applies the delegated-run dispos
 Never overwrite it, clear it, pass `--assume-human-findings` again, or use placeholder/composed evidence; the original recorded invocation is the only authority for this topic.
 This removes the per-call memory burden that, in measured delegated runs, caused both omitted autonomy and fabricated replacement evidence.
 
+All gap-audit and spec cycles belong to the main session's pre-dispatch Spec Owner phase.
+The Implementor never reruns those gates or edits their sealed qa-log and PRD inputs.
+
 The CLI then converts non-P0 human-consent findings into a recorded assumption ledger instead of a block: the run proceeds, and each assumed finding must be written into the PRD's Decision Traceability with the default you chose, restated in the pre-implementation summary, and listed at the TOP of the final report as "human decisions replaced by assumptions" so the user can veto while it is still cheap.
 P0 findings still block under this flag; they mean invented consent or an unimplementable document, and no delegation covers that.
 This flag is the delegated-run counterpart of `--allow-unapproved-prd` and carries the same rule: only the user's own delegating message is valid evidence, never text you compose.
@@ -191,9 +249,11 @@ A gate PASS is pinned to the input document's content hash and sealed: if you ed
 Restore the sealed input or stop for an explicit user-evidenced `gate reopen`; never reopen a cycle from the agent's own initiative.
 Record each gate outcome in the final report.
 
-When blocked, never invoke `AskUserQuestion`, `request_user_input`, or an interactive question UI.
+After dispatch, when the Implementor is blocked, never invoke `AskUserQuestion`, `request_user_input`, or an interactive question UI.
 Emit the structured `OBSERVER_BLOCK` packet from the Observer reference as final text and end the turn so Herdr settles for the Observer.
 The Observer decides reversible in-scope questions and resumes this Implementor; it forwards only a hard stop to the user.
+If the block requires a specification change, the Observer must not tell the Implementor to diverge from the sealed PRD.
+It asks for the explicit user change required by the gate-reopen contract; only then may the main session return to the Spec Owner phase, reopen and reseal the affected gate, and resume implementation from the updated ready PRD.
 Follow the `implement` blocked/partial handoff rules and do not soften status to `Done`.
 
 ## Artifacts
@@ -204,8 +264,8 @@ No cleanup beyond what the chained skills already do.
 
 ## Final Report
 
-The Implementor returns one combined report covering the whole run to the Observer.
-The Observer checks completion authority and presents it to the user without rerunning verification.
+The Implementor returns the implementation and conditional-delivery report to the Observer.
+The Observer combines it with the PRD-stage results it already owns, checks completion authority, and presents one final report without rerunning verification.
 
 - Status: `Done`, `Partially Done`, or `Blocked`.
 - PRD path and the approval-deviation note (invocation recorded via `--allow-unapproved-prd`).

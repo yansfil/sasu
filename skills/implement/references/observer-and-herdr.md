@@ -11,13 +11,16 @@
 
 ## Role Boundary
 
-The user-facing main session is the Observer.
+For a direct `$implement` invocation, the user-facing main session is the Observer from entry.
+For a direct `$please` invocation, the main session is the Spec Owner through qa-log closure and PRD readiness, then becomes the Observer only after it dispatches implementation.
 The fresh Herdr agent is the Implementor.
 The Sasu harness remains the independent verification authority.
 
+The Spec Owner owns conversation continuity, qa-log closure when applicable, PRD authorship, PRD gates, and the pre-implementation summary.
 The Observer owns conversation continuity, delegation, liveness, exception triage, recovery, and the final user-facing report.
-The Implementor owns PRD authoring when applicable, repository writes, task closure, evidence registration, verification, fixes, finalization, and conditional delivery.
-Only the Implementor may mutate project files or Sasu run state after dispatch.
+The Implementor owns implementation repository writes, task closure, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
+It never authors or repairs the qa-log or PRD.
+While the implementation phase is active, only the Implementor may mutate implementation files or Sasu run state after dispatch; the qa-log and PRD body remain sealed and read-only for both sessions.
 The Observer may read repository state, `sasu gate status`, `sasu implement status`, receipts, and the Implementor transcript.
 It must not become a second implementor or repeat verification.
 
@@ -35,12 +38,13 @@ node ~/.codex/skills/implement/scripts/herdr_observer.js role
 The helper treats the Herdr pane environment value `SASU_HERDR_ROLE=implementor` as the structural Implementor marker.
 The marker is injected atomically when the child pane is created, before its shell or agent can start.
 Never infer the role from pane titles, agent names, or transcript phrases.
+For `$please`, the unmarked main pane's Spec Owner phase is determined by pipeline stage, not a second environment marker.
 
 Apply this routing before any project write or mutating `sasu` command:
 
-- A delegated Implementor marker means execute the requested pipeline in the current pane and never dispatch another Implementor.
-- A direct user invocation in a Herdr pane without that marker means remain the Observer and dispatch exactly one Implementor.
-- A nested `implement` stage inside an already delegated `$please` run stays in the same Implementor pane.
+- A delegated Implementor marker means execute implementation and conditional delivery from the handed-off ready PRD in the current pane and never dispatch another Implementor.
+- A direct `$please` invocation in an unmarked Herdr pane means remain the Spec Owner through PRD `ready`; do not dispatch during interview or PRD work.
+- After `$please` reaches a ready PRD, or on a direct `$implement` invocation with an approved PRD, the unmarked main pane becomes the Observer and dispatches exactly one Implementor.
 - A `benchmark-implement` coordinator stays the Implementor because that benchmark explicitly requires in-session execution.
 - Outside Herdr, execute in the current session and report once that Observer isolation was unavailable.
 
@@ -52,13 +56,14 @@ Build the complete Handoff Packet below, then submit it on stdin to the determin
 ```sh
 node ~/.codex/skills/implement/scripts/herdr_observer.js dispatch \
   --name <unique-name> \
-  --cwd "$PWD" <<'SASU_HANDOFF'
+  --cwd "$PWD" \
+  --prd agents/prd/<topic-slug>/prd.md <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
-PIPELINE: <please or implement, plus exact skill path>
+PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
-GOAL AND CONTEXT: <lossless task context>
+GOAL AND CONTEXT: <implementation goal and operational facts not represented in the PRD>
 AUTHORITY: <autonomous defaults and hard stops>
-SOURCE: <cwd and approved PRD path when applicable>
+SOURCE: <cwd and ready PRD path>
 RETURN CONTRACT: <status, paths, assumptions, verdicts, timing, unresolved items>
 SASU_HANDOFF
 ```
@@ -67,13 +72,14 @@ This helper is the code-owned dispatch boundary.
 The generic Herdr skill explains the CLI but does not authorize substituting raw `herdr pane split`, `herdr pane run`, or `herdr agent start` commands here.
 The helper structurally refuses dispatch from an already marked Implementor pane.
 It refuses an empty handoff before creating anything.
+It refuses any pipeline other than `implement` and any missing or non-ready PRD before creating anything.
 It creates a right-side sibling with the same cwd and `--no-focus`, injects `SASU_HERDR_ROLE=implementor` in the pane creation call, starts the same detected agent kind unless `--kind` overrides it, submits the handoff through `herdr agent prompt`, and returns the new pane ID and agent name as JSON.
 Call the helper once per dispatch.
 It owns the bounded same-pane retry while a newly created shell becomes ready; rerunning the whole dispatch command would allocate duplicate panes.
 If pane creation succeeds but agent startup fails, it reports the exact failure and closes only the empty pane it created.
 Do not close a successfully started Implementor pane automatically; leave it visible for inspection.
-If dispatch fails in a Herdr-managed session, remain the Observer and surface the failure.
-Never fall back to writing the PRD, mutating Sasu state, or implementing inline from an unmarked Herdr pane.
+If dispatch fails in a Herdr-managed session, keep the sealed PRD, remain the user-facing session, and surface the failure.
+Never fall back to mutating implementation state or implementing inline from an unmarked Herdr pane.
 
 ## Handoff Packet
 
@@ -81,14 +87,15 @@ Send one lossless handoff through the dispatch helper's stdin.
 The packet must contain:
 
 - `ROLE`: Implementor, with instructions to confirm the `SASU_HERDR_ROLE=implementor` marker through the role helper and never dispatch recursively.
-- `PIPELINE`: `please` or `implement`, plus the exact skill path to read.
+- `PIPELINE`: `implement`, plus the exact skill path to read. Never dispatch `please`; its specification phase stays in the main session.
 - `ORIGINAL INVOCATION`: the user's delegating message verbatim.
-- `GOAL AND CONTEXT`: the task, accepted and rejected decisions, constraints, non-goals, and relevant conversation facts.
+- `GOAL AND CONTEXT`: the implementation goal and operational facts that are not represented in the ready PRD.
 - `AUTHORITY`: reversible in-scope defaults are autonomous; hard-stop classes remain blocked.
-- `SOURCE`: repository cwd and, for `implement`, the approved PRD path.
+- `SOURCE`: repository cwd and the ready PRD path.
 - `RETURN CONTRACT`: final status, paths, assumptions, verification verdicts, timing, and unresolved items.
 
-Do not replace the conversation with a vague summary such as "implement what we discussed".
+Do not replace the PRD with a vague summary such as "implement what we discussed".
+The ready PRD is the canonical implementation contract; accepted and rejected product decisions belong there rather than in a second handoff narrative.
 The Implementor cannot read the Observer's chat history.
 The dispatch helper appends a runtime routing contract that forbids the Implementor from invoking `AskUserQuestion`, `request_user_input`, or any interactive question UI.
 The Implementor has no direct user channel: when blocked, it emits `OBSERVER_BLOCK` as final text and ends the turn so the Observer can decide or escalate.
@@ -123,7 +130,11 @@ external_effect: none | <exact effect>
 
 The Observer resolves a block without asking the user when the answer is already in the handoff, follows an established repository convention, or is an in-scope reversible default that does not weaken an acceptance criterion.
 For `$please`, this includes reversible product, copy, and implementation choices that can be listed for final review.
-Send the decision back to the same Implementor and require it to record the assumption in PRD Decision Traceability or the final report as applicable.
+Send an in-contract decision back to the same Implementor and require it to record the assumption in the final report, never by editing the sealed PRD.
+
+If the block changes scope, an acceptance criterion, major structure, or product behavior, the Observer must not authorize divergence or edit the sealed PRD while implementation continues.
+Ask the user for the explicit change required by the gate-reopen contract.
+Only after receiving it may the main session pause implementation, return to the Spec Owner phase, reopen and reseal the affected gate with the user's words as evidence, and resume the same Implementor or a replacement from the updated ready PRD.
 
 Ask the user only when no defensible reversible default exists or the choice needs new authority: credentials, billing or external spend, production data, destructive or irreversible action, auth or security policy, an external-service commitment, an expensive persistent data shape, unauthorized delivery, or a conflict that requires dropping an approved requirement.
 Never use an Observer decision to lower verification or override a Sasu gate.
@@ -136,7 +147,7 @@ Inspect the lifecycle state, recent output, and Sasu status first.
 - On a soft `blocked` state, resolve it under the policy above and resume the same Implementor.
 - On idle or done without a receipt, ask the Implementor for its exact stage and next action, then continue if no hard stop exists.
 - On `unknown`, inspect the pane process and Sasu state before deciding that the agent died.
-- If the Implementor died, start one replacement in a fresh marked pane and hand off the original invocation, current diff, PRD, and Sasu status.
+- If the Implementor died, start one replacement in a fresh marked pane and hand off the original invocation, current diff, ready PRD, and Sasu status.
   The original user's `$please` or `$implement` invocation is the only takeover evidence available for the same task; never compose adoption evidence.
 - Allow one autonomous resolution for the same blocker signature.
   If that blocker repeats, stop the automatic loop and surface the failed approach and recommended replan to the user.

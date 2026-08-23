@@ -73,6 +73,29 @@ test("please bounds each PRD gate to a full review and one closure review", () =
   assert.doesNotMatch(skill, /already carries the user's approval of scope, structure, verification modes/);
 });
 
+test("please seals specification in the main session before implementation dispatch", () => {
+  const skill = readSkill("please");
+  const observer = fs.readFileSync(
+    path.join(repoRoot, "skills", "implement", "references", "observer-and-herdr.md"),
+    "utf8",
+  );
+  const prdStage = skill.indexOf("## Stage 1: PRD");
+  const dispatchStage = skill.indexOf("## Implementation Dispatch");
+  const implementStage = skill.indexOf("## Stage 2: Implement");
+
+  assert.ok(prdStage >= 0 && prdStage < dispatchStage && dispatchStage < implementStage);
+  assert.match(skill, /main session is the sole qa-log writer/);
+  assert.match(skill, /main session writes and seals the PRD/);
+  assert.match(skill, /must not open an Implementor.*before the PRD reaches `status: ready`/s);
+  assert.match(skill, /--prd agents\/prd\/<topic-slug>\/prd\.md/);
+  assert.match(skill, /PIPELINE: implement via/);
+  assert.match(skill, /Do not send `PIPELINE: please`/);
+  assert.match(skill, /Treat the qa-log and PRD body as sealed, read-only inputs/);
+  assert.match(observer, /main session is the Spec Owner through qa-log closure and PRD readiness/);
+  assert.match(observer, /It never authors or repairs the qa-log or PRD/);
+  assert.doesNotMatch(observer, /Implementor owns PRD authoring/);
+});
+
 test("quick documents its fast single-lane path and bounded large-input fallback", () => {
   const skill = readSkill("quick");
   assert.match(skill, /Up to eight machine-judged criteria stay in one routine judge call/);

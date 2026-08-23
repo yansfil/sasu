@@ -40,45 +40,63 @@ Any deliberate scope reduction must be an explicit decision with the omitted beh
 
 ## Low-Latency Capture
 
-The sasu interview CLI owns the qa-log's mechanical bookkeeping; the agent owns question choice and semantic prose.
-Never hand-edit the qa-log for a mutation an interview command can perform.
+The live Claude or Codex session JSONL is the raw source during ordinary Q&A.
+The sasu interview CLI streams that file and owns transcript bindings, deduplication, Raw Q&A imports, counters, and cursor bookkeeping.
+The agent owns question choice and checkpoint-time semantic normalization.
+Never read or parse the session JSONL by hand, and never hand-edit the qa-log for a mutation an interview command can perform.
+When a Decision Register row comes directly from the initial request rather than a later Q&A pair, use `user invocation: <runtime>:<session-id>:<start-ref>` copied from the bound Transcript Sources row; prelint accepts it only when the ref matches that boundary.
 
-Create agents/interview/<topic-slug>/qa-log.md before Q1:
+Create agents/interview/<topic-slug>/qa-log.md before Q1.
+`init` automatically binds the current agent session and records the invocation message as the start boundary:
 
 ~~~sh
 sasu interview init --slug <topic-slug> --topic "<topic>" --where <where> --packs "<packs>" --understanding "<one bullet per line>"
 ~~~
 
-Record each answered question immediately in raw form with one chained command per turn:
+When the user explicitly sets a question count, add `--question-limit <n>` to this same init command.
+Do not invent a numeric limit when the user did not provide one.
+The cursor reports `questionBudgetReached` at the limit, and sync exits nonzero with `qa-question-limit-exceeded` if the transcript contains a later answer.
+
+If no agent session ID is available, pass its JSONL explicitly with `--transcript <session.jsonl>`.
+Do not pass that flag in a normal Claude or Codex session.
+
+Ordinary answered questions require no tool call and no qa-log write.
+Keep the unresolved decision queue in the live conversation and ask the next question immediately.
+At a checkpoint, on resume after interruption or compaction, and immediately before closure, import every completed assistant-text -> human-answer pair in one command:
 
 ~~~sh
-sasu interview decision --slug <slug> --id D-05 --kind decision --area <area> --text "<decision>" --priority P0 --source "user, Q3" --status resolved --mapping "<PRD mapping>" \
-&& sasu interview log --slug <slug> --label "<short>" --asked "<question>" --recommended "<recommendation>" --answer "<raw answer>" --route user-decision --decision-ids "D-05" --notes "<interpretation>" --next-question "<next cursor>"
+sasu interview sync --slug <slug>
 ~~~
 
-- Register or patch the affected D# rows first, then log the turn: interview log rejects a decision_ids reference that is not in the register.
+- `sync` reads JSONL line by line, ignores tool results, sidechains, system and developer messages, and imports only completed visible assistant text paired with the next human input.
+- Every imported entry carries a stable `source_ref`; rerunning `sync` is idempotent and reports already-present turns without duplicating them.
+- A resumed agent session is bound on its first `sync`; run it before asking the first resumed question so its invocation becomes the new start boundary.
 - The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
-- New raw entries start with needs_normalization: true until their decision, provenance, and impact are normalized at a checkpoint.
-- Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or checkpoint prose on every turn; touch those sections only when their content materially changes.
+- New raw entries start with `decision_ids: none`, `route: mixed`, and `needs_normalization: true` until their decision, provenance, and impact are normalized at a checkpoint.
 - Every mutating interview command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
-- Resync with `sasu interview status --slug <slug> [--json]` instead of re-reading the whole file.
-- Do not make the user wait for prose polishing.
+- Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or checkpoint prose on every turn; batch them into the checkpoint.
+- Do not make the user wait for capture or prose polishing between answers.
 
-Normalize outstanding answers every 10 answered questions; `interview status` reports when a checkpoint is DUE.
+Count answered questions in the live conversation and checkpoint every 10 answers.
 Normalize after every 2 to 3 answers for high-risk work.
 High-risk work includes production data, migrations, PII, credentials, external APIs, payments, cost, legal or compliance, irreversible side effects, and user-facing launch gates.
 Treat a checkpoint as due early when a P0 node is reopened or invalidated.
-At a checkpoint, edit only the semantic prose that normalization requires (Decision Packets, register wording), and run one local intent, impact, and verification sweep over the resolved decisions.
+At a checkpoint, run `interview sync` first, read the newly imported entries once, upsert their material D# rows with `interview decision`, then batch-edit only the semantic fields that code cannot infer: label, route, recommended, decision_ids, and immediate_notes.
+Link every material imported entry to its D# before marking it normalized.
+Then run one local intent, impact, and verification sweep over the resolved decisions.
 The sweep's outcome is the `--gap` value: either no material gap or the one highest-impact follow-up; do not turn it into a second user interview.
 Then record the checkpoint:
 
 ~~~sh
-sasu interview checkpoint --slug <slug> --normalized "Q1,Q2" --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
+sasu interview checkpoint --slug <slug> --normalized pending --register-changes "<summary>" --reopened "<D#>" --gap "<highest remaining gap>"
 ~~~
 
-`--normalized` must list exactly the outstanding raw entries; naming an already-normalized entry aborts the whole checkpoint without writing anything.
+For the ordinary checkpoint path, pass `--normalized pending` so the CLI snapshots and flips every currently outstanding entry after your semantic edits.
+Never edit `needs_normalization` or `outstanding_raw_entries` yourself; the checkpoint command owns both fields.
+Use an explicit list such as `--normalized "Q1,Q2"` only for a deliberate partial repair; naming an already-normalized entry aborts the whole checkpoint without writing anything.
 
-Run a mandatory full normalization before marking qa-log.md complete and handing it to gen-prd.
+Run a mandatory `interview sync` immediately before the final full normalization, even when the last checkpoint was recent.
+Then mark qa-log.md complete and hand it to gen-prd.
 If the sasu binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
 ## Mid-Interview Coherence Check
@@ -100,12 +118,12 @@ Do not run this inside the answer-to-question path (it is one judge call); run i
 
 The path from receiving an answer to asking the next question is the latency budget; everything else must stay out of it.
 
-1. Interpret the answer, then run one chained interview command (decision upserts, then log).
-2. Ask the next question in the same reply.
-3. Do not run `interview status` or re-read the qa-log inside this path; the mutating command already returns the cursor. Resync only when resuming after an interruption or at a checkpoint.
+1. Interpret the answer in the live context and update the in-memory unresolved decision queue.
+2. Ask the next question in the same reply without any qa-log, transcript, status, or decision command.
+3. Run `interview sync` only when resuming, at a checkpoint, or before closure.
 4. Repo or docs verification inside this path is at most one bounded lookup, and only when its result changes which question to ask next; batch anything broader into preflight or a checkpoint.
 5. UX Scenario Cards, Evidence, and Current Understanding edits happen at their trigger but never between an answer and the next question unless the next question depends on them; otherwise fold them into the next checkpoint.
-6. The open P0/P1 nodes in the register are the standing next-question queue; a new question needs a register node before or with its turn, not a prose rewrite.
+6. Between checkpoints, the live P0/P1 queue is the standing next-question queue; each checkpoint persists it into the Decision Register before the conversation proceeds.
 
 ## Preflight And Routing
 
@@ -239,6 +257,11 @@ Use browser or runtime, API, DB, external, and human proof only where they prove
 
 ## Question Rules
 
+- Treat an explicit question-count limit or interview timebox as a hard interaction budget.
+  When that budget is a question count, persist it with `interview init --question-limit <n>` so the existing sync and prelint path enforce it without a per-turn command.
+  Never exceed it to satisfy coherence or gap-audit findings.
+  At the limit, run the final sync and normalization, audit once, record every remaining material gap, and mark the qa-log `paused` rather than asking another question or claiming PRD readiness.
+  Do not convert unresolved user-visible, scope, data, provider, access, cost, or lifecycle gaps into agent defaults merely to close within the budget.
 - Ask exactly one user-facing question at a time for P0 or P1 decisions, contradictions, UX choices that need judgment, and risk or operation questions.
 - Batch 3 to 5 low-risk confirmations only when they satisfy the silent-default rule.
 - Explain briefly why a question changes the outcome or proof.
@@ -263,7 +286,7 @@ Use this Decision Packet for material free-text answers:
 - source:
 ~~~
 
-Record the packet as the entry's `immediate_notes` value when logging the turn; the qa-log has no separate Decision Packets section.
+Record the packet as the imported entry's `immediate_notes` value during checkpoint normalization; the qa-log has no separate Decision Packets section.
 
 ## Artifacts
 
@@ -281,7 +304,8 @@ selected_packs: "ux, compatibility, data, provider, risk, operation, verificatio
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
 question_count: 0
-normalization_policy: "raw-capture-with-checkpoint-backfill"
+question_limit: <positive integer only when explicitly set; omit otherwise>
+normalization_policy: "transcript-sync-with-checkpoint-backfill"
 normalization_checkpoint_every: 10
 ---
 
@@ -297,6 +321,12 @@ normalization_checkpoint_every: 10
 - outstanding_raw_entries:
 - next_checkpoint_at:
 
+## Transcript Sources
+
+| Runtime | Session ID | Start ref |
+| --- | --- | --- |
+| codex | <session-id> | <invocation-message-ref> |
+
 ## Decision Register
 
 | ID | Kind | Area | Decision / fact | Priority | Source / owner | Status | PRD mapping / revisit |
@@ -307,6 +337,7 @@ normalization_checkpoint_every: 10
 ### Q1: <short label>
 - decision_ids:
 - route: fact | user-decision | mixed | research
+- source_ref: <runtime>:<session-id>:<human-message-ref>
 - asked:
 - recommended:
 - answer:
@@ -354,11 +385,11 @@ normalization_checkpoint_every: 10
 2. Preflight the repository and classify relevant packs.
 3. Create qa-log.md with `sasu interview init`, then seed the preflight facts as register rows with `interview decision`.
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
-5. Record the turn with chained `interview decision` and `interview log` commands per the Turn Protocol; reopen an invalidated node with `interview decision --status open`.
+5. Continue ordinary questions with no recording command; keep decisions in live context until the next checkpoint.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
-7. Checkpoint when `interview status` reports DUE (every 10 answers), earlier for high-risk work, or immediately when a P0 node is reopened or invalidated; run the intent, impact, and verification sweep as part of the checkpoint, record it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
+7. Every 10 answers, every 2 to 3 high-risk answers, or immediately when a P0 premise changes: run `interview sync`, batch-normalize the imported entries and Decision Register, run the intent, impact, and verification sweep, record it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
 8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
-9. Run full normalization and record it with `interview checkpoint`.
+9. Run `interview sync` again, then full normalization and `interview checkpoint`.
 10. Run the sasu gap-audit gate. Fall back to one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback only when the `sasu` binary or its judge backend is unavailable.
 11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
 12. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.

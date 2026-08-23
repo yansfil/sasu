@@ -1,20 +1,28 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
+
+const require = createRequire(import.meta.url);
+const { stripFrontmatter } = require("../../../cli/lib/prd_parser.js");
 
 const AGENT_START_RETRY_LIMIT = 50;
 const AGENT_START_RETRY_MS = 100;
 const IMPLEMENTOR_WAIT_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const IMPLEMENTOR_WAIT_POLL_MS = 250;
 const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
-const IMPLEMENTOR_ROUTING_CONTRACT = `
+function implementorRoutingContract(prdPath) {
+  return `
 
 RUNTIME ROUTING CONTRACT (injected by the Observer dispatcher):
 You are not the user-facing session. Never invoke AskUserQuestion, request_user_input, or any interactive question UI, and never ask the user directly.
+Your sole specification source is the ready PRD at ${prdPath}. Execute implementation and conditional delivery only; never author or edit the qa-log or PRD.
 When a decision or failure prevents progress, output the structured OBSERVER_BLOCK packet from the Observer reference as final text and end the turn so the Observer lifecycle monitor can settle and respond.
 `;
+}
 
 const HERDR_RUNTIME_ENV = Object.freeze({
   HERDR_ENV: {
@@ -115,10 +123,39 @@ function requireName(value) {
   return value;
 }
 
+function requireImplementationPipeline(handoff) {
+  const pipelineLines = handoff.split(/\r?\n/).filter(line => line.startsWith("PIPELINE:"));
+  if (pipelineLines.length !== 1 || !/^PIPELINE:\s*implement(?:\s|$)/.test(pipelineLines[0])) {
+    throw new Error("dispatch requires exactly one 'PIPELINE: implement' handoff field; specification work stays in the main session");
+  }
+}
+
+function requireReadyPrd(value, cwd) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("dispatch requires --prd <ready-prd-path>");
+  }
+  const resolved = path.resolve(cwd, value);
+  const relative = path.relative(cwd, resolved);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("--prd must resolve to a file inside --cwd");
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    throw new Error(`ready PRD not found: ${relative}`);
+  }
+  const { frontmatter } = stripFrontmatter(fs.readFileSync(resolved, "utf8"));
+  if (frontmatter.status !== "ready") {
+    throw new Error(`PRD status must be ready before dispatch, got ${frontmatter.status ?? "missing"}: ${relative}`);
+  }
+  return relative.split(path.sep).join("/");
+}
+
 function dispatch(flags, handoff) {
   if (typeof handoff !== "string" || handoff.trim() === "") {
     throw new Error("dispatch requires the lossless Implementor handoff on stdin");
   }
+  requireImplementationPipeline(handoff);
+  const cwd = flags.cwd ?? process.cwd();
+  const prdPath = requireReadyPrd(flags.prd, cwd);
   const role = currentRole();
   if (role.mode === "inline") throw new Error("Observer dispatch requires a Herdr-managed pane");
   if (role.mode === "implementor") {
@@ -126,7 +163,6 @@ function dispatch(flags, handoff) {
   }
 
   const name = requireName(flags.name);
-  const cwd = flags.cwd ?? process.cwd();
   const agentKind = flags.kind ?? role.agentKind;
   if (typeof agentKind !== "string" || agentKind === "") {
     throw new Error("--kind is required when the Observer pane has no detected agent kind");
@@ -152,7 +188,7 @@ function dispatch(flags, handoff) {
     throw error;
   }
 
-  const submittedHandoff = `${handoff.trim()}${IMPLEMENTOR_ROUTING_CONTRACT}`;
+  const submittedHandoff = `${handoff.trim()}${implementorRoutingContract(prdPath)}`;
   try {
     runHerdr(["agent", "prompt", name, submittedHandoff], { cwd });
   } catch (error) {
@@ -208,7 +244,7 @@ function main() {
   if (command === "role") return currentRole();
   if (command === "dispatch") return dispatch(flags, fs.readFileSync(0, "utf8"));
   if (command === "wait") return waitForImplementor(flags);
-  throw new Error("usage: herdr_observer.js role | dispatch --name <name> [--kind <kind>] [--cwd <path>] < handoff.txt | wait --name <name> [--cwd <path>]");
+  throw new Error("usage: herdr_observer.js role | dispatch --name <name> --prd <ready-prd-path> [--kind <kind>] [--cwd <path>] < handoff.txt | wait --name <name> [--cwd <path>]");
 }
 
 try {

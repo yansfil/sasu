@@ -150,6 +150,7 @@ export function prelintQaLog(content: string): PrelintResult {
   const findings: PrelintFinding[] = [];
   const warnings: PrelintFinding[] = [];
   const lines = content.split("\n");
+  let questionLimit: number | null = null;
 
   const fm = parseFrontmatter(lines);
   if (!fm) {
@@ -157,6 +158,19 @@ export function prelintQaLog(content: string): PrelintResult {
   } else {
     checkEnum(fm, "status", ["active", "paused", "complete"], "qa", findings);
     checkEnum(fm, "where", ["greenfield", "brownfield", "docs-only", "unknown"], "qa", findings);
+    const limit = fm.values.get("question_limit");
+    if (limit && !/^[1-9]\d*$/.test(limit.value)) {
+      findings.push(
+        finding(
+          "qa-question-limit-invalid",
+          limit.line,
+          `frontmatter question_limit is "${limit.value}" instead of a positive integer`,
+          "Set question_limit to a positive integer, or remove it when the user did not set a limit.",
+        ),
+      );
+    } else if (limit) {
+      questionLimit = Number(limit.value);
+    }
   }
 
   for (const section of QA_REQUIRED_SECTIONS) {
@@ -176,17 +190,55 @@ export function prelintQaLog(content: string): PrelintResult {
   // deterministic check catches the whole class before any judge call
   // (PRINCIPLES items 3 and 7).
   const rawQaRange = sectionRange(lines, "## Raw Q&A");
+  const transcriptSourcesRange = sectionRange(lines, "## Transcript Sources");
+  const transcriptStartRefs = new Set<string>();
+  if (transcriptSourcesRange) {
+    const sourceTable = parseTable(lines, transcriptSourcesRange.start + 1, transcriptSourcesRange.end);
+    if (sourceTable) {
+      const runtimeCol = sourceTable.header.indexOf("Runtime");
+      const sessionCol = sourceTable.header.indexOf("Session ID");
+      const startRefCol = sourceTable.header.indexOf("Start ref");
+      if (runtimeCol !== -1 && sessionCol !== -1 && startRefCol !== -1) {
+        for (const row of sourceTable.rows) {
+          const runtime = row.cells[runtimeCol]?.trim() ?? "";
+          const sessionId = row.cells[sessionCol]?.trim() ?? "";
+          const startRef = row.cells[startRefCol]?.trim() ?? "";
+          if (runtime !== "" && sessionId !== "" && startRef !== "") {
+            transcriptStartRefs.add(`${runtime}:${sessionId}:${startRef}`);
+          }
+        }
+      }
+    }
+  }
   /** Q&A anchor numbers that exist, e.g. "Q16" from "### Q16: label". */
   const qaAnchors = new Set<string>();
+  let firstQuestionOverLimit: { number: number; line: number } | null = null;
   /** Decision IDs cited by at least one Raw Q&A turn's decision_ids line. */
   const qaCitedIds = new Set<string>();
   if (rawQaRange) {
     for (let i = rawQaRange.start + 1; i < rawQaRange.end; i += 1) {
       const anchor = lines[i]!.match(/^###\s*Q(\d+)\b/);
-      if (anchor) qaAnchors.add(`Q${anchor[1]!}`);
+      if (anchor) {
+        const questionNumber = Number(anchor[1]!);
+        qaAnchors.add(`Q${questionNumber}`);
+        if (questionLimit !== null && questionNumber > questionLimit && firstQuestionOverLimit === null) {
+          firstQuestionOverLimit = { number: questionNumber, line: i + 1 };
+        }
+      }
       const cited = lines[i]!.match(/^\s*-\s*decision_ids:\s*(.*)$/);
       if (cited) for (const token of cited[1]!.match(/D-\d+/g) ?? []) qaCitedIds.add(token);
     }
+  }
+
+  if (firstQuestionOverLimit !== null && questionLimit !== null) {
+    findings.push(
+      finding(
+        "qa-question-limit-exceeded",
+        firstQuestionOverLimit.line,
+        `Raw Q&A reached Q${firstQuestionOverLimit.number}, beyond the user-set limit of ${questionLimit}`,
+        `Do not ask another question; normalize the captured answers, record remaining gaps, and pause the interview at Q${questionLimit}.`,
+      ),
+    );
   }
 
   const registerIds = new Set<string>();
@@ -231,7 +283,7 @@ export function prelintQaLog(content: string): PrelintResult {
           // Both citation rules below are ADVISORIES, not blocks: red-teamed
           // 2026-08-20 against every qa-log on this machine, the blocking
           // versions false-positived on 8 completed, judge-passed documents -
-          // (a) Source cells count user answers while `interview log`
+          // (a) Source cells count user answers while transcript sync
           // auto-assigns heading numbers (qalog.ts max+1), so batched turns
           // legitimately cite Q-numbers that exist as answers under another
           // heading (herdr-pet Q16 body carries "source: user, Q21"); and
@@ -257,13 +309,22 @@ export function prelintQaLog(content: string): PrelintResult {
                 }
               }
             }
-            if (kind === "decision" && status === "resolved" && /(\buser\b|사용자)/iu.test(source) && id !== "" && !qaCitedIds.has(id)) {
+            const invocationSource = source.trim().match(/^user invocation:\s*(.+)$/iu);
+            const isBoundInvocationDecision = invocationSource !== null && transcriptStartRefs.has(invocationSource[1]!.trim());
+            if (
+              kind === "decision"
+              && status === "resolved"
+              && /(\buser\b|사용자)/iu.test(source)
+              && id !== ""
+              && !qaCitedIds.has(id)
+              && !isBoundInvocationDecision
+            ) {
               warnings.push(
                 warning(
                   "qa-unanchored-user-decision",
                   row.line,
                   `${id} is a resolved user-sourced decision, but no Raw Q&A turn's decision_ids cites it`,
-                  `If a real exchange decided it, log it (sasu interview log --decision-ids ${id}); the judge blocks on unrecorded consent.`,
+                  `If a real exchange decided it, run sasu interview sync and link the imported Q# to ${id}; the judge blocks on unrecorded consent.`,
                 ),
               );
             }

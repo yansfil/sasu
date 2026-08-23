@@ -13,8 +13,39 @@ function makeProject() {
   return dir;
 }
 
+function makeCodexTranscript(dir, sessionId) {
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  const records = [
+    { type: "session_meta", payload: { id: sessionId } },
+    {
+      type: "response_item",
+      payload: { type: "message", role: "user", id: "u0", content: [{ type: "input_text", text: "begin" }] },
+    },
+  ];
+  fs.writeFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  return file;
+}
+
+function appendCodexTurn(file, asked, answer, number = 1) {
+  const records = [
+    {
+      type: "response_item",
+      payload: { type: "message", role: "assistant", id: `a${number}`, content: [{ type: "output_text", text: asked }] },
+    },
+    { type: "event_msg", payload: { type: "task_complete" } },
+    {
+      type: "response_item",
+      payload: { type: "message", role: "user", id: `u${number}`, content: [{ type: "input_text", text: answer }] },
+    },
+  ];
+  fs.appendFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+}
+
 function runCli(cwd, args, { stub } = {}) {
   const env = { ...process.env };
+  for (const key of ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"]) {
+    delete env[key];
+  }
   if (stub) {
     env.SASU_JUDGE_BACKEND = "stub";
     env.SASU_JUDGE_STUB_FILE = stub;
@@ -25,8 +56,44 @@ function runCli(cwd, args, { stub } = {}) {
   return spawnSync("node", [CLI, ...args], { cwd, encoding: "utf8", env });
 }
 
-test("a full interview turn is two chained commands and the gate prelint accepts the result", (t) => {
+test("question limit is persisted, surfaced at the boundary, and blocks an extra captured turn", () => {
   const dir = makeProject();
+  const transcript = makeCodexTranscript(dir, "limited-session");
+  const invalid = runCli(dir, [
+    "interview", "init", "--slug", "invalid-limit", "--topic", "Invalid", "--where", "greenfield",
+    "--packs", "ux", "--question-limit", "0", "--transcript", transcript,
+  ]);
+  assert.equal(invalid.status, 2, invalid.stdout + invalid.stderr);
+  assert.match(invalid.stderr, /--question-limit must be a positive integer/);
+
+  const init = runCli(dir, [
+    "interview", "init", "--slug", "limited", "--topic", "Limited interview", "--where", "greenfield",
+    "--packs", "ux", "--question-limit", "1", "--transcript", transcript, "--json",
+  ]);
+  assert.equal(init.status, 0, init.stdout + init.stderr);
+  assert.equal(JSON.parse(init.stdout).cursor.questionLimit, 1);
+
+  appendCodexTurn(transcript, "Only question?", "first answer");
+  const atLimit = runCli(dir, ["interview", "sync", "--slug", "limited", "--transcript", transcript, "--json"]);
+  assert.equal(atLimit.status, 0, atLimit.stdout + atLimit.stderr);
+  const reached = JSON.parse(atLimit.stdout);
+  assert.equal(reached.cursor.questionBudgetReached, true);
+  assert.equal(reached.cursor.questionBudgetExceeded, false);
+  assert.equal(reached.cursor.checkpointDue, true);
+
+  appendCodexTurn(transcript, "Question beyond limit?", "second answer", 2);
+  const exceeded = runCli(dir, ["interview", "sync", "--slug", "limited", "--transcript", transcript, "--json"]);
+  assert.equal(exceeded.status, 1, exceeded.stdout + exceeded.stderr);
+  const blocked = JSON.parse(exceeded.stdout);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.cursor.questionBudgetExceeded, true);
+  assert.deepEqual(blocked.detail.imported, ["Q2"]);
+  assert.ok(blocked.drift.some((finding) => finding.rule === "qa-question-limit-exceeded"));
+});
+
+test("a full interview turn syncs from the transcript and the gate prelint accepts the result", (t) => {
+  const dir = makeProject();
+  const transcript = makeCodexTranscript(dir, "retry-session");
   const init = runCli(dir, [
     "interview", "init",
     "--slug", "retry-flow",
@@ -34,11 +101,20 @@ test("a full interview turn is two chained commands and the gate prelint accepts
     "--where", "brownfield",
     "--packs", "ux, verification",
     "--understanding", "failed saves need a retry path",
+    "--transcript", transcript,
   ]);
   assert.equal(init.status, 0, init.stdout + init.stderr);
   assert.match(init.stdout, /created agents\/interview\/retry-flow\/qa-log\.md/);
 
-  // per-turn shape: register the decision, then log the turn
+  appendCodexTurn(transcript, "What happens when a save fails?", "keep input, show retry");
+  const sync = runCli(dir, ["interview", "sync", "--slug", "retry-flow", "--transcript", transcript, "--json"]);
+  assert.equal(sync.status, 0, sync.stdout + sync.stderr);
+  const parsed = JSON.parse(sync.stdout);
+  assert.deepEqual(parsed.detail.imported, ["Q1"]);
+  assert.deepEqual(parsed.cursor.outstandingNormalization, ["Q1"]);
+  assert.deepEqual(parsed.drift, []);
+
+  // Checkpoint normalization links the imported raw answer to its material decision.
   const decision = runCli(dir, [
     "interview", "decision",
     "--slug", "retry-flow",
@@ -52,25 +128,10 @@ test("a full interview turn is two chained commands and the gate prelint accepts
     "--mapping", "R1/AC1/V1",
   ]);
   assert.equal(decision.status, 0, decision.stdout + decision.stderr);
+  const qaLog = path.join(dir, "agents", "interview", "retry-flow", "qa-log.md");
+  fs.writeFileSync(qaLog, fs.readFileSync(qaLog, "utf8").replace("- decision_ids: none", "- decision_ids: D-01"));
 
-  const log = runCli(dir, [
-    "interview", "log",
-    "--slug", "retry-flow",
-    "--label", "Failed save behavior",
-    "--asked", "What happens when a save fails?",
-    "--recommended", "Keep the input and offer retry",
-    "--answer", "keep input, show retry",
-    "--decision-ids", "D-01",
-    "--next-question", "ask about permission-denied state",
-    "--json",
-  ]);
-  assert.equal(log.status, 0, log.stdout + log.stderr);
-  const parsed = JSON.parse(log.stdout);
-  assert.equal(parsed.detail.logged, "Q1");
-  assert.deepEqual(parsed.cursor.outstandingNormalization, ["Q1"]);
-  assert.deepEqual(parsed.drift, []);
-
-  const checkpoint = runCli(dir, ["interview", "checkpoint", "--slug", "retry-flow", "--normalized", "Q1"]);
+  const checkpoint = runCli(dir, ["interview", "checkpoint", "--slug", "retry-flow", "--normalized", "pending"]);
   assert.equal(checkpoint.status, 0, checkpoint.stdout + checkpoint.stderr);
 
   const status = runCli(dir, ["interview", "status", "--slug", "retry-flow", "--json"]);
@@ -91,7 +152,11 @@ test("a full interview turn is two chained commands and the gate prelint accepts
 
 test("interview coherence is advisory: skips when thin, judges when seeded, never writes gate state", (t) => {
   const dir = makeProject();
-  runCli(dir, ["interview", "init", "--slug", "coh", "--topic", "Task app", "--where", "greenfield", "--packs", "ux"]);
+  const transcript = makeCodexTranscript(dir, "coherence-session");
+  runCli(dir, [
+    "interview", "init", "--slug", "coh", "--topic", "Task app", "--where", "greenfield", "--packs", "ux",
+    "--transcript", transcript,
+  ]);
 
   // thin interview: skipped, exit 0, no judge call
   const thin = runCli(dir, ["interview", "coherence", "--slug", "coh", "--json"]);
@@ -125,9 +190,9 @@ test("interview coherence is advisory: skips when thin, judges when seeded, neve
 
 test("usage errors exit 2 and unknown subcommands are rejected", () => {
   const dir = makeProject();
-  const missing = runCli(dir, ["interview", "log", "--slug", "retry-flow"]);
+  const missing = runCli(dir, ["interview", "sync"]);
   assert.equal(missing.status, 2);
-  assert.match(missing.stderr, /missing required --label/);
+  assert.match(missing.stderr, /missing required --slug/);
   const unknown = runCli(dir, ["interview", "bogus", "--slug", "retry-flow"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /unknown interview subcommand/);

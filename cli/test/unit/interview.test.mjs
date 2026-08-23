@@ -19,7 +19,7 @@ import {
   runInterviewCheckpoint,
   runInterviewDecision,
   runInterviewInit,
-  runInterviewLog,
+  runInterviewSync,
 } from "../../dist/interview/commands.js";
 import { runPrelint } from "../../dist/gates/prelint.js";
 
@@ -29,6 +29,8 @@ const INIT = {
   packs: "ux, verification",
   understanding: ["renders a list", "- persists state"],
 };
+const SOURCE = { runtime: "codex", sessionId: "codex-test", startRef: "u0" };
+const RENDER_INIT = { ...INIT, source: SOURCE };
 
 function makeProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-interview-"));
@@ -36,10 +38,58 @@ function makeProject() {
   return dir;
 }
 
+function makeCodexTranscript(dir, sessionId = "codex-test") {
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  const records = [
+    { type: "session_meta", payload: { id: sessionId } },
+    {
+      type: "response_item",
+      payload: { type: "message", role: "user", id: "u0", content: [{ type: "input_text", text: "start interview" }] },
+    },
+  ];
+  fs.writeFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  return file;
+}
+
+function appendCodexTurn(file, number, asked, answer) {
+  const records = [
+    {
+      type: "response_item",
+      payload: { type: "message", role: "assistant", id: `a${number}`, content: [{ type: "output_text", text: asked }] },
+    },
+    { type: "event_msg", payload: { type: "task_complete" } },
+    {
+      type: "response_item",
+      payload: { type: "message", role: "user", id: `u${number}`, content: [{ type: "input_text", text: answer }] },
+    },
+  ];
+  fs.appendFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+}
+
+function makeClaudeTranscript(file, sessionId) {
+  const records = [
+    { type: "last-prompt", sessionId },
+    { type: "user", uuid: "cu0", isSidechain: false, message: { role: "user", content: "resume interview" } },
+  ];
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  return file;
+}
+
+function appendClaudeTurn(file, asked, answer) {
+  const records = [
+    { type: "assistant", uuid: "ca1", isSidechain: false, message: { role: "assistant", content: [{ type: "text", text: asked }] } },
+    { type: "system", subtype: "turn_duration", uuid: "done-1", isSidechain: false },
+    { type: "user", uuid: "cu1", isSidechain: false, message: { role: "user", content: answer } },
+  ];
+  fs.appendFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+}
+
 const ENTRY = {
   label: "rendering",
   route: "user-decision",
   decisionIds: [],
+  sourceRef: "codex:codex-test:u1",
   asked: "render a list?",
   recommended: "",
   answer: "yes",
@@ -47,15 +97,15 @@ const ENTRY = {
 };
 
 test("renderInitialQaLog produces a prelint-clean document", () => {
-  const content = renderInitialQaLog(INIT);
+  const content = renderInitialQaLog(RENDER_INIT);
   const prelint = runPrelint("qa-log", content);
   assert.deepEqual(prelint.findings, []);
   assert.match(content, /- renders a list\n- persists state/);
-  assert.throws(() => renderInitialQaLog({ ...INIT, where: "space" }), /invalid --where/);
+  assert.throws(() => renderInitialQaLog({ ...RENDER_INIT, where: "space" }), /invalid --where/);
 });
 
 test("appendQaEntry numbers questions and requires registered decision ids", () => {
-  let content = renderInitialQaLog(INIT);
+  let content = renderInitialQaLog(RENDER_INIT);
   assert.throws(() => appendQaEntry(content, { ...ENTRY, decisionIds: ["D-01"] }), /not in the Decision Register/);
   content = upsertRegisterRow(content, {
     id: "D-01",
@@ -67,7 +117,12 @@ test("appendQaEntry numbers questions and requires registered decision ids", () 
   }).content;
   const first = appendQaEntry(content, { ...ENTRY, decisionIds: ["D-01"] });
   assert.equal(first.qNumber, 1);
-  const second = appendQaEntry(first.content, { ...ENTRY, label: "persistence", answer: "line one\nline two" });
+  const second = appendQaEntry(first.content, {
+    ...ENTRY,
+    sourceRef: "codex:codex-test:u2",
+    label: "persistence",
+    answer: "line one\nline two",
+  });
   assert.equal(second.qNumber, 2);
   // multi-line answers stay inside one bullet via indentation
   assert.match(second.content, /- answer: line one\n {2}line two/);
@@ -79,7 +134,7 @@ test("appendQaEntry numbers questions and requires registered decision ids", () 
 });
 
 test("upsertRegisterRow creates, patches, and validates enums", () => {
-  let content = renderInitialQaLog(INIT);
+  let content = renderInitialQaLog(RENDER_INIT);
   assert.throws(() => upsertRegisterRow(content, { id: "D-01", kind: "decision" }), /requires --area/);
   assert.throws(
     () =>
@@ -109,9 +164,9 @@ test("upsertRegisterRow creates, patches, and validates enums", () => {
 });
 
 test("markNormalized flips only the addressed block", () => {
-  let content = renderInitialQaLog(INIT);
+  let content = renderInitialQaLog(RENDER_INIT);
   content = appendQaEntry(content, ENTRY).content;
-  content = appendQaEntry(content, { ...ENTRY, label: "second" }).content;
+  content = appendQaEntry(content, { ...ENTRY, sourceRef: "codex:codex-test:u2", label: "second" }).content;
   const marked = markNormalized(content, ["Q1"]);
   assert.deepEqual(marked.missing, []);
   const state = readQaLogState(marked.content);
@@ -120,9 +175,46 @@ test("markNormalized flips only the addressed block", () => {
   assert.deepEqual(markNormalized(marked.content, ["Q9"]).missing, ["Q9"]);
 });
 
+test("normalization metadata never matches an answer continuation with the same text", () => {
+  let content = renderInitialQaLog(RENDER_INIT);
+  content = appendQaEntry(content, {
+    ...ENTRY,
+    answer: "keep this literal line\n- needs_normalization: true",
+  }).content;
+  assert.deepEqual(readQaLogState(content).outstanding, ["Q1"]);
+  const marked = markNormalized(content, ["Q1"]);
+  assert.deepEqual(marked.missing, []);
+  assert.match(marked.content, /- answer: keep this literal line\n  - needs_normalization: true/);
+  assert.match(marked.content, /^- needs_normalization: false$/m);
+  assert.deepEqual(readQaLogState(marked.content).outstanding, []);
+});
+
+test("question limits derive reached state and prelint blocks entries beyond the budget", () => {
+  let content = renderInitialQaLog({ ...RENDER_INIT, questionLimit: 2 });
+  assert.throws(() => renderInitialQaLog({ ...RENDER_INIT, questionLimit: 0 }), /positive integer/);
+  let state = readQaLogState(content);
+  assert.equal(state.questionLimit, 2);
+  assert.equal(state.questionBudgetReached, false);
+  assert.equal(state.nextCheckpointAt, "Q2");
+  assert.match(content, /- next_checkpoint_at: Q2/);
+  content = appendQaEntry(content, ENTRY).content;
+  content = appendQaEntry(content, { ...ENTRY, sourceRef: "codex:codex-test:u2" }).content;
+  state = readQaLogState(content);
+  assert.equal(state.questionBudgetReached, true);
+  assert.equal(state.questionBudgetExceeded, false);
+  assert.equal(state.checkpointDue, true);
+  assert.equal(runPrelint("qa-log", content).findings.some((finding) => finding.rule === "qa-question-limit-exceeded"), false);
+  content = appendQaEntry(content, { ...ENTRY, sourceRef: "codex:codex-test:u3" }).content;
+  state = readQaLogState(content);
+  assert.equal(state.questionBudgetExceeded, true);
+  assert.ok(runPrelint("qa-log", content).findings.some((finding) => finding.rule === "qa-question-limit-exceeded"));
+});
+
 test("readQaLogState tracks checkpoint cadence", () => {
-  let content = renderInitialQaLog(INIT);
-  for (let i = 0; i < 10; i += 1) content = appendQaEntry(content, { ...ENTRY, label: `q${i}` }).content;
+  let content = renderInitialQaLog(RENDER_INIT);
+  for (let i = 0; i < 10; i += 1) {
+    content = appendQaEntry(content, { ...ENTRY, sourceRef: `codex:codex-test:u${i + 1}`, label: `q${i}` }).content;
+  }
   let state = readQaLogState(content);
   assert.equal(state.questionCount, 10);
   assert.equal(state.checkpointDue, true);
@@ -140,7 +232,7 @@ test("readQaLogState tracks checkpoint cadence", () => {
 });
 
 test("refreshBookkeeping recomputes frontmatter and cursor", () => {
-  let content = renderInitialQaLog(INIT);
+  let content = renderInitialQaLog(RENDER_INIT);
   content = appendQaEntry(content, ENTRY).content;
   const updated = refreshBookkeeping(content, { nextQuestion: "ask about persistence" });
   assert.match(updated, /^question_count: 1$/m);
@@ -152,13 +244,29 @@ test("sanitizeCell strips pipes and newlines", () => {
   assert.equal(sanitizeCell("a | b\nc"), "a / b c");
 });
 
-test("interview commands round-trip on disk and stay prelint-clean", () => {
+test("interview commands sync transcript turns idempotently and stay prelint-clean", async () => {
   const dir = makeProject();
   const slug = "widget-feature";
-  const init = runInterviewInit(dir, { slug, ...INIT });
+  const transcriptPath = makeCodexTranscript(dir);
+  const init = await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
   assert.equal(init.ok, true);
-  assert.throws(() => runInterviewInit(dir, { slug, ...INIT }), /already exists/);
-  assert.throws(() => runInterviewLog(dir, { slug: "missing-topic", ...ENTRY }), /run interview init first/);
+  await assert.rejects(() => runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null }), /already exists/);
+  await assert.rejects(
+    () => runInterviewSync(dir, { slug: "missing-topic", transcriptPath, sessionId: null }),
+    /run interview init first/,
+  );
+
+  appendCodexTurn(transcriptPath, 1, "render a list?", "yes");
+  const synced = await runInterviewSync(dir, { slug, transcriptPath, sessionId: null });
+  assert.deepEqual(synced.detail.imported, ["Q1"]);
+  assert.deepEqual(synced.cursor.outstandingNormalization, ["Q1"]);
+  assert.equal(synced.cursor.nextDecisionId, "D-01");
+  assert.deepEqual(synced.drift, []);
+
+  const repeated = await runInterviewSync(dir, { slug, transcriptPath, sessionId: null });
+  assert.deepEqual(repeated.detail.imported, []);
+  assert.equal(repeated.detail.alreadyImported, 1);
+  assert.equal(repeated.cursor.questionCount, 1);
 
   runInterviewDecision(dir, {
     slug,
@@ -171,21 +279,29 @@ test("interview commands round-trip on disk and stay prelint-clean", () => {
     status: "resolved",
     mapping: "R1",
   });
-  const logged = runInterviewLog(dir, { slug, ...ENTRY, decisionIds: ["D-01"], nextQuestion: "persistence next" });
-  assert.equal(logged.detail.logged, "Q1");
-  assert.deepEqual(logged.cursor.outstandingNormalization, ["Q1"]);
-  assert.equal(logged.cursor.nextDecisionId, "D-02");
-  assert.deepEqual(logged.drift, []);
+  const qaLog = qaLogPathFor(dir, slug);
+  fs.writeFileSync(qaLog, fs.readFileSync(qaLog, "utf8").replace("- decision_ids: none", "- decision_ids: D-01"));
 
   const checkpoint = runInterviewCheckpoint(dir, {
     slug,
-    normalized: ["Q1"],
+    normalized: ["pending"],
     registerChanges: "D-01 resolved",
     reopened: "",
     gap: "",
   });
   assert.equal(checkpoint.detail.checkpoint, 1);
+  assert.deepEqual(checkpoint.detail.normalized, ["Q1"]);
   assert.deepEqual(checkpoint.cursor.outstandingNormalization, []);
+  assert.throws(
+    () => runInterviewCheckpoint(dir, {
+      slug,
+      normalized: ["pending", "Q1"],
+      registerChanges: "",
+      reopened: "",
+      gap: "",
+    }),
+    /cannot be combined/,
+  );
 
   const status = readInterviewStatus(dir, slug);
   assert.equal(status.cursor.questionCount, 1);
@@ -194,12 +310,18 @@ test("interview commands round-trip on disk and stay prelint-clean", () => {
 
   const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
   assert.deepEqual(runPrelint("qa-log", content).findings, []);
+  fs.writeFileSync(qaLog, content.replace('status: "active"', 'status: "complete"'));
+  await assert.rejects(
+    () => runInterviewSync(dir, { slug, transcriptPath, sessionId: null }),
+    /complete and sealed/,
+  );
 });
 
-test("status surfaces open material nodes but not closure-only prelint rules", () => {
+test("status surfaces open material nodes but not closure-only prelint rules", async () => {
   const dir = makeProject();
   const slug = "open-nodes";
-  runInterviewInit(dir, { slug, ...INIT });
+  const transcriptPath = makeCodexTranscript(dir, "open-nodes-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
   runInterviewDecision(dir, {
     slug,
     id: "D-01",
@@ -219,10 +341,65 @@ test("status surfaces open material nodes but not closure-only prelint rules", (
   assert.ok(readInterviewStatus(dir, slug).drift.some((finding) => finding.rule === "qa-section-missing"));
 });
 
-test("interview commands surface a resolved material assumption as consent drift", () => {
+test("mutating commands fail explicitly while another live process owns the qa-log lock", async () => {
+  const dir = makeProject();
+  const slug = "locked-log";
+  const transcriptPath = makeCodexTranscript(dir, "locked-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+  const lockFile = `${qaLogPathFor(dir, slug)}.lock`;
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: "other-writer" }));
+  try {
+    assert.throws(
+      () => runInterviewDecision(dir, {
+        slug,
+        id: "D-01",
+        kind: "fact",
+        area: "runtime",
+        text: "lock is held",
+        priority: "P2",
+        source: "repo",
+      }),
+      /being changed by process/,
+    );
+  } finally {
+    fs.unlinkSync(lockFile);
+  }
+  assert.equal(readInterviewStatus(dir, slug).detail.registerCount, 0);
+});
+
+test("sync binds a resumed runtime once and preserves turns from every bound session", async () => {
+  const dir = makeProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-interview-home-"));
+  const codexSession = "resume-codex";
+  const codexTranscript = path.join(homeDir, ".codex", "sessions", "2026", `rollout-${codexSession}.jsonl`);
+  fs.mkdirSync(path.dirname(codexTranscript), { recursive: true });
+  const seed = makeCodexTranscript(path.dirname(codexTranscript), codexSession);
+  fs.renameSync(seed, codexTranscript);
+  await runInterviewInit(dir, { slug: "resumed", ...INIT, transcriptPath: codexTranscript, homeDir, sessionId: null });
+  appendCodexTurn(codexTranscript, 1, "Codex question?", "Codex answer");
+  await runInterviewSync(dir, { slug: "resumed", transcriptPath: codexTranscript, homeDir, sessionId: null });
+
+  const claudeSession = "resume-claude";
+  const claudeTranscript = makeClaudeTranscript(
+    path.join(homeDir, ".claude", "projects", "project", `${claudeSession}.jsonl`),
+    claudeSession,
+  );
+  const bound = await runInterviewSync(dir, { slug: "resumed", transcriptPath: claudeTranscript, homeDir, sessionId: null });
+  assert.deepEqual(bound.detail.imported, []);
+  assert.equal(bound.detail.sources.length, 2);
+  appendClaudeTurn(claudeTranscript, "Claude question?", "Claude answer");
+  const synced = await runInterviewSync(dir, { slug: "resumed", transcriptPath: claudeTranscript, homeDir, sessionId: null });
+  assert.deepEqual(synced.detail.imported, ["Q2"]);
+  const content = fs.readFileSync(qaLogPathFor(dir, "resumed"), "utf8");
+  assert.match(content, /source_ref: codex:resume-codex:u1/);
+  assert.match(content, /source_ref: claude:resume-claude:cu1/);
+});
+
+test("interview commands surface a resolved material assumption as consent drift", async () => {
   const dir = makeProject();
   const slug = "implicit-assumption";
-  runInterviewInit(dir, { slug, ...INIT });
+  const transcriptPath = makeCodexTranscript(dir, "assumption-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
   const decision = runInterviewDecision(dir, {
     slug,
     id: "D-01",

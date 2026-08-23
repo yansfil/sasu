@@ -7,7 +7,11 @@ import test from "node:test";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const helper = path.join(repoRoot, "skills", "implement", "scripts", "herdr_observer.js");
-const HANDOFF = "ROLE: Implementor\nPIPELINE: please\nORIGINAL INVOCATION: $please test";
+const PRD_PATH = "agents/prd/test/prd.md";
+const HANDOFF = `ROLE: Implementor
+PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
+ORIGINAL INVOCATION: $please test
+SOURCE: ${PRD_PATH}`;
 
 function fakeHerdrRoot(role) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-herdr-observer-"));
@@ -15,6 +19,7 @@ function fakeHerdrRoot(role) {
   const calls = path.join(root, "calls.jsonl");
   fs.mkdirSync(bin);
   const executable = path.join(bin, "herdr");
+  const prd = path.join(root, PRD_PATH);
   fs.writeFileSync(executable, `#!/usr/bin/env node
 import fs from "node:fs";
 const args = process.argv.slice(2);
@@ -51,7 +56,9 @@ if (key === "pane current") {
 }
 `);
   fs.chmodSync(executable, 0o755);
-  return { root, bin, calls, role };
+  fs.mkdirSync(path.dirname(prd), { recursive: true });
+  fs.writeFileSync(prd, "---\nstatus: ready\nhuman_approval: pending\n---\n\n# Test PRD\n");
+  return { root, bin, calls, prd: PRD_PATH, role };
 }
 
 function runHelper(fixture, args, extraEnv = {}, input = HANDOFF) {
@@ -77,7 +84,7 @@ function calls(fixture) {
 
 test("dispatch creates one right-side marked Implementor with the Observer agent kind", () => {
   const fixture = fakeHerdrRoot("observer");
-  const result = runHelper(fixture, ["dispatch", "--name", "please-smoke", "--cwd", fixture.root]);
+  const result = runHelper(fixture, ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd]);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
@@ -99,12 +106,14 @@ test("dispatch creates one right-side marked Implementor with the Observer agent
   assert.deepEqual(observedCalls[3].slice(0, 3), ["agent", "prompt", "please-smoke"]);
   assert.ok(observedCalls[3][3].startsWith(HANDOFF));
   assert.match(observedCalls[3][3], /Never invoke AskUserQuestion, request_user_input, or any interactive question UI/);
+  assert.match(observedCalls[3][3], /sole specification source is the ready PRD/);
+  assert.match(observedCalls[3][3], /never author or edit the qa-log or PRD/);
   assert.match(observedCalls[3][3], /output the structured OBSERVER_BLOCK packet.*end the turn/s);
 });
 
 test("dispatch refuses recursion from a marked Implementor pane", () => {
   const fixture = fakeHerdrRoot("implementor");
-  const result = runHelper(fixture, ["dispatch", "--name", "nested"]);
+  const result = runHelper(fixture, ["dispatch", "--name", "nested", "--prd", fixture.prd]);
 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /recursive dispatch refused/);
@@ -115,7 +124,7 @@ test("dispatch retries shell readiness in the same pane without splitting again"
   const fixture = fakeHerdrRoot("observer");
   const result = runHelper(
     fixture,
-    ["dispatch", "--name", "please-smoke", "--cwd", fixture.root],
+    ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd],
     { FAKE_HERDR_BUSY_STARTS: "1" },
   );
 
@@ -134,6 +143,33 @@ test("dispatch refuses an empty handoff before invoking Herdr", () => {
 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /requires the lossless Implementor handoff on stdin/);
+  assert.deepEqual(calls(fixture), []);
+});
+
+test("dispatch refuses specification work before invoking Herdr", () => {
+  const fixture = fakeHerdrRoot("observer");
+  const result = runHelper(
+    fixture,
+    ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd],
+    {},
+    HANDOFF.replace("PIPELINE: implement", "PIPELINE: please"),
+  );
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /requires exactly one 'PIPELINE: implement'/);
+  assert.deepEqual(calls(fixture), []);
+});
+
+test("dispatch refuses a PRD that is not ready before invoking Herdr", () => {
+  const fixture = fakeHerdrRoot("observer");
+  fs.writeFileSync(path.join(fixture.root, fixture.prd), "---\nstatus: draft\n---\n\n# Draft\n");
+  const result = runHelper(
+    fixture,
+    ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd],
+  );
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /PRD status must be ready before dispatch, got draft/);
   assert.deepEqual(calls(fixture), []);
 });
 

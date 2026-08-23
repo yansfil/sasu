@@ -3,11 +3,10 @@
  *
  * Ownership split (latency contract): the agent owns question judgment and
  * semantic prose (normalization, UX cards, evidence, sweeps); this module owns
- * every mechanical mutation - frontmatter counters, the Intake Cursor, Raw Q&A
- * appends, Decision Register upserts, checkpoint records, and
- * needs_normalization flips. All mutations are line-based string edits so the
- * agent's per-turn output shrinks to one short command instead of a multi-hunk
- * markdown diff.
+ * every mechanical mutation - transcript source bindings, frontmatter
+ * counters, the Intake Cursor, Raw Q&A appends, Decision Register upserts,
+ * checkpoint records, and needs_normalization flips. All mutations are
+ * line-based string edits so ordinary interview turns need no file write.
  *
  * Enum values mirror the gap-audit prelint rules in ../gates/prelint.ts; a
  * value accepted here must never be rejected there.
@@ -34,10 +33,17 @@ export interface QaEntryInput {
   label: string;
   route: string;
   decisionIds: string[];
+  sourceRef: string;
   asked: string;
   recommended: string;
   answer: string;
   notes: string;
+}
+
+export interface TranscriptSourceRow {
+  runtime: "claude" | "codex";
+  sessionId: string;
+  startRef: string;
 }
 
 export interface CheckpointInput {
@@ -49,6 +55,9 @@ export interface CheckpointInput {
 
 export interface QaLogState {
   questionCount: number;
+  questionLimit: number | null;
+  questionBudgetReached: boolean;
+  questionBudgetExceeded: boolean;
   outstanding: string[];
   registerRows: RegisterRow[];
   nextDecisionId: string;
@@ -61,6 +70,7 @@ export interface QaLogState {
 const REGISTER_HEADING = "## Decision Register";
 const RAW_QA_HEADING = "## Raw Q&A";
 const CURSOR_HEADING = "## Intake Cursor";
+const TRANSCRIPT_SOURCES_HEADING = "## Transcript Sources";
 const CHECKPOINT_HEADING = "## Checkpoint And Sweep History";
 
 export function todayStamp(): string {
@@ -263,11 +273,18 @@ export function appendQaEntry(content: string, entry: QaEntryInput): { content: 
       throw new Error(`--decision-ids references ${id} which is not in the Decision Register (run interview decision first)`);
     }
   }
+  if (entry.sourceRef.trim() === "" || /[\r\n]/.test(entry.sourceRef)) {
+    throw new Error("sourceRef must be one non-empty line");
+  }
+  if (qaSourceRefs(content).has(entry.sourceRef)) {
+    throw new Error(`sourceRef is already present in Raw Q&A: ${entry.sourceRef}`);
+  }
   const qNumber = Math.max(0, ...questionNumbers(content)) + 1;
   const block = [
     `### Q${qNumber}: ${sanitizeCell(entry.label)}`,
     `- decision_ids: ${entry.decisionIds.length > 0 ? entry.decisionIds.join(", ") : "none"}`,
     `- route: ${entry.route}`,
+    `- source_ref: ${sanitizeCell(entry.sourceRef)}`,
     `- asked: ${bulletValue(entry.asked)}`,
     `- recommended: ${bulletValue(entry.recommended || "none")}`,
     `- answer: ${bulletValue(entry.answer)}`,
@@ -276,6 +293,65 @@ export function appendQaEntry(content: string, entry: QaEntryInput): { content: 
   ];
   const lines = appendToSection(content.split("\n"), RAW_QA_HEADING, block);
   return { content: lines.join("\n"), qNumber };
+}
+
+export function parseTranscriptSources(content: string): TranscriptSourceRow[] {
+  const lines = content.split("\n");
+  const { start, end } = sectionRange(lines, TRANSCRIPT_SOURCES_HEADING);
+  const rows: TranscriptSourceRow[] = [];
+  for (let i = start + 1; i < end; i += 1) {
+    const line = lines[i]!;
+    if (!line.trim().startsWith("|")) continue;
+    const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-+:?$/.test(cell) || cell === "")) continue;
+    if (cells[0] === "Runtime") continue;
+    if (cells.length < 3) continue;
+    const runtime = cells[0];
+    if (runtime !== "claude" && runtime !== "codex") {
+      throw new Error(`invalid transcript runtime in qa-log: ${runtime}`);
+    }
+    const sessionId = cells[1] ?? "";
+    const startRef = cells[2] ?? "";
+    if (sessionId === "" || startRef === "") throw new Error("transcript source row is incomplete");
+    rows.push({ runtime, sessionId, startRef });
+  }
+  return rows;
+}
+
+export function appendTranscriptSource(
+  content: string,
+  source: TranscriptSourceRow,
+): { content: string; created: boolean } {
+  if (source.runtime !== "claude" && source.runtime !== "codex") {
+    throw new Error(`invalid transcript runtime: ${source.runtime}`);
+  }
+  for (const value of [source.sessionId, source.startRef]) {
+    if (value.trim() === "" || /[|\r\n]/.test(value)) throw new Error("transcript source fields must be one non-empty pipe-free line");
+  }
+  const existing = parseTranscriptSources(content).find(
+    (row) => row.runtime === source.runtime && row.sessionId === source.sessionId,
+  );
+  if (existing !== undefined) {
+    if (existing.startRef !== source.startRef) {
+      throw new Error(`session ${source.sessionId} already has a different transcript start boundary`);
+    }
+    return { content, created: false };
+  }
+  const lines = content.split("\n");
+  const { start, end } = sectionRange(lines, TRANSCRIPT_SOURCES_HEADING);
+  let insertAt = -1;
+  for (let i = start + 1; i < end; i += 1) {
+    if (lines[i]!.trim().startsWith("|")) insertAt = i + 1;
+  }
+  if (insertAt === -1) throw new Error("Transcript Sources has no table to append to");
+  lines.splice(insertAt, 0, `| ${source.runtime} | ${source.sessionId} | ${source.startRef} |`);
+  return { content: lines.join("\n"), created: true };
+}
+
+export function qaSourceRefs(content: string): Set<string> {
+  const refs = new Set<string>();
+  for (const match of content.matchAll(/^- source_ref:\s*(.+?)\s*$/gm)) refs.add(match[1]!);
+  return refs;
 }
 
 /** Bounds of the `### Q<n>:` block: from its heading to the next heading. */
@@ -306,7 +382,7 @@ export function markNormalized(content: string, qIds: string[]): { content: stri
     }
     let flipped = false;
     for (let i = range.start + 1; i < range.end; i += 1) {
-      if (lines[i]!.trim() === "- needs_normalization: true") {
+      if (lines[i] === "- needs_normalization: true") {
         lines[i] = "- needs_normalization: false";
         flipped = true;
         break;
@@ -335,6 +411,8 @@ export function appendCheckpoint(content: string, input: CheckpointInput, afterQ
 
 export function readQaLogState(content: string): QaLogState {
   const questionCount = Math.max(0, ...questionNumbers(content));
+  const parsedQuestionLimit = parseFrontmatterNumber(content, "question_limit", 0);
+  const questionLimit = parsedQuestionLimit > 0 ? parsedQuestionLimit : null;
   const outstanding: string[] = [];
   const lines = content.split("\n");
   let currentQ: string | null = null;
@@ -345,7 +423,7 @@ export function readQaLogState(content: string): QaLogState {
       continue;
     }
     if (/^##+\s/.test(line)) currentQ = null;
-    if (currentQ !== null && line.trim() === "- needs_normalization: true") {
+    if (currentQ !== null && line === "- needs_normalization: true") {
       outstanding.push(currentQ);
       currentQ = null;
     }
@@ -356,15 +434,27 @@ export function readQaLogState(content: string): QaLogState {
   const afters = [0];
   for (const match of content.matchAll(/^- after_question: Q(\d+)$/gm)) afters.push(Number(match[1]));
   const lastCheckpointAfter = Math.max(...afters);
+  const cadenceCheckpointAt = lastCheckpointAfter + checkpointEvery;
+  const budgetCheckpointAt = questionLimit !== null && questionLimit > lastCheckpointAfter
+    ? questionLimit
+    : cadenceCheckpointAt;
+  const nextCheckpointQuestion = Math.min(cadenceCheckpointAt, budgetCheckpointAt);
+  const questionBudgetReached = questionLimit !== null && questionCount >= questionLimit;
+  const questionBudgetExceeded = questionLimit !== null && questionCount > questionLimit;
   return {
     questionCount,
+    questionLimit,
+    questionBudgetReached,
+    questionBudgetExceeded,
     outstanding,
     registerRows,
     nextDecisionId: `D-${String(maxId + 1).padStart(2, "0")}`,
     checkpointEvery,
     lastCheckpointAfter,
-    checkpointDue: questionCount - lastCheckpointAfter >= checkpointEvery,
-    nextCheckpointAt: `Q${lastCheckpointAfter + checkpointEvery}`,
+    checkpointDue:
+      questionCount - lastCheckpointAfter >= checkpointEvery
+      || (questionLimit !== null && questionCount >= questionLimit && lastCheckpointAfter < questionLimit),
+    nextCheckpointAt: `Q${nextCheckpointQuestion}`,
   };
 }
 
@@ -391,11 +481,16 @@ export interface InitOptions {
   where: string;
   packs: string;
   understanding: string[];
+  source: TranscriptSourceRow;
+  questionLimit?: number;
 }
 
 export function renderInitialQaLog(options: InitOptions): string {
   if (!(QA_WHERE as readonly string[]).includes(options.where)) {
     throw new Error(`invalid --where "${options.where}" (allowed: ${QA_WHERE.join(" | ")})`);
+  }
+  if (options.questionLimit !== undefined && (!Number.isInteger(options.questionLimit) || options.questionLimit < 1)) {
+    throw new Error("--question-limit must be a positive integer");
   }
   const stamp = todayStamp();
   const understanding =
@@ -411,7 +506,8 @@ export function renderInitialQaLog(options: InitOptions): string {
     `created_at: "${stamp}"`,
     `updated_at: "${stamp}"`,
     "question_count: 0",
-    'normalization_policy: "raw-capture-with-checkpoint-backfill"',
+    ...(options.questionLimit === undefined ? [] : [`question_limit: ${options.questionLimit}`]),
+    'normalization_policy: "transcript-sync-with-checkpoint-backfill"',
     "normalization_checkpoint_every: 10",
     "---",
     "",
@@ -424,10 +520,16 @@ export function renderInitialQaLog(options: InitOptions): string {
     CURSOR_HEADING,
     "",
     "- next_decision_id: D-01",
-    "- next_question: (set by interview log --next-question)",
+    "- next_question: (owned by the live conversation until checkpoint)",
     "- last_materiality_sweep: preflight",
     "- outstanding_raw_entries: none",
-    "- next_checkpoint_at: Q10",
+    `- next_checkpoint_at: Q${Math.min(10, options.questionLimit ?? 10)}`,
+    "",
+    TRANSCRIPT_SOURCES_HEADING,
+    "",
+    "| Runtime | Session ID | Start ref |",
+    "| --- | --- | --- |",
+    `| ${options.source.runtime} | ${options.source.sessionId} | ${options.source.startRef} |`,
     "",
     REGISTER_HEADING,
     "",

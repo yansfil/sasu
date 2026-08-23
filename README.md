@@ -82,12 +82,12 @@ Skills stay thin orchestration prompts; the CLI owns state, gates, verification,
 The installer builds it and writes a shim onto the pnpm bin path, so the binary always matches the installed skills (same-repo versioning, no skew).
 
 ```text
-sasu interview init       create the interview qa-log skeleton for a topic
-sasu interview log        record one answered interview turn (raw capture, counters, cursor)
+sasu interview init       create the qa-log, bind its transcript, and optionally persist a question limit
+sasu interview sync       batch-import completed assistant-text -> human-answer turns from JSONL
 sasu interview decision   upsert a Decision Register row with enum validation
-sasu interview checkpoint  flip needs_normalization and record a normalization checkpoint
+sasu interview checkpoint  atomically normalize the pending batch and record its checkpoint
 sasu interview coherence  advisory mid-interview judge: resolved-decision contradiction + goal drift (never blocks)
-sasu interview status     interview state resync: counts, open P0/P1 nodes, checkpoint due, drift
+sasu interview status     persisted state view: synced counts, open P0/P1 nodes, checkpoint due, drift
 sasu gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
 sasu gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
 sasu gate verify      standalone PRD prelint + mechanical checks, then a diff-vs-AC judge
@@ -101,7 +101,9 @@ sasu gate override    user-only escape hatch; records a deviation with the user'
 sasu doctor           judge backends, verify commands, contract version
 ```
 
-The interview commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation, so a full interview turn costs one short chained command instead of a hand-written multi-hunk markdown edit.
+The interview commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation.
+Ordinary Q&A performs no file write; `interview sync` imports completed turns in one batch at checkpoints, resume, and closure.
+When `interview init --question-limit <n>` records an explicit user budget, the cursor derives reached and exceeded state and prelint blocks any Q number beyond it.
 Every mutating interview command re-runs the structural qa-log prelint (closure-only rules excluded) and reports drift immediately instead of at the gate.
 `interview coherence` adds an independent mid-interview check that the resolved decisions cohere and stay on the stated goal - it reads only the decisions (not the conversation), so it catches direction drift the interviewing agent is biased not to see, and stays advisory: it never touches gate state or the retry budget and its findings are next-question candidates.
 It judges only coherence, never completeness (that is the gap-audit closure gate), and uses the project-configured `routine` judge profile.

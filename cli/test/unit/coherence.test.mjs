@@ -13,8 +13,25 @@ function makeProject() {
   return dir;
 }
 
-function seedDecisions(dir, slug, n, status = "resolved") {
-  runInterviewInit(dir, { slug, topic: "widget", where: "greenfield", packs: "ux", understanding: ["a widget"] });
+async function seedDecisions(dir, slug, n, status = "resolved") {
+  const sessionId = `${slug}-session`;
+  const transcriptPath = path.join(dir, `${sessionId}.jsonl`);
+  fs.writeFileSync(
+    transcriptPath,
+    `${JSON.stringify({ type: "session_meta", payload: { id: sessionId } })}\n${JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "user", id: "u0", content: [{ type: "input_text", text: "begin" }] },
+    })}\n`,
+  );
+  await runInterviewInit(dir, {
+    slug,
+    topic: "widget",
+    where: "greenfield",
+    packs: "ux",
+    understanding: ["a widget"],
+    transcriptPath,
+    sessionId: null,
+  });
   for (let i = 1; i <= n; i += 1) {
     runInterviewDecision(dir, {
       slug,
@@ -57,7 +74,7 @@ test("coherencePrompt judges only decided rows and forbids incompleteness findin
 
 test("coherence skips below the minimum resolved-decision threshold without a judge call", async () => {
   const dir = makeProject();
-  seedDecisions(dir, "few", 2);
+  await seedDecisions(dir, "few", 2);
   const result = await runInterviewCoherence(dir, loadConfig(dir), { slug: "few", minDecisions: 3 });
   assert.equal(result.skipped, true);
   assert.equal(result.judge, null);
@@ -67,7 +84,7 @@ test("coherence skips below the minimum resolved-decision threshold without a ju
 
 test("coherence counts only resolved decisions toward the threshold", async () => {
   const dir = makeProject();
-  seedDecisions(dir, "open-heavy", 4, "open");
+  await seedDecisions(dir, "open-heavy", 4, "open");
   const result = await runInterviewCoherence(dir, loadConfig(dir), { slug: "open-heavy", minDecisions: 3 });
   assert.equal(result.skipped, true);
   assert.equal(result.resolvedCount, 0);
@@ -75,7 +92,7 @@ test("coherence counts only resolved decisions toward the threshold", async () =
 
 test("coherence returns judge findings and a duration without touching gate state", async () => {
   const dir = makeProject();
-  seedDecisions(dir, "drifted", 3);
+  await seedDecisions(dir, "drifted", 3);
   const response = {
     verdict: "BLOCK",
     findings: [
@@ -105,7 +122,7 @@ test("coherence returns judge findings and a duration without touching gate stat
 
 test("a coherent interview returns PASS with no findings", async () => {
   const dir = makeProject();
-  seedDecisions(dir, "clean", 3);
+  await seedDecisions(dir, "clean", 3);
   const result = await withStub(dir, { verdict: "PASS", findings: [] }, () =>
     runInterviewCoherence(dir, loadConfig(dir), { slug: "clean", minDecisions: 3 }),
   );
@@ -116,7 +133,7 @@ test("a coherent interview returns PASS with no findings", async () => {
 
 test("a judge failure is advisory: ok false, error surfaced, interview not blocked", async () => {
   const dir = makeProject();
-  seedDecisions(dir, "boom", 3);
+  await seedDecisions(dir, "boom", 3);
   const result = await withStub(dir, "not json at all", () =>
     runInterviewCoherence(dir, loadConfig(dir), { slug: "boom", minDecisions: 3 }),
   );
