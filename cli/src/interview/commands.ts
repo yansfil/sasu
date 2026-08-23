@@ -85,104 +85,10 @@ export function resolveQaLogPath(projectRoot: string, slug: string): string {
   return current;
 }
 
-interface QaLogMutationLock {
-  fd: number;
-  file: string;
-  token: string;
-}
-
-interface QaLogLockOwner {
-  pid: number;
-  token: string;
-}
-
 function errorCode(error: unknown): string | null {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code ?? "")
     : null;
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (errorCode(error) === "ESRCH") return false;
-    if (errorCode(error) === "EPERM") return true;
-    throw error;
-  }
-}
-
-function readLockOwner(file: string): QaLogLockOwner | null {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, "utf8");
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return null;
-    throw error;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`qa-log mutation lock is unreadable: ${file} (retry after the other command finishes)`);
-  }
-  if (
-    typeof parsed !== "object"
-    || parsed === null
-    || !Number.isInteger((parsed as { pid?: unknown }).pid)
-    || typeof (parsed as { token?: unknown }).token !== "string"
-  ) {
-    throw new Error(`qa-log mutation lock is invalid: ${file}`);
-  }
-  return parsed as QaLogLockOwner;
-}
-
-/** Serialize cooperative writers and recover a lock left by a dead process. */
-function acquireQaLogLock(file: string): QaLogMutationLock {
-  const lockFile = `${file}.lock`;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const token = randomUUID();
-    let fd: number;
-    try {
-      fd = fs.openSync(lockFile, "wx", 0o600);
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-      const owner = readLockOwner(lockFile);
-      if (owner === null) continue;
-      if (processIsAlive(owner.pid)) {
-        throw new Error(`qa-log is being changed by process ${owner.pid}; retry this command after it finishes`);
-      }
-      const staleFile = `${lockFile}.stale-${randomUUID()}`;
-      try {
-        fs.renameSync(lockFile, staleFile);
-      } catch (renameError) {
-        if (errorCode(renameError) === "ENOENT") continue;
-        throw renameError;
-      }
-      fs.unlinkSync(staleFile);
-      continue;
-    }
-    try {
-      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, token }), "utf8");
-    } catch (error) {
-      fs.closeSync(fd);
-      fs.unlinkSync(lockFile);
-      throw error;
-    }
-    return { fd, file: lockFile, token };
-  }
-  throw new Error(`could not acquire qa-log mutation lock: ${lockFile}`);
-}
-
-function releaseQaLogLock(lock: QaLogMutationLock): void {
-  fs.closeSync(lock.fd);
-  const owner = readLockOwner(lock.file);
-  if (owner === null || owner.token !== lock.token) {
-    throw new Error(`qa-log mutation lock ownership changed unexpectedly: ${lock.file}`);
-  }
-  fs.unlinkSync(lock.file);
 }
 
 function temporarySibling(file: string): string {
@@ -249,7 +155,7 @@ function result(
   const state: QaLogState = readQaLogState(content);
   const drift = driftFindings(content);
   return {
-    ok: !state.questionBudgetExceeded,
+    ok: true,
     action,
     slug,
     qaLog: path.relative(projectRoot, resolveQaLogPath(projectRoot, slug)),
@@ -276,9 +182,9 @@ export interface InterviewInitOptions {
   understanding: string[];
   questionLimit?: number;
   transcriptPath?: string;
-  /** Test/embedding seam for locating previously bound runtime transcripts. */
+  /** Test/embedding seam for locating bound and automatically discovered transcripts. */
   homeDir?: string;
-  /** Test/embedding seam; null explicitly opts out of current-session matching. */
+  /** Test/embedding seam for automatic discovery; null opts out of discovery. */
   sessionId?: string | null;
 }
 
@@ -307,29 +213,24 @@ export async function runInterviewInit(projectRoot: string, options: InterviewIn
     questionLimit: options.questionLimit,
   });
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const lock = acquireQaLogLock(file);
-  try {
-    const concurrentExisting = resolveQaLogPath(projectRoot, options.slug);
-    if (fs.existsSync(concurrentExisting)) {
-      throw new Error(`qa-log already exists: ${path.relative(projectRoot, concurrentExisting)} (resume it instead of re-initializing)`);
-    }
-    writeNewQaLog(file, content);
-    return result("init", projectRoot, options.slug, content, {
-      created: true,
-      questionLimit: options.questionLimit ?? null,
-      transcript: { runtime: transcript.runtime, sessionId: transcript.sessionId, startRef },
-    });
-  } finally {
-    releaseQaLogLock(lock);
+  const concurrentExisting = resolveQaLogPath(projectRoot, options.slug);
+  if (fs.existsSync(concurrentExisting)) {
+    throw new Error(`qa-log already exists: ${path.relative(projectRoot, concurrentExisting)} (resume it instead of re-initializing)`);
   }
+  writeNewQaLog(file, content);
+  return result("init", projectRoot, options.slug, content, {
+    created: true,
+    questionLimit: options.questionLimit ?? null,
+    transcript: { runtime: transcript.runtime, sessionId: transcript.sessionId, startRef },
+  });
 }
 
 export interface InterviewSyncOptions {
   slug: string;
   transcriptPath?: string;
-  /** Test/embedding seam for locating previously bound runtime transcripts. */
+  /** Test/embedding seam for locating bound and automatically discovered transcripts. */
   homeDir?: string;
-  /** Test/embedding seam; null explicitly opts out of current-session matching. */
+  /** Test/embedding seam for automatic discovery; null opts out of discovery. */
   sessionId?: string | null;
 }
 
@@ -347,85 +248,85 @@ export async function runInterviewSync(projectRoot: string, options: InterviewSy
   if (!fs.existsSync(file)) {
     throw new Error(`qa-log not found: ${path.relative(projectRoot, file)} (run interview init first)`);
   }
-  const lock = acquireQaLogLock(file);
-  try {
-    const original = fs.readFileSync(file, "utf8");
-    if (/^status:\s*"complete"\s*$/m.test(original)) {
-      throw new Error("qa-log is complete and sealed; do not bind or sync later conversation turns");
-    }
-    let content = original;
-    const current = await resolveCurrentTranscript({
-      transcriptPath: options.transcriptPath,
-      homeDir: options.homeDir,
-      sessionId: options.sessionId,
-    });
-    let sources = parseTranscriptSources(content);
-    let bound: { runtime: string; sessionId: string; startRef: string } | null = null;
+  const original = fs.readFileSync(file, "utf8");
+  const sealed = /^status:\s*"complete"\s*$/m.test(original);
+  let content = original;
+  const current = await resolveCurrentTranscript({
+    transcriptPath: options.transcriptPath,
+    homeDir: options.homeDir,
+    sessionId: options.sessionId,
+  });
+  let sources = parseTranscriptSources(content);
+  let bound: { runtime: string; sessionId: string; startRef: string } | null = null;
 
-    if (current !== null) {
-      const existing = sources.find(
-        (source) => source.runtime === current.runtime && source.sessionId === current.sessionId,
-      );
-      if (existing === undefined) {
-        const startRef = await latestHumanRef(current);
-        const appended = appendTranscriptSource(content, {
-          runtime: current.runtime,
-          sessionId: current.sessionId,
-          startRef,
-        });
-        content = appended.content;
-        bound = { runtime: current.runtime, sessionId: current.sessionId, startRef };
-        sources = parseTranscriptSources(content);
-      }
-    }
-
-    const identities = new Map<string, TranscriptIdentity>();
-    if (current !== null) identities.set(`${current.runtime}:${current.sessionId}`, current);
-    const extracted: Awaited<ReturnType<typeof extractTranscriptTurns>> = [];
-    for (const source of sources) {
-      const key = `${source.runtime}:${source.sessionId}`;
-      const identity = identities.get(key) ?? await locateTranscript(source.runtime, source.sessionId, options.homeDir);
-      identities.set(key, identity);
-      extracted.push(...await extractTranscriptTurns(identity, source.startRef));
-    }
-
-    const seen = qaSourceRefs(content);
-    const imported: string[] = [];
-    let alreadyImported = 0;
-    for (const turn of extracted) {
-      if (seen.has(turn.sourceRef)) {
-        alreadyImported += 1;
-        continue;
-      }
-      const entry: QaEntryInput = {
-        label: transcriptLabel(turn.asked),
-        route: "mixed",
-        decisionIds: [],
-        sourceRef: turn.sourceRef,
-        asked: turn.asked,
-        recommended: "",
-        answer: turn.answer,
-        notes: "Imported verbatim from the session transcript; semantic normalization is pending.",
-      };
-      const appended = appendQaEntry(content, entry);
+  if (current !== null && !sealed) {
+    const existing = sources.find(
+      (source) => source.runtime === current.runtime && source.sessionId === current.sessionId,
+    );
+    if (existing === undefined) {
+      const startRef = await latestHumanRef(current);
+      const appended = appendTranscriptSource(content, {
+        runtime: current.runtime,
+        sessionId: current.sessionId,
+        startRef,
+      });
       content = appended.content;
-      seen.add(turn.sourceRef);
-      imported.push(`Q${appended.qNumber}`);
+      bound = { runtime: current.runtime, sessionId: current.sessionId, startRef };
+      sources = parseTranscriptSources(content);
     }
-
-    if (content !== original) {
-      content = refreshBookkeeping(content);
-      replaceQaLog(file, original, content);
-    }
-    return result("sync", projectRoot, options.slug, content, {
-      imported,
-      alreadyImported,
-      bound,
-      sources: sources.map((source) => ({ runtime: source.runtime, sessionId: source.sessionId })),
-    });
-  } finally {
-    releaseQaLogLock(lock);
   }
+
+  const identities = new Map<string, TranscriptIdentity>();
+  if (current !== null) identities.set(`${current.runtime}:${current.sessionId}`, current);
+  const extracted: Awaited<ReturnType<typeof extractTranscriptTurns>> = [];
+  for (const source of sources) {
+    const key = `${source.runtime}:${source.sessionId}`;
+    const identity = identities.get(key) ?? await locateTranscript(source.runtime, source.sessionId, options.homeDir);
+    identities.set(key, identity);
+    extracted.push(...await extractTranscriptTurns(identity, source.startRef));
+  }
+
+  const seen = qaSourceRefs(content);
+  const unseen: typeof extracted = [];
+  for (const turn of extracted) {
+    if (seen.has(turn.sourceRef)) continue;
+    seen.add(turn.sourceRef);
+    unseen.push(turn);
+  }
+  if (sealed && unseen.length > 0) {
+    throw new Error(
+      `qa-log is complete and sealed; ${unseen.length} later conversation turn(s) require an explicit reopen before sync`,
+    );
+  }
+
+  const imported: string[] = [];
+  for (const turn of unseen) {
+    const entry: QaEntryInput = {
+      label: transcriptLabel(turn.asked),
+      route: "mixed",
+      decisionIds: [],
+      sourceRef: turn.sourceRef,
+      asked: turn.asked,
+      recommended: "",
+      answer: turn.answer,
+      notes: "Imported verbatim from the session transcript; semantic normalization is pending.",
+    };
+    const appended = appendQaEntry(content, entry);
+    content = appended.content;
+    imported.push(`Q${appended.qNumber}`);
+  }
+
+  if (content !== original) {
+    content = refreshBookkeeping(content);
+    replaceQaLog(file, original, content);
+  }
+  return result("sync", projectRoot, options.slug, content, {
+    imported,
+    alreadyImported: extracted.length - unseen.length,
+    bound,
+    sealed,
+    sources: sources.map((source) => ({ runtime: source.runtime, sessionId: source.sessionId })),
+  });
 }
 
 export interface InterviewDecisionOptions extends Partial<RegisterRow> {
@@ -436,21 +337,16 @@ export interface InterviewDecisionOptions extends Partial<RegisterRow> {
 export function runInterviewDecision(projectRoot: string, options: InterviewDecisionOptions): InterviewResult {
   assertSlug(options.slug);
   const { file } = readQaLog(projectRoot, options.slug);
-  const lock = acquireQaLogLock(file);
-  try {
-    const content = fs.readFileSync(file, "utf8");
-    const { slug: _slug, ...patch } = options;
-    const upserted = upsertRegisterRow(content, patch);
-    const updated = refreshBookkeeping(upserted.content);
-    replaceQaLog(file, content, updated);
-    return result("decision", projectRoot, options.slug, updated, {
-      id: upserted.row.id,
-      created: upserted.created,
-      row: upserted.row,
-    });
-  } finally {
-    releaseQaLogLock(lock);
-  }
+  const content = fs.readFileSync(file, "utf8");
+  const { slug: _slug, ...patch } = options;
+  const upserted = upsertRegisterRow(content, patch);
+  const updated = refreshBookkeeping(upserted.content);
+  replaceQaLog(file, content, updated);
+  return result("decision", projectRoot, options.slug, updated, {
+    id: upserted.row.id,
+    created: upserted.created,
+    row: upserted.row,
+  });
 }
 
 export interface InterviewCheckpointOptions {
@@ -464,34 +360,29 @@ export interface InterviewCheckpointOptions {
 export function runInterviewCheckpoint(projectRoot: string, options: InterviewCheckpointOptions): InterviewResult {
   assertSlug(options.slug);
   const { file } = readQaLog(projectRoot, options.slug);
-  const lock = acquireQaLogLock(file);
-  try {
-    const content = fs.readFileSync(file, "utf8");
-    if (options.normalized.includes("pending") && options.normalized.length !== 1) {
-      throw new Error('--normalized pending cannot be combined with explicit Q numbers');
-    }
-    const outstanding = readQaLogState(content).outstanding;
-    const normalized = options.normalized.length === 1 && options.normalized[0] === "pending"
-      ? outstanding
-      : options.normalized;
-    const marked = markNormalized(content, normalized);
-    if (marked.missing.length > 0) {
-      throw new Error(
-        `cannot mark normalized: ${marked.missing.join(", ")} (entry missing or already normalized)`,
-      );
-    }
-    const state = readQaLogState(marked.content);
-    const checkpointed = appendCheckpoint(marked.content, { ...options, normalized }, state.questionCount);
-    let updated = setCursorValue(checkpointed.content, "last_materiality_sweep", `checkpoint ${checkpointed.number}`);
-    updated = refreshBookkeeping(updated);
-    replaceQaLog(file, content, updated);
-    return result("checkpoint", projectRoot, options.slug, updated, {
-      checkpoint: checkpointed.number,
-      normalized,
-    });
-  } finally {
-    releaseQaLogLock(lock);
+  const content = fs.readFileSync(file, "utf8");
+  if (options.normalized.includes("pending") && options.normalized.length !== 1) {
+    throw new Error('--normalized pending cannot be combined with explicit Q numbers');
   }
+  const outstanding = readQaLogState(content).outstanding;
+  const normalized = options.normalized.length === 1 && options.normalized[0] === "pending"
+    ? outstanding
+    : options.normalized;
+  const marked = markNormalized(content, normalized);
+  if (marked.missing.length > 0) {
+    throw new Error(
+      `cannot mark normalized: ${marked.missing.join(", ")} (entry missing or already normalized)`,
+    );
+  }
+  const state = readQaLogState(marked.content);
+  const checkpointed = appendCheckpoint(marked.content, { ...options, normalized }, state.questionCount);
+  let updated = setCursorValue(checkpointed.content, "last_materiality_sweep", `checkpoint ${checkpointed.number}`);
+  updated = refreshBookkeeping(updated);
+  replaceQaLog(file, content, updated);
+  return result("checkpoint", projectRoot, options.slug, updated, {
+    checkpoint: checkpointed.number,
+    normalized,
+  });
 }
 
 export function readInterviewStatus(projectRoot: string, slug: string): InterviewResult {

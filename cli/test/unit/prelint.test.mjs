@@ -21,13 +21,15 @@ test("clean qa-log passes with zero findings (false-positive zero)", () => {
   assert.equal(result.findings.length, 0);
 });
 
-test("qa question limits reject invalid values and the first over-budget heading", () => {
+test("qa question limits reject invalid values and warn on the first over-budget heading", () => {
   const clean = fixture("qa-clean.md");
   const invalid = prelintQaLog(clean.replace('where: "greenfield"', 'where: "greenfield"\nquestion_limit: 0'));
   assert.deepEqual(invalid.findings.map((finding) => finding.rule), ["qa-question-limit-invalid"]);
   const exceeded = prelintQaLog(clean.replace('where: "greenfield"', 'where: "greenfield"\nquestion_limit: 1'));
-  assert.deepEqual(exceeded.findings.map((finding) => finding.rule), ["qa-question-limit-exceeded"]);
-  assert.match(exceeded.findings[0].missing, /Q2/);
+  assert.equal(exceeded.ok, true);
+  assert.deepEqual(exceeded.findings, []);
+  assert.deepEqual(exceeded.warnings.map((finding) => finding.rule), ["qa-question-limit-exceeded"]);
+  assert.match(exceeded.warnings[0].missing, /Q2/);
 });
 
 test("clean PRD passes with zero findings (false-positive zero)", () => {

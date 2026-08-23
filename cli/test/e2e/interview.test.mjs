@@ -56,7 +56,7 @@ function runCli(cwd, args, { stub } = {}) {
   return spawnSync("node", [CLI, ...args], { cwd, encoding: "utf8", env });
 }
 
-test("question limit is persisted, surfaced at the boundary, and blocks an extra captured turn", () => {
+test("question limit is persisted, surfaced at the boundary, and preserves an extra captured turn", () => {
   const dir = makeProject();
   const transcript = makeCodexTranscript(dir, "limited-session");
   const invalid = runCli(dir, [
@@ -83,12 +83,12 @@ test("question limit is persisted, surfaced at the boundary, and blocks an extra
 
   appendCodexTurn(transcript, "Question beyond limit?", "second answer", 2);
   const exceeded = runCli(dir, ["interview", "sync", "--slug", "limited", "--transcript", transcript, "--json"]);
-  assert.equal(exceeded.status, 1, exceeded.stdout + exceeded.stderr);
-  const blocked = JSON.parse(exceeded.stdout);
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.cursor.questionBudgetExceeded, true);
-  assert.deepEqual(blocked.detail.imported, ["Q2"]);
-  assert.ok(blocked.drift.some((finding) => finding.rule === "qa-question-limit-exceeded"));
+  assert.equal(exceeded.status, 0, exceeded.stdout + exceeded.stderr);
+  const preserved = JSON.parse(exceeded.stdout);
+  assert.equal(preserved.ok, true);
+  assert.equal(preserved.cursor.questionBudgetExceeded, true);
+  assert.deepEqual(preserved.detail.imported, ["Q2"]);
+  assert.equal(preserved.drift.some((finding) => finding.rule === "qa-question-limit-exceeded"), false);
 });
 
 test("a full interview turn syncs from the transcript and the gate prelint accepts the result", (t) => {

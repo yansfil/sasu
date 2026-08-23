@@ -21,8 +21,6 @@ export interface TranscriptBinding {
 export interface TranscriptTurn {
   asked: string;
   answer: string;
-  questionRef: string;
-  answerRef: string;
   sourceRef: string;
 }
 
@@ -44,7 +42,7 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
-async function forEachJsonLine(file: string, visit: (record: JsonRecord, lineNumber: number) => void): Promise<void> {
+async function* jsonRecords(file: string): AsyncGenerator<JsonRecord> {
   const stream = fs.createReadStream(file, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
   let lineNumber = 0;
@@ -62,7 +60,7 @@ async function forEachJsonLine(file: string, visit: (record: JsonRecord, lineNum
       if (record === null) {
         throw new Error(`transcript record is not an object at ${path.basename(file)}:${lineNumber}`);
       }
-      visit(record, lineNumber);
+      yield record;
     }
   } finally {
     lines.close();
@@ -71,25 +69,7 @@ async function forEachJsonLine(file: string, visit: (record: JsonRecord, lineNum
 }
 
 async function firstJsonRecord(file: string): Promise<JsonRecord> {
-  const stream = fs.createReadStream(file, { encoding: "utf8" });
-  const lines = createInterface({ input: stream, crlfDelay: Infinity });
-  try {
-    for await (const line of lines) {
-      if (line.trim() === "") continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        throw new Error(`transcript JSON is invalid at ${path.basename(file)}:1`);
-      }
-      const record = objectValue(parsed);
-      if (record === null) throw new Error(`transcript record is not an object at ${path.basename(file)}:1`);
-      return record;
-    }
-  } finally {
-    lines.close();
-    stream.destroy();
-  }
+  for await (const record of jsonRecords(file)) return record;
   throw new Error(`transcript is empty: ${file}`);
 }
 
@@ -152,14 +132,10 @@ export async function locateTranscript(
 }
 
 export async function resolveCurrentTranscript(options: ResolveTranscriptOptions = {}): Promise<TranscriptIdentity | null> {
-  const expectedSessionId = options.sessionId === undefined ? currentSessionId() : options.sessionId;
   if (options.transcriptPath !== undefined) {
-    const identity = await inspectTranscript(options.transcriptPath);
-    if (expectedSessionId !== null && identity.sessionId !== expectedSessionId) {
-      throw new Error(`--transcript belongs to session ${identity.sessionId}, expected ${expectedSessionId}`);
-    }
-    return identity;
+    return inspectTranscript(options.transcriptPath);
   }
+  const expectedSessionId = options.sessionId === undefined ? currentSessionId() : options.sessionId;
   if (expectedSessionId === null) return null;
   const homeDir = options.homeDir ?? os.homedir();
   const candidates: TranscriptIdentity[] = [];
@@ -257,10 +233,10 @@ function isTurnComplete(runtime: TranscriptRuntime, record: JsonRecord): boolean
 
 export async function latestHumanRef(identity: TranscriptIdentity): Promise<string> {
   let latest: string | null = null;
-  await forEachJsonLine(identity.file, (record) => {
+  for await (const record of jsonRecords(identity.file)) {
     const message = messageFor(identity.runtime, record, "user");
     if (message !== null) latest = message.ref;
-  });
+  }
   if (latest === null) throw new Error(`transcript has no human message to use as a start boundary: ${identity.file}`);
   return latest;
 }
@@ -278,7 +254,7 @@ export async function extractTranscriptTurns(
   let completionMarkers = 0;
   const turns: TranscriptTurn[] = [];
 
-  await forEachJsonLine(identity.file, (record) => {
+  for await (const record of jsonRecords(identity.file)) {
     const human = messageFor(identity.runtime, record, "user");
     if (!started) {
       if (human?.ref === startRef) {
@@ -287,7 +263,7 @@ export async function extractTranscriptTurns(
         assistantCandidate = null;
         pendingQuestion = null;
       }
-      return;
+      continue;
     }
 
     const assistant = messageFor(identity.runtime, record, "assistant");
@@ -300,7 +276,7 @@ export async function extractTranscriptTurns(
       completionMarkers += 1;
       if (assistantCandidate !== null) pendingQuestion = assistantCandidate;
       assistantCandidate = null;
-      return;
+      continue;
     }
 
     if (human !== null && pendingQuestion !== null) {
@@ -308,15 +284,13 @@ export async function extractTranscriptTurns(
       turns.push({
         asked: pendingQuestion.text,
         answer: human.text,
-        questionRef: pendingQuestion.ref,
-        answerRef: human.ref,
         sourceRef: `${identity.runtime}:${identity.sessionId}:${human.ref}`,
       });
       pendingQuestion = null;
     } else if (human !== null) {
       sawVisibleHuman = true;
     }
-  });
+  }
 
   if (!sawStart) {
     throw new Error(`transcript start boundary ${startRef} was not found in session ${identity.sessionId}`);

@@ -189,7 +189,7 @@ test("normalization metadata never matches an answer continuation with the same 
   assert.deepEqual(readQaLogState(marked.content).outstanding, []);
 });
 
-test("question limits derive reached state and prelint blocks entries beyond the budget", () => {
+test("question limits derive reached state and warn without blocking captured evidence", () => {
   let content = renderInitialQaLog({ ...RENDER_INIT, questionLimit: 2 });
   assert.throws(() => renderInitialQaLog({ ...RENDER_INIT, questionLimit: 0 }), /positive integer/);
   let state = readQaLogState(content);
@@ -207,7 +207,9 @@ test("question limits derive reached state and prelint blocks entries beyond the
   content = appendQaEntry(content, { ...ENTRY, sourceRef: "codex:codex-test:u3" }).content;
   state = readQaLogState(content);
   assert.equal(state.questionBudgetExceeded, true);
-  assert.ok(runPrelint("qa-log", content).findings.some((finding) => finding.rule === "qa-question-limit-exceeded"));
+  const prelint = runPrelint("qa-log", content);
+  assert.equal(prelint.ok, true);
+  assert.ok(prelint.warnings.some((finding) => finding.rule === "qa-question-limit-exceeded"));
 });
 
 test("readQaLogState tracks checkpoint cadence", () => {
@@ -311,9 +313,15 @@ test("interview commands sync transcript turns idempotently and stay prelint-cle
   const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
   assert.deepEqual(runPrelint("qa-log", content).findings, []);
   fs.writeFileSync(qaLog, content.replace('status: "active"', 'status: "complete"'));
+  const sealedContent = fs.readFileSync(qaLog, "utf8");
+  const noOp = await runInterviewSync(dir, { slug, transcriptPath, sessionId: null });
+  assert.equal(noOp.detail.sealed, true);
+  assert.deepEqual(noOp.detail.imported, []);
+  assert.equal(fs.readFileSync(qaLog, "utf8"), sealedContent);
+  appendCodexTurn(transcriptPath, 2, "late question?", "late answer");
   await assert.rejects(
     () => runInterviewSync(dir, { slug, transcriptPath, sessionId: null }),
-    /complete and sealed/,
+    /complete and sealed; 1 later conversation turn/,
   );
 });
 
@@ -339,32 +347,6 @@ test("status surfaces open material nodes but not closure-only prelint rules", a
   const file = qaLogPathFor(dir, slug);
   fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("## Audit History", "## Renamed"));
   assert.ok(readInterviewStatus(dir, slug).drift.some((finding) => finding.rule === "qa-section-missing"));
-});
-
-test("mutating commands fail explicitly while another live process owns the qa-log lock", async () => {
-  const dir = makeProject();
-  const slug = "locked-log";
-  const transcriptPath = makeCodexTranscript(dir, "locked-session");
-  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
-  const lockFile = `${qaLogPathFor(dir, slug)}.lock`;
-  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: "other-writer" }));
-  try {
-    assert.throws(
-      () => runInterviewDecision(dir, {
-        slug,
-        id: "D-01",
-        kind: "fact",
-        area: "runtime",
-        text: "lock is held",
-        priority: "P2",
-        source: "repo",
-      }),
-      /being changed by process/,
-    );
-  } finally {
-    fs.unlinkSync(lockFile);
-  }
-  assert.equal(readInterviewStatus(dir, slug).detail.registerCount, 0);
 });
 
 test("sync binds a resumed runtime once and preserves turns from every bound session", async () => {

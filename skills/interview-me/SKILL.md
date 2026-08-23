@@ -55,10 +55,11 @@ sasu interview init --slug <topic-slug> --topic "<topic>" --where <where> --pack
 
 When the user explicitly sets a question count, add `--question-limit <n>` to this same init command.
 Do not invent a numeric limit when the user did not provide one.
-The cursor reports `questionBudgetReached` at the limit, and sync exits nonzero with `qa-question-limit-exceeded` if the transcript contains a later answer.
+The cursor reports `questionBudgetReached` at the limit and `questionBudgetExceeded` when the transcript contains a later exchange.
+An overage remains captured and non-blocking because a correction or closure response is not necessarily another question; stop asking, review the exchange, and pause only when the interaction budget was actually exceeded.
 
-If no agent session ID is available, pass its JSONL explicitly with `--transcript <session.jsonl>`.
-Do not pass that flag in a normal Claude or Codex session.
+If automatic discovery is unavailable or you are deliberately recovering a known prior session, pass its JSONL explicitly with `--transcript <session.jsonl>`.
+The explicit path is the override; do not pass it in a normal current-session flow.
 
 Ordinary answered questions require no tool call and no qa-log write.
 Keep the unresolved decision queue in the live conversation and ask the next question immediately.
@@ -99,20 +100,20 @@ Run a mandatory `interview sync` immediately before the final full normalization
 Then mark qa-log.md complete and hand it to gen-prd.
 If the sasu binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
-## Mid-Interview Coherence Check
+## On-Demand Coherence Check
 
-At each checkpoint, after recording it, run one advisory coherence check:
+Run the advisory coherence check only when the local checkpoint sweep identifies a concrete contradiction among resolved decisions or plausible drift from the stated goal:
 
 ~~~sh
 sasu interview coherence --slug <slug>
 ~~~
 
-This is an independent mid-interview judge - it has no access to the interview conversation and reads only the resolved decisions plus the Current Understanding summary, so it catches direction drift without inheriting the turn-by-turn framing that biases the interviewing agent.
+This is an independent diagnostic - it has no access to the interview conversation and reads only the resolved decisions plus the Current Understanding summary, so it can test a specific direction-drift suspicion without inheriting the turn-by-turn framing that biases the interviewing agent.
 It judges coherence, not completeness: it reports only contradictions among resolved decisions and drift away from the stated goal, never missing decisions (that is the closure gate's job).
 It is advisory and never blocks: it does not touch gate state or the retry budget, a judge failure is safe to ignore, and it self-skips until at least three decisions are resolved.
 Treat any finding as a high-priority next-question candidate - a P0 coherence finding means the interview may be building on an invalidated premise, so resolve it with the user before piling on more questions.
 A PASS with no findings is the common, correct result; do not manufacture follow-ups from it.
-Do not run this inside the answer-to-question path (it is one judge call); run it at the checkpoint, outside the latency budget.
+Do not run it on routine checkpoints, merely because three decisions exist, or inside the answer-to-question path.
 
 ## Turn Protocol
 
@@ -258,9 +259,9 @@ Use browser or runtime, API, DB, external, and human proof only where they prove
 ## Question Rules
 
 - Treat an explicit question-count limit or interview timebox as a hard interaction budget.
-  When that budget is a question count, persist it with `interview init --question-limit <n>` so the existing sync and prelint path enforce it without a per-turn command.
+  When that budget is a question count, persist it with `interview init --question-limit <n>` so the cursor surfaces the boundary without a per-turn command.
   Never exceed it to satisfy coherence or gap-audit findings.
-  At the limit, run the final sync and normalization, audit once, record every remaining material gap, and mark the qa-log `paused` rather than asking another question or claiming PRD readiness.
+  At the limit, run the final sync and normalization, review whether any later captured exchange was a correction or closure response, audit once, record every remaining material gap, and mark the qa-log `paused` rather than asking another question or claiming PRD readiness.
   Do not convert unresolved user-visible, scope, data, provider, access, cost, or lifecycle gaps into agent defaults merely to close within the budget.
 - Ask exactly one user-facing question at a time for P0 or P1 decisions, contradictions, UX choices that need judgment, and risk or operation questions.
 - Batch 3 to 5 low-risk confirmations only when they satisfy the silent-default rule.
@@ -387,7 +388,7 @@ normalization_checkpoint_every: 10
 4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
 5. Continue ordinary questions with no recording command; keep decisions in live context until the next checkpoint.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
-7. Every 10 answers, every 2 to 3 high-risk answers, or immediately when a P0 premise changes: run `interview sync`, batch-normalize the imported entries and Decision Register, run the intent, impact, and verification sweep, record it with `interview checkpoint`, then run the advisory `interview coherence` check and turn any finding into the next question.
+7. Every 10 answers, every 2 to 3 high-risk answers, or immediately when a P0 premise changes: run `interview sync`, batch-normalize the imported entries and Decision Register, run the intent, impact, and verification sweep, and record it with `interview checkpoint`; run `interview coherence` only if that sweep surfaces a concrete contradiction or goal-drift suspicion.
 8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
 9. Run `interview sync` again, then full normalization and `interview checkpoint`.
 10. Run the sasu gap-audit gate. Fall back to one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback only when the `sasu` binary or its judge backend is unavailable.

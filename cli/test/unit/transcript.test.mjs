@@ -141,9 +141,9 @@ test("transcript discovery is exact and missing boundaries fail explicitly", asy
   ]);
   assert.equal((await locateTranscript("codex", "codex-2", home)).file, file);
   assert.equal((await resolveCurrentTranscript({ sessionId: "codex-2", homeDir: home })).file, file);
-  await assert.rejects(
-    () => resolveCurrentTranscript({ transcriptPath: file, sessionId: "different-session" }),
-    /belongs to session codex-2, expected different-session/,
+  assert.equal(
+    (await resolveCurrentTranscript({ transcriptPath: file, sessionId: "different-session" })).sessionId,
+    "codex-2",
   );
   await assert.rejects(
     () => extractTranscriptTurns({ runtime: "codex", sessionId: "codex-2", file }, "missing"),

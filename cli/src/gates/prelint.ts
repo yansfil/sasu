@@ -231,12 +231,12 @@ export function prelintQaLog(content: string): PrelintResult {
   }
 
   if (firstQuestionOverLimit !== null && questionLimit !== null) {
-    findings.push(
-      finding(
+    warnings.push(
+      warning(
         "qa-question-limit-exceeded",
         firstQuestionOverLimit.line,
         `Raw Q&A reached Q${firstQuestionOverLimit.number}, beyond the user-set limit of ${questionLimit}`,
-        `Do not ask another question; normalize the captured answers, record remaining gaps, and pause the interview at Q${questionLimit}.`,
+        `Preserve the captured evidence, do not ask another question, and pause if the extra exchange was a real question rather than a correction or closure response.`,
       ),
     );
   }

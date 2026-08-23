@@ -103,9 +103,9 @@ sasu doctor           judge backends, verify commands, contract version
 
 The interview commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation.
 Ordinary Q&A performs no file write; `interview sync` imports completed turns in one batch at checkpoints, resume, and closure.
-When `interview init --question-limit <n>` records an explicit user budget, the cursor derives reached and exceeded state and prelint blocks any Q number beyond it.
+When `interview init --question-limit <n>` records an explicit user budget, the cursor derives reached and exceeded state without rejecting later captured evidence; the interviewer stops asking and reviews whether an extra exchange was a correction or closure response.
 Every mutating interview command re-runs the structural qa-log prelint (closure-only rules excluded) and reports drift immediately instead of at the gate.
-`interview coherence` adds an independent mid-interview check that the resolved decisions cohere and stay on the stated goal - it reads only the decisions (not the conversation), so it catches direction drift the interviewing agent is biased not to see, and stays advisory: it never touches gate state or the retry budget and its findings are next-question candidates.
+`interview coherence` is an on-demand independent check for a concrete contradiction or goal-drift suspicion - it reads only the decisions (not the conversation) and stays advisory: it never touches gate state or the retry budget.
 It judges only coherence, never completeness (that is the gap-audit closure gate), and uses the project-configured `routine` judge profile.
 
 Every command accepts `--json` for structured output: a top-level `contractVersion` (schema-change detection for programmatic consumers), the gate verdict/attempt state, and on gate/verify a `prelint` key kept separate from judge findings.

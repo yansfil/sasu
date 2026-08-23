@@ -77,7 +77,7 @@ If `agents/interview/<topic-slug>/qa-log.md` exists for the same topic (or the l
 The main session is the sole qa-log writer for this run.
 When that qa-log is not complete, read the `interview-me` skill, run `sasu interview sync --slug <topic-slug>` before interpreting its outstanding state, and finish its raw capture, full normalization, closure, and audit bookkeeping in the current main session before drafting the PRD.
 Run `interview sync` once more immediately before the final normalization and gap-audit so the last human answer cannot be omitted.
-Do not bind or sync a qa-log that is already complete and sealed.
+A complete qa-log remains read-only: an idempotent `interview sync` may confirm that it has no new turns, while any later turn still requires an explicit reopen before import.
 Do not dispatch an Implementor to finish or reinterpret an active qa-log.
 
 Before authoring a PRD from a real qa-log, require its live closure verdict:
