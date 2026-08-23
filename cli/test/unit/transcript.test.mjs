@@ -121,6 +121,29 @@ test("Claude ignores compact and local-command records stored as user messages",
   ]);
 });
 
+test("Claude ignores background notifications and synthetic API failures between interview turns", async () => {
+  const dir = tempDir();
+  const file = writeJsonl(path.join(dir, "claude-background.jsonl"), [
+    { type: "last-prompt", sessionId: "claude-background" },
+    { type: "user", uuid: "u0", isSidechain: false, message: { role: "user", content: "begin" } },
+    { type: "assistant", uuid: "status", isSidechain: false, message: { role: "assistant", content: [{ type: "text", text: "감사를 실행 중입니다." }] } },
+    { type: "system", subtype: "turn_duration", uuid: "done-status", isSidechain: false },
+    { type: "user", uuid: "notification", isSidechain: false, message: { role: "user", content: "<task-notification>background failed</task-notification>" } },
+    { type: "assistant", uuid: "api-error", isSidechain: false, error: "server_error", message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text: "API Error: unavailable" }] } },
+    { type: "system", subtype: "turn_duration", uuid: "done-error", isSidechain: false },
+    { type: "user", uuid: "reaction", isSidechain: false, message: { role: "user", content: "응?" } },
+    { type: "assistant", uuid: "question", isSidechain: false, message: { role: "assistant", content: [{ type: "text", text: "실제 질문인가요?" }] } },
+    { type: "system", subtype: "turn_duration", uuid: "done-question", isSidechain: false },
+    { type: "user", uuid: "answer", isSidechain: false, message: { role: "user", content: "실제 답입니다." } },
+  ]);
+  const identity = await inspectTranscript(file);
+  const turns = await extractTranscriptTurns(identity, "u0");
+  assert.deepEqual(turns.map(({ asked, answer, sourceRef }) => ({ asked, answer, sourceRef })), [
+    { asked: "실제 질문인가요?", answer: "실제 답입니다.", sourceRef: "claude:claude-background:answer" },
+  ]);
+  assert.equal(await latestHumanRef(identity), "answer");
+});
+
 test("completed-turn marker drift fails instead of silently returning no turns", async () => {
   const dir = tempDir();
   const file = writeJsonl(path.join(dir, "codex-no-completion.jsonl"), [

@@ -170,7 +170,17 @@ function isSyntheticClaudeUserMessage(record: JsonRecord, text: string): boolean
   if (record["isCompactSummary"] === true) return true;
   const trimmed = text.trimStart();
   if (/^\[Request interrupted\b/iu.test(trimmed)) return true;
-  return /^(?:<command-name>|<local-command-(?:stdout|caveat)>)/u.test(trimmed);
+  return /^(?:<command-name>|<local-command-(?:stdout|caveat)>|<task-notification>)/u.test(trimmed);
+}
+
+function isClaudeTaskNotification(record: JsonRecord): boolean {
+  if (record["type"] !== "user" || record["isSidechain"] === true || record["isMeta"] === true) {
+    return false;
+  }
+  const message = objectValue(record["message"]);
+  return message?.["role"] === "user"
+    && typeof message["content"] === "string"
+    && message["content"].trimStart().startsWith("<task-notification>");
 }
 
 function codexMessage(record: JsonRecord, role: "assistant" | "user"): { ref: string; text: string } | null {
@@ -196,6 +206,7 @@ function claudeMessage(record: JsonRecord, role: "assistant" | "user"): { ref: s
   if (record["type"] !== role || record["isSidechain"] === true || record["isMeta"] === true) return null;
   const message = objectValue(record["message"]);
   if (message?.["role"] !== role) return null;
+  if (role === "assistant" && (record["error"] != null || message["model"] === "<synthetic>")) return null;
   const content = message["content"];
   let text = "";
   if (typeof content === "string") {
@@ -255,6 +266,11 @@ export async function extractTranscriptTurns(
   const turns: TranscriptTurn[] = [];
 
   for await (const record of jsonRecords(identity.file)) {
+    if (identity.runtime === "claude" && isClaudeTaskNotification(record)) {
+      assistantCandidate = null;
+      pendingQuestion = null;
+      continue;
+    }
     const human = messageFor(identity.runtime, record, "user");
     if (!started) {
       if (human?.ref === startRef) {
