@@ -63,7 +63,7 @@ node scripts/install-local-skills.mjs
 | `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$implement` becomes `/implement`) |
 | `scripts/` | Symlinked to this repository | Symlinked to this repository |
 | `references/` | Symlinked to this repository | Copied with the same substitutions as `SKILL.md` |
-| Hooks | No implement lifecycle hooks | No implement lifecycle hooks |
+| Hooks | `~/.codex/hooks.json` (`Stop`) | `~/.claude/settings.json` (`Stop`, `WorktreeCreate`) |
 
 The mechanics that make one source possible:
 
@@ -74,6 +74,44 @@ The mechanics that make one source possible:
   The Claude copies of `SKILL.md` and `references/*.md` are generated, so a skill edit in this repository lands in both runtimes on the next install.
 - **Idempotent hook retirement.**
   The installer removes legacy implement hooks without touching unrelated entries, and refuses to overwrite a foreign skill directory.
+
+## Optional Git Hooks
+
+Two standalone hooks in `scripts/hooks/` protect the working tree while an agent drives it.
+They are optional and independent of the skills: install them once and every repository on the machine gets them.
+
+| Hook | Event | What it does |
+| --- | --- | --- |
+| `git-checkpoint.sh` | `Stop` | Commits the working tree as `checkpoint: N file(s)` at the end of every turn, so no agent turn can silently lose work. Secret-looking files (`.env`, `*.pem`, `*id_rsa*`, `*.key`, `credentials.json`, ...) and files over 10MB are unstaged first. Skips detached HEAD, empty repositories, and in-progress rebase/merge/cherry-pick. Always exits 0. |
+| `worktree-create.sh` | `WorktreeCreate` (Claude Code only) | Replaces default worktree creation: checkpoints a dirty tree first so uncommitted WIP follows the worktree, branches from `HEAD` (not the default branch), creates the worktree under `<repo>/.claude/worktrees/<name>`, and runs `<repo>/.claude/worktree-bootstrap.sh` if it exists (env symlinks, dependency install). A failing bootstrap rolls the worktree and branch back. |
+
+Both write to `${SASU_HOOK_LOG:-~/.sasu/hooks.log}`.
+
+Turn checkpointing off per repository with `touch .git/no-checkpoint`, or per invocation with `AGENT_CHECKPOINT=0`.
+Undo the last `N` checkpoints with `git reset --soft HEAD~N`.
+
+### Install
+
+```sh
+node scripts/hooks/install.mjs              # register in both runtimes
+node scripts/hooks/install.mjs --uninstall  # remove
+```
+
+It is idempotent, preserves foreign hook entries, and is deliberately separate
+from the skill installer: these hooks are an opt-in machine-wide policy, not
+part of the skill contract, so `install-local-skills.mjs` never touches them.
+
+| | Codex (`~/.codex/hooks.json`) | Claude Code (`~/.claude/settings.json`) |
+| --- | --- | --- |
+| `Stop` | `git-checkpoint.sh` | `git-checkpoint.sh` |
+| `WorktreeCreate` | not supported by the runtime | `worktree-create.sh` |
+
+Confirm with a throwaway repository:
+
+```sh
+cd "$(mktemp -d)" && git init -q . && echo a > a && git add -A && git commit -qm init
+echo b > b && ~/projects/sasu/scripts/hooks/git-checkpoint.sh && git log --oneline
+```
 
 ## The Sasu CLI
 
@@ -210,6 +248,10 @@ skills/
   remember/  SKILL.md
 scripts/
   install-local-skills.mjs   dual-runtime installer + legacy hook retirement
+  challenge_trigger.mjs      UserPromptSubmit hook: !rv routing + round budget
+  hooks/install.mjs          opt-in installer for the two git-safety hooks
+  hooks/git-checkpoint.sh    optional Stop hook: turn-end checkpoint commit
+  hooks/worktree-create.sh   optional WorktreeCreate hook: checkpoint + bootstrap
 tests/
   prd_parser_unit.test.mjs        direct unit tests for cli/lib/prd_parser.js
   rules_engine.test.mjs           rules add/check/relevant + seed-agents-md
