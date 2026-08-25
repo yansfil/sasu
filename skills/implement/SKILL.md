@@ -174,8 +174,8 @@ The CLI owns this order:
 2. Run deterministic prelint and mechanical commands.
 3. Stop before LLM calls when mechanical proof fails.
 4. Run the acceptance judge and fidelity judge concurrently as separate calls.
-5. On `high-risk`, run one final risk judge after both base lanes finish.
-6. Record the input fingerprint, lane verdicts, findings, errors, and timing in `state.json`.
+5. On `high-risk`, run one final risk review after both base lanes finish and fold its successful output into the risk ledger.
+6. Record the input fingerprint, lane-local verdicts, ledger findings, errors, and timing in `state.json`.
 
 Acceptance judge responsibility:
 
@@ -190,12 +190,19 @@ Fidelity judge responsibility:
 - Use a fixed rubric with context selected from the current PRD source situation.
 - Do not repeat per-verification artifact sufficiency or code correctness judgment.
 
+Risk reviewer responsibility on `high-risk`:
+
+- Inspect residual ship-safety risks after acceptance and fidelity finish.
+- Record findings in the `state.json` risk ledger without voting on the unified verdict.
+- Keep unresolved findings open, mark delta-proven resolutions fixed, and leave explicit user acceptance to `sasu implement risk --accept --id <RF#> --evidence "<verbatim user approval>"`.
+- Leave the ledger unchanged when the risk call errors.
+
 For a conversation-only PRD, Decision Traceability is the canonical intent source because the CLI cannot read chat history.
 For a qa-log PRD, full qa-log is used unless a fresh spec gate already settled the qa-log to PRD leg.
 
 Do not automatically retry a generative judge.
 A new explicit verify command creates a new attempt.
-The CLI bounds the autonomous loop with `judge.retryBudget`: non-PASS attempts spend the fix budget, judge-only ERRORs use a separate consecutive-error gauge, prelint corrections are free, and PASS resets both gauges.
+The CLI bounds the autonomous loop with `judge.retryBudget`: non-PASS attempts spend the fix budget, acceptance/fidelity ERROR attempts use a separate consecutive-error gauge, prelint corrections are free, and PASS resets both gauges.
 When verify reports `budgetExhausted` or `judgeErrorLoop`, stop rather than running another attempt.
 The only two exits are `sasu implement finalize --status blocked` and, when the user explicitly approves more verification, `sasu implement verify --grant-budget "<the user's words verbatim>"`.
 Never archive or replace `state.json` to mint a fresh run; the grant keeps the whole history in one record.
@@ -209,7 +216,7 @@ sasu implement finalize
 ```
 
 Finalize reads state and hashes only.
-It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale source, stale artifacts, missing high-risk risk PASS, unanswered design comments, and malformed state.
+It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale source, stale artifacts, open blocking risk findings, unanswered design comments, and malformed state.
 It does not run tests, judges, browser tools, capture tools, or other subprocesses.
 
 Running finalize twice with the same input returns the same completed result without creating another verification attempt.
@@ -256,7 +263,7 @@ At minimum report:
 - Actual module boundaries and removed legacy paths.
 - Task and acceptance-criterion status.
 - Verification evidence by mode.
-- Acceptance, fidelity, and optional risk invocation IDs, verdicts, and timing.
+- Acceptance and fidelity voting results plus optional risk invocation, lane-local verdict, timing, and final ledger dispositions.
 - Evidence that mechanical failure made zero judge calls.
 - Evidence that finalize made zero execution calls.
 - Completion fingerprint and receipt path.

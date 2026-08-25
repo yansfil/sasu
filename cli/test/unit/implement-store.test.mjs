@@ -5,7 +5,37 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { artifactSourceFingerprint, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths } from "../../dist/implement/store.js";
+import { artifactSourceFingerprint, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, parseImplementState } from "../../dist/implement/store.js";
+
+test("early v5 state without riskFindings loads with an empty risk ledger", () => {
+  const parsed = parseImplementState(JSON.stringify({
+    schema: "sasu.implement.state.v5",
+    status: "active",
+    topicSlug: "fixture",
+    projectRoot: "/tmp/fixture",
+    worktree: null,
+    runDir: "agents/runs/fixture",
+    prdPath: "agents/prd/fixture/prd.md",
+    prd: {
+      sha256: "prd-sha",
+      snapshotPath: "agents/runs/fixture/prd.md",
+      reviewProfile: "high-risk",
+    },
+    initialSource: { head: null, digest: "source", entries: [] },
+    baselineAttribution: { disposition: "clean", paths: [], baselineDigest: "source", head: null },
+    tasks: [],
+    requirements: [],
+    acceptanceCriteria: [],
+    verification: [],
+    deviations: [],
+    artifacts: [],
+    verificationAttempts: [],
+    retirement: null,
+    completion: null,
+  }));
+
+  assert.deepEqual(parsed.riskFindings, []);
+});
 
 test("source freshness is commit-invariant when judged bytes do not change", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-fingerprint-"));

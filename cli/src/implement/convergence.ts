@@ -9,6 +9,7 @@ import type {
   RiskLaneResult,
   SourceEntry,
   SourceSnapshot,
+  TrackedRiskFinding,
   UnifiedVerificationAttempt,
   VerificationInputManifest,
   VerificationRoundContext,
@@ -176,7 +177,8 @@ function parseRiskDisposition(
   }
   if (reason === null) return `priorDispositions[${index}].reason must be a non-empty string`;
   const previous = priorById.get(id);
-  if (record["status"] === "resolved" && previous?.severity === "blocking") {
+  if (previous === undefined) return `priorDispositions[${index}].id must name a prior finding`;
+  if (record["status"] === "resolved" && (previous.severity === "blocking" || record["deltaBasis"] !== undefined)) {
     const basis = parseDeltaBasis(record["deltaBasis"], context, `priorDispositions[${index}]`);
     if (typeof basis === "string") return `resolving prior blocking ${id} requires ${basis}`;
     return { id, status: record["status"], reason, deltaBasis: basis };
@@ -188,6 +190,7 @@ export function validateRiskVerdict(
   value: unknown,
   prior: RiskLaneResult | null,
   context: VerificationRoundContext,
+  nextFindingNumber?: number,
 ): RiskLaneResult | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
   const raw = value as Record<string, unknown>;
@@ -218,7 +221,10 @@ export function validateRiskVerdict(
 
   const dispositionById = new Map((priorDispositions ?? []).map((entry) => [entry.id, entry]));
   const reusedPriorIds = new Set<string>();
-  let nextId = priorFindings.reduce((high, entry) => Math.max(high, Number(entry.id.replace(/^RF/, "")) || 0), 0) + 1;
+  let nextId = Math.max(
+    priorFindings.reduce((high, entry) => Math.max(high, Number(entry.id.replace(/^RF/, "")) || 0), 0) + 1,
+    nextFindingNumber ?? 1,
+  );
   const findings: RiskFinding[] = [];
   for (const [index, entry] of raw["findings"].entries()) {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
@@ -296,4 +302,69 @@ export function validateRiskVerdict(
     findings,
     ...(priorDispositions !== undefined ? { priorDispositions } : {}),
   };
+}
+
+/**
+ * Applies one successful risk-lane result to the state-owned ledger.
+ *
+ * The judge may prove that an open item was fixed, or keep it open. Only a
+ * finding marked `new` (or any first-round finding) can append an entry. A
+ * risk ERROR never reaches this function, which leaves the ledger untouched.
+ */
+export function reconcileRiskFindings(
+  tracked: readonly TrackedRiskFinding[],
+  result: RiskLaneResult,
+  attemptId: string,
+  at: string,
+): TrackedRiskFinding[] {
+  const next = tracked.map((entry) => ({
+    ...entry,
+    ...(entry.resolution !== undefined ? { resolution: { ...entry.resolution } } : {}),
+  }));
+  const byId = new Map(next.map((entry) => [entry.id, entry]));
+
+  for (const disposition of result.priorDispositions ?? []) {
+    const entry = byId.get(disposition.id);
+    if (entry === undefined || entry.status !== "open") {
+      throw new Error(`risk disposition ${disposition.id} does not name an open ledger finding`);
+    }
+    if (disposition.status === "resolved") {
+      if (entry.severity === "blocking" && disposition.deltaBasis === undefined) {
+        throw new Error(`resolved risk disposition ${disposition.id} is missing deltaBasis`);
+      }
+      const deltaEvidence = disposition.deltaBasis === undefined
+        ? "deltaBasis=none (advisory resolution)"
+        : `deltaBasis ${disposition.deltaBasis.kind}=${disposition.deltaBasis.value}`;
+      entry.status = "fixed";
+      entry.resolution = {
+        at,
+        evidence: `risk lane attempt ${attemptId}: ${disposition.reason}; ${deltaEvidence}`,
+      };
+    }
+  }
+
+  for (const finding of result.findings) {
+    if (finding.origin === "prior-unresolved") {
+      const priorId = finding.priorFindingId;
+      const entry = priorId === undefined ? undefined : byId.get(priorId);
+      if (entry === undefined || entry.status !== "open") {
+        throw new Error(`unresolved risk finding ${priorId ?? finding.id} does not name an open ledger finding`);
+      }
+      entry.severity = finding.severity;
+      entry.text = finding.text;
+      continue;
+    }
+    if (byId.has(finding.id)) throw new Error(`new risk finding reuses ledger id ${finding.id}`);
+    const entry: TrackedRiskFinding = {
+      id: finding.id,
+      severity: finding.severity,
+      text: finding.text,
+      originAttemptId: attemptId,
+      status: "open",
+    };
+    next.push(entry);
+    byId.set(entry.id, entry);
+  }
+
+  return next;
 }

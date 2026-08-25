@@ -8,12 +8,10 @@ Read this reference before unified verify, finalize, or a blocked handoff.
 | --- | --- |
 | `trivial` | acceptance and fidelity in parallel |
 | `standard` | acceptance, fidelity, and design in parallel |
-| `high-risk` | acceptance, fidelity, and design in parallel, then risk |
+| `high-risk` | acceptance and fidelity vote; design reviews in parallel; risk reviews after them into a ledger |
 
-The CLI executes these policies; there is no manual prompt generation or review-record step.
 Acceptance, fidelity, and design use the project `routine` judge profile.
-The additional risk lane uses the `high-risk` judge profile.
-By default those profiles are Codex Luna xhigh and Codex Sol xhigh, with Claude Sonnet 5 xhigh and Claude Opus 5 xhigh fallbacks respectively.
+The risk lane uses `high-risk`; the defaults are Codex Luna/Sol xhigh with Claude Sonnet 5/Opus 5 xhigh fallbacks respectively.
 
 ## Design Lane
 
@@ -31,6 +29,21 @@ The `verify` response carries `design.open` in full plus the count in `message`;
 
 This lane owns quality review; do not spawn ad-hoc adversarial review subagents on top of it.
 A prior run burned 92 minutes on five self-invoked review rounds against a verify gate that never returned a criterion FAIL.
+
+## Risk Lane
+
+The high-risk reviewer runs after acceptance and fidelity because their results are part of its input.
+Its lane-local PASS, FAIL, or ERROR is recorded on the attempt but does not vote on the unified verdict.
+A successful result updates the single risk ledger in `state.json`: unresolved prior findings stay open, delta-proven resolved findings become `fixed`, and findings marked `new` receive the next stable `RF<n>` id.
+A risk ERROR changes no ledger entry.
+
+An open blocking finding prevents `finalize --status complete`; an open advisory finding stays visible without blocking completion.
+
+- **Fix it**, then re-run `sasu implement verify`; the next risk review must disposition it as resolved and ground a prior blocking resolution in an exact changed path or new evidence item.
+- **Accept it** with the user's approval verbatim: `sasu implement risk --accept --id <RF#> --evidence "<verbatim user approval>"`.
+
+Both blocking and advisory findings may be accepted.
+The acceptance evidence and every judge-proven resolution remain beside the finding in `state.json` and `implementation-result.md`.
 
 ## Fidelity Rubric
 
@@ -51,18 +64,15 @@ The acceptance judge owns those questions.
 
 ## Unified Verdict
 
-Run:
+Run `sasu implement verify`.
 
-```sh
-sasu implement verify
-```
-
-The unified verdict is PASS only when every required lane is PASS.
+The unified verdict is PASS only when acceptance and fidelity are PASS.
+Design has no verdict, and the risk lane's local verdict updates the ledger instead of voting.
 NOT_RUN, FAIL, BLOCKED, ERROR, and STALE are not completion states.
 
 A source or evidence change after PASS makes the result stale.
 Run verify again explicitly after the implementation and final evidence are coherent.
-Each explicit run returns the current fix budget and consecutive judge-error gauges.
+Each explicit run returns the current fix budget and consecutive voting-lane judge-error gauges.
 When `budgetExhausted` or `judgeErrorLoop` is true, the CLI refuses further verification work.
 From that terminal state there are exactly two exits, both recorded in the same `state.json`:
 
@@ -73,24 +83,13 @@ Do not archive, rename, or replace `state.json` to start over; a fresh run disca
 
 ## Finalize
 
-Run:
+Run `sasu implement finalize`.
 
-```sh
-sasu implement finalize
-```
-
-Finalize validates only current state, source hashes, artifact hashes, and the fresh unified PASS.
+Finalize validates only current state, source hashes, artifact hashes, the fresh unified PASS, design dispositions, and the absence of open blocking risk findings.
 It performs no tests, judge calls, capture calls, browser work, or subprocess execution.
 
-Successful finalize writes:
-
-```text
-agents/runs/<topic-slug>/receipt.json
-agents/runs/<topic-slug>/implementation-result.md
-```
-
-Both outputs derive from `state.json`.
-They are not independent completion ledgers.
+Successful finalize writes `agents/runs/<topic-slug>/receipt.json` and `agents/runs/<topic-slug>/implementation-result.md`.
+Both outputs derive from `state.json`; they are not independent completion ledgers.
 
 Running finalize again with the same completion fingerprint returns the existing result.
 

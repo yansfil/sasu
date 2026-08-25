@@ -305,19 +305,21 @@ export function riskPrompt(
   roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
   readablePaths: string[] = [],
 ): string {
-  return `You are the final adversarial risk judge for a high-risk implementation.
+  return `You are the final adversarial risk reviewer for a high-risk implementation.
 The acceptance and fidelity judges have already completed. Inspect only residual sensitive, destructive, irreversible, costly, security, and evidence-integrity risks in the run-owned change material below.
+
+Your lane-local verdict is an honest record of this review, not a vote in the unified acceptance/fidelity verdict. New findings enter the state-owned risk ledger. An open blocking ledger finding prevents finalize until a later risk review proves it fixed or the user explicitly accepts it.
 
 SCOPE:
 - Judge only this run's changes. Do not re-litigate acceptance criteria or fidelity; those lanes already settled.
 - Delivery evidence is out of scope: branch, commit, PR, CI, merge, deployment, service health, and rollback receipts belong to the ship stage that follows this run. Their absence is never a finding here.
-- severity "blocking": a concrete residual risk demonstrable from the change material that makes shipping this diff unsafe (data loss, credential or sensitive-data exposure, irreversible or costly side effects, fabricated or contradictory evidence).
-- severity "advisory": everything else worth recording - hardening ideas, unproven-but-plausible concerns, follow-up work. Advisory findings do not fail the run.
+- severity "blocking": a concrete residual risk demonstrable from the change material that makes shipping this diff unsafe (data loss, credential or sensitive-data exposure, irreversible or costly side effects, fabricated or contradictory evidence). It blocks finalize while its ledger entry is open.
+- severity "advisory": everything else worth recording - hardening ideas, unproven-but-plausible concerns, follow-up work. Its ledger entry does not block finalize.
 - When you cannot demonstrate the failure path from the material below, the finding is advisory, not blocking.
 
 ${JSON_RULE}
-{ "verdict": "PASS" | "FAIL", "priorDispositions": [{ "id": "each prior RF id on round 2+", "status": "resolved" | "unresolved", "reason": "why", "deltaBasis": "required to resolve a prior blocking finding" }], "findings": [{ "severity": "blocking" | "advisory", "text": "specific residual risk", "origin": "prior-unresolved" | "new", "priorFindingId": "required for prior-unresolved", "deltaBasis": "required for a new blocking finding on round 2+ or advisory-to-blocking escalation" }] }
-FAIL requires at least one blocking finding. PASS means no blocking finding; advisory findings are allowed on PASS.
+{ "verdict": "PASS" | "FAIL", "priorDispositions": [{ "id": "each prior open RF id on round 2+", "status": "resolved" | "unresolved", "reason": "why", "deltaBasis": "required to resolve a prior blocking finding" }], "findings": [{ "severity": "blocking" | "advisory", "text": "specific residual risk", "origin": "prior-unresolved" | "new", "priorFindingId": "required for prior-unresolved", "deltaBasis": "required for a new blocking finding on round 2+ or advisory-to-blocking escalation" }] }
+The lane-local FAIL requires at least one blocking finding. Lane-local PASS means no blocking finding; advisory findings are allowed on PASS.
 An unresolved prior blocking finding must remain blocking. Resolving one requires a deltaBasis naming one exact changed path or new evidence entry from this round.
 
 ACCEPTANCE RESULT:

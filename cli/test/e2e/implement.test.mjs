@@ -500,6 +500,12 @@ test("a real second unified round dispositions prior findings and admits only de
     deltaBasis: { kind: "changed-path", value: "impl.txt" },
   }]);
   assert.equal(latest.lanes.risk.result.findings[0].id, "RF2");
+  const ledger = readState(root).riskFindings;
+  assert.equal(ledger[0].status, "fixed");
+  assert.match(ledger[0].resolution.evidence, new RegExp(`attempt ${latest.id}`));
+  assert.match(ledger[0].resolution.evidence, /deltaBasis changed-path=impl\.txt/);
+  assert.equal(ledger[1].id, "RF2");
+  assert.equal(ledger[1].status, "open");
   const prompt = fs.readFileSync(path.join(capture, "implement_risk.prompt.txt"), "utf8");
   assert.match(prompt, /PRIOR RISK RESULT/);
   assert.match(prompt, /CHANGED PATHS SINCE THE PRIOR ROUND:\n- impl\.txt/);
@@ -765,10 +771,7 @@ test("oversized design and risk diffs switch to isolated changed-file access", (
   }
 });
 
-test("risk findings fail the run only at the blocking severity floor", () => {
-  // Advisory findings ride along on PASS: without the floor, a fresh
-  // adversarial judge always finds something new and the lane cannot
-  // converge (2026-08-13 creator-assist: 17 rounds, 89 findings, 0 repeats).
+test("an open blocking risk is ledgered outside the unified verdict, blocks finalize, and user acceptance releases it", () => {
   const root = makeProject({ profile: "high-risk" });
   const { file, capture } = stub(root, "high-risk");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
@@ -790,46 +793,119 @@ test("risk findings fail the run only at the blocking severity floor", () => {
   assert.deepEqual(readState(root).verificationAttempts.at(-1).lanes.risk.result.findings, [
     { id: "RF1", severity: "advisory", text: "consider rate limiting the retry path" },
   ]);
+  assert.deepEqual(readState(root).riskFindings, [{
+    id: "RF1",
+    severity: "advisory",
+    text: "consider rate limiting the retry path",
+    originAttemptId: readState(root).verificationAttempts.at(-1).id,
+    status: "open",
+  }]);
   const riskPrompt = fs.readFileSync(path.join(capture, "implement_risk.prompt.txt"), "utf8");
   assert.match(riskPrompt, /Delivery evidence is out of scope/);
   assert.match(riskPrompt, /Their absence is never a finding here/);
 
-  // A blocking finding fails the lane and the run.
+  // A later blocking finding fails only the lane. The unified acceptance and
+  // fidelity verdict stays PASS, while the ledger becomes finalize authority.
   fs.writeFileSync(path.join(root, "impl.txt"), "a changed risk-bearing path\n");
+  const blockingText = "credentials are written to a world-readable log and remain visible to every local account on the host";
   configured.byPurpose["implement:risk"] = {
     verdict: "FAIL",
-    priorDispositions: [{ id: "RF1", status: "resolved", reason: "the advisory was reviewed" }],
+    priorDispositions: [{
+      id: "RF1",
+      status: "resolved",
+      reason: "the retry path is now rate limited",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    }],
     findings: [{
       severity: "blocking",
-      text: "credentials are written to a world-readable log",
+      text: blockingText,
       origin: "new",
       deltaBasis: { kind: "changed-path", value: "impl.txt" },
     }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
   const blocking = run(root, ["implement", "verify"], { env });
-  assert.equal(blocking.status, 1);
+  assert.equal(blocking.status, 0, blocking.stderr + blocking.stdout);
   assert.equal(blocking.json.detail.attempt.lanes.risk.verdict, "FAIL");
-  assert.equal(blocking.json.detail.attempt.verdict, "FAIL");
+  assert.equal(blocking.json.detail.attempt.verdict, "PASS");
+  assert.match(blocking.json.message, /1 blocking risk finding\(s\) await resolution/);
 
-  // Free-prose string findings and severity-inconsistent verdicts are
-  // rejected as invalid output instead of silently accepted.
-  configured.byPurpose["implement:risk"] = { verdict: "FAIL", findings: ["prose finding without severity"] };
-  fs.writeFileSync(file, JSON.stringify(configured));
-  const malformed = run(root, ["implement", "verify"], { env });
-  assert.equal(malformed.status, 1);
-  assert.equal(malformed.json.detail.attempt.lanes.risk.verdict, "ERROR");
-  assert.equal(malformed.json.detail.attempt.lanes.risk.error.code, "judge-invalid-output");
+  const state = readState(root);
+  assert.equal(state.riskFindings[0].status, "fixed");
+  assert.match(state.riskFindings[0].resolution.evidence, new RegExp(`attempt ${state.verificationAttempts.at(-1).id}`));
+  assert.match(state.riskFindings[0].resolution.evidence, /deltaBasis changed-path=impl\.txt/);
+  assert.deepEqual(state.riskFindings[1], {
+    id: "RF2",
+    severity: "blocking",
+    text: blockingText,
+    originAttemptId: state.verificationAttempts.at(-1).id,
+    status: "open",
+  });
 
+  const status = run(root, ["implement", "status"]);
+  assert.equal(status.status, 0, status.stderr + status.stdout);
+  assert.equal(status.json.detail.counts.riskFindingsOpen, 1);
+  assert.deepEqual(status.json.detail.riskFindings.open, [{
+    id: "RF2",
+    severity: "blocking",
+    text: blockingText.slice(0, 80),
+  }]);
+
+  const refused = run(root, ["implement", "finalize"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /risk finding RF2 \(blocking\) is open/);
+  assert.match(refused.json.message, /fix it and re-run `sasu implement verify`/);
+  assert.match(refused.json.message, /sasu implement risk --accept --id RF2 --evidence/);
+
+  const approval = "I approve accepting RF2 for this release";
+  const accepted = run(root, ["implement", "risk", "--accept", "--id", "RF2", "--evidence", approval]);
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  assert.equal(accepted.json.detail.finding.status, "accepted");
+  assert.equal(accepted.json.detail.finding.resolution.evidence, approval);
+  assert.deepEqual(accepted.json.detail.open, []);
+
+  // The same operation converges without replacing the original evidence.
+  const repeated = run(root, ["implement", "risk", "--accept", "--id", "RF2", "--evidence", approval]);
+  assert.equal(repeated.status, 0, repeated.stderr + repeated.stdout);
+  assert.match(repeated.json.message, /already accepted with the same evidence/);
+
+  const finalized = run(root, ["implement", "finalize"]);
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  const report = fs.readFileSync(path.join(root, finalized.json.detail.completion.implementationResultPath), "utf8");
+  assert.match(report, /## Risk Findings/);
+  assert.match(report, /RF1 \[advisory\].*Status: fixed/s);
+  assert.match(report, /deltaBasis changed-path=impl\.txt/);
+  assert.match(report, /RF2 \[blocking\].*Status: accepted/s);
+  assert.match(report, new RegExp(approval));
+});
+
+test("a risk ERROR stays in the attempt record without changing the unified verdict or ledger", () => {
+  const root = makeProject({ profile: "high-risk" });
+  const { file, capture } = stub(root, "high-risk");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
   configured.byPurpose["implement:risk"] = {
     verdict: "FAIL",
-    findings: [{ severity: "advisory", text: "only advisory yet FAIL" }],
+    findings: [{ severity: "blocking", text: "unsafe destructive write" }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
-  const inconsistent = run(root, ["implement", "verify"], { env });
-  assert.equal(inconsistent.status, 1);
-  assert.equal(inconsistent.json.detail.attempt.lanes.risk.verdict, "ERROR");
-  assert.equal(inconsistent.json.detail.attempt.lanes.risk.error.code, "judge-invalid-output");
+  startAndClose(root);
+  const first = run(root, ["implement", "verify"], { env });
+  assert.equal(first.status, 0, first.stderr + first.stdout);
+  const before = readState(root).riskFindings;
+  assert.equal(before.length, 1);
+
+  // Missing priorDispositions is invalid on round 2+, so the risk lane records
+  // ERROR after its normal repair/fallback ladder. It is not a voter.
+  configured.byPurpose["implement:risk"] = { verdict: "PASS", findings: [] };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const errored = run(root, ["implement", "verify"], { env });
+  assert.equal(errored.status, 0, errored.stderr + errored.stdout);
+  assert.equal(errored.json.detail.attempt.verdict, "PASS");
+  assert.equal(errored.json.detail.attempt.error, null);
+  assert.equal(errored.json.detail.attempt.lanes.risk.verdict, "ERROR");
+  assert.equal(errored.json.detail.attempt.lanes.risk.error.code, "judge-invalid-output");
+  assert.deepEqual(readState(root).riskFindings, before, "an errored review must not resolve or append ledger entries");
 });
 
 test("lane failure and malformed judge output remain independent and block finalize", () => {

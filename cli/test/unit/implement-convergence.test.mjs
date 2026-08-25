@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   latestAttemptResult,
+  reconcileRiskFindings,
   validateRiskVerdict,
   validateVerdictDelta,
   verificationInputManifest,
@@ -95,7 +96,12 @@ test("risk findings get stable ids and every prior finding is dispositioned on r
   assert.match(validateRiskVerdict({ verdict: "PASS", findings: [] }, first, context), /priorDispositions/);
   const second = validateRiskVerdict({
     verdict: "FAIL",
-    priorDispositions: [{ id: "RF1", status: "resolved", reason: "permission is now scoped" }],
+    priorDispositions: [{
+      id: "RF1",
+      status: "resolved",
+      reason: "permission is now scoped",
+      deltaBasis: { kind: "changed-path", value: "src/auth.ts" },
+    }],
     findings: [{
       severity: "blocking",
       text: "the new token path logs credentials",
@@ -138,4 +144,54 @@ test("an unresolved blocker cannot be downgraded and resolving it requires an ex
   }, prior, changed);
   assert.notEqual(typeof resolved, "string");
   assert.deepEqual(resolved.priorDispositions[0].deltaBasis, { kind: "changed-path", value: "src/write.ts" });
+});
+
+test("a successful risk result moves the ledger through open, fixed, and newly appended entries", () => {
+  const firstResult = {
+    verdict: "FAIL",
+    findings: [
+      { id: "RF1", severity: "blocking", text: "unsafe write" },
+      { id: "RF2", severity: "advisory", text: "consider a smaller permission" },
+    ],
+  };
+  const first = reconcileRiskFindings([], firstResult, "attempt-1", "2026-08-25T01:00:00.000Z");
+  assert.deepEqual(first, [
+    { id: "RF1", severity: "blocking", text: "unsafe write", originAttemptId: "attempt-1", status: "open" },
+    { id: "RF2", severity: "advisory", text: "consider a smaller permission", originAttemptId: "attempt-1", status: "open" },
+  ]);
+
+  const secondResult = {
+    verdict: "FAIL",
+    priorDispositions: [
+      {
+        id: "RF1",
+        status: "resolved",
+        reason: "the write is now guarded",
+        deltaBasis: { kind: "changed-path", value: "src/write.ts" },
+      },
+      { id: "RF2", status: "unresolved", reason: "permission is unchanged" },
+    ],
+    findings: [
+      { id: "RF2", severity: "advisory", text: "permission remains broad", origin: "prior-unresolved", priorFindingId: "RF2" },
+      { id: "RF3", severity: "blocking", text: "new credential log", origin: "new", deltaBasis: { kind: "changed-path", value: "src/write.ts" } },
+    ],
+  };
+  const second = reconcileRiskFindings(first, secondResult, "attempt-2", "2026-08-25T02:00:00.000Z");
+  assert.equal(second[0].status, "fixed");
+  assert.match(second[0].resolution.evidence, /attempt attempt-2/);
+  assert.match(second[0].resolution.evidence, /deltaBasis changed-path=src\/write\.ts/);
+  assert.deepEqual(second[1], {
+    id: "RF2",
+    severity: "advisory",
+    text: "permission remains broad",
+    originAttemptId: "attempt-1",
+    status: "open",
+  });
+  assert.deepEqual(second[2], {
+    id: "RF3",
+    severity: "blocking",
+    text: "new credential log",
+    originAttemptId: "attempt-2",
+    status: "open",
+  });
 });

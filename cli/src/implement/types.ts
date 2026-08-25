@@ -130,11 +130,10 @@ export interface AcceptanceCriterionInvocation {
   reusedFrom?: string;
 }
 
-// The severity floor is the risk lane's convergence bound: a fresh
-// adversarial judge always finds something new (2026-08-13 creator-assist: 17
-// risk rounds, 89 findings, zero repeats, every round FAIL), so only findings
-// the judge stakes as blocking may fail the lane. Advisory findings are
-// recorded without invalidating the run.
+// The risk lane keeps its local verdict so each attempt records exactly what
+// the judge returned. It is not a unified-verdict voter: findings are folded
+// into ImplementState.riskFindings, where open blocking entries stop finalize
+// and every entry has an explicit fixed/accepted closing transition.
 export interface RiskFinding {
   id: string;
   severity: "blocking" | "advisory";
@@ -156,6 +155,19 @@ export interface RiskLaneResult {
   verdict: "PASS" | "FAIL";
   findings: RiskFinding[];
   priorDispositions?: RiskDisposition[];
+}
+
+/** One risk finding tracked across attempts in the state-owned ledger. */
+export interface TrackedRiskFinding {
+  /** Stable `RF<n>`, assigned once and never reused. */
+  id: string;
+  severity: "blocking" | "advisory";
+  text: string;
+  /** Attempt where this finding first entered the ledger. */
+  originAttemptId: string;
+  status: "open" | "fixed" | "accepted";
+  /** Judge delta proof for fixed, or verbatim user approval for accepted. */
+  resolution?: { at: string; evidence: string };
 }
 
 // The design lane is a reviewer, not a judge: it returns comments and no
@@ -331,6 +343,9 @@ export interface ImplementState {
   // each new run re-judging every criterion from zero).
   budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
   deviations: { at: string; type: string; summary: string }[];
+  // Risk findings are a ledger, not votes. Missing on early v5 states and
+  // normalized to [] by loadState so the additive v5 shape stays readable.
+  riskFindings: TrackedRiskFinding[];
   // Design comments tracked across attempts with their dispositions. Absent on
   // states recorded before dispositions existed (= no tracked comments).
   designComments?: TrackedDesignComment[];

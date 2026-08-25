@@ -12,6 +12,7 @@ import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 import {
   latestAttemptResult,
+  reconcileRiskFindings,
   validateRiskVerdict,
   validateVerdictDelta,
   verificationInputManifest,
@@ -65,6 +66,7 @@ import {
   type RegisteredArtifact,
   type RiskLaneResult,
   type TaskItem,
+  type TrackedRiskFinding,
   type UnifiedVerificationAttempt,
   type VerificationItem,
   type VerificationStatus,
@@ -251,9 +253,10 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     }
     // Prelint is a free structural correction.
     if (attempt.error?.stage === "prelint") continue;
-    // The budget exists to bound a stage that cannot converge: a fresh
-    // adversarial judge invents new findings every round (PRINCIPLES 13). A
-    // round that called no judge is not that stage - a failing test suite or
+    // The budget bounds repeated non-PASS generative voting lanes. The open-
+    // ended risk reviewer no longer votes; its findings converge through the
+    // ledger instead (PRINCIPLES 13). A round that called no judge is not that
+    // stage - a failing test suite or
     // a mis-declared binding converges on a fixed exit code - so it is free,
     // provided the tree or the pinned inputs actually moved since the last
     // attempt. That proviso is the whole bound: without new work there is no
@@ -308,6 +311,7 @@ function publicState(
   currentInputFingerprint?: string,
 ): Record<string, unknown> {
   const latest = state.verificationAttempts.at(-1) ?? null;
+  const openRisk = state.riskFindings.filter((entry) => entry.status === "open");
   const effectiveVerdict = latest === null
     ? "NOT_RUN"
     : (currentSourceDigest !== undefined && latest.sourceFingerprint !== currentSourceDigest)
@@ -329,6 +333,11 @@ function publicState(
       tasksOpen: state.tasks.filter((entry) => entry.status !== "complete").length,
       acceptanceOpen: state.acceptanceCriteria.filter((entry) => entry.status !== "complete").length,
       verificationNotPassed: state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").length,
+      riskFindingsOpen: openRisk.length,
+    },
+    riskFindings: {
+      openCount: openRisk.length,
+      open: openRisk.map((entry) => ({ id: entry.id, severity: entry.severity, text: entry.text.slice(0, 80) })),
     },
     verification: {
       verdict: effectiveVerdict,
@@ -541,6 +550,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       verificationAttempts: [],
       budgetGrants: [],
       deviations: [],
+      riskFindings: [],
       retirement: null,
       completion: null,
       createdAt,
@@ -772,6 +782,40 @@ function design(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const open = openDesignComments(state);
   return result("design", true, `${id} accepted; ${open.length} design comment(s) still await a disposition`, {
     comment: entry,
+    open,
+  });
+}
+
+/** Records the user's verbatim decision to leave one risk finding unresolved. */
+function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  if (args.flags.get("accept") !== true) throw new Error("risk requires --accept");
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const id = requiredFlag(args, "id").toUpperCase();
+  const evidence = requiredFlag(args, "evidence");
+  const entry = state.riskFindings.find((candidate) => candidate.id === id);
+  if (entry === undefined) {
+    const known = openRiskFindings(state).map((candidate) => candidate.id);
+    throw new Error(`unknown risk finding: ${id}${known.length === 0 ? "" : ` (open: ${known.join(", ")})`}`);
+  }
+  if (entry.status === "accepted") {
+    if (entry.resolution?.evidence !== evidence) throw new Error(`${id} is already accepted with different evidence`);
+    // Ownership adoption is itself state even when the finding transition is
+    // already settled, so the idempotent path must not discard it.
+    persistState(statePath, state);
+    return result("risk", true, `${id} was already accepted with the same evidence`, {
+      finding: entry,
+      open: openRiskFindings(state),
+    });
+  }
+  if (entry.status === "fixed") throw new Error(`${id} is already fixed by a later risk review`);
+  entry.status = "accepted";
+  entry.resolution = { at: nowIso(), evidence };
+  persistState(statePath, state);
+  const open = openRiskFindings(state);
+  return result("risk", true, `${id} accepted; ${open.length} risk finding(s) remain open`, {
+    finding: entry,
     open,
   });
 }
@@ -1211,6 +1255,30 @@ export function openDesignComments(state: ImplementState): TrackedDesignComment[
   return (state.designComments ?? []).filter((entry) => entry.status === "open" && entry.accepted === null);
 }
 
+export function openRiskFindings(state: ImplementState): TrackedRiskFinding[] {
+  return state.riskFindings.filter((entry) => entry.status === "open");
+}
+
+function riskLedgerPriorResult(state: ImplementState, lineage: RiskLaneResult | null): RiskLaneResult | null {
+  if (lineage === null) return null;
+  const findings = openRiskFindings(state).map((entry) => ({
+    id: entry.id,
+    severity: entry.severity,
+    text: entry.text,
+  }));
+  return {
+    verdict: findings.some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS",
+    findings,
+  };
+}
+
+function nextRiskFindingNumber(state: ImplementState): number {
+  return state.riskFindings.reduce(
+    (high, entry) => Math.max(high, Number(entry.id.replace(/^RF/, "")) || 0),
+    0,
+  ) + 1;
+}
+
 async function judgeLane<T>(
   invocationId: string,
   run: () => Promise<{ value: T; record: LaneRecord<T>["judge"] }>,
@@ -1574,11 +1642,12 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       attempt.lanes.acceptance?.result?.criteria.find((entry) => entry.id === criterion.id)),
   ]));
   const fidelityPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.fidelity?.result);
-  const riskPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.risk?.result);
+  const riskLineageInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.risk?.result);
+  const priorRiskResult = riskLedgerPriorResult(state, riskLineageInput.result);
   const roundContexts: VerificationRoundContexts = {
     acceptance: Object.fromEntries([...acceptancePriorInputs].map(([id, input]) => [id, input.context])),
     fidelity: fidelityPriorInput.context,
-    risk: state.prd.reviewProfile === "high-risk" ? riskPriorInput.context : null,
+    risk: state.prd.reviewProfile === "high-risk" ? riskLineageInput.context : null,
   };
   if (!lint.ok) {
     const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
@@ -1681,15 +1750,14 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
         }),
   ]);
 
-  // The risk lane is never reused: its prompt consumes acceptance.result and
-  // fidelity.result. If both upstream lanes were fully reused, the prior
-  // attempt's ERROR was the risk lane itself; otherwise a fresh upstream
-  // judgment changed the risk lane's inputs. Either way it must re-run.
+  // The risk lane is never reused: its prompt consumes this attempt's
+  // acceptance/fidelity results and the current open ledger. A risk ERROR is
+  // itself harmless to the unified verdict, but it also proves nothing and
+  // therefore cannot mutate or stand in for a later ledger review.
   let risk: LaneRecord<RiskLaneResult> | null = null;
   if (state.prd.reviewProfile === "high-risk") {
     progress("risk: judging residual risk");
-    const priorRiskResult = riskPriorInput.result;
-    const riskRoundContext = riskPriorInput.context;
+    const riskRoundContext = riskLineageInput.context;
     risk = await judgeLane(crypto.randomUUID(), () =>
       runJudge(
         config,
@@ -1709,7 +1777,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
           riskRoundContext,
           reviewEvidencePaths,
         ),
-        (value) => validateRiskVerdict(value, priorRiskResult, riskRoundContext),
+        (value) => validateRiskVerdict(value, priorRiskResult, riskRoundContext, nextRiskFindingNumber(state)),
         reviewNeedsAgentic
           ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
           : {},
@@ -1719,7 +1787,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const advisory = risk.result?.findings.filter((entry) => entry.severity === "advisory").length ?? 0;
     progress(`risk: ${risk.verdict} (${blocking} blocking, ${advisory} advisory, ${(risk.durationMs / 1000).toFixed(0)}s)`);
   }
-  const laneVerdicts = [acceptance.verdict, fidelity.verdict, ...(risk !== null ? [risk.verdict] : [])];
+  // Risk is a recorded review feeding the state-owned ledger, not a voter.
+  // A fresh adversarial question has no fixed point; acceptance and fidelity
+  // remain the only unified verdict inputs (PRINCIPLES 10 and 13).
+  const laneVerdicts = [acceptance.verdict, fidelity.verdict];
   const verdict: VerificationStatus = laneVerdicts.includes("ERROR") ? "ERROR" : laneVerdicts.every((entry) => entry === "PASS") ? "PASS" : "FAIL";
   for (const criterion of acceptance.result?.criteria ?? []) {
     const item = state.acceptanceCriteria.find((entry) => entry.id === criterion.id);
@@ -1744,10 +1815,15 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     mechanical,
     lanes: { acceptance, fidelity, risk, design },
     error: verdict === "ERROR"
-      ? { stage: "judge", code: "judge-error", message: [acceptance.error?.message, fidelity.error?.message, risk?.error?.message].filter(Boolean).join("; ") }
+      ? { stage: "judge", code: "judge-error", message: [acceptance.error?.message, fidelity.error?.message].filter(Boolean).join("; ") }
       : null,
   };
   state.verificationAttempts.push(attempt);
+  // ERROR means the risk reviewer produced no trustworthy result. The attempt
+  // still records that error, while the ledger remains byte-for-byte intact.
+  if (risk?.result != null) {
+    state.riskFindings = reconcileRiskFindings(state.riskFindings, risk.result, attempt.id, nowIso());
+  }
   // Only a lane that actually produced a comment set may reconcile. On ERROR
   // the lane saw nothing, and treating "saw nothing" as "reported nothing"
   // would silently resolve every open comment.
@@ -1757,11 +1833,15 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   persistState(statePath, state);
   progress(`unified verification ${verdict} in ${((Date.now() - started) / 1000).toFixed(0)}s`);
   const open = openDesignComments(state);
+  const openRisk = openRiskFindings(state);
   if (open.length > 0) progress(`design: ${open.length} comment(s) await a disposition before finalize`);
+  const openBlockingRisk = openRisk.filter((entry) => entry.severity === "blocking");
+  if (openBlockingRisk.length > 0) progress(`risk: ${openBlockingRisk.length} blocking finding(s) await resolution before finalize`);
   const budget = verificationBudget(state, config.judge.retryBudget);
   const terminal = terminalBudgetMessage(budget);
   const designNote = open.length === 0 ? "" : `; ${open.length} design comment(s) await a disposition`;
-  return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}${designNote}`, {
+  const riskNote = openBlockingRisk.length === 0 ? "" : `; ${openBlockingRisk.length} blocking risk finding(s) await resolution`;
+  return result("verify", verdict === "PASS", `unified verification ${verdict}${terminal === null ? "" : `; ${terminal}`}${designNote}${riskNote}`, {
     attempt: attemptSummary(attempt),
     sourceRouting: sourceContext.routing,
     verificationBudget: budget,
@@ -1781,6 +1861,16 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
             ? null
             : "fix it and re-run `sasu implement verify` (the comment disappears on its own), or record `sasu implement design --id <D#> --accept \"<why it is being left alone>\"`",
         },
+    riskFindings: {
+      openCount: openRisk.length,
+      open: openRisk,
+      fixedCount: state.riskFindings.filter((entry) => entry.status === "fixed").length,
+      acceptedCount: state.riskFindings.filter((entry) => entry.status === "accepted").length,
+      ...(risk?.verdict === "ERROR" ? { error: risk.error?.message ?? "unknown" } : {}),
+      howToCloseBlocking: openBlockingRisk.length === 0
+        ? null
+        : "fix it and re-run `sasu implement verify`, or record verbatim user approval with `sasu implement risk --accept --id <RF#> --evidence \"<verbatim user approval>\"`",
+    },
   });
 }
 
@@ -1814,6 +1904,24 @@ function designSection(state: ImplementState, attempt: UnifiedVerificationAttemp
     return `- ${entry.id} [${entry.area}] ${entry.path}\n  ${entry.text}\n  Suggestion: ${entry.suggestion}\n  Disposition: ${disposition}`;
   };
   return tracked.map(line).join("\n");
+}
+
+function riskSection(state: ImplementState, attempt: UnifiedVerificationAttempt): string {
+  const lane = attempt.lanes.risk;
+  const laneNote = lane?.verdict === "ERROR"
+    ? `Latest lane errored: ${lane.error?.message ?? "unknown"}. The ledger was not changed by that attempt.`
+    : null;
+  if (state.riskFindings.length === 0) {
+    if (laneNote !== null) return `${laneNote}\n\nNo findings.`;
+    return lane === null ? "Not run (non-high-risk profile)." : "No findings.";
+  }
+  const line = (entry: TrackedRiskFinding): string => {
+    const resolution = entry.resolution === undefined
+      ? "none"
+      : `${entry.resolution.at}: ${entry.resolution.evidence}`;
+    return `- ${entry.id} [${entry.severity}] ${entry.text}\n  Origin attempt: ${entry.originAttemptId}\n  Status: ${entry.status}\n  Resolution: ${resolution}`;
+  };
+  return [laneNote, state.riskFindings.map(line).join("\n")].filter((entry) => entry !== null).join("\n\n");
 }
 
 function implementationReport(
@@ -1854,7 +1962,7 @@ function implementationReport(
   const openItemsSection = blocked === undefined
     ? ""
     : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1884,7 +1992,11 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   if (latest.inputFingerprint !== inputFingerprint(state, source.digest, currentFidelityInput)) {
     blockers.push("unified verify input fingerprint no longer matches current state, artifacts, or fidelity source");
   }
-  if (state.prd.reviewProfile === "high-risk" && latest.lanes.risk?.verdict !== "PASS") blockers.push("high-risk final judge is not PASS");
+  blockers.push(...openRiskFindings(state)
+    .filter((entry) => entry.severity === "blocking")
+    .map((entry) =>
+      `risk finding ${entry.id} (blocking) is open: fix it and re-run \`sasu implement verify\`, or \`sasu implement risk --accept --id ${entry.id} --evidence "<verbatim user approval>"\``,
+    ));
   // The design lane's whole consequence. Not a verdict: the comment does not
   // have to be fixed, it has to be answered. Fixing answers it by making the
   // lane stop reporting it; the escape hatch is one recorded sentence, and
@@ -2005,9 +2117,10 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "status") return status(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
     if (subcommand === "design") return design(projectRoot, args);
+    if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, task, artifact, status, design, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,

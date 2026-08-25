@@ -68,6 +68,8 @@ test("risk prompt receives the complete artifact roster and the exact round-2 de
     { priorAttemptId: "attempt-1", changedPaths: ["src/run.ts"], newEvidence: [{ verificationId: "V5", path: "proof/run.log", sha256: "a".repeat(64) }] },
   );
   assert.match(prompt, /V5 log proof\/run\.log sha256=/);
+  assert.match(prompt, /not a vote in the unified acceptance\/fidelity verdict/);
+  assert.match(prompt, /Resolving one requires a deltaBasis/);
   assert.match(prompt, /ROUND-2\+ DELTA CONTRACT/);
   assert.match(prompt, /Disposition every prior finding by its supplied id as resolved or unresolved/);
   assert.match(prompt, /deltaBasis.*one exact path.*CHANGED PATHS SINCE THE PRIOR ROUND/s);

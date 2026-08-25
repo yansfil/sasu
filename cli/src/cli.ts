@@ -50,6 +50,7 @@ Usage:
   sasu implement artifact --id <Vn> --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
   sasu implement design   --id <D#> --accept "<why the comment is being left alone>" [--slug <topic> | --state <path>] [--json]
+  sasu implement risk     --accept --id <RF#> --evidence "<verbatim user approval>" [--slug <topic> | --state <path>] [--json]
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]

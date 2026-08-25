@@ -244,6 +244,37 @@ export function parseImplementState(text: string): ImplementState {
   if (!Array.isArray(candidate.artifacts) || !Array.isArray(candidate.verificationAttempts)) {
     throw new Error("malformed implement state: artifacts and verificationAttempts must be arrays");
   }
+  // riskFindings was added without a schema bump. Early v5 runs therefore
+  // load as an empty ledger; every subsequent persist writes the field.
+  if (candidate.riskFindings === undefined) candidate.riskFindings = [];
+  if (!Array.isArray(candidate.riskFindings)) {
+    throw new Error("malformed implement state: riskFindings must be an array");
+  }
+  const riskFindingIds = new Set<string>();
+  for (const [index, entry] of candidate.riskFindings.entries()) {
+    assertRecord(entry, `riskFindings[${index}]`);
+    assertString(entry["id"], `riskFindings[${index}].id`);
+    if (!/^RF[1-9]\d*$/.test(entry["id"])) {
+      throw new Error(`malformed implement state: riskFindings[${index}].id must match RF<n>`);
+    }
+    if (riskFindingIds.has(entry["id"])) {
+      throw new Error(`malformed implement state: duplicate risk finding id ${entry["id"]}`);
+    }
+    riskFindingIds.add(entry["id"]);
+    if (entry["severity"] !== "blocking" && entry["severity"] !== "advisory") {
+      throw new Error(`malformed implement state: riskFindings[${index}].severity must be blocking or advisory`);
+    }
+    assertString(entry["text"], `riskFindings[${index}].text`);
+    assertString(entry["originAttemptId"], `riskFindings[${index}].originAttemptId`);
+    if (entry["status"] !== "open" && entry["status"] !== "fixed" && entry["status"] !== "accepted") {
+      throw new Error(`malformed implement state: riskFindings[${index}].status must be open, fixed, or accepted`);
+    }
+    if (entry["resolution"] !== undefined) {
+      assertRecord(entry["resolution"], `riskFindings[${index}].resolution`);
+      assertString(entry["resolution"]["at"], `riskFindings[${index}].resolution.at`);
+      assertString(entry["resolution"]["evidence"], `riskFindings[${index}].resolution.evidence`);
+    }
+  }
   for (const [index, attempt] of candidate.verificationAttempts.entries()) {
     assertRecord(attempt, `verificationAttempts[${index}]`);
     assertString(attempt["id"], `verificationAttempts[${index}].id`);
