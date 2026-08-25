@@ -402,11 +402,16 @@ function resolveDirtyAttributions(
   paths: string[],
   input: string | undefined,
 ): Array<{ path: string; disposition: DirtyAttribution }> {
-  // Attribution is a declaration by the run's trusted Implementor, not a
-  // user waiver: the approved SC3 gives that actor the decision and requires
-  // path-complete recording, while only cross-session retirement requires
-  // verbatim user evidence. The enforceable boundary here is therefore exact
-  // path coverage and value validation, including mixed-ownership trees.
+  // The disposition is answered by a person at the pipeline's pre-dispatch
+  // intake (DIRTY_INTAKE_QUESTION) and carried into the run. Only someone who
+  // watched the tree can say whether uncommitted bytes are a sibling's work or
+  // this run's own earlier attempt; the harness cannot tell those apart from
+  // content, and guessing is what misattributed a sibling's 16 files to the
+  // 2026-08-24 x-twitter run and failed its fidelity lane three rounds running.
+  // This function only expands and validates that answer, so the enforceable
+  // boundary here is exact path coverage and value validation, including
+  // mixed-ownership trees. Cross-session retirement, not attribution, is the
+  // surface that requires verbatim user evidence.
   if (input === undefined) return [];
   if (input === "pre-existing" || input === "run-owned") {
     return paths.map((entry) => ({ path: entry, disposition: input }));
