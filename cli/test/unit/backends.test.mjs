@@ -46,7 +46,8 @@ test("codex no-tools preamble forbids shell, file access, and tools", () => {
 
 test("codex scoped-read preamble bounds shell exploration", () => {
   assert.match(CODEX_ISOLATED_READ_PREAMBLE, /scoped evidence workspace/);
-  assert.match(CODEX_ISOLATED_READ_PREAMBLE, /at most three commands/);
+  assert.match(CODEX_ISOLATED_READ_PREAMBLE, /join sed or rg reads with &&, \|\|, ;, \|, or newlines/);
+  assert.doesNotMatch(CODEX_ISOLATED_READ_PREAMBLE, /at most three commands/);
   assert.match(CODEX_ISOLATED_READ_PREAMBLE, /Do not list directories/);
   assert.match(CODEX_ISOLATED_READ_PREAMBLE, /Never execute project code/);
 });
@@ -67,15 +68,36 @@ test("codex activity audit accepts quoted regex metacharacters from real judge c
   }
 });
 
-test("codex activity audit rejects composition, expansion, scope escape, and tool failure", () => {
+test("codex activity audit splits safe shell connections and audits every segment", () => {
   const event = (item) => JSON.stringify({ type: "item.completed", item });
-  assert.match(
-    codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -lc 'cat /etc/passwd'" }), {
+  const cases = [
+    {
+      command: "/bin/zsh -lc \"sed -n '1,220p' a/piece.json && sed -n '1,220p' a/threads.md\"",
+      evidencePaths: ["a/piece.json", "a/threads.md"],
+    },
+    {
+      command: "/bin/zsh -lc \"sed -n '1,240p' x.mjs\nsed -n '1,220p' y.md\"",
+      evidencePaths: ["x.mjs", "y.md"],
+    },
+    {
+      command: "/bin/zsh -lc 'rg -n \"a|b\" listed.md'",
+      evidencePaths: ["listed.md"],
+    },
+    {
+      command: "sed -n '1,10p' a.md || rg -n x b.md; sed -n '2,20p' c.md | rg -F y d.md",
+      evidencePaths: ["a.md", "b.md", "c.md", "d.md"],
+    },
+  ];
+  for (const { command, evidencePaths } of cases) {
+    assert.equal(codexActivityProblem(event({ type: "command_execution", command }), {
       agentic: true,
-      evidencePaths: ["src/status.ts"],
-    }).detail,
-    /non-read command|out-of-workspace/,
-  );
+      evidencePaths,
+    }), null, command);
+  }
+});
+
+test("codex activity audit rejects unsafe shell syntax, expansion, non-read segments, and tool failure", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
   assert.match(
     codexActivityProblem(event({ type: "error", message: "code mode host missing" }), { agentic: true, evidencePaths: [] }).detail,
     /tool surface failed/,
@@ -85,11 +107,9 @@ test("codex activity audit rejects composition, expansion, scope escape, and too
       agentic: true,
       evidencePaths: ["src/status.ts"],
     }).detail,
-    /composition or expansion/,
+    /non-read command.*cat secret/,
   );
   for (const command of [
-    "/bin/zsh -lc 'rg needle src/status.ts | cat'",
-    "/bin/zsh -lc 'rg needle src/status.ts && sed -n 1p src/status.ts'",
     "/bin/zsh -lc 'rg $(cat /etc/passwd) src/status.ts'",
     "/bin/zsh -lc 'rg $HOME src/status.ts'",
     "/bin/zsh -lc 'rg needle src/*.ts'",
@@ -104,9 +124,33 @@ test("codex activity audit rejects composition, expansion, scope escape, and too
     assert.equal(problem.reason, "shell-composition", command);
   }
   for (const command of [
+    "sed -n '1,10p' a.md > out.txt",
+    "sed -n '1,10p' a.md >> out.txt",
+    "sed -n '1,10p' $(echo a.md)",
+    "sed -n '1,10p' `echo a.md`",
+    "sed -n '1,10p' a.md < input.txt",
+    "(sed -n '1,10p' a.md)",
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["a.md"],
+    });
+    assert.equal(problem.reason, "shell-composition", command);
+  }
+  for (const command of [
+    "/bin/zsh -lc 'cat /etc/passwd'",
+    "/bin/zsh -lc 'rg needle src/status.ts | cat'",
+    "sed -n '1,10p' a.md && rm b.md",
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["src/status.ts", "a.md", "b.md"],
+    });
+    assert.equal(problem.reason, "non-read-command", command);
+  }
+  for (const command of [
     "/bin/zsh -lc 'sed -n 1p /etc/passwd'",
     "/bin/zsh -lc 'rg needle ../secret.txt src/status.ts'",
-    "/bin/zsh -lc 'rg --file=/etc/passwd src/status.ts'",
   ]) {
     const problem = codexActivityProblem(event({ type: "command_execution", command }), {
       agentic: true,
@@ -114,17 +158,58 @@ test("codex activity audit rejects composition, expansion, scope escape, and too
     });
     assert.equal(problem.reason, "out-of-workspace", command);
   }
+});
+
+test("codex activity audit fail-closes sed and rg flags while admitting bounded reads", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
   for (const command of [
-    "/bin/zsh -lc \"rg --pre 'cat /etc/passwd' . src/status.ts\"",
-    "/bin/zsh -lc \"rg . --pre 'cat /etc/passwd' README.md\"",
-    "/bin/zsh -lc 'rg --file src/status.ts src/status.ts'",
+    "/bin/zsh -lc 'rg -n -A2 \"pat\" a.md b.md'",
+    "/bin/zsh -lc 'rg --files-with-matches --count --only-matching --smart-case --multiline --type md -m 2 -B1 -C0 \"pat\" a.md b.md'",
+    "/bin/zsh -lc 'rg -l -c -o -S -U -t md -e \"-dash|/etc/passwd\" a.md b.md'",
+    "/bin/zsh -lc \"sed -n '12,80p' a.md\"",
+  ]) {
+    assert.equal(codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["a.md", "b.md"],
+    }), null, command);
+  }
+
+  for (const [command, token] of [
+    ["rg --pre=/bin/sh -n \"x\" listed.md", "--pre=/bin/sh"],
+    ["rg --hostname-bin=x -n \"y\" listed.md", "--hostname-bin=x"],
+    ["rg -f /etc/passwd -n \"x\" listed.md", "-f"],
+    ["rg --ignore-file /etc/hosts -n \"x\" listed.md", "--ignore-file"],
+    ["rg --file listed.md \"x\" listed.md", "--file"],
+    ["rg --pre \"cat /etc/passwd\" \"x\" listed.md", "--pre"],
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["listed.md", "/etc/passwd", "/etc/hosts", "cat /etc/passwd"],
+    });
+    assert.equal(problem.reason, "non-read-command", command);
+    assert.ok(problem.detail.includes(`disallowed flag: ${token}`), problem.detail);
+  }
+
+  for (const [command, script] of [
+    ["sed -n '1e echo hi' listed.md", "1e echo hi"],
+    ["sed -n 's/a/b/e' listed.md", "s/a/b/e"],
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["listed.md"],
+    });
+    assert.equal(problem.reason, "non-read-command", command);
+    assert.ok(problem.detail.includes(`disallowed script: ${script}`), problem.detail);
+  }
+
+  for (const command of [
     "/bin/zsh -lc 'rg -n needle src/status.ts src/other.ts'",
     "/bin/zsh -lc 'sed -n -f src/status.ts src/status.ts'",
     "/bin/zsh -lc 'sed -n 1p README.md -f secret'",
   ]) {
     const problem = codexActivityProblem(event({ type: "command_execution", command }), {
       agentic: true,
-      evidencePaths: ["src/status.ts", "--pre", "cat /etc/passwd", "README.md", "-f", "secret"],
+      evidencePaths: ["src/status.ts", "README.md", "-f", "secret"],
     });
     assert.equal(problem.reason, "non-read-command", command);
   }
@@ -137,12 +222,12 @@ test("codex activity audit rejects composition, expansion, scope escape, and too
   );
 });
 
-test("codex activity audit preserves prompt-only and three-command limits", () => {
+test("codex activity audit preserves prompt-only isolation without a read-command count budget", () => {
   const event = (item) => JSON.stringify({ type: "item.completed", item });
   const one = event({ type: "command_execution", command: "/bin/zsh -lc 'sed -n 1p src/status.ts'" });
   assert.equal(codexActivityProblem(one, { agentic: false, evidencePaths: ["src/status.ts"] }).reason, "prompt-only-shell");
   const four = [one, one, one, one].join("\n");
-  assert.equal(codexActivityProblem(four, { agentic: true, evidencePaths: ["src/status.ts"] }).reason, "command-budget");
+  assert.equal(codexActivityProblem(four, { agentic: true, evidencePaths: ["src/status.ts"] }), null);
 });
 
 // Agentic judges resolve repo-relative evidence paths in a harness-owned

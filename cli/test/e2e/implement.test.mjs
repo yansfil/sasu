@@ -158,9 +158,19 @@ function readState(root, slug = "fixture") {
   return JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", slug, "state.json"), "utf8"));
 }
 
-function startAndClose(root) {
+function writeFixtureImplementation(root) {
+  const state = readState(root);
+  const workRoot = state.worktree?.path ?? root;
+  fs.writeFileSync(path.join(workRoot, "fixture-implementation.txt"), "fixture implementation created after start\n");
+}
+
+function startAndClose(root, { sourceChange = true } = {}) {
   const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
+  // A completed task normally represents source work after the baseline was
+  // captured. The 2026-08-25 empty-diff incident proved that fixtures which
+  // close tasks without making that work accidentally exercise an invalid run.
+  if (sourceChange) writeFixtureImplementation(root);
   const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
 }
@@ -568,6 +578,25 @@ test("a partial judge error cannot erase older unresolved acceptance or risk fin
   }
 });
 
+test("verify refuses a completed run whose run-owned change set is empty", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root, { sourceChange: false });
+
+  const refused = run(root, ["implement", "verify"], { env });
+  assert.equal(refused.status, 1, refused.stderr + refused.stdout);
+  assert.equal(refused.json.detail.reason, "empty-run-owned-change-set");
+  assert.match(refused.json.message, /run-owned change set is empty after 1 complete task/);
+  assert.match(refused.json.message, /`sasu implement start` ran after the implementation was committed/);
+  assert.match(refused.json.message, /dispositioned pre-existing at start/);
+  assert.match(refused.json.message, /`sasu implement retire`/);
+  assert.match(refused.json.message, /restart with `sasu implement start` before implementation begins/);
+  assert.equal(readState(root).verificationAttempts.length, 0, "a refusal before any judge must not spend an attempt");
+  assert.equal(run(root, ["implement", "status"]).json.detail.verification.budget.fixAttempts, 0);
+  assert.equal(fs.existsSync(capture), false, "no judge may run for an empty change set");
+});
+
 test("open tasks and mechanical failures stop before either judge", () => {
   const root = makeProject({ testExit: 3 });
   const { file, capture } = stub(root);
@@ -578,6 +607,7 @@ test("open tasks and mechanical failures stop before either judge", () => {
   assert.match(open.json.message, /open: T1/);
   assert.equal(fs.existsSync(capture), false);
 
+  writeFixtureImplementation(root);
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
   const failed = run(root, ["implement", "verify"], { env });
   assert.equal(failed.status, 1);
@@ -1076,6 +1106,7 @@ test("the conversation-approved please chain reaches a finalized receipt", () =>
   assert.equal(started.status, 0, started.stderr + started.stdout);
   assert.equal(readState(root).prd.approval.source, "conversation");
   assert.equal(readState(root).prd.approval.evidence, invocation);
+  writeFixtureImplementation(root);
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented from the approved conversation"]).status, 0);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const finalized = run(root, ["implement", "finalize"]);
@@ -1385,6 +1416,7 @@ test("a run owned by another session refuses mutation without --adopt and record
   const sessionA = { CLAUDE_CODE_SESSION_ID: "session-a" };
   const sessionB = { CLAUDE_CODE_SESSION_ID: "session-b" };
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: sessionA }).status, 0);
+  writeFixtureImplementation(root);
   const refused = run(root, ["implement", "task", "--id", "T1", "--evidence", "done", "--slug", "fixture"], { env: sessionB });
   assert.equal(refused.status, 2);
   assert.match(refused.json.message, /owned by another session \(session-a\)/);

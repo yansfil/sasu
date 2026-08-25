@@ -103,6 +103,13 @@ function result(action: string, ok: boolean, message: string, detail?: Record<st
   return { ok, action, exitCode: ok ? 0 : 1, message, ...(detail !== undefined ? { detail } : {}) };
 }
 
+class VerifyInvariantError extends Error {
+  constructor(readonly reason: "empty-run-owned-change-set", message: string) {
+    super(message);
+    this.name = "VerifyInvariantError";
+  }
+}
+
 /**
  * What a command response says about a verification attempt: the verdict, the
  * pins, and what still needs fixing - never the full lane transcripts. A raw
@@ -1503,8 +1510,21 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   assertRunOwnership(statePath, state, args);
   const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
   if (openTasks.length > 0) throw new Error(`verify requires all tasks complete; open: ${openTasks.map((entry) => entry.id).join(", ")}`);
+  const completeTaskCount = state.tasks.filter((entry) => entry.status === "complete").length;
   const recordRoot = state.projectRoot;
   const workRoot = requireWorkRoot(state);
+  const source = captureSourceSnapshot(workRoot);
+  const changedPaths = changedPathsSince(state.initialSource, source);
+  if (completeTaskCount > 0 && changedPaths.length === 0) {
+    // 2026-08-25 creator-studio spent eight judge rounds on zero changed files
+    // after a post-commit start captured the implementation in the baseline.
+    // Refusing here moves that contradiction out of judge discretion and into
+    // the code-owned invariant before any verification budget can be spent.
+    throw new VerifyInvariantError(
+      "empty-run-owned-change-set",
+      `implement verify refused [empty-run-owned-change-set]: the run-owned change set is empty after ${completeTaskCount} complete task(s). Two causes produce this: (a) \`sasu implement start\` ran after the implementation was committed, contaminating the baseline with it, or (b) every dirty path was dispositioned pre-existing at start, absorbing the work into the baseline. Either way there is no run-owned change for a judge to verify. Run \`sasu implement retire\`, then restart with \`sasu implement start\` before implementation begins (attribute genuinely run-owned dirty work as run-owned, not pre-existing).`,
+    );
+  }
   const config = loadConfig(recordRoot);
   if (args.flags.has("grant-budget")) {
     const evidence = flag(args, "grant-budget")?.trim() ?? "";
@@ -1547,7 +1567,6 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const lint = prelintPrd(prdText);
   const prelint = { ok: lint.ok, findings: lint.findings };
-  const source = captureSourceSnapshot(workRoot);
   const inputManifest = verificationInputManifest(state.initialSource, source, state.artifacts);
   const acceptancePriorInputs = new Map(state.acceptanceCriteria.map((criterion) => [
     criterion.id,
@@ -1604,7 +1623,6 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
 
   const material = changeMaterial(workRoot, state, source);
-  const changedPaths = changedPathsSince(state.initialSource, source);
   const changedFiles = changedFileManifest(workRoot, changedPaths);
   const reviewDiff = runOwnedDiff(workRoot, state, changedPaths);
   const reviewEvidencePaths = textEvidencePaths(workRoot, changedPaths);
@@ -1994,9 +2012,10 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     return {
       ok: false,
       action: subcommand ?? "unknown",
-      exitCode: error instanceof SyntaxError ? 1 : 2,
+      exitCode: error instanceof SyntaxError || error instanceof VerifyInvariantError ? 1 : 2,
       message: error instanceof Error ? error.message : String(error),
       ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
+      ...(error instanceof VerifyInvariantError ? { detail: { reason: error.reason } } : {}),
     };
   }
 }

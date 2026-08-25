@@ -359,7 +359,7 @@ test("backend audit rejection gets one reasoned retry before fallback and record
     '  else prompt="$1"; shift; fi',
     'done',
     'printf "%s" "$prompt" > "$count_file.prompt.$count"',
-    `printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc rg -n credential|token allowed.txt"}}'`,
+    `printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc sed -n 1p allowed.txt && rm credential-token"}}'`,
     `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
     "",
   ].join("\n"));
@@ -385,13 +385,13 @@ test("backend audit rejection gets one reasoned retry before fallback and record
     assert.equal(fs.readFileSync(countFile, "utf8"), "2", "the primary must be rejected twice before fallback");
     assert.match(
       fs.readFileSync(`${countFile}.prompt.2`, "utf8"),
-      /previous reply was rejected: isolated codex judge used shell composition or expansion.*credential\|token/,
+      /previous attempt was rejected: isolated codex judge used a non-read command.*rm credential-token.*Correct that specific problem, then reply with only the JSON object/,
     );
     assert.equal(outcome.record.backend, "claude");
     assert.equal(outcome.record.fallback?.backend, "codex");
     assert.equal(outcome.record.fallback?.attempts, 2);
     assert.equal(outcome.record.fallback?.outcome, "judge-invalid-output");
-    assert.equal(outcome.record.fallback?.reason, "command-audit: isolated judge used shell composition or expansion");
+    assert.equal(outcome.record.fallback?.reason, "command-audit: isolated judge used a non-read command");
     assert.doesNotMatch(outcome.record.fallback?.reason ?? "", /credential|token/);
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;

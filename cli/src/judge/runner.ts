@@ -33,9 +33,8 @@ function persistedFallbackReason(
   // commands, paths, and secrets never need message-prefix parsing here.
   switch (error.reason) {
     case "prompt-only-shell": return "command-audit: prompt-only judge executed a shell command";
-    case "command-budget": return "command-audit: isolated judge exceeded the command budget";
     case "non-read-command": return "command-audit: isolated judge used a non-read command";
-    case "shell-composition": return "command-audit: isolated judge used shell composition or expansion";
+    case "shell-composition": return "command-audit: isolated judge used unsafe shell syntax or expansion";
     case "out-of-workspace": return "command-audit: isolated judge attempted an out-of-workspace path";
     case "missing-allowlisted-path": return "command-audit: isolated judge named no allowlisted evidence path";
     case "tool-surface": return "tool-surface: codex tool failed";
@@ -164,7 +163,7 @@ export async function runJudge<T>(
     const retryPreamble =
       attempts === 1
         ? ""
-        : `Your previous reply was rejected: ${lastProblem}. Reply with ONLY the JSON object, no prose, no code fences.\n\n`;
+        : `Your previous attempt was rejected: ${lastProblem}. Correct that specific problem, then reply with only the JSON object, no prose, no code fences.\n\n`;
     let text: string;
     try {
       const result = await backend.run(retryPreamble + prompt, {

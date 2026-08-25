@@ -10,7 +10,6 @@ export type JudgeErrorCode =
 
 export type JudgeFailureReason =
   | "prompt-only-shell"
-  | "command-budget"
   | "non-read-command"
   | "shell-composition"
   | "out-of-workspace"
