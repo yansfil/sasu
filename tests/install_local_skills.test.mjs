@@ -13,7 +13,12 @@ function runInstaller(home, options = {}) {
     cwd: repoRoot,
     shell: false,
     encoding: "utf8",
-    env: { ...process.env, HOME: home },
+    env: {
+      ...process.env,
+      HOME: home,
+      PNPM_HOME: path.join(home, "bin"),
+      ...(options.env ?? {}),
+    },
   });
   if (!options.allowFailure && result.status !== 0) {
     throw new Error(`Installer failed:\n${result.stdout}\n${result.stderr}`);
@@ -232,4 +237,67 @@ test("installer refuses to overwrite a foreign skill directory", () => {
   assert.match(result.stderr, /Refusing to overwrite/);
   // The foreign skill is untouched.
   assert.match(fs.readFileSync(path.join(foreign, "SKILL.md"), "utf8"), /someone-elses-skill/);
+});
+
+test("installer refuses a target directory whose ownership cannot be proven", () => {
+  for (const skillMd of [null, "# no parseable frontmatter\n"]) {
+    const home = freshHome();
+    const foreign = path.join(home, ".codex", "skills", "interview-me");
+    fs.mkdirSync(foreign, { recursive: true });
+    fs.writeFileSync(path.join(foreign, "KEEP.txt"), "foreign data\n");
+    if (skillMd !== null) fs.writeFileSync(path.join(foreign, "SKILL.md"), skillMd);
+
+    const result = runInstaller(home, { allowFailure: true });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refusing to overwrite/);
+    assert.equal(fs.readFileSync(path.join(foreign, "KEEP.txt"), "utf8"), "foreign data\n");
+  }
+});
+
+test("installer validates every skill target before replacing the CLI shim or any skill", () => {
+  const home = freshHome();
+  const shim = path.join(home, "bin", "sasu");
+  const foreign = path.join(home, ".claude", "skills", "remember");
+  fs.mkdirSync(path.dirname(shim), { recursive: true });
+  fs.writeFileSync(shim, "existing shim\n");
+  fs.mkdirSync(foreign, { recursive: true });
+  fs.writeFileSync(
+    path.join(foreign, "SKILL.md"),
+    "---\nname: someone-elses-remember\n---\n\n# other\n",
+  );
+
+  const result = runInstaller(home, { allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Refusing to overwrite/);
+  assert.equal(fs.readFileSync(shim, "utf8"), "existing shim\n");
+  assert.equal(fs.existsSync(path.join(home, ".codex", "skills", "interview-me")), false);
+  assert.match(fs.readFileSync(path.join(foreign, "SKILL.md"), "utf8"), /someone-elses-remember/);
+});
+
+test("installer changes no runtime contracts when CLI preparation fails", () => {
+  const home = freshHome();
+  const fakeBin = path.join(home, "fake-bin");
+  const pnpm = path.join(fakeBin, "pnpm");
+  const existing = path.join(home, ".codex", "skills", "implement", "KEEP.txt");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(pnpm, "#!/bin/sh\nexit 17\n", { mode: 0o755 });
+  fs.mkdirSync(path.dirname(existing), { recursive: true });
+  fs.writeFileSync(existing, "unchanged\n");
+  fs.writeFileSync(
+    path.join(path.dirname(existing), "SKILL.md"),
+    "---\nname: implement\n---\n\n# owned implement\n",
+  );
+
+  const result = runInstaller(home, {
+    allowFailure: true,
+    env: { PATH: `${fakeBin}:${process.env.PATH}` },
+  });
+  assert.notEqual(result.status, 0);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.installed, { codex: [], claude: [] });
+  assert.equal(report.hooks, null);
+  assert.match(report.note, /No skill, legacy directory, or hook changes/);
+  assert.equal(fs.readFileSync(existing, "utf8"), "unchanged\n");
+  assert.equal(fs.existsSync(path.join(home, ".claude")), false);
 });

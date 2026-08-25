@@ -13,6 +13,19 @@ export const SESSION_ID_ENV_KEYS = [
   "CLAUDE_CODE_SESSION_ID",
 ] as const;
 
+// The environment key is a code-owned contract. Herdr supplies only its
+// value when it creates the child pane, so invalid values fail explicitly
+// instead of silently becoming an unmarked Observer session.
+export const HERDR_ROLE_ENV_KEY = "SASU_HERDR_ROLE" as const;
+export type HerdrRole = "implementor" | "unmarked";
+
+export function currentHerdrRole(env: NodeJS.ProcessEnv = process.env): HerdrRole {
+  const value = env[HERDR_ROLE_ENV_KEY]?.trim() ?? "";
+  if (value === "") return "unmarked";
+  if (value === "implementor") return "implementor";
+  throw new Error(`${HERDR_ROLE_ENV_KEY} must be empty or implementor; got ${value}`);
+}
+
 /**
  * Sanitized so the id can double as a pointer filename; every comparison and
  * record uses the sanitized form so identity and storage never diverge.

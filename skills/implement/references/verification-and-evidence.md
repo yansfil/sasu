@@ -51,6 +51,12 @@ After mechanical PASS:
 - the fidelity judge checks intent preservation with a fixed rubric and dynamic source context.
 - a high-risk run adds one final risk judge after the two base lanes finish.
 
+From the second judged round onward, acceptance, fidelity, and risk receive the prior lane result, exact changed paths, and newly registered evidence.
+Every prior failure or risk finding must be dispositioned as resolved or unresolved.
+A prior PASS can become FAIL, and a new blocking finding can appear, only when the judge points to one exact changed path or new evidence item from that round.
+This is an evidence-pointer requirement, not a ban on genuine defects.
+The validator rejects invented or missing pointers through the normal invalid-output retry ladder.
+
 For each acceptance criterion, the harness places the relevant mechanical output and text artifact content directly in the prompt.
 It lists run-owned changed files and visual artifacts as an exact read allowlist instead of copying every changed file into every prompt.
 The default Codex judge gets a disposable workspace containing only those copied allowlisted files.

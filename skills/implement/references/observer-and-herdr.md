@@ -57,7 +57,10 @@ Build the complete Handoff Packet below, then submit it on stdin to the determin
 node ~/.codex/skills/implement/scripts/herdr_observer.js dispatch \
   --name <unique-name> \
   --cwd "$PWD" \
-  --prd agents/prd/<topic-slug>/prd.md <<'SASU_HANDOFF'
+  --model <agent-model> \
+  --effort <reasoning-effort> \
+  --prd agents/prd/<topic-slug>/prd.md \
+  [--dirty-attribution <pre-existing|run-owned>] <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
@@ -69,11 +72,17 @@ SASU_HANDOFF
 ```
 
 This helper is the code-owned dispatch boundary.
+For `$please`, the Spec Owner runs `sasu implement intake` before the first gate.
+When it reports dirty judged paths, the Spec Owner asks its returned question once and either resolves `commit-first` by committing before dispatch or passes the selected `pre-existing|run-owned` value on `--dirty-attribution`.
+The helper injects that value into the Implementor handoff and start contract; the Implementor passes it to `sasu implement start` and never asks again.
+The helper rejects `commit-first` because dispatch cannot begin until that choice has produced a clean committed tree.
 The generic Herdr skill explains the CLI but does not authorize substituting raw `herdr pane split`, `herdr pane run`, or `herdr agent start` commands here.
 The helper structurally refuses dispatch from an already marked Implementor pane.
 It refuses an empty handoff before creating anything.
 It refuses any pipeline other than `implement` and any missing or non-ready PRD before creating anything.
-It creates a right-side sibling with the same cwd and `--no-focus`, injects `SASU_HERDR_ROLE=implementor` in the pane creation call, starts the same detected agent kind unless `--kind` overrides it, submits the handoff through `herdr agent prompt`, and returns the new pane ID and agent name as JSON.
+It creates a right-side sibling with the same cwd and `--no-focus`, injects `SASU_HERDR_ROLE=implementor` in the pane creation call, starts the same detected agent kind unless `--kind` overrides it, forwards optional `--model` and `--effort` values as native agent arguments, submits the handoff through `herdr agent prompt`, and returns the new pane ID, agent name, and requested launch settings as JSON.
+For Codex, `--effort xhigh` becomes the native `--config model_reasoning_effort="xhigh"` argument.
+For Claude, it becomes the native `--effort xhigh` argument.
 Call the helper once per dispatch.
 It owns the bounded same-pane retry while a newly created shell becomes ready; rerunning the whole dispatch command would allocate duplicate panes.
 If pane creation succeeds but agent startup fails, it reports the exact failure and closes only the empty pane it created.
@@ -92,6 +101,7 @@ The packet must contain:
 - `GOAL AND CONTEXT`: the implementation goal and operational facts that are not represented in the ready PRD.
 - `AUTHORITY`: reversible in-scope defaults are autonomous; hard-stop classes remain blocked.
 - `SOURCE`: repository cwd and the ready PRD path.
+- `DIRTY ATTRIBUTION`: injected by the helper when the Spec Owner selected `pre-existing` or `run-owned`; absent only after intake reported clean or `commit-first` was resolved into a clean tree.
 - `RETURN CONTRACT`: final status, paths, assumptions, verification verdicts, timing, and unresolved items.
 
 Do not replace the PRD with a vague summary such as "implement what we discussed".

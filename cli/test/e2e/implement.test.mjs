@@ -141,6 +141,7 @@ const SESSION_ID_ENV_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESS
 function run(root, args, options = {}) {
   const env = { ...process.env, ...(options.env ?? {}) };
   for (const key of SESSION_ID_ENV_KEYS) if (!(key in (options.env ?? {}))) delete env[key];
+  if (!("SASU_HERDR_ROLE" in (options.env ?? {}))) delete env.SASU_HERDR_ROLE;
   const executed = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd: root, encoding: "utf8", env });
   let json = null;
   try {
@@ -158,7 +159,7 @@ function readState(root, slug = "fixture") {
 }
 
 function startAndClose(root) {
-  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
   const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
@@ -190,6 +191,11 @@ test("a legacy agents/implement/<slug> run resolves by slug and by legacy active
     path.join(root, "agents", "implement", ".prd-implement-active.json"),
   );
   const pointerPath = path.join(root, "agents", "implement", ".prd-implement-active.json");
+  const legacyStatePath = path.join(root, "agents", "implement", "fixture", "state.json");
+  const legacyState = JSON.parse(fs.readFileSync(legacyStatePath, "utf8"));
+  legacyState.runDir = "agents/implement/fixture";
+  legacyState.prd.snapshotPath = "agents/implement/fixture/prd.md";
+  fs.writeFileSync(legacyStatePath, JSON.stringify(legacyState));
   const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf8"));
   pointer.statePath = "agents/implement/fixture/state.json";
   fs.writeFileSync(pointerPath, JSON.stringify(pointer));
@@ -213,6 +219,353 @@ test("old implement state schemas fail closed with restart guidance", () => {
   assert.equal(result.status, 2);
   assert.match(result.json.message, /unsupported implement state schema/);
   assert.match(result.json.message, /sasu implement start/);
+});
+
+test("dirty attribution and retire cover refusal, recovery, cross-session evidence, and released occupancy", () => {
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "impl.txt"), "work that predates this run\n");
+  const sessionA = { CLAUDE_CODE_SESSION_ID: "session-a" };
+  const sessionB = { CLAUDE_CODE_SESSION_ID: "session-b" };
+
+  const refused = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: sessionA });
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /will not guess their ownership/);
+  assert.match(refused.json.message, /- impl\.txt/);
+  assert.match(refused.json.message, /--dirty-attribution pre-existing/);
+  assert.match(refused.json.message, /--dirty-attribution run-owned/);
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "state.json")), false);
+
+  const started = run(root, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "pre-existing",
+  ], { env: sessionA });
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  let state = readState(root);
+  assert.equal(state.baselineAttribution.disposition, "pre-existing");
+  assert.deepEqual(state.baselineAttribution.paths, [{ path: "impl.txt", disposition: "pre-existing" }]);
+  assert.ok(state.initialSource.entries.some((entry) => entry.path === "impl.txt"));
+  assert.equal(
+    fs.readFileSync(path.join(root, state.prd.snapshotPath), "utf8"),
+    fs.readFileSync(path.join(root, state.prdPath), "utf8"),
+  );
+
+  const foreign = run(root, ["implement", "retire", "--slug", "fixture"], { env: sessionB });
+  assert.equal(foreign.status, 2);
+  assert.match(foreign.json.message, /owned by another session/);
+  assert.equal(readState(root).status, "active");
+
+  const approval = "I approve retiring session-a's unfinished run";
+  const retired = run(root, ["implement", "retire", "--slug", "fixture", "--adopt", approval], { env: sessionB });
+  assert.equal(retired.status, 0, retired.stderr + retired.stdout);
+  state = readState(root);
+  assert.equal(state.status, "retired");
+  assert.equal(state.retirement.adoptedFromSessionId, "session-a");
+  assert.equal(state.retirement.adoptionEvidence, approval);
+  assert.equal(state.adoptions.at(-1).evidence, approval);
+  assert.equal(run(root, ["implement", "retire", "--slug", "fixture"], { env: { CLAUDE_CODE_SESSION_ID: "session-c" } }).status, 0);
+
+  const secondPrd = path.join(root, "agents", "prd", "fixture-two", "prd.md");
+  fs.mkdirSync(path.dirname(secondPrd), { recursive: true });
+  fs.writeFileSync(secondPrd, prd());
+  const restarted = run(root, [
+    "implement", "start", "--prd", "agents/prd/fixture-two/prd.md", "--dirty-attribution", "pre-existing",
+  ], { env: sessionB });
+  assert.equal(restarted.status, 0, restarted.stderr + restarted.stdout);
+  assert.equal(readState(root, "fixture-two").worktree, null, "a retired run no longer forces isolation");
+
+  const runOwnedRoot = makeProject();
+  fs.writeFileSync(path.join(runOwnedRoot, "impl.txt"), "this run owns these bytes\n");
+  const runOwned = run(runOwnedRoot, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned",
+  ]);
+  assert.equal(runOwned.status, 0, runOwned.stderr + runOwned.stdout);
+  const runOwnedState = readState(runOwnedRoot);
+  assert.equal(runOwnedState.baselineAttribution.disposition, "run-owned");
+  assert.deepEqual(runOwnedState.baselineAttribution.paths, [{ path: "impl.txt", disposition: "run-owned" }]);
+  assert.equal(runOwnedState.initialSource.entries.some((entry) => entry.path === "impl.txt"), false);
+
+  const mixedRoot = makeProject();
+  fs.writeFileSync(path.join(mixedRoot, "other-session.txt"), "pre-existing bytes\n");
+  fs.writeFileSync(path.join(mixedRoot, "this-run.txt"), "run-owned bytes\n");
+  const mixed = run(mixedRoot, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution",
+    JSON.stringify({ "other-session.txt": "pre-existing", "this-run.txt": "run-owned" }),
+  ]);
+  assert.equal(mixed.status, 0, mixed.stderr + mixed.stdout);
+  const mixedState = readState(mixedRoot);
+  assert.equal(mixedState.baselineAttribution.disposition, "mixed");
+  assert.deepEqual(mixedState.baselineAttribution.paths, [
+    { path: "other-session.txt", disposition: "pre-existing" },
+    { path: "this-run.txt", disposition: "run-owned" },
+  ]);
+  assert.equal(mixedState.initialSource.entries.some((entry) => entry.path === "other-session.txt"), true);
+  assert.equal(mixedState.initialSource.entries.some((entry) => entry.path === "this-run.txt"), false);
+});
+
+test("dirty intake presents one operator question and commit-first produces a committed baseline", () => {
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "impl.txt"), "work awaiting disposition\n");
+
+  const intake = run(root, ["implement", "intake"]);
+  assert.equal(intake.status, 0, intake.stderr + intake.stdout);
+  assert.deepEqual(intake.json.detail.paths, ["impl.txt"]);
+  assert.equal(intake.json.detail.required, true);
+  assert.equal(intake.json.detail.question, "커밋되지 않은 판정 대상 파일이 있습니다. 이 작업을 어떻게 시작할까요?");
+  assert.deepEqual(intake.json.detail.options.map((option) => [option.value, option.label]), [
+    ["commit-first", "먼저 커밋하고 시작"],
+    ["pre-existing", "기존 작업으로 이어서 시작"],
+    ["run-owned", "이번 작업에 포함"],
+  ]);
+
+  assert.equal(spawnSync("git", ["add", "impl.txt"], { cwd: root }).status, 0);
+  const committed = spawnSync(
+    "git",
+    ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "save existing work"],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(committed.status, 0, committed.stderr);
+  const clean = run(root, ["implement", "intake"]);
+  assert.equal(clean.status, 0, clean.stderr + clean.stdout);
+  assert.deepEqual(clean.json.detail, { required: false, paths: [], question: null, options: [] });
+
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  const state = readState(root);
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+  assert.equal(state.baselineAttribution.disposition, "clean");
+  assert.equal(state.baselineAttribution.head, head);
+  assert.ok(state.initialSource.entries.some((entry) => entry.path === "impl.txt"));
+});
+
+test("isolated starts carry source dirtiness and preserve its selected attribution", () => {
+  const preExistingRoot = makeProject();
+  fs.mkdirSync(path.join(preExistingRoot, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(preExistingRoot, "agents", "config.json"), JSON.stringify({ worktree: { enabled: true } }));
+  fs.writeFileSync(path.join(preExistingRoot, "impl.txt"), "pre-existing bytes\n");
+
+  const refused = run(preExistingRoot, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /sasu implement intake/);
+  assert.match(refused.json.message, /- impl\.txt/);
+  const recovered = run(preExistingRoot, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "pre-existing",
+  ]);
+  assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
+  const preExisting = readState(preExistingRoot);
+  assert.ok(preExisting.worktree);
+  assert.equal(fs.readFileSync(path.join(preExisting.worktree.path, "impl.txt"), "utf8"), "pre-existing bytes\n");
+  assert.deepEqual(preExisting.baselineAttribution.paths, [{ path: "impl.txt", disposition: "pre-existing" }]);
+  assert.ok(preExisting.initialSource.entries.some((entry) => entry.path === "impl.txt"));
+
+  const runOwnedRoot = makeProject();
+  fs.mkdirSync(path.join(runOwnedRoot, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(runOwnedRoot, "agents", "config.json"), JSON.stringify({ worktree: { enabled: true } }));
+  fs.writeFileSync(path.join(runOwnedRoot, "impl.txt"), "run-owned bytes\n");
+  const started = run(runOwnedRoot, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned",
+  ]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  const runOwned = readState(runOwnedRoot);
+  assert.equal(fs.readFileSync(path.join(runOwned.worktree.path, "impl.txt"), "utf8"), "run-owned bytes\n");
+  assert.deepEqual(runOwned.baselineAttribution.paths, [{ path: "impl.txt", disposition: "run-owned" }]);
+  assert.equal(runOwned.initialSource.entries.some((entry) => entry.path === "impl.txt"), false);
+});
+
+test("an unborn Git repository still requires attribution and keeps its files in the run-owned diff", () => {
+  const root = makeProject();
+  fs.rmSync(path.join(root, ".git"), { recursive: true, force: true });
+  assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
+  fs.writeFileSync(path.join(root, "impl.txt"), "work before the first commit\n");
+
+  const refused = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /- impl\.txt/);
+  assert.match(refused.json.message, /- package\.json/);
+
+  const started = run(root, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned",
+  ]);
+  assert.equal(started.status, 0, started.stderr + started.stdout);
+  const state = readState(root);
+  assert.equal(state.initialSource.head, null);
+  assert.deepEqual(state.baselineAttribution.paths, [
+    { path: "impl.txt", disposition: "run-owned" },
+    { path: "package.json", disposition: "run-owned" },
+  ]);
+  assert.equal(state.initialSource.entries.some((entry) => entry.path === "impl.txt"), false);
+  assert.equal(state.initialSource.entries.some((entry) => entry.path === "package.json"), false);
+
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  const prompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC1.prompt.txt"), "utf8");
+  assert.match(prompt, /- impl\.txt \[text,/);
+  assert.match(prompt, /- package\.json \[text,/);
+});
+
+test("a real second unified round dispositions prior findings and admits only delta-grounded blockers", () => {
+  const root = makeProject({ profile: "high-risk" });
+  const { file, capture } = stub(root, "high-risk");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:acceptance:AC1"] = {
+    verdict: "FAIL",
+    criteria: [{ id: "AC1", verdict: "FAIL", reason: "the first failure remains", evidence: "" }],
+  };
+  configured.byPurpose["implement:fidelity"] = {
+    verdict: "FAIL",
+    checks: ["F1", "F2", "F3", "F4", "F5"].map((id) => ({
+      id,
+      verdict: id === "F1" ? "FAIL" : "PASS",
+      reason: id === "F1" ? "goal drift" : "preserved",
+      evidence: "D-01",
+    })),
+  };
+  configured.byPurpose["implement:risk"] = {
+    verdict: "FAIL",
+    findings: [{ severity: "blocking", text: "first blocking risk" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  startAndClose(root);
+  const first = run(root, ["implement", "verify"], { env });
+  assert.equal(first.status, 1, first.stderr + first.stdout);
+
+  fs.writeFileSync(path.join(root, "impl.txt"), "round two changed this exact path\n");
+  configured.byPurpose["implement:acceptance:AC1"] = {
+    verdict: "FAIL",
+    criteria: [{
+      id: "AC1",
+      verdict: "FAIL",
+      reason: "a different changed-path defect exists",
+      evidence: "impl.txt",
+      priorDisposition: { status: "resolved", reason: "the first failure was fixed" },
+      origin: "new",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    }],
+  };
+  configured.byPurpose["implement:fidelity"] = {
+    verdict: "PASS",
+    checks: ["F1", "F2", "F3", "F4", "F5"].map((id) => ({
+      id,
+      verdict: "PASS",
+      reason: "preserved",
+      evidence: "D-01",
+      ...(id === "F1" ? { priorDisposition: { status: "resolved", reason: "goal lineage restored" } } : {}),
+    })),
+  };
+  configured.byPurpose["implement:risk"] = {
+    verdict: "FAIL",
+    priorDispositions: [{
+      id: "RF1",
+      status: "resolved",
+      reason: "the first risk was removed",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    }],
+    findings: [{
+      severity: "blocking",
+      text: "a new risk in the changed path",
+      origin: "new",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const second = run(root, ["implement", "verify"], { env });
+  assert.equal(second.status, 1, second.stderr + second.stdout);
+  assert.equal(second.json.detail.attempt.lanes.acceptance.verdict, "FAIL");
+  assert.equal(second.json.detail.attempt.lanes.fidelity.verdict, "PASS");
+  assert.equal(second.json.detail.attempt.lanes.risk.verdict, "FAIL");
+
+  const latest = readState(root).verificationAttempts.at(-1);
+  assert.deepEqual(latest.roundContexts.acceptance.AC1.changedPaths, ["impl.txt"]);
+  assert.deepEqual(latest.roundContexts.fidelity.changedPaths, ["impl.txt"]);
+  assert.deepEqual(latest.roundContexts.risk.changedPaths, ["impl.txt"]);
+  assert.equal(latest.lanes.acceptance.result.criteria[0].priorDisposition.status, "resolved");
+  assert.deepEqual(latest.lanes.acceptance.result.criteria[0].deltaBasis, { kind: "changed-path", value: "impl.txt" });
+  assert.equal(latest.lanes.fidelity.result.checks[0].priorDisposition.status, "resolved");
+  assert.deepEqual(latest.lanes.risk.result.priorDispositions, [{
+    id: "RF1",
+    status: "resolved",
+    reason: "the first risk was removed",
+    deltaBasis: { kind: "changed-path", value: "impl.txt" },
+  }]);
+  assert.equal(latest.lanes.risk.result.findings[0].id, "RF2");
+  const prompt = fs.readFileSync(path.join(capture, "implement_risk.prompt.txt"), "utf8");
+  assert.match(prompt, /PRIOR RISK RESULT/);
+  assert.match(prompt, /CHANGED PATHS SINCE THE PRIOR ROUND:\n- impl\.txt/);
+});
+
+test("a partial judge error cannot erase older unresolved acceptance or risk findings", () => {
+  const root = makeProject({ profile: "high-risk" });
+  const { file, capture } = stub(root, "high-risk");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:acceptance:AC1"] = {
+    verdict: "FAIL",
+    criteria: [{ id: "AC1", verdict: "FAIL", reason: "older unresolved acceptance", evidence: "" }],
+  };
+  configured.byPurpose["implement:risk"] = {
+    verdict: "FAIL",
+    findings: [{ severity: "blocking", text: "older unresolved risk" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  startAndClose(root);
+
+  const first = run(root, ["implement", "verify"], { env });
+  assert.equal(first.status, 1, first.stderr + first.stdout);
+  const firstAttempt = readState(root).verificationAttempts.at(-1);
+
+  // Both outputs are invalid only for their own lane. Fidelity still settles,
+  // leaving a mixed partial attempt that must not become the lineage source
+  // for acceptance AC1 or risk.
+  configured.byPurpose["implement:acceptance:AC1"] = { verdict: "PASS", criteria: [] };
+  configured.byPurpose["implement:risk"] = { verdict: "PASS", findings: [] };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const partial = run(root, ["implement", "verify"], { env });
+  assert.equal(partial.status, 1, partial.stderr + partial.stdout);
+  assert.equal(partial.json.detail.attempt.lanes.acceptance.verdict, "ERROR");
+  assert.equal(partial.json.detail.attempt.lanes.risk.verdict, "ERROR");
+
+  fs.writeFileSync(path.join(root, "impl.txt"), "the recovery changed this path\n");
+  configured.byPurpose["implement:acceptance:AC1"] = {
+    verdict: "PASS",
+    criteria: [{
+      id: "AC1",
+      verdict: "PASS",
+      reason: "older acceptance is fixed",
+      evidence: "impl.txt",
+      priorDisposition: { status: "resolved", reason: "the changed path fixes it" },
+    }],
+  };
+  configured.byPurpose["implement:risk"] = {
+    verdict: "PASS",
+    priorDispositions: [{
+      id: "RF1",
+      status: "resolved",
+      reason: "the changed path removes it",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    }],
+    findings: [],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const recovered = run(root, ["implement", "verify"], { env });
+  assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
+
+  const latest = readState(root).verificationAttempts.at(-1);
+  assert.equal(latest.lanes.acceptance.result.criteria[0].priorDisposition.status, "resolved");
+  assert.deepEqual(latest.lanes.risk.result.priorDispositions, [
+    {
+      id: "RF1",
+      status: "resolved",
+      reason: "the changed path removes it",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    },
+  ]);
+  for (const name of ["implement_acceptance_AC1.prompt.txt", "implement_risk.prompt.txt"]) {
+    const prompt = fs.readFileSync(path.join(capture, name), "utf8");
+    assert.match(prompt, new RegExp(`PRIOR ATTEMPT: ${firstAttempt.id}`));
+    assert.match(prompt, /older unresolved/);
+  }
 });
 
 test("open tasks and mechanical failures stop before either judge", () => {
@@ -364,6 +717,24 @@ test("high-risk runs the risk judge only after both base lanes complete", () => 
   assert.equal(fs.existsSync(path.join(trivialStub.capture, "implement_risk.prompt.txt")), false);
 });
 
+test("oversized design and risk diffs switch to isolated changed-file access", () => {
+  const root = makeProject({ profile: "high-risk" });
+  const { file, capture } = stub(root, "high-risk");
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  fs.writeFileSync(path.join(root, "large.ts"), `export const large = "${"x".repeat(130_000)}";\n`);
+
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  for (const purpose of ["implement_design", "implement_risk"]) {
+    const prompt = fs.readFileSync(path.join(capture, `${purpose}.prompt.txt`), "utf8");
+    const options = JSON.parse(fs.readFileSync(path.join(capture, `${purpose}.options.json`), "utf8"));
+    assert.match(prompt, /diff omitted because it exceeds the 120000-character review input limit/);
+    assert.match(prompt, /- large\.ts/);
+    assert.deepEqual(options, { agentic: true, cwd: fs.realpathSync(root), effort: "xhigh" });
+  }
+});
+
 test("risk findings fail the run only at the blocking severity floor", () => {
   // Advisory findings ride along on PASS: without the floor, a fresh
   // adversarial judge always finds something new and the lane cannot
@@ -387,16 +758,23 @@ test("risk findings fail the run only at the blocking severity floor", () => {
   assert.deepEqual(advisory.json.detail.attempt.lanes.risk.blocking, []);
   assert.equal(advisory.json.detail.attempt.lanes.risk.advisoryCount, 1);
   assert.deepEqual(readState(root).verificationAttempts.at(-1).lanes.risk.result.findings, [
-    { severity: "advisory", text: "consider rate limiting the retry path" },
+    { id: "RF1", severity: "advisory", text: "consider rate limiting the retry path" },
   ]);
   const riskPrompt = fs.readFileSync(path.join(capture, "implement_risk.prompt.txt"), "utf8");
   assert.match(riskPrompt, /Delivery evidence is out of scope/);
   assert.match(riskPrompt, /Their absence is never a finding here/);
 
   // A blocking finding fails the lane and the run.
+  fs.writeFileSync(path.join(root, "impl.txt"), "a changed risk-bearing path\n");
   configured.byPurpose["implement:risk"] = {
     verdict: "FAIL",
-    findings: [{ severity: "blocking", text: "credentials are written to a world-readable log" }],
+    priorDispositions: [{ id: "RF1", status: "resolved", reason: "the advisory was reviewed" }],
+    findings: [{
+      severity: "blocking",
+      text: "credentials are written to a world-readable log",
+      origin: "new",
+      deltaBasis: { kind: "changed-path", value: "impl.txt" },
+    }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
   const blocking = run(root, ["implement", "verify"], { env });
@@ -558,7 +936,9 @@ test("missing or malformed PRD, state, artifact, and judge input fail closed wit
   fs.rmSync(path.join(missingPrdRoot, "agents", "prd", "fixture", "prd.md"));
   const missingPrd = run(missingPrdRoot, ["implement", "verify"]);
   assert.equal(missingPrd.status, 2);
-  assert.match(missingPrd.json.message, /PRD missing/);
+  assert.match(missingPrd.json.message, /PRD changed after implement start/);
+  assert.match(missingPrd.json.message, /current sha256: missing/);
+  assert.equal(missingPrd.json.detail.prdDrift.code, "prd-drift");
 
   const malformedStateRoot = makeProject();
   startAndClose(malformedStateRoot);
@@ -717,13 +1097,16 @@ test("implement verify stops at the configured fix budget before running more wo
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const second = run(root, ["implement", "verify"]);
   assert.equal(second.status, 1);
-  assert.equal(second.json.detail.verificationBudget.budgetExhausted, true);
+  assert.equal(second.json.detail.verificationBudget.fixAttempts, 1);
+  const third = run(root, ["implement", "verify"]);
+  assert.equal(third.status, 1);
+  assert.equal(third.json.detail.verificationBudget.budgetExhausted, true);
   const refused = run(root, ["implement", "verify"]);
   assert.equal(refused.status, 1);
   assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
   assert.equal(refused.json.detail.judgeCalls, 0);
-  assert.equal(readState(root).verificationAttempts.length, 2);
-  assert.equal(fs.readFileSync(path.join(root, "agents", "verify-count"), "utf8"), "2");
+  assert.equal(readState(root).verificationAttempts.length, 3);
+  assert.equal(fs.readFileSync(path.join(root, "agents", "verify-count"), "utf8"), "3");
   assert.match(refused.json.message, /--grant-budget/);
 });
 
@@ -744,6 +1127,7 @@ test("an explicit user grant opens one fresh fix budget inside the same state re
 
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   assert.equal(run(root, ["implement", "verify"]).status, 1);
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
   const refused = run(root, ["implement", "verify"]);
   assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
 
@@ -757,15 +1141,16 @@ test("an explicit user grant opens one fresh fix budget inside the same state re
   assert.equal(granted.status, 1, granted.stderr + granted.stdout);
   assert.notEqual(granted.json.detail.terminalReason, "budget-exhausted");
   const grantedState = readState(root);
-  assert.equal(grantedState.verificationAttempts.length, 3);
+  assert.equal(grantedState.verificationAttempts.length, 4);
   assert.equal(grantedState.budgetGrants.length, 1);
   assert.equal(grantedState.budgetGrants[0].evidence, "새 검증 런을 허용한다");
-  assert.equal(grantedState.budgetGrants[0].attemptCountBefore, 2);
-  assert.equal(granted.json.detail.verificationBudget.fixAttempts, 1);
+  assert.equal(grantedState.budgetGrants[0].attemptCountBefore, 3);
+  assert.equal(granted.json.detail.verificationBudget.fixAttempts, 0);
   assert.equal(granted.json.detail.verificationBudget.grants, 1);
 
   // The granted budget exhausts again by the same rule, and the blocked
   // close then works with the grant on the receipt's gauge.
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const reExhausted = run(root, ["implement", "verify"]);
   assert.equal(reExhausted.json.detail.terminalReason, "budget-exhausted");
@@ -883,6 +1268,7 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   assert.match(early.json.message, /verification can still run/);
 
   // Exhaust the budget; the refusal must name the honest exit.
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
   const refused = run(root, ["implement", "verify"], { env });
   assert.equal(refused.json.detail.terminalReason, "budget-exhausted");
@@ -1096,7 +1482,82 @@ test("worktree.enabled isolates the first run too", () => {
   assert.ok(readState(root).worktree, "enabled=true must isolate without an occupant");
 });
 
-test("a round that called no judge is free once the tree moved, and charged when it did not", () => {
+test("dirty worktree setup output is attributed before state and a refused provision is rolled back", () => {
+  const root = makeProject();
+  const worktreeRoot = path.join(os.tmpdir(), `${path.basename(root)}-prepared-worktrees`);
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({
+    worktree: {
+      enabled: true,
+      root: worktreeRoot,
+      setup: ["node -e \"require('fs').writeFileSync('setup.txt','prepared')\""],
+    },
+  }));
+  const refused = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.json.message, /- setup\.txt/);
+  assert.equal(fs.existsSync(path.join(worktreeRoot, "fixture")), false);
+  const branch = spawnSync("git", ["branch", "--list", "prd/fixture"], { cwd: root, encoding: "utf8" });
+  assert.equal(branch.stdout.trim(), "");
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "state.json")), false);
+
+  const recovered = run(root, [
+    "implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "pre-existing",
+  ]);
+  assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
+  assert.deepEqual(readState(root).baselineAttribution.paths, [{ path: "setup.txt", disposition: "pre-existing" }]);
+});
+
+test("a failure after worktree setup removes the unrecorded worktree and branch", () => {
+  const root = makeProject();
+  const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-init-failure-worktrees-"));
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({
+    worktree: { enabled: true, root: worktreeRoot },
+  }));
+  // A directory at the snapshot path makes the atomic file rename fail after
+  // the worktree exists, but before state.json becomes the run commit point.
+  fs.mkdirSync(path.join(root, "agents", "runs", "fixture", "prd.md"), { recursive: true });
+
+  const failed = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(failed.status, 2);
+  assert.equal(fs.existsSync(path.join(worktreeRoot, "fixture")), false);
+  const branch = spawnSync("git", ["branch", "--list", "prd/fixture"], { cwd: root, encoding: "utf8" });
+  assert.equal(branch.stdout.trim(), "");
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "state.json")), false);
+});
+
+test("a failed worktree rollback reports its cleanup failures", () => {
+  const root = makeProject();
+  const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-cleanup-failure-worktrees-"));
+  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-cleanup-failure-bin-"));
+  const realGit = spawnSync("which", ["git"], { encoding: "utf8" }).stdout.trim();
+  const gitWrapper = path.join(fakeBin, "git");
+  fs.writeFileSync(gitWrapper, `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  echo "forced cleanup failure" >&2
+  exit 77
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({
+    worktree: { enabled: true, root: worktreeRoot },
+  }));
+  fs.mkdirSync(path.join(root, "agents", "runs", "fixture", "prd.md"), { recursive: true });
+
+  const failed = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], {
+    env: { PATH: `${fakeBin}:${process.env.PATH}` },
+  });
+  assert.equal(failed.status, 2);
+  assert.match(failed.json.message, /cleanup was incomplete/);
+  assert.match(failed.json.message, /worktree remove failed: forced cleanup failure/);
+  assert.match(failed.json.message, /branch delete failed/);
+
+  const worktreePath = path.join(worktreeRoot, "fixture");
+  assert.equal(fs.existsSync(worktreePath), true, "the reported debris remains observable for recovery");
+  assert.equal(spawnSync(realGit, ["worktree", "remove", "--force", worktreePath], { cwd: root }).status, 0);
+  assert.equal(spawnSync(realGit, ["branch", "-D", "prd/fixture"], { cwd: root }).status, 0);
+});
+
+test("a first round that called no judge is free, while unchanged repeats remain bounded", () => {
   // 2026-08-17 herdr-remote-handoff: 3 of the 5 rounds that exhausted the
   // budget never reached a lane (mis-declared binding, stale artifact, own
   // test failure). Only 2 real judged rounds were spendable and an otherwise
@@ -1107,25 +1568,30 @@ test("a round that called no judge is free once the tree moved, and charged when
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
   startAndClose(root);
 
-  // First round: nothing precedes it, so no progress can be proven - charged.
+  // The first deterministic failure did not invoke a generative stage, so it
+  // cannot spend the budget that exists to bound that stage.
   assert.equal(run(root, ["implement", "verify"]).status, 1);
-  assert.equal(run(root, ["implement", "status"]).json.detail.verification.budget.fixAttempts, 1);
+  assert.equal(run(root, ["implement", "status"]).json.detail.verification.budget.fixAttempts, 0);
 
   // A real fix lands in the judged tree; the next mechanical failure is free.
   fs.writeFileSync(path.join(root, "fix-one.txt"), "a real change between rounds\n");
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const afterFix = run(root, ["implement", "status"]).json.detail.verification.budget;
-  assert.equal(afterFix.fixAttempts, 1, "a no-judge round that followed real work spends nothing");
+  assert.equal(afterFix.fixAttempts, 0, "a no-judge round that followed real work spends nothing");
   assert.equal(afterFix.budgetExhausted, false);
 
   // Re-running the identical tree proves no new work, so it is charged and
   // the loop still terminates.
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const repeated = run(root, ["implement", "status"]).json.detail.verification.budget;
-  assert.equal(repeated.fixAttempts, 2, "an unchanged re-run is charged exactly like a judged round");
-  assert.equal(repeated.budgetExhausted, true);
+  assert.equal(repeated.fixAttempts, 1, "an unchanged re-run is charged exactly like a judged round");
+  assert.equal(repeated.budgetExhausted, false);
+  assert.equal(run(root, ["implement", "verify"]).status, 1);
+  const exhausted = run(root, ["implement", "status"]).json.detail.verification.budget;
+  assert.equal(exhausted.fixAttempts, 2);
+  assert.equal(exhausted.budgetExhausted, true);
   assert.equal(run(root, ["implement", "verify"]).json.detail.terminalReason, "budget-exhausted");
-  assert.equal(readState(root).verificationAttempts.length, 3);
+  assert.equal(readState(root).verificationAttempts.length, 4);
 });
 
 test("registering evidence does not stale the artifacts registered from the same file", () => {

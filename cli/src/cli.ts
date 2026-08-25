@@ -31,6 +31,7 @@ import { runPrdCommand } from "./prd/commands";
 import { runPrinciplesCommand } from "./principles/commands";
 import { runRulesCommand, runSetupCommand } from "./support/commands";
 import { ensureSetup } from "./support/ensure-setup";
+import { currentHerdrRole, HERDR_ROLE_ENV_KEY } from "./runs/session";
 
 const USAGE = `sasu - harness CLI: judge gates, verification, doctor
 
@@ -43,12 +44,14 @@ Usage:
   sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
-  sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--json]
+  sasu implement intake   [--json]
+  sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
   sasu implement task     --id <Tn> [--status <complete|pending|blocked>] --evidence "<proof>" [--json]
   sasu implement artifact --id <Vn> --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
   sasu implement design   --id <D#> --accept "<why the comment is being left alone>" [--slug <topic> | --state <path>] [--json]
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
+  sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
     (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>")
   sasu prd readiness       --prd <path> [--json]
@@ -364,6 +367,22 @@ async function main(): Promise<void> {
       }
     }
     process.exit(principlesResult.exitCode);
+  }
+
+  const implementorBlockedGates = new Set(["gap-audit", "spec", "delegate", "reopen", "override"]);
+  if (command === "gate" && subcommand !== undefined && implementorBlockedGates.has(subcommand) && currentHerdrRole() === "implementor") {
+    const message = `Implementor role cannot run specification-stage gate '${subcommand}'. This command belongs to the Spec Owner or Observer. Run it from an unmarked main session; no state was written.`;
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({
+        contractVersion: contractVersion(),
+        ok: false,
+        action: `gate:${subcommand}`,
+        error: { code: "implementor-spec-command-refused", message, roleMarker: `${HERDR_ROLE_ENV_KEY}=implementor` },
+      }, null, 2)}\n`);
+    } else {
+      process.stderr.write(`sasu: ${message}\n`);
+    }
+    process.exit(1);
   }
 
   // Every skill funnels through this CLI, so one guard here auto-provisions

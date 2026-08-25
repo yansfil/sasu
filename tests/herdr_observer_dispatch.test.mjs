@@ -42,6 +42,9 @@ if (key === "pane current") {
     process.exit(1);
   }
   console.log(JSON.stringify({ result: { ok: true } }));
+} else if (key === "agent prompt" && process.env.FAKE_HERDR_PROMPT_FAIL === "1") {
+  console.error("failed argv: " + args.join(" "));
+  process.exit(1);
 } else if (key === "agent list") {
   console.log(JSON.stringify({ result: { agents: [{
     name: "please-smoke",
@@ -109,6 +112,83 @@ test("dispatch creates one right-side marked Implementor with the Observer agent
   assert.match(observedCalls[3][3], /sole specification source is the ready PRD/);
   assert.match(observedCalls[3][3], /never author or edit the qa-log or PRD/);
   assert.match(observedCalls[3][3], /output the structured OBSERVER_BLOCK packet.*end the turn/s);
+});
+
+test("dispatch forwards the selected Codex model and reasoning effort as native agent arguments", () => {
+  const fixture = fakeHerdrRoot("observer");
+  const result = runHelper(fixture, [
+    "dispatch",
+    "--name", "please-smoke",
+    "--cwd", fixture.root,
+    "--prd", fixture.prd,
+    "--model", "gpt-5.6-sol",
+    "--effort", "xhigh",
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).implementor, {
+    name: "please-smoke",
+    paneId: "w1:p2",
+    agentKind: "codex",
+    cwd: fixture.root,
+    handoffSubmitted: true,
+    model: "gpt-5.6-sol",
+    effort: "xhigh",
+  });
+  assert.deepEqual(calls(fixture)[2], [
+    "agent", "start", "please-smoke", "--kind", "codex", "--pane", "w1:p2",
+    "--", "--model", "gpt-5.6-sol", "--config", 'model_reasoning_effort="xhigh"',
+  ]);
+});
+
+test("dispatch carries the Spec Owner's dirty disposition into the Implementor start contract", () => {
+  const fixture = fakeHerdrRoot("observer");
+  const result = runHelper(fixture, [
+    "dispatch",
+    "--name", "please-smoke",
+    "--cwd", fixture.root,
+    "--prd", fixture.prd,
+    "--dirty-attribution", "pre-existing",
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).implementor.dirtyAttribution, "pre-existing");
+  const submitted = calls(fixture).find(call => call[0] === "agent" && call[1] === "prompt")[3];
+  assert.match(submitted, /DIRTY ATTRIBUTION: pre-existing/);
+  assert.match(submitted, /Pass --dirty-attribution pre-existing to sasu implement start exactly once/);
+  assert.match(submitted, /never ask the question again/);
+});
+
+test("dispatch rejects unresolved commit-first before invoking Herdr", () => {
+  const fixture = fakeHerdrRoot("observer");
+  const result = runHelper(fixture, [
+    "dispatch",
+    "--name", "please-smoke",
+    "--cwd", fixture.root,
+    "--prd", fixture.prd,
+    "--dirty-attribution", "commit-first",
+  ]);
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /commit-first is resolved before dispatch/);
+  assert.deepEqual(calls(fixture), []);
+});
+
+test("a failed handoff submission never echoes the handoff into diagnostics", () => {
+  const fixture = fakeHerdrRoot("observer");
+  const secret = "PRIVATE_OPERATIONAL_CONTEXT_8241";
+  const result = runHelper(
+    fixture,
+    ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd],
+    { FAKE_HERDR_PROMPT_FAIL: "1" },
+    `${HANDOFF}\nCONTEXT: ${secret}`,
+  );
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /agent prompt please-smoke <redacted handoff> failed/);
+  assert.match(result.stderr, /handoff diagnostic redacted/);
+  assert.doesNotMatch(result.stderr, new RegExp(secret));
+  assert.doesNotMatch(result.stderr, /ORIGINAL INVOCATION/);
 });
 
 test("dispatch refuses recursion from a marked Implementor pane", () => {

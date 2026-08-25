@@ -24,12 +24,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const {
+  SKILL_NAMES,
+  contractFiles,
+  runtimeIncludesEntry,
+  transformContractFile,
+} = require("../cli/lib/skill-contract.js");
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skillsRoot = path.join(repoRoot, "skills");
 const home = process.env.HOME || "";
-
-const SKILL_NAMES = ["interview-me", "gen-prd", "implement", "benchmark-implement", "ship", "sasu-setup", "please", "remember", "quick", "challenge"];
 
 // Pre-rename install directories that this pipeline used to own, including
 // the retired ho-* compatibility aliases.
@@ -38,25 +45,14 @@ const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", 
 // every earlier generation (butler set, pre-rename prd-* set).
 const OWNED_LEGACY_NAMES = [...SKILL_NAMES, ...LEGACY_DIRS];
 
-// Codex-only auxiliary entries that make no sense in the Claude install.
-const CODEX_ONLY_ENTRIES = new Set(["agents"]);
-
 const TARGETS = {
   codex: {
     root: path.join(home, ".codex", "skills"),
-    transformSkillMd: text => text,
   },
   claude: {
     root: path.join(home, ".claude", "skills"),
-    transformSkillMd: text => substituteForClaude(text),
   },
 };
-
-function substituteForClaude(text) {
-  const roots = text.split("~/.codex/skills/").join("~/.claude/skills/");
-  // Invocation tokens: $interview-me -> /interview-me.
-  return roots.replace(/\$(interview-me|gen-prd|implement|benchmark-implement|ship|sasu-setup|please|remember|quick|challenge)\b/g, "/$1");
-}
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -77,14 +73,35 @@ function frontmatterName(skillMdPath) {
 }
 
 function assertNotForeign(targetDir, expectedName) {
+  if (!fs.existsSync(targetDir)) return;
+  const targetStat = fs.lstatSync(targetDir);
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) {
+    throw new Error(`Refusing to overwrite ${targetDir}: the existing target is not an owned skill directory.`);
+  }
   const existing = path.join(targetDir, "SKILL.md");
-  if (!fs.existsSync(existing)) return;
-  const name = frontmatterName(existing);
-  if (name && name !== expectedName) {
+  if (!fs.existsSync(existing) || !fs.lstatSync(existing).isFile() || fs.lstatSync(existing).isSymbolicLink()) {
     throw new Error(
-      `Refusing to overwrite ${targetDir}: existing SKILL.md is named '${name}', expected '${expectedName}'. ` +
+      `Refusing to overwrite ${targetDir}: the existing directory has no regular SKILL.md proving ownership. ` +
+      "Remove or rename the foreign directory first.",
+    );
+  }
+  const name = frontmatterName(existing);
+  if (name !== expectedName) {
+    throw new Error(
+      `Refusing to overwrite ${targetDir}: existing SKILL.md is named '${name ?? "unparseable"}', expected '${expectedName}'. ` +
       "Remove or rename the foreign skill first.",
     );
+  }
+}
+
+function preflightSkills() {
+  for (const targetKey of Object.keys(TARGETS)) {
+    for (const name of SKILL_NAMES) {
+      // This shared manifest validates every effective contract file, including
+      // executable scripts, before any installed runtime surface is changed.
+      contractFiles(skillsRoot, name, targetKey);
+      assertNotForeign(path.join(TARGETS[targetKey].root, name), name);
+    }
   }
 }
 
@@ -104,12 +121,12 @@ function installSkill(targetKey, name) {
   if (!fs.existsSync(skillMdSource)) throw new Error(`Missing ${skillMdSource}`);
   fs.writeFileSync(
     path.join(targetDir, "SKILL.md"),
-    target.transformSkillMd(fs.readFileSync(skillMdSource, "utf8")),
+    transformContractFile(targetKey, "SKILL.md", fs.readFileSync(skillMdSource, "utf8")),
   );
 
   for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
     if (entry.name === "SKILL.md") continue;
-    if (targetKey === "claude" && CODEX_ONLY_ENTRIES.has(entry.name)) continue;
+    if (!runtimeIncludesEntry(targetKey, entry.name)) continue;
     const source = path.join(sourceDir, entry.name);
     const linkTarget = path.join(targetDir, entry.name);
     removePath(linkTarget);
@@ -124,7 +141,11 @@ function installSkill(targetKey, name) {
         if (referenceEntry.endsWith(".md")) {
           fs.writeFileSync(
             path.join(linkTarget, referenceEntry),
-            target.transformSkillMd(fs.readFileSync(referenceSource, "utf8")),
+            transformContractFile(
+              targetKey,
+              `references/${referenceEntry}`,
+              fs.readFileSync(referenceSource, "utf8"),
+            ),
           );
         } else {
           fs.symlinkSync(referenceSource, path.join(linkTarget, referenceEntry), fs.statSync(referenceSource).isDirectory() ? "dir" : "file");
@@ -229,44 +250,66 @@ function installCliBinary() {
   ensureDir(binDir);
   const shimPath = path.join(binDir, "sasu");
   const entry = path.join(cliDir, "dist", "cli.js");
-  fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
   const version = spawnSync("node", [entry, "--contract-version"], { encoding: "utf8" });
-  return { ok: version.status === 0, shimPath, contractVersion: (version.stdout || "").trim() };
+  if (version.status !== 0) {
+    return { ok: false, error: `built CLI version probe failed: ${(version.stderr || version.stdout || "").trim().slice(0, 500)}` };
+  }
+  fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
+  return { ok: true, shimPath, contractVersion: (version.stdout || "").trim() };
 }
 
-for (const key of Object.keys(TARGETS)) ensureDir(TARGETS[key].root);
+function runInstaller() {
+  // Ownership and the complete source manifest are read-only checks. Running
+  // them first prevents a later safety refusal from stranding a new CLI shim
+  // beside only a subset of the matching skill contracts.
+  preflightSkills();
 
-const cliBinary = installCliBinary();
+  // The CLI is the authority that executes the installed contracts. Prepare
+  // and probe it before touching either runtime tree so a failed build cannot
+  // leave new skills paired with an old binary while still exiting zero.
+  const cliBinary = installCliBinary();
+  if (!cliBinary.ok) {
+    return {
+      ok: false,
+      repoRoot,
+      cliBinary,
+      installed: { codex: [], claude: [] },
+      removedLegacy: { codex: [], claude: [] },
+      hooks: null,
+      note: "No skill, legacy directory, or hook changes were attempted because CLI preparation failed.",
+    };
+  }
 
-const installed = {
-  codex: SKILL_NAMES.map(name => installSkill("codex", name)),
-  claude: SKILL_NAMES.map(name => installSkill("claude", name)),
-};
+  for (const key of Object.keys(TARGETS)) ensureDir(TARGETS[key].root);
+  const installed = {
+    codex: SKILL_NAMES.map(name => installSkill("codex", name)),
+    claude: SKILL_NAMES.map(name => installSkill("claude", name)),
+  };
+  const removedLegacy = {
+    codex: cleanupLegacyDirs("codex"),
+    claude: cleanupLegacyDirs("claude"),
+  };
 
-const removedLegacy = {
-  codex: cleanupLegacyDirs("codex"),
-  claude: cleanupLegacyDirs("claude"),
-};
+  // The implement pipeline stays CLI-owned and registers no lifecycle hooks.
+  // The challenge trigger is the sole exception because its adversarial round
+  // cap must be an executable guard, not a prose-only request.
+  const challengeTriggerCommand = `node ${path.join(repoRoot, "scripts", "challenge_trigger.mjs")}`;
+  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand };
+  const hooks = {
+    codex: ensureHooks(path.join(home, ".codex", "hooks.json"), lifecycleHooks),
+    claude: ensureHooks(path.join(home, ".claude", "settings.json"), lifecycleHooks),
+  };
+  return {
+    ok: true,
+    repoRoot,
+    cliBinary,
+    installed,
+    removedLegacy,
+    hooks,
+    note: "SKILL.md files are real copies (Claude copies are path/invocation substituted); auxiliary entries are symlinks.",
+  };
+}
 
-// The implement pipeline stays CLI-owned and registers no lifecycle hooks. The
-// one exception is the challenge trigger: it is a UserPromptSubmit reader that
-// writes nothing and blocks nothing, and it exists in the harness rather than
-// in a skill document because the adversarial round cap must be a guard, not a
-// request for discipline (PRINCIPLES items 7 and 13).
-const challengeTriggerCommand = `node ${path.join(repoRoot, "scripts", "challenge_trigger.mjs")}`;
-const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand };
-
-const hooks = {
-  codex: ensureHooks(path.join(home, ".codex", "hooks.json"), lifecycleHooks),
-  claude: ensureHooks(path.join(home, ".claude", "settings.json"), lifecycleHooks),
-};
-
-process.stdout.write(JSON.stringify({
-  ok: cliBinary.ok,
-  repoRoot,
-  cliBinary,
-  installed,
-  removedLegacy,
-  hooks,
-  note: "SKILL.md files are real copies (Claude copies are path/invocation substituted); auxiliary entries are symlinks.",
-}, null, 2) + "\n");
+const report = runInstaller();
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+if (!report.ok) process.exitCode = 1;

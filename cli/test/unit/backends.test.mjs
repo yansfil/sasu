@@ -51,33 +51,98 @@ test("codex scoped-read preamble bounds shell exploration", () => {
   assert.match(CODEX_ISOLATED_READ_PREAMBLE, /Never execute project code/);
 });
 
-test("codex activity audit accepts narrow reads and rejects scope escape or tool failure", () => {
+test("codex activity audit accepts quoted regex metacharacters from real judge commands", () => {
   const event = (item) => JSON.stringify({ type: "item.completed", item });
-  assert.equal(
-    codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -lc \"sed -n '1,80p' src/status.ts\"" }), {
+  const commands = [
+    "/bin/zsh -lc 'rg -n -i \"dirty|uncommitted|disposition|changed path|changedPaths|working tree|start\" cli/src/implement/commands.ts'",
+    "/bin/zsh -lc 'rg -n -i \"retir|isolat|worktree|status|occup|ghost|candidate\" cli/src/doctor.ts cli/src/implement/commands.ts cli/test/e2e/implement.test.mjs'",
+    "/bin/zsh -lc \"sed -n '1,80p' cli/src/doctor.ts\"",
+    "/bin/zsh -lc 'rg -n \"literal;&|><\" cli/src/doctor.ts'",
+  ];
+  for (const command of commands) {
+    assert.equal(codexActivityProblem(event({ type: "command_execution", command }), {
       agentic: true,
-      evidencePaths: ["src/status.ts"],
-    }),
-    null,
-  );
+      evidencePaths: ["cli/src/doctor.ts", "cli/src/implement/commands.ts", "cli/test/e2e/implement.test.mjs"],
+    }), null, command);
+  }
+});
+
+test("codex activity audit rejects composition, expansion, scope escape, and tool failure", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
   assert.match(
     codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -lc 'cat /etc/passwd'" }), {
       agentic: true,
       evidencePaths: ["src/status.ts"],
-    }),
+    }).detail,
     /non-read command|out-of-workspace/,
   );
   assert.match(
-    codexActivityProblem(event({ type: "error", message: "code mode host missing" }), { agentic: true, evidencePaths: [] }),
+    codexActivityProblem(event({ type: "error", message: "code mode host missing" }), { agentic: true, evidencePaths: [] }).detail,
     /tool surface failed/,
   );
   assert.match(
     codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -lc \"sed -n '1p' src/status.ts\ncat secret\"" }), {
       agentic: true,
       evidencePaths: ["src/status.ts"],
-    }),
+    }).detail,
     /composition or expansion/,
   );
+  for (const command of [
+    "/bin/zsh -lc 'rg needle src/status.ts | cat'",
+    "/bin/zsh -lc 'rg needle src/status.ts && sed -n 1p src/status.ts'",
+    "/bin/zsh -lc 'rg $(cat /etc/passwd) src/status.ts'",
+    "/bin/zsh -lc 'rg $HOME src/status.ts'",
+    "/bin/zsh -lc 'rg needle src/*.ts'",
+    "rg . $'\\x2d\\x2dpre' $'cat /etc/passwd' README.md",
+    "/bin/zsh -lc 'rg needle =rg src/status.ts'",
+    "/bin/zsh -lc 'rg needle src/status.ts",
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["src/status.ts"],
+    });
+    assert.equal(problem.reason, "shell-composition", command);
+  }
+  for (const command of [
+    "/bin/zsh -lc 'sed -n 1p /etc/passwd'",
+    "/bin/zsh -lc 'rg needle ../secret.txt src/status.ts'",
+    "/bin/zsh -lc 'rg --file=/etc/passwd src/status.ts'",
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["src/status.ts"],
+    });
+    assert.equal(problem.reason, "out-of-workspace", command);
+  }
+  for (const command of [
+    "/bin/zsh -lc \"rg --pre 'cat /etc/passwd' . src/status.ts\"",
+    "/bin/zsh -lc \"rg . --pre 'cat /etc/passwd' README.md\"",
+    "/bin/zsh -lc 'rg --file src/status.ts src/status.ts'",
+    "/bin/zsh -lc 'rg -n needle src/status.ts src/other.ts'",
+    "/bin/zsh -lc 'sed -n -f src/status.ts src/status.ts'",
+    "/bin/zsh -lc 'sed -n 1p README.md -f secret'",
+  ]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command }), {
+      agentic: true,
+      evidencePaths: ["src/status.ts", "--pre", "cat /etc/passwd", "README.md", "-f", "secret"],
+    });
+    assert.equal(problem.reason, "non-read-command", command);
+  }
+  assert.equal(
+    codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -lc 'rg needle src/other.ts'" }), {
+      agentic: true,
+      evidencePaths: ["src/status.ts"],
+    }).reason,
+    "missing-allowlisted-path",
+  );
+});
+
+test("codex activity audit preserves prompt-only and three-command limits", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
+  const one = event({ type: "command_execution", command: "/bin/zsh -lc 'sed -n 1p src/status.ts'" });
+  assert.equal(codexActivityProblem(one, { agentic: false, evidencePaths: ["src/status.ts"] }).reason, "prompt-only-shell");
+  const four = [one, one, one, one].join("\n");
+  assert.equal(codexActivityProblem(four, { agentic: true, evidencePaths: ["src/status.ts"] }).reason, "command-budget");
 });
 
 // Agentic judges resolve repo-relative evidence paths in a harness-owned

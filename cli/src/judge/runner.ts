@@ -19,6 +19,33 @@ export interface JudgeOutcome<T> {
   record: JudgeCallRecord;
 }
 
+function persistedFallbackReason(
+  error: JudgeError,
+): string {
+  const outcome = error.code;
+  if (outcome === "judge-auth") return "primary judge authentication failed";
+  if (outcome === "judge-auth-or-runtime") return "primary judge authentication or runtime failed";
+  if (outcome === "judge-timeout") return "primary judge timed out";
+  if (outcome !== "judge-invalid-output") return "primary judge failed before producing a usable verdict";
+
+  // The exact detail still reaches the one in-memory retry, but durable state
+  // is formatted from a structured backend/validator category. Provider text,
+  // commands, paths, and secrets never need message-prefix parsing here.
+  switch (error.reason) {
+    case "prompt-only-shell": return "command-audit: prompt-only judge executed a shell command";
+    case "command-budget": return "command-audit: isolated judge exceeded the command budget";
+    case "non-read-command": return "command-audit: isolated judge used a non-read command";
+    case "shell-composition": return "command-audit: isolated judge used shell composition or expansion";
+    case "out-of-workspace": return "command-audit: isolated judge attempted an out-of-workspace path";
+    case "missing-allowlisted-path": return "command-audit: isolated judge named no allowlisted evidence path";
+    case "tool-surface": return "tool-surface: codex tool failed";
+    case "missing-json": return "response-validation: no JSON object found";
+    case "empty-response": return "response-validation: judge returned no usable message";
+    default: break;
+  }
+  return "response-validation: judge output did not satisfy the required contract";
+}
+
 /** Effective project profile after the test/diagnostic backend override. */
 export function effectiveJudgeProfile(config: SasuConfig, profile: JudgeProfile): { primary: JudgeTarget; fallback: JudgeTarget | null } {
   const configured = judgeProfileFor(config, profile);
@@ -85,7 +112,7 @@ export async function runJudge<T>(
   let activityCommands: string[] = [];
   let fallback: JudgeCallRecord["fallback"];
   let fallbackUsed = target.backend !== selected.primary.backend;
-  const useFallback = (outcome: Exclude<JudgeCallRecord["outcome"], "ok">): boolean => {
+  const useFallback = (error: JudgeError): boolean => {
     const fallbackTarget = !fallbackUsed ? selected.fallback : null;
     if (fallbackTarget === null) return false;
     const fallbackBackend = resolveBackend(fallbackTarget.backend);
@@ -102,7 +129,9 @@ export async function runJudge<T>(
       model: target.model,
       effort: target.effort,
       durationMs: Date.now() - startedAt,
-      outcome,
+      attempts,
+      outcome: error.code,
+      reason: persistedFallbackReason(error),
     };
     target = fallbackTarget;
     backend = fallbackBackend;
@@ -113,6 +142,23 @@ export async function runJudge<T>(
     return true;
   };
   let attemptActivity: JudgeActivity = { commands: [], toolRounds: null };
+  const retryOrFallback = (error: JudgeError): void => {
+    // Every unusable judge response crosses this one boundary. Backend
+    // command-audit rejection, missing JSON, and schema rejection must not
+    // acquire three subtly different attempt or fallback contracts.
+    if (error.code === "judge-invalid-output" && attempts < 2) {
+      lastProblem = error.detail;
+      return;
+    }
+    const canFallback = error.code === "judge-auth"
+      || error.code === "judge-auth-or-runtime"
+      || error.code === "judge-timeout"
+      || error.code === "judge-invalid-output";
+    if (canFallback && useFallback(error)) return;
+    throw Object.assign(error, {
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
+    });
+  };
   while (true) {
     attempts += 1;
     const retryPreamble =
@@ -141,36 +187,22 @@ export async function runJudge<T>(
       };
     } catch (error) {
       if (error instanceof JudgeError) {
-        const canFallback = error.code === "judge-auth" || error.code === "judge-auth-or-runtime" || error.code === "judge-timeout" || error.code === "judge-invalid-output";
-        if (canFallback && useFallback(error.code)) continue;
-        throw Object.assign(error, {
-          record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
-        });
+        // The creator-assist baseline recorded 27/56 acceptance calls crossing
+        // to the slower fallback after a command-audit rejection; none gave
+        // the primary the repair attempt schema-invalid JSON already received.
+        retryOrFallback(error);
+        continue;
       }
       throw error;
     }
     const parsed = extractJsonObject(text);
     if (parsed === null) {
-      lastProblem = "no JSON object found in output";
-      if (attempts >= 2) {
-        const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
-        if (useFallback(error.code)) continue;
-        throw Object.assign(error, {
-          record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
-        });
-      }
+      retryOrFallback(new JudgeError("judge-invalid-output", backend.name, "no JSON object found in output", "missing-json"));
       continue;
     }
     const validated = validate(parsed, attemptActivity);
     if (typeof validated === "string") {
-      lastProblem = validated;
-      if (attempts >= 2) {
-        const error = new JudgeError("judge-invalid-output", backend.name, lastProblem);
-        if (useFallback(error.code)) continue;
-        throw Object.assign(error, {
-          record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands),
-        });
-      }
+      retryOrFallback(new JudgeError("judge-invalid-output", backend.name, validated, "invalid-contract"));
       continue;
     }
     return {

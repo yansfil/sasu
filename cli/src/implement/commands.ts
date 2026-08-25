@@ -10,15 +10,32 @@ import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, validateSemanticVerdict } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
-import { provisionWorktree } from "./worktree";
+import {
+  latestAttemptResult,
+  validateRiskVerdict,
+  validateVerdictDelta,
+  verificationInputManifest,
+  verificationRoundContext,
+} from "./convergence";
+import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
-import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, riskPrompt, type AcceptancePromptMaterial } from "./prompts";
+import {
+  acceptancePrompt,
+  designPrompt,
+  fidelityPrompt,
+  fidelitySource,
+  IMPLEMENT_REVIEW_DIFF_MAX_CHARS,
+  riskPrompt,
+  type AcceptancePromptMaterial,
+} from "./prompts";
+import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import {
   artifactIntegrityProblems,
   artifactSourceFingerprint,
   captureBaselineSnapshot,
   captureSourceSnapshot,
   changedPathsSince,
+  dirtySourcePaths,
   loadState,
   normalizeProjectPath,
   nowIso,
@@ -37,6 +54,7 @@ import {
   type SourceSnapshot,
   type ContractItem,
   type DesignComment,
+  type DirtyAttribution,
   type TrackedDesignComment,
   type FidelityCheckResult,
   type ImplementCommandResult,
@@ -45,11 +63,14 @@ import {
   type MechanicalBinding,
   type MechanicalRunRecord,
   type RegisteredArtifact,
-  type RiskFinding,
+  type RiskLaneResult,
   type TaskItem,
   type UnifiedVerificationAttempt,
   type VerificationItem,
   type VerificationStatus,
+  type VerificationInputManifest,
+  type VerificationRoundContext,
+  type VerificationRoundContexts,
 } from "./types";
 
 export interface ImplementArgs {
@@ -58,6 +79,25 @@ export interface ImplementArgs {
 }
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
+
+export const DIRTY_INTAKE_QUESTION = "커밋되지 않은 판정 대상 파일이 있습니다. 이 작업을 어떻게 시작할까요?";
+export const DIRTY_INTAKE_OPTIONS = [
+  {
+    value: "commit-first",
+    label: "먼저 커밋하고 시작",
+    description: "표시된 변경을 먼저 커밋한 뒤 그 커밋을 깨끗한 기준선으로 사용합니다.",
+  },
+  {
+    value: "pre-existing",
+    label: "기존 작업으로 이어서 시작",
+    description: "현재 바이트는 기준선에 포함하고 이번 런의 변경에서는 제외합니다.",
+  },
+  {
+    value: "run-owned",
+    label: "이번 작업에 포함",
+    description: "현재 바이트부터 이번 런이 만든 변경으로 검증합니다.",
+  },
+] as const;
 
 function result(action: string, ok: boolean, message: string, detail?: Record<string, unknown>): ImplementCommandResult {
   return { ok, action, exitCode: ok ? 0 : 1, message, ...(detail !== undefined ? { detail } : {}) };
@@ -215,10 +255,15 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     // budget called no judge (17ms mis-declared binding, 20ms stale artifact,
     // 10.6s own test failure), leaving only 2 real judged rounds and closing
     // an otherwise finished run as blocked.
-    const previous = index > 0 ? state.verificationAttempts[index - 1]! : null;
-    const advanced = previous !== null
-      && (previous.sourceFingerprint !== attempt.sourceFingerprint
-        || previous.inputFingerprint !== attempt.inputFingerprint);
+    const previous = index > countFrom ? state.verificationAttempts[index - 1]! : null;
+    // The first no-judge round has no generative verdict to bound and no prior
+    // attempt against which progress could be measured. Charging it was the
+    // observed off-by-one: a deterministic pre-judge failure spent budget
+    // before any judge existed. Later identical no-judge rounds are still
+    // charged so an unfixed command cannot loop forever.
+    const advanced = previous === null
+      || previous.sourceFingerprint !== attempt.sourceFingerprint
+      || previous.inputFingerprint !== attempt.inputFingerprint;
     if (calledNoJudge(attempt) && advanced) continue;
     fixAttempts += 1;
     consecutiveErrors = 0;
@@ -267,6 +312,8 @@ function publicState(
     status: state.status,
     topicSlug: state.topicSlug,
     prdPath: state.prdPath,
+    prdSnapshotPath: state.prd.snapshotPath,
+    baselineAttribution: state.baselineAttribution,
     // The judged tree: agents edit files here, never in the record tree.
     workingRoot: state.worktree?.path ?? state.projectRoot,
     worktree: state.worktree ?? null,
@@ -283,6 +330,7 @@ function publicState(
       latest: latest === null ? null : attemptSummary(latest),
     },
     artifacts: state.artifacts,
+    retirement: state.retirement,
     completion: state.completion,
   };
 }
@@ -309,6 +357,73 @@ function activeInPlaceRun(projectRoot: string): string | null {
     }
   }
   return null;
+}
+
+function dirtyAttributionRefusal(paths: string[]): Error {
+  const mixedExample = Object.fromEntries(paths.map((entry, index) => [
+    entry,
+    index === 0 ? "pre-existing" : "run-owned",
+  ]));
+  return new Error(
+    `implement start found dirty judged paths and will not guess their ownership:\n` +
+    `${paths.map((entry) => `- ${entry}`).join("\n")}\n` +
+    `Use \`sasu implement intake\` in the specification-owning session and ask once. Commit the listed changes first for a clean committed baseline, ` +
+    `or re-run with --dirty-attribution pre-existing to exclude all of these bytes from this run, or --dirty-attribution run-owned to include all of them as this run's work. ` +
+    `For mixed ownership, map every listed path exactly: --dirty-attribution '${JSON.stringify(mixedExample)}'.`,
+  );
+}
+
+function intake(projectRoot: string): ImplementCommandResult {
+  const paths = dirtySourcePaths(projectRoot);
+  return result(
+    "intake",
+    true,
+    paths.length === 0 ? "judged source tree is clean; no dirty disposition is required" : "dirty source disposition is required before implementation dispatch",
+    paths.length === 0
+      ? { required: false, paths: [], question: null, options: [] }
+      : { required: true, paths, question: DIRTY_INTAKE_QUESTION, options: DIRTY_INTAKE_OPTIONS },
+  );
+}
+
+function resolveDirtyAttributions(
+  paths: string[],
+  input: string | undefined,
+): Array<{ path: string; disposition: DirtyAttribution }> {
+  // Attribution is a declaration by the run's trusted Implementor, not a
+  // user waiver: the approved SC3 gives that actor the decision and requires
+  // path-complete recording, while only cross-session retirement requires
+  // verbatim user evidence. The enforceable boundary here is therefore exact
+  // path coverage and value validation, including mixed-ownership trees.
+  if (input === undefined) return [];
+  if (input === "pre-existing" || input === "run-owned") {
+    return paths.map((entry) => ({ path: entry, disposition: input }));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    throw new Error("--dirty-attribution must be pre-existing, run-owned, or a JSON object mapping every dirty path to one of those values");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--dirty-attribution JSON must be an object mapping every dirty path to pre-existing or run-owned");
+  }
+  const record = parsed as Record<string, unknown>;
+  const expected = new Set(paths);
+  const unknown = Object.keys(record).filter((entry) => !expected.has(entry)).sort();
+  const missing = paths.filter((entry) => !Object.prototype.hasOwnProperty.call(record, entry));
+  const invalid = Object.entries(record)
+    .filter(([, value]) => value !== "pre-existing" && value !== "run-owned")
+    .map(([entry]) => entry)
+    .sort();
+  if (unknown.length > 0 || missing.length > 0 || invalid.length > 0) {
+    const details = [
+      ...(missing.length > 0 ? [`missing: ${missing.join(", ")}`] : []),
+      ...(unknown.length > 0 ? [`unknown: ${unknown.join(", ")}`] : []),
+      ...(invalid.length > 0 ? [`invalid value: ${invalid.join(", ")}`] : []),
+    ].join("; ");
+    throw new Error(`--dirty-attribution JSON must map every dirty path exactly to pre-existing or run-owned (${details})`);
+  }
+  return paths.map((entry) => ({ path: entry, disposition: record[entry] as DirtyAttribution }));
 }
 
 function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -359,50 +474,100 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   // only diverts when this tree already hosts an active in-place run.
   const occupant = activeInPlaceRun(projectRoot);
   const isolate = config.worktree.enabled || occupant !== null;
-  const runDirAbsolute = path.join(projectRoot, runDirRel(slug));
-  const worktree = isolate
-    ? provisionWorktree(projectRoot, slug, runDirAbsolute, config.worktree, config.verify.commandTimeoutMs)
-    : null;
-  const createdAt = nowIso();
-  const state: ImplementState = {
-    schema: IMPLEMENT_SCHEMA,
-    status: "active",
-    topicSlug: slug,
-    projectRoot,
-    worktree,
-    runDir: runDirRel(slug),
-    prdPath: prd.relative,
-    prd: {
-      sha256: sha256(text),
-      status: contract.frontmatter["status"] ?? null,
-      approval: frontmatterApproval === "approved"
-        ? { source: "frontmatter", evidence: "human_approval: approved" }
-        : { source: "conversation", evidence: approval },
-      reviewProfile: reviewProfile(contract),
-      reviewRationale: contract.frontmatter["review_rationale"] ?? "",
-      sourceIntake,
-    },
-    initialSource: captureBaselineSnapshot(worktree?.path ?? projectRoot),
-    ownerSessionId: currentSessionId(),
-    adoptions: [],
-    tasks: contract.tasks,
-    requirements: contract.requirements,
-    acceptanceCriteria: contract.acceptanceCriteria,
-    verification: contract.verification,
-    artifacts: [],
-    verificationAttempts: [],
-    budgetGrants: [],
-    deviations: [],
-    completion: null,
-    createdAt,
-    updatedAt: createdAt,
+  const requestedAttribution = flag(args, "dirty-attribution");
+  // In-place runs can reject before provisioning. An isolated worktree starts
+  // from committed bytes but configured copy/setup steps may dirty it, so the
+  // provisioner validates the prepared tree inside its all-or-nothing cleanup
+  // boundary. Either way ownership is explicit before state exists
+  // (PRINCIPLES 4, 10, 11).
+  const sourceDirty = dirtySourcePaths(projectRoot);
+  if (sourceDirty.length > 0 && requestedAttribution === undefined) {
+    throw dirtyAttributionRefusal(sourceDirty);
+  }
+  const initializeState = (
+    worktree: WorktreeProvision | null,
+    pathAttributions: Array<{ path: string; disposition: DirtyAttribution }>,
+  ): ImplementState => {
+    const workRoot = worktree?.path ?? projectRoot;
+    const baseline = captureBaselineSnapshot(workRoot, pathAttributions);
+    const dispositions = new Set(pathAttributions.map((entry) => entry.disposition));
+    const aggregateAttribution = pathAttributions.length === 0
+      ? "clean"
+      : dispositions.size === 1
+        ? pathAttributions[0]!.disposition
+        : "mixed";
+    const snapshotPath = prdSnapshotPath(runDirRel(slug));
+    const createdAt = nowIso();
+    const state: ImplementState = {
+      schema: IMPLEMENT_SCHEMA,
+      status: "active",
+      topicSlug: slug,
+      projectRoot,
+      worktree,
+      runDir: runDirRel(slug),
+      prdPath: prd.relative,
+      prd: {
+        sha256: sha256(text),
+        snapshotPath,
+        status: contract.frontmatter["status"] ?? null,
+        approval: frontmatterApproval === "approved"
+          ? { source: "frontmatter", evidence: "human_approval: approved" }
+          : { source: "conversation", evidence: approval },
+        reviewProfile: reviewProfile(contract),
+        reviewRationale: contract.frontmatter["review_rationale"] ?? "",
+        sourceIntake,
+      },
+      initialSource: baseline,
+      baselineAttribution: {
+        disposition: aggregateAttribution,
+        paths: pathAttributions,
+        baselineDigest: baseline.digest,
+        head: baseline.head,
+      },
+      ownerSessionId: currentSessionId(),
+      adoptions: [],
+      tasks: contract.tasks,
+      requirements: contract.requirements,
+      acceptanceCriteria: contract.acceptanceCriteria,
+      verification: contract.verification,
+      artifacts: [],
+      verificationAttempts: [],
+      budgetGrants: [],
+      deviations: [],
+      retirement: null,
+      completion: null,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    fs.mkdirSync(path.join(projectRoot, state.runDir, "artifacts", "logs"), { recursive: true });
+    writePrdSnapshot(projectRoot, snapshotPath, text);
+    // state.json is the commit point. Until this atomic write succeeds, an
+    // isolated provision remains inside the cleanup boundary. Navigation
+    // pointers are written afterward because they are not run authority.
+    writeJsonAtomic(statePath, state);
+    return state;
   };
-  fs.mkdirSync(path.join(projectRoot, state.runDir, "artifacts", "logs"), { recursive: true });
-  writeJsonAtomic(statePath, state);
+  const runDirAbsolute = path.join(projectRoot, runDirRel(slug));
+  const state = isolate
+    ? provisionWorktree(
+        projectRoot,
+        slug,
+        runDirAbsolute,
+        config.worktree,
+        config.verify.commandTimeoutMs,
+        sourceDirty,
+        (prepared) => {
+          const dirtyPaths = dirtySourcePaths(prepared.path);
+          if (dirtyPaths.length > 0 && requestedAttribution === undefined) throw dirtyAttributionRefusal(dirtyPaths);
+          return initializeState(prepared, resolveDirtyAttributions(dirtyPaths, requestedAttribution));
+        },
+      )
+    : initializeState(null, resolveDirtyAttributions(sourceDirty, requestedAttribution));
   writeActivePointer(projectRoot, state);
-  const message = worktree === null
+  const startedWorktree = state.worktree ?? null;
+  const message = startedWorktree === null
     ? `implement run started: ${slug}`
-    : `implement run started: ${slug} in isolated worktree ${worktree.path} (branch ${worktree.branch})` +
+    : `implement run started: ${slug} in isolated worktree ${startedWorktree.path} (branch ${startedWorktree.branch})` +
       `${occupant !== null ? ` because run '${occupant}' is active in this tree` : ""} - implement the tasks there; records stay in this tree's agents/`;
   return result("start", true, message, publicState(state, config.judge.retryBudget));
 }
@@ -414,7 +579,11 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
  * session - the claim rides the command's own persist, so a command that
  * fails leaves no trace. A run owned by another session is refused unless
  * the user's approval arrives verbatim via --adopt, the same shape as every
- * other user-granted waiver (--grant-budget, --allow-unapproved-prd).
+ * other user-granted waiver (--grant-budget, --allow-unapproved-prd). These
+ * strings are durable audit evidence supplied by the trusted orchestrating
+ * session, not an authentication factor: the CLI has no authoritative chat
+ * identity to validate. Adding transcript attestation or a nonce would change
+ * that trust contract rather than strengthen this local ownership guard.
  */
 function assertRunOwnership(statePath: string, state: ImplementState, args: ImplementArgs): void {
   const sessionId = currentSessionId();
@@ -435,11 +604,49 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
   persistState(statePath, state);
 }
 
+function assertRunOpenForMutation(state: ImplementState): void {
+  if (state.status === "retired") throw new Error("implement run is retired; start a new approved PRD under a new slug");
+  if (state.status === "complete") throw new Error("implement run is already complete");
+}
+
+function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  if (state.status === "retired") {
+    return result("retire", true, `implement run is already retired: ${state.topicSlug}`, {
+      status: state.status,
+      retirement: state.retirement,
+      occupancyReleased: true,
+    });
+  }
+  if (state.status !== "active") {
+    throw new Error(`only an active unfinished run can be retired; ${state.topicSlug} is ${state.status}`);
+  }
+  const previousOwner = state.ownerSessionId ?? null;
+  const sessionId = currentSessionId();
+  const adoptionEvidence = flag(args, "adopt")?.trim() ?? "";
+  assertRunOwnership(statePath, state, args);
+  state.status = "retired";
+  state.retirement = {
+    retiredAt: nowIso(),
+    retiredBySessionId: sessionId,
+    ...(previousOwner !== null && previousOwner !== sessionId
+      ? { adoptedFromSessionId: previousOwner, adoptionEvidence }
+      : {}),
+  };
+  state.completion = null;
+  persistState(statePath, state);
+  return result("retire", true, `implement run retired and tree occupancy released: ${state.topicSlug}`, {
+    status: state.status,
+    retirement: state.retirement,
+    occupancyReleased: true,
+  });
+}
+
 function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
   const config = loadConfig(state.projectRoot);
   assertRunOwnership(statePath, state, args);
-  if (state.status === "complete") throw new Error("implement run is already complete");
   const id = requiredFlag(args, "id").toUpperCase();
   const nextStatus = flag(args, "status") ?? "complete";
   if (nextStatus !== "complete" && nextStatus !== "pending" && nextStatus !== "blocked") {
@@ -497,8 +704,8 @@ function inspectArtifactFile(absolute: string, kind: string): { sha256: string; 
 
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
-  if (state.status === "complete") throw new Error("implement run is already complete");
   const verificationId = requiredFlag(args, "id").toUpperCase();
   if (!state.verification.some((entry) => entry.id === verificationId)) throw new Error(`unknown verification item: ${verificationId}`);
   const kind = requiredFlag(args, "kind").toLowerCase();
@@ -538,6 +745,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
  */
 function design(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
   const id = requiredFlag(args, "id").toUpperCase();
   const note = requiredFlag(args, "accept").trim();
@@ -567,18 +775,17 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const config = loadConfig(recordRoot);
   const source = captureSourceSnapshot(requireWorkRoot(state));
   const problems = artifactIntegrityProblems(recordRoot, state, source);
-  const prdAbsolute = normalizeProjectPath(recordRoot, state.prdPath).absolute;
-  if (!fs.existsSync(prdAbsolute)) throw new Error(`PRD missing: ${state.prdPath}`);
-  const prdText = fs.readFileSync(prdAbsolute, "utf8");
-  const prdStale = sha256(prdText) !== state.prd.sha256;
+  const heldPrd = pinnedPrd(recordRoot, state);
+  const prdText = heldPrd.text;
   const contract = parseImplementContract(prdText);
   const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const currentInput = inputFingerprint(state, source.digest, fidelityInput);
   return result("status", true, `${state.topicSlug}: ${state.status}`, {
-    ...publicState(state, config.judge.retryBudget, source.digest, prdStale ? "PRD_STALE" : currentInput),
+    ...publicState(state, config.judge.retryBudget, source.digest, heldPrd.drift === null ? currentInput : "PRD_DRIFT"),
     artifactProblems: problems,
-    prdProblem: prdStale ? "PRD changed after implement start" : null,
+    prdProblem: heldPrd.drift === null ? null : "PRD changed after implement start",
+    prdDrift: heldPrd.drift,
   });
 }
 
@@ -857,7 +1064,11 @@ function acceptanceMaterial(
   return { changedFiles, checks, evidence, readableArtifacts, scenarios: mappedScenarios };
 }
 
-function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | string {
+function validateFidelity(
+  value: unknown,
+  prior: { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | null = null,
+  context: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
+): { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
   const raw = value as { verdict?: unknown; checks?: unknown };
   if (raw.verdict !== "PASS" && raw.verdict !== "FAIL") return "verdict must be PASS or FAIL";
@@ -870,11 +1081,16 @@ function validateFidelity(value: unknown): { verdict: "PASS" | "FAIL"; checks: F
     if (!expected.includes(String(check["id"]))) return `checks[${index}].id must be F1 through F5`;
     if (check["verdict"] !== "PASS" && check["verdict"] !== "FAIL") return `checks[${index}].verdict must be PASS or FAIL`;
     if (typeof check["reason"] !== "string" || typeof check["evidence"] !== "string") return `checks[${index}] needs reason and evidence strings`;
+    const id = check["id"] as FidelityCheckResult["id"];
+    const previous = prior?.checks.find((entry) => entry.id === id) ?? null;
+    const delta = validateVerdictDelta(check, check["verdict"], previous?.verdict ?? null, context, id);
+    if (typeof delta === "string") return delta;
     checks.push({
-      id: check["id"] as FidelityCheckResult["id"],
+      id,
       verdict: check["verdict"],
       reason: check["reason"],
       evidence: check["evidence"],
+      ...delta,
     });
   }
   if (new Set(checks.map((entry) => entry.id)).size !== 5 || expected.some((id) => !checks.some((entry) => entry.id === id))) {
@@ -988,33 +1204,6 @@ export function openDesignComments(state: ImplementState): TrackedDesignComment[
   return (state.designComments ?? []).filter((entry) => entry.status === "open" && entry.accepted === null);
 }
 
-function validateRisk(value: unknown): { verdict: "PASS" | "FAIL"; findings: RiskFinding[] } | string {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
-  const raw = value as { verdict?: unknown; findings?: unknown };
-  if (raw.verdict !== "PASS" && raw.verdict !== "FAIL") return "verdict must be PASS or FAIL";
-  if (!Array.isArray(raw.findings)) return "findings must be an array";
-  const findings: RiskFinding[] = [];
-  for (const [index, entry] of raw.findings.entries()) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      return `findings[${index}] must be an object with severity and text`;
-    }
-    const finding = entry as Record<string, unknown>;
-    if (finding["severity"] !== "blocking" && finding["severity"] !== "advisory") {
-      return `findings[${index}].severity must be blocking or advisory`;
-    }
-    if (typeof finding["text"] !== "string" || finding["text"].trim() === "") {
-      return `findings[${index}].text must be a non-empty string`;
-    }
-    findings.push({ severity: finding["severity"], text: finding["text"] });
-  }
-  // The verdict is a pure function of the severity floor, never a separate
-  // judgment: FAIL means at least one blocking finding, PASS means none.
-  const blocking = findings.some((entry) => entry.severity === "blocking");
-  if (raw.verdict === "PASS" && blocking) return "PASS cannot carry a blocking finding";
-  if (raw.verdict === "FAIL" && !blocking) return "FAIL requires at least one blocking finding";
-  return { verdict: raw.verdict, findings };
-}
-
 async function judgeLane<T>(
   invocationId: string,
   run: () => Promise<{ value: T; record: LaneRecord<T>["judge"] }>,
@@ -1102,6 +1291,7 @@ async function acceptanceLane(
   changedPaths: string[],
   mechanical: MechanicalRunRecord[],
   reuse: UnifiedVerificationAttempt | null,
+  priorInputs: Map<string, PriorLaneInput<AcLaneResult>>,
 ): Promise<NonNullable<UnifiedVerificationAttempt["lanes"]["acceptance"]>> {
   const invocationId = crypto.randomUUID();
   const started = Date.now();
@@ -1120,6 +1310,9 @@ async function acceptanceLane(
     }
     const record = await judgeLane(crypto.randomUUID(), async () => {
       const material = acceptanceMaterial(recordRoot, state, criterion, changedFiles, mechanical, scenarios);
+      const priorInput = priorInputs.get(criterion.id)!;
+      const priorCriterion = priorInput.result;
+      const criterionRoundContext = priorInput.context;
       // With no inlined check, artifact, or image, the only honest basis for
       // a PASS is the code itself - and the agentic probe measured judges
       // reading zero to two files, zero included. A PASS with a known-zero
@@ -1132,15 +1325,31 @@ async function acceptanceLane(
         config,
         `implement:acceptance:${criterion.id}`,
         "routine",
-        acceptancePrompt(state, criterion, material),
+        acceptancePrompt(state, criterion, material, priorCriterion, criterionRoundContext),
         (value, activity) => {
           const verdict = validateSemanticVerdict(value, [criterion.id]);
           if (typeof verdict === "string") return verdict;
+          const rawCriteria = (value as { criteria?: unknown }).criteria;
+          const rawCriterion = Array.isArray(rawCriteria)
+            ? rawCriteria.find((entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry) && (entry as Record<string, unknown>)["id"] === criterion.id)
+            : undefined;
+          if (rawCriterion === undefined) return `${criterion.id} raw result is missing`;
+          const delta = validateVerdictDelta(
+            rawCriterion as Record<string, unknown>,
+            verdict.criteria[0]!.verdict,
+            priorCriterion?.verdict ?? null,
+            criterionRoundContext,
+            criterion.id,
+          );
+          if (typeof delta === "string") return delta;
           const passed = verdict.criteria.some((entry) => entry.verdict === "PASS");
           if (!inlinedProof && passed && activity.commands.length === 0 && activity.toolRounds === 0) {
             return `${criterion.id} has no inlined check or artifact, so a PASS must rest on reading the implementation; no file read was recorded - read the files you cite as evidence, then judge again`;
           }
-          return verdict;
+          return {
+            ...verdict,
+            criteria: verdict.criteria.map((entry) => entry.id === criterion.id ? { ...entry, ...delta } : entry),
+          };
         },
         // 2026-08-13 live probe: 16 Luna xhigh calls across direct proof,
         // code PASS/FAIL, a 21-file noisy manifest, allowlisted dependencies,
@@ -1235,10 +1444,32 @@ function setVerificationStatuses(
   return problems;
 }
 
+function firstRoundContext(): VerificationRoundContext {
+  return { priorAttemptId: null, changedPaths: [], newEvidence: [] };
+}
+
+interface PriorLaneInput<T> {
+  result: T | null;
+  context: VerificationRoundContext;
+}
+
+function priorLaneInput<T>(
+  state: ImplementState,
+  inputManifest: VerificationInputManifest,
+  select: (attempt: UnifiedVerificationAttempt) => T | null | undefined,
+): PriorLaneInput<T> {
+  const prior = latestAttemptResult(state.verificationAttempts, select);
+  return prior === null
+    ? { result: null, context: firstRoundContext() }
+    : { result: prior.result, context: verificationRoundContext(inputManifest, prior.attempt) };
+}
+
 function failedAttempt(
   state: ImplementState,
   sourceDigest: string,
   fidelityInput: UnifiedVerificationAttempt["fidelityInput"],
+  inputManifest: VerificationInputManifest,
+  roundContexts: VerificationRoundContexts,
   started: number,
   startedAt: string,
   prelint: UnifiedVerificationAttempt["prelint"],
@@ -1252,6 +1483,8 @@ function failedAttempt(
     id: crypto.randomUUID(),
     inputFingerprint: inputFingerprint(state, sourceDigest, fidelityInput),
     sourceFingerprint: sourceDigest,
+    inputManifest,
+    roundContexts,
     fidelityInput,
     startedAt,
     finishedAt: nowIso(),
@@ -1266,8 +1499,8 @@ function failedAttempt(
 
 async function verify(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
-  if (state.status === "complete") throw new Error("implement run is already complete");
   const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
   if (openTasks.length > 0) throw new Error(`verify requires all tasks complete; open: ${openTasks.map((entry) => entry.id).join(", ")}`);
   const recordRoot = state.projectRoot;
@@ -1308,18 +1541,28 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
   const started = Date.now();
   const startedAt = nowIso();
-  const prdAbsolute = normalizeProjectPath(recordRoot, state.prdPath).absolute;
-  if (!fs.existsSync(prdAbsolute)) throw new Error(`PRD missing: ${state.prdPath}`);
-  const prdText = fs.readFileSync(prdAbsolute, "utf8");
-  if (sha256(prdText) !== state.prd.sha256) throw new Error("PRD changed after implement start; start a new run with the approved PRD");
+  const prdText = requirePinnedPrd(recordRoot, state);
   const contract = parseImplementContract(prdText);
   const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const lint = prelintPrd(prdText);
   const prelint = { ok: lint.ok, findings: lint.findings };
   const source = captureSourceSnapshot(workRoot);
+  const inputManifest = verificationInputManifest(state.initialSource, source, state.artifacts);
+  const acceptancePriorInputs = new Map(state.acceptanceCriteria.map((criterion) => [
+    criterion.id,
+    priorLaneInput(state, inputManifest, (attempt) =>
+      attempt.lanes.acceptance?.result?.criteria.find((entry) => entry.id === criterion.id)),
+  ]));
+  const fidelityPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.fidelity?.result);
+  const riskPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.risk?.result);
+  const roundContexts: VerificationRoundContexts = {
+    acceptance: Object.fromEntries([...acceptancePriorInputs].map(([id, input]) => [id, input.context])),
+    fidelity: fidelityPriorInput.context,
+    risk: state.prd.reviewProfile === "high-risk" ? riskPriorInput.context : null,
+  };
   if (!lint.ok) {
-    const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
+    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     return result("verify", false, "PRD prelint failed before mechanical verification; no judge was called", {
@@ -1329,7 +1572,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
   const runtimeArtifactProblems = artifactIntegrityProblems(recordRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) }, source);
   if (runtimeArtifactProblems.length > 0) {
-    const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, [], "artifact", "artifact-stale", runtimeArtifactProblems.join("; "), "STALE");
+    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "artifact", "artifact-stale", runtimeArtifactProblems.join("; "), "STALE");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     const budget = verificationBudget(state, config.judge.retryBudget);
@@ -1348,7 +1591,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const message = failedMechanical !== undefined
       ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
       : proofProblems.join("; ");
-    const attempt = failedAttempt(state, source.digest, fidelityInput, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
+    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     const budget = verificationBudget(state, config.judge.retryBudget);
@@ -1363,13 +1606,18 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const material = changeMaterial(workRoot, state, source);
   const changedPaths = changedPathsSince(state.initialSource, source);
   const changedFiles = changedFileManifest(workRoot, changedPaths);
+  const reviewDiff = runOwnedDiff(workRoot, state, changedPaths);
+  const reviewEvidencePaths = textEvidencePaths(workRoot, changedPaths);
+  const reviewNeedsAgentic = reviewDiff.length > IMPLEMENT_REVIEW_DIFF_MAX_CHARS;
   const reuse = reusableErrorAttempt(state, inputFingerprint(state, source.digest, fidelityInput), source.digest, mechanical);
-  const priorFidelity = reuse !== null && reuse.lanes.fidelity !== null && reuse.lanes.fidelity.verdict !== "ERROR"
+  const priorFidelityResult = fidelityPriorInput.result;
+  const fidelityRoundContext = fidelityPriorInput.context;
+  const reusedFidelity = reuse !== null && reuse.lanes.fidelity !== null && reuse.lanes.fidelity.verdict !== "ERROR"
     ? { ...reuse.lanes.fidelity, reusedFrom: reuse.id }
     : null;
   const fidelityInvocationId = crypto.randomUUID();
   progress(`judging ${state.acceptanceCriteria.length} acceptance criteria and fidelity in parallel (profile: ${state.prd.reviewProfile})`);
-  if (priorFidelity !== null) progress(`fidelity: ${priorFidelity.verdict} (reused from the ERROR'd attempt)`);
+  if (reusedFidelity !== null) progress(`fidelity: ${reusedFidelity.verdict} (reused from the ERROR'd attempt)`);
   // The design lane always re-runs (never reused - it is one cheap call and
   // its comments must describe the CURRENT tree: a reused comment set would
   // let a fixed defect keep blocking finalize, and a fresh one keep passing).
@@ -1378,11 +1626,17 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   // not a vote - see reconcileDesignComments and the finalize blocker.
   const runDesignLane = state.prd.reviewProfile !== "trivial";
   const [acceptance, fidelity, design] = await Promise.all([
-    acceptanceLane(config, recordRoot, workRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse),
-    priorFidelity !== null
-      ? Promise.resolve(priorFidelity)
+    acceptanceLane(config, recordRoot, workRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse, acceptancePriorInputs),
+    reusedFidelity !== null
+      ? Promise.resolve(reusedFidelity)
       : judgeLane(fidelityInvocationId, () =>
-          runJudge(config, "implement:fidelity", "routine", fidelityPrompt(prdText, contract, state, sourceContext, material), validateFidelity),
+          runJudge(
+            config,
+            "implement:fidelity",
+            "routine",
+            fidelityPrompt(prdText, contract, state, sourceContext, material, priorFidelityResult, fidelityRoundContext),
+            (value) => validateFidelity(value, priorFidelityResult, fidelityRoundContext),
+          ),
         ).then((record) => {
           progress(`fidelity: ${record.verdict} (${(record.durationMs / 1000).toFixed(0)}s)`);
           return record;
@@ -1390,7 +1644,16 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     !runDesignLane
       ? Promise.resolve(null)
       : judgeLane(crypto.randomUUID(), () =>
-          runJudge(config, "implement:design", "routine", designPrompt(prdText, material, runOwnedDiff(workRoot, state, changedPaths)), validateDesign),
+          runJudge(
+            config,
+            "implement:design",
+            "routine",
+            designPrompt(prdText, reviewDiff, material, reviewEvidencePaths),
+            validateDesign,
+            reviewNeedsAgentic
+              ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
+              : {},
+          ),
         ).then((record) => {
           const summary = record.verdict === "ERROR"
             ? `ERROR (${record.error?.message ?? "unknown"})`
@@ -1404,11 +1667,35 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   // fidelity.result. If both upstream lanes were fully reused, the prior
   // attempt's ERROR was the risk lane itself; otherwise a fresh upstream
   // judgment changed the risk lane's inputs. Either way it must re-run.
-  let risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: RiskFinding[] }> | null = null;
+  let risk: LaneRecord<RiskLaneResult> | null = null;
   if (state.prd.reviewProfile === "high-risk") {
     progress("risk: judging residual risk");
+    const priorRiskResult = riskPriorInput.result;
+    const riskRoundContext = riskPriorInput.context;
     risk = await judgeLane(crypto.randomUUID(), () =>
-      runJudge(config, "implement:risk", "high-risk", riskPrompt(prdText, material, acceptance.result, fidelity.result), validateRisk),
+      runJudge(
+        config,
+        "implement:risk",
+        "high-risk",
+        // A complete diff is smaller and more honest than clamped whole-file
+        // bodies: it includes every run-owned changed line, including new
+        // files, without inviting the risk judge to block on pre-existing
+        // context that this run did not change.
+        riskPrompt(
+          prdText,
+          reviewDiff,
+          acceptance.result,
+          fidelity.result,
+          state.artifacts,
+          priorRiskResult,
+          riskRoundContext,
+          reviewEvidencePaths,
+        ),
+        (value) => validateRiskVerdict(value, priorRiskResult, riskRoundContext),
+        reviewNeedsAgentic
+          ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
+          : {},
+      ),
     );
     const blocking = risk.result?.findings.filter((entry) => entry.severity === "blocking").length ?? 0;
     const advisory = risk.result?.findings.filter((entry) => entry.severity === "advisory").length ?? 0;
@@ -1428,6 +1715,8 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     id: crypto.randomUUID(),
     inputFingerprint: inputFingerprint(state, source.digest, fidelityInput),
     sourceFingerprint: source.digest,
+    inputManifest,
+    roundContexts,
     fidelityInput,
     startedAt,
     finishedAt: nowIso(),
@@ -1547,7 +1836,7 @@ function implementationReport(
   const openItemsSection = blocked === undefined
     ? ""
     : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1556,21 +1845,18 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     throw new Error("finalize --status must be complete or blocked");
   }
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  if (state.status === "retired") throw new Error("implement run is retired and cannot be finalized");
   assertRunOwnership(statePath, state, args);
   const recordRoot = state.projectRoot;
   const source = captureSourceSnapshot(requireWorkRoot(state));
   const latest = state.verificationAttempts.at(-1);
   if (latest === undefined) throw new Error("finalize requires a unified verify attempt");
-  const prdAbsolute = normalizeProjectPath(recordRoot, state.prdPath).absolute;
-  if (!fs.existsSync(prdAbsolute)) throw new Error(`PRD missing: ${state.prdPath}`);
-  const prdText = fs.readFileSync(prdAbsolute, "utf8");
-  const prdStale = sha256(prdText) !== state.prd.sha256;
+  const prdText = requirePinnedPrd(recordRoot, state);
   const contract = parseImplementContract(prdText);
   const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const currentFidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const fingerprint = completionFingerprint(state, source.digest, latest, currentFidelityInput);
   const blockers: string[] = [];
-  if (prdStale) blockers.push("PRD changed after implement start");
   blockers.push(...state.tasks.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.acceptanceCriteria.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").map((entry) => `${entry.id} is ${entry.status}`));
@@ -1614,6 +1900,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       terminalReason,
       topicSlug: state.topicSlug,
       prdPath: state.prdPath,
+      prdSnapshotPath: state.prd.snapshotPath,
+      baselineAttribution: state.baselineAttribution,
       blockedAt,
       completionFingerprint: fingerprint,
       sourceFingerprint: source.digest,
@@ -1660,6 +1948,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     status: "complete",
     topicSlug: state.topicSlug,
     prdPath: state.prdPath,
+    prdSnapshotPath: state.prd.snapshotPath,
+    baselineAttribution: state.baselineAttribution,
     completedAt,
     completionFingerprint: fingerprint,
     sourceFingerprint: source.digest,
@@ -1690,20 +1980,23 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 export async function runImplementCommand(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const subcommand = args.positional[1];
   try {
+    if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
     if (subcommand === "design") return design(projectRoot, args);
+    if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use start, task, artifact, status, design, verify, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, task, artifact, status, design, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
       action: subcommand ?? "unknown",
       exitCode: error instanceof SyntaxError ? 1 : 2,
       message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
     };
   }
 }

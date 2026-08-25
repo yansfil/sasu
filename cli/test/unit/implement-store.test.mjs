@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { artifactSourceFingerprint, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince } from "../../dist/implement/store.js";
+import { artifactSourceFingerprint, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths } from "../../dist/implement/store.js";
 
 test("source freshness is commit-invariant when judged bytes do not change", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-fingerprint-"));
@@ -40,7 +40,12 @@ test("baseline snapshot pins dirty paths to HEAD so pre-start work stays run-own
     fs.writeFileSync(path.join(root, "new.txt"), "untracked implementation\n");
     fs.rmSync(path.join(root, "gone.txt"));
 
-    const baseline = captureBaselineSnapshot(root);
+    const dirty = dirtySourcePaths(root);
+    assert.throws(
+      () => captureBaselineSnapshot(root, [{ path: "base.txt", disposition: "pre-existing" }]),
+      /dirty source paths changed while binding baseline attribution \(added: gone\.txt, new\.txt\)/,
+    );
+    const baseline = captureBaselineSnapshot(root, dirty.map((entry) => ({ path: entry, disposition: "run-owned" })));
     const byPath = new Map(baseline.entries.map((entry) => [entry.path, entry]));
     assert.equal(byPath.get("base.txt").sha256, captureSourceSnapshotSha("committed body\n"));
     assert.equal(byPath.has("new.txt"), false, "a file absent at HEAD is run-owned work, not baseline");
@@ -48,6 +53,12 @@ test("baseline snapshot pins dirty paths to HEAD so pre-start work stays run-own
 
     const working = captureSourceSnapshot(root);
     assert.deepEqual(changedPathsSince(baseline, working), ["base.txt", "gone.txt", "new.txt"]);
+
+    const mixed = captureBaselineSnapshot(root, dirty.map((entry) => ({
+      path: entry,
+      disposition: entry === "base.txt" ? "pre-existing" : "run-owned",
+    })));
+    assert.deepEqual(changedPathsSince(mixed, working), ["gone.txt", "new.txt"]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -57,7 +68,7 @@ test("baseline snapshot without a git HEAD is the working tree", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-baseline-plain-"));
   try {
     fs.writeFileSync(path.join(root, "only.txt"), "no repository here\n");
-    const baseline = captureBaselineSnapshot(root);
+    const baseline = captureBaselineSnapshot(root, []);
     const working = captureSourceSnapshot(root);
     assert.deepEqual(baseline, working);
   } finally {

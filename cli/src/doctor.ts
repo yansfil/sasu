@@ -1,13 +1,31 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { loadConfig, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
+import { loadState } from "./implement/store";
+import { IMPLEMENT_SCHEMA } from "./implement/types";
+import { currentSessionId } from "./runs/session";
+
+const skillContract: {
+  SKILL_NAMES: readonly string[];
+  contractFiles: (skillsRoot: string, name: string, runtime: "codex" | "claude") => string[];
+  transformContractFile: (runtime: "codex" | "claude", relative: string, text: string) => string;
+  treeFiles: (root: string) => string[];
+} = require("../lib/skill-contract.js");
 
 export interface DoctorSection {
-  section: "judge" | "verify" | "namespace" | "contract";
+  section: "judge" | "verify" | "namespace" | "runs" | "skills" | "contract";
   ok: boolean;
   lines: string[];
+}
+
+export interface DoctorOptions {
+  home?: string;
+  harnessRoot?: string;
 }
 
 function binaryVersion(binary: string): string | null {
@@ -16,7 +34,116 @@ function binaryVersion(binary: string): string | null {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim().split("\n")[0] ?? null;
 }
 
-export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorSection[] } {
+export function runIntegritySection(projectRoot: string, sessionId: string | null = currentSessionId()): DoctorSection {
+  const runsDir = path.join(projectRoot, "agents", "runs");
+  const retire: string[] = [];
+  const orphans: string[] = [];
+  const incompatibleActive: string[] = [];
+  const malformed: string[] = [];
+  if (fs.existsSync(runsDir)) {
+    for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const statePath = path.join(runsDir, entry.name, "state.json");
+      if (!fs.existsSync(statePath)) continue;
+      let raw: Record<string, unknown> | null = null;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(statePath, "utf8")) as unknown;
+        raw = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as Record<string, unknown>
+          : null;
+        // The operator report must agree with the command surface about what
+        // constitutes a readable run. Reusing the implementation parser keeps
+        // malformed states observable instead of maintaining a permissive
+        // second parser that can silently drop an unknown status.
+        const state = loadState(projectRoot, { state: path.relative(projectRoot, statePath) }).state;
+        if (state.status === "active") {
+          const owner = state.ownerSessionId ?? null;
+          const adoption = owner !== null && owner !== sessionId
+            ? " --adopt \"<verbatim user approval>\""
+            : "";
+          retire.push(
+            `retire candidate: ${entry.name} owner=${owner ?? "unowned"} command=sasu implement retire --slug ${entry.name}${adoption}`,
+          );
+        }
+        if ((state.status === "complete" || state.status === "blocked" || state.status === "retired")
+          && state.worktree !== null && state.worktree !== undefined && fs.existsSync(state.worktree.path)) {
+          orphans.push(
+            `orphan worktree: ${entry.name} status=${state.status} path=${state.worktree.path} branch=${state.worktree.branch}`,
+          );
+        }
+      } catch (error) {
+        if (raw?.["status"] === "active" && raw["schema"] !== IMPLEMENT_SCHEMA) {
+          incompatibleActive.push(
+            `incompatible active run: ${entry.name} status=active schema=${String(raw["schema"] ?? "missing")} installed-schema=${IMPLEMENT_SCHEMA}; use a matching CLI to inspect or retire it, or start a new slug`,
+          );
+        } else {
+          malformed.push(`malformed run state: ${entry.name} (${error instanceof Error ? error.message : String(error)})`);
+        }
+      }
+    }
+  }
+  return {
+    section: "runs",
+    ok: orphans.length === 0 && incompatibleActive.length === 0 && malformed.length === 0,
+    lines: [
+      ...(retire.length === 0 ? ["retire candidates: none"] : retire),
+      ...(orphans.length === 0 ? ["orphan worktrees: none"] : orphans),
+      ...incompatibleActive,
+      ...malformed,
+    ],
+  };
+}
+
+export function skillFreshnessSection(home: string, harnessRoot: string): DoctorSection {
+  const skillsRoot = path.join(harnessRoot, "skills");
+  const lines: string[] = [];
+  const differences: string[] = [];
+  for (const runtime of ["codex", "claude"] as const) {
+    const installedRoot = path.join(home, `.${runtime}`, "skills");
+    const installed = skillContract.SKILL_NAMES.some((name) => fs.existsSync(path.join(installedRoot, name)));
+    if (!installed) {
+      lines.push(`${runtime}: harness skills not installed`);
+      continue;
+    }
+    for (const name of skillContract.SKILL_NAMES) {
+      const expectedFiles = skillContract.contractFiles(skillsRoot, name, runtime);
+      const expectedSet = new Set(expectedFiles);
+      const installedSkillRoot = path.join(installedRoot, name);
+      if (fs.existsSync(installedSkillRoot)) {
+        for (const relative of skillContract.treeFiles(installedSkillRoot)) {
+          if (!expectedSet.has(relative)) {
+            differences.push(`unexpected installed contract: ${runtime}:${name}/${relative}`);
+          }
+        }
+      }
+      for (const relative of expectedFiles) {
+        const source = path.join(skillsRoot, name, relative);
+        const target = path.join(installedSkillRoot, relative);
+        const label = `${runtime}:${name}/${relative}`;
+        if (!fs.existsSync(target)) {
+          differences.push(`missing installed contract: ${label}`);
+          continue;
+        }
+        const targetLink = fs.lstatSync(target);
+        if (relative === "SKILL.md" && targetLink.isSymbolicLink()) {
+          differences.push(`invalid installed contract: ${label} (SKILL.md must be a real file, not a symbolic link)`);
+          continue;
+        }
+        if (!fs.statSync(target).isFile()) {
+          differences.push(`missing installed contract: ${label}`);
+          continue;
+        }
+        const sourceText = fs.readFileSync(source, "utf8");
+        const expected = skillContract.transformContractFile(runtime, relative, sourceText);
+        if (fs.readFileSync(target, "utf8") !== expected) differences.push(`stale installed contract: ${label}`);
+      }
+    }
+    if (!differences.some((entry) => entry.includes(`${runtime}:`))) lines.push(`${runtime}: installed contracts match repository`);
+  }
+  return { section: "skills", ok: differences.length === 0, lines: [...lines, ...differences] };
+}
+
+export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { ok: boolean; sections: DoctorSection[] } {
   let config: SasuConfig | null = null;
   let configError: string | null = null;
   try {
@@ -89,6 +216,12 @@ export function runDoctor(projectRoot: string): { ok: boolean; sections: DoctorS
     }
   }
   sections.push({ section: "namespace", ok: namespaceOk, lines: namespaceLines });
+
+  sections.push(runIntegritySection(projectRoot));
+
+  const home = options.home ?? os.homedir();
+  const harnessRoot = options.harnessRoot ?? path.resolve(__dirname, "../..");
+  sections.push(skillFreshnessSection(home, harnessRoot));
 
   sections.push({
     section: "contract",

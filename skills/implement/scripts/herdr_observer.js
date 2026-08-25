@@ -14,12 +14,15 @@ const AGENT_START_RETRY_MS = 100;
 const IMPLEMENTOR_WAIT_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const IMPLEMENTOR_WAIT_POLL_MS = 250;
 const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
-function implementorRoutingContract(prdPath) {
+function implementorRoutingContract(prdPath, dirtyAttribution) {
   return `
 
 RUNTIME ROUTING CONTRACT (injected by the Observer dispatcher):
 You are not the user-facing session. Never invoke AskUserQuestion, request_user_input, or any interactive question UI, and never ask the user directly.
 Your sole specification source is the ready PRD at ${prdPath}. Execute implementation and conditional delivery only; never author or edit the qa-log or PRD.
+${dirtyAttribution === undefined
+    ? "The specification-owning session found no dirty disposition to pass. Start normally and fail closed if the tree changed before start."
+    : `The user already chose the dirty disposition '${dirtyAttribution}'. Pass --dirty-attribution ${dirtyAttribution} to sasu implement start exactly once and never ask the question again.`}
 When a decision or failure prevents progress, output the structured OBSERVER_BLOCK packet from the Observer reference as final text and end the turn so the Observer lifecycle monitor can settle and respond.
 `;
 }
@@ -61,7 +64,18 @@ function parseArgs(argv) {
   return { command, flags };
 }
 
+function herdrDiagnostic(args) {
+  if (args[0] === "agent" && args[1] === "prompt") {
+    return {
+      command: `herdr agent prompt ${args[2] ?? "<unknown>"} <redacted handoff>`,
+      retainOutput: false,
+    };
+  }
+  return { command: `herdr ${args.join(" ")}`, retainOutput: true };
+}
+
 function runHerdr(args, options = {}) {
+  const diagnostic = herdrDiagnostic(args);
   const result = spawnSync("herdr", args, {
     cwd: options.cwd ?? process.cwd(),
     encoding: "utf8",
@@ -69,25 +83,34 @@ function runHerdr(args, options = {}) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || "no diagnostic").trim();
-    throw new Error(`herdr ${args.join(" ")} failed (${result.status}): ${detail}`);
+    // `agent prompt` carries the complete handoff as one argv entry. Herdr or
+    // a wrapper may echo argv on failure, so retaining its output would write
+    // the user's verbatim invocation and operational context into Observer
+    // logs. Status plus the redacted command is sufficient for recovery.
+    const detail = diagnostic.retainOutput
+      ? (result.stderr || result.stdout || "no diagnostic").trim()
+      : "handoff diagnostic redacted";
+    throw new Error(`${diagnostic.command} failed (${result.status}): ${detail}`);
   }
   const output = result.stdout.trim();
   if (output === "") return null;
   try {
     return JSON.parse(output);
   } catch {
-    throw new Error(`herdr ${args.join(" ")} returned non-JSON output`);
+    throw new Error(`${diagnostic.command} returned non-JSON output`);
   }
 }
 
-function startAgentWhenShellIsReady(name, agentKind, paneId, cwd) {
+function startAgentWhenShellIsReady(name, agentKind, paneId, cwd, nativeArgs = []) {
   // A fresh Herdr pane is observable before its shell accepts agent start.
   // The 2026-08-23 live /please drive hit this race on every immediate start;
   // retry the same pane for at most five seconds instead of allocating more panes.
   for (let attempt = 1; attempt <= AGENT_START_RETRY_LIMIT; attempt += 1) {
     try {
-      return runHerdr(["agent", "start", name, "--kind", agentKind, "--pane", paneId], { cwd });
+      return runHerdr([
+        "agent", "start", name, "--kind", agentKind, "--pane", paneId,
+        ...(nativeArgs.length === 0 ? [] : ["--", ...nativeArgs]),
+      ], { cwd });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       const shellIsStarting = detail.includes("agent_pane_busy");
@@ -123,6 +146,30 @@ function requireName(value) {
   return value;
 }
 
+function nativeAgentArgs(agentKind, flags) {
+  const model = flags.model;
+  const effort = flags.effort;
+  if (model !== undefined && model.trim() === "") throw new Error("--model must be non-empty");
+  const efforts = new Set(["low", "medium", "high", "xhigh", "max", "ultra"]);
+  if (effort !== undefined && !efforts.has(effort)) {
+    throw new Error("--effort must be one of: low, medium, high, xhigh, max, ultra");
+  }
+  if (model === undefined && effort === undefined) return [];
+  if (agentKind === "codex") {
+    return [
+      ...(model === undefined ? [] : ["--model", model]),
+      ...(effort === undefined ? [] : ["--config", `model_reasoning_effort="${effort}"`]),
+    ];
+  }
+  if (agentKind === "claude") {
+    return [
+      ...(model === undefined ? [] : ["--model", model]),
+      ...(effort === undefined ? [] : ["--effort", effort]),
+    ];
+  }
+  throw new Error(`--model/--effort are supported only for codex or claude agents, got ${agentKind}`);
+}
+
 function requireImplementationPipeline(handoff) {
   const pipelineLines = handoff.split(/\r?\n/).filter(line => line.startsWith("PIPELINE:"));
   if (pipelineLines.length !== 1 || !/^PIPELINE:\s*implement(?:\s|$)/.test(pipelineLines[0])) {
@@ -149,6 +196,14 @@ function requireReadyPrd(value, cwd) {
   return relative.split(path.sep).join("/");
 }
 
+function optionalDirtyAttribution(value) {
+  if (value === undefined) return undefined;
+  if (value !== "pre-existing" && value !== "run-owned") {
+    throw new Error("--dirty-attribution must be pre-existing or run-owned; commit-first is resolved before dispatch by committing and re-running intake");
+  }
+  return value;
+}
+
 function dispatch(flags, handoff) {
   if (typeof handoff !== "string" || handoff.trim() === "") {
     throw new Error("dispatch requires the lossless Implementor handoff on stdin");
@@ -156,6 +211,7 @@ function dispatch(flags, handoff) {
   requireImplementationPipeline(handoff);
   const cwd = flags.cwd ?? process.cwd();
   const prdPath = requireReadyPrd(flags.prd, cwd);
+  const dirtyAttribution = optionalDirtyAttribution(flags["dirty-attribution"]);
   const role = currentRole();
   if (role.mode === "inline") throw new Error("Observer dispatch requires a Herdr-managed pane");
   if (role.mode === "implementor") {
@@ -167,6 +223,7 @@ function dispatch(flags, handoff) {
   if (typeof agentKind !== "string" || agentKind === "") {
     throw new Error("--kind is required when the Observer pane has no detected agent kind");
   }
+  const launchArgs = nativeAgentArgs(agentKind, flags);
 
   const split = runHerdr([
     "pane", "split", "--current", "--direction", "right", "--cwd", cwd,
@@ -178,7 +235,7 @@ function dispatch(flags, handoff) {
   }
 
   try {
-    startAgentWhenShellIsReady(name, agentKind, paneId, cwd);
+    startAgentWhenShellIsReady(name, agentKind, paneId, cwd, launchArgs);
   } catch (error) {
     try {
       runHerdr(["pane", "close", paneId], { cwd });
@@ -188,7 +245,8 @@ function dispatch(flags, handoff) {
     throw error;
   }
 
-  const submittedHandoff = `${handoff.trim()}${implementorRoutingContract(prdPath)}`;
+  const dispositionField = dirtyAttribution === undefined ? "" : `\nDIRTY ATTRIBUTION: ${dirtyAttribution}`;
+  const submittedHandoff = `${handoff.trim()}${dispositionField}${implementorRoutingContract(prdPath, dirtyAttribution)}`;
   try {
     runHerdr(["agent", "prompt", name, submittedHandoff], { cwd });
   } catch (error) {
@@ -199,7 +257,19 @@ function dispatch(flags, handoff) {
     );
   }
 
-  return { mode: "observer", implementor: { name, paneId, agentKind, cwd, handoffSubmitted: true } };
+  return {
+    mode: "observer",
+    implementor: {
+      name,
+      paneId,
+      agentKind,
+      cwd,
+      handoffSubmitted: true,
+      ...(dirtyAttribution !== undefined ? { dirtyAttribution } : {}),
+      ...(flags.model !== undefined ? { model: flags.model } : {}),
+      ...(flags.effort !== undefined ? { effort: flags.effort } : {}),
+    },
+  };
 }
 
 function implementorSnapshot(name, cwd) {
@@ -244,7 +314,7 @@ function main() {
   if (command === "role") return currentRole();
   if (command === "dispatch") return dispatch(flags, fs.readFileSync(0, "utf8"));
   if (command === "wait") return waitForImplementor(flags);
-  throw new Error("usage: herdr_observer.js role | dispatch --name <name> --prd <ready-prd-path> [--kind <kind>] [--cwd <path>] < handoff.txt | wait --name <name> [--cwd <path>]");
+  throw new Error("usage: herdr_observer.js role | dispatch --name <name> --prd <ready-prd-path> [--dirty-attribution <pre-existing|run-owned>] [--kind <kind>] [--model <model>] [--effort <low|medium|high|xhigh|max|ultra>] [--cwd <path>] < handoff.txt | wait --name <name> [--cwd <path>]");
 }
 
 try {

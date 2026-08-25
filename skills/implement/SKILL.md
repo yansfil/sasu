@@ -90,6 +90,14 @@ sasu implement start \
   --allow-unapproved-prd '<verbatim user approval>'
 ```
 
+If the judged tree has uncommitted source changes, start refuses and lists every affected path instead of guessing who owns the bytes.
+Re-run with `--dirty-attribution pre-existing` when those paths must be part of the baseline and excluded from this run's diff, or with `--dirty-attribution run-owned` when this run owns them and they must be judged.
+When ownership is mixed, pass one JSON object on the same flag that maps every listed path exactly to `pre-existing` or `run-owned`; use the refusal message's path-complete example rather than adding or omitting paths.
+The choice and resulting baseline are recorded in `state.json`.
+Do not pick a disposition without grounding it in the handoff and repository state.
+For a `$please` handoff, the specification-owning session must already have run `sasu implement intake` and either made the tree clean after the user's `먼저 커밋하고 시작` choice or supplied `DIRTY ATTRIBUTION: pre-existing|run-owned` through the dispatch helper.
+Pass that supplied value to `sasu implement start` exactly and never ask the ownership question from the Implementor pane.
+
 Read `workingRoot` from the start response.
 When the harness isolated the run into a worktree, implement the tasks in that directory; the worktrees reference above covers the details.
 
@@ -101,6 +109,8 @@ sasu implement status
 
 Old implement state schemas are intentionally unsupported.
 Start a new run instead of migrating or adapting them.
+The run's exact approved PRD is pinned at the `prdSnapshotPath` reported by status.
+If the source PRD drifts, restore its exact pinned bytes or retire the run and start the newly approved contract under a new slug.
 
 ## 3. Implement Tasks
 

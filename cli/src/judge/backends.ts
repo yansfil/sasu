@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BackendName, JudgeEffort } from "../config";
-import { JudgeError } from "./types";
+import { JudgeError, type JudgeFailureReason } from "./types";
 
 export interface BackendRunResult {
   text: string;
@@ -260,7 +260,7 @@ export class ClaudeBackend implements JudgeBackend {
       }
       // Fall back to raw stdout when the envelope shape changes across CLI versions.
       if (result.stdout.trim() !== "") return { text: result.stdout };
-      throw new JudgeError("judge-invalid-output", this.name, "empty stdout from claude -p");
+      throw new JudgeError("judge-invalid-output", this.name, "empty stdout from claude -p", "empty-response");
     } finally {
       if (evidenceRoot !== undefined) fs.rmSync(evidenceRoot, { recursive: true, force: true });
     }
@@ -313,6 +313,216 @@ If supplied evidence already settles the question, use no command.
 
 `;
 
+interface ShellWords {
+  words: string[];
+  hasOperator: boolean;
+  hasExpansion: boolean;
+  malformed: boolean;
+}
+
+/**
+ * Parse only the shell surface the audit permits: words, single/double quotes,
+ * and backslash escapes. The result is deliberately not an execution plan.
+ * Anything that would make the shell compose commands or expand values is
+ * surfaced as a flag and rejected by the caller. Keeping this parser smaller
+ * than a shell is the fail-closed boundary: unknown or unfinished syntax never
+ * becomes an allowed read.
+ */
+function shellWords(input: string): ShellWords {
+  const words: string[] = [];
+  let word = "";
+  let inWord = false;
+  let quote: "single" | "double" | null = null;
+  let hasOperator = false;
+  let hasExpansion = false;
+  let malformed = input.includes("\0");
+  const finishWord = (): void => {
+    if (!inWord) return;
+    words.push(word);
+    word = "";
+    inWord = false;
+  };
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]!;
+    const next = input[index + 1];
+    if (char === "\r" || char === "\n") {
+      // The old audit rejected every physical newline. Preserve that boundary
+      // even inside quotes because command traces never need multiline reads.
+      hasOperator = true;
+      continue;
+    }
+    if (quote === "single") {
+      if (char === "'") quote = null;
+      else word += char;
+      inWord = true;
+      continue;
+    }
+    if (quote === "double") {
+      if (char === '"') {
+        quote = null;
+        inWord = true;
+        continue;
+      }
+      if (char === "\\") {
+        if (next === undefined) {
+          malformed = true;
+          continue;
+        }
+        if (next === "\r" || next === "\n") hasOperator = true;
+        if (next === "$" || next === "`" || next === '"' || next === "\\") {
+          word += next;
+          index += 1;
+        } else {
+          // POSIX double quotes preserve a backslash before other characters.
+          word += `\\${next}`;
+          index += 1;
+        }
+        inWord = true;
+        continue;
+      }
+      // Every dollar outside single quotes is rejected. zsh has more dollar
+      // forms than parameter and command substitution, notably ANSI-C
+      // quoting ($'...'), so enumerating only familiar suffixes is bypassable.
+      if (char === "`" || char === "$") hasExpansion = true;
+      word += char;
+      inWord = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      finishWord();
+      continue;
+    }
+    if (char === "'") {
+      quote = "single";
+      inWord = true;
+      continue;
+    }
+    if (char === '"') {
+      quote = "double";
+      inWord = true;
+      continue;
+    }
+    if (char === "\\") {
+      if (next === undefined) {
+        malformed = true;
+        continue;
+      }
+      if (next === "\r" || next === "\n") hasOperator = true;
+      word += next;
+      inWord = true;
+      index += 1;
+      continue;
+    }
+    if (";&|<>()".includes(char)) {
+      finishWord();
+      hasOperator = true;
+      continue;
+    }
+    if (char === "`" || char === "$") hasExpansion = true;
+    // Globs and brace expansion are shell expansion too. Legitimate judge
+    // patterns quote these characters; unquoted forms may inspect paths the
+    // prompt did not name.
+    if (char === "*" || char === "?" || char === "[" || char === "{" || char === "~" || (char === "=" && !inWord)) {
+      hasExpansion = true;
+    }
+    word += char;
+    inWord = true;
+  }
+  finishWord();
+  if (quote !== null) malformed = true;
+  return { words, hasOperator, hasExpansion, malformed };
+}
+
+function auditedCommandWords(command: string): { words: string[]; shellProblem: boolean } {
+  const outer = shellWords(command);
+  if (outer.malformed || outer.hasOperator || outer.hasExpansion) return { words: [], shellProblem: true };
+  if (outer.words[0] !== "/bin/zsh") return { words: outer.words, shellProblem: false };
+  if (outer.words.length < 3 || outer.words[1] !== "-lc") return { words: [], shellProblem: true };
+  // Codex normally renders the script argv as one quoted word, but older and
+  // stub traces flatten that argv into the remaining display words. Operators
+  // and expansions were already rejected while parsing the complete trace, so
+  // accepting the flattened tail preserves the same read-only token policy.
+  if (outer.words.length > 3) return { words: outer.words.slice(2), shellProblem: false };
+  const inner = shellWords(outer.words[2]!);
+  return {
+    words: inner.words,
+    shellProblem: inner.malformed || inner.hasOperator || inner.hasExpansion,
+  };
+}
+
+function tokenEscapesWorkspace(token: string): boolean {
+  const candidates = [token, ...token.split("=").slice(1)];
+  return candidates.some((candidate) => {
+    if (path.posix.isAbsolute(candidate) || path.win32.isAbsolute(candidate)) return true;
+    return candidate.split(/[\\/]/).includes("..");
+  });
+}
+
+const SAFE_RG_FLAGS = new Set([
+  "-F", "--fixed-strings",
+  "-H", "--with-filename",
+  "-S", "--smart-case",
+  "-h", "--no-filename",
+  "-i", "--ignore-case",
+  "-n", "--line-number",
+  "-s", "--case-sensitive",
+  "-v", "--invert-match",
+  "-w", "--word-regexp",
+  "-x", "--line-regexp",
+  "--no-config",
+  "--no-heading",
+  "--no-messages",
+]);
+
+/**
+ * Admit only the small command grammar the evidence prompt asks judges to use.
+ * Checking for one allowlisted path is insufficient: both sed and rg expose
+ * options that read other files or execute preprocessors. An option allowlist
+ * plus exact file operands keeps this an auditable read surface instead of a
+ * second shell policy.
+ */
+function readCommandProblem(words: string[], evidencePaths: string[]): { reason: JudgeFailureReason; detail: string } | null {
+  const evidence = new Set(evidencePaths);
+  const operandProblem = (command: "sed" | "rg", paths: string[]): { reason: JudgeFailureReason; detail: string } | null => {
+    if (paths.every((candidate) => evidence.has(candidate))) return null;
+    if (!paths.some((candidate) => evidence.has(candidate))) {
+      return { reason: "missing-allowlisted-path", detail: `${command} named no allowlisted evidence path` };
+    }
+    return { reason: "non-read-command", detail: `${command} named a file operand outside the evidence allowlist` };
+  };
+  if (words[0] === "sed") {
+    if (words.length < 4 || words[1] !== "-n" || !/^\d+(?:,\d+)?p$/.test(words[2]!)) {
+      return { reason: "non-read-command", detail: "sed must use only: sed -n <line-or-range>p <allowlisted-path>..." };
+    }
+    const paths = words.slice(3);
+    if (paths.some((candidate) => candidate.startsWith("-"))) {
+      return { reason: "non-read-command", detail: "sed file operands must not be reinterpretable as options" };
+    }
+    return operandProblem("sed", paths);
+  }
+
+  if (words[0] === "rg") {
+    let index = 1;
+    while (index < words.length && SAFE_RG_FLAGS.has(words[index]!)) index += 1;
+    const hasEndOfOptions = words[index] === "--";
+    if (hasEndOfOptions) index += 1;
+    const pattern = words[index];
+    const paths = words.slice(index + 1);
+    // rg recognizes options after its pattern too. Without an explicit `--`,
+    // a dash-prefixed token cannot be trusted as a filename even when an
+    // untrusted repository happens to register that exact name as evidence.
+    if (pattern === undefined || pattern.startsWith("-") || paths.length === 0 || (!hasEndOfOptions && paths.some((candidate) => candidate.startsWith("-")))) {
+      return {
+        reason: "non-read-command",
+        detail: "rg must use only safe flags followed by one pattern and explicit allowlisted paths",
+      };
+    }
+    return operandProblem("rg", paths);
+  }
+
+  return { reason: "non-read-command", detail: "command is not an allowed read command" };
+}
+
 function copyEvidenceFiles(sourceRoot: string, workRoot: string, paths: string[], backend: BackendName = "codex"): void {
   const root = path.resolve(sourceRoot);
   for (const relative of [...new Set(paths)]) {
@@ -338,7 +548,7 @@ function copyEvidenceFiles(sourceRoot: string, workRoot: string, paths: string[]
 export function codexActivityProblem(
   stdout: string,
   options: { agentic: boolean; evidencePaths: string[] },
-): string | null {
+): { reason: JudgeFailureReason; detail: string } | null {
   const items = stdout
     .split("\n")
     .filter(Boolean)
@@ -351,21 +561,33 @@ export function codexActivityProblem(
       }
     });
   const toolError = items.find((item) => item.type === "error");
-  if (toolError !== undefined) return `codex tool surface failed: ${toolError.message ?? "unknown tool error"}`;
+  if (toolError !== undefined) {
+    return { reason: "tool-surface", detail: `codex tool surface failed: ${toolError.message ?? "unknown tool error"}` };
+  }
   const commands = items.filter((item) => item.type === "command_execution" && typeof item.command === "string").map((item) => item.command!);
-  if (!options.agentic && commands.length > 0) return "prompt-only codex judge executed a shell command";
-  if (commands.length > 3) return `isolated codex judge exceeded the three-command budget (${commands.length})`;
+  if (!options.agentic && commands.length > 0) {
+    return { reason: "prompt-only-shell", detail: "prompt-only codex judge executed a shell command" };
+  }
+  if (commands.length > 3) {
+    return { reason: "command-budget", detail: `isolated codex judge exceeded the three-command budget (${commands.length})` };
+  }
   for (const command of commands) {
-    const inner = command.replace(/^\/bin\/zsh\s+-lc\s+/, "");
-    if (!/^["']?(?:sed|rg)\b/.test(inner)) return `isolated codex judge used a non-read command: ${command}`;
-    if (/[;&|><`\r\n]|\$\(|\$\{|(?:^|[^\\])\$[A-Za-z_]|(?:^|\s)~\//.test(inner)) {
-      return `isolated codex judge used shell composition or expansion: ${command}`;
+    const parsed = auditedCommandWords(command);
+    if (parsed.shellProblem) {
+      return { reason: "shell-composition", detail: `isolated codex judge used shell composition or expansion: ${command}` };
     }
-    if (/(?:^|[\s"'])\/(?!bin\/zsh\b)/.test(inner) || /(?:^|[\s"'])\.\.\//.test(inner)) {
-      return `isolated codex judge attempted an out-of-workspace path: ${command}`;
+    if (parsed.words[0] !== "sed" && parsed.words[0] !== "rg") {
+      return { reason: "non-read-command", detail: `isolated codex judge used a non-read command: ${command}` };
     }
-    if (!options.evidencePaths.some((relative) => inner.includes(relative))) {
-      return `isolated codex judge command named no allowlisted evidence path: ${command}`;
+    if (parsed.words.slice(1).some(tokenEscapesWorkspace)) {
+      return { reason: "out-of-workspace", detail: `isolated codex judge attempted an out-of-workspace path: ${command}` };
+    }
+    const readProblem = readCommandProblem(parsed.words, options.evidencePaths);
+    if (readProblem !== null) {
+      return {
+        reason: readProblem.reason,
+        detail: `isolated codex judge used an unsafe read command (${readProblem.detail}): ${command}`,
+      };
     }
   }
   return null;
@@ -412,9 +634,10 @@ export class CodexBackend implements JudgeBackend {
     // argument; stdin via `-` hangs. argv has OS limits, so oversized prompts
     // fail fast instead of hanging the gate.
     if (prompt.length > 400_000) {
-      throw new JudgeError("judge-invalid-output", this.name, "prompt exceeds codex argv budget (400k chars); reduce gate input");
+      throw new JudgeError("judge-invalid-output", this.name, "prompt exceeds codex argv budget (400k chars); reduce gate input", "input-too-large");
     }
     const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-judge-"));
+    const shellConfigRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-judge-zdot-"));
     const lastMessagePath = path.join(workRoot, "last-message.txt");
     try {
       if (agentic) {
@@ -428,20 +651,32 @@ export class CodexBackend implements JudgeBackend {
       // codex-code-mode-host in the real app resources directory; invoking
       // the symlink made every read tool fail closed while the model could
       // still guess a verdict from path names.
+      const judgeEnv: NodeJS.ProcessEnv = { ...process.env, [JUDGE_SUBPROCESS_ENV]: "1" };
+      // ripgrep only loads a config when this variable is set. Removing it
+      // prevents inherited host configuration from adding options such as a
+      // preprocessor behind an otherwise safe-looking traced command.
+      delete judgeEnv["RIPGREP_CONFIG_PATH"];
+      // `zsh -lc` otherwise loads user startup files before the traced command.
+      // A separate empty directory is required because an allowlisted evidence
+      // file named `.zshenv` may legitimately exist in the scoped workspace.
+      judgeEnv["ZDOTDIR"] = shellConfigRoot;
       const result = await runProcess(binaryRealPath(this.binary), args, {
         timeoutMs,
-        env: { ...process.env, [JUDGE_SUBPROCESS_ENV]: "1" },
+        env: judgeEnv,
       });
       interpretSpawnFailure(this.name, result);
       const activityProblem = codexActivityProblem(result.stdout, { agentic, evidencePaths });
-      if (activityProblem !== null) throw new JudgeError("judge-invalid-output", this.name, activityProblem);
+      if (activityProblem !== null) {
+        throw new JudgeError("judge-invalid-output", this.name, activityProblem.detail, activityProblem.reason);
+      }
       if (fs.existsSync(lastMessagePath)) {
         const text = fs.readFileSync(lastMessagePath, "utf8");
         if (text.trim() !== "") return { text, activity: { commands: codexCommandTrace(result.stdout) } };
       }
-      throw new JudgeError("judge-invalid-output", this.name, "codex exec produced no last message");
+      throw new JudgeError("judge-invalid-output", this.name, "codex exec produced no last message", "empty-response");
     } finally {
       fs.rmSync(workRoot, { recursive: true, force: true });
+      fs.rmSync(shellConfigRoot, { recursive: true, force: true });
     }
   }
 }

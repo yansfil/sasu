@@ -249,6 +249,7 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
     assert.equal(outcome.record.attempts, 1);
     assert.equal(outcome.record.fallback?.backend, "claude");
     assert.equal(outcome.record.fallback?.outcome, "judge-timeout");
+    assert.equal(outcome.record.fallback?.reason, "primary judge timed out");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
@@ -334,6 +335,71 @@ test("runJudge falls back from repeated invalid Claude output to Codex", async (
   }
 });
 
+test("backend audit rejection gets one reasoned retry before fallback and records the cause", async () => {
+  // The production x-twitter records had this exact shape 27 times: Codex was
+  // rejected as judge-invalid-output after one attempt and the record retained
+  // no reason. The second prompt and the fallback record are the observable
+  // contract that prevents another silent 24-minute discard class.
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const fakeCodex = path.join(binDir, "codex");
+  const fakeClaude = path.join(binDir, "claude");
+  const countFile = path.join(binDir, "codex-count");
+  fs.writeFileSync(path.join(binDir, "allowed.txt"), "evidence\n");
+  fs.writeFileSync(fakeCodex, [
+    "#!/bin/sh",
+    `count_file=${JSON.stringify(countFile)}`,
+    'count=0',
+    'test ! -f "$count_file" || count=$(cat "$count_file")',
+    'count=$((count + 1))',
+    'printf "%s" "$count" > "$count_file"',
+    'last=""',
+    'prompt=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2',
+    '  else prompt="$1"; shift; fi',
+    'done',
+    'printf "%s" "$prompt" > "$count_file.prompt.$count"',
+    `printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc rg -n credential|token allowed.txt"}}'`,
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    "",
+  ].join("\n"));
+  fs.writeFileSync(
+    fakeClaude,
+    '#!/bin/sh\nprintf \'%s\\n\' \'{"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}\'\n',
+  );
+  fs.chmodSync(fakeCodex, 0o755);
+  fs.chmodSync(fakeClaude, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    const outcome = await runJudge(
+      config,
+      "gate:test",
+      "routine",
+      "ORIGINAL-PROMPT",
+      validateGapVerdict,
+      { agentic: true, cwd: binDir, evidencePaths: ["allowed.txt"] },
+    );
+    assert.equal(fs.readFileSync(countFile, "utf8"), "2", "the primary must be rejected twice before fallback");
+    assert.match(
+      fs.readFileSync(`${countFile}.prompt.2`, "utf8"),
+      /previous reply was rejected: isolated codex judge used shell composition or expansion.*credential\|token/,
+    );
+    assert.equal(outcome.record.backend, "claude");
+    assert.equal(outcome.record.fallback?.backend, "codex");
+    assert.equal(outcome.record.fallback?.attempts, 2);
+    assert.equal(outcome.record.fallback?.outcome, "judge-invalid-output");
+    assert.equal(outcome.record.fallback?.reason, "command-audit: isolated judge used shell composition or expansion");
+    assert.doesNotMatch(outcome.record.fallback?.reason ?? "", /credential|token/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
 test("runJudge falls back from Claude authentication failure to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
@@ -359,6 +425,8 @@ test("runJudge falls back from Claude authentication failure to Codex", async ()
     assert.equal(outcome.record.fallback.model, "claude-sonnet-5");
     assert.equal(outcome.record.fallback.outcome, "judge-auth");
     assert.equal(typeof outcome.record.fallback.durationMs, "number");
+    assert.equal(outcome.record.fallback.reason, "primary judge authentication failed");
+    assert.doesNotMatch(outcome.record.fallback.reason, /login/i);
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
@@ -390,6 +458,7 @@ test("runJudge falls back from a Claude runtime failure to Codex", async () => {
     assert.equal(outcome.record.fallback.backend, "claude");
     assert.equal(outcome.record.fallback.outcome, "judge-auth-or-runtime");
     assert.equal(typeof outcome.record.fallback.durationMs, "number");
+    assert.equal(outcome.record.fallback.reason, "primary judge authentication or runtime failed");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;

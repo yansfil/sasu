@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource } from "../../dist/implement/prompts.js";
+import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, riskPrompt } from "../../dist/implement/prompts.js";
 import { mechanicalBindings, parseImplementContract } from "../../dist/implement/contract.js";
 
 function contract(sourceIntake) {
@@ -55,6 +55,40 @@ test("full qa-log supplements rather than replaces PRD decision traceability", (
   assert.match(prompt, /CANONICAL INTENT SOURCE:\nFULL QA LOG/);
   assert.match(prompt, /DECISION TRACEABILITY:\nD-01 preserve the user's chosen flow/);
   assert.match(prompt, /FULL APPROVED PRD:\nFULL PRD/);
+});
+
+test("risk prompt receives the complete artifact roster and the exact round-2 delta contract", () => {
+  const prompt = riskPrompt(
+    "FULL PRD",
+    "changed source",
+    { verdict: "PASS" },
+    { verdict: "PASS" },
+    [{ verificationId: "V5", kind: "log", path: "proof/run.log", sha256: "a".repeat(64), description: "CLI run", bytes: 10, sourceFingerprint: "source", registeredAt: "now" }],
+    { verdict: "PASS", findings: [{ id: "RF1", severity: "advisory", text: "old note" }] },
+    { priorAttemptId: "attempt-1", changedPaths: ["src/run.ts"], newEvidence: [{ verificationId: "V5", path: "proof/run.log", sha256: "a".repeat(64) }] },
+  );
+  assert.match(prompt, /V5 log proof\/run\.log sha256=/);
+  assert.match(prompt, /ROUND-2\+ DELTA CONTRACT/);
+  assert.match(prompt, /Disposition every prior finding by its supplied id as resolved or unresolved/);
+  assert.match(prompt, /deltaBasis.*one exact path.*CHANGED PATHS SINCE THE PRIOR ROUND/s);
+  assert.match(prompt, /"origin": "prior-unresolved" \| "new"/);
+  assert.doesNotMatch(prompt, /"new on round 2\+"/);
+  assert.match(prompt, /V5:proof\/run\.log/);
+  assert.match(prompt, /Artifact bytes remain in the record tree and are not readable in this lane/);
+});
+
+test("design and risk prompts bound oversized diffs and name the isolated read surface", () => {
+  const completeDiff = `FIRST_CHANGED_LINE\n${"x".repeat(130_000)}\nLAST_CHANGED_LINE`;
+  const readable = ["src/large.ts"];
+  const design = designPrompt("PRD", completeDiff, "BOUNDED FILE BODY", readable);
+  const risk = riskPrompt("PRD", completeDiff, { verdict: "PASS" }, { verdict: "PASS" }, [], null, undefined, readable);
+  for (const prompt of [design, risk]) {
+    assert.match(prompt, /1300\d+-character diff omitted/);
+    assert.match(prompt, /isolated read-only access/);
+    assert.match(prompt, /- src\/large\.ts/);
+    assert.doesNotMatch(prompt, /FIRST_CHANGED_LINE|LAST_CHANGED_LINE/);
+    assert.ok(prompt.length < 125_000);
+  }
 });
 
 test("explicit verify commands bind nested product checks instead of detected harness checks", () => {
@@ -130,8 +164,8 @@ test("implement contract parses 2.1 scenario cards and carries SC ids into V cov
   assert.ok(parsed.verification[0].covers.includes("SC1"), JSON.stringify(parsed.verification[0].covers));
 });
 
-test("design prompt carries no verdict, anchors every comment to a path, and shows the run's own diff", () => {
-  const prompt = designPrompt("PRD BODY", "CHANGE MATERIAL", "RUN OWNED DIFF");
+test("design prompt carries no verdict, anchors every comment to a path, and shows the diff with bounded file context", () => {
+  const prompt = designPrompt("PRD BODY", "RUN OWNED DIFF", "CURRENT FILE BODY");
   assert.match(prompt, /design reviewer/);
   assert.match(prompt, /You have no verdict/);
   // The lane must not be able to emit a verdict at all: a verdict field in the
@@ -146,12 +180,13 @@ test("design prompt carries no verdict, anchors every comment to a path, and sho
   assert.match(prompt, /"area" is a label for the reader, not part of the identity/);
   assert.match(prompt, /One cause patched as N symptoms/);
   assert.match(prompt, /No style nitpicks/);
-  // The diff is the material the accretion charter needs; the bodies are context.
+  // The complete diff is the material the accretion charter needs. Whole file
+  // bodies previously duplicated it and made the prompt silently incomplete.
   assert.match(prompt, /RUN OWNED DIFF/);
   assert.match(prompt, /Judge what THIS RUN did/);
-  assert.match(prompt, /CHANGE MATERIAL/);
+  assert.match(prompt, /BOUNDED CURRENT BODIES OF CHANGED FILES/);
+  assert.match(prompt, /CURRENT FILE BODY/);
   assert.match(prompt, /PRD BODY/);
-  assert.ok(prompt.indexOf("RUN OWNED DIFF") < prompt.indexOf("CHANGE MATERIAL"));
 });
 
 test("implement contract extracts nested Decision Traceability content", () => {

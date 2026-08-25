@@ -63,6 +63,24 @@ Never put interview closure, gate delegation, gap-audit, or PRD authoring into t
 Before starting, capture verbatim the user message that invoked `$please` (including any argument).
 This exact text is passed to `sasu implement start --allow-unapproved-prd` later; losing it forces a stop to re-ask.
 
+Inspect dirty judged source before the first gate run:
+
+```sh
+sasu implement intake
+```
+
+When `required` is false, keep no disposition and continue.
+When `required` is true, show the returned paths and ask the returned question exactly once with its three returned options:
+
+- `먼저 커밋하고 시작`: commit exactly the listed work only after the user chooses it, rerun `sasu implement intake`, and continue only when it reports a clean tree so the actual commit becomes the baseline.
+- `기존 작업으로 이어서 시작`: retain `pre-existing` as the dirty disposition.
+- `이번 작업에 포함`: retain `run-owned` as the dirty disposition.
+
+This ownership fact is the one required human intake exception to the normal `$please` assumption policy because neither the Spec Owner nor the harness can infer who owns uncommitted bytes.
+Do not defer this question to the Implementor.
+Do not dispatch while `commit-first` remains unresolved.
+For `pre-existing` or `run-owned`, pass the retained value to the dispatch helper and later to `sasu implement start`; never ask again.
+
 Immediately bind that invocation to the topic before the first gate run:
 
 ```sh
@@ -151,7 +169,8 @@ Call the deterministic helper exactly once with the ready PRD path:
 node ~/.codex/skills/implement/scripts/herdr_observer.js dispatch \
   --name <unique-name> \
   --cwd "$PWD" \
-  --prd agents/prd/<topic-slug>/prd.md <<'SASU_HANDOFF'
+  --prd agents/prd/<topic-slug>/prd.md \
+  [--dirty-attribution <pre-existing|run-owned>] <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim $please invocation message>
@@ -178,8 +197,12 @@ Only the marked Implementor, or the same inline session outside Herdr, runs the 
 ```sh
 sasu implement start \
   --prd agents/prd/<topic-slug>/prd.md \
-  --allow-unapproved-prd "<verbatim $please invocation message>"
+  --allow-unapproved-prd "<verbatim $please invocation message>" \
+  [--dirty-attribution <pre-existing|run-owned>]
 ```
+
+The optional disposition must exactly match the value in the dispatch handoff or the inline Spec Owner's retained intake result.
+Its presence means the user already answered; the Implementor must not ask again.
 
 Rules:
 

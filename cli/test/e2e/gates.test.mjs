@@ -49,6 +49,7 @@ function stubFile(dir, responses) {
 
 function runCli(cwd, args, { stub, env: extraEnv } = {}) {
   const env = { ...process.env, ...extraEnv };
+  if (!("SASU_HERDR_ROLE" in (extraEnv ?? {}))) delete env.SASU_HERDR_ROLE;
   if (stub) {
     env.SASU_JUDGE_BACKEND = "stub";
     env.SASU_JUDGE_STUB_FILE = stub;
@@ -75,6 +76,28 @@ const BLOCK_RESPONSE = {
     },
   ],
 };
+
+test("an Implementor role refuses specification gates before setup writes, and an unmarked session recovers", () => {
+  const dir = makeProject({ git: true });
+  const exclude = path.join(dir, ".git", "info", "exclude");
+  const beforeExclude = fs.readFileSync(exclude, "utf8");
+  const args = ["gate", "gap-audit", "--slug", "role-fixture", "--qa-log", "qa-log.md", "--json"];
+  const refused = runCli(dir, args, {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+    env: { SASU_HERDR_ROLE: "implementor" },
+  });
+
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  const refusal = JSON.parse(refused.stdout);
+  assert.equal(refusal.error.code, "implementor-spec-command-refused");
+  assert.match(refusal.error.message, /belongs to the Spec Owner or Observer/);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "role-fixture")), false);
+  assert.equal(fs.readFileSync(exclude, "utf8"), beforeExclude, "the refusal happens before ensureSetup");
+
+  const recovered = runCli(dir, args, { stub: stubFile(dir, { verdict: "PASS", findings: [] }) });
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.equal(JSON.parse(recovered.stdout).status.effective, "PASS");
+});
 
 test("gate gap-audit BLOCKs on gaps then PASSes when the log is complete", (t) => {
   const dir = makeProject();

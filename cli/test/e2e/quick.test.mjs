@@ -57,6 +57,7 @@ function stubFile(dir, response) {
 
 function runCli(cwd, args, { stub, env: extraEnv } = {}) {
   const env = { ...process.env, ...(extraEnv ?? {}) };
+  if (!("SASU_HERDR_ROLE" in (extraEnv ?? {}))) delete env.SASU_HERDR_ROLE;
   if (stub) {
     env.SASU_JUDGE_BACKEND = "stub";
     env.SASU_JUDGE_STUB_FILE = stub;

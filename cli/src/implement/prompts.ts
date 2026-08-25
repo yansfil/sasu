@@ -2,9 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkSection, evidenceSection, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
 import type { ImplementContract } from "./contract";
-import type { ContractItem, ImplementState, RegisteredArtifact } from "./types";
+import type {
+  AcLaneResult,
+  ContractItem,
+  FidelityCheckResult,
+  ImplementState,
+  RegisteredArtifact,
+  RiskLaneResult,
+  VerificationRoundContext,
+} from "./types";
 
 const JSON_RULE = "Reply with ONLY the requested JSON object. Do not use prose or code fences.";
+export const IMPLEMENT_REVIEW_DIFF_MAX_CHARS = 120_000;
 
 function clamp(text: string, limit = 120_000): string {
   if (text.length <= limit) return text;
@@ -17,6 +26,44 @@ function artifactSummary(artifacts: RegisteredArtifact[]): string {
   return artifacts
     .map((artifact) => `- ${artifact.verificationId} ${artifact.kind} ${artifact.path} sha256=${artifact.sha256} - ${artifact.description}`)
     .join("\n");
+}
+
+function reviewDiffMaterial(runOwnedDiff: string, readablePaths: string[]): string {
+  if (runOwnedDiff.length <= IMPLEMENT_REVIEW_DIFF_MAX_CHARS) return runOwnedDiff;
+  const paths = readablePaths.length === 0 ? "- none" : readablePaths.map((entry) => `- ${entry}`).join("\n");
+  return `[${runOwnedDiff.length}-character diff omitted because it exceeds the ${IMPLEMENT_REVIEW_DIFF_MAX_CHARS}-character review input limit. The judge has isolated read-only access to the exact text files below and must inspect only what it needs.]\n\nREADABLE RUN-OWNED CHANGED PATHS:\n${paths}`;
+}
+
+function roundDeltaSection(
+  context: VerificationRoundContext,
+  priorLabel: string,
+  prior: unknown,
+): string {
+  if (context.priorAttemptId === null) return "";
+  const changedPaths = context.changedPaths.length === 0 ? "- none" : context.changedPaths.map((entry) => `- ${entry}`).join("\n");
+  const newEvidence = context.newEvidence.length === 0
+    ? "- none"
+    : context.newEvidence.map((entry) => `- ${entry.verificationId}:${entry.path} sha256=${entry.sha256}`).join("\n");
+  return `
+ROUND-2+ DELTA CONTRACT:
+- Disposition every prior finding by its supplied id as resolved or unresolved.
+- A previous PASS may become FAIL, and a new blocking finding may be added, only when \`deltaBasis\` names one exact path in CHANGED PATHS SINCE THE PRIOR ROUND or one exact artifact in NEW EVIDENCE SINCE THE PRIOR ROUND.
+- This is an evidence-pointer requirement, not a ban on genuine defects. Never invent a path or artifact to satisfy it.
+
+PRIOR ATTEMPT: ${context.priorAttemptId}
+${priorLabel}:
+${JSON.stringify(prior)}
+
+CHANGED PATHS SINCE THE PRIOR ROUND:
+${changedPaths}
+
+NEW EVIDENCE SINCE THE PRIOR ROUND:
+${newEvidence}
+
+For an unresolved prior FAIL, set \`priorDisposition\` to { "status": "unresolved", "reason": "why" } and set \`origin\` to "prior-unresolved".
+For a resolved prior FAIL, set \`priorDisposition\` to { "status": "resolved", "reason": "why" }.
+For a new FAIL, set \`origin\` to "new" and set \`deltaBasis\` to { "kind": "changed-path" | "new-evidence", "value": "one exact entry above" }.
+`;
 }
 
 export interface ReadableAcceptanceArtifact {
@@ -67,6 +114,8 @@ export function acceptancePrompt(
   state: ImplementState,
   criterion: ContractItem,
   material: AcceptancePromptMaterial,
+  prior: AcLaneResult | null = null,
+  roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
 ): string {
   const verification = state.verification.filter((entry) => entry.covers.includes(criterion.id));
   const requirements = state.requirements.filter((entry) => criterion.requirements.includes(entry.id));
@@ -87,7 +136,7 @@ ${JSON_RULE}
 {
   "verdict": "PASS" | "FAIL",
   "criteria": [
-    { "id": "${criterion.id}", "verdict": "PASS" | "FAIL", "reason": "why", "evidence": "files, mechanical output, or artifacts actually relied on" }
+    { "id": "${criterion.id}", "verdict": "PASS" | "FAIL", "reason": "why", "evidence": "files, mechanical output, or artifacts actually relied on", "priorDisposition": "required for a prior FAIL on round 2+", "origin": "required for FAIL on round 2+", "deltaBasis": "required for a new FAIL on round 2+" }
   ]
 }
 
@@ -99,7 +148,7 @@ ${requirements.length === 0 ? "- none" : requirements.map((entry) => `- ${entry.
 
 MAPPED VERIFICATION PASS INTENTS:
 ${verification.length === 0 ? "- none" : verification.map((entry) => `- ${entry.id}: ${entry.passIntent}`).join("\n")}
-${scenarioSection(material.scenarios)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
+${roundDeltaSection(roundContext, `PRIOR RESULT FOR ${criterion.id}`, prior)}${scenarioSection(material.scenarios)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
 RUN-OWNED CHANGED FILES:
 This is an allowlist, not an instruction to read every file. Prefer the smallest sufficient set.
 ---
@@ -147,6 +196,8 @@ export function fidelityPrompt(
   state: ImplementState,
   source: FidelitySource,
   changeMaterial: string,
+  prior: { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | null = null,
+  roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
 ): string {
   const claims = [
     `run=${state.status}`,
@@ -166,7 +217,7 @@ ${JSON_RULE}
 {
   "verdict": "PASS" | "FAIL",
   "checks": [
-    { "id": "F1", "verdict": "PASS" | "FAIL", "reason": "why", "evidence": "decision or implementation reference" }
+    { "id": "F1", "verdict": "PASS" | "FAIL", "reason": "why", "evidence": "decision or implementation reference", "priorDisposition": "required for a prior FAIL on round 2+", "origin": "required for FAIL on round 2+", "deltaBasis": "required for a new FAIL on round 2+" }
   ]
 }
 Return exactly F1 through F5 once each. PASS cannot contain a failed check.
@@ -199,11 +250,18 @@ Acceptance-criterion statuses are intentionally omitted because the independent 
 REGISTERED ARTIFACT ROSTER:
 ${artifactSummary(state.artifacts)}
 
+${roundDeltaSection(roundContext, "PRIOR FIDELITY RESULT", prior)}
+
 CURATED RUN-OWNED CHANGE SUMMARY:
 ${clamp(changeMaterial)}`;
 }
 
-export function designPrompt(prdText: string, changeMaterial: string, runOwnedDiff: string): string {
+export function designPrompt(
+  prdText: string,
+  runOwnedDiff: string,
+  changeMaterial: string,
+  readablePaths: string[] = [],
+): string {
   return `You are the design reviewer for a completed implementation. You leave comments on the shape of the code. You have no verdict: you cannot pass or fail this run, and an empty comment list is a fully valid answer.
 
 Every comment you leave must be answered before the run can be finalized - either by the defect being fixed (you will simply stop seeing it) or by a human recording why it is being left alone. So a comment is a bill someone has to pay. Leave the ones worth paying.
@@ -228,9 +286,9 @@ ${JSON_RULE}
 There is no verdict field. Do not emit one.
 
 RUN-OWNED DIFF (what this run changed, against the pre-run commit):
-${clamp(runOwnedDiff, 60_000)}
+${reviewDiffMaterial(runOwnedDiff, readablePaths)}
 
-FULL BODIES OF THE CHANGED FILES (context for reading the diff above):
+BOUNDED CURRENT BODIES OF CHANGED FILES (context for judging the surrounding shape):
 ${clamp(changeMaterial)}
 
 PRD (for the structure-changes section and guardrails):
@@ -242,6 +300,10 @@ export function riskPrompt(
   changeMaterial: string,
   acceptance: unknown,
   fidelity: unknown,
+  artifacts: RegisteredArtifact[] = [],
+  prior: RiskLaneResult | null = null,
+  roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
+  readablePaths: string[] = [],
 ): string {
   return `You are the final adversarial risk judge for a high-risk implementation.
 The acceptance and fidelity judges have already completed. Inspect only residual sensitive, destructive, irreversible, costly, security, and evidence-integrity risks in the run-owned change material below.
@@ -254,8 +316,9 @@ SCOPE:
 - When you cannot demonstrate the failure path from the material below, the finding is advisory, not blocking.
 
 ${JSON_RULE}
-{ "verdict": "PASS" | "FAIL", "findings": [{ "severity": "blocking" | "advisory", "text": "specific residual risk" }] }
+{ "verdict": "PASS" | "FAIL", "priorDispositions": [{ "id": "each prior RF id on round 2+", "status": "resolved" | "unresolved", "reason": "why", "deltaBasis": "required to resolve a prior blocking finding" }], "findings": [{ "severity": "blocking" | "advisory", "text": "specific residual risk", "origin": "prior-unresolved" | "new", "priorFindingId": "required for prior-unresolved", "deltaBasis": "required for a new blocking finding on round 2+ or advisory-to-blocking escalation" }] }
 FAIL requires at least one blocking finding. PASS means no blocking finding; advisory findings are allowed on PASS.
+An unresolved prior blocking finding must remain blocking. Resolving one requires a deltaBasis naming one exact changed path or new evidence entry from this round.
 
 ACCEPTANCE RESULT:
 ${JSON.stringify(acceptance)}
@@ -263,8 +326,14 @@ ${JSON.stringify(acceptance)}
 FIDELITY RESULT:
 ${JSON.stringify(fidelity)}
 
+REGISTERED ARTIFACT ROSTER:
+The risk lane receives the complete identity and hash roster. Artifact bytes remain in the record tree and are not readable in this lane.
+${artifactSummary(artifacts)}
+
+${roundDeltaSection(roundContext, "PRIOR RISK RESULT", prior)}
+
 RUN-OWNED CHANGE MATERIAL:
-${clamp(changeMaterial)}
+${reviewDiffMaterial(changeMaterial, readablePaths)}
 
 PRD:
 ${clamp(prdText)}`;

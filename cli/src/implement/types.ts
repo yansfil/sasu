@@ -1,7 +1,9 @@
 import type { JudgeCallRecord } from "../judge/types";
 
-// v4: task entries carry dependsOn (PRD-declared execution dependencies).
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v4" as const;
+// v5: the run owns its approved PRD snapshot, baseline attribution, retirement
+// transition, and round-to-round judge delta record. Older shapes are not
+// migrated because completion authority must never guess missing provenance.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v5" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 
 export type ItemStatus = "pending" | "complete" | "blocked";
@@ -54,6 +56,15 @@ export interface SourceSnapshot {
   entries: SourceEntry[];
 }
 
+export type DirtyAttribution = "pre-existing" | "run-owned";
+
+export interface BaselineAttribution {
+  disposition: "clean" | DirtyAttribution | "mixed";
+  paths: Array<{ path: string; disposition: DirtyAttribution }>;
+  baselineDigest: string;
+  head: string | null;
+}
+
 export interface RegisteredArtifact {
   verificationId: string;
   kind: string;
@@ -88,6 +99,21 @@ export interface AcLaneResult {
   verdict: "PASS" | "FAIL";
   reason: string;
   evidence: string;
+  priorDisposition?: PriorDisposition;
+  origin?: FindingOrigin;
+  deltaBasis?: DeltaBasis;
+}
+
+export type FindingOrigin = "prior-unresolved" | "new";
+
+export interface PriorDisposition {
+  status: "resolved" | "unresolved";
+  reason: string;
+}
+
+export interface DeltaBasis {
+  kind: "changed-path" | "new-evidence";
+  value: string;
 }
 
 export interface AcceptanceCriterionInvocation {
@@ -110,8 +136,26 @@ export interface AcceptanceCriterionInvocation {
 // the judge stakes as blocking may fail the lane. Advisory findings are
 // recorded without invalidating the run.
 export interface RiskFinding {
+  id: string;
   severity: "blocking" | "advisory";
   text: string;
+  origin?: FindingOrigin;
+  priorFindingId?: string;
+  deltaBasis?: DeltaBasis;
+}
+
+export interface RiskDisposition {
+  id: string;
+  status: "resolved" | "unresolved";
+  reason: string;
+  /** Required when resolving a prior blocking risk. */
+  deltaBasis?: DeltaBasis;
+}
+
+export interface RiskLaneResult {
+  verdict: "PASS" | "FAIL";
+  findings: RiskFinding[];
+  priorDispositions?: RiskDisposition[];
 }
 
 // The design lane is a reviewer, not a judge: it returns comments and no
@@ -166,6 +210,26 @@ export interface FidelityCheckResult {
   verdict: "PASS" | "FAIL";
   reason: string;
   evidence: string;
+  priorDisposition?: PriorDisposition;
+  origin?: FindingOrigin;
+  deltaBasis?: DeltaBasis;
+}
+
+export interface VerificationInputManifest {
+  source: SourceEntry[];
+  evidence: Array<{ verificationId: string; path: string; sha256: string }>;
+}
+
+export interface VerificationRoundContext {
+  priorAttemptId: string | null;
+  changedPaths: string[];
+  newEvidence: Array<{ verificationId: string; path: string; sha256: string }>;
+}
+
+export interface VerificationRoundContexts {
+  acceptance: Record<string, VerificationRoundContext>;
+  fidelity: VerificationRoundContext;
+  risk: VerificationRoundContext | null;
 }
 
 export interface LaneRecord<T> {
@@ -185,6 +249,9 @@ export interface UnifiedVerificationAttempt {
   id: string;
   inputFingerprint: string;
   sourceFingerprint: string;
+  inputManifest: VerificationInputManifest;
+  /** Exact prior-result/delta context used by each semantic judge unit. */
+  roundContexts: VerificationRoundContexts;
   fidelityInput: {
     routing: "decision-traceability" | "full-qa-log";
     contentSha256: string;
@@ -202,7 +269,7 @@ export interface UnifiedVerificationAttempt {
       invocations: AcceptanceCriterionInvocation[];
     }> | null;
     fidelity: LaneRecord<{ verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] }> | null;
-    risk: LaneRecord<{ verdict: "PASS" | "FAIL"; findings: RiskFinding[] }> | null;
+    risk: LaneRecord<RiskLaneResult> | null;
     // Optional: attempts recorded before the design lane existed lack the key.
     design?: LaneRecord<{ comments: DesignComment[] }> | null;
   };
@@ -211,7 +278,7 @@ export interface UnifiedVerificationAttempt {
 
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
-  status: "active" | "complete" | "blocked";
+  status: "active" | "complete" | "blocked" | "retired";
   topicSlug: string;
   /**
    * The RECORD tree: where agents/ bookkeeping (this state, receipt, PRD,
@@ -230,6 +297,7 @@ export interface ImplementState {
   prdPath: string;
   prd: {
     sha256: string;
+    snapshotPath: string;
     status: string | null;
     approval: { source: "frontmatter" | "conversation"; evidence: string };
     reviewProfile: ReviewProfile;
@@ -237,6 +305,7 @@ export interface ImplementState {
     sourceIntake: string;
   };
   initialSource: SourceSnapshot;
+  baselineAttribution: BaselineAttribution;
   // Session allowed to mutate this run, stamped at start from the shared
   // resolver (runs/session.ts). This is the ONLY record of ownership: the v2
   // guard kept three copies and an `||` fallback, and one env-less write was
@@ -265,6 +334,12 @@ export interface ImplementState {
   // Design comments tracked across attempts with their dispositions. Absent on
   // states recorded before dispositions existed (= no tracked comments).
   designComments?: TrackedDesignComment[];
+  retirement: {
+    retiredAt: string;
+    retiredBySessionId: string | null;
+    adoptedFromSessionId?: string;
+    adoptionEvidence?: string;
+  } | null;
   completion: {
     fingerprint: string;
     completedAt: string;

@@ -91,14 +91,16 @@ sasu interview status     persisted state view: synced counts, open P0/P1 nodes,
 sasu gate gap-audit   interview closure judge: material-gap findings list (empty = PASS)
 sasu gate spec        PRD judge: fidelity to the qa-log + testability + verification completeness
 sasu gate verify      standalone PRD prelint + mechanical checks, then a diff-vs-AC judge
-sasu implement start  initialize one approved-PRD implementation state
+sasu implement intake inspect dirty judged paths and return the one Spec Owner disposition question
+sasu implement start  initialize one approved-PRD state with explicit dirty-source attribution
 sasu implement task   close one implementation obligation without implying verification
 sasu implement artifact  register already-created runtime evidence with hashes
 sasu implement verify run mechanical proof, then parallel AC and fidelity judges
+sasu implement retire release an unfinished run's occupancy with cross-session evidence when needed
 sasu implement finalize  create receipt and result from a fresh PASS without rerunning proof
 sasu gate status      gate verdicts, attempts, freshness, judge usage for a topic
 sasu gate override    user-only escape hatch; records a deviation with the user's reason
-sasu doctor           judge backends, verify commands, contract version
+sasu doctor           judge backends, verify commands, run/worktree integrity, installed skill freshness, contract version
 ```
 
 The interview commands exist for interview latency: the agent owns question judgment while the CLI owns every mechanical qa-log mutation.

@@ -8,16 +8,32 @@ export type JudgeErrorCode =
   | "judge-timeout"
   | "judge-invalid-output";
 
+export type JudgeFailureReason =
+  | "prompt-only-shell"
+  | "command-budget"
+  | "non-read-command"
+  | "shell-composition"
+  | "out-of-workspace"
+  | "missing-allowlisted-path"
+  | "tool-surface"
+  | "missing-json"
+  | "empty-response"
+  | "invalid-contract"
+  | "input-too-large"
+  | "evidence-access";
+
 export class JudgeError extends Error {
   readonly code: JudgeErrorCode;
   readonly backend: BackendName;
   readonly detail: string;
+  readonly reason: JudgeFailureReason | null;
 
-  constructor(code: JudgeErrorCode, backend: BackendName, detail: string) {
+  constructor(code: JudgeErrorCode, backend: BackendName, detail: string, reason: JudgeFailureReason | null = null) {
     super(`${code} (backend: ${backend}): ${detail}`);
     this.code = code;
     this.backend = backend;
     this.detail = detail;
+    this.reason = reason;
   }
 }
 
@@ -47,7 +63,11 @@ export interface JudgeCallRecord {
     model: string | null;
     effort: JudgeEffort;
     durationMs: number;
+    /** Calls made to the rejected backend before crossing vendors. */
+    attempts: number;
     outcome: JudgeErrorCode;
+    /** Bounded diagnostic category for the rejection that caused fallback. */
+    reason: string;
   };
 }
 

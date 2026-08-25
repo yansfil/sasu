@@ -43,6 +43,9 @@ PR creation and CI are never required to prove implementation completion.
 The new implement state schema does not migrate old runs.
 Start a new run in the intended checkout.
 Do not add compatibility adapters or copy old completion verdicts into the new state.
+An active unfinished run that must be abandoned can release its occupancy with `sasu implement retire --slug <topic-slug>`.
+Retiring a run owned by another session requires `--adopt '<verbatim user approval>'`, and the evidence is recorded with the transition.
+Run `sasu doctor` to list active retire candidates and worktrees that remain after their run ended.
 
 ## Attribution
 
