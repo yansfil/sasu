@@ -72,7 +72,9 @@ export interface RegisteredArtifact {
   description: string;
   sha256: string;
   bytes: number;
-  sourceFingerprint: string;
+  // Legacy v5 records may carry this removed per-artifact freshness pin.
+  // It is accepted for additive-tolerant reads but ignored; new records omit it.
+  sourceFingerprint?: string;
   registeredAt: string;
   command?: string;
   cwd?: string;

@@ -58,16 +58,23 @@ test("full qa-log supplements rather than replaces PRD decision traceability", (
 });
 
 test("risk prompt receives the complete artifact roster and the exact round-2 delta contract", () => {
+  const registeredAt = "2026-08-25T06:14:00.000Z";
+  const harnessRanAt = "2026-08-25T06:37:00.000Z";
   const prompt = riskPrompt(
     "FULL PRD",
     "changed source",
     { verdict: "PASS" },
     { verdict: "PASS" },
-    [{ verificationId: "V5", kind: "log", path: "proof/run.log", sha256: "a".repeat(64), description: "CLI run", bytes: 10, sourceFingerprint: "source", registeredAt: "now" }],
+    [
+      { verificationId: "V5", kind: "log", path: "proof/run.log", sha256: "a".repeat(64), description: "CLI run", bytes: 10, registeredAt },
+      { verificationId: "V1", kind: "command-log", path: "proof/test.log", sha256: "b".repeat(64), description: "test run", bytes: 20, registeredAt: harnessRanAt, command: "npm test", cwd: ".", exitCode: 0 },
+    ],
     { verdict: "PASS", findings: [{ id: "RF1", severity: "advisory", text: "old note" }] },
     { priorAttemptId: "attempt-1", changedPaths: ["src/run.ts"], newEvidence: [{ verificationId: "V5", path: "proof/run.log", sha256: "a".repeat(64) }] },
   );
   assert.match(prompt, /V5 log proof\/run\.log sha256=/);
+  assert.ok(prompt.includes(`agent-registered at ${registeredAt}; treat as the implementer's claim, not a harness observation`));
+  assert.ok(prompt.includes(`the harness ran \`npm test\` at ${harnessRanAt} from cwd=.`));
   assert.match(prompt, /not a vote in the unified acceptance\/fidelity verdict/);
   assert.match(prompt, /Resolving one requires a deltaBasis/);
   assert.match(prompt, /ROUND-2\+ DELTA CONTRACT/);
@@ -111,6 +118,7 @@ test("explicit verify commands bind nested product checks instead of detected ha
 });
 
 test("acceptance prompt is scoped to one criterion and its mapped proof", () => {
+  const registeredAt = "2026-08-25T06:14:00.000Z";
   const scopedState = {
     requirements: [
       { id: "R1", text: "first requirement" },
@@ -126,7 +134,7 @@ test("acceptance prompt is scoped to one criterion and its mapped proof", () => 
     changedFiles: "- src/second.ts [text, 80 bytes]",
     checks: [{ criterionId: "AC2", command: "npm test", exitCode: 0, tail: "SECOND-MECHANICAL-PROOF" }],
     evidence: [{ criterionId: "AC2", path: "second.log", sha256: "b".repeat(64), bytes: 21, text: "SECOND-ARTIFACT-BODY" }],
-    readableArtifacts: [{ path: "second.png", kind: "screenshot", sha256: "c".repeat(64), bytes: 42, description: "second screen" }],
+    readableArtifacts: [{ path: "second.png", kind: "screenshot", sha256: "c".repeat(64), bytes: 42, description: "second screen", registeredAt }],
     scenarios: [],
   });
   assert.match(prompt, /AC2: second criterion/);
@@ -136,6 +144,8 @@ test("acceptance prompt is scoped to one criterion and its mapped proof", () => 
   assert.match(prompt, /SECOND-MECHANICAL-PROOF/);
   assert.match(prompt, /SECOND-ARTIFACT-BODY/);
   assert.match(prompt, /second\.png/);
+  assert.ok(prompt.includes(`agent-registered at ${registeredAt}; treat as the implementer's claim, not a harness observation`));
+  assert.match(prompt, /a PASS relying on it must explain in reason why that evidence remains valid/);
   assert.match(prompt, /src\/second\.ts \[text, 80 bytes\]/);
   assert.doesNotMatch(prompt, /AC1:|R1:|V1:|first\.log|RUN-OWNED CHANGE MATERIAL|MAPPED USER SCENARIOS/);
 });

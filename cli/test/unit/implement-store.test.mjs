@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { artifactSourceFingerprint, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, parseImplementState } from "../../dist/implement/store.js";
+import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, parseImplementState } from "../../dist/implement/store.js";
 
 test("early v5 state without riskFindings loads with an empty risk ledger", () => {
   const parsed = parseImplementState(JSON.stringify({
@@ -132,25 +132,31 @@ test("source snapshot excludes only the root agents bookkeeping namespace", () =
   }
 });
 
-test("an artifact's freshness basis excludes its own bytes and nothing else", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-artifact-fingerprint-"));
-  fs.mkdirSync(path.join(root, "docs"), { recursive: true });
-  fs.writeFileSync(path.join(root, "code.txt"), "implementation\n");
-  fs.writeFileSync(path.join(root, "docs", "evidence.md"), "first observation\n");
-  const before = artifactSourceFingerprint(captureSourceSnapshot(root), "docs/evidence.md");
+test("artifact integrity pins file identity without coupling it to the source tree", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-artifact-integrity-"));
+  try {
+    fs.mkdirSync(path.join(root, "proof"), { recursive: true });
+    fs.writeFileSync(path.join(root, "source.txt"), "implementation\n");
+    fs.writeFileSync(path.join(root, "proof", "run.log"), "runtime observation\n");
+    const artifactSha = captureSourceSnapshot(root).entries.find((entry) => entry.path === "proof/run.log").sha256;
+    const state = {
+      artifacts: [{
+        verificationId: "V1",
+        path: "proof/run.log",
+        sha256: artifactSha,
+        sourceFingerprint: "legacy-v5-field-is-ignored",
+      }],
+    };
 
-  // The artifact's own file changing must not move its basis: its bytes are
-  // already pinned by the artifact's sha256, so counting them twice only makes
-  // evidence invalidate itself.
-  fs.appendFileSync(path.join(root, "docs", "evidence.md"), "second observation\n");
-  assert.equal(artifactSourceFingerprint(captureSourceSnapshot(root), "docs/evidence.md"), before);
+    fs.writeFileSync(path.join(root, "source.txt"), "implementation revised\n");
+    assert.deepEqual(artifactIntegrityProblems(root, state), []);
 
-  // Any other file changing still moves it: the artifact proves something
-  // about the tree, and the tree moved.
-  fs.writeFileSync(path.join(root, "code.txt"), "implementation, revised\n");
-  assert.notEqual(artifactSourceFingerprint(captureSourceSnapshot(root), "docs/evidence.md"), before);
+    fs.writeFileSync(path.join(root, "proof", "run.log"), "different bytes\n");
+    assert.match(artifactIntegrityProblems(root, state).join("\n"), /artifact hash changed: proof\/run\.log/);
 
-  // A path that names no snapshot entry falls back to the whole-tree digest.
-  const snapshot = captureSourceSnapshot(root);
-  assert.equal(artifactSourceFingerprint(snapshot, "docs/never-registered.md"), snapshot.digest);
+    fs.rmSync(path.join(root, "proof", "run.log"));
+    assert.match(artifactIntegrityProblems(root, state).join("\n"), /artifact missing: proof\/run\.log/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

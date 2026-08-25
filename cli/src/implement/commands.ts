@@ -22,6 +22,7 @@ import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import {
   acceptancePrompt,
+  agentRegisteredArtifactProvenance,
   designPrompt,
   fidelityPrompt,
   fidelitySource,
@@ -32,7 +33,6 @@ import {
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import {
   artifactIntegrityProblems,
-  artifactSourceFingerprint,
   captureBaselineSnapshot,
   captureSourceSnapshot,
   changedPathsSince,
@@ -52,7 +52,6 @@ import {
   IMPLEMENT_SCHEMA,
   type AcceptanceCriterionInvocation,
   type AcLaneResult,
-  type SourceSnapshot,
   type ContractItem,
   type DesignComment,
   type DirtyAttribution,
@@ -200,7 +199,7 @@ function inputFingerprint(
   // as [command, cwd, exitCode, status] wherever it matters.
   const artifacts = state.artifacts
     .filter((entry) => entry.command === undefined)
-    .map((entry) => ({ verificationId: entry.verificationId, path: entry.path, sha256: entry.sha256, sourceFingerprint: entry.sourceFingerprint }))
+    .map((entry) => ({ verificationId: entry.verificationId, path: entry.path, sha256: entry.sha256 }))
     .sort((left, right) => `${left.verificationId}:${left.path}`.localeCompare(`${right.verificationId}:${right.path}`));
   return sha256(JSON.stringify({
     schema: state.schema,
@@ -224,10 +223,9 @@ interface VerificationBudgetView {
 }
 
 /**
- * A round that never reached a judge. Prelint, a mechanical command, a stale
- * or missing artifact - all settle before any lane is invoked, so the round
- * cost no judge call and its failure is a deterministic exit code rather than
- * a fresh generative opinion.
+ * A round that never reached a judge. Prelint or a mechanical command settles
+ * before any lane is invoked, so the round costs no judge call and its failure
+ * is a deterministic exit code rather than a fresh generative opinion.
  */
 function calledNoJudge(attempt: UnifiedVerificationAttempt): boolean {
   return attempt.lanes.acceptance === null && attempt.lanes.fidelity === null && attempt.lanes.risk === null;
@@ -261,10 +259,9 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     // provided the tree or the pinned inputs actually moved since the last
     // attempt. That proviso is the whole bound: without new work there is no
     // new answer, and the round is charged exactly like a judged one.
-    // 2026-08-17 herdr-remote-handoff: 3 of the 5 rounds that exhausted the
-    // budget called no judge (17ms mis-declared binding, 20ms stale artifact,
-    // 10.6s own test failure), leaving only 2 real judged rounds and closing
-    // an otherwise finished run as blocked.
+    // 2026-08-17 herdr-remote-handoff: deterministic pre-judge failures (a
+    // 17ms mis-declared binding and a 10.6s own test failure) spent the budget
+    // intended for generative opinions and helped close a finished run blocked.
     const previous = index > countFrom ? state.verificationAttempts[index - 1]! : null;
     // The first no-judge round has no generative verdict to bound and no prior
     // attempt against which progress could be measured. Charging it was the
@@ -732,21 +729,25 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
   const description = requiredFlag(args, "description").trim();
   const inspected = inspectArtifactFile(target.absolute, kind);
-  const source = captureSourceSnapshot(requireWorkRoot(state));
   const previous = state.artifacts.find((entry) => entry.verificationId === verificationId && entry.path === target.relative);
+  // Re-registration was the 2026-08-25 workaround: 28 unchanged records were
+  // stamped again, making an old log look current. Equal bytes carry no new
+  // observation, so preserve the entire prior record and its original clock.
+  if (previous !== undefined && previous.sha256 === inspected.sha256) {
+    return result(
+      "artifact",
+      true,
+      `artifact unchanged since ${previous.registeredAt}; registration timestamp preserved for ${verificationId}: ${target.relative}`,
+      { artifact: previous, unchanged: true },
+    );
+  }
   const registered: RegisteredArtifact = {
     verificationId,
     kind,
     path: target.relative,
     description,
     ...inspected,
-    sourceFingerprint: artifactSourceFingerprint(source, target.relative),
-    registeredAt:
-      previous !== undefined
-        && previous.sha256 === inspected.sha256
-        && previous.sourceFingerprint === artifactSourceFingerprint(source, target.relative)
-        ? previous.registeredAt
-        : nowIso(),
+    registeredAt: nowIso(),
   };
   state.artifacts = state.artifacts.filter((entry) => !(entry.verificationId === verificationId && entry.path === target.relative));
   state.artifacts.push(registered);
@@ -825,7 +826,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const recordRoot = state.projectRoot;
   const config = loadConfig(recordRoot);
   const source = captureSourceSnapshot(requireWorkRoot(state));
-  const problems = artifactIntegrityProblems(recordRoot, state, source);
+  const problems = artifactIntegrityProblems(recordRoot, state);
   const heldPrd = pinnedPrd(recordRoot, state);
   const prdText = heldPrd.text;
   const contract = parseImplementContract(prdText);
@@ -870,7 +871,7 @@ function writeMechanicalLog(
   return relative;
 }
 
-function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord, source: SourceSnapshot, projectRoot: string): void {
+function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord, projectRoot: string): void {
   const inspected = inspectArtifactFile(path.join(projectRoot, run.logPath), "log");
   for (const verificationId of run.verificationIds) {
     const artifact: RegisteredArtifact = {
@@ -879,7 +880,6 @@ function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord,
       path: run.logPath,
       description: `mechanical ${run.status}: ${run.command}`,
       ...inspected,
-      sourceFingerprint: artifactSourceFingerprint(source, run.logPath),
       registeredAt: run.finishedAt,
       command: run.command,
       cwd: run.cwd,
@@ -903,7 +903,6 @@ function runMechanicalBindings(
   workRoot: string,
   state: ImplementState,
   bindings: MechanicalBinding[],
-  source: SourceSnapshot,
 ): MechanicalRunRecord[] {
   const records: MechanicalRunRecord[] = [];
   const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
@@ -941,7 +940,7 @@ function runMechanicalBindings(
     const record: MechanicalRunRecord = { ...base, logPath };
     progress(`mechanical ${record.status} in ${(record.durationMs / 1000).toFixed(1)}s: ${record.command}`);
     records.push(record);
-    upsertCommandArtifacts(state, record, source, recordRoot);
+    upsertCommandArtifacts(state, record, recordRoot);
     if (record.status === "FAIL") break;
   }
   return records;
@@ -1095,6 +1094,7 @@ function acceptanceMaterial(
         sha256: artifact.sha256,
         bytes: artifact.bytes,
         description: artifact.description,
+        registeredAt: artifact.registeredAt,
       });
       continue;
     }
@@ -1108,7 +1108,7 @@ function acceptanceMaterial(
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       text: excerpt.text,
-      provenance: `registered by the implementing session at ${artifact.registeredAt}; hash-pinned by the harness; description: ${artifact.description}`,
+      provenance: `${agentRegisteredArtifactProvenance(artifact.registeredAt)}; hash-pinned by the harness; description: ${artifact.description}`,
       ...(excerpt.truncated ? { truncated: true } : {}),
     });
   }
@@ -1493,7 +1493,6 @@ function setVerificationStatuses(
   state: ImplementState,
   bindings: MechanicalBinding[],
   runs: MechanicalRunRecord[],
-  source: SourceSnapshot,
 ): string[] {
   const problems: string[] = [];
   for (const item of state.verification) {
@@ -1509,11 +1508,8 @@ function setVerificationStatuses(
     if (artifacts.length === 0) {
       item.status = "NOT_RUN";
       if (item.requiredForDone) problems.push(`${item.id}: no command binding or registered runtime artifact proves ${item.passIntent}`);
-    } else if (artifacts.every((entry) => entry.sourceFingerprint === artifactSourceFingerprint(source, entry.path))) {
-      item.status = "PASS";
     } else {
-      item.status = "STALE";
-      problems.push(`${item.id}: registered runtime evidence is stale`);
+      item.status = "PASS";
     }
   }
   return problems;
@@ -1658,23 +1654,18 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       verificationBudget: verificationBudget(state, config.judge.retryBudget),
     });
   }
-  const runtimeArtifactProblems = artifactIntegrityProblems(recordRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) }, source);
+  const runtimeArtifactProblems = artifactIntegrityProblems(recordRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) });
   if (runtimeArtifactProblems.length > 0) {
-    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "artifact", "artifact-stale", runtimeArtifactProblems.join("; "), "STALE");
-    state.verificationAttempts.push(attempt);
-    persistState(statePath, state);
-    const budget = verificationBudget(state, config.judge.retryBudget);
-    const terminal = terminalBudgetMessage(budget);
-    return result("verify", false, `runtime artifact preflight failed; no mechanical command or judge was called${terminal === null ? "" : `; ${terminal}`}`, {
-      attempt: attemptSummary(attempt),
+    return result("verify", false, "runtime artifact integrity preflight failed; no verification attempt, mechanical command, or judge was called", {
       problems: runtimeArtifactProblems,
-      verificationBudget: budget,
+      judgeCalls: 0,
+      verificationBudget: verificationBudget(state, config.judge.retryBudget),
     });
   }
   const bindings = mechanicalBindings(recordRoot, workRoot, state.verification);
-  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings, source);
+  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings);
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
-  const proofProblems = setVerificationStatuses(state, bindings, mechanical, source);
+  const proofProblems = setVerificationStatuses(state, bindings, mechanical);
   if (failedMechanical !== undefined || proofProblems.length > 0) {
     const message = failedMechanical !== undefined
       ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
@@ -1986,9 +1977,22 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   blockers.push(...state.tasks.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.acceptanceCriteria.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").map((entry) => `${entry.id} is ${entry.status}`));
-  blockers.push(...artifactIntegrityProblems(recordRoot, state, source));
+  blockers.push(...artifactIntegrityProblems(recordRoot, state));
   if (latest.verdict !== "PASS") blockers.push(`unified verify is ${latest.verdict}`);
-  if (latest.sourceFingerprint !== source.digest) blockers.push("unified verify is STALE because judged source changed");
+  if (latest.sourceFingerprint !== source.digest) {
+    // The attempt pin remains completion authority. The bounded path list
+    // keeps the diagnosis the removed per-artifact tree fingerprints tried to
+    // provide, without coupling every artifact to every source edit.
+    const changedPaths = verificationRoundContext(
+      verificationInputManifest(state.initialSource, source, state.artifacts),
+      latest,
+    ).changedPaths;
+    const shown = changedPaths.slice(0, 20);
+    const count = changedPaths.length > 20 ? `first 20 of ${changedPaths.length}` : `${changedPaths.length} total`;
+    blockers.push(
+      `unified verify is STALE because judged source changed; changed paths since judged attempt ${latest.id} (${count}): ${shown.join(", ") || "none detected"}`,
+    );
+  }
   if (latest.inputFingerprint !== inputFingerprint(state, source.digest, currentFidelityInput)) {
     blockers.push("unified verify input fingerprint no longer matches current state, artifacts, or fidelity source");
   }

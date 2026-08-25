@@ -52,7 +52,7 @@ Read each directly linked reference completely when its condition applies.
 - Verification proof is never reduced to save ceremony.
 - The CLI executes deterministic verification before any LLM judge.
 - Acceptance and fidelity are separate LLM calls and neither consumes the other's result.
-- Required verification must be a fresh PASS on the current source and registered evidence.
+- Required verification must be a current PASS whose attempt pins the current source and registered artifact hashes.
 - `sasu implement finalize` never runs tests, judges, capture tools, or external commands.
 - `state.json` is the completion authority; the receipt is its portable derived proof.
 - The marked Implementor is the only implementation and `state.json` writer; the Observer stays read-only after dispatch, and both sessions treat the qa-log and PRD body as sealed inputs.
@@ -155,8 +155,8 @@ sasu implement artifact \
   --description '<what this proves>'
 ```
 
-Registration pins the file hash and current source fingerprint in `state.json`.
-Changing the artifact or judged source makes the evidence stale.
+Registration pins the file hash and records when the agent supplied it in `state.json`.
+The hash proves file identity; judges receive the registration time and decide whether an agent-supplied claim still reflects later source changes.
 
 Development-time screenshots and logs may remain temporary when they are not final evidence.
 
@@ -170,7 +170,7 @@ sasu implement verify
 
 The CLI owns this order:
 
-1. Validate PRD, state, tasks, artifacts, and freshness.
+1. Validate PRD, state, tasks, and artifact identity.
 2. Run deterministic prelint and mechanical commands.
 3. Stop before LLM calls when mechanical proof fails.
 4. Run the acceptance judge and fidelity judge concurrently as separate calls.
@@ -216,7 +216,7 @@ sasu implement finalize
 ```
 
 Finalize reads state and hashes only.
-It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale source, stale artifacts, open blocking risk findings, unanswered design comments, and malformed state.
+It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale judged source, missing or changed artifact bytes, open blocking risk findings, unanswered design comments, and malformed state.
 It does not run tests, judges, browser tools, capture tools, or other subprocesses.
 
 Running finalize twice with the same input returns the same completed result without creating another verification attempt.
@@ -237,7 +237,7 @@ Report:
 - the failed stage.
 - the observable error and recovery.
 - which tasks, ACs, or verification items remain open.
-- whether source or artifact evidence is stale.
+- whether the verify attempt is stale or artifact identity failed.
 - whether the judge provider is unavailable.
 
 Do not use overrides on the user's behalf.

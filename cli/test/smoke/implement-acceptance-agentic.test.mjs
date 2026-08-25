@@ -133,6 +133,7 @@ test("live acceptance judge stays within the criterion evidence and changed-file
       sha256: "fixture-sha",
       bytes: fs.statSync(imagePath).size,
       description: "rendered visual",
+      registeredAt: "2026-08-25T00:00:00.000Z",
     }],
   });
   const imageResult = runTraced(imagePrompt, imageRoot, "AC4");

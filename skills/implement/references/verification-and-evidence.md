@@ -7,7 +7,7 @@ Read this reference before capturing or registering final runtime evidence and b
 - The agent or a suitable tool creates screenshots, recordings, API traces, DB captures, and runtime logs.
 - `sasu implement artifact` validates and registers an existing file.
 - `sasu implement verify` creates mechanical command logs itself.
-- `state.json` records hashes, source fingerprints, metadata, and verification attempts.
+- `state.json` records artifact hashes and registration times, attempt-level source fingerprints, metadata, and verification attempts.
 
 ## Final Evidence Timing
 
@@ -27,13 +27,15 @@ sasu implement artifact \
 The file must exist, be non-empty, stay inside the repository, and match its declared kind.
 Image evidence must contain valid PNG or JPEG bytes.
 
-## Freshness
+## Artifact Identity And Freshness Judgment
 
-Artifact registration pins both the artifact hash and current source fingerprint.
-Changing either makes the artifact stale.
-Recapture or re-register only the evidence invalidated by the source change.
+Artifact registration pins the file hash and records `registeredAt`.
+Missing or changed bytes fail the harness's identity check.
+The harness does not infer semantic freshness from the whole source tree.
+Judges see when bare evidence was agent-registered, treat it as the implementer's claim rather than a harness observation, and explain why older evidence remains valid when they rely on it after source changes.
 
-Do not edit `state.json` to refresh a hash.
+Re-registering identical bytes preserves the original `registeredAt`; only changed bytes create a new registration time.
+Do not edit `state.json` to refresh a hash or timestamp.
 
 ## Mechanical Verification
 

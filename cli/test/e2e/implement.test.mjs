@@ -658,12 +658,15 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.match(fidelityPrompt, /F1 Original goal preserved/);
   assert.match(fidelityPrompt, /SOURCE ROUTING: decision-traceability/);
   assert.match(fidelityPrompt, /Do not repeat code-correctness/);
+  const registeredProvenance = `agent-registered at ${registered.json.detail.artifact.registeredAt}; treat as the implementer's claim, not a harness observation`;
+  assert.ok(fidelityPrompt.includes(registeredProvenance));
 
   const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC1.prompt.txt"), "utf8");
   const acceptanceOptions = JSON.parse(fs.readFileSync(path.join(capture, "implement_acceptance_AC1.options.json"), "utf8"));
   assert.match(acceptancePrompt, /"id": "AC1"/);
   assert.match(acceptancePrompt, /MECHANICAL-PROOF/);
   assert.match(acceptancePrompt, /REGISTERED-RUNTIME-EVIDENCE/);
+  assert.ok(acceptancePrompt.includes(registeredProvenance));
   assert.match(acceptancePrompt, /source\.txt \[text, \d+ bytes\]/);
   assert.doesNotMatch(acceptancePrompt, /SOURCE-BODY-MUST-NOT-BE-INLINED/);
   assert.deepEqual(acceptanceOptions, { agentic: true, cwd: fs.realpathSync(root), effort: "xhigh" });
@@ -937,29 +940,28 @@ test("lane failure and malformed judge output remain independent and block final
   assert.equal(malformed.json.detail.attempt.verdict, "ERROR");
 });
 
-test("registered runtime evidence becomes stale when the file or the rest of the judged source changes", () => {
+test("registered runtime evidence stays source-independent while file identity failures remain observable", () => {
   const root = makeProject();
   fs.writeFileSync(path.join(root, "runtime.log"), "runtime proof\n");
   startAndClose(root);
   const register = () => run(root, [
     "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
   ]);
-  assert.equal(register().status, 0);
+  const registered = register();
+  assert.equal(registered.status, 0);
+  assert.equal(Object.hasOwn(registered.json.detail.artifact, "sourceFingerprint"), false);
 
-  // The artifact's own bytes moving is one fact, reported once, by its hash
-  // pin. It is not additionally "stale": an artifact that invalidates itself
-  // makes extending evidence cost a verification round for nothing.
+  fs.writeFileSync(path.join(root, "source.txt"), "judged source moved\n");
+  const sourceChange = run(root, ["implement", "status"]).json.detail.artifactProblems;
+  assert.deepEqual(sourceChange, [], "an unrelated source edit must not stale every registered artifact");
+
   fs.writeFileSync(path.join(root, "runtime.log"), "changed proof\n");
   const ownChange = run(root, ["implement", "status"]).json.detail.artifactProblems.join("\n");
   assert.match(ownChange, /artifact hash changed/);
-  assert.doesNotMatch(ownChange, /artifact is stale/);
 
-  // The rest of the judged tree moving still stales it: the artifact is proof
-  // about that tree.
-  assert.equal(register().status, 0);
-  fs.writeFileSync(path.join(root, "source.txt"), "judged source moved\n");
-  const sourceChange = run(root, ["implement", "status"]).json.detail.artifactProblems.join("\n");
-  assert.match(sourceChange, /artifact is stale/);
+  fs.rmSync(path.join(root, "runtime.log"));
+  const deleted = run(root, ["implement", "status"]).json.detail.artifactProblems.join("\n");
+  assert.match(deleted, /artifact missing/);
 });
 
 test("a source change after unified PASS makes finalize refuse the stale attempt", () => {
@@ -970,12 +972,18 @@ test("a source change after unified PASS makes finalize refuse the stale attempt
   startAndClose(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   fs.writeFileSync(path.join(root, "source.txt"), "changed after pass\n");
+  for (let index = 0; index < 21; index += 1) {
+    fs.writeFileSync(path.join(root, `z-post-pass-${String(index).padStart(2, "0")}.txt`), "changed after pass\n");
+  }
 
   const stale = run(root, ["implement", "status"]);
   assert.equal(stale.json.detail.verification.verdict, "STALE");
-  const finalized = run(root, ["implement", "finalize"]);
+  const finalized = run(root, ["implement", "finalize", "--status", "complete"]);
   assert.equal(finalized.status, 2);
   assert.match(finalized.json.message, /STALE because judged source changed/);
+  assert.match(finalized.json.message, /changed paths since judged attempt .+ \(first 20 of 22\): source\.txt/);
+  assert.match(finalized.json.message, /z-post-pass-18\.txt/);
+  assert.doesNotMatch(finalized.json.message, /z-post-pass-19\.txt|z-post-pass-20\.txt/);
 });
 
 test("a routed qa-log change after PASS stales status and blocks finalize", () => {
@@ -1068,8 +1076,10 @@ test("missing or malformed PRD, state, artifact, and judge input fail closed wit
   fs.rmSync(path.join(missingArtifactRoot, "runtime.log"));
   const missingArtifact = run(missingArtifactRoot, ["implement", "verify"], { env: artifactEnv });
   assert.equal(missingArtifact.status, 1);
-  assert.equal(missingArtifact.json.detail.attempt.error.stage, "artifact");
-  assert.match(missingArtifact.json.detail.attempt.error.message, /artifact missing/);
+  assert.match(missingArtifact.json.message, /artifact integrity preflight failed/);
+  assert.match(missingArtifact.json.detail.problems.join("\n"), /artifact missing/);
+  assert.equal(missingArtifact.json.detail.judgeCalls, 0);
+  assert.equal(readState(missingArtifactRoot).verificationAttempts.length, 0);
   assert.equal(fs.existsSync(artifactStub.capture), false);
 
   const malformedJudgeRoot = makeProject();
@@ -1097,10 +1107,24 @@ test("artifact registration and verify converge safely when each operation runs 
     "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
   ];
   const first = run(root, command);
-  const second = run(root, command);
+  const second = run(root, [...command.slice(0, -1), "attempted metadata-only relabel"]);
   assert.equal(first.status, 0);
   assert.equal(second.status, 0);
   assert.equal(first.json.detail.artifact.registeredAt, second.json.detail.artifact.registeredAt);
+  assert.equal(second.json.detail.unchanged, true);
+  assert.equal(
+    second.json.message,
+    `artifact unchanged since ${first.json.detail.artifact.registeredAt}; registration timestamp preserved for V1: runtime.log`,
+  );
+  assert.deepEqual(readState(root).artifacts, [first.json.detail.artifact], "same bytes must preserve the entire prior artifact record");
+  assert.equal(Object.hasOwn(first.json.detail.artifact, "sourceFingerprint"), false);
+
+  fs.writeFileSync(path.join(root, "runtime.log"), "runtime proof with changed bytes\n");
+  const changed = run(root, command);
+  assert.equal(changed.status, 0);
+  assert.notEqual(changed.json.detail.artifact.sha256, first.json.detail.artifact.sha256);
+  assert.notEqual(changed.json.detail.artifact.registeredAt, first.json.detail.artifact.registeredAt);
+  assert.equal(Object.hasOwn(changed.json.detail.artifact, "sourceFingerprint"), false);
 
   const verifiedOnce = run(root, ["implement", "verify"], { env });
   const verifiedTwice = run(root, ["implement", "verify"], { env });
@@ -1667,8 +1691,8 @@ exec ${JSON.stringify(realGit)} "$@"
 
 test("a first round that called no judge is free, while unchanged repeats remain bounded", () => {
   // 2026-08-17 herdr-remote-handoff: 3 of the 5 rounds that exhausted the
-  // budget never reached a lane (mis-declared binding, stale artifact, own
-  // test failure). Only 2 real judged rounds were spendable and an otherwise
+  // budget never reached a lane (a mis-declared binding and an own test
+  // failure). Only 2 real judged rounds were spendable and an otherwise
   // finished run closed as blocked. A failing test suite converges; the
   // budget exists for the stage that does not (PRINCIPLES 13).
   const root = makeProject({ testExit: 1 });
@@ -1700,34 +1724,6 @@ test("a first round that called no judge is free, while unchanged repeats remain
   assert.equal(exhausted.budgetExhausted, true);
   assert.equal(run(root, ["implement", "verify"]).json.detail.terminalReason, "budget-exhausted");
   assert.equal(readState(root).verificationAttempts.length, 4);
-});
-
-test("registering evidence does not stale the artifacts registered from the same file", () => {
-  // 2026-08-17 herdr-remote-handoff: V6-V12 all cited docs/evidence/e2e-run.md,
-  // so appending to that document invalidated every artifact drawn from it and
-  // burned two verification rounds on bookkeeping alone.
-  const root = makeProject();
-  const evidence = path.join(root, "docs", "evidence");
-  fs.mkdirSync(evidence, { recursive: true });
-  fs.writeFileSync(path.join(evidence, "run.md"), "first observation\n");
-  startAndClose(root);
-
-  const register = (id) => run(root, [
-    "implement", "artifact", "--id", id, "--kind", "log",
-    "--path", "docs/evidence/run.md", "--description", `runtime evidence for ${id}`,
-  ]);
-  assert.equal(register("V1").status, 0);
-
-  // The document grows, exactly as an implementation session extends its
-  // evidence, and both artifacts are re-registered from the new content.
-  fs.appendFileSync(path.join(evidence, "run.md"), "second observation\n");
-  assert.equal(register("V1").status, 0);
-  assert.equal(register("V2").status, 0);
-
-  const status = run(root, ["implement", "status"]);
-  assert.equal(status.status, 0, status.stderr + status.stdout);
-  const stale = (status.json.detail.artifactProblems ?? []).filter((problem) => problem.includes("stale"));
-  assert.deepEqual(stale, [], "an artifact must not invalidate itself");
 });
 
 // --- design comments: the lane's only consequence is disposition -----------
