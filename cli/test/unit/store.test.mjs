@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { createRequire } from "node:module";
 import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
+import { JUDGE_ERROR_LOOP_THRESHOLD } from "../../dist/judge/types.js";
 
 const require = createRequire(import.meta.url);
 const { judgedDiffSha256 } = require(
@@ -27,6 +28,12 @@ const BLOCK_FINDING = {
 
 function blockOutcome() {
   return { kind: "verdict", verdict: "BLOCK", findings: [BLOCK_FINDING], artifactPayload: { findings: [BLOCK_FINDING] } };
+}
+
+const JUDGE_CAUSE = { code: "judge-invalid-output", backend: "codex", reason: "invalid-contract" };
+
+function judgeErrorOutcome(message = "judge broke", cause = JUDGE_CAUSE) {
+  return { kind: "error", message, cause };
 }
 
 test("state machine: BLOCK increments attempts and stays blocked", () => {
@@ -90,7 +97,11 @@ test("a declared gap closes the gate without spending the fix budget", () => {
 test("state machine fail-closed: judge error records ERROR and stays blocked", () => {
   const store = makeStore();
   let state = store.load();
-  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge-binary-missing: no claude" }, []);
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome("judge-binary-missing: no claude", {
+    code: "judge-binary-missing",
+    backend: "claude",
+    reason: null,
+  }), []);
   const view = gateStatus(state, "verify", 2);
   assert.equal(view.effective, "BLOCKED");
   assert.equal(view.verdict, "ERROR");
@@ -114,7 +125,7 @@ test("totalAttempts accumulates across every run while the budget gauge resets o
   // A judge error is a run that spent real work (fail-closed D-15): it counts
   // in the cumulative ledger, but never in the FIX budget - it produced nothing
   // to fix.
-  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome(), []);
   assert.equal(state.gates.verify.attempts, 0, "the fix budget is not spent by a judge malfunction");
   assert.equal(state.gates.verify.totalAttempts, 4, "the honest run count still moves");
   assert.equal(state.gates.verify.history.at(-1).verdict, "ERROR", "and the history row is still written");
@@ -127,10 +138,12 @@ test("totalAttempts accumulates across every run while the budget gauge resets o
 // gate never found one real defect, yet the run went BLOCKED three times.
 // Both halves of the fix are pinned here: the errors must not spend the fix
 // budget, and they must still terminate.
-test("a judge-error loop spends no fix budget, keeps the honest record, and still terminates", () => {
+test("a same-cause judge-error loop uses its own threshold, not the fix budget", () => {
   const store = makeStore();
-  const budget = 3;
-  const judgeError = () => ({ kind: "error", message: "judge-invalid-output (backend: claude): criteria missing verdicts for: AC1, AC2, AC3" });
+  const budget = 15;
+  const judgeError = () => judgeErrorOutcome(
+    "judge-invalid-output (backend: codex): response contract failed",
+  );
   let state = store.load();
 
   // One real FAIL first: this one DID hand the agent findings, so it is the one
@@ -138,18 +151,20 @@ test("a judge-error loop spends no fix budget, keeps the honest record, and stil
   state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: [], artifactPayload: {} }, []);
   assert.equal(gateStatus(state, "verify", budget).attempts, 1);
 
-  for (let i = 1; i <= budget; i += 1) {
+  for (let i = 1; i <= JUDGE_ERROR_LOOP_THRESHOLD; i += 1) {
     state = recordGateResult(store, state, "verify", judgeError(), []);
     const view = gateStatus(state, "verify", budget);
     assert.equal(view.attempts, 1, `error ${i}: the fix budget stays where the last real verdict left it`);
     assert.equal(view.consecutiveErrors, i, `error ${i}: the error streak is the gauge that moves`);
     assert.equal(view.effective, "BLOCKED", `error ${i}: ERROR is never a PASS`);
     assert.equal(view.budgetExhausted, false, `error ${i}: a receipt must never claim a budget it did not spend`);
-    assert.equal(view.judgeErrorLoop, i >= budget, `error ${i}: terminal only once the streak reaches the bound`);
+    assert.equal(view.judgeErrorThreshold, JUDGE_ERROR_LOOP_THRESHOLD);
+    assert.equal(view.judgeErrorCause, "codex/judge-invalid-output/invalid-contract");
+    assert.equal(view.judgeErrorLoop, i >= JUDGE_ERROR_LOOP_THRESHOLD, `error ${i}: terminal only once the backend streak reaches its own bound`);
   }
 
   // Terminal, and distinguishable from the other two causes: attempts read the
-  // honest 1/3, so `budgetExhausted` stays false and only `judgeErrorLoop` is
+  // honest 1/15, so `budgetExhausted` stays false and only `judgeErrorLoop` is
   // set. (`rerunRefused` lives in the gate commands layer and never arms on
   // ERROR - a broken judge says nothing about the tree.)
   const terminal = gateStatus(state, "verify", budget);
@@ -160,10 +175,11 @@ test("a judge-error loop spends no fix budget, keeps the honest record, and stil
 
   // Every run is still in the ledger: 1 FAIL + 3 ERRORs, none of them lost.
   const record = store.load().gates.verify;
-  assert.equal(record.totalAttempts, budget + 1);
-  assert.equal(record.history.length, budget + 1);
-  assert.equal(record.history.filter((row) => row.verdict === "ERROR").length, budget);
+  assert.equal(record.totalAttempts, JUDGE_ERROR_LOOP_THRESHOLD + 1);
+  assert.equal(record.history.length, JUDGE_ERROR_LOOP_THRESHOLD + 1);
+  assert.equal(record.history.filter((row) => row.verdict === "ERROR").length, JUDGE_ERROR_LOOP_THRESHOLD);
   assert.ok(record.history.at(-1).error.includes("judge-invalid-output"));
+  assert.deepEqual(record.history.at(-1).judgeErrorCause, JUDGE_CAUSE);
 
   // A judge that answers again clears the streak - including with a FAIL, since
   // what the streak counts is whether the question got answered at all. The
@@ -175,10 +191,26 @@ test("a judge-error loop spends no fix budget, keeps the honest record, and stil
   assert.equal(recovered.attempts, 2, "the fix budget resumes from where the real verdicts left it");
 });
 
+test("a different structured judge error starts a new streak and names the new cause", () => {
+  const store = makeStore();
+  let state = store.load();
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome(), []);
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome(), []);
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome("timed out", {
+    code: "judge-timeout",
+    backend: "codex",
+    reason: null,
+  }), []);
+  const view = gateStatus(state, "verify", 1);
+  assert.equal(view.consecutiveErrors, 1);
+  assert.equal(view.judgeErrorCause, "codex/judge-timeout");
+  assert.equal(view.judgeErrorLoop, false, "a changed cause cannot inherit another failure class's streak");
+});
+
 test("a legacy record with no error-streak field is never terminal on the judge-error cause", () => {
   const store = makeStore();
   let state = store.load();
-  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome(), []);
   delete state.gates.verify.consecutiveErrors; // a gates.json written before the field existed
   const view = gateStatus(state, "verify", 1, store.projectRoot);
   assert.equal(view.consecutiveErrors, 0);
@@ -246,7 +278,7 @@ test("failedStage and diffSource ride the record and history row; PASS and ERROR
 
   // ERROR is a fact about the judge, not a stage or a diff: both stamps clear.
   state = recordGateResult(store, state, "verify", fail, []);
-  state = recordGateResult(store, state, "verify", { kind: "error", message: "judge broke" }, []);
+  state = recordGateResult(store, state, "verify", judgeErrorOutcome(), []);
   assert.equal(state.gates.verify.failedStage, undefined);
   assert.equal(state.gates.verify.diffSource, undefined);
 
@@ -293,7 +325,11 @@ test("a new judge ERROR supersedes an earlier override", () => {
   let state = store.load();
   state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
   state = overrideGate(store, state, "gap-audit", "temporary user exception");
-  state = recordGateResult(store, state, "gap-audit", { kind: "error", message: "judge-timeout" }, []);
+  state = recordGateResult(store, state, "gap-audit", judgeErrorOutcome("judge-timeout", {
+    code: "judge-timeout",
+    backend: "codex",
+    reason: null,
+  }), []);
   const view = gateStatus(state, "gap-audit", 3);
   assert.equal(view.effective, "BLOCKED");
   assert.equal(view.verdict, "ERROR");

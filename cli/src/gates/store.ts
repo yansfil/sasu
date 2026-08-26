@@ -2,7 +2,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Finding, GapVerdict, JudgeCallRecord } from "../judge/types";
+import {
+  JUDGE_ERROR_LOOP_THRESHOLD,
+  describeJudgeFailureCause,
+  sameJudgeFailureCause,
+  type Finding,
+  type GapVerdict,
+  type JudgeCallRecord,
+  type JudgeFailureCause,
+} from "../judge/types";
 import { gatesDirFor } from "../runs/paths";
 
 export type GateId = "gap-audit" | "spec" | "verify";
@@ -93,6 +101,8 @@ export interface GateRunSummary {
   findingCount: number;
   requiresHuman: boolean;
   error: string | null;
+  /** Structured backend failure class for an ERROR row. */
+  judgeErrorCause?: JudgeFailureCause;
   artifact: string | null;
   /**
    * The diff this attempt's verdict was earned on, by sha256 (item 10: a
@@ -164,11 +174,14 @@ export interface GateRecord {
    *
    * Not charging it cannot mean "retry forever" though (PRINCIPLES item 13: a
    * stage that cannot converge on its own needs a harness-owned bound), so this
-   * counter is the separate gauge for the separate failure, read against the
-   * same configured bound by `judgeErrorLoop`. Absent on pre-field files, which
-   * read as 0 and are simply never terminal on this cause.
+   * counter is the separate gauge for the separate failure. It counts only a
+   * structurally identical cause and is read against the harness-owned small
+   * threshold, never the fix budget. Absent on pre-field files, which read as
+   * 0 and are simply never terminal on this cause.
    */
   consecutiveErrors?: number;
+  /** Failure class whose current consecutiveErrors streak is counting. */
+  consecutiveErrorCause?: JudgeFailureCause;
   overridden: boolean;
   findings: Finding[];
   lastRunAt: string | null;
@@ -510,10 +523,15 @@ export interface GateStatusView {
   budgetExhausted: boolean;
   /** Judge ERRORs since the last real verdict (GateRecord.consecutiveErrors). */
   consecutiveErrors: number;
+  /** Harness-owned backend streak bound, independent from the fix budget. */
+  judgeErrorThreshold: number;
+  /** Human-readable structured cause behind the active error streak. */
+  judgeErrorCause: string | null;
   /**
    * Third terminal cause, beside `budgetExhausted` and the gate-commands-owned
-   * `rerunRefused`: the judge backend has failed `budget` times in a row
-   * without ever returning a verdict. Distinct on purpose (PRINCIPLES item 10 -
+   * `rerunRefused`: the judge backend has failed three times in a row with the
+   * same structured cause and without returning a verdict. Distinct on purpose
+   * (PRINCIPLES item 10 -
    * a record names what actually happened): a spent fix budget means the agent
    * had N sets of findings and could not close them, while this means it never
    * got one. Reported honestly as attempts 0/N plus this flag, never as a faked
@@ -660,13 +678,19 @@ export function gateStatus(
   // `stale` only downgrades an otherwise-passing gate; on a blocked gate the
   // list is informational and must not turn BLOCKED into STALE.
   const stale = passed && staleInputs.length > 0;
-  // The error streak is bounded by the SAME configured number as the fix budget
-  // rather than a second knob: both answer "how many times may this gate fail
-  // the same way before the autonomous loop stops" (PRINCIPLES item 4 - an
-  // addition that ships a knob owes a deletion, and this one owes none). Two
-  // gauges, one bound; `verdict === "ERROR"` keeps a streak written by one dist
-  // from being read as terminal under a verdict written by another.
+  // Backend survival and fix iteration answer different questions. The former
+  // stops after a small harness-owned streak of the same structured cause; the
+  // latter remains project-configurable because it prices actual fix rounds.
+  // `verdict === "ERROR"` keeps a streak written by one dist from being read as
+  // terminal under a verdict written by another (PRINCIPLES items 10 and 13).
   const consecutiveErrors = Number.isInteger(record.consecutiveErrors) ? (record.consecutiveErrors as number) : 0;
+  const rawErrorCause = record.consecutiveErrorCause;
+  const errorCause = rawErrorCause !== undefined
+    && typeof rawErrorCause.code === "string"
+    && typeof rawErrorCause.backend === "string"
+    && (typeof rawErrorCause.reason === "string" || rawErrorCause.reason === null)
+      ? rawErrorCause
+      : null;
   // Cycle gauge: judged NON-PASS rounds since the last grant. Counting only
   // non-PASS rounds (unlike `attempts`, which a PASS resets) bounds the
   // PASS->STALE->re-judge livelock - its blocked rounds accumulate across the
@@ -698,10 +722,15 @@ export function gateStatus(
     attempts: record.attempts,
     budget,
     // PRD semantic work is bounded by the two-phase lifecycle, not a numeric
-    // retry gauge. The configured budget still bounds judge backend errors.
+    // retry gauge. Backend errors use the separate harness-owned threshold.
     budgetExhausted: !prdGate && !passed && record.attempts >= budget && record.verdict !== null,
     consecutiveErrors,
-    judgeErrorLoop: !passed && record.verdict === "ERROR" && consecutiveErrors > 0 && consecutiveErrors >= budget,
+    judgeErrorThreshold: JUDGE_ERROR_LOOP_THRESHOLD,
+    judgeErrorCause: errorCause === null ? null : describeJudgeFailureCause(errorCause),
+    judgeErrorLoop: !passed
+      && record.verdict === "ERROR"
+      && errorCause !== null
+      && consecutiveErrors >= JUDGE_ERROR_LOOP_THRESHOLD,
     roundsSinceGrant: prdGate ? null : roundsSinceGrant,
     cycleCap: prdGate ? null : cycleCap,
     cycleExhausted: !prdGate && budget > 0 && record.verdict !== null && roundsSinceGrant >= cycleCap,
@@ -781,6 +810,7 @@ export function grantGateBudget(store: GateStore, _state: GatesState, gate: Gate
     ];
     record.attempts = 0;
     record.consecutiveErrors = 0;
+    delete record.consecutiveErrorCause;
     state.gates[gate] = record;
   });
 }
@@ -814,6 +844,7 @@ export function reopenPrdGate(store: GateStore, gate: PrdGateId, evidence: strin
       record.verdict = null;
       record.attempts = 0;
       record.consecutiveErrors = 0;
+      delete record.consecutiveErrorCause;
       record.overridden = false;
       record.findings = [];
       record.lastRunAt = null;
@@ -857,7 +888,7 @@ export function recordGateResult(
         /** Delegated-run conversion this round performed (see GateRecord.humanAssumptions). */
         humanAssumption?: { evidence: string; findings: Finding[] };
       }
-    | { kind: "error"; message: string; artifactPayload?: unknown },
+    | { kind: "error"; message: string; cause: JudgeFailureCause; artifactPayload?: unknown },
   judgeRecords: JudgeCallRecord[],
 ): GatesState {
   const at = new Date().toISOString();
@@ -873,7 +904,14 @@ export function recordGateResult(
     const artifact = outcome.kind === "verdict"
       ? store.writeArtifact(gate, { at, gate, ...((outcome.artifactPayload as object) ?? {}) })
       : outcome.artifactPayload !== undefined
-        ? store.writeArtifact(gate, { at, gate, stage: "judge-error", error: outcome.message, ...(outcome.artifactPayload as object) })
+        ? store.writeArtifact(gate, {
+            at,
+            gate,
+            stage: "judge-error",
+            error: outcome.message,
+            cause: outcome.cause,
+            ...(outcome.artifactPayload as object),
+          })
         : null;
     // A new judged result supersedes any earlier user override. The deviation
     // remains in history, but it must not turn a later BLOCK/FAIL/ERROR into an
@@ -937,6 +975,7 @@ export function recordGateResult(
     // ANY judged verdict clears the error streak, FAIL and BLOCK included: the
     // judge answered the question, which is the whole thing the streak counts.
     record.consecutiveErrors = 0;
+    delete record.consecutiveErrorCause;
     if (outcome.humanAssumption !== undefined && outcome.humanAssumption.findings.length > 0) {
       record.humanAssumptions = [
         ...(record.humanAssumptions ?? []),
@@ -981,12 +1020,22 @@ export function recordGateResult(
     // budget is a gauge, not the ledger (PRINCIPLES item 10).
     record.totalAttempts = (record.totalAttempts ?? 0) + 1;
     // The bound that keeps "does not spend the budget" from meaning "retries
-    // forever" (PRINCIPLES item 13): gateStatus turns a streak of `budget`
-    // errors into `judgeErrorLoop`, its own terminal cause, so the run reaches
-    // an honest blocked receipt instead of spinning on a broken backend.
-    record.consecutiveErrors = (record.consecutiveErrors ?? 0) + 1;
+    // forever" (PRINCIPLES item 13): only an identical structured backend
+    // cause grows the streak. A different failure starts a new diagnosis at 1.
+    record.consecutiveErrors = sameJudgeFailureCause(record.consecutiveErrorCause, outcome.cause)
+      ? (record.consecutiveErrors ?? 0) + 1
+      : 1;
+    record.consecutiveErrorCause = outcome.cause;
     if (reviewBefore !== null) record.review = reviewBefore;
-    summary = { at, verdict: "ERROR", findingCount: 0, requiresHuman: false, error: outcome.message, artifact };
+    summary = {
+      at,
+      verdict: "ERROR",
+      findingCount: 0,
+      requiresHuman: false,
+      error: outcome.message,
+      judgeErrorCause: outcome.cause,
+      artifact,
+    };
     }
     record.lastRunAt = at;
     record.history = [...record.history.slice(-19), summary];

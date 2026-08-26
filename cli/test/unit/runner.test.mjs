@@ -33,6 +33,175 @@ const config = loadConfig(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-")));
 // first-failure contract, so every test starts from a healthy process.
 beforeEach(resetJudgeHealth);
 
+function fakeCodexProgram(mainLines, options = {}) {
+  const preflightLines = options.preflightLines ?? [
+    `printf '%s' 'OK' > "$last"`,
+    `printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}'`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+    "exit 0",
+  ];
+  const countLines = options.countFile === undefined
+    ? []
+    : [
+        `count_file=${JSON.stringify(options.countFile)}`,
+        "count=0",
+        `test ! -f "$count_file" || count=$(cat "$count_file")`,
+        "count=$((count + 1))",
+        `printf '%s' "$count" > "$count_file"`,
+      ];
+  return [
+    "#!/bin/sh",
+    ...countLines,
+    'last=""',
+    'prompt=""',
+    'root=""',
+    'while [ "$#" -gt 0 ]; do',
+    '  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2',
+    '  elif [ "$1" = "-C" ]; then root="$2"; shift 2',
+    '  else prompt="$1"; shift; fi',
+    "done",
+    'case "$prompt" in',
+    '  *"Reply with exactly: OK"*)',
+    ...preflightLines,
+    "  ;;",
+    "esac",
+    ...mainLines,
+    "",
+  ].join("\n");
+}
+
+async function withFakeCodex(program, fn) {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fake-codex-"));
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeCodex, program);
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "codex";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    return await fn(binDir);
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+}
+
+test("Codex advisory plus turn.completed and a valid verdict is a recorded PASS", async () => {
+  const message = "Skill descriptions were shortened to fit the skills context budget.";
+  const program = fakeCodexProgram([
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '${JSON.stringify({ type: "item.completed", item: { id: "item_0", type: "error", message } })}'`,
+    `printf '%s\\n' '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}}'`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]);
+  await withFakeCodex(program, async () => {
+    let warnings = "";
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk) => {
+      warnings += String(chunk);
+      return true;
+    });
+    try {
+      const outcome = await runJudge(config, "gate:advisory", "routine", "prompt", validateGapVerdict);
+      assert.equal(outcome.value.verdict, "PASS");
+      assert.equal(outcome.record.outcome, "ok");
+      assert.equal(outcome.record.attempts, 1);
+      assert.deepEqual(outcome.record.advisories, [{ code: "judge-backend-advisory", backend: "codex", message }]);
+      assert.match(warnings, /judge-backend-advisory \(codex, gate:advisory\)/);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  });
+});
+
+test("Codex turn.completed without a last message remains a hard failure", async () => {
+  const program = fakeCodexProgram([
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]);
+  await withFakeCodex(program, async () => {
+    await assert.rejects(
+      () => runJudge(config, "gate:no-message", "routine", "prompt", validateGapVerdict),
+      (error) => error.code === "judge-invalid-output"
+        && error.reason === "empty-response"
+        && error.record.attempts === 2,
+    );
+  });
+});
+
+test("Codex turn.failed rejects a last message that looks like a valid verdict", async () => {
+  const program = fakeCodexProgram([
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.failed","error":{"message":"backend unavailable"}}'`,
+  ]);
+  await withFakeCodex(program, async () => {
+    await assert.rejects(
+      () => runJudge(config, "gate:failed-turn", "routine", "prompt", validateGapVerdict),
+      (error) => error.code === "judge-auth-or-runtime"
+        && error.reason === "turn-failed"
+        && error.record.attempts === 1,
+    );
+  });
+});
+
+test("Codex requires turn.completed even when a valid last message exists", async () => {
+  const program = fakeCodexProgram([
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+  ]);
+  await withFakeCodex(program, async () => {
+    await assert.rejects(
+      () => runJudge(config, "gate:missing-terminal", "routine", "prompt", validateGapVerdict),
+      (error) => error.code === "judge-auth-or-runtime"
+        && error.reason === "missing-turn-completed"
+        && error.record.attempts === 1,
+    );
+  });
+});
+
+test("Codex command-audit violation rejects a completed turn with a valid verdict", async () => {
+  const program = fakeCodexProgram([
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"rm allowed.txt"}}'`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]);
+  await withFakeCodex(program, async (binDir) => {
+    fs.writeFileSync(path.join(binDir, "allowed.txt"), "evidence\n");
+    await assert.rejects(
+      () => runJudge(config, "gate:unsafe-command", "routine", "prompt", validateGapVerdict, {
+        agentic: true,
+        cwd: binDir,
+        evidencePaths: ["allowed.txt"],
+      }),
+      (error) => error.code === "judge-invalid-output"
+        && error.reason === "non-read-command"
+        && error.record.attempts === 2,
+    );
+  });
+});
+
+test("Codex preflight fails before the first full judge attempt", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-preflight-count-"));
+  const countFile = path.join(dir, "count");
+  const program = fakeCodexProgram([
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ], {
+    countFile,
+    preflightLines: [
+      `printf '%s\\n' '{"type":"turn.failed","error":{"message":"preflight failed"}}'`,
+      "exit 0",
+    ],
+  });
+  await withFakeCodex(program, async () => {
+    await assert.rejects(
+      () => runJudge(config, "gate:preflight", "routine", "EXPENSIVE-PROMPT", validateGapVerdict),
+      (error) => error.reason === "turn-failed" && error.record.attempts === 0,
+    );
+    assert.equal(fs.readFileSync(countFile, "utf8"), "1", "the expensive judge turn must never start");
+  });
+});
+
 test("runJudge accepts a valid first reply with attempts=1", async () => {
   await withStub([{ verdict: "PASS", findings: [] }], async () => {
     const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
@@ -174,7 +343,10 @@ test("visual evidence routes a Claude-primary profile to its attachment-capable 
   fs.writeFileSync(fakeClaude, `#!/bin/sh\ntouch ${JSON.stringify(claudeMarker)}\nexit 1\n`);
   fs.writeFileSync(
     fakeCodex,
-    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+    fakeCodexProgram([
+      `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+      `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+    ]),
   );
   fs.chmodSync(fakeClaude, 0o755);
   fs.chmodSync(fakeCodex, 0o755);
@@ -239,7 +411,10 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
   fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 5\n");
   fs.writeFileSync(
     fakeCodex,
-    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+    fakeCodexProgram([
+      `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+      `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+    ]),
   );
   fs.chmodSync(fakeClaude, 0o755);
   fs.chmodSync(fakeCodex, 0o755);
@@ -270,21 +445,13 @@ test("an agentic Claude failure falls back to Codex with only allowlisted eviden
   fs.writeFileSync(path.join(binDir, "allowed.txt"), "READY\n");
   fs.writeFileSync(path.join(binDir, "decoy.txt"), "MUST NOT COPY\n");
   fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 5\n");
-  fs.writeFileSync(fakeCodex, [
-    "#!/bin/sh",
-    'last=""',
-    'root=""',
-    'while [ "$#" -gt 0 ]; do',
-    '  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2',
-    '  elif [ "$1" = "-C" ]; then root="$2"; shift 2',
-    '  else shift; fi',
-    "done",
+  fs.writeFileSync(fakeCodex, fakeCodexProgram([
     'test -f "$root/allowed.txt" || exit 41',
     'test ! -e "$root/decoy.txt" || exit 42',
     `printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc sed -n 1p allowed.txt"}}'`,
     `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
-    "",
-  ].join("\n"));
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]));
   fs.chmodSync(fakeClaude, 0o755);
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
@@ -319,7 +486,10 @@ test("runJudge falls back from repeated invalid Claude output to Codex", async (
   fs.writeFileSync(fakeClaude, "#!/bin/sh\nprintf 'not json\\n'\n");
   fs.writeFileSync(
     fakeCodex,
-    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+    fakeCodexProgram([
+      `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+      `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+    ]),
   );
   fs.chmodSync(fakeClaude, 0o755);
   fs.chmodSync(fakeCodex, 0o755);
@@ -351,24 +521,12 @@ test("backend audit rejection gets one reasoned retry before fallback and record
   const fakeClaude = path.join(binDir, "claude");
   const countFile = path.join(binDir, "codex-count");
   fs.writeFileSync(path.join(binDir, "allowed.txt"), "evidence\n");
-  fs.writeFileSync(fakeCodex, [
-    "#!/bin/sh",
-    `count_file=${JSON.stringify(countFile)}`,
-    'count=0',
-    'test ! -f "$count_file" || count=$(cat "$count_file")',
-    'count=$((count + 1))',
-    'printf "%s" "$count" > "$count_file"',
-    'last=""',
-    'prompt=""',
-    'while [ "$#" -gt 0 ]; do',
-    '  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2',
-    '  else prompt="$1"; shift; fi',
-    'done',
+  fs.writeFileSync(fakeCodex, fakeCodexProgram([
     'printf "%s" "$prompt" > "$count_file.prompt.$count"',
     `printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc sed -n 1p allowed.txt && rm credential-token"}}'`,
     `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
-    "",
-  ].join("\n"));
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ], { countFile }));
   fs.writeFileSync(
     fakeClaude,
     '#!/bin/sh\nprintf \'%s\\n\' \'{"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}\'\n',
@@ -388,9 +546,9 @@ test("backend audit rejection gets one reasoned retry before fallback and record
       validateGapVerdict,
       { agentic: true, cwd: binDir, evidencePaths: ["allowed.txt"] },
     );
-    assert.equal(fs.readFileSync(countFile, "utf8"), "2", "the primary must be rejected twice before fallback");
+    assert.equal(fs.readFileSync(countFile, "utf8"), "3", "one preflight plus two rejected primary attempts must run before fallback");
     assert.match(
-      fs.readFileSync(`${countFile}.prompt.2`, "utf8"),
+      fs.readFileSync(`${countFile}.prompt.3`, "utf8"),
       /previous attempt was rejected: isolated codex judge used a non-read command.*rm credential-token.*Correct that specific problem, then reply with only the JSON object/,
     );
     assert.equal(outcome.record.backend, "claude");
@@ -413,7 +571,10 @@ test("runJudge falls back from Claude authentication failure to Codex", async ()
   fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"Not logged in. Please run /login."}\'\n');
   fs.writeFileSync(
     fakeCodex,
-    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+    fakeCodexProgram([
+      `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+      `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+    ]),
   );
   fs.chmodSync(fakeClaude, 0o755);
   fs.chmodSync(fakeCodex, 0o755);
@@ -447,7 +608,10 @@ test("runJudge falls back from a Claude runtime failure to Codex", async () => {
   fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"upstream service unavailable"}\'\n');
   fs.writeFileSync(
     fakeCodex,
-    '#!/bin/sh\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\nprintf \'{"verdict":"PASS","findings":[]}\' > "$last"\n',
+    fakeCodexProgram([
+      `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+      `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+    ]),
   );
   fs.chmodSync(fakeClaude, 0o755);
   fs.chmodSync(fakeCodex, 0o755);

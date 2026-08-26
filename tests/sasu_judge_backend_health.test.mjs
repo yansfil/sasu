@@ -34,6 +34,25 @@ function writeShell(file, body) {
   fs.chmodSync(file, 0o755);
 }
 
+// Every fake codex must speak the runner's protocol: answer the one-shot
+// preflight canary with OK, and terminate real turns with turn.completed.
+const CODEX_PREFLIGHT_PRELUDE = `last=""
+prompt=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then last="$arg"; fi
+  prev="$arg"
+  prompt="$arg"
+done
+case "$prompt" in
+  *"Reply with exactly: OK"*)
+    printf '%s' OK > "$last"
+    printf '%s\\n' '{"type":"turn.completed","usage":{}}'
+    exit 0
+  ;;
+esac
+`;
+
 /** Records that it was asked, then answers. */
 function writeAnsweringClaude(binDir, callLog) {
   writeShell(
@@ -47,7 +66,7 @@ function writeAnsweringCodex(binDir, callLog) {
   fs.writeFileSync(verdict, '{"verdict":"PASS","findings":[]}');
   writeShell(
     path.join(binDir, "codex"),
-    `echo call >> ${JSON.stringify(callLog)}\nlast=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\ncat ${JSON.stringify(verdict)} > "$last"\n`,
+    `${CODEX_PREFLIGHT_PRELUDE}echo call >> ${JSON.stringify(callLog)}\ncat ${JSON.stringify(verdict)} > "$last"\nprintf '%s\\n' '{"type":"turn.completed","usage":{}}'\n`,
   );
 }
 
@@ -92,9 +111,13 @@ test("a judge backend that failed authentication is skipped by the next call in 
   // "Not logged in" to judge-auth, which is one strike and enough.
   writeShell(path.join(binDir, "claude"), `echo call >> ${JSON.stringify(claudeLog)}\nprintf '%s' '{"is_error":true,"result":"Not logged in. Please run /login."}'\n`);
   writeAnsweringCodex(binDir, codexLog);
+  // Claude primary is declared in config: SASU_JUDGE_BACKEND is a diagnostic
+  // pin that drops the fallback, and this scenario needs the fallback.
+  const { routine } = config.judge.profiles;
+  config.judge.profiles.routine = { primary: routine.fallback, fallback: routine.primary };
   resetJudgeHealth();
   try {
-    await withBins(binDir, "claude", async () => {
+    await withBins(binDir, undefined, async () => {
       const first = await runJudge(config, "regression:health:auth-1", "routine", "prompt", validateGapVerdict);
       assert.equal(first.record.backend, "codex", "the first call must recover through the fallback");
       assert.equal(first.record.fallback.outcome, "judge-auth");
@@ -198,7 +221,7 @@ test("a runtime failure on one codex model does not disable another codex model"
   // silently downgrades every high-risk judgment to the fallback vendor.
   writeShell(
     path.join(binDir, "codex"),
-    `model=""\nlast=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--model" ]; then model="$arg"; fi\n  if [ "$prev" = "--output-last-message" ]; then last="$arg"; fi\n  prev="$arg"\ndone\necho "$model" >> ${JSON.stringify(codexLog)}\nif [ "$model" = ${JSON.stringify(routineModel)} ]; then exit 99; fi\ncat ${JSON.stringify(verdict)} > "$last"\n`,
+    `${CODEX_PREFLIGHT_PRELUDE}model=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--model" ]; then model="$arg"; fi\n  prev="$arg"\ndone\necho "$model" >> ${JSON.stringify(codexLog)}\nif [ "$model" = ${JSON.stringify(routineModel)} ]; then exit 99; fi\ncat ${JSON.stringify(verdict)} > "$last"\nprintf '%s\\n' '{"type":"turn.completed","usage":{}}'\n`,
   );
   writeAnsweringClaude(binDir, claudeLog);
   resetJudgeHealth();
@@ -234,7 +257,7 @@ test("a success clears runtime strikes so a transient blip cannot condemn the ba
   const cursor = path.join(binDir, "cursor");
   writeShell(
     path.join(binDir, "codex"),
-    `echo call >> ${JSON.stringify(codexLog)}\nn=$(cat ${JSON.stringify(cursor)} 2>/dev/null || echo 0)\nn=$((n+1))\necho "$n" > ${JSON.stringify(cursor)}\nif [ $((n % 2)) = 1 ]; then exit 99; fi\nlast=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--output-last-message" ]; then last="$arg"; fi\n  prev="$arg"\ndone\ncat ${JSON.stringify(verdict)} > "$last"\n`,
+    `${CODEX_PREFLIGHT_PRELUDE}echo call >> ${JSON.stringify(codexLog)}\nn=$(cat ${JSON.stringify(cursor)} 2>/dev/null || echo 0)\nn=$((n+1))\necho "$n" > ${JSON.stringify(cursor)}\nif [ $((n % 2)) = 1 ]; then exit 99; fi\ncat ${JSON.stringify(verdict)} > "$last"\nprintf '%s\\n' '{"type":"turn.completed","usage":{}}'\n`,
   );
   writeAnsweringClaude(binDir, claudeLog);
   resetJudgeHealth();

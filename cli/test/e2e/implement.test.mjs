@@ -1293,7 +1293,7 @@ test("an explicit user grant opens one fresh fix budget inside the same state re
 test("implement verify bounds consecutive judge errors without spending the fix budget", () => {
   const root = makeProject();
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
-  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 15 } }));
   const { file, capture } = stub(root);
   fs.writeFileSync(file, "{bad json");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
@@ -1303,11 +1303,22 @@ test("implement verify bounds consecutive judge errors without spending the fix 
   const second = run(root, ["implement", "verify"], { env });
   assert.equal(second.status, 1);
   assert.equal(second.json.detail.verificationBudget.fixAttempts, 0);
-  assert.equal(second.json.detail.verificationBudget.judgeErrorLoop, true);
+  assert.equal(second.json.detail.verificationBudget.judgeErrorLoop, false);
+  const third = run(root, ["implement", "verify"], { env });
+  assert.equal(third.status, 1);
+  assert.equal(third.json.detail.verificationBudget.fixAttempts, 0);
+  assert.equal(third.json.detail.verificationBudget.judgeErrorThreshold, 3);
+  assert.equal(third.json.detail.verificationBudget.judgeErrorCause, "unknown/judge-runtime");
+  assert.equal(third.json.detail.verificationBudget.judgeErrorLoop, true, "backend survival stops independently of the 15-round fix budget");
   const refused = run(root, ["implement", "verify"], { env });
   assert.equal(refused.status, 1);
   assert.equal(refused.json.detail.terminalReason, "judge-error-loop");
-  assert.equal(readState(root).verificationAttempts.length, 2);
+  assert.equal(readState(root).verificationAttempts.length, 3);
+  const closed = run(root, ["implement", "finalize", "--status", "blocked"]);
+  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+  assert.equal(closed.json.detail.receipt.verificationBudget.judgeErrorThreshold, 3);
+  assert.equal(closed.json.detail.receipt.verificationBudget.judgeErrorCause, "unknown/judge-runtime");
+  assert.equal(closed.json.detail.receipt.verificationBudget.judgeErrorLoop, true);
 });
 
 test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree only", () => {

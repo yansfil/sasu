@@ -1,4 +1,4 @@
-import type { JudgeCallRecord } from "../judge/types";
+import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 
 // v5: the run owns its approved PRD snapshot, baseline attribution, retirement
 // transition, and round-to-round judge delta record. Older shapes are not
@@ -9,6 +9,13 @@ export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 export type ItemStatus = "pending" | "complete" | "blocked";
 export type VerificationStatus = "NOT_RUN" | "PASS" | "FAIL" | "BLOCKED" | "ERROR" | "STALE";
 export type ReviewProfile = "trivial" | "standard" | "high-risk";
+
+export interface JudgeLaneError {
+  code: string;
+  message: string;
+  /** Structured identity used by the backend survival circuit breaker. */
+  cause?: JudgeFailureCause;
+}
 
 export interface EvidenceNote {
   at: string;
@@ -126,7 +133,7 @@ export interface AcceptanceCriterionInvocation {
   durationMs: number;
   verdict: VerificationStatus;
   judge: JudgeCallRecord | null;
-  error: { code: string; message: string } | null;
+  error: JudgeLaneError | null;
   // Names the ERROR'd attempt this settled verdict was carried over from.
   // Timestamps and judge record stay those of the original judgment.
   reusedFrom?: string;
@@ -254,7 +261,7 @@ export interface LaneRecord<T> {
   verdict: VerificationStatus;
   result: T | null;
   judge: JudgeCallRecord | null;
-  error: { code: string; message: string } | null;
+  error: JudgeLaneError | null;
   // Names the ERROR'd attempt this settled lane was carried over from.
   reusedFrom?: string;
 }

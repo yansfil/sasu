@@ -91,7 +91,8 @@ Gap-audit and spec each get one exhaustive verdict. A BLOCK permits exactly one
 closure verdict after the document is fixed. PASS seals that cycle; a sealed
 input change or a second BLOCK stops at $0 until the user explicitly opens a
 new cycle with 'gate reopen'. --grant-budget only retries a judge backend that
-failed without returning a verdict. Verify keeps its configured retry budget.
+failed three times in a row with the same structured cause and no verdict.
+Verify keeps its separately configured fix retry budget.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
 --assume-human-findings exists for delegated runs only (the user invoked $please
@@ -180,7 +181,7 @@ function printStatusView(view: GateStatusView): void {
     : view.budgetExhausted
     ? " - RETRY BUDGET EXHAUSTED: the autonomous fix loop stops here; report the findings to the user (only their verbatim approval, recorded via --grant-budget, reopens the budget)"
     : view.judgeErrorLoop
-      ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors} consecutive judge failures with no verdict, so nothing was judged and the fix budget is unspent; repair the judge, then a user-granted --grant-budget re-run may continue, or close the run out blocked`
+      ? ` - JUDGE ERROR LOOP: ${view.consecutiveErrors}/${view.judgeErrorThreshold} consecutive judge failures with cause ${view.judgeErrorCause ?? "unknown"} and no verdict, so nothing was judged and the fix budget is unspent; repair the judge, then a user-granted --grant-budget re-run may continue, or close the run out blocked`
       : view.cycleExhausted
         ? ` - CYCLE CAP REACHED: ${view.roundsSinceGrant}/${view.cycleCap} judged non-PASS rounds since the last grant; the fix loop is not converging - report the findings to the user (their verbatim approval via --grant-budget reopens it)`
         : "";

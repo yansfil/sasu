@@ -1,7 +1,7 @@
 import type { BackendName, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { judgeProfileFor } from "../config";
-import { AGENTIC_READ_MAX_ROUNDS, resolveBackend } from "./backends";
-import { extractJsonObject, JudgeError, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
+import { AGENTIC_READ_MAX_ROUNDS, resolveBackend, type BackendRunResult, type JudgeBackend } from "./backends";
+import { extractJsonObject, JudgeError, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
 
 /**
  * Backends that failed authentication or runtime in THIS process.
@@ -63,6 +63,50 @@ export function resetJudgeHealth(): void {
   judgeHealth.clear();
 }
 
+const CODEX_PREFLIGHT_PROMPT = "Reply with exactly: OK";
+const CODEX_PREFLIGHT_TIMEOUT_MS = 30_000;
+const codexPreflights = new Map<string, Promise<BackendRunResult>>();
+
+function codexPreflightKey(target: JudgeTarget): string {
+  // Scope the one-shot success to the command lookup context and exact target.
+  // Failures are never cached, so an operator repair is immediately rechecked.
+  return JSON.stringify([process.env["PATH"] ?? "", target.backend, target.model, target.effort]);
+}
+
+async function preflightBackend(
+  backend: JudgeBackend,
+  target: JudgeTarget,
+  configuredTimeoutMs: number,
+): Promise<BackendRunResult | null> {
+  if (backend.name !== "codex") return null;
+  const key = codexPreflightKey(target);
+  const existing = codexPreflights.get(key);
+  if (existing !== undefined) return existing;
+  const pending = backend.run(CODEX_PREFLIGHT_PROMPT, {
+    model: target.model,
+    effort: target.effort,
+    timeoutMs: Math.min(configuredTimeoutMs, CODEX_PREFLIGHT_TIMEOUT_MS),
+    purpose: "judge:preflight",
+  }).then((result) => {
+    if (result.text.trim() !== "OK") {
+      throw new JudgeError(
+        "judge-invalid-output",
+        backend.name,
+        "judge preflight did not reply with exactly OK",
+        "invalid-contract",
+      );
+    }
+    return result;
+  }).catch((error) => {
+    // A failure must be re-checkable after the operator repairs the backend in
+    // the same host process. Only successful canaries are safe to cache.
+    codexPreflights.delete(key);
+    throw error;
+  });
+  codexPreflights.set(key, pending);
+  return pending;
+}
+
 /**
  * What the judge demonstrably did to gather evidence during one attempt.
  * `toolRounds: null` means the backend gave no signal - callers must treat
@@ -83,6 +127,8 @@ function persistedFallbackReason(
   error: JudgeError,
 ): string {
   const outcome = error.code;
+  if (error.reason === "turn-failed") return "backend-turn: codex reported turn.failed";
+  if (error.reason === "missing-turn-completed") return "backend-turn: codex emitted no turn.completed event";
   if (outcome === "judge-auth") return "primary judge authentication failed";
   if (outcome === "judge-auth-or-runtime") return "primary judge authentication or runtime failed";
   if (outcome === "judge-timeout") return "primary judge timed out";
@@ -97,7 +143,6 @@ function persistedFallbackReason(
     case "shell-composition": return "command-audit: isolated judge used unsafe shell syntax or expansion";
     case "out-of-workspace": return "command-audit: isolated judge attempted an out-of-workspace path";
     case "missing-allowlisted-path": return "command-audit: isolated judge named no allowlisted evidence path";
-    case "tool-surface": return "tool-surface: codex tool failed";
     case "missing-json": return "response-validation: no JSON object found";
     case "empty-response": return "response-validation: judge returned no usable message";
     case "read-budget-exceeded": return "read-budget: isolated judge exceeded the harness read budget";
@@ -199,6 +244,19 @@ export async function runJudge<T>(
   let attempts = 0;
   let lastProblem = "";
   let activityCommands: string[] = [];
+  const advisories: JudgeAdvisory[] = [];
+  const advisoryKeys = new Set<string>();
+  const addAdvisories = (incoming: JudgeAdvisory[] = []): void => {
+    for (const advisory of incoming) {
+      const key = `${advisory.code}\0${advisory.backend}\0${advisory.message}`;
+      if (advisoryKeys.has(key)) continue;
+      advisoryKeys.add(key);
+      advisories.push(advisory);
+      process.stderr.write(
+        `sasu: WARNING: ${advisory.code} (${advisory.backend}, ${purpose}): ${advisory.message}\n`,
+      );
+    }
+  };
   let fallbackUsed = target.backend !== selected.primary.backend;
   const useFallback = (error: JudgeError): boolean => {
     const fallbackTarget = !fallbackUsed ? selected.fallback : null;
@@ -268,10 +326,27 @@ export async function runJudge<T>(
       || error.code === "judge-invalid-output";
     if (canFallback && useFallback(error)) return;
     throw Object.assign(error, {
-      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
     });
   };
   while (true) {
+    try {
+      const preflight = await preflightBackend(backend, target, config.judge.timeoutMs);
+      addAdvisories(preflight?.advisories);
+    } catch (error) {
+      if (!(error instanceof JudgeError)) throw error;
+      // The canary is cheap but its failure is the same observation the health
+      // ledger records for full calls: this target cannot answer right now.
+      recordBackendFailure(backend.name, target.model, error.code);
+      const canFallback = error.code === "judge-auth"
+        || error.code === "judge-auth-or-runtime"
+        || error.code === "judge-timeout"
+        || error.code === "judge-invalid-output";
+      if (canFallback && useFallback(error)) continue;
+      throw Object.assign(error, {
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+      });
+    }
     attempts += 1;
     attemptStartedAt = Date.now();
     // Usage belongs to the answering attempt only; a stale value from an
@@ -296,6 +371,7 @@ export async function runJudge<T>(
       });
       text = result.text;
       usage = result.usage;
+      addAdvisories(result.advisories);
       activityCommands.push(...(result.activity?.commands ?? []));
       attemptActivity = {
         commands: result.activity?.commands ?? [],
@@ -343,7 +419,7 @@ export async function runJudge<T>(
     recordBackendSuccess(backend.name, target.model);
     return {
       value: validated,
-      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, activityCommands, retries, usage),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, activityCommands, retries, usage, advisories),
     };
   }
 }
@@ -360,6 +436,7 @@ function makeRecord(
   activityCommands: string[] = [],
   retries: JudgeRetry[] = [],
   usage?: JudgeUsage,
+  advisories: JudgeAdvisory[] = [],
 ): JudgeCallRecord {
   return {
     at: new Date(startedAt).toISOString(),
@@ -371,6 +448,7 @@ function makeRecord(
     durationMs: Date.now() - startedAt,
     attempts,
     outcome,
+    ...(advisories.length > 0 ? { advisories } : {}),
     ...(activityCommands.length > 0 ? { activity: { commands: activityCommands } } : {}),
     ...(usage !== undefined ? { usage } : {}),
     ...(retries.length > 0 ? { retries } : {}),

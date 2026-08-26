@@ -45,15 +45,24 @@ test("a codex judge call records provider usage and every rejected attempt", { s
   // retried. Call 2 answers the contract. Both calls emit a turn.completed
   // usage event on stdout, the way codex --json does.
   fs.writeFileSync(path.join(binDir, "codex"), `#!/bin/sh
-n=$(cat ${JSON.stringify(cursor)} 2>/dev/null || echo 0)
-n=$((n+1))
-echo "$n" > ${JSON.stringify(cursor)}
 last=""
+prompt=""
 prev=""
 for arg in "$@"; do
   if [ "$prev" = "--output-last-message" ]; then last="$arg"; fi
   prev="$arg"
+  prompt="$arg"
 done
+case "$prompt" in
+  *"Reply with exactly: OK"*)
+    printf '%s' OK > "$last"
+    printf '%s\\n' '{"type":"turn.completed","usage":{}}'
+    exit 0
+  ;;
+esac
+n=$(cat ${JSON.stringify(cursor)} 2>/dev/null || echo 0)
+n=$((n+1))
+echo "$n" > ${JSON.stringify(cursor)}
 cat ${JSON.stringify(usageLine)}
 if [ "$n" = 1 ]; then printf 'I cannot decide.' > "$last"; else cat ${JSON.stringify(goodVerdict)} > "$last"; fi
 `);

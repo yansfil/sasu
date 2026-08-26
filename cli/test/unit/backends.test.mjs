@@ -4,7 +4,7 @@
 // refactor cannot silently broaden judge activity.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -96,12 +96,19 @@ test("codex activity audit splits safe shell connections and audits every segmen
   }
 });
 
-test("codex activity audit rejects unsafe shell syntax, expansion, non-read segments, and tool failure", () => {
+test("codex backend error items are advisories, not command-audit failures", () => {
   const event = (item) => JSON.stringify({ type: "item.completed", item });
-  assert.match(
-    codexActivityProblem(event({ type: "error", message: "code mode host missing" }), { agentic: true, evidencePaths: [] }).detail,
-    /tool surface failed/,
-  );
+  const stdout = event({ type: "error", message: "Skill descriptions were shortened to fit the skills context budget." });
+  assert.equal(codexActivityProblem(stdout, { agentic: true, evidencePaths: [] }), null);
+  assert.deepEqual(codexBackendAdvisories(stdout), [{
+    code: "judge-backend-advisory",
+    backend: "codex",
+    message: "Skill descriptions were shortened to fit the skills context budget.",
+  }]);
+});
+
+test("codex command audit rejects unsafe shell syntax, expansion, and non-read segments", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
   assert.match(
     codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -lc \"sed -n '1p' src/status.ts\ncat secret\"" }), {
       agentic: true,

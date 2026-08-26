@@ -292,6 +292,9 @@ export function auditProject(projectRoot: string, config: SasuConfig): Omit<Audi
         add("stalled-at-terminal-cause", gate, "info", [10], `${gate} sits at a terminal cause (${terminalCause}) and the run is not finalized`, {
           attempts: view.attempts,
           budget: view.budget,
+          consecutiveErrors: view.consecutiveErrors,
+          judgeErrorThreshold: view.judgeErrorThreshold,
+          judgeErrorCause: view.judgeErrorCause,
           roundsSinceGrant: view.roundsSinceGrant,
         });
       }

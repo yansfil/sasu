@@ -306,7 +306,7 @@ test("fail-closed: invalid judge replies surface as a blocked ERROR run naming t
 // fix budget. End to end, a judge that never answers must leave the budget
 // alone and must still stop the loop with its own named cause.
 test("retry budget: a judge-error loop spends no budget and terminates on its own cause", () => {
-  const dir = makeProject({ config: { judge: { retryBudget: 2 } } });
+  const dir = makeProject({ config: { judge: { retryBudget: 15 } } });
   const broken = () =>
     runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
       stub: stubFile(dir, "garbage that is not json"),
@@ -321,14 +321,18 @@ test("retry budget: a judge-error loop spends no budget and terminates on its ow
   assert.equal(second.status, 1);
   assert.match(second.stdout, /semantic rounds 0\/2/, "still 0/2: there was never a semantic verdict");
   assert.doesNotMatch(second.stdout, /RETRY BUDGET EXHAUSTED/, "the receipt must not claim a budget it did not spend");
-  assert.match(second.stdout, /failed 2 times in a row without returning a verdict/, "the loop is bounded and names why");
-  assert.match(second.stdout, /close the run out honestly as blocked/, "and names the exit instead of demanding another re-run");
+  assert.doesNotMatch(second.stdout, /close the run out honestly as blocked/, "two identical failures remain below the backend threshold");
+
+  const third = broken();
+  assert.equal(third.status, 1);
+  assert.match(third.stdout, /failed 3\/3 times in a row with the same cause \(stub\/judge-invalid-output\/missing-json\)/, "the independent loop bound names the structured cause");
+  assert.match(third.stdout, /close the run out honestly as blocked/, "and names the exit instead of demanding another re-run");
 
   const state = gatesState(dir, "fixture");
   assert.equal(state.gates["gap-audit"].attempts, 0);
-  assert.equal(state.gates["gap-audit"].consecutiveErrors, 2);
-  assert.equal(state.gates["gap-audit"].totalAttempts, 2, "both runs are still in the honest ledger");
-  assert.equal(state.gates["gap-audit"].history.length, 2);
+  assert.equal(state.gates["gap-audit"].consecutiveErrors, 3);
+  assert.equal(state.gates["gap-audit"].totalAttempts, 3, "all runs are still in the honest ledger");
+  assert.equal(state.gates["gap-audit"].history.length, 3);
 });
 
 test("PRD review cycle: full BLOCK plus closure BLOCK stops at two and only explicit reopen starts another cycle", () => {

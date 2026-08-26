@@ -3,12 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BackendName, JudgeEffort } from "../config";
-import { JudgeError, type JudgeFailureReason, type JudgeUsage } from "./types";
+import { JudgeError, type JudgeAdvisory, type JudgeFailureReason, type JudgeUsage } from "./types";
 
 export interface BackendRunResult {
   text: string;
   /** Provider-reported token spend, recorded when the envelope exposes it. */
   usage?: JudgeUsage;
+  /** Non-fatal backend notices observed during this invocation. */
+  advisories?: JudgeAdvisory[];
   activity?: {
     commands: string[];
     /**
@@ -738,6 +740,71 @@ interface CodexTraceItem {
   aggregated_output?: string;
 }
 
+interface CodexEvent {
+  type?: string;
+  item?: CodexTraceItem;
+  message?: string;
+  error?: string | { message?: string };
+}
+
+function codexEvents(stdout: string): CodexEvent[] {
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const event = JSON.parse(line) as CodexEvent;
+        return event !== null && typeof event === "object" && !Array.isArray(event) ? [event] : [];
+      } catch {
+        return [];
+      }
+    });
+}
+
+/**
+ * Codex "error" items are backend notices (a skills-context truncation, a
+ * degraded tool), not command-audit findings: they say nothing about what the
+ * judge read, so they surface as advisories and must never invalidate a
+ * verdict on their own. Turn liveness is judged separately by
+ * codexTurnProblem.
+ */
+export function codexBackendAdvisories(stdout: string): JudgeAdvisory[] {
+  const seen = new Set<string>();
+  const advisories: JudgeAdvisory[] = [];
+  for (const event of codexEvents(stdout)) {
+    if (event.type !== "item.completed" || event.item?.type !== "error") continue;
+    const normalized = (event.item.message ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const message = (normalized || "Codex reported an advisory without a message").slice(0, 800);
+    if (seen.has(message)) continue;
+    seen.add(message);
+    advisories.push({ code: "judge-backend-advisory", backend: "codex", message });
+  }
+  return advisories;
+}
+
+function codexTurnProblem(stdout: string): JudgeError | null {
+  const events = codexEvents(stdout);
+  const failed = events.find((event) => event.type === "turn.failed");
+  if (failed !== undefined) {
+    const reported = typeof failed.error === "string"
+      ? failed.error
+      : failed.error?.message ?? failed.message ?? "unknown turn failure";
+    const detail = reported.replace(/\s+/g, " ").trim().slice(0, 800);
+    return new JudgeError("judge-auth-or-runtime", "codex", `codex turn failed: ${detail}`, "turn-failed");
+  }
+  if (!events.some((event) => event.type === "turn.completed")) {
+    return new JudgeError(
+      "judge-auth-or-runtime",
+      "codex",
+      "codex exec ended without a turn.completed event",
+      "missing-turn-completed",
+    );
+  }
+  return null;
+}
+
 /**
  * Harness-owned bound on what one agentic judge call may read.
  *
@@ -778,9 +845,9 @@ function codexItemProblem(
   item: CodexTraceItem,
   options: { agentic: boolean; evidencePaths: string[] },
 ): ActivityProblem | null {
-  if (item.type === "error") {
-    return { reason: "tool-surface", detail: `codex tool surface failed: ${item.message ?? "unknown tool error"}` };
-  }
+  // "error" items are deliberately not problems: they are backend notices
+  // (see codexBackendAdvisories). Only observed commands can violate the
+  // security invariant this audit protects.
   if (item.type !== "command_execution" || typeof item.command !== "string") return null;
   const command = item.command;
   if (!options.agentic) {
@@ -905,19 +972,10 @@ export function claudeUsage(envelope: Record<string, unknown>): JudgeUsage | und
 }
 
 function codexCommandTrace(stdout: string): string[] {
-  return stdout
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        const event = JSON.parse(line) as { type?: string; item?: { type?: string; command?: string } };
-        return event.type === "item.completed" && event.item?.type === "command_execution" && typeof event.item.command === "string"
-          ? [event.item.command]
-          : [];
-      } catch {
-        return [];
-      }
-    });
+  return codexEvents(stdout)
+    .flatMap((event) => (event.type === "item.completed" && event.item !== undefined ? [event.item] : []))
+    .filter((item) => item.type === "command_execution" && typeof item.command === "string")
+    .map((item) => item.command!);
 }
 
 /**
@@ -985,13 +1043,18 @@ export class CodexBackend implements JudgeBackend {
       if (result.aborted !== undefined) {
         throw new JudgeError("judge-invalid-output", this.name, result.aborted.detail, result.aborted.reason);
       }
-      interpretSpawnFailure(this.name, result);
-      // Backstop for what the streaming audit cannot see: a violation carried
-      // in a final chunk with no trailing newline, or one past MAX_OUTPUT_CHARS.
+      // Security is not a liveness heuristic. The backstop audits every
+      // observed command even when the process or turn failed - a violation
+      // carried in a final chunk with no trailing newline, or past
+      // MAX_OUTPUT_CHARS, must reject the trace before any verdict it may
+      // also have written is considered (PRINCIPLES item 7).
       const activityProblem = codexActivityProblem(result.stdout, { agentic, evidencePaths });
       if (activityProblem !== null) {
         throw new JudgeError("judge-invalid-output", this.name, activityProblem.detail, activityProblem.reason);
       }
+      interpretSpawnFailure(this.name, result);
+      const turnProblem = codexTurnProblem(result.stdout);
+      if (turnProblem !== null) throw turnProblem;
       if (fs.existsSync(lastMessagePath)) {
         const text = fs.readFileSync(lastMessagePath, "utf8");
         if (text.trim() !== "") {
@@ -999,6 +1062,7 @@ export class CodexBackend implements JudgeBackend {
           return {
             text,
             ...(usage !== undefined ? { usage } : {}),
+            advisories: codexBackendAdvisories(result.stdout),
             activity: { commands: codexCommandTrace(result.stdout) },
           };
         }

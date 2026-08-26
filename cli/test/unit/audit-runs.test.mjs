@@ -103,7 +103,11 @@ test("ledger: a fingerprint is reported once, tracked afterwards, and --include-
   const store = new GateStore(dir, "grants");
   let state = store.load();
   for (let i = 0; i < config.judge.retryBudget; i += 1) {
-    state = recordGateResult(store, state, "spec", { kind: "error", message: "backend down" }, []);
+    state = recordGateResult(store, state, "spec", {
+      kind: "error",
+      message: "backend down",
+      cause: { code: "judge-auth-or-runtime", backend: "codex", reason: "turn-failed" },
+    }, []);
   }
   grantGateBudget(store, state, "spec", "backend fixed; go on", config.judge.retryBudget);
 

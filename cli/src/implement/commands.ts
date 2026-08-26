@@ -8,7 +8,14 @@ import { prelintPrd } from "../gates/prelint";
 import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { judgeFanoutLimit, mapWithConcurrency } from "../judge/fanout";
-import { JudgeError, validateSemanticVerdict } from "../judge/types";
+import {
+  JUDGE_ERROR_LOOP_THRESHOLD,
+  JudgeError,
+  describeJudgeFailureCause,
+  judgeFailureCause,
+  validateSemanticVerdict,
+  type JudgeFailureCause,
+} from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 import {
@@ -219,6 +226,8 @@ interface VerificationBudgetView {
   budget: number;
   budgetExhausted: boolean;
   consecutiveErrors: number;
+  judgeErrorThreshold: number;
+  judgeErrorCause: string | null;
   judgeErrorLoop: boolean;
   grants: number;
 }
@@ -232,9 +241,35 @@ function calledNoJudge(attempt: UnifiedVerificationAttempt): boolean {
   return attempt.lanes.acceptance === null && attempt.lanes.fidelity === null && attempt.lanes.risk === null;
 }
 
+function verificationJudgeErrorCause(
+  attempt: UnifiedVerificationAttempt,
+): { key: string; label: string } | null {
+  const causes: JudgeFailureCause[] = [];
+  for (const invocation of attempt.lanes.acceptance?.result?.invocations ?? []) {
+    if (invocation.verdict === "ERROR" && invocation.error?.cause !== undefined) {
+      causes.push(invocation.error.cause);
+    }
+  }
+  if (attempt.lanes.fidelity?.verdict === "ERROR" && attempt.lanes.fidelity.error?.cause !== undefined) {
+    causes.push(attempt.lanes.fidelity.error.cause);
+  }
+  const unique = new Map(causes.map((cause) => [
+    `${cause.backend}\0${cause.code}\0${cause.reason ?? ""}`,
+    cause,
+  ]));
+  const ordered = [...unique.entries()].sort(([left], [right]) => left.localeCompare(right));
+  if (ordered.length === 0) return null;
+  return {
+    key: ordered.map(([key]) => key).join("|"),
+    label: ordered.map(([, cause]) => describeJudgeFailureCause(cause)).join(", "),
+  };
+}
+
 function verificationBudget(state: ImplementState, budget: number): VerificationBudgetView {
   let fixAttempts = 0;
   let consecutiveErrors = 0;
+  let consecutiveErrorKey: string | null = null;
+  let consecutiveErrorLabel: string | null = null;
   const grants = state.budgetGrants ?? [];
   // A recorded user grant opens a fresh budget: attempts before the latest
   // grant no longer count against either gauge.
@@ -244,10 +279,24 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     if (attempt.verdict === "PASS") {
       fixAttempts = 0;
       consecutiveErrors = 0;
+      consecutiveErrorKey = null;
+      consecutiveErrorLabel = null;
       continue;
     }
     if (attempt.verdict === "ERROR") {
-      consecutiveErrors += 1;
+      const cause = verificationJudgeErrorCause(attempt);
+      if (cause === null) {
+        // Pre-structured records cannot prove that two errors were the same
+        // failure class. They stay fail-closed as ERROR but never manufacture
+        // a circuit-breaker diagnosis from prose.
+        consecutiveErrors = 0;
+        consecutiveErrorKey = null;
+        consecutiveErrorLabel = null;
+        continue;
+      }
+      consecutiveErrors = consecutiveErrorKey === cause.key ? consecutiveErrors + 1 : 1;
+      consecutiveErrorKey = cause.key;
+      consecutiveErrorLabel = cause.label;
       continue;
     }
     // Prelint is a free structural correction.
@@ -275,6 +324,8 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     if (calledNoJudge(attempt) && advanced) continue;
     fixAttempts += 1;
     consecutiveErrors = 0;
+    consecutiveErrorKey = null;
+    consecutiveErrorLabel = null;
   }
   return {
     fixAttempts,
@@ -282,7 +333,9 @@ function verificationBudget(state: ImplementState, budget: number): Verification
     budget,
     budgetExhausted: fixAttempts > 0 && fixAttempts >= budget,
     consecutiveErrors,
-    judgeErrorLoop: consecutiveErrors > 0 && consecutiveErrors >= budget,
+    judgeErrorThreshold: JUDGE_ERROR_LOOP_THRESHOLD,
+    judgeErrorCause: consecutiveErrorLabel,
+    judgeErrorLoop: consecutiveErrors >= JUDGE_ERROR_LOOP_THRESHOLD,
     grants: grants.length,
   };
 }
@@ -297,7 +350,7 @@ function terminalBudgetMessage(view: VerificationBudgetView): string | null {
     return `unified verification fix budget exhausted (${view.fixAttempts}/${view.budget}); ${exits}`;
   }
   if (view.judgeErrorLoop) {
-    return `unified judge failed ${view.consecutiveErrors} times in a row without a verdict; ${exits}`;
+    return `unified judge failed ${view.consecutiveErrors}/${view.judgeErrorThreshold} times in a row with the same cause (${view.judgeErrorCause ?? "unknown"}) and without a verdict; ${exits}`;
   }
   return null;
 }
@@ -1361,6 +1414,9 @@ async function judgeLane<T>(
     };
   } catch (error) {
     const code = error instanceof JudgeError ? error.code : "judge-runtime";
+    const cause = error instanceof JudgeError
+      ? judgeFailureCause(error)
+      : { code, backend: "unknown", reason: null };
     return {
       invocationId,
       startedAt,
@@ -1369,7 +1425,7 @@ async function judgeLane<T>(
       verdict: "ERROR",
       result: null,
       judge: judgeCallRecordFrom(error),
-      error: { code, message: error instanceof Error ? error.message : String(error) },
+      error: { code, message: error instanceof Error ? error.message : String(error), cause },
     };
   }
 }
@@ -2156,7 +2212,15 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         fidelity: latest.lanes.fidelity?.verdict ?? "NOT_RUN",
         risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
       },
-      verificationBudget: { fixAttempts: view.fixAttempts, budget: view.budget, consecutiveErrors: view.consecutiveErrors, grants: view.grants },
+      verificationBudget: {
+        fixAttempts: view.fixAttempts,
+        budget: view.budget,
+        consecutiveErrors: view.consecutiveErrors,
+        judgeErrorThreshold: view.judgeErrorThreshold,
+        judgeErrorCause: view.judgeErrorCause,
+        judgeErrorLoop: view.judgeErrorLoop,
+        grants: view.grants,
+      },
       openItems: blockers,
       ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
       ...(state.worktree ? { worktree: state.worktree } : {}),

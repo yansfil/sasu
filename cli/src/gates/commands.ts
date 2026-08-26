@@ -6,6 +6,8 @@ import { resolveBackend } from "../judge/backends";
 import { effectiveJudgeProfile, runJudge, judgeCallRecordFrom } from "../judge/runner";
 import {
   JudgeError,
+  describeJudgeFailureCause,
+  judgeFailureCause,
   validateGapVerdict,
   validateSemanticVerdict,
   type CriterionVerdict,
@@ -434,7 +436,7 @@ async function runGapListGate(
         zeroJudgeCalls: true,
         error: {
           code: "judge-error-loop",
-          message: `${gate} refused: judge failed ${before.consecutiveErrors} times in a row without a verdict; no judge was called`,
+          message: `${gate} refused: judge failed ${before.consecutiveErrors}/${before.judgeErrorThreshold} times in a row with cause ${before.judgeErrorCause ?? "unknown"} and without a verdict; no judge was called`,
           recovery: `Repair the judge, then record the user's approval to retry the broken backend with --grant-budget. ${overrideRecovery(topic, gate)}`,
         },
       };
@@ -522,9 +524,10 @@ async function runGapListGate(
         const first = failures[0]!.error;
         const code = first instanceof JudgeError ? first.code : "judge-auth-or-runtime";
         const backend = first instanceof JudgeError ? first.backend : "claude";
+        const reason = first instanceof JudgeError ? first.reason : null;
         const detail = first instanceof Error ? first.message : String(first);
         const laneList = failures.map((lane) => lane.laneId).join(", ");
-        const laneError = new JudgeError(code, backend, `lane failed [${laneList}]: ${detail}`);
+        const laneError = new JudgeError(code, backend, `lane failed [${laneList}]: ${detail}`, reason);
         return recordJudgeFailure(store, state, gate, config, laneError, records, topic);
       }
       const merged = mergeLaneFindings(
@@ -1032,9 +1035,10 @@ async function settleVerifyLanes(
     const first = failures[0]!.error;
     const code = first instanceof JudgeError ? first.code : "judge-auth-or-runtime";
     const backend = first instanceof JudgeError ? first.backend : "claude";
+    const reason = first instanceof JudgeError ? first.reason : null;
     const detail = first instanceof JudgeError ? first.detail : first instanceof Error ? first.message : String(first);
     const laneList = failures.map((settledLane) => settledLane.lane.laneId).join(", ");
-    throw new JudgeError(code, backend, laneCount > 1 ? `lane failed [${laneList}]: ${detail}` : detail);
+    throw new JudgeError(code, backend, laneCount > 1 ? `lane failed [${laneList}]: ${detail}` : detail, reason);
   }
   return settled.map((settledLane) => ({ lane: settledLane.lane, outcome: settledLane.outcome! }));
 }
@@ -1863,7 +1867,12 @@ function recordJudgeFailure(
     store,
     state,
     gate,
-    { kind: "error", message: error.message, ...(artifactPayload !== undefined ? { artifactPayload } : {}) },
+    {
+      kind: "error",
+      message: error.message,
+      cause: judgeFailureCause(error),
+      ...(artifactPayload !== undefined ? { artifactPayload } : {}),
+    },
     records,
   );
   const recoveryByCode: Record<string, string> = {
@@ -1878,11 +1887,11 @@ function recordJudgeFailure(
   // Same rule the rerun short-circuit follows: the component that ends the loop
   // is the one that has to say what is left. Every recovery line above says
   // "re-run", which is the right advice for one broken judge call and the wrong
-  // advice once the backend has failed `budget` times in a row - that is the
+  // advice once the same backend failure reaches its dedicated threshold - that is the
   // spin PRINCIPLES item 13 bounds, and the honest exit has to be named here
   // rather than left to the agent's patience.
   const recovery = status.judgeErrorLoop
-    ? `The judge has now failed ${status.consecutiveErrors} times in a row without returning a verdict, so this is a backend failure, not a verification failure: `
+    ? `The judge has now failed ${status.consecutiveErrors}/${status.judgeErrorThreshold} times in a row with the same cause (${status.judgeErrorCause ?? describeJudgeFailureCause(judgeFailureCause(error))}) and without returning a verdict, so this is a backend failure, not a verification failure: `
       + `the fix budget is untouched (attempts ${status.attempts}/${status.budget}) because there were never any findings to fix. `
       + `${recoveryByCode[error.code] ?? "Fix the cause and re-run."} If the backend cannot be fixed here, close the run out honestly as blocked - the gate counts as the blocker and the receipt records the judge-error loop as the cause. `
       + `${overrideRecovery(topic, gate)}`

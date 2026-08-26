@@ -14,7 +14,8 @@ export type JudgeFailureReason =
   | "shell-composition"
   | "out-of-workspace"
   | "missing-allowlisted-path"
-  | "tool-surface"
+  | "turn-failed"
+  | "missing-turn-completed"
   | "missing-json"
   | "empty-response"
   | "invalid-contract"
@@ -53,6 +54,32 @@ export interface JudgeRetry {
   durationMs: number;
 }
 
+export const JUDGE_ERROR_LOOP_THRESHOLD = 3;
+
+export interface JudgeFailureCause {
+  code: string;
+  backend: string;
+  reason: string | null;
+}
+
+export function judgeFailureCause(error: JudgeError): JudgeFailureCause {
+  return { code: error.code, backend: error.backend, reason: error.reason };
+}
+
+export function sameJudgeFailureCause(left: JudgeFailureCause | null | undefined, right: JudgeFailureCause): boolean {
+  return left?.code === right.code && left.backend === right.backend && left.reason === right.reason;
+}
+
+export function describeJudgeFailureCause(cause: JudgeFailureCause): string {
+  return `${cause.backend}/${cause.code}${cause.reason === null ? "" : `/${cause.reason}`}`;
+}
+
+export interface JudgeAdvisory {
+  code: "judge-backend-advisory";
+  backend: BackendName;
+  message: string;
+}
+
 export class JudgeError extends Error {
   readonly code: JudgeErrorCode;
   readonly backend: BackendName;
@@ -83,6 +110,8 @@ export interface JudgeCallRecord {
    */
   attempts: number;
   outcome: "ok" | JudgeErrorCode;
+  /** Non-fatal backend notices observed during this invocation. */
+  advisories?: JudgeAdvisory[];
   /** Audited shell reads made by an agentic backend, when exposed. */
   activity?: {
     commands: string[];

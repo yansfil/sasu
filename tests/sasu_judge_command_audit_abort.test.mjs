@@ -30,6 +30,27 @@ const TIMEOUT_MS = 8000;
  * fake binary cats it. Inlining it into the shell script would silently
  * rewrite the command the audit is supposed to see.
  */
+
+// Every fake codex must speak the runner's protocol: answer the one-shot
+// preflight canary with OK (and a completed turn), then exit before the
+// trace fixture, so the audited call under test is the real one.
+const CODEX_PREFLIGHT_PRELUDE = `last=""
+prompt=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then last="$arg"; fi
+  prev="$arg"
+  prompt="$arg"
+done
+case "$prompt" in
+  *"Reply with exactly: OK"*)
+    printf '%s' OK > "$last"
+    printf '%s\\n' '{"type":"turn.completed","usage":{}}'
+    exit 0
+  ;;
+esac
+`;
+
 function writeFakeCodex(binDir, command, { hang = false } = {}) {
   const tracePath = path.join(binDir, "trace.jsonl");
   fs.writeFileSync(tracePath, `${JSON.stringify({ type: "item.completed", item: { type: "command_execution", command } })}\n`);
@@ -37,10 +58,9 @@ function writeFakeCodex(binDir, command, { hang = false } = {}) {
   fs.writeFileSync(verdictPath, '{"verdict":"PASS","findings":[]}');
   const tail = hang
     ? `/bin/sleep ${HANG_SECONDS}\n`
-    : 'last=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--output-last-message" ]; then last="$2"; shift 2; else shift; fi\ndone\ncat ' +
-      JSON.stringify(verdictPath) + ' > "$last"\n';
+    : `cat ${JSON.stringify(verdictPath)} > "$last"\nprintf '%s\\n' '{"type":"turn.completed","usage":{}}'\n`;
   const fake = path.join(binDir, "codex");
-  fs.writeFileSync(fake, `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n${tail}`);
+  fs.writeFileSync(fake, `#!/bin/sh\n${CODEX_PREFLIGHT_PRELUDE}cat ${JSON.stringify(tracePath)}\n${tail}`);
   fs.chmodSync(fake, 0o755);
 }
 
@@ -137,7 +157,7 @@ test("a judge binary that traps SIGTERM is still killed within the escalation gr
   const tracePath = path.join(binDir, "trace.jsonl");
   fs.writeFileSync(tracePath, `${JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "/bin/zsh -lc 'cat /etc/passwd'" } })}\n`);
   const fake = path.join(binDir, "codex");
-  fs.writeFileSync(fake, `#!/bin/sh\ntrap '' TERM\ncat ${JSON.stringify(tracePath)}\n/bin/sleep 60\n`);
+  fs.writeFileSync(fake, `#!/bin/sh\n${CODEX_PREFLIGHT_PRELUDE}trap '' TERM\ncat ${JSON.stringify(tracePath)}\n/bin/sleep 60\n`);
   fs.chmodSync(fake, 0o755);
   const config = loadConfig(project);
   config.judge.timeoutMs = TIMEOUT_MS;
@@ -181,7 +201,7 @@ test("exceeding the agentic read budget aborts the call with its own reason", { 
   const line = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "sed -n '1,10p' evidence.md", aggregated_output: "fixture evidence\n" } });
   fs.writeFileSync(tracePath, Array.from({ length: 17 }, () => line).join("\n") + "\n");
   const fake = path.join(binDir, "codex");
-  fs.writeFileSync(fake, `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n/bin/sleep ${HANG_SECONDS}\n`);
+  fs.writeFileSync(fake, `#!/bin/sh\n${CODEX_PREFLIGHT_PRELUDE}cat ${JSON.stringify(tracePath)}\n/bin/sleep ${HANG_SECONDS}\n`);
   fs.chmodSync(fake, 0o755);
   const config = loadConfig(project);
   config.judge.timeoutMs = TIMEOUT_MS;
@@ -225,7 +245,7 @@ test("a newline-less flood aborts the call as unauditable instead of blinding th
   const tracePath = path.join(binDir, "trace.jsonl");
   fs.writeFileSync(tracePath, `\n${JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "/bin/zsh -lc 'cat /etc/passwd'" } })}\n`);
   const fake = path.join(binDir, "codex");
-  fs.writeFileSync(fake, `#!/bin/sh\ncat ${JSON.stringify(floodPath)}\ncat ${JSON.stringify(tracePath)}\n/bin/sleep ${HANG_SECONDS}\n`);
+  fs.writeFileSync(fake, `#!/bin/sh\n${CODEX_PREFLIGHT_PRELUDE}cat ${JSON.stringify(floodPath)}\ncat ${JSON.stringify(tracePath)}\n/bin/sleep ${HANG_SECONDS}\n`);
   fs.chmodSync(fake, 0o755);
   const config = loadConfig(project);
   config.judge.timeoutMs = TIMEOUT_MS;
@@ -267,7 +287,7 @@ test("a single oversized read event cannot evade the read budget", { skip: !fs.e
   const verdictPath = path.join(binDir, "verdict.json");
   fs.writeFileSync(verdictPath, '{"verdict":"PASS","findings":[]}');
   const fake = path.join(binDir, "codex");
-  fs.writeFileSync(fake, `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\nlast=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--output-last-message" ]; then last="$arg"; fi\n  prev="$arg"\ndone\ncat ${JSON.stringify(verdictPath)} > "$last"\n`);
+  fs.writeFileSync(fake, `#!/bin/sh\n${CODEX_PREFLIGHT_PRELUDE}cat ${JSON.stringify(tracePath)}\ncat ${JSON.stringify(verdictPath)} > "$last"\nprintf '%s\\n' '{"type":"turn.completed","usage":{}}'\n`);
   fs.chmodSync(fake, 0o755);
   const config = loadConfig(project);
   config.judge.timeoutMs = TIMEOUT_MS;
