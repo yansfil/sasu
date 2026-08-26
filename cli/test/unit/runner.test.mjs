@@ -26,6 +26,19 @@ async function withStub(responses, fn) {
 }
 
 const config = loadConfig(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-")));
+const claudePrimaryConfig = {
+  ...config,
+  judge: {
+    ...config.judge,
+    profiles: {
+      ...config.judge.profiles,
+      routine: {
+        primary: config.judge.profiles.routine.fallback,
+        fallback: config.judge.profiles.routine.primary,
+      },
+    },
+  },
+};
 
 // The backend health ledger is process-scoped, which in production means
 // run-scoped: one `sasu` invocation is one process. A test file is not - it
@@ -73,8 +86,13 @@ function fakeCodexProgram(mainLines, options = {}) {
 async function withFakeCodex(program, fn) {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fake-codex-"));
   const fakeCodex = path.join(binDir, "codex");
+  const unexpectedClaude = path.join(binDir, "claude");
   fs.writeFileSync(fakeCodex, program);
+  // Keep the configured fallback available so negative Codex cases prove the
+  // override is pinned even on machines without Claude beside the Node binary.
+  fs.writeFileSync(unexpectedClaude, "#!/bin/sh\nprintf 'unexpected Claude fallback' >&2\nexit 99\n");
   fs.chmodSync(fakeCodex, 0o755);
+  fs.chmodSync(unexpectedClaude, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
   process.env.SASU_JUDGE_BACKEND = "codex";
@@ -200,6 +218,36 @@ test("Codex preflight fails before the first full judge attempt", async () => {
     );
     assert.equal(fs.readFileSync(countFile, "utf8"), "1", "the expensive judge turn must never start");
   });
+});
+
+test("SASU_JUDGE_BACKEND pins Claude without returning to configured Codex", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-pinned-claude-"));
+  const fakeClaude = path.join(binDir, "claude");
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"forced Claude failure"}\'\n');
+  fs.writeFileSync(fakeCodex, fakeCodexProgram([
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]));
+  fs.chmodSync(fakeClaude, 0o755);
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  process.env.SASU_JUDGE_BACKEND = "claude";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    await assert.rejects(
+      () => runJudge(config, "gate:pinned-claude", "routine", "prompt", validateGapVerdict),
+      (error) => error.code === "judge-auth-or-runtime"
+        && error.backend === "claude"
+        && error.record.backend === "claude"
+        && error.record.fallback === undefined,
+    );
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
 });
 
 test("runJudge accepts a valid first reply with attempts=1", async () => {
@@ -354,21 +402,8 @@ test("visual evidence routes a Claude-primary profile to its attachment-capable 
   const previousPath = process.env.PATH;
   delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}`;
-  const claudePrimary = {
-    ...config,
-    judge: {
-      ...config.judge,
-      profiles: {
-        ...config.judge.profiles,
-        routine: {
-          primary: { backend: "claude", model: "claude-sonnet-5", effort: "xhigh" },
-          fallback: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" },
-        },
-      },
-    },
-  };
   try {
-    const outcome = await runJudge(claudePrimary, "gate:test", "routine", "prompt", validateGapVerdict, { images: [path.join(binDir, "proof.png")] });
+    const outcome = await runJudge(claudePrimaryConfig, "gate:test", "routine", "prompt", validateGapVerdict, { images: [path.join(binDir, "proof.png")] });
     assert.equal(outcome.record.backend, "codex");
     assert.equal(fs.existsSync(claudeMarker), false, "visual evidence must never be delivered to Claude through Read");
   } finally {
@@ -404,7 +439,7 @@ test("a failed visual judge does not fall back to Claude without image attachmen
   }
 });
 
-test("runJudge falls back from a Claude timeout to Codex", async () => {
+test("without an override, runJudge falls back from a Claude timeout to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
@@ -420,9 +455,9 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.SASU_JUDGE_BACKEND = "claude";
+  delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
-  const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 1000 } };
+  const fastConfig = { ...claudePrimaryConfig, judge: { ...claudePrimaryConfig.judge, timeoutMs: 1000 } };
   try {
     const outcome = await runJudge(fastConfig, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
@@ -438,7 +473,7 @@ test("runJudge falls back from a Claude timeout to Codex", async () => {
   }
 });
 
-test("an agentic Claude failure falls back to Codex with only allowlisted evidence", async () => {
+test("without an override, an agentic Claude failure falls back to Codex with only allowlisted evidence", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
@@ -456,9 +491,9 @@ test("an agentic Claude failure falls back to Codex with only allowlisted eviden
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.SASU_JUDGE_BACKEND = "claude";
+  delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
-  const fastConfig = { ...config, judge: { ...config.judge, timeoutMs: 1000 } };
+  const fastConfig = { ...claudePrimaryConfig, judge: { ...claudePrimaryConfig.judge, timeoutMs: 1000 } };
   try {
     const outcome = await runJudge(
       fastConfig,
@@ -479,7 +514,7 @@ test("an agentic Claude failure falls back to Codex with only allowlisted eviden
   }
 });
 
-test("runJudge falls back from repeated invalid Claude output to Codex", async () => {
+test("without an override, runJudge falls back from repeated invalid Claude output to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
@@ -495,10 +530,10 @@ test("runJudge falls back from repeated invalid Claude output to Codex", async (
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.SASU_JUDGE_BACKEND = "claude";
+  delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
+    const outcome = await runJudge(claudePrimaryConfig, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
@@ -564,7 +599,7 @@ test("backend audit rejection gets one reasoned retry before fallback and record
   }
 });
 
-test("runJudge falls back from Claude authentication failure to Codex", async () => {
+test("without an override, runJudge falls back from Claude authentication failure to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
@@ -580,10 +615,10 @@ test("runJudge falls back from Claude authentication failure to Codex", async ()
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.SASU_JUDGE_BACKEND = "claude";
+  delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
+    const outcome = await runJudge(claudePrimaryConfig, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
@@ -601,7 +636,7 @@ test("runJudge falls back from Claude authentication failure to Codex", async ()
   }
 });
 
-test("runJudge falls back from a Claude runtime failure to Codex", async () => {
+test("without an override, runJudge falls back from a Claude runtime failure to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
@@ -617,10 +652,10 @@ test("runJudge falls back from a Claude runtime failure to Codex", async () => {
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.SASU_JUDGE_BACKEND = "claude";
+  delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
-    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);
+    const outcome = await runJudge(claudePrimaryConfig, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
     assert.equal(outcome.record.backend, "codex");
     assert.equal(outcome.record.attempts, 1);
@@ -636,7 +671,7 @@ test("runJudge falls back from a Claude runtime failure to Codex", async () => {
   }
 });
 
-test("runJudge falls back from a Codex runtime failure to Claude", async () => {
+test("without an override, runJudge falls back from a Codex runtime failure to Claude", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
@@ -649,7 +684,7 @@ test("runJudge falls back from a Codex runtime failure to Claude", async () => {
   fs.chmodSync(fakeCodex, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
-  process.env.SASU_JUDGE_BACKEND = "codex";
+  delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
   try {
     const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict);

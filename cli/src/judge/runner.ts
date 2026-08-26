@@ -159,22 +159,18 @@ export function effectiveJudgeProfile(config: SasuConfig, profile: JudgeProfile)
   if (override !== undefined && override !== "claude" && override !== "codex" && override !== "stub") {
     throw new Error(`SASU_JUDGE_BACKEND must be claude, codex, or stub, got: ${override}`);
   }
+  if (override === undefined) return configured;
+
   const configuredTargets = [configured.primary, configured.fallback].filter((target): target is JudgeTarget => target !== null);
-  const overriddenPrimary = override === undefined
-    ? null
-    : configuredTargets.find((target) => target.backend === override) ?? {
-        ...configured.primary,
-        backend: override,
-        ...(override === "stub" ? { model: null } : {}),
-      };
-  return override === undefined
-    ? configured
-    : {
-        primary: overriddenPrimary!,
-        fallback: override === "stub"
-          ? null
-          : configuredTargets.find((target) => target.backend !== override) ?? null,
-      };
+  const overriddenPrimary = configuredTargets.find((target) => target.backend === override) ?? {
+    ...configured.primary,
+    backend: override,
+    ...(override === "stub" ? { model: null } : {}),
+  };
+  // A diagnostic override is an operator pin, not a preference. Retaining a
+  // fallback can re-enter the backend being bypassed and make the observed
+  // failure depend on an unrelated CLI in PATH (PRINCIPLES items 3 and 11).
+  return { primary: overriddenPrimary, fallback: null };
 }
 
 /**
