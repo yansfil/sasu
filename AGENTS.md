@@ -107,8 +107,9 @@ later run cannot retract it without disturbing a foreign hook.
 
 **Judge policy.** Judge model routing is project-configurable only through the
 `routine` and `high-risk` profiles in `agents/config.json`.
-Routine calls default to Codex Luna xhigh with Claude Sonnet 5 xhigh fallback.
-High-risk calls default to Codex Sol xhigh with Claude Opus 5 xhigh fallback.
+Both profiles default to Codex Luna max as the primary; they differ only in
+fallback, Claude Sonnet 5 xhigh for routine and Claude Opus 5 xhigh for
+high-risk.
 Evidence access is a harness-owned capability, not a project knob: Codex gets a
 disposable workspace containing only allowlisted files, runs read-only, and has
 its JSON command trace checked against the allowlist. Any non-bounded read

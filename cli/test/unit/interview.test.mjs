@@ -270,7 +270,7 @@ test("interview commands sync transcript turns idempotently and stay prelint-cle
   assert.equal(repeated.detail.alreadyImported, 1);
   assert.equal(repeated.cursor.questionCount, 1);
 
-  runInterviewDecision(dir, {
+  await runInterviewDecision(dir, {
     slug,
     id: "D-01",
     kind: "decision",
@@ -330,7 +330,7 @@ test("status surfaces open material nodes but not closure-only prelint rules", a
   const slug = "open-nodes";
   const transcriptPath = makeCodexTranscript(dir, "open-nodes-session");
   await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
-  runInterviewDecision(dir, {
+  await runInterviewDecision(dir, {
     slug,
     id: "D-01",
     kind: "decision",
@@ -382,7 +382,7 @@ test("interview commands surface a resolved material assumption as consent drift
   const slug = "implicit-assumption";
   const transcriptPath = makeCodexTranscript(dir, "assumption-session");
   await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
-  const decision = runInterviewDecision(dir, {
+  const decision = await runInterviewDecision(dir, {
     slug,
     id: "D-01",
     kind: "assumption",
@@ -394,4 +394,99 @@ test("interview commands surface a resolved material assumption as consent drift
     mapping: "R1; revisit if retention changes",
   });
   assert.ok(decision.drift.some((finding) => finding.rule === "qa-resolved-material-assumption"));
+});
+
+const CADENCE_RULE = "interview-decision-cadence";
+
+function cadenceDriftOf(result) {
+  return result.drift.filter((finding) => finding.rule === CADENCE_RULE);
+}
+
+function decisionInput(slug, n, transcriptPath) {
+  return {
+    slug,
+    transcriptPath,
+    id: `D-${String(n).padStart(2, "0")}`,
+    kind: "decision",
+    area: "ux",
+    text: `decision ${n}`,
+    priority: "P1",
+    source: "user",
+    status: "resolved",
+    mapping: "R1",
+  };
+}
+
+test("a whole checkpoint batch of decision writes on one turn is never cadence drift", async () => {
+  const dir = makeProject();
+  const slug = "batched-cadence";
+  const transcriptPath = makeCodexTranscript(dir, "batched-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+
+  // The agent answers ten questions in the conversation, syncs once, then
+  // upserts every imported row - all of it sitting on the same human turn.
+  for (let i = 1; i <= 10; i += 1) appendCodexTurn(transcriptPath, i, `Q${i}?`, `answer ${i}`);
+  await runInterviewSync(dir, { slug, transcriptPath, sessionId: null });
+
+  let last;
+  for (let i = 1; i <= 10; i += 1) {
+    last = await runInterviewDecision(dir, decisionInput(slug, i, transcriptPath));
+  }
+  assert.deepEqual(cadenceDriftOf(last), []);
+  assert.equal(last.detail.cadence.turnsSinceCheckpoint, 1);
+});
+
+test("a decision write on every answered turn becomes cadence drift, and a checkpoint clears it", async () => {
+  const dir = makeProject();
+  const slug = "per-turn-cadence";
+  const transcriptPath = makeCodexTranscript(dir, "per-turn-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+
+  const drifted = [];
+  for (let i = 1; i <= 4; i += 1) {
+    appendCodexTurn(transcriptPath, i, `Q${i}?`, `answer ${i}`);
+    const decision = await runInterviewDecision(dir, decisionInput(slug, i, transcriptPath));
+    drifted.push(cadenceDriftOf(decision).length > 0);
+  }
+  // Three turns is the widest cadence the skill sanctions; the fourth is drift.
+  assert.deepEqual(drifted, [false, false, false, true]);
+
+  await runInterviewSync(dir, { slug, transcriptPath, sessionId: null });
+  await runInterviewCheckpoint(dir, {
+    slug,
+    normalized: ["pending"],
+    registerChanges: "batched",
+    reopened: "none",
+    gap: "none",
+  });
+
+  appendCodexTurn(transcriptPath, 5, "Q5?", "answer 5");
+  const afterCheckpoint = await runInterviewDecision(dir, decisionInput(slug, 5, transcriptPath));
+  assert.deepEqual(cadenceDriftOf(afterCheckpoint), []);
+  assert.equal(afterCheckpoint.detail.cadence.turnsSinceCheckpoint, 1);
+});
+
+test("cadence tracking never fails a decision write when the transcript is unavailable", async () => {
+  const dir = makeProject();
+  const slug = "untracked-cadence";
+  const transcriptPath = makeCodexTranscript(dir, "untracked-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+
+  const decision = await runInterviewDecision(dir, { ...decisionInput(slug, 1, undefined), sessionId: null });
+  assert.equal(decision.ok, true);
+  assert.equal(decision.detail.cadence.tracked, false);
+  assert.deepEqual(cadenceDriftOf(decision), []);
+});
+
+test("corrupt cadence state is reported, never raised over a completed decision write", async () => {
+  const dir = makeProject();
+  const slug = "corrupt-cadence";
+  const transcriptPath = makeCodexTranscript(dir, "corrupt-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+  fs.writeFileSync(path.join(path.dirname(qaLogPathFor(dir, slug)), ".cadence.json"), "{ not json");
+
+  const decision = await runInterviewDecision(dir, decisionInput(slug, 1, transcriptPath));
+  assert.equal(decision.ok, true);
+  assert.equal(decision.detail.cadence.tracked, false);
+  assert.match(readQaLogState(fs.readFileSync(qaLogPathFor(dir, slug), "utf8")).registerRows[0].text, /decision 1/);
 });

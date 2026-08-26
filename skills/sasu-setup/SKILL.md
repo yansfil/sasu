@@ -93,10 +93,12 @@ Then interview:
 6. Sasu judge gates (optional; defaults work without config):
    - `judge.profiles.routine`: primary and fallback target for interview,
      document-gate, acceptance, fidelity, and normal semantic judgment.
-     The default is Codex `gpt-5.6-luna` xhigh, then Claude Sonnet 5 xhigh.
+     The default is Codex `gpt-5.6-luna` max, then Claude Sonnet 5 xhigh.
    - `judge.profiles.high-risk`: primary and fallback target for the final
      high-risk lane.
-     The default is Codex `gpt-5.6-sol` xhigh, then Claude Opus 5 xhigh.
+     The default is Codex `gpt-5.6-luna` max, then Claude Opus 5 xhigh.
+     Both primaries run the same model at the same ceiling; the profiles
+     differ by fallback.
    - Each target has `backend`, `model`, and `effort`; `fallback: null`
      explicitly disables fallback for that profile.
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
@@ -128,7 +130,11 @@ Recommended `.gitignore` block:
 # PRD pipeline runtime state
 agents/runs/
 agents/quick/
+agents/interview/*/.cadence.json
 ```
+
+The qa-log itself stays tracked; `.cadence.json` beside it is per-machine
+decision-write cadence bookkeeping and never belongs in review.
 
 Projects that still carry legacy-layout runs also keep the old lines
 (`agents/implement/`, `agents/gates/`) until those runs are gone.
@@ -158,11 +164,11 @@ Reference shape:
     "fanout": true,
     "profiles": {
       "routine": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
         "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "xhigh" }
       },
       "high-risk": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
         "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "xhigh" }
       }
     }

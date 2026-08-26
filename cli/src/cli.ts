@@ -61,7 +61,7 @@ Usage:
   sasu setup seed-agents-md [--project-root <path>] [--adopt-claude-md]
   sasu interview init       --slug <topic> --topic "<title>" --where <greenfield|brownfield|docs-only|unknown> --packs "<csv>" [--understanding "<lines>"] [--question-limit <n>] [--transcript <session.jsonl>] [--json]
   sasu interview sync       --slug <topic> [--transcript <session.jsonl>] [--json]
-  sasu interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--json]
+  sasu interview decision   --slug <topic> --id D-01 [--kind <fact|decision|assumption>] [--area "<area>"] [--text "<decision>"] [--priority <P0|P1|P2>] [--source "<owner>"] [--status <open|resolved|deferred|blocking|rejected>] [--mapping "<prd mapping>"] [--transcript <session.jsonl>] [--json]
   sasu interview checkpoint --slug <topic> --normalized <pending|"Q1,Q2"> [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
@@ -73,6 +73,12 @@ bindings, counters, Raw Q&A imports, Decision Register upserts, and
 needs_normalization flips). Ordinary turns stay in the live conversation;
 interview sync batches completed assistant-text -> human-answer pairs from
 the current Claude or Codex JSONL. Semantic normalization stays with the agent.
+
+interview decision reports [drift] interview-decision-cadence once more than
+three separate conversation turns have each triggered a decision write since
+the last checkpoint - the per-turn write pattern the latency contract forbids.
+A whole batch of upserts made at one checkpoint counts as the single turn it
+happens on, so a legitimate batch never trips it.
 
 interview coherence is an advisory mid-interview judge: an independent check that
 the RESOLVED decisions cohere and stay on the stated goal (contradiction and
@@ -467,8 +473,9 @@ async function main(): Promise<void> {
         transcriptPath: optional("transcript"),
       });
     } else if (subcommand === "decision") {
-      interviewResult = runInterviewDecision(projectRoot, {
+      interviewResult = await runInterviewDecision(projectRoot, {
         slug,
+        transcriptPath: optional("transcript"),
         id: requireFlag(args, "id"),
         kind: optional("kind"),
         area: optional("area"),

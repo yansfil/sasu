@@ -75,6 +75,9 @@ sasu interview sync --slug <slug>
 - The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
 - New raw entries start with `decision_ids: none`, `route: mixed`, and `needs_normalization: true` until their decision, provenance, and impact are normalized at a checkpoint.
 - Every mutating interview command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
+- `interview decision` also reports `[drift] interview-decision-cadence` once more than three separate conversation turns have each triggered a decision write since the last checkpoint.
+That is the per-turn write pattern this section forbids: when it fires, stop writing between answers and batch the D# upserts at the next checkpoint.
+A whole batch of upserts made at one checkpoint counts as the single turn it happens on, so a legitimate batch never trips it.
 - Do not rewrite Current Understanding, UX Scenario Cards, Evidence, or checkpoint prose on every turn; batch them into the checkpoint.
 - Do not make the user wait for capture or prose polishing between answers.
 

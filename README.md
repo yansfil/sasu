@@ -159,8 +159,8 @@ The rule set targets zero false positives; ID numbering gaps (R1, R2, R4) are de
 
 Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with schema validation, one retry, and fail-closed errors.
 The gap-list gates fan out into lane-parallel narrow judges (gap-audit: 4 document-area lanes; spec: 2 review-axis lanes) whose findings the CLI merges mechanically - union, normalized dedupe, any blocking finding blocks - so the wall-clock cost is one narrow judge, not one exhaustive sweep; set `judge.fanout: false` to restore the single-judge path.
-Routine judgment defaults to Codex `gpt-5.6-luna` at `xhigh`, with Claude Sonnet 5 at `xhigh` as the fallback.
-High-risk review defaults to Codex `gpt-5.6-sol` at `xhigh`, with Claude Opus 5 at `xhigh` as the fallback.
+Routine judgment defaults to Codex `gpt-5.6-luna` at `max`, with Claude Sonnet 5 at `xhigh` as the fallback.
+High-risk review runs the same primary - Codex `gpt-5.6-luna` at `max` - and differs only in its fallback, Claude Opus 5 at `xhigh`.
 Prompt-only Codex calls run in an empty ephemeral work root with user config and project rules disabled.
 When a judge needs source evidence, the harness copies only the exact allowlisted files into a disposable working directory.
 Codex's read-only sandbox blocks writes but does not provide an OS-hard boundary against every host read.
@@ -183,11 +183,11 @@ Omitted fields inherit the defaults above.
   "judge": {
     "profiles": {
       "routine": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
         "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "xhigh" }
       },
       "high-risk": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
         "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "xhigh" }
       }
     }

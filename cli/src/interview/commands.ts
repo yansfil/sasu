@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { runPrelint, type PrelintFinding } from "../gates/prelint";
+import { cadenceDrift, clearCadence, recordDecisionTurn } from "./cadence";
 import {
   appendCheckpoint,
   appendQaEntry,
@@ -50,7 +51,11 @@ export interface InterviewResult {
   slug: string;
   qaLog: string;
   cursor: InterviewCursorView;
-  /** Structural drift found by the gap-audit prelint (closure-only rules excluded). */
+  /**
+   * Drift for the agent to fix now: structural defects from the gap-audit
+   * prelint (closure-only rules excluded), plus the decision-write cadence
+   * finding when D# upserts stop being batched at a checkpoint.
+   */
   drift: PrelintFinding[];
   detail: Record<string, unknown>;
 }
@@ -151,9 +156,10 @@ function result(
   slug: string,
   content: string,
   detail: Record<string, unknown>,
+  extraDrift: PrelintFinding[] = [],
 ): InterviewResult {
   const state: QaLogState = readQaLogState(content);
-  const drift = driftFindings(content);
+  const drift = [...driftFindings(content), ...extraDrift];
   return {
     ok: true,
     action,
@@ -218,6 +224,7 @@ export async function runInterviewInit(projectRoot: string, options: InterviewIn
     throw new Error(`qa-log already exists: ${path.relative(projectRoot, concurrentExisting)} (resume it instead of re-initializing)`);
   }
   writeNewQaLog(file, content);
+  clearCadence(file);
   return result("init", projectRoot, options.slug, content, {
     created: true,
     questionLimit: options.questionLimit ?? null,
@@ -332,21 +339,80 @@ export async function runInterviewSync(projectRoot: string, options: InterviewSy
 export interface InterviewDecisionOptions extends Partial<RegisterRow> {
   slug: string;
   id: string;
+  transcriptPath?: string;
+  /** Test/embedding seam for locating bound and automatically discovered transcripts. */
+  homeDir?: string;
+  /** Test/embedding seam for automatic discovery; null opts out of discovery. */
+  sessionId?: string | null;
 }
 
-export function runInterviewDecision(projectRoot: string, options: InterviewDecisionOptions): InterviewResult {
+interface CadenceOutcome {
+  cadence: Record<string, unknown>;
+  drift: PrelintFinding[];
+}
+
+/**
+ * Record this decision write against the conversation turn it happened on and
+ * judge the cadence.
+ *
+ * Cadence is advisory bookkeeping about a qa-log write that has already
+ * succeeded, so nothing in here may fail the command: an unresolvable
+ * transcript or unreadable cadence state is reported as untracked in `detail`
+ * (where the caller and --json both see it) rather than raised over a
+ * completed mutation.
+ */
+async function trackDecisionCadence(
+  qaLogFile: string,
+  options: InterviewDecisionOptions,
+): Promise<CadenceOutcome> {
+  let turnRef: string;
+  try {
+    const transcript = await resolveCurrentTranscript({
+      transcriptPath: options.transcriptPath,
+      homeDir: options.homeDir,
+      sessionId: options.sessionId,
+    });
+    if (transcript === null) {
+      return { cadence: { tracked: false, reason: "current agent session is unavailable" }, drift: [] };
+    }
+    turnRef = await latestHumanRef(transcript);
+  } catch (error) {
+    return { cadence: { tracked: false, reason: messageOf(error) }, drift: [] };
+  }
+  try {
+    const turns = recordDecisionTurn(qaLogFile, turnRef);
+    const finding = cadenceDrift(turns);
+    return {
+      cadence: { tracked: true, turnsSinceCheckpoint: turns.length },
+      drift: finding === null ? [] : [finding],
+    };
+  } catch (error) {
+    return { cadence: { tracked: false, reason: messageOf(error) }, drift: [] };
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function runInterviewDecision(
+  projectRoot: string,
+  options: InterviewDecisionOptions,
+): Promise<InterviewResult> {
   assertSlug(options.slug);
   const { file } = readQaLog(projectRoot, options.slug);
   const content = fs.readFileSync(file, "utf8");
-  const { slug: _slug, ...patch } = options;
+  const { slug: _slug, transcriptPath: _transcriptPath, homeDir: _homeDir, sessionId: _sessionId, ...patch } = options;
   const upserted = upsertRegisterRow(content, patch);
   const updated = refreshBookkeeping(upserted.content);
   replaceQaLog(file, content, updated);
+  const { cadence, drift } = await trackDecisionCadence(file, options);
   return result("decision", projectRoot, options.slug, updated, {
     id: upserted.row.id,
     created: upserted.created,
     row: upserted.row,
-  });
+    cadence,
+  }, drift);
 }
 
 export interface InterviewCheckpointOptions {
@@ -379,6 +445,7 @@ export function runInterviewCheckpoint(projectRoot: string, options: InterviewCh
   let updated = setCursorValue(checkpointed.content, "last_materiality_sweep", `checkpoint ${checkpointed.number}`);
   updated = refreshBookkeeping(updated);
   replaceQaLog(file, content, updated);
+  clearCadence(file);
   return result("checkpoint", projectRoot, options.slug, updated, {
     checkpoint: checkpointed.number,
     normalized,

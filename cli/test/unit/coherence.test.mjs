@@ -33,7 +33,7 @@ async function seedDecisions(dir, slug, n, status = "resolved") {
     sessionId: null,
   });
   for (let i = 1; i <= n; i += 1) {
-    runInterviewDecision(dir, {
+    await runInterviewDecision(dir, {
       slug,
       id: `D-${String(i).padStart(2, "0")}`,
       kind: "decision",
