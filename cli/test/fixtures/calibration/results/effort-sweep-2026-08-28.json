@@ -1,0 +1,1775 @@
+{
+  "at": "2026-08-28T10:56:01.435Z",
+  "what": "Reasoning-budget sweep for the gap-audit lane fan-out",
+  "judge": {
+    "backend": "codex",
+    "model": "gpt-5.6-luna"
+  },
+  "caveats": [
+    "Wall clock measured on a machine running several other agent sessions (~30 concurrent codex processes); ratios within a sweep are trustworthy, absolute ms are inflated.",
+    "real-passed is agents/interview/implement-check/qa-log.md, a 626-line production log whose round-5 closure verdict PASSed. The sweep judges it as a FRESH full review, so a BLOCK here does not contradict that PASS.",
+    "qa-log-complete.md is the spec-calibration companion log, not a gap-free document: it BLOCKed at every effort with a stable 10-14 findings, so its findings are not scored as false positives.",
+    "One document drives the effort recommendation. Re-measure before generalizing to a different project shape (PRINCIPLES 11)."
+  ],
+  "baseline": [
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "low",
+      "laneSet": "default",
+      "wallMs": 21307,
+      "verdict": "BLOCK",
+      "findingCount": 11,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 13589,
+          "findings": 2
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 14389,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 19142,
+          "findings": 4
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 21302,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The log does not define what happens when a note is deleted on one side of the bidirectional sync, including whether deletion propagates, is ignored, or requires recovery confirmation."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The log leaves simultaneous edits and offline edits unresolved, so the core bidirectional-sync conflict behavior and user-visible recovery scope cannot be written faithfully."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict recovery",
+          "missing": "The behavior when the same note is edited on both sides, including offline edits, is left unresolved, so conflict detection, winner selection, user messaging, and recovery cannot be written faithfully."
+        },
+        {
+          "severity": "P0",
+          "area": "deletion behavior",
+          "missing": "The log does not define how deletions propagate in bidirectional sync, despite NotesHub DELETE being permanent and unrecoverable."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict resolution",
+          "missing": "The log does not define which version wins or how conflicts are surfaced and recovered when both sides edit the same note, including offline edits."
+        },
+        {
+          "severity": "P0",
+          "area": "deletion lifecycle",
+          "missing": "Bidirectional synchronization does not define what happens when a note is deleted on either side, despite NotesHub deletion being permanent and unrecoverable."
+        },
+        {
+          "severity": "P1",
+          "area": "provider rate limits",
+          "missing": "The plan does not specify how synchronization handles the documented 60-requests-per-minute limit, 429 Retry-After responses, and possible key suspension for sustained excess."
+        },
+        {
+          "severity": "P1",
+          "area": "credential storage",
+          "missing": "Admin-only API-key entry is defined, but secure persistence, masking, replacement, revocation/deletion, and access boundaries for the credential are not specified."
+        },
+        {
+          "severity": "P0",
+          "area": "risk",
+          "missing": "양방향 동기화에서 삭제가 발생했을 때 NotesHub의 영구 삭제를 전파할지, 보류할지, 복구·확인 절차를 둘지 결정되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "양쪽에서 같은 노트를 편집한 충돌 상황의 해결 규칙과 검증 증거가 정의되지 않아 핵심 양방향 동기화를 구현·검증할 수 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "분당 60회 제한과 지속 초과 시 API 키 일시 정지 위험에 대해 동기화 스케줄링, 백오프, 부분 실패, 관리자 안내 정책이 결정되지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "complete",
+      "effort": "low",
+      "laneSet": "default",
+      "wallMs": 17522,
+      "verdict": "BLOCK",
+      "findingCount": 12,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 14486,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 14322,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 17522,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 13504,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "NotesHub 연동 대상이 각 멤버의 개인 계정인지 워크스페이스가 공유하는 단일 계정인지 정해지지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "회의 노트 폴더의 식별 범위와 양쪽 서비스에서 폴더가 어떻게 대응되는지가 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "노트가 아카이브될 때 이미 동기화된 상대편 노트를 유지할지 제거·휴지통 처리할지 결정되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "background sync",
+          "missing": "The user-facing behavior and states for automatic five-minute synchronization are unspecified, including whether progress, success, partial failure, or repeated failure is surfaced outside the manual-sync flow."
+        },
+        {
+          "severity": "P1",
+          "area": "deletion recovery",
+          "missing": "Soft-delete propagation specifies trash retention but does not define whether or how users can view, restore, undo, or resolve notes moved to the trash during the 30-day recovery window."
+        },
+        {
+          "severity": "P1",
+          "area": "error recovery",
+          "missing": "The failure banner is scoped as the only notification channel, but retry, dismissal, persistence, and recovery behavior for ordinary sync failures and rate-limit exhaustion are not defined."
+        },
+        {
+          "severity": "P1",
+          "area": "credentials",
+          "missing": "The log establishes that only workspace administrators manage the NotesHub API key but does not decide how the key is stored, protected, rotated, or revoked."
+        },
+        {
+          "severity": "P1",
+          "area": "provider contract",
+          "missing": "The log specifies NotesHub upsert and rate-limit behavior but does not establish whether NotesHub supports the required trash, 30-day retention, permanent deletion, restoration, and conflict-resolution operations."
+        },
+        {
+          "severity": "P2",
+          "area": "data lifecycle",
+          "missing": "The sync_events retention decision does not define the minimum event fields needed to reconstruct failures, provider responses, note identity, or deletion/conflict history."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The log does not define observable proof for several risk-critical behaviors: soft-delete propagation and 30-day purge, permission-loss handling, rate-limit deferral and 429 backoff, oversized-note skipping and re-inclusion, archive exclusion/re-inclusion, and lossless Markdown round trips."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "The operational behavior when the 5-minute sync repeatedly fails or remains partially incomplete is not defined beyond a header banner, including whether the system retries across cycles, records the failure state, and communicates pending work."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The log names a one-time staging-key smoke test but does not define launch or ongoing verification coverage for the 5-minute background scheduler, manual-sync concurrency, or the 50-requests-per-minute workspace-wide limit."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "low",
+      "laneSet": "default",
+      "wallMs": 14939,
+      "verdict": "PASS",
+      "findingCount": 1,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 8051,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 7496,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 8900,
+          "findings": 0
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 14939,
+          "findings": 1
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P2",
+          "area": "verification",
+          "missing": "검증 계획은 화이트리스트의 네트워크·시스템 변경 명령 차단과 human-window 1회 만료를 명시적으로 자동 검증 대상으로 연결하지 않는다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "medium",
+      "laneSet": "default",
+      "wallMs": 24030,
+      "verdict": "BLOCK",
+      "findingCount": 12,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 20736,
+          "findings": 2
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 22059,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 22975,
+          "findings": 4
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 24024,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "scope",
+          "missing": "양방향 동기화에서 한쪽의 노트 삭제를 상대편에 어떻게 반영할지 결정되어 있지 않다."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "양쪽에서 같은 노트를 편집하거나 오프라인 편집이 겹칠 때의 충돌 처리와 복구 범위가 미결 상태다."
+        },
+        {
+          "severity": "P0",
+          "area": "destructive sync behavior",
+          "missing": "The log does not define what happens when a note is deleted on either side, despite NotesHub deletion being permanent and the feature being bidirectional."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict recovery",
+          "missing": "The log identifies simultaneous and offline edits as a failure state but does not decide conflict resolution, user-visible messaging, or recovery behavior for 409 version conflicts."
+        },
+        {
+          "severity": "P1",
+          "area": "partial sync and retry feedback",
+          "missing": "The log does not specify user-facing behavior when background or manual sync partially fails due to rate limits, transient errors, or per-note failures, including retry timing and completion messaging."
+        },
+        {
+          "severity": "P0",
+          "area": "data/provider",
+          "missing": "Deletion semantics for bidirectional sync are undefined, including whether local or NotesHub deletions propagate, despite NotesHub DELETE being permanent and unrecoverable."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "Conflict resolution is unresolved when the same note is edited on both sides, including offline edits and handling of NotesHub 409/If-Match conflicts."
+        },
+        {
+          "severity": "P1",
+          "area": "provider",
+          "missing": "The sync behavior under the documented 60-requests-per-minute limit and 429 responses is unspecified, including retry, backoff, scheduling, and key-suspension safeguards."
+        },
+        {
+          "severity": "P1",
+          "area": "credentials",
+          "missing": "The log decides who may manage the API key but not how the key is stored, protected from logs or ordinary-member access, or handled during replacement and failure."
+        },
+        {
+          "severity": "P0",
+          "area": "risk",
+          "missing": "양방향 동기화에서 노트 삭제를 상대편에 전파할지와 영구 삭제를 어떻게 보호할지 결정되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "risk",
+          "missing": "양쪽에서 같은 노트를 편집하거나 오프라인 변경이 겹칠 때의 충돌 해결 정책이 비어 있다."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "분당 60회 제한과 지속 초과 시 API 키가 일시 정지될 수 있다는 위험에 대한 요청 조절·재시도·부분 처리 정책이 없다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "complete",
+      "effort": "medium",
+      "laneSet": "default",
+      "wallMs": 28137,
+      "verdict": "BLOCK",
+      "findingCount": 10,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 16944,
+          "findings": 2
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 15443,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 28137,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 18043,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The sync topology is unclear: it is not specified whether the workspace connects to one shared NotesHub account or to each member’s personal NotesHub account."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The lifecycle of the integration itself is unspecified, including whether and how an administrator enables, disables, or disconnects synchronization and what happens to existing mappings when it is disconnected."
+        },
+        {
+          "severity": "P1",
+          "area": "ux/setup",
+          "missing": "API 키를 처음 설정하거나 갱신할 때 관리자가 거치는 화면, 검증 결과, 비관리자에게 보이는 상태와 권한 거부 동작이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior/error-recovery",
+          "missing": "5분 주기 자동 동기화에서 전체 성공, 부분 실패, 반복 실패, 429 이월 이후의 사용자 노출 상태와 재시도 동작이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "ux/data-recovery",
+          "missing": "삭제 전파 후 휴지통에 있는 노트를 사용자가 복원하거나 다시 삭제할 때 양방향 동기화가 어떻게 동작하는지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "The log does not define the sync data model and source-of-truth rules needed for identity mapping, revision tracking, conflict detection, resolution writes, and tombstone handling beyond a single external_id column."
+        },
+        {
+          "severity": "P1",
+          "area": "external provider",
+          "missing": "NotesHub's required read, change-discovery, pagination, tag, trash, permanent-delete, conditional-write, idempotency, and credential-scope contracts are not recorded, although the requested behavior depends on them."
+        },
+        {
+          "severity": "P1",
+          "area": "data lifecycle",
+          "missing": "Concurrent deletion and editing, restoration from trash, and the authority and timing for permanent deletion are not specified for the two-way sync lifecycle."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The log does not define observable verification proof for scheduled sync, deletion retention cleanup, archive exclusion and re-inclusion, large-note skipping, Markdown round trips, permission loss, rate-limit deferral, or failure-banner behavior."
+        },
+        {
+          "severity": "P1",
+          "area": "security and operation",
+          "missing": "Although administrator-only API-key management is decided, the key's storage, masking, rotation, revocation, expiration handling, and access audit policy are unspecified."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "medium",
+      "laneSet": "default",
+      "wallMs": 34424,
+      "verdict": "BLOCK",
+      "findingCount": 4,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 12035,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 10108,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 24787,
+          "findings": 1
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 34424,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "data/close semantics",
+          "missing": "D-20 is internally contradictory: its register entry requires judged evidence registration before task close, while the current understanding and Q12 notes explicitly make judged evidence non-blocking for close."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "최종 verify에서만 강제한다는 신선도 검사의 구체적 의미와 stale 상태 판정·실패 결과·증명 방법이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "risk/verification",
+          "missing": "러너 화이트리스트와 워킹트리 side-effect 경계가 재사용된다고만 되어 있어 네트워크·시스템 변경 명령의 fail-closed 동작과 human-window 1회 만료를 입증할 구체적 검증이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "operation/verification",
+          "missing": "결정 지점 게시 후 부사수가 중단되지 않고 다른 ready 작업을 계속한다는 운영 핵심 동작이 선언되어 있지만 관찰 가능한 검증 시나리오가 없다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "high",
+      "laneSet": "default",
+      "wallMs": 78132,
+      "verdict": "BLOCK",
+      "findingCount": 16,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 29299,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 47288,
+          "findings": 4
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 40329,
+          "findings": 4
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 78127,
+          "findings": 5
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "scope",
+          "missing": "Deletion behavior is undefined even though NotesHub deletion is permanent, including whether local or external deletions propagate."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "Conflict handling for simultaneous or offline edits to the same note is explicitly left unresolved in UX-02."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "Initial reconciliation of pre-existing workspace and NotesHub notes is unspecified, including which notes are created, imported, or matched when sync is first enabled."
+        },
+        {
+          "severity": "P0",
+          "area": "destructive sync behavior",
+          "missing": "The log does not decide whether local or NotesHub deletions propagate, how permanent deletion is confirmed or surfaced, or how users recover from an irreversible NotesHub DELETE."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict recovery",
+          "missing": "Conflict handling for simultaneous or offline edits is explicitly left blank, despite the provider exposing 409 optimistic-lock conflicts."
+        },
+        {
+          "severity": "P1",
+          "area": "failure retry states",
+          "missing": "The log chooses a failure banner but does not define retry or backoff behavior, banner clearing, or user recovery for rate limits, transient failures, missing notes, and other non-key errors."
+        },
+        {
+          "severity": "P1",
+          "area": "sync concurrency",
+          "missing": "The behavior when a manual sync overlaps with a background sync or receives repeated clicks is unspecified, including whether runs are blocked, queued, deduplicated, or shown as already in progress."
+        },
+        {
+          "severity": "P0",
+          "area": "data",
+          "missing": "양방향 동기화에서 로컬 또는 NotesHub 노트 삭제를 상대편에 전파할지와 영구 삭제를 어떻게 처리할지 결정되지 않았다."
+        },
+        {
+          "severity": "P0",
+          "area": "data",
+          "missing": "양쪽에서 같은 노트를 동시에 수정하거나 오프라인 변경이 겹칠 때 충돌 해결 및 데이터 보존 방식이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "기존 노트와 NotesHub 노트를 최초 동기화에서 어떻게 식별·연결하고, 새 노트를 어느 방향에서 생성할지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "provider",
+          "missing": "NotesHub의 429 rate limit과 Retry-After 처리 정책이 없어 대규모 워크스페이스에서 동기화 순서, 재시도, 부분 완료 및 다음 주기 동작을 구현자가 정해야 한다."
+        },
+        {
+          "severity": "P0",
+          "area": "risk/data",
+          "missing": "Bidirectional sync has no policy for propagating local or NotesHub deletions despite the provider DELETE being permanent and unrecoverable."
+        },
+        {
+          "severity": "P1",
+          "area": "risk/ux",
+          "missing": "The conflict behavior for concurrent or offline edits is unresolved, including how 409 version conflicts are presented and recovered."
+        },
+        {
+          "severity": "P1",
+          "area": "operation/provider",
+          "missing": "The 60-requests-per-minute limit and possible key suspension lack decisions for throttling, concurrency, Retry-After handling, retries, and backlog or partial-sync behavior."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "The banner-only failure decision does not define when a banner appears, how repeated or partial failures are represented, when it clears, or whether the last-sync time advances."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The named proof does not explicitly cover scheduler execution, permission revocation enforcement, or the required operational failure paths."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "complete",
+      "effort": "high",
+      "laneSet": "default",
+      "wallMs": 112637,
+      "verdict": "BLOCK",
+      "findingCount": 12,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 28344,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 37574,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 112637,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 54888,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "target users and account scope",
+          "missing": "The log does not specify whether each workspace member connects an individual NotesHub account or whether one workspace-wide NotesHub account is synchronized, so destination ownership and user scope remain ambiguous."
+        },
+        {
+          "severity": "P1",
+          "area": "initial and ongoing scope",
+          "missing": "The log does not define whether enabling sync backfills existing meeting notes or only processes changes created after activation, nor how newly created notes on either side enter the sync."
+        },
+        {
+          "severity": "P1",
+          "area": "folder boundary behavior",
+          "missing": "The log does not state what happens when a linked note moves into or out of the meeting-notes folder, leaving the scope boundary and linkage behavior to implementation judgment."
+        },
+        {
+          "severity": "P1",
+          "area": "destructive recovery",
+          "missing": "The log does not define whether a note moved to trash can be restored before 30 days or how restoration propagates between the two systems."
+        },
+        {
+          "severity": "P1",
+          "area": "permission state",
+          "missing": "The log defines that changes stop after folder access is lost but does not specify what the affected user sees or can do with the resulting stale notes."
+        },
+        {
+          "severity": "P1",
+          "area": "rate-limit feedback",
+          "missing": "The log defines deferral to the next cycle but does not define how users are told that synchronization is queued or incomplete rather than silently finished."
+        },
+        {
+          "severity": "P0",
+          "area": "consent provenance",
+          "missing": "D-03 and D-05-D-09 cite Q3-Q8 whose verbatim answers are absent, and D-04 cites unspecified provider docs, so several data and provider policies lack auditable authority."
+        },
+        {
+          "severity": "P1",
+          "area": "external provider contract",
+          "missing": "The log establishes only NotesHub single-item upsert and rate limits, but not the read/list, tag, trash/permanent-delete, revision or conditional-write, authentication, and error contracts required by the sync behavior."
+        },
+        {
+          "severity": "P1",
+          "area": "data model and source of truth",
+          "missing": "The external_id mapping alone does not define the persisted base/current versions, conflict state, revision or hash tracking, and raw markdown representation needed for conflict detection and lossless round trips."
+        },
+        {
+          "severity": "P0",
+          "area": "risk",
+          "missing": "D-13 adds a maximum of three 429 retries, but Q12 only records consent to exponential backoff and does not authorize a retry cap."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "The log does not define safe rollout, pausing, rollback, or recovery behavior for a bidirectional sync that can propagate deletions and permanently delete data after 30 days."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "Proof is named only for manual sync and conflict handling, leaving no scenario-specific observable verification for deletion retention, rate-limit carryover and 429 retries, oversized-note recovery, archive and permission boundaries, markdown round trips, event retention, or failure banners."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "default",
+      "wallMs": 84603,
+      "verdict": "BLOCK",
+      "findingCount": 4,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 14685,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 45711,
+          "findings": 1
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 32805,
+          "findings": 1
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 84603,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "states and recovery",
+          "missing": "Resume explicitly returns a parked AC to pending while its task remains complete, but the log does not define whether dependent tasks stay unlocked or how pending state affects subsequent close, verify, and finalize behavior."
+        },
+        {
+          "severity": "P2",
+          "area": "data schema",
+          "missing": "The log defines v6 state behavior but does not enumerate the exact serialized fields, types, or AC-to-task/artifact cardinality."
+        },
+        {
+          "severity": "P0",
+          "area": "security and side effects",
+          "missing": "Check execution on the working tree with inherited shell environment and permitted writes is a security-sensitive authority decision supported only by broad delegation, not explicit user approval or repository evidence."
+        },
+        {
+          "severity": "P1",
+          "area": "verification freshness",
+          "missing": "The log says freshness is enforced only at final verify but does not define what happens when the tree changes after a green check, especially for already-closed tasks, nor provide proof for that path."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "xhigh",
+      "laneSet": "default",
+      "wallMs": 242463,
+      "verdict": "BLOCK",
+      "findingCount": 17,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 40580,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 32623,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 95578,
+          "findings": 4
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 242458,
+          "findings": 7
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "goal/users",
+          "missing": "The log does not resolve whether NotesHub is one shared team account or separate personal accounts for workspace members, so the destination, visibility, and target user model are ambiguous."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The first-sync and discovery scope is undefined, including whether existing NotesHub notes are imported, how unlinked NotesHub notes become associated, and how new notes on either side enter the meeting-notes set."
+        },
+        {
+          "severity": "P0",
+          "area": "scope/data lifecycle",
+          "missing": "Bidirectional synchronization does not specify whether deleting a note on either side propagates deletion, leaves an orphan, or is excluded from synchronization, despite NotesHub deletion being permanent and unrecoverable."
+        },
+        {
+          "severity": "P0",
+          "area": "conflict recovery",
+          "missing": "양방향 동기화에서 양쪽 또는 오프라인 상태로 같은 노트를 편집했을 때 충돌을 해결하는 규칙과 사용자 복구 흐름이 정해지지 않았다."
+        },
+        {
+          "severity": "P0",
+          "area": "destructive behavior",
+          "missing": "노트 삭제가 상대편에 전파되는지, 영구 삭제 API를 사용할 권한과 삭제 후 복구·undo 동작이 무엇인지 결정되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "failure states",
+          "missing": "백그라운드·수동 동기화의 네트워크 오류, rate limit, 부분 실패 등에서 헤더 배너를 언제 누구에게 얼마나 유지하고 어떤 재시도·해결 동작을 제공할지 정의되지 않았다."
+        },
+        {
+          "severity": "P0",
+          "area": "data lifecycle",
+          "missing": "양방향 동기화에서 신규 노트의 발견·식별·external_id 부여와 로컬/NotesHub 삭제, 고아 매핑 처리 규칙이 없으며 NotesHub DELETE는 영구 삭제다."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict and fidelity",
+          "missing": "동시·오프라인 편집 시 source of truth, 409 충돌 처리, 병합 또는 승자 선택, 그리고 무손실 왕복의 적용 경계가 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "provider operations",
+          "missing": "단건 upsert, 분당 60회 제한, 429 Retry-After 및 키 일시정지 가능성에 대해 대량 동기화의 스케줄링·스로틀링·백오프·재개·부분 실패 정책이 없다."
+        },
+        {
+          "severity": "P0",
+          "area": "credentials",
+          "missing": "관리자 전용 API 키 등록·교체 UX는 정해졌지만 키의 암호화 저장, 서버 접근 범위, 마스킹·로그 노출 방지, 폐기·교체 및 provider scope 정책이 없다."
+        },
+        {
+          "severity": "P0",
+          "area": "data lifecycle",
+          "missing": "양방향 동기화에서 한쪽 노트의 삭제나 404를 어떻게 처리할지, 특히 NotesHub의 영구 DELETE를 언제 허용할지 결정돼 있지 않다."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict risk",
+          "missing": "동일 노트를 양쪽에서 수정한 경우와 오프라인 편집이 겹친 경우의 승자·병합·보류 및 복구 규칙이 미결이다."
+        },
+        {
+          "severity": "P1",
+          "area": "provider limits",
+          "missing": "분당 60회 제한과 지속 초과 시 키 일시 정지 위험에 대해 요청 조절, 재시도·백오프, 동시 실행, 부분 완료 및 사용자 안내 정책이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "failure operation",
+          "missing": "D-16의 헤더 배너가 어떤 실패 지속 조건에서 나타나고 언제 해제·갱신되는지 정의되지 않았으며 키 오류 외 provider 장애나 429에 대한 관찰 가능한 증거도 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification coverage",
+          "missing": "현재 proof 항목은 UX-01~UX-04와 마크다운 왕복에 집중되어 아카이브 제외·재포함, 권한 상실 후 미반영·기존 내용 유지, 30일 이벤트 삭제의 관찰 가능한 검증이 지정되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "rollout",
+          "missing": "자동 5분 동기화와 외부 쓰기를 어떤 기본 활성화 방식으로 출시하고 provider 장애나 데이터 문제 때 어떻게 즉시 중지·롤백할지 운영 정책이 없다."
+        },
+        {
+          "severity": "P0",
+          "area": "consent provenance",
+          "missing": "D-16의 재검토 조건인 ‘관리자 다수 요청’은 Q15의 ‘관리자들이 진짜로 원하면’보다 구체적인 임계값이며 Raw Q&A에서 승인되지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "complete",
+      "effort": "xhigh",
+      "laneSet": "default",
+      "wallMs": 187266,
+      "verdict": "BLOCK",
+      "findingCount": 14,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 27336,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 156169,
+          "findings": 5
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 187266,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 120451,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "target users",
+          "missing": "The log does not specify whether one workspace syncs to a single administrator-owned NotesHub account or whether each member syncs their accessible notes to their own account."
+        },
+        {
+          "severity": "P1",
+          "area": "scope boundary",
+          "missing": "“회의 노트 폴더” is not defined precisely enough to establish which folder or nested folders are in scope."
+        },
+        {
+          "severity": "P1",
+          "area": "in-scope behavior",
+          "missing": "“양방향 동기화” does not explicitly define whether newly created unpaired notes and initial synchronization are included on either side."
+        },
+        {
+          "severity": "P0",
+          "area": "consent provenance",
+          "missing": "UX decisions D-02, D-05, D-06, and D-10 cite Q2, Q4, Q5, and Q9, but those Raw Q&A answers are absent, so user authorization is unverified."
+        },
+        {
+          "severity": "P1",
+          "area": "conflict resolution",
+          "missing": "The log does not define where a selected version or manual edit is written, how the user confirms or cancels resolution, or exactly when the conflict badge clears."
+        },
+        {
+          "severity": "P1",
+          "area": "delete recovery",
+          "missing": "The 30-day trash policy does not define whether restore or undo is available, how restoration propagates across systems, or what happens after one side is permanently deleted."
+        },
+        {
+          "severity": "P1",
+          "area": "archive behavior",
+          "missing": "Archive exclusion does not define what happens to an already-synced counterpart or to edits made on either side while the note is archived."
+        },
+        {
+          "severity": "P1",
+          "area": "background sync states",
+          "missing": "Only the manual sync happy path is specified; scheduled runs, overlapping manual requests, partial outcomes, and the lifecycle and recovery actions for failure banners are undefined."
+        },
+        {
+          "severity": "P0",
+          "area": "consent provenance",
+          "missing": "D-03, D-05, D-06, D-07, and D-09 rely on user Q3-Q8, but those verbatim Raw Q&A entries are absent, so the mapping, credential, tag, title, and staging-smoke decisions lack recorded consent."
+        },
+        {
+          "severity": "P1",
+          "area": "provider contract",
+          "missing": "The provider contract covers only single-note upsert and quotas/size, but not remote change discovery, account or tenant mapping, tag creation, trash/restore/permanent deletion, identifier and version semantics, idempotency, credential lifecycle, or auth/error behavior."
+        },
+        {
+          "severity": "P1",
+          "area": "data model and lifecycle",
+          "missing": "external_id and the soft-delete/archive decisions do not define mapping scope and uniqueness, first-sync matching or backfill, canonical/version/raw-content storage, conflict writeback, or tombstone and restore behavior."
+        },
+        {
+          "severity": "P0",
+          "area": "verification provenance",
+          "missing": "D-09 attributes approval to Q8, but the verbatim Q8 answer is absent, so its verification contract is not supported by the log."
+        },
+        {
+          "severity": "P1",
+          "area": "verification coverage",
+          "missing": "The proof plan covers manual sync and conflict resolution but does not name observable proof for scheduled sync, deletion retention, archive re-inclusion, rate-limit handling, permission boundaries, oversized-note behavior, or markdown round trips."
+        },
+        {
+          "severity": "P1",
+          "area": "rollout and failure handling",
+          "missing": "No operational decision defines safe rollout, disable/rollback behavior, or handling of partially completed and queued work after provider outages, authentication failures, or exhausted retries."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "laneSet": "default",
+      "wallMs": 218906,
+      "verdict": "BLOCK",
+      "findingCount": 3,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 122877,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 181330,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 171289,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 218906,
+          "findings": 0
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "data model",
+          "missing": "The log does not define the canonical source or cardinality of the task-to-AC mapping required by task close."
+        },
+        {
+          "severity": "P1",
+          "area": "data lifecycle",
+          "missing": "Check attempts and bind histories are append-only, but their retention, archival, deletion, and finalized-run behavior are unspecified."
+        },
+        {
+          "severity": "P1",
+          "area": "park schema",
+          "missing": "Park is described as requiring approval, reason, and failure evidence, but the no-decision-point human path and pre-approved gate:human path do not clarify whether failure evidence is required or what is persisted."
+        }
+      ]
+    }
+  ],
+  "repeats": [
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "medium",
+      "laneSet": "default",
+      "wallMs": 42401,
+      "verdict": "BLOCK",
+      "findingCount": 4,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 12607,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 23615,
+          "findings": 1
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 20395,
+          "findings": 0
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 42393,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "ux",
+          "missing": "번들 A에서 사람이 park를 승인하는 구체적인 사용자 흐름과 필수 입력값(사유·실패 증거·verbatim 승인)을 어떤 명령과 검증 상태로 제출하는지 결정되어 있지 않다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "검증 계획에 judged-only 태스크, machine AC 없는 태스크, gate:human의 green/parked 및 human-window 1회 만료를 확인하는 명시적 증명이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "최종 verify에서 요구하는 신선도의 판정 기준, stale 결과의 처리, 이를 확인할 증명이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "risk",
+          "missing": "러너 화이트리스트와 워킹트리 side-effect 경계가 결정되어 있지만 네트워크·시스템 변경 명령 거부와 허용된 로컬 쓰기 동작을 검증할 구체적 증명이 없다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "default",
+      "wallMs": 91869,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 13872,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 54861,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 91863,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 71086,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "verification data",
+          "missing": "최종 verify에서 AC 상태, check 장부, 현재 트리 지문, 판사 판정이 서로 불일치할 때 무엇을 우선하며 신선도를 어떻게 판정하는지 정의되어 있지 않다."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility",
+          "missing": "스키마 v5의 기존 실행에 check·park·resume·finalize 명령을 적용할 때 거부할지, 읽기만 허용할지, 명확한 오류를 낼지 구체적인 호환 동작이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "data lifecycle",
+          "missing": "append-only check·bind 이력과 승인 인용·출력 지문이 run 종료 및 기존 agents/runs 보존 기간과 어떻게 함께 삭제·보관되는지 명시되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "security",
+          "missing": "사람의 park 승인 verbatim이 어떤 AC/run에만 적용되는지, 언제 만료되는지, 재사용 가능한지와 이후 human-window 실행까지 허용하는지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "check의 timeout·출력 상한 외에 반복 실행, 동시 실행, 고비용 러너로 인한 시간·비용·자원 소모의 운영 경계가 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "검증 계획에 fail-closed 러너 정책과 워킹트리 side effect 경계, human-window 1회 만료 같은 고위험 불변식의 결정적 증명 방법이 명시적으로 배정되지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "laneSet": "default",
+      "wallMs": 235519,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 33406,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 163442,
+          "findings": 4
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 153551,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 235514,
+          "findings": 0
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "task close / dependencies",
+          "missing": "AC별 close 조건은 정해졌지만 기존 의존 태스크 complete 요구가 유지되는지 AC 조건이 이를 대체하는지 명시되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "judged lifecycle",
+          "missing": "judged AC는 close 비차단 및 증거 누락 시 verify 실패만 정의되어 있고, 증거가 있는 judged 결과의 상태 표시와 PASS·FAIL 후 재시도·복구 동작이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "machine recheck state",
+          "missing": "이미 green인 machine AC에 check를 다시 실행할 수 있는지와 재실행 실패 시 green을 pending으로 되돌릴지 거부할지가 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "park validation",
+          "missing": "park에 사유와 실패 증거가 항상 필요한지에 대해 Q9는 필수라고 하고 Q10은 결정 지점 없는 human park를 증거 없이 허용한다고 하여 경로별 입력과 검증이 충돌한다."
+        },
+        {
+          "severity": "P0",
+          "area": "compatibility/provenance",
+          "missing": "D-06's schema-v6 new-runs-only and no-migration policy is sourced only to an opaque invocation reference, not a Raw Q&A answer, verbatim delegated invocation, or exact repository evidence."
+        },
+        {
+          "severity": "P1",
+          "area": "data model/source of truth",
+          "missing": "The log does not define where a run's immutable AC catalog, identity, tags, pass intent, and AC-to-task mapping are persisted, leaving PRD-versus-state authority and mismatch behavior ambiguous."
+        },
+        {
+          "severity": "P0",
+          "area": "data lifecycle/security",
+          "missing": "Append-only attempts, bound commands, reasons, and verbatim human approvals are persisted and attached to judge input without a policy for inline credentials, sensitive content, access, redaction, or retention."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "medium",
+      "laneSet": "default",
+      "wallMs": 25859,
+      "verdict": "BLOCK",
+      "findingCount": 2,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 8706,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 14713,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 14029,
+          "findings": 0
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 25859,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "Repeated check execution has no explicit concurrency, rate, resource, or cost boundary beyond per-process timeout and output limits."
+        },
+        {
+          "severity": "P2",
+          "area": "verification",
+          "missing": "The verification plan does not explicitly assign an observable automated proof to the required AC-table readiness failures, such as rejecting a missing 판정 column or missing judged evidence declaration."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "default",
+      "wallMs": 87733,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 22537,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 57333,
+          "findings": 4
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 69751,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 87733,
+          "findings": 0
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "states",
+          "missing": "The combined machine+gate:human tag has no explicit rule for whether binding is required before park or green, and which tag's close/check semantics take precedence."
+        },
+        {
+          "severity": "P1",
+          "area": "recovery",
+          "missing": "After resuming a parked AC, the log says already closed tasks remain closed but does not define whether open dependent tasks remain ready, become blocked, or require revalidation."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "Parked ACs are skipped and recorded, but the overall verify result and exit status when skips exist are not specified."
+        },
+        {
+          "severity": "P1",
+          "area": "permission",
+          "missing": "Pre-authorized verbatim approval for park has no explicit scope or lifecycle, unlike the one-execution expiry defined for human-window approval."
+        },
+        {
+          "severity": "P0",
+          "area": "data/schema",
+          "missing": "태스크 close가 의존하는 ‘매핑된 machine AC’의 정본이 v6에서 어디에 저장되거나 어떻게 파생되는지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "data/state",
+          "missing": "judged AC의 verify 성공·실패와 Evidence 연결이 state의 AC 전이 규칙에 포함되지 않아 결과의 정본과 재시도 lifecycle이 불명확하다."
+        },
+        {
+          "severity": "P1",
+          "area": "data/lifecycle",
+          "missing": "append-only check attempt 및 bind/rebind 이력의 보존·정리·run 삭제 lifecycle이 정의되지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "laneSet": "default",
+      "wallMs": 233366,
+      "verdict": "BLOCK",
+      "findingCount": 5,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 44143,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 194466,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 57906,
+          "findings": 0
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 233366,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "states",
+          "missing": "D-25/D-34 define pending-to-green and rebind-to-pending but do not define whether checking an already-green AC is allowed, what a failed re-check does, or whether an already-complete task reopens after invalidation."
+        },
+        {
+          "severity": "P1",
+          "area": "decision-point behavior",
+          "missing": "The tools-only condition is named as a decision-point trigger, but its threshold and interaction with the 3-consecutive and 5-failure counters are unspecified."
+        },
+        {
+          "severity": "P0",
+          "area": "risk/security",
+          "missing": "D-23와 D-30의 실행·부작용 경계는 Q12의 포괄 위임에만 기대어 확정됐지만, Q14가 명시한 P0 보안 가정 위임 불가 원칙에 대한 사용자의 직접 승인이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "검증 계획이 judged AC의 증거 없는 task close 허용 후 verify FAIL 처리와 machine AC가 없는 태스크의 close 허용을 관찰 가능한 증명 항목으로 명시하지 않는다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification/risk",
+          "missing": "화이트리스트 fail-closed, 실제 child exit code 사용, 자기 신고 배제, --human-window의 누락·재사용 거부 같은 신뢰 경계가 구체적인 부정 경로 검증 없이 광범위한 unit/e2e 계획으로만 남아 있다."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "medium",
+      "laneSet": "default",
+      "wallMs": 27749,
+      "verdict": "BLOCK",
+      "findingCount": 2,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 11340,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 10695,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 27749,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 22898,
+          "findings": 0
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "data schema",
+          "missing": "스키마 v6가 AC 정의·태스크-AC 매핑·현재 바인딩·park 승인/사유/증거·결정 지점의 구체적 저장 필드와 불변식을 확정하지 않아 구현자가 핵심 데이터 구조를 발명해야 한다."
+        },
+        {
+          "severity": "P1",
+          "area": "data lifecycle",
+          "missing": "append-only check/bind 이력과 verbatim 승인·사유·명령·출력 관련 데이터의 보존 기간, 삭제·정리 방식, 민감정보 마스킹 경계가 정해지지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "default",
+      "wallMs": 96809,
+      "verdict": "BLOCK",
+      "findingCount": 4,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 12974,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 34652,
+          "findings": 0
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 61164,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 96809,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "data lifecycle and privacy",
+          "missing": "Append-only attempts, bind/rebind commands, reasons, and approval text have no defined retention, deletion, or sensitive-data handling policy."
+        },
+        {
+          "severity": "P1",
+          "area": "schema and compatibility",
+          "missing": "Schema v6 defines conceptual transitions but not the persisted field shape/cardinality or the user-facing behavior when an existing v5 run is opened."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "Parked AC가 skipped 처리된 뒤 verify 전체의 판정과 exit 결과가 mixed 상태 또는 모든 AC parked인 경우 어떻게 되는지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "risk/verification",
+          "missing": "check 실행 신뢰 경계에 대해 금지된 네트워크·시스템 변경 명령의 fail-closed, 허용된 워킹트리 쓰기, human-window 재사용 거부와 타임아웃·출력 상한을 입증할 구체적인 proof 항목이 없다."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "laneSet": "default",
+      "wallMs": 317800,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 17880,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 162718,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 139073,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 317799,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "task close/dependencies",
+          "missing": "The tag-based close rule does not state whether the existing all-dependencies-complete prerequisite remains, which changes downstream task readiness."
+        },
+        {
+          "severity": "P1",
+          "area": "resume/rebind state",
+          "missing": "When resume or rebind returns an AC on an already closed task to pending, downstream readiness and verify/finalize behavior are undefined."
+        },
+        {
+          "severity": "P1",
+          "area": "verify result state",
+          "missing": "verify skips parked ACs but does not define the overall verdict or exit status when unresolved parked ACs are the only outstanding items."
+        },
+        {
+          "severity": "P1",
+          "area": "data/schema",
+          "missing": "AC 계약의 state.json 저장 방식과 AC-태스크 매핑의 권위 있는 출처, cardinality, 누락·중복·변경된 ID 처리 규칙이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "data/lifecycle",
+          "missing": "AC가 이미 green 또는 parked이거나 소속 태스크가 complete인 상태에서 park, bind/rebind, check, resume를 수행할 때의 허용 여부와 태스크 재개방·verify 대상 처리 규칙이 완전한 전이표로 정의되지 않았다."
+        },
+        {
+          "severity": "P0",
+          "area": "risk/security",
+          "missing": "D-23/D-30/D-35 record worktree writes, blocked side effects, environment inheritance, wrapper treatment, and one-shot human approval as agent decisions under Q12 delegation, although Q14 states P0 security assumptions cannot be delegated and provides explicit approval only for the human-origin trust limitation."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "D-04 requires freshness enforcement at final verify, while D-13 limits Bundle A verify to parked skipping and ledger attachment without defining how stale check fingerprints are detected or judged."
+        }
+      ]
+    }
+  ],
+  "laneSplit": [
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "split",
+      "wallMs": 108908,
+      "verdict": "BLOCK",
+      "findingCount": 3,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 23109,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 69415,
+          "findings": 1
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 108900,
+          "findings": 0
+        },
+        {
+          "laneId": "risk-ops",
+          "ms": 94376,
+          "findings": 2
+        },
+        {
+          "laneId": "verification-proof",
+          "ms": 81058,
+          "findings": 0
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "states and recovery",
+          "missing": "tools-only 조건이 제품 diff가 없을 때 즉시 결정 지점을 게시하는지, 아니면 동일 실패 3회 또는 백스톱 5회와 함께만 게시하는지 모호하다."
+        },
+        {
+          "severity": "P0",
+          "area": "security/risk",
+          "missing": "P0 execution and side-effect boundaries are recorded only as agent decisions under Q12's broad delegation; Q14 explicitly approved only the unverifiable human-origin trust limitation, not worktree/temp writes, inherited environment/secrets, or whitelist-based command authority."
+        },
+        {
+          "severity": "P1",
+          "area": "cost/operation",
+          "missing": "The log defines per-check timeout and output caps as code defaults but does not state whether repeated checks have any cumulative resource, rate, or concurrency bound."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "split",
+      "wallMs": 63510,
+      "verdict": "BLOCK",
+      "findingCount": 8,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 13805,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 57491,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 61575,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops",
+          "ms": 63510,
+          "findings": 1
+        },
+        {
+          "laneId": "verification-proof",
+          "ms": 56823,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "states",
+          "missing": "이미 green인 AC를 다시 check했을 때 실패하면 AC 상태와 task close·후속 태스크의 허용 여부가 어떻게 바뀌는지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "recovery",
+          "missing": "parked AC에 대해 rebind를 허용하는지, 허용한다면 parked 상태·승인·카운터가 어떻게 변하는지 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility",
+          "missing": "스키마 v5 기존 run을 열거나 변경할 때 CLI가 거부하는지, 읽기 전용으로 허용하는지, 보존되는 명령이 무엇인지가 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "data lifecycle",
+          "missing": "state.json의 append-only check attempt 및 bind/rebind 이력과 판사 입력 참조가 언제까지 보존되고 어떻게 정리되는지 정의되지 않았다."
+        },
+        {
+          "severity": "P0",
+          "area": "security",
+          "missing": "The check execution authority and side-effect boundary, including inherited credentials, working-tree writes, and fail-closed blocking of network or system changes, are recorded only as an agent decision under broad Q12 delegation rather than explicit user approval."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "최종 verify가 check의 트리 지문과 현재 워킹트리가 다를 때 어떤 판정과 복구를 하는지, 그리고 그 pass 기준을 검증 계획에서 정하지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "태스크 close 규칙의 모든 분기, 특히 judged AC의 비차단 동작, gate:human의 green/parked 허용, machine AC가 없는 태스크의 close를 관찰 가능한 검증으로 배정하지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "러너 화이트리스트의 네트워크·시스템 변경 명령 거부와 워킹트리 내 쓰기 허용이라는 side-effect 경계를 검증할 구체적인 부정·허용 테스트가 없다."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "high",
+      "laneSet": "split",
+      "wallMs": 109379,
+      "verdict": "BLOCK",
+      "findingCount": 9,
+      "minesDetected": null,
+      "mineTotal": null,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 13200,
+          "findings": 0
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 66375,
+          "findings": 1
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 109379,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops",
+          "ms": 81148,
+          "findings": 2
+        },
+        {
+          "laneId": "verification-proof",
+          "ms": 58747,
+          "findings": 4
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "states and recovery",
+          "missing": "The lifecycle after an AC is already green is undefined: the log does not specify whether re-checking may fail, whether rebind after green reopens the AC, or what happens to an already-complete task and its dependents."
+        },
+        {
+          "severity": "P1",
+          "area": "data/task mapping",
+          "missing": "Task close refers to mapped ACs, but the authoritative relationship between tasks, V rows, and AC IDs is not defined, including mixed machine/judged coverage."
+        },
+        {
+          "severity": "P1",
+          "area": "data lifecycle",
+          "missing": "Append-only check and bind histories have no explicit retention or deletion lifecycle beyond the artifact rules."
+        },
+        {
+          "severity": "P0",
+          "area": "security and authority",
+          "missing": "D23, D30, D35의 check 실행 권한과 워킹트리 쓰기·환경변수·화이트리스트 차단 범위가 포괄적 Q12 위임만으로 확정되었으며, Q14에서 명시 승인된 인간 승인 기원 미인증 한계와 달리 이 보안 정책에는 구체적 사용자 승인이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "secret handling",
+          "missing": "상속 셸 환경에서 실행되는 bind 명령과 check 출력·장부·판사 입력 첨부에 시크릿이 포함될 수 있는 경우의 허용 여부, 마스킹, 저장·전달·보존 기간이 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "최종 verify에서 check 결과의 신선성을 무엇과 어떻게 비교하는지, stale 결과의 판정과 통과 조건 및 이를 검증할 테스트가 정의되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "AC 태그·readiness 규칙(machine/judged/gate:human, 필수 판정 컬럼, judged 증거 선언)의 유효 입력과 거부 조건에 대한 구체적인 검증 증명이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "하네스 직접 실행, 러너 fail-closed, human-window 1회 만료, 허용된 side effect 경계라는 신뢰·안전 동작에 대한 구체적인 자동 검증 증명이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "judged AC가 증거 없이도 task close는 허용되지만 verify에서는 전체 실패해야 한다는 서로 다른 두 단계의 동작에 대한 close 및 후속 verify 검증이 없다."
+        }
+      ]
+    }
+  ]
+}
