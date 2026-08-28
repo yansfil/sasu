@@ -193,7 +193,37 @@ function requireReadyPrd(value, cwd) {
   if (frontmatter.status !== "ready") {
     throw new Error(`PRD status must be ready before dispatch, got ${frontmatter.status ?? "missing"}: ${relative}`);
   }
+  requirePrdGatesPass(cwd, resolved, frontmatter);
   return relative.split(path.sep).join("/");
+}
+
+// Mirrors the check `sasu implement start` enforces: a qa-log-backed PRD
+// needs a live PASS on gap-audit and spec. 2026-08-27 modakbul: the Observer
+// dispatched while gap-audit sat BLOCKED on a judge-auth ERROR; the
+// Implementor booted, read the pipeline skill, ran implement start, was
+// refused, and bounced back - a whole dispatch round trip this one status
+// read buys back. Authority stays with implement start: when `sasu` or its
+// output is unavailable here, dispatch proceeds and start still enforces.
+function requirePrdGatesPass(cwd, resolvedPrd, frontmatter) {
+  const sourceIntake = typeof frontmatter.source_intake === "string" ? frontmatter.source_intake : "";
+  if (path.basename(sourceIntake) !== "qa-log.md") return;
+  const slug = path.basename(path.dirname(resolvedPrd));
+  const result = spawnSync("sasu", ["gate", "status", "--slug", slug, "--json"], { cwd, encoding: "utf8" });
+  if (result.error !== undefined || result.status !== 0 || typeof result.stdout !== "string") return;
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return;
+  }
+  const incomplete = ["gap-audit", "spec"].filter((gate) => parsed?.[gate]?.effective !== "PASS");
+  if (incomplete.length > 0) {
+    const statuses = incomplete.map((gate) => `${gate}=${parsed?.[gate]?.effective ?? "UNKNOWN"}`).join(", ");
+    throw new Error(
+      `dispatch refused: qa-log-backed PRD requires live PASS for gap-audit and spec, got ${statuses}; `
+        + "finish the gates in this Observer session, then dispatch",
+    );
+  }
 }
 
 function optionalDirtyAttribution(value) {

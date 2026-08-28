@@ -283,3 +283,61 @@ test("wait owns lifecycle parsing and settles on the named Implementor", () => {
     ["agent", "list"],
   ]);
 });
+
+// Pre-dispatch gate check. 2026-08-27 modakbul: the Observer dispatched while
+// gap-audit sat BLOCKED on a judge-auth ERROR; the Implementor booted, ran
+// `sasu implement start`, was refused, and bounced. The dispatcher now reads
+// `sasu gate status` first for qa-log-backed PRDs; authority stays with
+// implement start, so an unavailable or unparseable `sasu` never blocks here.
+function writeQaLogBackedPrd(fixture) {
+  fs.writeFileSync(
+    path.join(fixture.root, PRD_PATH),
+    "---\nstatus: ready\nhuman_approval: pending\nsource_intake: agents/interview/test/qa-log.md\n---\n\n# Test PRD\n",
+  );
+}
+
+function fakeSasu(fixture, body) {
+  const executable = path.join(fixture.bin, "sasu");
+  fs.writeFileSync(executable, `#!/usr/bin/env node\n${body}\n`);
+  fs.chmodSync(executable, 0o755);
+}
+
+function gateStatusJson(gapEffective, specEffective) {
+  return JSON.stringify({
+    contractVersion: "test",
+    "gap-audit": { gate: "gap-audit", effective: gapEffective },
+    spec: { gate: "spec", effective: specEffective },
+    verify: { gate: "verify", effective: "NOT_RUN" },
+  });
+}
+
+test("dispatch refuses a qa-log-backed PRD while a PRD gate is not at live PASS", () => {
+  const fixture = fakeHerdrRoot("observer");
+  writeQaLogBackedPrd(fixture);
+  fakeSasu(fixture, `console.log(${JSON.stringify(gateStatusJson("BLOCKED", "PASS"))});`);
+  const result = runHelper(fixture, ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /dispatch refused: qa-log-backed PRD requires live PASS for gap-audit and spec, got gap-audit=BLOCKED/);
+  assert.deepEqual(calls(fixture).filter((call) => call[0] === "pane" && call[1] === "split"), [], "no Implementor pane may be provisioned");
+});
+
+test("dispatch proceeds for a qa-log-backed PRD once both PRD gates report PASS", () => {
+  const fixture = fakeHerdrRoot("observer");
+  writeQaLogBackedPrd(fixture);
+  fakeSasu(fixture, `console.log(${JSON.stringify(gateStatusJson("PASS", "PASS"))});`);
+  const result = runHelper(fixture, ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).implementor.handoffSubmitted, true);
+});
+
+test("dispatch stays fail-open when sasu is broken; implement start remains the authority", () => {
+  const fixture = fakeHerdrRoot("observer");
+  writeQaLogBackedPrd(fixture);
+  fakeSasu(fixture, "console.log('not json'); process.exit(1);");
+  const result = runHelper(fixture, ["dispatch", "--name", "please-smoke", "--cwd", fixture.root, "--prd", fixture.prd]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).implementor.handoffSubmitted, true);
+});
