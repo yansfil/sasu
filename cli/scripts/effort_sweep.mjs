@@ -14,6 +14,13 @@
 //   specificity - a complete document must PASS with no invented findings
 // A budget that keeps both is cheaper at no cost to the gate.
 //
+// Wall-clock caveat: this machine routinely runs several agent sessions at
+// once (the 2026-08-28 baseline sweep was measured with ~30 other codex
+// processes alive, belonging to peer sessions). Absolute milliseconds are
+// therefore inflated and noisy; only the ratios between efforts measured in
+// the SAME sweep are trustworthy. Re-measure on an idle machine before
+// quoting an absolute number anywhere.
+//
 // Usage:
 //   node cli/scripts/effort_sweep.mjs [--efforts low,medium,high,xhigh]
 //     [--repeats 1] [--out <path>] [--backend codex] [--model <id>]
@@ -50,13 +57,49 @@ const mines = JSON.parse(fs.readFileSync(path.join(fixtures, "mines-qa.json"), "
 // because the synthetic fixtures are 144 lines and a real qa-log is 626 - a
 // budget that holds on a toy document but collapses on a real one has not been
 // measured on anything that matters.
+// `qa-log-complete.md` is named for its role in the SPEC calibration (it is
+// the companion log a PRD is judged against), not for being gap-free: the
+// 2026-08-28 baseline had it BLOCK at every single effort with a stable 10-12
+// findings. Scoring those as false positives would have measured the fixture's
+// name instead of the judge, so it is labelled for what it demonstrably is and
+// the one real PASS control is the production log that actually PASSed.
 const DOCS = [
   { id: "mined", file: path.join(fixtures, "qa-log-mined.md"), expect: "BLOCK", scored: true },
-  { id: "complete", file: path.join(fixtures, "qa-log-complete.md"), expect: "PASS", scored: false },
+  { id: "complete", file: path.join(fixtures, "qa-log-complete.md"), expect: "BLOCK", scored: false },
   { id: "real-passed", file: path.join(root, "agents", "interview", "implement-check", "qa-log.md"), expect: "PASS", scored: false },
 ];
 
-const lanes = prompts.GAP_AUDIT_LANES;
+/**
+ * Alternative lane partition, measured before it is proposed (PRINCIPLES 4:
+ * an extra lane is an extra judge call, so it must earn its cost in data).
+ *
+ * risk-ops-verification is the recorded tail: in the 2026-08-28 implement-check
+ * artifacts it was the slowest lane in 4 of 5 rounds and hit 540s. Fan-out wall
+ * time is the slowest lane, so splitting the widest lane is the one lever that
+ * shortens a round WITHOUT lowering any lane's reasoning budget - unlike
+ * effort, it should not trade detection for time. `--lanes split` measures
+ * whether that holds.
+ */
+const SPLIT_LANES = [
+  ...prompts.GAP_AUDIT_LANES.filter((lane) => lane.id !== "risk-ops-verification"),
+  {
+    id: "risk-ops",
+    title: "risk, security, cost, and operation",
+    scope:
+      "Missing or ambiguous decisions about risks and side effects, security/access boundaries, credentials and authority for destructive or irreversible actions, cost or rate limits, and rollout/launch/operational needs.",
+    areaHints: ["risk", "operation", "ops", "security", "launch", "cost"],
+  },
+  {
+    id: "verification-proof",
+    title: "verification proof",
+    scope:
+      "Whether every primary behavior, state, and failure path named in the log has an observable verification proof: what will be checked, how a pass is recognized, and which proofs are deferred to a human with a stated reason.",
+    areaHints: ["verification", "proof", "observability", "acceptance", "test"],
+  },
+];
+
+const laneSet = arg("lanes", "default");
+const lanes = laneSet === "split" ? SPLIT_LANES : prompts.GAP_AUDIT_LANES;
 const config = loadConfig(root);
 if (modelOverride) {
   for (const profile of Object.values(config.judge.profiles)) {
@@ -121,7 +164,7 @@ async function fanout(doc, effort) {
 for (const doc of DOCS) doc.content = fs.readFileSync(doc.file, "utf8");
 
 const runs = [];
-console.error(`[sweep] efforts=${efforts.join(",")} repeats=${repeats} docs=${DOCS.map((d) => d.id).join(",")} lanes=${lanes.length}`);
+console.error(`[sweep] efforts=${efforts.join(",")} repeats=${repeats} docs=${DOCS.map((d) => d.id).join(",")} lanes=${lanes.length} (${laneSet})`);
 console.error(`[sweep] backend=${backendOverride ?? config.judge.profiles.routine.primary.backend} model=${modelOverride ?? config.judge.profiles.routine.primary.model}`);
 
 for (let round = 1; round <= repeats; round += 1) {
@@ -129,6 +172,7 @@ for (let round = 1; round <= repeats; round += 1) {
     for (const doc of DOCS) {
       const result = await fanout(doc, effort);
       result.round = round;
+    result.laneSet = laneSet;
       runs.push(result);
       const acc = result.minesDetected === null
         ? `fp=${result.falsePositives}`

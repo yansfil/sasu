@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, type SasuConfig } from "./config";
+import { loadConfig, type JudgeTarget, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
@@ -163,10 +163,18 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
   if (config) {
     for (const name of ["routine", "high-risk"] as const) {
       const profile = config.judge.profiles[name];
+      // An `api` target's origin is part of "which judge answers": the same
+      // model id behind a proxy is a different route, and a doctor that hides
+      // it cannot answer the question it exists to answer.
+      const target = (t: JudgeTarget): string =>
+        `${t.backend}/${t.model ?? "default"}/${t.effort}${t.backend === "api" ? `@${t.baseUrl ?? "api.anthropic.com"}` : ""}`;
       judgeLines.push(
-        `${name}: primary=${profile.primary.backend}/${profile.primary.model ?? "default"}/${profile.primary.effort} fallback=${profile.fallback === null ? "none" : `${profile.fallback.backend}/${profile.fallback.model ?? "default"}/${profile.fallback.effort}`}`,
+        `${name}: primary=${target(profile.primary)} fallback=${profile.fallback === null ? "none" : target(profile.fallback)}`,
       );
     }
+    judgeLines.push(
+      `document-gate lane effort: ${config.judge.laneEffort ?? "profile default"}`,
+    );
     judgeLines.push(`retry budget: ${config.judge.retryBudget}`);
   }
   sections.push({
