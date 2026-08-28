@@ -3,13 +3,20 @@ import os from "node:os";
 import path from "node:path";
 
 export type JudgeProfile = "routine" | "high-risk";
-export type BackendName = "claude" | "codex" | "stub";
+export type BackendName = "claude" | "codex" | "api" | "stub";
 export type JudgeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface JudgeTarget {
   backend: BackendName;
   model: string | null;
   effort: JudgeEffort;
+  /**
+   * Messages-API origin for the `api` backend. Null means the Anthropic API.
+   * A local proxy is reached by naming its origin here and nothing else: the
+   * harness knows one wire protocol, never a vendor's proxy, so swapping the
+   * upstream stays a config string rather than a code path (PRINCIPLES 7).
+   */
+  baseUrl?: string | null;
 }
 
 export interface JudgeProfileConfig {
@@ -23,6 +30,16 @@ export interface JudgeConfig {
   timeoutMs: number;
   /** Lane-parallel fan-out for the gap-list gates; false restores the single-judge path. */
   fanout: boolean;
+  /**
+   * Reasoning budget for ONE document-gate lane, overriding the profile's.
+   * Null means "use the profile effort" - the pre-measurement behavior.
+   *
+   * A lane judges one narrow axis of a document, which is not the same job as
+   * the exhaustive single judge the profile effort was chosen for. Measured
+   * 2026-08-28 on this repo's calibration fixtures (cli/scripts/effort_sweep.mjs):
+   * see the sweep result committed under cli/test/fixtures/calibration/results/.
+   */
+  laneEffort: JudgeEffort | null;
 }
 
 export interface VerifyConfig {
@@ -87,6 +104,7 @@ const DEFAULT_JUDGE: JudgeConfig = {
   // punish honest iteration; 5 keeps the loop finite while surviving one
   // clumsy attempt.
   retryBudget: 5,
+  laneEffort: null,
   // 2026-08-13 creator-assist exploration-settings run: with ~145KB of diff
   // per lane at xhigh effort, Codex Luna finished in 159-165s while Claude
   // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. A timeout
@@ -98,7 +116,7 @@ const DEFAULT_JUDGE: JudgeConfig = {
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
 const PROFILE_NAMES: JudgeProfile[] = ["routine", "high-risk"];
-const BACKENDS: BackendName[] = ["claude", "codex", "stub"];
+const BACKENDS: BackendName[] = ["claude", "codex", "api", "stub"];
 const EFFORTS: JudgeEffort[] = ["low", "medium", "high", "xhigh", "max"];
 
 type RawTarget = Partial<JudgeTarget>;
@@ -106,7 +124,10 @@ type RawProfile = { primary?: RawTarget; fallback?: RawTarget | null };
 
 function mergeTarget(base: JudgeTarget, raw: RawTarget | undefined, label: string): JudgeTarget {
   const target = { ...base, ...(raw ?? {}) };
-  if (!BACKENDS.includes(target.backend)) throw new Error(`${label}.backend must be claude, codex, or stub`);
+  if (!BACKENDS.includes(target.backend)) throw new Error(`${label}.backend must be one of: ${BACKENDS.join(", ")}`);
+  if (target.baseUrl !== undefined && target.baseUrl !== null && (typeof target.baseUrl !== "string" || target.baseUrl.trim() === "")) {
+    throw new Error(`${label}.baseUrl must be a non-empty string or null`);
+  }
   if (target.model !== null && (typeof target.model !== "string" || target.model.trim() === "")) {
     throw new Error(`${label}.model must be a non-empty string or null`);
   }
@@ -156,7 +177,11 @@ export function loadConfig(projectRoot: string): SasuConfig {
     retryBudget: judgeRaw.retryBudget ?? DEFAULT_JUDGE.retryBudget,
     timeoutMs: judgeRaw.timeoutMs ?? DEFAULT_JUDGE.timeoutMs,
     fanout: judgeRaw.fanout ?? DEFAULT_JUDGE.fanout,
+    laneEffort: judgeRaw.laneEffort ?? DEFAULT_JUDGE.laneEffort,
   };
+  if (judge.laneEffort !== null && !EFFORTS.includes(judge.laneEffort)) {
+    throw new Error(`judge.laneEffort must be null or one of: ${EFFORTS.join(", ")}`);
+  }
   if (!Number.isInteger(judge.retryBudget) || judge.retryBudget < 0) {
     throw new Error(`judge.retryBudget must be a non-negative integer, got: ${String(judge.retryBudget)}`);
   }

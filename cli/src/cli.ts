@@ -110,8 +110,13 @@ without such a delegating user message is inventing consent.
 every later gap-audit/spec run on the slug then applies it automatically, so a
 delegated run cannot lose or replace the user's invocation. A repeated
 per-call --assume-human-findings value must exactly match the stored record.
-Judgment runs as one-shot headless calls (claude -p / codex exec); this CLI never
-executes implementation work.
+Judgment runs as one-shot calls - a CLI session (claude -p / codex exec) or a
+Messages-API request (backend 'api', judge.profiles.*.baseUrl to point it at a
+compatible origin instead of api.anthropic.com); this CLI never executes
+implementation work. 'judge.laneEffort' sets the reasoning budget of ONE
+document-gate lane, overriding the profile's; null keeps the profile budget.
+Lowering it trades detection for wall time in both directions - measure with
+cli/scripts/effort_sweep.mjs before changing it, never guess.
 
 'audit runs' is the L1 run auditor: a read-only sweep of every recorded run's
 gate state against the behavior the skills promise, built to be driven

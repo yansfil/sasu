@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { ApiBackend } from "./api-backend";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +46,8 @@ export interface BackendRunOptions {
   cwd?: string;
   /** Exact project-relative files copied into Codex's scoped evidence workspace. */
   evidencePaths?: string[];
+  /** Messages-API origin for the `api` backend; null/undefined means the Anthropic API. */
+  baseUrl?: string | null;
 }
 
 export interface JudgeBackend {
@@ -1242,10 +1245,8 @@ function safeParse(text: string): unknown | null {
 }
 
 export function resolveBackend(backend: BackendName): JudgeBackend {
-  const claude = new ClaudeBackend();
-  const codex = new CodexBackend();
-  const stub = new StubBackend();
-  if (backend === "stub") return stub;
-  if (backend === "claude") return claude;
-  return codex;
+  if (backend === "stub") return new StubBackend();
+  if (backend === "claude") return new ClaudeBackend();
+  if (backend === "api") return new ApiBackend();
+  return new CodexBackend();
 }

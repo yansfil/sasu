@@ -488,10 +488,22 @@ async function runGapListGate(
 
       // Lane-parallel fan-out (R1/R2): narrow judges run concurrently and the
       // CLI merges mechanically. One fan-out round is one gate attempt.
-      // Lanes run at low effort: calibration showed judge wall time is a flat
-      // per-call reasoning budget (a full-effort lane costs as much as the
-      // exhaustive single judge), so the narrow scope is paired with a small
-      // budget - that pairing, not parallelism alone, is what halves the gate.
+      //
+      // Lanes run at the profile budget unless judge.laneEffort lowers it.
+      // The older claim here - "lanes run at low effort ... judge wall time is
+      // a flat per-call reasoning budget" - was wrong twice over, and both
+      // halves were re-measured on 2026-08-28 (cli/scripts/effort_sweep.mjs):
+      //   - It was never wired. runJudge had no override, so every lane spent
+      //     the profile's xhigh (the 2026-08-28 implement-check artifacts show
+      //     all four lanes at xhigh).
+      //   - Wall time is NOT flat per call. On a real 626-line qa-log one
+      //     fan-out round took 15s at low, 34s at medium, 85s at high; recorded
+      //     production lanes ranged 23s-540s at one effort. Time tracks how
+      //     much the judge finds, not a fixed budget.
+      // Lowering it is therefore a real speed lever AND a real detection
+      // tradeoff: at low the same document PASSed with one P2, while high
+      // reported a P0 side-effect/authority gap. The budget is config, not a
+      // constant, because that tradeoff belongs to the project (PRINCIPLES 9).
       const lanes = gate === "gap-audit" ? GAP_AUDIT_LANES : SPEC_LANES;
       const routedPrior = routePriorFindings(priorFindings, lanes);
       const settled = await Promise.all(
@@ -503,6 +515,7 @@ async function runGapListGate(
               "routine",
               buildPrompt(routedPrior.get(lane.id) ?? [], { lane, laneCount: lanes.length, rerun: isRerun, delegationEvidence }),
               (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
+              config.judge.laneEffort !== null ? { effort: config.judge.laneEffort } : {},
             );
             return { laneId: lane.id, outcome, error: null };
           } catch (error) {

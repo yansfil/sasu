@@ -378,6 +378,7 @@ export async function runJudge<T>(
         timeoutMs: config.judge.timeoutMs,
         purpose,
         effort: target.effort,
+        ...(target.baseUrl !== undefined ? { baseUrl: target.baseUrl } : {}),
         ...(options.images !== undefined ? { images: options.images } : {}),
         ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
