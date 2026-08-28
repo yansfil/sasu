@@ -161,15 +161,23 @@ async function fanout(doc, effort) {
   };
 }
 
-for (const doc of DOCS) doc.content = fs.readFileSync(doc.file, "utf8");
+// A judge's findings vary run to run, so the decision-relevant experiment is
+// usually one document repeated, not every document once. --docs selects.
+const docFilter = arg("docs", "").split(",").map((d) => d.trim()).filter(Boolean);
+const selectedDocs = docFilter.length > 0 ? DOCS.filter((d) => docFilter.includes(d.id)) : DOCS;
+if (selectedDocs.length === 0) {
+  console.error(`--docs matched nothing; known ids: ${DOCS.map((d) => d.id).join(",")}`);
+  process.exit(2);
+}
+for (const doc of selectedDocs) doc.content = fs.readFileSync(doc.file, "utf8");
 
 const runs = [];
-console.error(`[sweep] efforts=${efforts.join(",")} repeats=${repeats} docs=${DOCS.map((d) => d.id).join(",")} lanes=${lanes.length} (${laneSet})`);
+console.error(`[sweep] efforts=${efforts.join(",")} repeats=${repeats} docs=${selectedDocs.map((d) => d.id).join(",")} lanes=${lanes.length} (${laneSet})`);
 console.error(`[sweep] backend=${backendOverride ?? config.judge.profiles.routine.primary.backend} model=${modelOverride ?? config.judge.profiles.routine.primary.model}`);
 
 for (let round = 1; round <= repeats; round += 1) {
   for (const effort of efforts) {
-    for (const doc of DOCS) {
+    for (const doc of selectedDocs) {
       const result = await fanout(doc, effort);
       result.round = round;
     result.laneSet = laneSet;
