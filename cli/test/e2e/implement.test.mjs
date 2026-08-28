@@ -1929,3 +1929,229 @@ test("a trivial-profile run skips the design lane entirely and finalizes with no
   assert.equal(readState(root).designComments, undefined);
   assert.equal(run(root, ["implement", "finalize"]).status, 0);
 });
+
+// Lane-ordering contract. The design lane produces comments, not a verdict:
+// riskPrompt never receives its result and the unified verdict never reads
+// it. Holding risk behind it inside one Promise.all cost 23.1 minutes of pure
+// wait across the 8 verify attempts of the 2026-08-27 crawler-arena run - 41%
+// of that run's total verify wall clock, against a design lane measured at
+// 264-655s. A slow design lane must not delay risk by a single second.
+test("a slow design lane does not delay the risk lane", () => {
+  const root = makeProject({ profile: "high-risk" });
+  const { file } = stub(root, "high-risk");
+  const env = {
+    SASU_JUDGE_BACKEND: "stub",
+    SASU_JUDGE_STUB_FILE: file,
+    // 3000ms, not a tighter figure: the assertion compares lane wall-clock
+    // ordering, and a loaded CI box can stretch the stub lanes' bookkeeping
+    // enough to false-fail a small delay.
+    SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:design": 3000 }),
+  };
+  startAndClose(root);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+
+  const state = readState(root);
+  const attempt = state.verificationAttempts.at(-1);
+  const { design, risk, acceptance } = attempt.lanes;
+  assert.ok(design, "the design lane must still run on a high-risk profile");
+  assert.ok(risk, "the risk lane must still run on a high-risk profile");
+  assert.ok(design.durationMs >= 1500, `the design lane must actually be the slow one, was ${design.durationMs}ms`);
+  assert.ok(
+    Date.parse(risk.startedAt) < Date.parse(design.finishedAt),
+    `risk must start before design finishes (risk ${risk.startedAt}, design finished ${design.finishedAt})`,
+  );
+  // Risk still waits for what it genuinely consumes.
+  assert.ok(
+    Date.parse(risk.startedAt) >= Date.parse(acceptance.finishedAt),
+    "risk must still start after the acceptance result it is prompted with",
+  );
+});
+
+test("a design lane outside the risk barrier still records its comments on the attempt", () => {
+  const root = makeProject({ profile: "high-risk" });
+  const { file } = stub(root, "high-risk");
+  const configured = JSON.parse(fs.readFileSync(file, "utf8"));
+  configured.byPurpose["implement:design"] = {
+    comments: [{ area: "dead-weight", path: "package.json", text: "unused script", suggestion: "remove it" }],
+  };
+  fs.writeFileSync(file, JSON.stringify(configured));
+  const env = {
+    SASU_JUDGE_BACKEND: "stub",
+    SASU_JUDGE_STUB_FILE: file,
+    SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:design": 300 }),
+  };
+  startAndClose(root);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+
+  const state = readState(root);
+  const attempt = state.verificationAttempts.at(-1);
+  assert.equal(attempt.lanes.design.result.comments.length, 1);
+  assert.equal(state.designComments.length, 1);
+  assert.equal(verified.json.detail.design.open.length, 1, "the caller must still be handed the comment it owes an answer for");
+});
+
+// The unified judge verdict is the ONLY promotion authority for a
+// verification item whose proof is agent-registered runtime evidence. The
+// harness used to stamp PASS on the artifact's mere existence while the
+// acceptance judge was told the same artifact is "the implementer's claim" -
+// two authorities over one proof, disagreeing forever (2026-08-27
+// crawler-arena, 66h without a receipt).
+test("an artifact-only verification item inherits the judged verdict instead of a harness stamp", () => {
+  const root = makeProject();
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  // Add a runtime-mode item no branch of commandsForVerification can bind.
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8")
+    .replace(
+      "| live judge runtime | yes | judge lanes | none |",
+      "| live judge runtime | yes | judge lanes | none |\n| browser runtime capture | yes | browser surface | none |",
+    )
+    .replace(
+      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |",
+      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |\n| V4 | browser runtime capture | R1, AC1 | the public flow renders in a real browser | yes | no |",
+    ));
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+
+  // No binding, no artifact: nothing for any authority to weigh - fail
+  // before a judge is called.
+  const bare = run(root, ["implement", "verify"], { env });
+  assert.equal(bare.status, 1);
+  assert.equal(bare.json.detail.judgeCalls, 0);
+  assert.match(bare.json.message, /V4: no command binding or registered runtime artifact/);
+  assert.equal(readState(root).verification.find((entry) => entry.id === "V4").status, "NOT_RUN");
+
+  // With an artifact the item defers to the judges; on a judged PASS it
+  // inherits PASS exactly like a live-judge item.
+  fs.writeFileSync(path.join(root, "browser.log"), "BROWSER-RUNTIME-EVIDENCE\n");
+  assert.equal(run(root, ["implement", "artifact", "--id", "V4", "--kind", "log", "--path", "browser.log", "--description", "browser runtime proof"]).status, 0);
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  const after = readState(root);
+  assert.equal(after.verification.find((entry) => entry.id === "V4").status, "PASS");
+  assert.equal(after.verification.find((entry) => entry.id === "V3").status, "PASS");
+  assert.equal(run(root, ["implement", "finalize"], { env }).status, 0);
+});
+
+test("a mechanical failure leaves artifact-only items unstamped instead of PASS", () => {
+  const root = makeProject({ testExit: 7 });
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8")
+    .replace(
+      "| live judge runtime | yes | judge lanes | none |",
+      "| live judge runtime | yes | judge lanes | none |\n| browser runtime capture | yes | browser surface | none |",
+    )
+    .replace(
+      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |",
+      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |\n| V4 | browser runtime capture | R1, AC1 | the public flow renders in a real browser | yes | no |",
+    ));
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  fs.writeFileSync(path.join(root, "browser.log"), "BROWSER-RUNTIME-EVIDENCE\n");
+  assert.equal(run(root, ["implement", "artifact", "--id", "V4", "--kind", "log", "--path", "browser.log", "--description", "browser runtime proof"]).status, 0);
+  const failed = run(root, ["implement", "verify"], { env });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.json.detail.judgeCalls, 0);
+  // The artifact alone must never look like a proof: no judge ran, so the
+  // item stays NOT_RUN rather than carrying a stamp no authority earned.
+  assert.equal(readState(root).verification.find((entry) => entry.id === "V4").status, "NOT_RUN");
+});
+
+test("a harness-owned mechanical log cannot be registered as runtime evidence", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  fs.writeFileSync(path.join(root, "runtime.log"), "REGISTERED-RUNTIME-EVIDENCE\n");
+  assert.equal(run(root, ["implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof"]).status, 0);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+  const logPath = readState(root).artifacts.find((entry) => entry.command !== undefined).path;
+  // 2026-08-27 crawler-arena: this exact registration deadlocked the run -
+  // the harness rewrites its log every verify, so the frozen sha could never
+  // match again and the integrity preflight failed forever.
+  const refused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "log", "--path", logPath, "--description", "harness log as claim"]);
+  assert.equal(refused.status, 2, refused.stderr + refused.stdout);
+  assert.match(refused.json.message ?? refused.stderr, /harness-owned and rewritten by the harness/);
+});
+
+test("harness-owned files and their symlink aliases cannot be registered as evidence", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  // state.json is self-invalidating evidence: registering it freezes a sha
+  // that the registration's own persistState immediately rewrites, after
+  // which every verify fails the integrity preflight forever.
+  const stateRefused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "file", "--path", "agents/runs/fixture/state.json", "--description", "self-referential claim"]);
+  assert.equal(stateRefused.status, 2, stateRefused.stderr + stateRefused.stdout);
+  assert.match(stateRefused.json.message ?? stateRefused.stderr, /harness-owned and rewritten by the harness/);
+  const prdRefused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "file", "--path", "agents/runs/fixture/prd.md", "--description", "pinned prd as claim"]);
+  assert.equal(prdRefused.status, 2);
+  // A project-internal symlink alias points at the same harness-owned file;
+  // the refusal resolves realpath, so the alias is judged by its target.
+  fs.symlinkSync(path.join(root, "agents", "runs", "fixture", "state.json"), path.join(root, "alias-state.json"));
+  const aliasRefused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "file", "--path", "alias-state.json", "--description", "alias claim"]);
+  assert.equal(aliasRefused.status, 2, aliasRefused.stderr + aliasRefused.stdout);
+  assert.match(aliasRefused.json.message ?? aliasRefused.stderr, /harness-owned/);
+});
+
+test("a legacy agent-registered harness log is purged so the run can verify again", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndClose(root);
+  fs.writeFileSync(path.join(root, "runtime.log"), "REGISTERED-RUNTIME-EVIDENCE\n");
+  assert.equal(run(root, ["implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof"]).status, 0);
+  assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
+  // Reproduce the poisoned shape directly: an agent-registered copy of the
+  // harness's own mechanical log, sha frozen at a value the next mechanical
+  // run is guaranteed to invalidate.
+  const statePath = path.join(root, "agents", "runs", "fixture", "state.json");
+  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const commandLog = state.artifacts.find((entry) => entry.command !== undefined);
+  state.artifacts.push({
+    verificationId: "V3",
+    kind: "log",
+    path: commandLog.path,
+    description: "poisoned legacy registration",
+    sha256: "0".repeat(64),
+    bytes: 1,
+    registeredAt: new Date().toISOString(),
+  });
+  // The same species one directory up: state.json itself, which every
+  // persistState rewrites. The purge must cover the harness-owned class,
+  // not one log directory.
+  state.artifacts.push({
+    verificationId: "V3",
+    kind: "file",
+    path: "agents/runs/fixture/state.json",
+    description: "poisoned self-referential registration",
+    sha256: "0".repeat(64),
+    bytes: 1,
+    registeredAt: new Date().toISOString(),
+  });
+  // And the alias face of the same poison: a legacy symlink registration
+  // whose stored string names the alias, not the harness-owned target.
+  fs.symlinkSync(path.join(root, "agents", "runs", "fixture", "state.json"), path.join(root, "legacy-alias.json"));
+  state.artifacts.push({
+    verificationId: "V3",
+    kind: "file",
+    path: "legacy-alias.json",
+    description: "poisoned legacy alias registration",
+    sha256: "0".repeat(64),
+    bytes: 1,
+    registeredAt: new Date().toISOString(),
+  });
+  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  const repaired = run(root, ["implement", "verify"], { env });
+  assert.equal(repaired.status, 0, repaired.stderr + repaired.stdout);
+  assert.match(repaired.stderr, /dropped 3 agent-registered artifact\(s\) on harness-owned path\(s\)/);
+  assert.equal(
+    readState(root).artifacts.filter((entry) => entry.command === undefined && entry.path === commandLog.path).length,
+    0,
+    "the poisoned entry must be gone from the record",
+  );
+});

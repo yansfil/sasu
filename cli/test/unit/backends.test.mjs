@@ -4,7 +4,7 @@
 // refactor cannot silently broaden judge activity.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexExecArgs, processSpawnOptions } from "../../dist/judge/backends.js";
+import { CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -238,4 +238,42 @@ test("judge spawn options carry the selected workspace cwd, and omit it when abs
   assert.equal(withCwd.cwd, "/repo/root", "the provided project root must reach the spawned judge");
   const without = processSpawnOptions({});
   assert.ok(!("cwd" in without), "no cwd provided must leave the inherited working directory untouched");
+});
+
+// The streaming auditor exists so a violating command kills the codex call
+// instead of being discovered after it finishes (2026-08-27: 565s and 646s of
+// design-lane judge time discarded whole). Two audits over one allowlist can
+// drift apart, so parity with the whole-stdout backstop is the contract.
+test("codex line auditor matches the whole-stdout audit on the same trace", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
+  const options = { agentic: true, evidencePaths: ["src/status.ts"] };
+  const cases = [
+    { type: "command_execution", command: "/bin/zsh -lc \"sed -n '1,10p' src/status.ts\"" },
+    { type: "command_execution", command: "/bin/zsh -lc 'cat /etc/passwd'" },
+    { type: "command_execution", command: "/bin/zsh -lc 'rg $HOME src/status.ts'" },
+    { type: "command_execution", command: "/bin/zsh -lc \"sed -n '1,10p' /etc/hosts\"" },
+    { type: "error", message: "code mode host missing" },
+  ];
+  const audit = codexLineAuditor(options);
+  for (const item of cases) {
+    const line = event(item);
+    const streamed = audit(line);
+    const batched = codexActivityProblem(line, options);
+    assert.deepEqual(streamed, batched, JSON.stringify(item));
+  }
+});
+
+test("codex line auditor ignores non-trace lines instead of aborting on them", () => {
+  const audit = codexLineAuditor({ agentic: true, evidencePaths: [] });
+  for (const line of ["", "   ", "not json", JSON.stringify({ type: "turn.started" }), JSON.stringify({ type: "item.completed" })]) {
+    assert.equal(audit(line), null, line);
+  }
+});
+
+test("codex line auditor reports the first violating item in trace order", () => {
+  const audit = codexLineAuditor({ agentic: true, evidencePaths: ["a.md"] });
+  const ok = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "sed -n '1,5p' a.md" } });
+  const bad = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "rm -rf a.md" } });
+  assert.equal(audit(ok), null);
+  assert.equal(audit(bad).reason, "non-read-command");
 });

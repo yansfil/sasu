@@ -19,7 +19,39 @@ export type JudgeFailureReason =
   | "empty-response"
   | "invalid-contract"
   | "input-too-large"
+  | "read-budget-exceeded"
+  | "unauditable-trace"
   | "evidence-access";
+
+/**
+ * Token spend reported by the backend for one judge call. Recorded verbatim
+ * from the provider envelope: the 2026-08-27 crawler-arena investigation had
+ * to replay a 575s judge call with a hand-built probe because nothing in
+ * state.json said where the time went - the backends were already emitting
+ * this and the harness discarded it (PRINCIPLES 9).
+ */
+export interface JudgeUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+  reasoningOutputTokens?: number;
+}
+
+/**
+ * One rejected attempt inside a judge call. `attempts: 2` alone cannot answer
+ * "why 2" - the rejection reason lived only in the in-memory retry preamble
+ * and evaporated when the retry succeeded.
+ */
+export interface JudgeRetry {
+  at: string;
+  backend: BackendName;
+  model: string | null;
+  code: JudgeErrorCode;
+  reason: JudgeFailureReason | null;
+  /** Bounded diagnostic; the full text reaches only the in-memory retry preamble. */
+  detail: string;
+  durationMs: number;
+}
 
 export class JudgeError extends Error {
   readonly code: JudgeErrorCode;
@@ -55,6 +87,10 @@ export interface JudgeCallRecord {
   activity?: {
     commands: string[];
   };
+  /** Provider-reported token spend of the answering attempt, when exposed. */
+  usage?: JudgeUsage;
+  /** Every rejected attempt, in order, across the primary and any fallback. */
+  retries?: JudgeRetry[];
   /** A backend failure that was recovered by one cross-vendor fallback. */
   fallback?: {
     at: string;

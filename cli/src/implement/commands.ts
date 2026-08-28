@@ -7,6 +7,7 @@ import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
 import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
+import { judgeFanoutLimit, mapWithConcurrency } from "../judge/fanout";
 import { JudgeError, validateSemanticVerdict } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
@@ -721,6 +722,43 @@ function inspectArtifactFile(absolute: string, kind: string): { sha256: string; 
   return { sha256: sha256(buffer), bytes: stat.size };
 }
 
+/**
+ * Every path the harness itself writes during a run's lifetime. Registering
+ * one as runtime evidence is self-invalidating (see the refusal site), so
+ * the whole class is refused at registration and purged from legacy state.
+ */
+function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
+  return relative === `${state.runDir}/state.json`
+    || relative === state.prd.snapshotPath
+    || relative === `${state.runDir}/receipt.json`
+    || relative === `${state.runDir}/implementation-result.md`
+    || relative.startsWith(`${state.runDir}/artifacts/logs/`)
+    || relative.startsWith(`${state.runDir}/gates/`)
+    || relative === "agents/config.json"
+    || relative.startsWith("agents/gates/");
+}
+
+/**
+ * The registration path resolved through realpath and re-expressed relative
+ * to the run dir, so a symlink alias to a harness-owned file is judged by
+ * where it actually points. Falls back to the string-normalized relative
+ * when the file sits outside the run dir.
+ */
+function canonicalRunRelative(state: ImplementState, target: { absolute: string; relative: string }): string {
+  try {
+    const realRunDir = fs.realpathSync(path.join(state.projectRoot, state.runDir));
+    const realTarget = fs.realpathSync(target.absolute);
+    if (realTarget === realRunDir) return state.runDir;
+    if (realTarget.startsWith(`${realRunDir}${path.sep}`)) {
+      return `${state.runDir}/${path.relative(realRunDir, realTarget).split(path.sep).join("/")}`;
+    }
+  } catch {
+    // A vanished path falls through to the string form; inspectArtifactFile
+    // rejects missing files with its own message.
+  }
+  return target.relative;
+}
+
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
@@ -732,6 +770,23 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   // Artifact paths live in the RECORD tree (normally under the run dir):
   // the receipt cites them, and the record must outlive the worktree.
   const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
+  // A file the harness itself rewrites can never be frozen evidence: the
+  // next harness write invalidates the frozen sha and the integrity
+  // preflight fails forever with no unregister. 2026-08-27 crawler-arena hit
+  // this with the mechanical log; the same species one directory up is
+  // state.json itself. The refusal keys on the harness-owned class, resolved
+  // through realpath so a symlink alias to this run's own files cannot slip
+  // past it (PRINCIPLES 3: the class, not the one incident directory). The
+  // realpath canonicalization covers the runDir-scoped members; the global
+  // members (agents/config.json, legacy agents/gates/) are matched by string
+  // only - nothing in this CLI rewrites them during a run, so an alias to
+  // them is stale-evidence hygiene, not the self-invalidation deadlock.
+  if (harnessOwnedRunPath(state, canonicalRunRelative(state, target))) {
+    throw new Error(`artifact path is harness-owned and rewritten by the harness: ${target.relative}. Register your own runtime output instead.`);
+  }
+  if (state.artifacts.some((entry) => entry.command !== undefined && entry.path === target.relative)) {
+    throw new Error(`artifact path is already registered as harness command evidence: ${target.relative}. Register your own runtime output instead.`);
+  }
   const description = requiredFlag(args, "description").trim();
   const inspected = inspectArtifactFile(target.absolute, kind);
   const previous = state.artifacts.find((entry) => entry.verificationId === verificationId && entry.path === target.relative);
@@ -1379,7 +1434,11 @@ async function acceptanceLane(
   const settled = reuse === null
     ? new Map<string, { invocation: AcceptanceCriterionInvocation; criteria: AcLaneResult[] }>()
     : settledAcceptanceInvocations(reuse);
-  const perCriterion = await Promise.all(state.acceptanceCriteria.map(async (criterion) => {
+  // Bounded rather than unbounded: see judgeFanoutLimit for the measurement.
+  // Criteria still all judge in one round and the lane still costs its
+  // slowest one - the ceiling only stops a 22-criterion PRD from putting 22
+  // heavyweight judge subprocesses on a box that already runs the project.
+  const perCriterion = await mapWithConcurrency(state.acceptanceCriteria, judgeFanoutLimit(), async (criterion) => {
     const prior = settled.get(criterion.id);
     if (reuse !== null && prior !== undefined) {
       progress(`acceptance ${criterion.id}: ${prior.invocation.verdict} (reused from the ERROR'd attempt)`);
@@ -1459,7 +1518,7 @@ async function acceptanceLane(
       error: record.error,
     };
     return { invocation, criteria: record.result?.criteria ?? [] };
-  }));
+  });
   const criteria = perCriterion.flatMap((entry) => entry.criteria);
   const invocations = perCriterion.map((entry) => entry.invocation);
   const verdict: VerificationStatus = invocations.some((entry) => entry.verdict === "ERROR")
@@ -1494,6 +1553,23 @@ function verificationNeedsJudge(item: VerificationItem): boolean {
   return item.mode.toLowerCase().includes("live judge");
 }
 
+/**
+ * Verification items whose PASS authority is the unified judge verdict, not a
+ * mechanical exit code: live-judge items by declaration, and items whose only
+ * proof is agent-registered runtime evidence. The latter used to be stamped
+ * PASS here on the mere existence of an artifact, while the acceptance judge
+ * was simultaneously told the same artifact is "the implementer's claim, not
+ * a harness observation" - two authorities over one proof, disagreeing
+ * forever (2026-08-27 crawler-arena, 66 hours without a receipt). One
+ * authority now: the judges weigh the artifact, and the item inherits the
+ * judged verdict exactly like a live-judge item.
+ */
+function judgeDeferred(state: ImplementState, item: VerificationItem, bindings: MechanicalBinding[]): boolean {
+  if (verificationNeedsJudge(item)) return true;
+  if (bindings.some((binding) => binding.verificationIds.includes(item.id))) return false;
+  return state.artifacts.some((entry) => entry.verificationId === item.id && entry.command === undefined);
+}
+
 function setVerificationStatuses(
   state: ImplementState,
   bindings: MechanicalBinding[],
@@ -1509,12 +1585,13 @@ function setVerificationStatuses(
       if (item.status !== "PASS") problems.push(`${item.id}: mechanical proof did not pass`);
       continue;
     }
+    // No mechanical authority over this item. With registered evidence it is
+    // judge-deferred (stamped from the unified verdict after the lanes run);
+    // with nothing at all there is nothing for any authority to weigh.
+    item.status = "NOT_RUN";
     const artifacts = state.artifacts.filter((entry) => entry.verificationId === item.id && entry.command === undefined);
-    if (artifacts.length === 0) {
-      item.status = "NOT_RUN";
-      if (item.requiredForDone) problems.push(`${item.id}: no command binding or registered runtime artifact proves ${item.passIntent}`);
-    } else {
-      item.status = "PASS";
+    if (artifacts.length === 0 && item.requiredForDone) {
+      problems.push(`${item.id}: no command binding or registered runtime artifact proves ${item.passIntent}`);
     }
   }
   return problems;
@@ -1659,6 +1736,22 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       verificationBudget: verificationBudget(state, config.judge.retryBudget),
     });
   }
+  // Repair path for runs poisoned before registration refused harness-owned
+  // paths: an agent-registered copy of a file the harness rewrites can never
+  // satisfy the integrity preflight, and no unregister command exists
+  // (2026-08-27 crawler-arena, permanently deadlocked on its mechanical log).
+  // Judged through the same canonicalization as registration: a legacy entry
+  // whose stored string is a symlink alias to a harness-owned file is the
+  // same poison and must not survive the repair on a naming technicality.
+  const poisonedEntry = (entry: RegisteredArtifact): boolean =>
+    entry.command === undefined
+    && harnessOwnedRunPath(state, canonicalRunRelative(state, { absolute: path.join(state.projectRoot, entry.path), relative: entry.path }));
+  const poisoned = state.artifacts.filter(poisonedEntry);
+  if (poisoned.length > 0) {
+    state.artifacts = state.artifacts.filter((entry) => !poisonedEntry(entry));
+    persistState(statePath, state);
+    progress(`dropped ${poisoned.length} agent-registered artifact(s) on harness-owned path(s): ${poisoned.map((entry) => `${entry.verificationId}:${entry.path}`).join(", ")}`);
+  }
   const runtimeArtifactProblems = artifactIntegrityProblems(recordRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) });
   if (runtimeArtifactProblems.length > 0) {
     return result("verify", false, "runtime artifact integrity preflight failed; no verification attempt, mechanical command, or judge was called", {
@@ -1701,14 +1794,43 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityInvocationId = crypto.randomUUID();
   progress(`judging ${state.acceptanceCriteria.length} acceptance criteria and fidelity in parallel (profile: ${state.prd.reviewProfile})`);
   if (reusedFidelity !== null) progress(`fidelity: ${reusedFidelity.verdict} (reused from the ERROR'd attempt)`);
-  // The design lane always re-runs (never reused - it is one cheap call and
-  // its comments must describe the CURRENT tree: a reused comment set would
-  // let a fixed defect keep blocking finalize, and a fresh one keep passing).
-  // Skipped for trivial profiles and excluded from the attempt verdict: it
-  // has no verdict to contribute. What makes it consequential is disposition,
-  // not a vote - see reconcileDesignComments and the finalize blocker.
+  // The design lane always re-runs (never reused - its comments must describe
+  // the CURRENT tree: a reused comment set would let a fixed defect keep
+  // blocking finalize, and a fresh one keep passing). Skipped for trivial
+  // profiles and excluded from the attempt verdict: it has no verdict to
+  // contribute. What makes it consequential is disposition, not a vote - see
+  // reconcileDesignComments and the finalize blocker.
+  //
+  // It is NOT a cheap call, and it is deliberately outside the barrier that
+  // gates risk. Measured across the 8 verify attempts of the 2026-08-27
+  // crawler-arena run: design 264/423/545/648/655s against acceptance
+  // 119-531s and fidelity 31-101s - the slowest lane in 4 of 5 judged
+  // attempts. `riskPrompt` never receives its result and `laneVerdicts` never
+  // reads it, so holding risk behind it bought nothing and cost 23.1 minutes
+  // of pure wait, 41% of that run's total verify wall clock (PRINCIPLES 5).
+  // It settles alongside risk and is awaited once, after.
   const runDesignLane = state.prd.reviewProfile !== "trivial";
-  const [acceptance, fidelity, design] = await Promise.all([
+  const designPending: Promise<LaneRecord<{ comments: DesignComment[] }> | null> = !runDesignLane
+    ? Promise.resolve(null)
+    : judgeLane(crypto.randomUUID(), () =>
+        runJudge(
+          config,
+          "implement:design",
+          "routine",
+          designPrompt(prdText, reviewDiff, material, reviewEvidencePaths),
+          validateDesign,
+          reviewNeedsAgentic
+            ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
+            : {},
+        ),
+      ).then((record) => {
+        const summary = record.verdict === "ERROR"
+          ? `ERROR (${record.error?.message ?? "unknown"})`
+          : `${record.result?.comments.length ?? 0} comment(s)`;
+        progress(`design: ${summary} (${(record.durationMs / 1000).toFixed(0)}s)`);
+        return record;
+      });
+  const [acceptance, fidelity] = await Promise.all([
     acceptanceLane(config, recordRoot, workRoot, state, contract.scenarios, changedFiles, changedPaths, mechanical, reuse, acceptancePriorInputs),
     reusedFidelity !== null
       ? Promise.resolve(reusedFidelity)
@@ -1722,26 +1844,6 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
           ),
         ).then((record) => {
           progress(`fidelity: ${record.verdict} (${(record.durationMs / 1000).toFixed(0)}s)`);
-          return record;
-        }),
-    !runDesignLane
-      ? Promise.resolve(null)
-      : judgeLane(crypto.randomUUID(), () =>
-          runJudge(
-            config,
-            "implement:design",
-            "routine",
-            designPrompt(prdText, reviewDiff, material, reviewEvidencePaths),
-            validateDesign,
-            reviewNeedsAgentic
-              ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
-              : {},
-          ),
-        ).then((record) => {
-          const summary = record.verdict === "ERROR"
-            ? `ERROR (${record.error?.message ?? "unknown"})`
-            : `${record.result?.comments.length ?? 0} comment(s)`;
-          progress(`design: ${summary} (${(record.durationMs / 1000).toFixed(0)}s)`);
           return record;
         }),
   ]);
@@ -1783,6 +1885,9 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const advisory = risk.result?.findings.filter((entry) => entry.severity === "advisory").length ?? 0;
     progress(`risk: ${risk.verdict} (${blocking} blocking, ${advisory} advisory, ${(risk.durationMs / 1000).toFixed(0)}s)`);
   }
+  // judgeLane never rejects (it records ERROR), so this pending lane cannot
+  // become an unhandled rejection while risk runs.
+  const design = await designPending;
   // Risk is a recorded review feeding the state-owned ledger, not a voter.
   // A fresh adversarial question has no fixed point; acceptance and fidelity
   // remain the only unified verdict inputs (PRINCIPLES 10 and 13).
@@ -1795,7 +1900,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const note = `${criterion.verdict}: ${criterion.reason} (${criterion.evidence})`;
     if (!item.evidence.some((entry) => entry.text === note)) item.evidence.push({ at: nowIso(), text: note });
   }
-  for (const item of state.verification.filter(verificationNeedsJudge)) item.status = verdict === "PASS" ? "PASS" : verdict;
+  for (const item of state.verification.filter((entry) => judgeDeferred(state, entry, bindings))) item.status = verdict === "PASS" ? "PASS" : verdict;
   const attempt: UnifiedVerificationAttempt = {
     id: crypto.randomUUID(),
     inputFingerprint: inputFingerprint(state, source.digest, fidelityInput),

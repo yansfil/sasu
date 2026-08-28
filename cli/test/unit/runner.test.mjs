@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
-import { runJudge } from "../../dist/judge/runner.js";
+import test, { beforeEach } from "node:test";
+import { resetJudgeHealth, runJudge } from "../../dist/judge/runner.js";
 import { validateGapVerdict } from "../../dist/judge/types.js";
 import { loadConfig } from "../../dist/config.js";
 
@@ -26,6 +26,12 @@ async function withStub(responses, fn) {
 }
 
 const config = loadConfig(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-")));
+
+// The backend health ledger is process-scoped, which in production means
+// run-scoped: one `sasu` invocation is one process. A test file is not - it
+// runs many independent "runs" back to back, and each of these asserts a
+// first-failure contract, so every test starts from a healthy process.
+beforeEach(resetJudgeHealth);
 
 test("runJudge accepts a valid first reply with attempts=1", async () => {
   await withStub([{ verdict: "PASS", findings: [] }], async () => {
