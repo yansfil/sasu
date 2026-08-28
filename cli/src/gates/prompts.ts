@@ -243,14 +243,14 @@ Do not invent nice-to-have process gaps. An empty findings list with verdict PAS
 answer for a complete log.
 
 ${exhaustiveBlock}
-${laneContext(options.lane, options.laneCount ?? 1)}
 ${GAP_JSON_CONTRACT}
-${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0)}
 INTERVIEW LOG (qa-log.md):
 ---
 ${clampDocument(qaLogContent)}
 ---
-${delegationContext(options.delegationEvidence)}`;
+${delegationContext(options.delegationEvidence)}
+${laneContext(options.lane, options.laneCount ?? 1)}
+${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0)}`;
 }
 
 export function specGatePrompt(
