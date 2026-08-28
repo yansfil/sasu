@@ -557,7 +557,12 @@ function auditedCommandSegments(command: string): { segments: string[][]; shellP
       audited.push(words);
       continue;
     }
-    if (words.length < 3 || words[1] !== "-lc") {
+    // `-c` and `-lc` carry the same script-argument semantics; `-l` only adds
+    // login-shell init, which ZDOTDIR already neutralizes. 2026-08-28 modakbul
+    // acceptance lane: a judge wrapped three allowlisted sed reads in
+    // `/bin/zsh -c` and the `-lc`-only shape check voided the whole verdict,
+    // costing a full ~25min verify attempt for a wrapper spelling.
+    if (words.length < 3 || (words[1] !== "-lc" && words[1] !== "-c")) {
       return { segments: [], shellProblem: "malformed /bin/zsh wrapper: expected /bin/zsh -lc <script>" };
     }
     // Codex normally renders the script argv as one quoted word, but older and

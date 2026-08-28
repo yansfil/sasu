@@ -96,6 +96,31 @@ test("codex activity audit splits safe shell connections and audits every segmen
   }
 });
 
+// 2026-08-28 modakbul acceptance lane: a judge wrapped three safe sed reads in
+// `/bin/zsh -c` (newline-joined) and the `-lc`-only wrapper check voided the
+// verdict, costing a full verify attempt. `-c` audits identically to `-lc`;
+// any other wrapper spelling still fails closed.
+test("codex activity audit accepts /bin/zsh -c as the -lc wrapper's equivalent", () => {
+  const event = (item) => JSON.stringify({ type: "item.completed", item });
+  const command = "/bin/zsh -c \"sed -n '1,240p' a/types.ts\nsed -n '1,280p' a/schemas.ts\nsed -n '1,280p' a/result.tsx\"";
+  assert.equal(codexActivityProblem(event({ type: "command_execution", command }), {
+    agentic: true,
+    evidencePaths: ["a/types.ts", "a/schemas.ts", "a/result.tsx"],
+  }), null, command);
+  const unsafeInner = codexActivityProblem(event({ type: "command_execution", command: "/bin/zsh -c 'cat /etc/passwd'" }), {
+    agentic: true,
+    evidencePaths: [],
+  });
+  assert.equal(unsafeInner.reason, "non-read-command", "-c must not weaken the inner audit");
+  for (const wrapper of ["/bin/zsh -x -c 'sed -n 1p a.md'", "/bin/zsh -ic 'sed -n 1p a.md'", "/bin/zsh 'sed -n 1p a.md'"]) {
+    const problem = codexActivityProblem(event({ type: "command_execution", command: wrapper }), {
+      agentic: true,
+      evidencePaths: ["a.md"],
+    });
+    assert.equal(problem.reason, "shell-composition", wrapper);
+  }
+});
+
 test("codex backend error items are advisories, not command-audit failures", () => {
   const event = (item) => JSON.stringify({ type: "item.completed", item });
   const stdout = event({ type: "error", message: "Skill descriptions were shortened to fit the skills context budget." });
