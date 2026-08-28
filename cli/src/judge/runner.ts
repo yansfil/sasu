@@ -1,4 +1,4 @@
-import type { BackendName, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
+import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { judgeProfileFor } from "../config";
 import { AGENTIC_READ_MAX_ROUNDS, resolveBackend, type BackendRunResult, type JudgeBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
@@ -173,6 +173,18 @@ export function effectiveJudgeProfile(config: SasuConfig, profile: JudgeProfile)
   return { primary: overriddenPrimary, fallback: null };
 }
 
+/** Caller-scoped reasoning budget, applied to the primary and the fallback alike. */
+function withEffortOverride(
+  selected: { primary: JudgeTarget; fallback: JudgeTarget | null },
+  effort: JudgeEffort | undefined,
+): { primary: JudgeTarget; fallback: JudgeTarget | null } {
+  if (effort === undefined) return selected;
+  return {
+    primary: { ...selected.primary, effort },
+    fallback: selected.fallback === null ? null : { ...selected.fallback, effort },
+  };
+}
+
 /**
  * One-shot judge call with the D-16 output defense: schema validation plus
  * exactly one retry on invalid output. Backend/model/attempt counts are
@@ -186,9 +198,15 @@ export async function runJudge<T>(
   profile: JudgeProfile,
   prompt: string,
   validate: (value: unknown, activity: JudgeActivity) => T | string,
-  options: { images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[] } = {},
+  options: { images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[]; effort?: JudgeEffort } = {},
 ): Promise<JudgeOutcome<T>> {
-  const selected = effectiveJudgeProfile(config, profile);
+  // The caller's effort wins over the profile's for BOTH targets, applied once
+  // here rather than at the backend.run call site: every downstream reader of
+  // `target.effort` (the persisted record, the fallback record, the backend
+  // health key) must report the effort actually spent, or an artifact claims a
+  // budget the call never used. A caller-scoped budget is how a narrow lane
+  // pays less than an exhaustive single judge for the same profile.
+  const selected = withEffortOverride(effectiveJudgeProfile(config, profile), options.effort);
   let target: JudgeTarget = selected.primary;
   let backend = resolveBackend(target.backend);
   // An image must be an attachment, not bytes emitted by a Read tool. Claude
