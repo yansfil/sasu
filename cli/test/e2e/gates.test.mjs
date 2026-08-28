@@ -962,3 +962,30 @@ test("delegated run: empty --assume-human-findings evidence is refused before an
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /verbatim delegated invocation/);
 });
+
+// The auth recovery names the topology the failure record actually shows.
+// 2026-08-27 modakbul gap-audit: the Codex primary failed at preflight and the
+// Claude fallback terminally failed "Not logged in", but a hardcoded
+// Claude-primary/Codex-fallback sentence sent the operator to repair the
+// wrong backend.
+test("a dual-backend auth failure's recovery is built from the failure record", () => {
+  const dir = makeProject();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  fs.writeFileSync(path.join(bin, "codex"), "#!/bin/sh\nexit 99\n");
+  fs.writeFileSync(
+    path.join(bin, "claude"),
+    "#!/bin/sh\nprintf '%s' '{\"is_error\":true,\"result\":\"Not logged in. Please run /login.\"}'\n",
+  );
+  fs.chmodSync(path.join(bin, "codex"), 0o755);
+  fs.chmodSync(path.join(bin, "claude"), 0o755);
+  const result = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
+    env: { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin` },
+  });
+  assert.equal(result.status, 1);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.error.code, "judge-auth");
+  assert.match(parsed.error.recovery, /The claude judge was not authenticated/);
+  assert.match(parsed.error.recovery, /The codex judge was already abandoned first/);
+  assert.doesNotMatch(parsed.error.recovery, /Codex fallback was unavailable/, "the topology must come from the record, never a hardcoded sentence");
+  fs.rmSync(bin, { recursive: true, force: true });
+});

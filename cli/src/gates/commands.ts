@@ -1875,10 +1875,25 @@ function recordJudgeFailure(
     },
     records,
   );
+  // The auth recovery is built from the failure record, never hardcoded to a
+  // topology. 2026-08-27 modakbul gap-audit: the primary was Codex (failed at
+  // preflight) and Claude was the fallback that terminally failed, but this
+  // line was a fixed "Claude judge ... Codex fallback was unavailable"
+  // sentence - the operator was sent to repair the wrong backend.
+  // A merged lane error carries no record of its own; the per-lane failure
+  // records already collected do, so the abandoned-backend note reads the
+  // most recent failing record that crossed a fallback.
+  const abandoned = failureRecord?.fallback
+    ?? [...records].reverse().find((entry) => entry.outcome !== "ok" && entry.fallback !== undefined)?.fallback;
+  const abandonedNote = abandoned === undefined
+    ? ""
+    : ` The ${abandoned.backend} judge was already abandoned first (${abandoned.reason}).`;
+  const authRecovery = (failed: string): string =>
+    `The ${error.backend} judge ${failed}.${abandonedNote} Log in to or repair the named backend(s), then re-run.`;
   const recoveryByCode: Record<string, string> = {
     "judge-binary-missing": "Install the configured judge CLI or change the profile primary/fallback in agents/config.json.",
-    "judge-auth": "The Claude judge was not authenticated and Codex fallback was unavailable. Log in to Claude or install/log in to Codex, then re-run.",
-    "judge-auth-or-runtime": "Check the judge CLI login/auth status and re-run.",
+    "judge-auth": authRecovery("was not authenticated"),
+    "judge-auth-or-runtime": authRecovery("failed authentication or runtime"),
     "judge-context-overflow": "The judge prompt exceeded its context window. Reduce the evidence or prompt scope, then re-run.",
     "judge-timeout": "Re-run; if it persists, raise judge.timeoutMs in agents/config.json.",
     "judge-invalid-output": "Re-run; if it persists, change the model in judge.profiles.routine or judge.profiles.high-risk.",
