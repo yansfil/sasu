@@ -38,7 +38,9 @@ const textStream = (text) => [
   { type: "content_block_start", index: 1, content_block: { type: "text" } },
   ...[...text].map((ch) => ({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: ch } })),
   { type: "content_block_stop", index: 1 },
-  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 42 } },
+  // Real envelopes (and proxies) report the FINAL counts here while
+  // message_start carries zeros, so the merge must survive both orders.
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 1200, output_tokens: 42, cache_read_input_tokens: 900 } },
   { type: "message_stop" },
 ];
 
@@ -55,6 +57,22 @@ test("records the provider's reported usage including cache reads", async () => 
   assert.equal(result.usage.inputTokens, 1200);
   assert.equal(result.usage.cachedInputTokens, 900);
   assert.equal(result.usage.outputTokens, 42);
+});
+
+test("final usage on message_delta wins over the zeros message_start opens with", async () => {
+  const events = [
+    { type: "message_start", message: { usage: { input_tokens: 0, output_tokens: 0 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: VERDICT } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { input_tokens: 37, output_tokens: 4, cache_read_input_tokens: 12 } },
+    { type: "message_stop" },
+  ];
+  const result = await withServer((req, res) => sse(res, events), (baseUrl) =>
+    new ApiBackend().run("judge this", { model: "claude-opus-5", timeoutMs: 10_000, baseUrl }));
+  assert.equal(result.usage.inputTokens, 37, "a zero opener must not hide the real input count");
+  assert.equal(result.usage.outputTokens, 4);
+  assert.equal(result.usage.cachedInputTokens, 12, "cache reads are how prompt caching is measured at all");
 });
 
 test("sends the effort ceiling and adaptive thinking, never a token budget", async () => {

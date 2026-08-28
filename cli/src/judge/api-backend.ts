@@ -141,19 +141,18 @@ async function consumeStream(response: Response, stallMs: number): Promise<Strea
           if (typeof delta?.stop_reason === "string") acc.stopReason = delta.stop_reason;
           const details = (event["delta"] as { stop_details?: { category?: unknown } } | undefined)?.stop_details;
           if (typeof details?.category === "string") acc.refusal = details.category;
+          // The FINAL usage lands here, not on message_start: that opening
+          // event carries zeros for input_tokens on the real API and through a
+          // proxy alike (measured 2026-08-28 against opencodex: message_start
+          // said input_tokens 0, message_delta said 37). Reading only
+          // output_tokens here threw away the input count and, worse,
+          // cache_read_input_tokens - the one number that says whether prompt
+          // caching is working at all. Later values win field by field.
           const usage = event["usage"] as Record<string, unknown> | undefined;
-          if (usage !== undefined) acc.usage = { ...(acc.usage ?? { inputTokens: 0, outputTokens: 0 }), outputTokens: Number(usage["output_tokens"] ?? 0) };
+          if (usage !== undefined) acc.usage = mergeUsage(acc.usage, usage);
         } else if (type === "message_start") {
           const usage = (event["message"] as { usage?: Record<string, unknown> } | undefined)?.usage;
-          if (usage !== undefined) {
-            acc.usage = {
-              inputTokens: Number(usage["input_tokens"] ?? 0),
-              outputTokens: Number(usage["output_tokens"] ?? 0),
-              ...(usage["cache_read_input_tokens"] !== undefined
-                ? { cachedInputTokens: Number(usage["cache_read_input_tokens"]) }
-                : {}),
-            };
-          }
+          if (usage !== undefined) acc.usage = mergeUsage(acc.usage, usage);
         } else if (type === "error") {
           const error = event["error"] as { message?: unknown; type?: unknown } | undefined;
           throw classifyApiError(response.status, String(error?.message ?? "stream error"));
@@ -168,6 +167,28 @@ async function consumeStream(response: Response, stallMs: number): Promise<Strea
     }
   }
   return acc;
+}
+
+/**
+ * Fold one envelope's usage into what is known so far. A field is taken only
+ * when the envelope actually reports it, so a later event's zeros for fields
+ * it does not carry cannot erase an earlier real count.
+ */
+function mergeUsage(current: JudgeUsage | undefined, reported: Record<string, unknown>): JudgeUsage {
+  const merged: JudgeUsage = current ?? { inputTokens: 0, outputTokens: 0 };
+  const take = (key: string): number | undefined => {
+    const value = reported[key];
+    return typeof value === "number" ? value : undefined;
+  };
+  const input = take("input_tokens");
+  const output = take("output_tokens");
+  const cached = take("cache_read_input_tokens");
+  return {
+    ...merged,
+    ...(input !== undefined && input > 0 ? { inputTokens: input } : {}),
+    ...(output !== undefined && output > 0 ? { outputTokens: output } : {}),
+    ...(cached !== undefined ? { cachedInputTokens: cached } : {}),
+  };
 }
 
 function classifyApiError(status: number, detail: string): JudgeError {
