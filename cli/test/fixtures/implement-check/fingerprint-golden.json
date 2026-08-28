@@ -1,0 +1,23 @@
+[
+  {
+    "runner": "cargo",
+    "left": "error: test failed, to rerun pass --lib\n  at /tmp/build-a/src/lib.rs:42\nfinished in 1.23s\n",
+    "right": "error: test failed, to rerun pass --lib\n  at /private/tmp/build-b/src/lib.rs:907\nfinished in 8.91s\n",
+    "expectedFailureClass": "540eb8618b28d8b37a00152eed93bbae9e7c5315e368163475cacc5bf8fb7dce",
+    "expectedOutputFingerprint": "5033feaad48fd6916c886dcf603c67b0b1b95c291c21e7e7208e36a220e7da00"
+  },
+  {
+    "runner": "vitest",
+    "left": "FAIL src/widget.test.ts > widget > saves 123\nAssertionError: expected 4 to be 5\nDuration 1.23s\n/Users/alice/project/src/widget.test.ts:44\n",
+    "right": "FAIL src/widget.test.ts > widget > saves 999\nAssertionError: expected 8 to be 10\nDuration 9.87s\n/Users/bob/work/src/widget.test.ts:811\n",
+    "expectedFailureClass": "1e70cbc940f2ae724d31a5e26c0753f3db62a727a857579ca572c1f526541f43",
+    "expectedOutputFingerprint": "d4ee03ab5c62db1f06864fd67d51d4bb5b37f4a01827c7e18da7d79191b41575"
+  },
+  {
+    "runner": "pytest",
+    "left": "FAILED tests/test_api.py::test_health - AssertionError: /tmp/run-a/response.json expected 200 got 500\n1 failed in 0.42s\n",
+    "right": "FAILED tests/test_api.py::test_health - AssertionError: /private/tmp/run-b/response.json expected 201 got 503\n7 failed in 3.19s\n",
+    "expectedFailureClass": "897a610cd191d6f12957ffe53ad176c31b43f937bde2a6739f99ffed30a9747d",
+    "expectedOutputFingerprint": "897a610cd191d6f12957ffe53ad176c31b43f937bde2a6739f99ffed30a9747d"
+  }
+]

@@ -7,6 +7,7 @@ import test from "node:test";
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const skillDir = path.join(repoRoot, "skills", "implement");
 const skillPath = path.join(skillDir, "SKILL.md");
+const genPrdSkillPath = path.join(repoRoot, "skills", "gen-prd", "SKILL.md");
 const referencesDir = path.join(skillDir, "references");
 
 const expectedReferences = [
@@ -68,6 +69,10 @@ test("implement entrypoint retains lifecycle, safety, and completion authority",
     /`sasu implement finalize` never runs tests, judges, capture tools, or external commands/,
     /`state\.json` is the completion authority/,
     /Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes/,
+    /sasu implement check --ac AC1 --bind/,
+    /sasu implement park/,
+    /sasu implement resume --ac AC1/,
+    /skippedAcceptanceCriteria/,
     /^## Hard Stops$/m,
     /^## Final Report$/m,
   ];
@@ -77,12 +82,23 @@ test("implement entrypoint retains lifecycle, safety, and completion authority",
   }
 });
 
+test("gen-prd and implement retain the acceptance tagging and check lifecycle contract", () => {
+  const genPrd = fs.readFileSync(genPrdSkillPath, "utf8");
+  const implement = fs.readFileSync(skillPath, "utf8");
+  assert.match(genPrd, /\| ID \| Criterion \| Judgment \| Evidence Declaration \|/);
+  assert.match(genPrd, /Ask a contract-breaking tagging question only when/);
+  assert.match(genPrd, /`machine\+gate:human`/);
+  assert.match(implement, /sasu implement check --ac AC1 --bind/);
+  assert.match(implement, /sasu implement park/);
+  assert.match(implement, /sasu implement resume --ac AC1/);
+});
+
 test("removed dispatcher rejects direct legacy invocations with new-command guidance", () => {
   const script = path.join(skillDir, "scripts", "prd_state_harness.js");
   for (const args of [[], ["hook", "stop"], ["verify-run", "--id", "V1"]]) {
     const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /prd_state_harness\.js was removed/);
-    assert.match(result.stderr, /sasu implement start\|task\|artifact\|status\|verify\|finalize/);
+    assert.match(result.stderr, /sasu implement start\|check\|park\|resume\|task\|artifact\|status\|verify\|finalize/);
   }
 });

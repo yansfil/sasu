@@ -7,8 +7,8 @@ import test from "node:test";
 
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, parseImplementState } from "../../dist/implement/store.js";
 
-test("early v5 state without riskFindings loads with an empty risk ledger", () => {
-  const parsed = parseImplementState(JSON.stringify({
+test("v5 state is rejected instead of being migrated into the v6 check contract", () => {
+  assert.throws(() => parseImplementState(JSON.stringify({
     schema: "sasu.implement.state.v5",
     status: "active",
     topicSlug: "fixture",
@@ -32,9 +32,7 @@ test("early v5 state without riskFindings loads with an empty risk ledger", () =
     verificationAttempts: [],
     retirement: null,
     completion: null,
-  }));
-
-  assert.deepEqual(parsed.riskFindings, []);
+  })), /unsupported implement state schema sasu\.implement\.state\.v5.*accepts only sasu\.implement\.state\.v6/);
 });
 
 test("source freshness is commit-invariant when judged bytes do not change", () => {

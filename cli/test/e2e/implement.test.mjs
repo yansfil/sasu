@@ -57,7 +57,9 @@ The CLI owns state.
 
 ## 7. Acceptance Criteria
 
-- AC1. A completed task can be verified and finalized from one state.
+| ID | Criterion | Judgment | Evidence Declaration |
+| --- | --- | --- | --- |
+| AC1 | A completed task can be verified and finalized from one state. | machine | - |
 
 ## 8. PRD-Level Tasks
 
@@ -164,13 +166,24 @@ function writeFixtureImplementation(root) {
   fs.writeFileSync(path.join(workRoot, "fixture-implementation.txt"), "fixture implementation created after start\n");
 }
 
-function startAndClose(root, { sourceChange = true } = {}) {
+function greenAc(root, ac = "AC1", { command = "npm test", env } = {}) {
+  const options = env === undefined ? {} : { env };
+  const bound = run(root, ["implement", "check", "--ac", ac, "--bind", command], options);
+  assert.equal(bound.status, 0, bound.stderr + bound.stdout);
+  const checked = run(root, ["implement", "check", "--ac", ac], options);
+  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
+}
+
+function startAndClose(root, { sourceChange = true, checkCommand = "npm test" } = {}) {
   const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
   // A completed task normally represents source work after the baseline was
   // captured. The 2026-08-25 empty-diff incident proved that fixtures which
   // close tasks without making that work accidentally exercise an invalid run.
   if (sourceChange) writeFixtureImplementation(root);
+  for (const criterion of readState(root).acceptanceCriteria) {
+    if (criterion.judgment === "machine") greenAc(root, criterion.id, { command: checkCommand });
+  }
   const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
 }
@@ -406,6 +419,7 @@ test("an unborn Git repository still requires attribution and keeps its files in
 
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  greenAc(root);
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
@@ -614,6 +628,7 @@ test("open tasks and mechanical failures stop before either judge", () => {
   assert.equal(fs.existsSync(capture), false);
 
   writeFixtureImplementation(root);
+  greenAc(root, "AC1", { command: "node --version" });
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
   const failed = run(root, ["implement", "verify"], { env });
   assert.equal(failed.status, 1);
@@ -1141,6 +1156,7 @@ test("closing a task reports the remaining open tasks in the response", () => {
   const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
 
+  greenAc(root);
   const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
   assert.match(closed.json.message, /remaining: none - all tasks closed/);
@@ -1173,6 +1189,7 @@ test("task dependencies gate closing order and the response marks ready tasks", 
   assert.notEqual(early.status, 0);
   assert.match(early.json.message, /cannot close T4: depends on T2, T3 \(not complete\)/);
 
+  greenAc(root);
   const base = run(root, ["implement", "task", "--id", "T1", "--evidence", "base done"]);
   assert.equal(base.status, 0, base.stderr + base.stdout);
   assert.match(base.json.message, /T2 \(Adapter A, ready\)/);
@@ -1207,6 +1224,7 @@ test("the conversation-approved please chain reaches a finalized receipt", () =>
   assert.equal(readState(root).prd.approval.source, "conversation");
   assert.equal(readState(root).prd.approval.evidence, invocation);
   writeFixtureImplementation(root);
+  greenAc(root);
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented from the approved conversation"]).status, 0);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const finalized = run(root, ["implement", "finalize"]);
@@ -1223,7 +1241,7 @@ test("implement verify stops at the configured fix budget before running more wo
       test: "node -e \"const fs=require('fs');const p='agents/verify-count';const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8')):0;fs.writeFileSync(p,String(n+1));process.exit(1)\"",
     },
   }));
-  startAndClose(root);
+  startAndClose(root, { checkCommand: "node --version" });
 
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const second = run(root, ["implement", "verify"]);
@@ -1249,7 +1267,7 @@ test("an explicit user grant opens one fresh fix budget inside the same state re
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"process.exit(1)\"" } }));
-  startAndClose(root);
+  startAndClose(root, { checkCommand: "node --version" });
 
   // A grant before exhaustion is refused: it would widen the configured budget.
   const early = run(root, ["implement", "verify", "--grant-budget", "go ahead"]);
@@ -1326,8 +1344,8 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
   let text = fs.readFileSync(prdPath, "utf8");
   text = text.replace(
-    "- AC1. A completed task can be verified and finalized from one state.",
-    "- AC1. A completed task can be verified and finalized from one state.\n- AC2. The same flow reports its status honestly.",
+    "| AC1 | A completed task can be verified and finalized from one state. | machine | - |",
+    "| AC1 | A completed task can be verified and finalized from one state. | machine | - |\n| AC2 | The same flow reports its status honestly. | machine | - |",
   );
   text = text.replaceAll("R1, AC1", "R1, AC1, AC2");
   text = text.replace("Covers AC1.", "Covers AC1, AC2.");
@@ -1401,7 +1419,7 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   fs.writeFileSync(path.join(root, "package.json"), failingTest);
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndClose(root, { checkCommand: "node --version" });
 
   // A blocked close is refused while the budget still allows a fix loop.
   assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
@@ -1448,13 +1466,13 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   assert.equal(readState(root).status, "complete");
 });
 
-test("an unbacked acceptance PASS with a known-zero read trace is invalidated", () => {
+test("a judged criterion without AC-bound evidence fails before a judge call", () => {
   const root = makeProject();
   const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
   let text = fs.readFileSync(prdPath, "utf8");
   text = text.replace(
-    "- AC1. A completed task can be verified and finalized from one state.",
-    "- AC1. A completed task can be verified and finalized from one state.\n- AC2. The same flow reports its status honestly.",
+    "| AC1 | A completed task can be verified and finalized from one state. | machine | - |",
+    "| AC1 | A completed task can be verified and finalized from one state. | machine | - |\n| AC2 | The same flow reports its status honestly. | judged | agents/runs/fixture/artifacts/status.log |",
   );
   // AC2 hangs off its own requirement covered ONLY by a live-judge
   // verification: coverage expands through requirements, so R1's mechanical
@@ -1479,21 +1497,35 @@ test("an unbacked acceptance PASS with a known-zero read trace is invalidated", 
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   startAndClose(root);
 
-  // The stub attests zero tool rounds, so AC2's unbacked PASS is rejected
-  // through the invalid-output ladder while check-backed AC1 still settles.
+  // A declaration is not evidence. The harness fails AC2 before provider
+  // routing and still lets check-backed AC1 settle normally.
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 1);
   const attempt = verified.json.detail.attempt;
-  assert.equal(attempt.lanes.acceptance.verdict, "ERROR");
+  assert.equal(attempt.lanes.acceptance.verdict, "FAIL");
   const invocations = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations;
   const ac1 = invocations.find((entry) => entry.criterionId === "AC1");
   const ac2 = invocations.find((entry) => entry.criterionId === "AC2");
   assert.equal(ac1.verdict, "PASS");
-  assert.equal(ac2.verdict, "ERROR");
-  assert.match(ac2.error.message, /no file read was recorded/);
+  assert.equal(ac2.verdict, "FAIL");
+  assert.equal(ac2.judge, null);
+  assert.equal(ac2.error, null);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC2.prompt.txt")), false);
 
-  // A judge that attests a read is accepted on the same contract.
-  const attested = run(root, ["implement", "verify"], { env: { ...env, SASU_JUDGE_STUB_TOOL_ROUNDS: "1" } });
+  // Registering the declared evidence against AC2 admits its judge.
+  fs.mkdirSync(path.join(root, "agents", "runs", "fixture", "artifacts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "runs", "fixture", "artifacts", "status.log"), "status lifecycle proof\n");
+  const registered = run(root, [
+    "implement", "artifact", "--ac", "AC2", "--kind", "log",
+    "--path", "agents/runs/fixture/artifacts/status.log", "--description", "status lifecycle proof",
+  ]);
+  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+  stubJson.byPurpose["implement:acceptance:AC2"].criteria[0].priorDisposition = {
+    status: "resolved",
+    reason: "the declared status evidence is now registered against AC2",
+  };
+  fs.writeFileSync(file, JSON.stringify(stubJson));
+  const attested = run(root, ["implement", "verify"], { env });
   assert.equal(attested.status, 0, attested.stderr + attested.stdout);
   assert.equal(attested.json.detail.attempt.verdict, "PASS");
 });
@@ -1528,6 +1560,7 @@ test("a run owned by another session refuses mutation without --adopt and record
   const sessionB = { CLAUDE_CODE_SESSION_ID: "session-b" };
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: sessionA }).status, 0);
   writeFixtureImplementation(root);
+  greenAc(root, "AC1", { env: sessionA });
   const refused = run(root, ["implement", "task", "--id", "T1", "--evidence", "done", "--slug", "fixture"], { env: sessionB });
   assert.equal(refused.status, 2);
   assert.match(refused.json.message, /owned by another session \(session-a\)/);
@@ -1569,7 +1602,9 @@ test("a sessionless run stays on the shared pointer and is claimed by its first 
   // A session with no pointer of its own falls back to the sessionless run,
   // and its first mutation claims ownership, closing the unowned window that
   // let a bystander session become a run's owner (pokemon-rpg-run-1).
-  const claimed = run(root, ["implement", "task", "--id", "T1", "--evidence", "done"], { env: { CLAUDE_CODE_SESSION_ID: "session-c" } });
+  const sessionC = { CLAUDE_CODE_SESSION_ID: "session-c" };
+  greenAc(root, "AC1", { env: sessionC });
+  const claimed = run(root, ["implement", "task", "--id", "T1", "--evidence", "done"], { env: sessionC });
   assert.equal(claimed.status, 0, claimed.stderr + claimed.stdout);
   assert.equal(readState(root).ownerSessionId, "session-c");
 });
@@ -1599,6 +1634,7 @@ test("a second start in an occupied tree diverts to an isolated worktree and com
   // Session B implements in the worktree while the record tree keeps churning.
   fs.writeFileSync(path.join(wt, "beta.txt"), "beta implementation\n");
   fs.writeFileSync(path.join(root, "alpha.txt"), "concurrent unrelated edit in the record tree\n");
+  greenAc(root, "AC1", { env: b });
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented in worktree"], { env: b }).status, 0);
   const { file, capture } = stub(root);
   const env = { ...b, SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
@@ -1709,7 +1745,7 @@ test("a first round that called no judge is free, while unchanged repeats remain
   const root = makeProject({ testExit: 1 });
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
-  startAndClose(root);
+  startAndClose(root, { checkCommand: "node --version" });
 
   // The first deterministic failure did not invoke a generative stage, so it
   // cannot spend the budget that exists to bound that stage.
@@ -2060,7 +2096,7 @@ test("a mechanical failure leaves artifact-only items unstamped instead of PASS"
     ));
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndClose(root, { checkCommand: "node --version" });
   fs.writeFileSync(path.join(root, "browser.log"), "BROWSER-RUNTIME-EVIDENCE\n");
   assert.equal(run(root, ["implement", "artifact", "--id", "V4", "--kind", "log", "--path", "browser.log", "--description", "browser runtime proof"]).status, 0);
   const failed = run(root, ["implement", "verify"], { env });

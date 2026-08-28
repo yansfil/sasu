@@ -22,7 +22,9 @@ The `benchmark-implement` coordinator remains an explicit in-session Implementor
 The public closing flow is intentionally small:
 
 ```text
-implementation complete
+bind Check to each machine AC
+  -> run Check to green (or record a human-approved park)
+  -> implementation complete and task close
   -> final evidence registered
   -> sasu implement verify
   -> sasu implement finalize
@@ -56,6 +58,9 @@ Read each directly linked reference completely when its condition applies.
 - `sasu implement finalize` never runs tests, judges, capture tools, or external commands.
 - `state.json` is the completion authority; the receipt is its portable derived proof.
 - The marked Implementor is the only implementation and `state.json` writer; the Observer stays read-only after dispatch, and both sessions treat the qa-log and PRD body as sealed inputs.
+- Check results, fingerprints, counters, decision points, and approval windows are harness-owned facts.
+  Never supply or synthesize them as agent evidence.
+- A parked AC may unlock task work, but it is skipped explicitly by verify and always blocks a complete finalize until resumed and proved.
 - Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.
 
 ## 1. Confirm Readiness
@@ -127,14 +132,55 @@ For each task:
 
 1. Re-read the mapped requirement and acceptance criteria.
 2. Make the smallest complete change.
-3. Run a focused development check when useful.
-4. Close the task with concrete implementation evidence.
+3. For each mapped `machine` or `machine+gate:human` AC, bind its focused Check once, run it, and use the state-owned green result as close authority.
+4. Close the task.
+   Optional `--evidence` records useful implementation context; it never substitutes for a missing or failing Check.
+
+```sh
+sasu implement check --ac AC1 --bind 'npm test' --cwd .
+sasu implement check --ac AC1
+```
+
+The binding must be one fail-closed, project-confined command form.
+Product suite addresses are recorded as `asset`; `agents/**` bookkeeping addresses are recorded as `labor`.
+Replacing a binding requires a reason, preserves the full history, invalidates an earlier green, and resets the consecutive-failure counter:
+
+```sh
+sasu implement check \
+  --ac AC1 \
+  --bind 'node scripts/check-draft.mjs' \
+  --reason 'the original checker exercised the wrong entrypoint'
+```
+
+For `machine+gate:human`, every execution needs a fresh approval quote.
+The quote is consumed by that one attempt whether the command passes or fails:
+
+```sh
+sasu implement check --ac AC3 --human-window '<verbatim approval for this run>'
+```
+
+After repeated failures, inspect `sasu implement status`.
+It surfaces same-class, five-failure, and tools-only decision points without stopping independent ready tasks.
+Resolve the cause and rebind/check, or use the only Bundle-A deferral path, a human-approved park:
+
+```sh
+sasu implement park \
+  --ac AC1 \
+  --approval '<verbatim human approval>' \
+  --reason '<why proof is deferred>' \
+  --evidence '<optional incident or trace link>'
+
+sasu implement resume --ac AC1
+```
+
+Resume returns the AC to pending with a zeroed consecutive-failure counter.
+It does not reopen an already closed task.
+A parked criterion cannot be checked until it is resumed.
 
 ```sh
 sasu implement task \
   --id T1 \
-  --status complete \
-  --evidence '<files and focused result>'
+  --status complete
 ```
 
 Closing a task means only that its implementation obligation is complete.
@@ -153,6 +199,18 @@ sasu implement artifact \
   --kind screenshot \
   --path docs/screenshots/example.png \
   --description '<what this proves>'
+```
+
+Evidence intended for a `judged` AC must also be bound to that semantic unit.
+`--ac` and the existing V-lane `--id` may be used separately or together:
+
+```sh
+sasu implement artifact \
+  --id V3 \
+  --ac AC2 \
+  --kind log \
+  --path docs/evidence/recovery-run.log \
+  --description 'expired-link failure and successful retry transcript'
 ```
 
 Registration pins the file hash and records when the agent supplied it in `state.json`.
@@ -183,6 +241,8 @@ Acceptance judge responsibility:
 - Receive the relevant mechanical output and text artifact bytes directly from the harness.
 - Inspect only the exact run-owned changed files and visual artifacts placed in the disposable evidence workspace; execution, writes, broad file discovery, history inspection, and web access remain disabled.
 - Cite concrete changed files, mechanical output, or registered artifacts actually used.
+- Receive the harness-owned Check ledger hash and complete binding history for its AC.
+  A parked AC is omitted and recorded in the attempt's `skippedAcceptanceCriteria`; a `judged` AC with no AC-bound artifact fails deterministically before a provider call.
 
 Fidelity judge responsibility:
 
@@ -217,6 +277,7 @@ sasu implement finalize
 
 Finalize reads state and hashes only.
 It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale judged source, missing or changed artifact bytes, open blocking risk findings, unanswered design comments, and malformed state.
+It also rejects every parked AC even when verify honestly skipped it and the other lanes passed.
 It does not run tests, judges, browser tools, capture tools, or other subprocesses.
 
 Running finalize twice with the same input returns the same completed result without creating another verification attempt.

@@ -20,6 +20,10 @@ import type { ImplementState } from "../implement/types";
 import { implementStatePathFor } from "../runs/paths";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { prelintPrdDecisionIds, runPrelint, type PrelintResult } from "./prelint";
+
+const { parseAcceptanceCriteria } = require("../../lib/prd_parser.js") as {
+  parseAcceptanceCriteria: (section: string) => Array<{ id: string; text: string }>;
+};
 import {
   GAP_AUDIT_LANES,
   SPEC_LANES,
@@ -1989,27 +1993,17 @@ export function runDelegateClear(projectRoot: string, topic: string): { cleared:
 
 export function extractAcceptanceCriteria(prdContent: string): { id: string; text: string }[] {
   const lines = prdContent.split("\n");
-  const criteria: { id: string; text: string }[] = [];
   let inSection = false;
-  let current: { id: string; text: string } | null = null;
+  const section: string[] = [];
   for (const line of lines) {
     if (/^##\s+7\./.test(line) || /^##\s+Acceptance Criteria/i.test(line)) {
       inSection = true;
       continue;
     }
     if (inSection && /^##\s/.test(line)) break;
-    if (!inSection) continue;
-    const match = line.match(/^-\s+(AC\d+)\.\s+(.*)$/);
-    if (match && match[1] !== undefined && match[2] !== undefined) {
-      current = { id: match[1], text: match[2].trim() };
-      criteria.push(current);
-    } else if (current && /^\s+\S/.test(line)) {
-      current.text += ` ${line.trim()}`;
-    } else {
-      current = null;
-    }
+    if (inSection) section.push(line);
   }
-  return criteria;
+  return parseAcceptanceCriteria(section.join("\n")).map((criterion) => ({ id: criterion.id, text: criterion.text }));
 }
 
 /**

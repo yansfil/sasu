@@ -5,7 +5,7 @@ Read this reference before implementation, while closing tasks, or when executio
 ## Contract Ownership
 
 - The PRD owns requirements, acceptance criteria, technical structure, risks, and verification intent.
-- `state.json` owns task progress, registered evidence, verification attempts, and completion.
+- `state.json` owns task progress, AC Check bindings and attempts, registered evidence, verification attempts, and completion.
 - The implementation result owns the actual file and module boundaries selected within the approved structure.
 
 ## Coverage Check
@@ -34,11 +34,13 @@ For each task:
 1. Read the mapped contract.
 2. Inspect the current implementation boundary.
 3. Make the smallest complete change.
-4. Run a focused development check when useful.
-5. Close the task with concrete evidence.
+4. Bind and run each mapped machine AC Check to green, or record a human-approved park when work must continue without that proof.
+5. Close the task; optional evidence is context, not completion authority.
 
 ```sh
-sasu implement task --id T1 --status complete --evidence '<files and focused result>'
+sasu implement check --ac AC1 --bind 'npm test'
+sasu implement check --ac AC1
+sasu implement task --id T1 --status complete
 ```
 
 Task completion does not mark acceptance criteria or verification PASS.
@@ -53,5 +55,6 @@ If a bounded implementation detail differs while preserving the approved structu
 
 ## Completion
 
-An implementation task is ready to close when its code obligation is complete and its evidence names the files and focused result.
+An implementation task is ready to close when its code obligation is complete and every mapped machine AC is green or human-approved parked.
+Judged-only or AC-less tasks add no mechanical close condition.
 The run is not complete until unified verify passes and finalize writes the receipt.

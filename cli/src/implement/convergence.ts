@@ -39,14 +39,15 @@ export function latestAttemptResult<T>(
   return null;
 }
 
-export function evidenceDeltaKey(entry: { verificationId: string; path: string }): string {
-  return `${entry.verificationId}:${entry.path}`;
+export function evidenceDeltaKey(entry: { verificationId?: string; acceptanceCriterionId?: string; path: string }): string {
+  return `${entry.acceptanceCriterionId ?? entry.verificationId ?? "unbound"}:${entry.path}`;
 }
 
 export function verificationInputManifest(
   initial: SourceSnapshot,
   current: SourceSnapshot,
   artifacts: RegisteredArtifact[],
+  checkLedger: VerificationInputManifest["checkLedger"] = { sha256: "none", bindings: [] },
 ): VerificationInputManifest {
   const currentByPath = new Map(current.entries.map((entry) => [entry.path, entry]));
   const source: SourceEntry[] = changedPathsSince(initial, current).map((relative) =>
@@ -54,9 +55,14 @@ export function verificationInputManifest(
   );
   const evidence = artifacts
     .filter((entry) => entry.command === undefined)
-    .map((entry) => ({ verificationId: entry.verificationId, path: entry.path, sha256: entry.sha256 }))
+    .map((entry) => ({
+      ...(entry.verificationId !== undefined ? { verificationId: entry.verificationId } : {}),
+      ...(entry.acceptanceCriterionId !== undefined ? { acceptanceCriterionId: entry.acceptanceCriterionId } : {}),
+      path: entry.path,
+      sha256: entry.sha256,
+    }))
     .sort((left, right) => evidenceDeltaKey(left).localeCompare(evidenceDeltaKey(right)));
-  return { source, evidence };
+  return { source, evidence, checkLedger };
 }
 
 export function verificationRoundContext(

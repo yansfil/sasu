@@ -27,7 +27,9 @@ Render and persist the widget.
 `;
 
 function git(dir, args) {
-  const result = spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], {
+  // Fixture commits must not depend on the operator's global signing agent,
+  // which may be unavailable while the full parallel e2e suite is saturated.
+  const result = spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args], {
     cwd: dir,
     encoding: "utf8",
   });

@@ -16,7 +16,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
     const file = path.join(root, "agents", "runs", slug, "state.json");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({
-      schema: "sasu.implement.state.v5",
+      schema: "sasu.implement.state.v6",
       topicSlug: slug,
       projectRoot: root,
       runDir: `agents/runs/${slug}`,
@@ -49,7 +49,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
   assert.ok(section.lines.includes(
-    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v5; use a matching CLI to inspect or retire it, or start a new slug",
+    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v6; use a matching CLI to inspect or retire it, or start a new slug",
   ));
 });
 

@@ -396,8 +396,10 @@ No major technical structure change expected.
 
 ## 7. Acceptance Criteria
 
-- AC1. the widget renders
-- AC2. the widget persists its state
+| ID | Criterion | Judgment | Evidence Declaration |
+| --- | --- | --- | --- |
+| AC1 | the widget renders | machine | - |
+| AC2 | the widget persists its state | machine | - |
 
 ## 8. PRD-Level Tasks
 

@@ -38,6 +38,13 @@ test("clean PRD passes with zero findings (false-positive zero)", () => {
   assert.equal(result.findings.length, 0);
 });
 
+test("quoted frontmatter values keep working when followed by an inline YAML comment", () => {
+  const commented = fixture("prd-clean.md").replace('human_approval: "approved"', 'human_approval: "approved" # verbatim approval recorded elsewhere');
+  const result = prelintPrd(commented);
+  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+  assert.equal(result.findings.length, 0);
+});
+
 const QA_CASES = [
   ["qa-frontmatter-missing.md", "qa-frontmatter-missing"],
   ["qa-frontmatter-enum.md", "qa-frontmatter-enum"],
@@ -115,7 +122,7 @@ test("a Covers reference to an undefined SC card is a dangling reference", () =>
 
 test("ID numbering gaps alone are NOT flagged (continuity is an explicit non-goal)", () => {
   const prd = fixture("prd-clean.md")
-    .replace("- AC2. the widget persists its state", "- AC7. the widget persists its state")
+    .replace("| AC2 | the widget persists its state | machine | - |", "| AC7 | the widget persists its state | machine | - |")
     .replace("Covers R1, AC1, AC2.", "Covers R1, AC1, AC7.")
     .replace("| V1 | automated behavior | R1, AC1, AC2 |", "| V1 | automated behavior | R1, AC1, AC7 |");
   const result = prelintPrd(prd);
@@ -182,7 +189,10 @@ test("PRD implementation bindings are rejected at every semantic surface", () =>
   assert.equal(taskScope.ok, false);
   assert.ok(taskScope.findings.some((entry) => entry.rule === "prd-implementation-binding" && /file Scope/.test(entry.missing)));
 
-  const acCheck = prelintPrd(cleanPrd.replace("- AC1.", "- AC1. Check: `npm test`."));
+  const acCheck = prelintPrd(cleanPrd.replace(
+    "| AC1 | the widget renders | machine | - |",
+    "| AC1 | Check: `npm test`. the widget renders | machine | - |",
+  ));
   assert.equal(acCheck.ok, false);
   assert.ok(acCheck.findings.some((entry) => entry.rule === "prd-implementation-binding" && /executable Check/.test(entry.missing)));
 

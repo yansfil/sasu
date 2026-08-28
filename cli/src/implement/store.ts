@@ -123,6 +123,23 @@ function assertNullableString(value: unknown, label: string): void {
   if (value !== null) assertString(value, label);
 }
 
+function assertIsoTimestamp(value: unknown, label: string): asserts value is string {
+  assertString(value, label);
+  if (!Number.isFinite(Date.parse(value))) throw new Error(`malformed implement state: ${label} must be an ISO timestamp`);
+}
+
+function assertSha256(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error(`malformed implement state: ${label} must be a SHA-256 hex digest`);
+  }
+}
+
+function assertStringArray(value: unknown, label: string, nonEmpty = false): asserts value is string[] {
+  if (!Array.isArray(value) || (nonEmpty && value.length === 0) || !value.every((entry) => typeof entry === "string" && entry !== "")) {
+    throw new Error(`malformed implement state: ${label} must be ${nonEmpty ? "a non-empty" : "a"} string array`);
+  }
+}
+
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`malformed implement state: ${label} must be an object`);
@@ -145,9 +162,28 @@ function assertInputManifest(value: unknown, label: string): void {
   if (!Array.isArray(value["evidence"])) throw new Error(`malformed implement state: ${label}.evidence must be an array`);
   for (const [index, entry] of value["evidence"].entries()) {
     assertRecord(entry, `${label}.evidence[${index}]`);
-    assertString(entry["verificationId"], `${label}.evidence[${index}].verificationId`);
+    if (entry["verificationId"] === undefined && entry["acceptanceCriterionId"] === undefined) {
+      throw new Error(`malformed implement state: ${label}.evidence[${index}] must name verificationId or acceptanceCriterionId`);
+    }
+    if (entry["verificationId"] !== undefined) assertString(entry["verificationId"], `${label}.evidence[${index}].verificationId`);
+    if (entry["acceptanceCriterionId"] !== undefined) assertString(entry["acceptanceCriterionId"], `${label}.evidence[${index}].acceptanceCriterionId`);
     assertString(entry["path"], `${label}.evidence[${index}].path`);
     assertString(entry["sha256"], `${label}.evidence[${index}].sha256`);
+  }
+  assertRecord(value["checkLedger"], `${label}.checkLedger`);
+  assertSha256(value["checkLedger"]["sha256"], `${label}.checkLedger.sha256`);
+  if (!Array.isArray(value["checkLedger"]["bindings"])) {
+    throw new Error(`malformed implement state: ${label}.checkLedger.bindings must be an array`);
+  }
+  for (const [index, binding] of value["checkLedger"]["bindings"].entries()) {
+    assertRecord(binding, `${label}.checkLedger.bindings[${index}]`);
+    for (const field of ["criterionId", "bindingId", "command", "cwd"] as const) {
+      assertString(binding[field], `${label}.checkLedger.bindings[${index}].${field}`);
+    }
+    assertStringArray(binding["argv"], `${label}.checkLedger.bindings[${index}].argv`, true);
+    if (binding["classification"] !== "asset" && binding["classification"] !== "labor") {
+      throw new Error(`malformed implement state: ${label}.checkLedger.bindings[${index}].classification is invalid`);
+    }
   }
 }
 
@@ -160,9 +196,169 @@ function assertRoundContext(value: unknown, label: string): void {
   if (!Array.isArray(value["newEvidence"])) throw new Error(`malformed implement state: ${label}.newEvidence must be an array`);
   for (const [index, entry] of value["newEvidence"].entries()) {
     assertRecord(entry, `${label}.newEvidence[${index}]`);
-    assertString(entry["verificationId"], `${label}.newEvidence[${index}].verificationId`);
+    if (entry["verificationId"] === undefined && entry["acceptanceCriterionId"] === undefined) {
+      throw new Error(`malformed implement state: ${label}.newEvidence[${index}] must name verificationId or acceptanceCriterionId`);
+    }
+    if (entry["verificationId"] !== undefined) assertString(entry["verificationId"], `${label}.newEvidence[${index}].verificationId`);
+    if (entry["acceptanceCriterionId"] !== undefined) assertString(entry["acceptanceCriterionId"], `${label}.newEvidence[${index}].acceptanceCriterionId`);
     assertString(entry["path"], `${label}.newEvidence[${index}].path`);
     assertString(entry["sha256"], `${label}.newEvidence[${index}].sha256`);
+  }
+}
+
+function assertAcceptanceCriteria(value: unknown, label: string): void {
+  if (!Array.isArray(value)) throw new Error(`malformed implement state: ${label} must be an array`);
+  const criterionIds = new Set<string>();
+  for (const [index, entry] of value.entries()) {
+    assertRecord(entry, `${label}[${index}]`);
+    assertString(entry["id"], `${label}[${index}].id`);
+    if (criterionIds.has(entry["id"])) throw new Error(`malformed implement state: duplicate acceptance criterion ${entry["id"]}`);
+    criterionIds.add(entry["id"]);
+    if (entry["judgment"] !== "machine" && entry["judgment"] !== "judged" && entry["judgment"] !== "machine+gate:human") {
+      throw new Error(`malformed implement state: ${label}[${index}].judgment is invalid`);
+    }
+    if (entry["judgment"] === "judged") assertString(entry["evidenceDeclaration"], `${label}[${index}].evidenceDeclaration`);
+    assertRecord(entry["check"], `${label}[${index}].check`);
+    if (entry["check"]["status"] !== "pending" && entry["check"]["status"] !== "green" && entry["check"]["status"] !== "parked") {
+      throw new Error(`malformed implement state: ${label}[${index}].check.status is invalid`);
+    }
+    for (const field of ["bindings", "attempts", "decisionPoints", "parks"] as const) {
+      if (!Array.isArray(entry["check"][field])) throw new Error(`malformed implement state: ${label}[${index}].check.${field} must be an array`);
+    }
+    if (!Number.isInteger(entry["check"]["consecutiveFailures"]) || Number(entry["check"]["consecutiveFailures"]) < 0) {
+      throw new Error(`malformed implement state: ${label}[${index}].check.consecutiveFailures must be a non-negative integer`);
+    }
+
+    const check = entry["check"];
+    const bindings = check["bindings"] as unknown[];
+    const bindingIds = new Set<string>();
+    for (const [bindingIndex, binding] of bindings.entries()) {
+      const bindingLabel = `${label}[${index}].check.bindings[${bindingIndex}]`;
+      assertRecord(binding, bindingLabel);
+      if (binding["id"] !== `B${bindingIndex + 1}`) throw new Error(`malformed implement state: ${bindingLabel}.id must be B${bindingIndex + 1}`);
+      bindingIds.add(binding["id"] as string);
+      assertString(binding["command"], `${bindingLabel}.command`);
+      assertStringArray(binding["argv"], `${bindingLabel}.argv`, true);
+      assertString(binding["cwd"], `${bindingLabel}.cwd`);
+      if (binding["classification"] !== "asset" && binding["classification"] !== "labor") {
+        throw new Error(`malformed implement state: ${bindingLabel}.classification is invalid`);
+      }
+      assertIsoTimestamp(binding["boundAt"], `${bindingLabel}.boundAt`);
+      if (bindingIndex === 0) {
+        if (binding["reason"] !== null) throw new Error(`malformed implement state: ${bindingLabel}.reason must be null for the first binding`);
+      } else {
+        assertString(binding["reason"], `${bindingLabel}.reason`);
+      }
+    }
+
+    const attempts = check["attempts"] as unknown[];
+    const attemptIds = new Set<string>();
+    const consumedHumanWindows = new Set<string>();
+    let lastAttemptBindingIndex = -1;
+    for (const [attemptIndex, attempt] of attempts.entries()) {
+      const attemptLabel = `${label}[${index}].check.attempts[${attemptIndex}]`;
+      assertRecord(attempt, attemptLabel);
+      if (attempt["id"] !== `A${attemptIndex + 1}`) throw new Error(`malformed implement state: ${attemptLabel}.id must be A${attemptIndex + 1}`);
+      attemptIds.add(attempt["id"] as string);
+      assertString(attempt["bindingId"], `${attemptLabel}.bindingId`);
+      if (!bindingIds.has(attempt["bindingId"] as string)) throw new Error(`malformed implement state: ${attemptLabel}.bindingId names no binding`);
+      const attemptBindingIndex = bindings.findIndex((binding) => (binding as Record<string, unknown>)["id"] === attempt["bindingId"]);
+      if (attemptBindingIndex < lastAttemptBindingIndex) throw new Error(`malformed implement state: ${attemptLabel}.bindingId moves backward in append-only binding history`);
+      lastAttemptBindingIndex = attemptBindingIndex;
+      assertIsoTimestamp(attempt["startedAt"], `${attemptLabel}.startedAt`);
+      assertIsoTimestamp(attempt["finishedAt"], `${attemptLabel}.finishedAt`);
+      if (!Number.isInteger(attempt["durationMs"]) || Number(attempt["durationMs"]) < 0) {
+        throw new Error(`malformed implement state: ${attemptLabel}.durationMs must be a non-negative integer`);
+      }
+      if (!Number.isInteger(attempt["exitCode"])) throw new Error(`malformed implement state: ${attemptLabel}.exitCode must be an integer`);
+      if (typeof attempt["timedOut"] !== "boolean") throw new Error(`malformed implement state: ${attemptLabel}.timedOut must be boolean`);
+      if (attempt["signal"] !== null && (typeof attempt["signal"] !== "string" || !/^SIG[A-Z0-9]+$/.test(attempt["signal"]))) {
+        throw new Error(`malformed implement state: ${attemptLabel}.signal is invalid`);
+      }
+      if (attempt["outcome"] !== "green" && attempt["outcome"] !== "failed") {
+        throw new Error(`malformed implement state: ${attemptLabel}.outcome is invalid`);
+      }
+      const isGreen = attempt["exitCode"] === 0 && attempt["timedOut"] === false && attempt["signal"] === null;
+      if ((attempt["outcome"] === "green") !== isGreen) throw new Error(`malformed implement state: ${attemptLabel}.outcome contradicts the recorded process result`);
+      assertSha256(attempt["outputFingerprint"], `${attemptLabel}.outputFingerprint`);
+      if (isGreen) {
+        if (attempt["failureClass"] !== null) throw new Error(`malformed implement state: ${attemptLabel}.failureClass must be null for green`);
+      } else {
+        assertSha256(attempt["failureClass"], `${attemptLabel}.failureClass`);
+      }
+      assertRecord(attempt["tree"], `${attemptLabel}.tree`);
+      for (const field of ["all", "product", "bookkeeping"] as const) assertSha256(attempt["tree"][field], `${attemptLabel}.tree.${field}`);
+      if (entry["judgment"] === "machine+gate:human") {
+        assertRecord(attempt["humanWindow"], `${attemptLabel}.humanWindow`);
+        assertString(attempt["humanWindow"]["evidence"], `${attemptLabel}.humanWindow.evidence`);
+        assertIsoTimestamp(attempt["humanWindow"]["recordedAt"], `${attemptLabel}.humanWindow.recordedAt`);
+        if (attempt["humanWindow"]["criterionId"] !== entry["id"]) throw new Error(`malformed implement state: ${attemptLabel}.humanWindow.criterionId must match ${entry["id"]}`);
+        if (consumedHumanWindows.has(attempt["humanWindow"]["evidence"] as string)) throw new Error(`malformed implement state: ${attemptLabel}.humanWindow.evidence was consumed more than once`);
+        consumedHumanWindows.add(attempt["humanWindow"]["evidence"] as string);
+      } else if (attempt["humanWindow"] !== null) {
+        throw new Error(`malformed implement state: ${attemptLabel}.humanWindow is valid only for machine+gate:human`);
+      }
+    }
+
+    const parks = check["parks"] as unknown[];
+    let activePark = false;
+    let latestResume: string | null = null;
+    for (const [parkIndex, park] of parks.entries()) {
+      const parkLabel = `${label}[${index}].check.parks[${parkIndex}]`;
+      assertRecord(park, parkLabel);
+      assertIsoTimestamp(park["parkedAt"], `${parkLabel}.parkedAt`);
+      if (park["parkedBy"] !== "human") throw new Error(`malformed implement state: ${parkLabel}.parkedBy must be human`);
+      assertString(park["approval"], `${parkLabel}.approval`);
+      assertString(park["reason"], `${parkLabel}.reason`);
+      assertNullableString(park["evidence"], `${parkLabel}.evidence`);
+      if (park["resumedAt"] === null) {
+        if (parkIndex !== parks.length - 1) throw new Error(`malformed implement state: only the latest park may be active`);
+        activePark = true;
+      } else {
+        assertIsoTimestamp(park["resumedAt"], `${parkLabel}.resumedAt`);
+        latestResume = park["resumedAt"] as string;
+      }
+    }
+    if ((check["status"] === "parked") !== activePark) throw new Error(`malformed implement state: ${label}[${index}].check.status contradicts park history`);
+
+    const decisions = check["decisionPoints"] as unknown[];
+    for (const [decisionIndex, decision] of decisions.entries()) {
+      const decisionLabel = `${label}[${index}].check.decisionPoints[${decisionIndex}]`;
+      assertRecord(decision, decisionLabel);
+      if (decision["id"] !== `DP${decisionIndex + 1}`) throw new Error(`malformed implement state: ${decisionLabel}.id must be DP${decisionIndex + 1}`);
+      if (decision["kind"] !== "same-class" && decision["kind"] !== "five-failures" && decision["kind"] !== "tools-only") {
+        throw new Error(`malformed implement state: ${decisionLabel}.kind is invalid`);
+      }
+      assertIsoTimestamp(decision["openedAt"], `${decisionLabel}.openedAt`);
+      assertString(decision["attemptId"], `${decisionLabel}.attemptId`);
+      if (!attemptIds.has(decision["attemptId"] as string)) throw new Error(`malformed implement state: ${decisionLabel}.attemptId names no attempt`);
+      assertString(decision["message"], `${decisionLabel}.message`);
+      const resolution = decision["resolution"];
+      if (decision["resolvedAt"] === null || resolution === null) {
+        if (decision["resolvedAt"] !== null || resolution !== null) throw new Error(`malformed implement state: ${decisionLabel} must resolve time and outcome together`);
+      } else {
+        assertIsoTimestamp(decision["resolvedAt"], `${decisionLabel}.resolvedAt`);
+        if (resolution !== "green" && resolution !== "parked" && resolution !== "rebound") throw new Error(`malformed implement state: ${decisionLabel}.resolution is invalid`);
+      }
+    }
+
+    const currentBinding = bindings.at(-1) as Record<string, unknown> | undefined;
+    const currentAttempts = currentBinding === undefined
+      ? []
+      : attempts.filter((attempt) => (attempt as Record<string, unknown>)["bindingId"] === currentBinding["id"]) as Array<Record<string, unknown>>;
+    const latestAttempt = currentAttempts.at(-1);
+    const attemptAfterResume = latestAttempt !== undefined && (latestResume === null || (latestAttempt["finishedAt"] as string) >= latestResume);
+    const derivedStatus = activePark ? "parked" : attemptAfterResume && latestAttempt?.["outcome"] === "green" ? "green" : "pending";
+    if (check["status"] !== derivedStatus) throw new Error(`malformed implement state: ${label}[${index}].check.status ${String(check["status"])} contradicts the harness-owned attempt ledger (expected ${derivedStatus})`);
+    const attemptsAfterResume = currentAttempts.filter((attempt) => latestResume === null || (attempt["finishedAt"] as string) >= latestResume);
+    let derivedFailures = 0;
+    for (const attempt of attemptsAfterResume.slice().reverse()) {
+      if (attempt["outcome"] === "green") break;
+      derivedFailures += 1;
+    }
+    if (check["consecutiveFailures"] !== derivedFailures) {
+      throw new Error(`malformed implement state: ${label}[${index}].check.consecutiveFailures contradicts the harness-owned attempt ledger (expected ${derivedFailures})`);
+    }
   }
 }
 
@@ -241,6 +437,7 @@ export function parseImplementState(text: string): ImplementState {
     || !Array.isArray(candidate.deviations)) {
     throw new Error("malformed implement state: tasks, requirements, acceptanceCriteria, verification, and deviations must be arrays");
   }
+  assertAcceptanceCriteria(candidate.acceptanceCriteria, "acceptanceCriteria");
   if (!Array.isArray(candidate.artifacts) || !Array.isArray(candidate.verificationAttempts)) {
     throw new Error("malformed implement state: artifacts and verificationAttempts must be arrays");
   }
@@ -280,6 +477,14 @@ export function parseImplementState(text: string): ImplementState {
     assertString(attempt["id"], `verificationAttempts[${index}].id`);
     assertInputManifest(attempt["inputManifest"], `verificationAttempts[${index}].inputManifest`);
     assertRoundContexts(attempt["roundContexts"], `verificationAttempts[${index}].roundContexts`);
+    if (!Array.isArray(attempt["skippedAcceptanceCriteria"])) {
+      throw new Error(`malformed implement state: verificationAttempts[${index}].skippedAcceptanceCriteria must be an array`);
+    }
+    for (const [skipIndex, skipped] of attempt["skippedAcceptanceCriteria"].entries()) {
+      assertRecord(skipped, `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}]`);
+      assertString(skipped["id"], `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}].id`);
+      assertString(skipped["reason"], `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}].reason`);
+    }
   }
 
   if (candidate.retirement === undefined) throw new Error("malformed implement state: retirement must be null or an object");
@@ -485,6 +690,7 @@ export function changedPathsSince(initial: SourceSnapshot, current: SourceSnapsh
 export function artifactIntegrityProblems(projectRoot: string, state: ImplementState): string[] {
   const problems: string[] = [];
   for (const artifact of state.artifacts) {
+    const target = [artifact.verificationId, artifact.acceptanceCriterionId].filter(Boolean).join("+");
     let absolute: string;
     try {
       absolute = normalizeProjectPath(projectRoot, artifact.path).absolute;
@@ -493,16 +699,16 @@ export function artifactIntegrityProblems(projectRoot: string, state: ImplementS
       continue;
     }
     if (!fs.existsSync(absolute)) {
-      problems.push(`${artifact.verificationId}: artifact missing: ${artifact.path}`);
+      problems.push(`${target}: artifact missing: ${artifact.path}`);
       continue;
     }
     const stat = fs.statSync(absolute);
     if (!stat.isFile() || stat.size <= 0) {
-      problems.push(`${artifact.verificationId}: artifact is empty or not a file: ${artifact.path}`);
+      problems.push(`${target}: artifact is empty or not a file: ${artifact.path}`);
       continue;
     }
     const actual = sha256(fs.readFileSync(absolute));
-    if (actual !== artifact.sha256) problems.push(`${artifact.verificationId}: artifact hash changed: ${artifact.path}`);
+    if (actual !== artifact.sha256) problems.push(`${target}: artifact hash changed: ${artifact.path}`);
   }
   return problems;
 }

@@ -29,6 +29,16 @@ import {
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import {
+  bindCriterionCheck,
+  checkLedgerForCriterion,
+  checkLedgerPayload,
+  criterionCheckIsGreen,
+  parkCriterion,
+  resumeCriterion,
+  runCriterionCheck,
+  validateCheckBinding,
+} from "./checks";
+import {
   acceptancePrompt,
   agentRegisteredArtifactProvenance,
   designPrompt,
@@ -58,6 +68,7 @@ import {
 } from "./store";
 import {
   IMPLEMENT_SCHEMA,
+  type AcceptanceCriterionItem,
   type AcceptanceCriterionInvocation,
   type AcLaneResult,
   type ContractItem,
@@ -154,6 +165,7 @@ function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unk
     durationMs: attempt.durationMs,
     prelint: attempt.prelint,
     mechanical: attempt.mechanical,
+    skippedAcceptanceCriteria: attempt.skippedAcceptanceCriteria,
     error: attempt.error,
     lanes: {
       acceptance: lane(attempt.lanes.acceptance, (laneResult) => ({
@@ -207,13 +219,19 @@ function inputFingerprint(
   // as [command, cwd, exitCode, status] wherever it matters.
   const artifacts = state.artifacts
     .filter((entry) => entry.command === undefined)
-    .map((entry) => ({ verificationId: entry.verificationId, path: entry.path, sha256: entry.sha256 }))
-    .sort((left, right) => `${left.verificationId}:${left.path}`.localeCompare(`${right.verificationId}:${right.path}`));
+    .map((entry) => ({
+      verificationId: entry.verificationId ?? null,
+      acceptanceCriterionId: entry.acceptanceCriterionId ?? null,
+      path: entry.path,
+      sha256: entry.sha256,
+    }))
+    .sort((left, right) => `${left.acceptanceCriterionId ?? left.verificationId}:${left.path}`.localeCompare(`${right.acceptanceCriterionId ?? right.verificationId}:${right.path}`));
   return sha256(JSON.stringify({
     schema: state.schema,
     prdSha256: state.prd.sha256,
     sourceDigest,
     artifacts,
+    checkLedger: checkLedgerPayload(state).sha256,
     tasks: state.tasks.map((entry) => [entry.id, entry.status]),
     deviations: state.deviations,
     fidelityInput,
@@ -363,6 +381,10 @@ function publicState(
 ): Record<string, unknown> {
   const latest = state.verificationAttempts.at(-1) ?? null;
   const openRisk = state.riskFindings.filter((entry) => entry.status === "open");
+  const parked = state.acceptanceCriteria.filter((entry) => entry.check.status === "parked");
+  const decisionPoints = state.acceptanceCriteria.flatMap((entry) => entry.check.decisionPoints
+    .filter((point) => point.resolvedAt === null)
+    .map((point) => ({ criterionId: entry.id, ...point })));
   const effectiveVerdict = latest === null
     ? "NOT_RUN"
     : (currentSourceDigest !== undefined && latest.sourceFingerprint !== currentSourceDigest)
@@ -385,7 +407,19 @@ function publicState(
       acceptanceOpen: state.acceptanceCriteria.filter((entry) => entry.status !== "complete").length,
       verificationNotPassed: state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").length,
       riskFindingsOpen: openRisk.length,
+      acceptanceParked: parked.length,
+      decisionPointsOpen: decisionPoints.length,
     },
+    acceptanceChecks: state.acceptanceCriteria.map((entry) => ({
+      id: entry.id,
+      judgment: entry.judgment,
+      status: entry.check.status,
+      binding: entry.check.bindings.at(-1) ?? null,
+      attempts: entry.check.attempts.length,
+      consecutiveFailures: entry.check.consecutiveFailures,
+    })),
+    parked: parked.map((entry) => ({ id: entry.id, park: entry.check.parks.at(-1) })),
+    decisionPoints,
     riskFindings: {
       openCount: openRisk.length,
       open: openRisk.map((entry) => ({ id: entry.id, severity: entry.severity, text: entry.text.slice(0, 80) })),
@@ -513,6 +547,14 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   }
   if (contract.tasks.length === 0 || contract.acceptanceCriteria.length === 0 || contract.verification.length === 0) {
     throw new Error("PRD is missing tasks, acceptance criteria, or verification items");
+  }
+  const incompleteAcceptance = contract.acceptanceCriteria.filter((criterion) =>
+    criterion.judgment === null || (criterion.judgment === "judged" && criterion.evidenceDeclaration === null));
+  if (incompleteAcceptance.length > 0) {
+    throw new Error(
+      `PRD acceptance contract is incomplete: ${incompleteAcceptance.map((criterion) => criterion.id).join(", ")}. `
+      + "Every AC must use the canonical table with Judgment, and judged ACs require Evidence Declaration.",
+    );
   }
   const slug = slugFromPrd(prd.absolute);
   const sourceIntake = contract.frontmatter["source_intake"] ?? "";
@@ -728,11 +770,25 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   const item = state.tasks.find((entry) => entry.id === id);
   if (item === undefined) throw new Error(`unknown task: ${id}`);
   const evidence = flag(args, "evidence")?.trim() ?? "";
-  if (nextStatus !== "pending" && evidence === "") throw new Error("--evidence is required when closing or blocking a task");
   if (nextStatus === "complete") {
     const byId = new Map(state.tasks.map((entry) => [entry.id, entry]));
     const openDeps = item.dependsOn.filter((dep) => byId.get(dep)?.status !== "complete");
     if (openDeps.length > 0) throw new Error(`cannot close ${id}: depends on ${openDeps.join(", ")} (not complete)`);
+    const mechanicalBlockers = state.acceptanceCriteria
+      .filter((criterion) => item.acceptanceCriteria.includes(criterion.id))
+      .filter((criterion) => criterion.judgment === "machine" || criterion.judgment === "machine+gate:human")
+      .flatMap((criterion) => {
+        if (criterion.check.status === "parked") return [];
+        const binding = criterion.check.bindings.at(-1);
+        if (binding === undefined) return [`${criterion.id}: no Check binding; bind with \`sasu implement check --ac ${criterion.id} --bind "<command>"\`, or park with verbatim human approval`];
+        if (!criterionCheckIsGreen(criterion)) {
+          return [`${criterion.id}: latest Check is not green; run \`sasu implement check --ac ${criterion.id}\` or park with verbatim human approval`];
+        }
+        return [];
+      });
+    if (mechanicalBlockers.length > 0) {
+      throw new Error(`cannot close ${id}; blocking acceptance criteria:\n- ${mechanicalBlockers.join("\n- ")}. Free-text --evidence is optional context and cannot satisfy this guard.`);
+    }
   }
   item.status = nextStatus;
   if (evidence !== "" && !item.evidence.some((entry) => entry.text === evidence)) item.evidence.push({ at: nowIso(), text: evidence });
@@ -759,6 +815,84 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
       dependsOn: entry.dependsOn,
       ready: entry.status !== "blocked" && entry.dependsOn.every((dep) => complete.has(dep)),
     })),
+  });
+}
+
+function acceptanceCriterion(state: ImplementState, args: ImplementArgs) {
+  const id = requiredFlag(args, "ac").toUpperCase();
+  const criterion = state.acceptanceCriteria.find((entry) => entry.id === id);
+  if (criterion === undefined) throw new Error(`unknown acceptance criterion: ${id}`);
+  return criterion;
+}
+
+function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  const workRoot = requireWorkRoot(state);
+  for (const forbidden of ["outcome", "exit-code", "output-fingerprint", "failure-class", "tree-fingerprint"]) {
+    if (args.flags.has(forbidden)) {
+      throw new Error(`--${forbidden} is harness-owned and cannot be supplied; \`sasu implement check\` records the real execution result`);
+    }
+  }
+  const command = flag(args, "bind")?.trim();
+  if (command !== undefined) {
+    const validated = validateCheckBinding(workRoot, command, flag(args, "cwd") ?? ".");
+    const binding = bindCriterionCheck(criterion, {
+      ...validated,
+      reason: flag(args, "reason")?.trim() || null,
+    });
+    persistState(statePath, state);
+    return result("check", true, `${criterion.id} Check ${binding.id} bound (${binding.classification}); run \`sasu implement check --ac ${criterion.id}\``, {
+      criterionId: criterion.id,
+      binding,
+      checkStatus: criterion.check.status,
+      decisionPoints: criterion.check.decisionPoints,
+    });
+  }
+  if (args.flags.has("cwd") || args.flags.has("reason")) {
+    throw new Error("--cwd and --reason are valid only with --bind");
+  }
+  const attempt = runCriterionCheck(state, workRoot, criterion, flag(args, "human-window")?.trim() || null);
+  persistState(statePath, state);
+  const open = criterion.check.decisionPoints.filter((point) => point.resolvedAt === null);
+  return result("check", attempt.outcome === "green", `${criterion.id} Check ${attempt.outcome} (exit ${attempt.exitCode}); consecutive failures ${criterion.check.consecutiveFailures}${open.length > 0 ? `; decision point: ${open.map((point) => point.kind).join(", ")}` : ""}`, {
+    criterionId: criterion.id,
+    checkStatus: criterion.check.status,
+    attempt,
+    decisionPoints: open,
+  });
+}
+
+function park(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  parkCriterion(criterion, {
+    approval: flag(args, "approval")?.trim() ?? "",
+    reason: flag(args, "reason")?.trim() ?? "",
+    evidence: flag(args, "evidence")?.trim() || null,
+  });
+  persistState(statePath, state);
+  return result("park", true, `${criterion.id} parked by recorded human approval; finalize remains blocked until resume and proof`, {
+    criterionId: criterion.id,
+    park: criterion.check.parks.at(-1),
+  });
+}
+
+function resume(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  resumeCriterion(criterion);
+  persistState(statePath, state);
+  return result("resume", true, `${criterion.id} resumed to pending; consecutive failure counter reset to 0`, {
+    criterionId: criterion.id,
+    checkStatus: criterion.check.status,
+    consecutiveFailures: criterion.check.consecutiveFailures,
   });
 }
 
@@ -816,8 +950,18 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
-  const verificationId = requiredFlag(args, "id").toUpperCase();
-  if (!state.verification.some((entry) => entry.id === verificationId)) throw new Error(`unknown verification item: ${verificationId}`);
+  const verificationId = flag(args, "id")?.trim().toUpperCase();
+  const acceptanceCriterionId = flag(args, "ac")?.trim().toUpperCase();
+  if (verificationId === undefined && acceptanceCriterionId === undefined) {
+    throw new Error("artifact requires --id <Vn>, --ac <ACn>, or both");
+  }
+  if (verificationId !== undefined && !state.verification.some((entry) => entry.id === verificationId)) {
+    throw new Error(`unknown verification item: ${verificationId}`);
+  }
+  if (acceptanceCriterionId !== undefined && !state.acceptanceCriteria.some((entry) => entry.id === acceptanceCriterionId)) {
+    throw new Error(`unknown acceptance criterion: ${acceptanceCriterionId}`);
+  }
+  const targetLabel = [verificationId, acceptanceCriterionId].filter(Boolean).join("+");
   const kind = requiredFlag(args, "kind").toLowerCase();
   if (!ARTIFACT_KINDS.has(kind) || kind === "command-log") throw new Error(`--kind must be one of: screenshot, image, browser, api, db, log, file`);
   // Artifact paths live in the RECORD tree (normally under the run dir):
@@ -842,7 +986,10 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   }
   const description = requiredFlag(args, "description").trim();
   const inspected = inspectArtifactFile(target.absolute, kind);
-  const previous = state.artifacts.find((entry) => entry.verificationId === verificationId && entry.path === target.relative);
+  const previous = state.artifacts.find((entry) =>
+    entry.verificationId === verificationId
+    && entry.acceptanceCriterionId === acceptanceCriterionId
+    && entry.path === target.relative);
   // Re-registration was the 2026-08-25 workaround: 28 unchanged records were
   // stamped again, making an old log look current. Equal bytes carry no new
   // observation, so preserve the entire prior record and its original clock.
@@ -850,22 +997,27 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     return result(
       "artifact",
       true,
-      `artifact unchanged since ${previous.registeredAt}; registration timestamp preserved for ${verificationId}: ${target.relative}`,
+      `artifact unchanged since ${previous.registeredAt}; registration timestamp preserved for ${targetLabel}: ${target.relative}`,
       { artifact: previous, unchanged: true },
     );
   }
   const registered: RegisteredArtifact = {
-    verificationId,
+    ...(verificationId !== undefined ? { verificationId } : {}),
+    ...(acceptanceCriterionId !== undefined ? { acceptanceCriterionId } : {}),
     kind,
     path: target.relative,
     description,
     ...inspected,
     registeredAt: nowIso(),
   };
-  state.artifacts = state.artifacts.filter((entry) => !(entry.verificationId === verificationId && entry.path === target.relative));
+  state.artifacts = state.artifacts.filter((entry) => !(
+    entry.verificationId === verificationId
+    && entry.acceptanceCriterionId === acceptanceCriterionId
+    && entry.path === target.relative
+  ));
   state.artifacts.push(registered);
   persistState(statePath, state);
-  return result("artifact", true, `artifact registered for ${verificationId}: ${target.relative}`, { artifact: registered });
+  return result("artifact", true, `artifact registered for ${targetLabel}: ${target.relative}`, { artifact: registered });
 }
 
 /**
@@ -1168,7 +1320,7 @@ function textEvidencePaths(projectRoot: string, paths: string[]): string[] {
 function acceptanceMaterial(
   projectRoot: string,
   state: ImplementState,
-  criterion: ContractItem,
+  criterion: AcceptanceCriterionItem,
   changedFiles: string,
   runs: MechanicalRunRecord[],
   scenarios: ContractItem[],
@@ -1196,7 +1348,8 @@ function acceptanceMaterial(
   const evidence: EvidenceMaterial[] = [];
   const readableArtifacts: AcceptancePromptMaterial["readableArtifacts"] = [];
   for (const artifact of state.artifacts.filter(
-    (entry) => entry.command === undefined && verificationIds.has(entry.verificationId),
+    (entry) => entry.command === undefined
+      && (entry.acceptanceCriterionId === criterion.id || (entry.verificationId !== undefined && verificationIds.has(entry.verificationId))),
   )) {
     const absolute = normalizeProjectPath(projectRoot, artifact.path).absolute;
     const buffer = fs.readFileSync(absolute);
@@ -1225,7 +1378,14 @@ function acceptanceMaterial(
       ...(excerpt.truncated ? { truncated: true } : {}),
     });
   }
-  return { changedFiles, checks, evidence, readableArtifacts, scenarios: mappedScenarios };
+  return {
+    changedFiles,
+    checks,
+    evidence,
+    readableArtifacts,
+    scenarios: mappedScenarios,
+    checkLedger: checkLedgerForCriterion(criterion),
+  };
 }
 
 function validateFidelity(
@@ -1494,13 +1654,33 @@ async function acceptanceLane(
   // Criteria still all judge in one round and the lane still costs its
   // slowest one - the ceiling only stops a 22-criterion PRD from putting 22
   // heavyweight judge subprocesses on a box that already runs the project.
-  const perCriterion = await mapWithConcurrency(state.acceptanceCriteria, judgeFanoutLimit(), async (criterion) => {
+  const runnableCriteria = state.acceptanceCriteria.filter((criterion) => criterion.check.status !== "parked");
+  const perCriterion = await mapWithConcurrency(runnableCriteria, judgeFanoutLimit(), async (criterion) => {
     const prior = settled.get(criterion.id);
     if (reuse !== null && prior !== undefined) {
       progress(`acceptance ${criterion.id}: ${prior.invocation.verdict} (reused from the ERROR'd attempt)`);
       return {
         invocation: { ...prior.invocation, reusedFrom: reuse.id },
         criteria: prior.criteria,
+      };
+    }
+    if (criterion.judgment === "judged"
+      && !state.artifacts.some((artifact) => artifact.acceptanceCriterionId === criterion.id)) {
+      const at = nowIso();
+      const reason = `required judged evidence is not registered: ${criterion.evidenceDeclaration ?? "no evidence declaration"}`;
+      progress(`acceptance ${criterion.id}: FAIL (${reason})`);
+      return {
+        invocation: {
+          criterionId: criterion.id,
+          invocationId: crypto.randomUUID(),
+          startedAt: at,
+          finishedAt: at,
+          durationMs: 0,
+          verdict: "FAIL" as const,
+          judge: null,
+          error: null,
+        },
+        criteria: [{ id: criterion.id, verdict: "FAIL" as const, reason, evidence: "none registered for this acceptance criterion" }],
       };
     }
     const record = await judgeLane(crypto.randomUUID(), async () => {
@@ -1515,7 +1695,10 @@ async function acceptanceLane(
       // (retry with the reason, then backend fallback). An unknown trace
       // (toolRounds null) never rejects: absence of a signal is not evidence
       // of absence.
-      const inlinedProof = material.checks.length > 0 || material.evidence.length > 0 || material.readableArtifacts.length > 0;
+      const inlinedProof = criterion.check.attempts.length > 0
+        || material.checks.length > 0
+        || material.evidence.length > 0
+        || material.readableArtifacts.length > 0;
       return runJudge(
         config,
         `implement:acceptance:${criterion.id}`,
@@ -1673,6 +1856,15 @@ function priorLaneInput<T>(
     : { result: prior.result, context: verificationRoundContext(inputManifest, prior.attempt) };
 }
 
+function skippedAcceptanceCriteria(state: ImplementState): UnifiedVerificationAttempt["skippedAcceptanceCriteria"] {
+  return state.acceptanceCriteria
+    .filter((criterion) => criterion.check.status === "parked")
+    .map((criterion) => ({
+      id: criterion.id,
+      reason: criterion.check.parks.at(-1)?.reason ?? "parked by recorded human approval",
+    }));
+}
+
 function failedAttempt(
   state: ImplementState,
   sourceDigest: string,
@@ -1701,6 +1893,7 @@ function failedAttempt(
     verdict,
     prelint,
     mechanical,
+    skippedAcceptanceCriteria: skippedAcceptanceCriteria(state),
     lanes: { acceptance: null, fidelity: null, risk: null },
     error: { stage, code, message },
   };
@@ -1769,7 +1962,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const lint = prelintPrd(prdText);
   const prelint = { ok: lint.ok, findings: lint.findings };
-  const inputManifest = verificationInputManifest(state.initialSource, source, state.artifacts);
+  const inputManifest = verificationInputManifest(state.initialSource, source, state.artifacts, checkLedgerPayload(state));
   const acceptancePriorInputs = new Map(state.acceptanceCriteria.map((criterion) => [
     criterion.id,
     priorLaneInput(state, inputManifest, (attempt) =>
@@ -1806,7 +1999,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   if (poisoned.length > 0) {
     state.artifacts = state.artifacts.filter((entry) => !poisonedEntry(entry));
     persistState(statePath, state);
-    progress(`dropped ${poisoned.length} agent-registered artifact(s) on harness-owned path(s): ${poisoned.map((entry) => `${entry.verificationId}:${entry.path}`).join(", ")}`);
+    progress(`dropped ${poisoned.length} agent-registered artifact(s) on harness-owned path(s): ${poisoned.map((entry) => `${[entry.verificationId, entry.acceptanceCriterionId].filter(Boolean).join("+")}:${entry.path}`).join(", ")}`);
   }
   const runtimeArtifactProblems = artifactIntegrityProblems(recordRoot, { ...state, artifacts: state.artifacts.filter((entry) => entry.command === undefined) });
   if (runtimeArtifactProblems.length > 0) {
@@ -1970,6 +2163,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     verdict,
     prelint,
     mechanical,
+    skippedAcceptanceCriteria: skippedAcceptanceCriteria(state),
     lanes: { acceptance, fidelity, risk, design },
     error: verdict === "ERROR"
       ? { stage: "judge", code: "judge-error", message: [acceptance.error?.message, fidelity.error?.message].filter(Boolean).join("; ") }
@@ -2119,7 +2313,10 @@ function implementationReport(
   const openItemsSection = blocked === undefined
     ? ""
     : `## Open Items\n\nThis run closed without a verification PASS. A person must settle each item before the work can be called done:\n\n${blocked.openItems.length === 0 ? "- none recorded" : blocked.openItems.map((item) => `- ${item}`).join("\n")}\n\n`;
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nImplementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
+  const skippedLines = attempt.skippedAcceptanceCriteria.length === 0
+    ? "None."
+    : attempt.skippedAcceptanceCriteria.map((entry) => `- ${entry.id}: ${entry.reason}`).join("\n");
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nBind and run AC Checks -> implementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, AC Check bindings and attempts, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n### Skipped Acceptance Criteria\n\n${skippedLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -2141,6 +2338,9 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   const fingerprint = completionFingerprint(state, source.digest, latest, currentFidelityInput);
   const blockers: string[] = [];
   blockers.push(...state.tasks.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
+  blockers.push(...state.acceptanceCriteria
+    .filter((entry) => entry.check.status === "parked")
+    .map((entry) => `${entry.id} is parked and was skipped by verification; resume and prove it before finalize`));
   blockers.push(...state.acceptanceCriteria.filter((entry) => entry.status !== "complete").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...state.verification.filter((entry) => entry.requiredForDone && entry.status !== "PASS").map((entry) => `${entry.id} is ${entry.status}`));
   blockers.push(...artifactIntegrityProblems(recordRoot, state));
@@ -2150,7 +2350,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     // keeps the diagnosis the removed per-artifact tree fingerprints tried to
     // provide, without coupling every artifact to every source edit.
     const changedPaths = verificationRoundContext(
-      verificationInputManifest(state.initialSource, source, state.artifacts),
+      verificationInputManifest(state.initialSource, source, state.artifacts, checkLedgerPayload(state)),
       latest,
     ).changedPaths;
     const shown = changedPaths.slice(0, 20);
@@ -2221,6 +2421,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         judgeErrorLoop: view.judgeErrorLoop,
         grants: view.grants,
       },
+      skippedAcceptanceCriteria: latest.skippedAcceptanceCriteria,
       openItems: blockers,
       ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
       ...(state.worktree ? { worktree: state.worktree } : {}),
@@ -2268,6 +2469,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       fidelity: latest.lanes.fidelity?.verdict ?? "NOT_RUN",
       risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
     },
+    skippedAcceptanceCriteria: latest.skippedAcceptanceCriteria,
     ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
     ...(state.worktree ? { worktree: state.worktree } : {}),
     executionCallsDuringFinalize: 0,
@@ -2290,6 +2492,9 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
   try {
     if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);
+    if (subcommand === "check") return check(projectRoot, args);
+    if (subcommand === "park") return park(projectRoot, args);
+    if (subcommand === "resume") return resume(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
@@ -2298,7 +2503,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,

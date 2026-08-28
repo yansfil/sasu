@@ -1,9 +1,9 @@
 import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 
-// v5: the run owns its approved PRD snapshot, baseline attribution, retirement
-// transition, and round-to-round judge delta record. Older shapes are not
-// migrated because completion authority must never guess missing provenance.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v5" as const;
+// v6: acceptance criteria own their mechanical check ledger, decision points,
+// and park history. Older shapes are not migrated because completion authority
+// must never guess missing bindings, attempts, or human approvals.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v6" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 
 export type ItemStatus = "pending" | "complete" | "blocked";
@@ -30,6 +30,75 @@ export interface ContractItem {
   acceptanceCriteria: string[];
   status: ItemStatus;
   evidence: EvidenceNote[];
+}
+
+export type AcceptanceJudgment = "machine" | "judged" | "machine+gate:human";
+export type AcceptanceCheckStatus = "pending" | "green" | "parked";
+
+export interface CheckBinding {
+  id: string;
+  command: string;
+  argv: string[];
+  cwd: string;
+  classification: "asset" | "labor";
+  boundAt: string;
+  reason: string | null;
+}
+
+export interface CheckTreeFingerprint {
+  all: string;
+  product: string;
+  bookkeeping: string;
+}
+
+export interface CheckAttempt {
+  id: string;
+  bindingId: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  exitCode: number;
+  timedOut: boolean;
+  signal: NodeJS.Signals | null;
+  outcome: "green" | "failed";
+  outputFingerprint: string;
+  failureClass: string | null;
+  tree: CheckTreeFingerprint;
+  humanWindow: { evidence: string; recordedAt: string; criterionId: string } | null;
+}
+
+export interface CheckDecisionPoint {
+  id: string;
+  kind: "same-class" | "five-failures" | "tools-only";
+  openedAt: string;
+  attemptId: string;
+  message: string;
+  resolvedAt: string | null;
+  resolution: "green" | "parked" | "rebound" | null;
+}
+
+export interface CheckParkRecord {
+  parkedAt: string;
+  parkedBy: "human";
+  approval: string;
+  reason: string;
+  evidence: string | null;
+  resumedAt: string | null;
+}
+
+export interface AcceptanceCheckLedger {
+  status: AcceptanceCheckStatus;
+  bindings: CheckBinding[];
+  attempts: CheckAttempt[];
+  consecutiveFailures: number;
+  decisionPoints: CheckDecisionPoint[];
+  parks: CheckParkRecord[];
+}
+
+export interface AcceptanceCriterionItem extends ContractItem {
+  judgment: AcceptanceJudgment | null;
+  evidenceDeclaration: string | null;
+  check: AcceptanceCheckLedger;
 }
 
 export interface TaskItem extends ContractItem {
@@ -73,7 +142,8 @@ export interface BaselineAttribution {
 }
 
 export interface RegisteredArtifact {
-  verificationId: string;
+  verificationId?: string;
+  acceptanceCriterionId?: string;
   kind: string;
   path: string;
   description: string;
@@ -238,13 +308,17 @@ export interface FidelityCheckResult {
 
 export interface VerificationInputManifest {
   source: SourceEntry[];
-  evidence: Array<{ verificationId: string; path: string; sha256: string }>;
+  evidence: Array<{ verificationId?: string; acceptanceCriterionId?: string; path: string; sha256: string }>;
+  checkLedger: {
+    sha256: string;
+    bindings: Array<{ criterionId: string; bindingId: string; command: string; argv: string[]; cwd: string; classification: "asset" | "labor" }>;
+  };
 }
 
 export interface VerificationRoundContext {
   priorAttemptId: string | null;
   changedPaths: string[];
-  newEvidence: Array<{ verificationId: string; path: string; sha256: string }>;
+  newEvidence: Array<{ verificationId?: string; acceptanceCriterionId?: string; path: string; sha256: string }>;
 }
 
 export interface VerificationRoundContexts {
@@ -283,6 +357,8 @@ export interface UnifiedVerificationAttempt {
   verdict: VerificationStatus;
   prelint: { ok: boolean; findings: unknown[] };
   mechanical: MechanicalRunRecord[];
+  /** Criteria deliberately excluded from this attempt by a recorded park. */
+  skippedAcceptanceCriteria: Array<{ id: string; reason: string }>;
   lanes: {
     acceptance: LaneRecord<{
       verdict: "PASS" | "FAIL";
@@ -341,7 +417,7 @@ export interface ImplementState {
   adoptions?: { at: string; fromSessionId: string; evidence: string }[];
   tasks: TaskItem[];
   requirements: ContractItem[];
-  acceptanceCriteria: ContractItem[];
+  acceptanceCriteria: AcceptanceCriterionItem[];
   verification: VerificationItem[];
   artifacts: RegisteredArtifact[];
   verificationAttempts: UnifiedVerificationAttempt[];

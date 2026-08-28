@@ -31,6 +31,10 @@ test("gen-prd routes readiness through the spec gate", () => {
   assert.match(skill, /sasu gate spec --slug <topic-slug> --prd/);
   assert.match(skill, /fidelity/i);
   assert.match(skill, /Never run `sasu gate override` yourself/);
+  assert.match(skill, /\| ID \| Criterion \| Judgment \| Evidence Declaration \|/);
+  assert.match(skill, /`machine\+gate:human`/);
+  assert.match(skill, /Ask a contract-breaking tagging question only when/);
+  assert.match(skill, /judged AC without its Evidence Declaration/);
 });
 
 test("implement routes changed-code tasks through unified implement verify", () => {
@@ -38,6 +42,10 @@ test("implement routes changed-code tasks through unified implement verify", () 
   assert.match(skill, /sasu implement verify/);
   assert.match(skill, /mechanical/i);
   assert.match(skill, /Do not use overrides on the user's behalf/);
+  assert.match(skill, /sasu implement check --ac AC1 --bind/);
+  assert.match(skill, /sasu implement park/);
+  assert.match(skill, /sasu implement resume --ac AC1/);
+  assert.match(skill, /parked AC.*blocks a complete finalize/is);
 });
 
 test("please bounds each PRD gate to a full review and one closure review", () => {

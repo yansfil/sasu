@@ -29,11 +29,17 @@ export function runPrdCommand(
     const text = fs.readFileSync(resolved.absolute, "utf8");
     const prelint = prelintPrd(text);
     const contract = parseImplementContract(text);
+    const tagCounts = contract.acceptanceCriteria.reduce<Record<string, number>>((counts, criterion) => {
+      const tag = criterion.judgment ?? "missing";
+      counts[tag] = (counts[tag] ?? 0) + 1;
+      return counts;
+    }, { machine: 0, judged: 0, "machine+gate:human": 0, missing: 0 });
     const detail = {
       prdPath: resolved.relative,
       parsed: {
         taskCount: contract.tasks.length,
         acceptanceCriteriaCount: contract.acceptanceCriteria.length,
+        acceptanceJudgments: tagCounts,
         verificationCount: contract.verification.length,
       },
       blockingGaps: prelint.findings,

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
-import type { ContractItem, MechanicalBinding, ReviewProfile, TaskItem, VerificationItem } from "./types";
+import type { AcceptanceCriterionItem, AcceptanceJudgment, ContractItem, MechanicalBinding, ReviewProfile, TaskItem, VerificationItem } from "./types";
 
 interface ParsedItem {
   id: string;
@@ -9,6 +9,8 @@ interface ParsedItem {
   title: string;
   requirements?: string[];
   acceptanceCriteria?: string[];
+  judgment?: AcceptanceJudgment | null;
+  evidenceDeclaration?: string | null;
   matrix?: {
     mode?: string;
     covers?: string;
@@ -23,6 +25,7 @@ interface ParserLibrary {
   extractFirstSection(markdown: string, headings: string[]): string;
   extractFirstNestedSection(markdown: string, headings: string[]): string;
   parseMarkdownItems(markdown: string, prefix: string, label: string): ParsedItem[];
+  parseAcceptanceCriteria(markdown: string): ParsedItem[];
   parseVerification(markdown: string): ParsedItem[];
   parseTestModeContract(markdown: string): unknown[];
   applyTestModeDefaults(items: ParsedItem[], modes: unknown[]): void;
@@ -40,7 +43,7 @@ export interface ImplementContract {
   body: string;
   tasks: TaskItem[];
   requirements: ContractItem[];
-  acceptanceCriteria: ContractItem[];
+  acceptanceCriteria: AcceptanceCriterionItem[];
   /** §2.1 user scenario cards (SC#). Optional: scenario-less PRDs parse to []. */
   scenarios: ContractItem[];
   verification: VerificationItem[];
@@ -58,6 +61,22 @@ function item(input: ParsedItem): ContractItem {
     acceptanceCriteria: [...(input.acceptanceCriteria ?? [])],
     status: "pending",
     evidence: [],
+  };
+}
+
+function acceptanceCriterion(input: ParsedItem): AcceptanceCriterionItem {
+  return {
+    ...item(input),
+    judgment: input.judgment ?? null,
+    evidenceDeclaration: input.evidenceDeclaration ?? null,
+    check: {
+      status: "pending",
+      bindings: [],
+      attempts: [],
+      consecutiveFailures: 0,
+      decisionPoints: [],
+      parks: [],
+    },
   };
 }
 
@@ -116,8 +135,8 @@ export function parseImplementContract(markdown: string): ImplementContract {
     .parseMarkdownItems(parser.extractFirstSection(parsed.body, ["6. Requirements", "Requirements"]), "R", "R")
     .map(item);
   const acceptanceCriteria = parser
-    .parseMarkdownItems(parser.extractFirstSection(parsed.body, ["7. Acceptance Criteria", "Acceptance Criteria"]), "AC", "AC")
-    .map(item);
+    .parseAcceptanceCriteria(parser.extractFirstSection(parsed.body, ["7. Acceptance Criteria", "Acceptance Criteria"]))
+    .map(acceptanceCriterion);
   const scenarios = parser
     .parseMarkdownItems(parser.extractFirstNestedSection(parsed.body, ["2.1 User Scenarios", "User Scenarios"]), "SC", "SC")
     .map(item);

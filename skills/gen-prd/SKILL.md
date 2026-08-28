@@ -312,6 +312,28 @@ expected`.
 Requirements and ACs must be testable. Tasks are PRD-level obligations, not
 executor nodes.
 
+Every AC must use the canonical judgment table.
+Choose the tag from the proof boundary, not from convenience:
+
+- `machine`: a deterministic command can settle the criterion without a human execution window.
+- `judged`: sufficiency depends on semantic or runtime evidence a read-only acceptance judge must weigh.
+  `Evidence Declaration` is required and names the evidence shape or scripted run steps, not a command or future file path.
+- `machine+gate:human`: the final check is deterministic, but one execution requires a fresh human approval window.
+  The implementation records that approval for one check attempt.
+
+Ask a contract-breaking tagging question only when choosing between these forms would materially change required human involvement or evidence.
+Do not infer `machine+gate:human` merely because a V row names a human judgment; AC judgment tags and V modes are independent contracts in this version.
+
+```markdown
+| ID | Criterion | Judgment | Evidence Declaration |
+| --- | --- | --- | --- |
+| AC1 | a saved draft reopens with the same content | machine | - |
+| AC2 | the recovery message is understandable and actionable | judged | scripted recovery run: trigger expiry, capture message, retry successfully |
+| AC3 | the owner-approved destructive preview matches the final target set | machine+gate:human | - |
+```
+
+`sasu prd readiness` rejects list-form or untagged ACs, rejects a `judged` row without an evidence declaration, and reports counts for all three tags.
+
 Task rules:
 
 - Every task traces to at least one requirement unless it is pure verification
@@ -328,11 +350,10 @@ Task rules:
 - If implementation later needs an unmapped task or material structure change,
   the agent must ask for approval before continuing.
 
-Use IDs in the text:
+Use IDs in requirements and tasks; AC IDs live in the table:
 
 ```markdown
 - R1. ...
-- AC1. ...
 - T1. ... Covers R1, AC1.
 - T2. ... Covers R2. Depends on: T1.
 ```
@@ -340,7 +361,7 @@ Use IDs in the text:
 #### Product Semantics Versus Implementation Bindings
 
 Keep every AC as an observable product outcome.
-Do not append `Check:` commands or `Artifact:` paths to AC bullets.
+Do not put `Check:` commands or `Artifact:` paths in the Criterion or Evidence Declaration cells.
 Do not phrase the evidence procedure as the result: `tests pass`, `a screenshot
 is registered`, `the reviewer confirms`, and `the check runs in a browser`
 belong in `V#` Pass Intent. State the resulting behavior, state, quality, or
@@ -494,6 +515,9 @@ After drafting and before marking the PRD `ready`, verify inline:
 - Pass intent: each required `V#` states a pass intent whose success is
   observable by an artifact or tool, and it actually proves the covered
   requirement rather than a proxy condition.
+- AC judgment: every AC has the correct `machine`, `judged`, or
+  `machine+gate:human` tag; every judged row declares the evidence shape or
+  scripted run steps; no row embeds an executor command or artifact path.
 - Regression value: each automated test names a realistic regression risk and
   has enough protection value to justify its maintenance cost; other behavior
   uses the strongest fitting proof mode.
@@ -520,6 +544,7 @@ This is stateless: it parses the PRD exactly the way `implement` will,
 derives the verification plan against real repo signals, and writes nothing.
 Exit code 2 means the semantic verification contract is not harness-readable.
 Examples include uncovered ACs, dangling references, missing coverage, or invalid mode semantics.
+An untagged/list-form AC or a judged AC without its Evidence Declaration is a blocking readiness defect; the parsed output also reports the three tag counts so the approval review can see the planned proof mix.
 Missing implementation commands appear under `deferredBindings` and do not block PRD approval.
 For greenfield work, the precheck validates semantic coverage and the derived
 binding shape, including required evidence kinds, without requiring a runner,

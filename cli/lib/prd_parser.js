@@ -303,6 +303,60 @@ function parseMarkdownItems(section, prefix, fallbackLabel) {
   return items;
 }
 
+/**
+ * Acceptance criteria use one canonical table because judgment ownership is
+ * executable state, not prose. List syntax is still parsed as an incomplete
+ * contract so readiness can point at each missing tag instead of crashing;
+ * implement start rejects those null judgments.
+ */
+function parseAcceptanceCriteria(section) {
+  const rows = [];
+  let headers = null;
+  for (const [index, rawLine] of String(section || "").split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("```")) continue;
+    if (!looksLikeMarkdownTable(line, headers)) continue;
+    const cells = parseMarkdownTableRow(line);
+    if (cells.length === 0 || isTableSeparator(cells)) continue;
+    if (!headers) {
+      headers = cells.map(normalizeTableHeader);
+      continue;
+    }
+    const rawId = tableValue(headers, cells, ["id", "ac", "criterion id", "acceptance criterion id"]);
+    const id = rawId.replace(/\s+/g, "").toUpperCase();
+    if (!/^AC\d+$/.test(id)) continue;
+    const text = tableValue(headers, cells, ["criterion", "acceptance criterion", "criteria", "requirement"]);
+    const rawJudgment = tableValue(headers, cells, ["judgment", "judgement", "판정"]);
+    const judgment = ["machine", "judged", "machine+gate:human"].includes(rawJudgment.toLowerCase())
+      ? rawJudgment.toLowerCase()
+      : null;
+    const rawEvidence = tableValue(headers, cells, ["evidence declaration", "evidence", "증거 선언", "증거"]);
+    const evidenceDeclaration = rawEvidence === "" || /^[-–—]$/.test(rawEvidence) ? null : rawEvidence;
+    const coverage = coverageFromText(text);
+    rows.push({
+      id,
+      text,
+      title: firstSentence(text),
+      requirements: coverage.requirements,
+      acceptanceCriteria: coverage.acceptanceCriteria,
+      status: "pending",
+      evidence: [],
+      artifacts: [],
+      judgment,
+      evidenceDeclaration,
+      line: index + 1,
+      source: "acceptance_table",
+    });
+  }
+  if (rows.length > 0) return rows;
+  return parseMarkdownItems(section, "AC", "AC").map((entry) => ({
+    ...entry,
+    judgment: null,
+    evidenceDeclaration: null,
+    source: "acceptance_list",
+  }));
+}
+
 function coverageFromText(text) {
   return {
     requirements: expandCoverageIds(text, "R"),
@@ -898,6 +952,7 @@ function findPrdImplementationBindings(content) {
   const defects = [];
   let section = null;
   let currentAc = null;
+  let acCriterionIndex = -1;
   let inVerificationMatrix = false;
   let matrixHeaderSeen = false;
 
@@ -911,6 +966,7 @@ function findPrdImplementationBindings(content) {
         : number === "8" || title === "prd-level tasks" ? "task"
           : null;
       currentAc = null;
+      acCriterionIndex = -1;
       inVerificationMatrix = false;
       matrixHeaderSeen = false;
     }
@@ -936,6 +992,23 @@ function findPrdImplementationBindings(content) {
     }
 
     if (section === "ac") {
+      if (line.trim().startsWith("|")) {
+        const cells = parseMarkdownTableRow(line);
+        const normalized = cells.map(cell => cell.trim().toLowerCase());
+        if (normalized.includes("id") && normalized.includes("criterion")) {
+          acCriterionIndex = normalized.indexOf("criterion");
+        } else if (/^AC\d+$/i.test((cells[0] || "").trim()) && acCriterionIndex >= 0) {
+          const id = cells[0].trim().toUpperCase();
+          const criterion = cells[acCriterionIndex] || "";
+          if (/(?:^|\s)(?:Check|Artifact):\s*/i.test(criterion)) {
+            defects.push({
+              code: "prd-implementation-binding",
+              line: index + 1,
+              message: `${id} declares an executable Check or Artifact path inside the product criterion`,
+            });
+          }
+        }
+      }
       const definition = line.match(/^\s*-\s*(AC\d+)[.:]\s+/i);
       if (definition) currentAc = definition[1].toUpperCase();
       else if (!/^\s+\S/.test(line) || /^\s*-\s/.test(line)) currentAc = null;
@@ -975,6 +1048,7 @@ module.exports = {
   extractNestedSection,
   extractFirstNestedSection,
   parseMarkdownItems,
+  parseAcceptanceCriteria,
   coverageFromText,
   expandCoverageIds,
   parsePreWorkChecklist,

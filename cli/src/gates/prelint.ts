@@ -57,8 +57,8 @@ function parseFrontmatter(lines: string[]): Frontmatter | null {
     if (lines[i]!.trim() === "---") {
       const values = new Map<string, { value: string; line: number }>();
       for (let j = 1; j < i; j += 1) {
-        const match = lines[j]!.match(/^([A-Za-z_][A-Za-z0-9_]*):\s*"?([^"]*?)"?\s*$/);
-        if (match) values.set(match[1]!, { value: match[2]!.trim(), line: j + 1 });
+        const match = lines[j]!.match(/^([A-Za-z_][A-Za-z0-9_]*):\s*(?:"([^"]*)"|([^#]*?))(?:\s+#.*)?\s*$/);
+        if (match) values.set(match[1]!, { value: (match[2] ?? match[3] ?? "").trim(), line: j + 1 });
       }
       return { values, bodyStartIndex: i + 1 };
     }
@@ -450,7 +450,7 @@ export function prelintPrd(content: string): PrelintResult {
     findings.push(finding("prd-section-missing", null, `missing numbered section(s): ${missingSections.join(", ")}`, "Add every '## <n>.' section from the gen-prd template (1-12)."));
   }
 
-  // Defined IDs: list items plus 9.2 table ID cells.
+  // Defined IDs: list items plus the AC and 9.2 tables.
   const defined = new Set<string>();
   const acDefinitionLines = new Map<string, number>();
   const acRequirementRefs = new Map<string, Set<string>>();
@@ -468,6 +468,49 @@ export function prelintPrd(content: string): PrelintResult {
     }
     if (match[1] === "SC" && !scenarioDefinitionLines.has(id)) {
       scenarioDefinitionLines.set(id, i + 1);
+    }
+  }
+
+  const acSection = sectionRange(lines, "## 7. Acceptance Criteria")
+    ?? sectionRange(lines, "## Acceptance Criteria");
+  const acTable = acSection ? parseTable(lines, acSection.start + 1, acSection.end) : null;
+  const requiredAcHeaders = ["ID", "Criterion", "Judgment", "Evidence Declaration"];
+  const acHeaderIndexes = new Map(requiredAcHeaders.map((header) => [header, acTable?.header.indexOf(header) ?? -1]));
+  if (acTable === null || requiredAcHeaders.some((header) => acHeaderIndexes.get(header) === -1)) {
+    const listedAcs = [...acDefinitionLines.entries()];
+    if (listedAcs.length === 0) {
+      findings.push(finding("prd-ac-table-required", acSection === null ? null : acSection.start + 1, "acceptance criteria must use the ID | Criterion | Judgment | Evidence Declaration table", "Use the canonical four-column AC table."));
+    } else {
+      for (const [id, line] of listedAcs) {
+        findings.push(finding("prd-ac-judgment-missing", line, `${id} has no Judgment tag because it is not in the canonical AC table`, `Move ${id} into the AC table and set Judgment to machine, judged, or machine+gate:human.`));
+      }
+    }
+  } else {
+    // Once the table exists it is the single AC definition surface. A list AC
+    // is not a fallback definition because that would restore the untagged
+    // completion path the table removes.
+    for (const id of acDefinitionLines.keys()) defined.delete(id);
+    acDefinitionLines.clear();
+    acRequirementRefs.clear();
+    const idIndex = acHeaderIndexes.get("ID")!;
+    const criterionIndex = acHeaderIndexes.get("Criterion")!;
+    const judgmentIndex = acHeaderIndexes.get("Judgment")!;
+    const evidenceIndex = acHeaderIndexes.get("Evidence Declaration")!;
+    for (const row of acTable.rows) {
+      const id = (row.cells[idIndex] ?? "").replace(/\s+/g, "").toUpperCase();
+      if (!/^AC\d+$/.test(id)) continue;
+      defined.add(id);
+      acDefinitionLines.set(id, row.line);
+      const criterion = row.cells[criterionIndex] ?? "";
+      acRequirementRefs.set(id, new Set(criterion.match(/\bR\d+\b/g) ?? []));
+      const judgment = (row.cells[judgmentIndex] ?? "").toLowerCase();
+      if (!new Set(["machine", "judged", "machine+gate:human"]).has(judgment)) {
+        findings.push(finding("prd-ac-judgment-missing", row.line, `${id} has invalid or missing Judgment "${row.cells[judgmentIndex] ?? ""}"`, "Use machine, judged, or machine+gate:human."));
+      }
+      const evidence = (row.cells[evidenceIndex] ?? "").trim();
+      if (judgment === "judged" && (evidence === "" || /^[-–—]$/.test(evidence))) {
+        findings.push(finding("prd-ac-evidence-missing", row.line, `${id} is judged but has no Evidence Declaration`, "Declare the artifact or scripted run evidence the acceptance judge will receive."));
+      }
     }
   }
 
@@ -539,6 +582,7 @@ export function prelintPrd(content: string): PrelintResult {
   const warnings: PrelintFinding[] = [];
   checkTableRowShape(lines, verificationTable, "9.2", findings, warnings);
   checkTableRowShape(lines, modeTable, "9.1", findings, warnings);
+  checkTableRowShape(lines, acTable, "7", findings, warnings);
   for (const defect of findPrdImplementationBindings(content)) {
     findings.push(finding(
       defect.code,

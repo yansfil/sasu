@@ -32,7 +32,7 @@ function artifactSummary(artifacts: RegisteredArtifact[]): string {
       const provenance = artifact.command === undefined
         ? agentRegisteredArtifactProvenance(artifact.registeredAt)
         : `the harness ran \`${artifact.command}\` at ${artifact.registeredAt}${artifact.cwd === undefined ? "" : ` from cwd=${artifact.cwd}`}`;
-      return `- ${artifact.verificationId} ${artifact.kind} ${artifact.path} sha256=${artifact.sha256}; ${provenance} - ${artifact.description}`;
+      return `- ${artifact.acceptanceCriterionId ?? artifact.verificationId ?? "unbound"} ${artifact.kind} ${artifact.path} sha256=${artifact.sha256}; ${provenance} - ${artifact.description}`;
     })
     .join("\n");
 }
@@ -52,7 +52,7 @@ function roundDeltaSection(
   const changedPaths = context.changedPaths.length === 0 ? "- none" : context.changedPaths.map((entry) => `- ${entry}`).join("\n");
   const newEvidence = context.newEvidence.length === 0
     ? "- none"
-    : context.newEvidence.map((entry) => `- ${entry.verificationId}:${entry.path} sha256=${entry.sha256}`).join("\n");
+    : context.newEvidence.map((entry) => `- ${entry.acceptanceCriterionId ?? entry.verificationId}:${entry.path} sha256=${entry.sha256}`).join("\n");
   return `
 ROUND-2+ DELTA CONTRACT:
 - Disposition every prior finding by its supplied id as resolved or unresolved.
@@ -89,12 +89,23 @@ export interface AcceptancePromptMaterial {
   checks: CheckResult[];
   evidence: EvidenceMaterial[];
   readableArtifacts: ReadableAcceptanceArtifact[];
+  checkLedger: string;
   /**
    * §2.1 scenario cards covered by the same V rows that cover this criterion.
    * The card body (primary path, failure state, recovery) travels to the judge
    * so "half the scenario verified" is judgeable, not invisible.
    */
   scenarios: ContractItem[];
+}
+
+function checkLedgerSection(ledger: string): string {
+  return `
+HARNESS-OWNED ACCEPTANCE CHECK LEDGER:
+The harness executed these bindings and recorded attempts itself. Binding replacements stay visible.
+---
+${ledger}
+---
+`;
 }
 
 function scenarioSection(scenarios: ContractItem[]): string {
@@ -159,7 +170,7 @@ ${requirements.length === 0 ? "- none" : requirements.map((entry) => `- ${entry.
 
 MAPPED VERIFICATION PASS INTENTS:
 ${verification.length === 0 ? "- none" : verification.map((entry) => `- ${entry.id}: ${entry.passIntent}`).join("\n")}
-${roundDeltaSection(roundContext, `PRIOR RESULT FOR ${criterion.id}`, prior)}${scenarioSection(material.scenarios)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
+${roundDeltaSection(roundContext, `PRIOR RESULT FOR ${criterion.id}`, prior)}${scenarioSection(material.scenarios)}${checkLedgerSection(material.checkLedger)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
 RUN-OWNED CHANGED FILES:
 This is an allowlist, not an instruction to read every file. Prefer the smallest sufficient set.
 ---

@@ -43,6 +43,107 @@ export interface MechanicalResult {
   configSuggestion: Record<string, string> | null;
 }
 
+export interface MechanicalExecution {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  signal: NodeJS.Signals | null;
+}
+
+function failedMechanicalExecution(message: string): MechanicalExecution {
+  return { exitCode: 1, stdout: "", stderr: message, timedOut: false, signal: null };
+}
+
+function confinedMechanicalCwd(projectRoot: string, cwd: string | undefined): string | MechanicalExecution {
+  const requested = cwd ?? ".";
+  try {
+    const realProjectRoot = fs.realpathSync(projectRoot);
+    const realCommandCwd = fs.realpathSync(path.resolve(projectRoot, requested));
+    const relativeCwd = path.relative(realProjectRoot, realCommandCwd);
+    if (relativeCwd === ".." || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
+      return failedMechanicalExecution(`[sasu] command cwd escapes the project root: ${requested}`);
+    }
+    return realCommandCwd;
+  } catch {
+    return failedMechanicalExecution(`[sasu] command cwd does not exist: ${requested}`);
+  }
+}
+
+function completedMechanicalExecution(executed: {
+  error?: Error;
+  status: number | null;
+  stdout: unknown;
+  stderr: unknown;
+  signal: NodeJS.Signals | null;
+}): MechanicalExecution {
+  // SIGTERM alone is not a timeout: the child may have interrupted itself.
+  // Node marks a spawnSync deadline with ETIMEDOUT, keeping timeout and signal
+  // as two distinct observable facts for both shell and argv spawn modes.
+  const timedOut = (executed.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+  const text = (value: unknown): string => typeof value === "string" ? value : value instanceof Buffer ? value.toString("utf8") : "";
+  return {
+    exitCode: timedOut ? 124 : (executed.status ?? 1),
+    stdout: text(executed.stdout),
+    stderr: text(executed.stderr) || executed.error?.message || "",
+    timedOut,
+    signal: executed.signal,
+  };
+}
+
+/**
+ * Contract-declared shell commands and implement argv checks share cwd,
+ * output, and timeout result handling here; each public function owns only
+ * its required spawn mode and environment policy.
+ */
+export function executeMechanicalCommand(
+  projectRoot: string,
+  command: string,
+  cwd: string | undefined,
+  timeoutMs: number,
+): MechanicalExecution {
+  const commandCwd = confinedMechanicalCwd(projectRoot, cwd);
+  if (typeof commandCwd !== "string") return commandCwd;
+  const executed = spawnSync(command, {
+    cwd: commandCwd,
+    shell: true,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: timeoutMs,
+    env: process.env,
+  });
+  return completedMechanicalExecution(executed);
+}
+
+/**
+ * Implement Check bindings are agent-authored, so they use the same bounded
+ * spawn machinery without a shell and without inheriting the agent process's
+ * credential-bearing environment.
+ */
+export function executeMechanicalArgv(
+  projectRoot: string,
+  argv: string[],
+  cwd: string | undefined,
+  timeoutMs: number,
+  env: NodeJS.ProcessEnv,
+): MechanicalExecution {
+  const commandCwd = confinedMechanicalCwd(projectRoot, cwd);
+  if (typeof commandCwd !== "string") return commandCwd;
+  const [executable, ...args] = argv;
+  if (executable === undefined) {
+    return { exitCode: 1, stdout: "", stderr: "[sasu] command argv is empty", timedOut: false, signal: null };
+  }
+  const executed = spawnSync(executable, args, {
+    cwd: commandCwd,
+    shell: false,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: timeoutMs,
+    env,
+  });
+  return completedMechanicalExecution(executed);
+}
+
 /**
  * Resolve mechanical verify commands (D-08): explicit config wins, then root
  * manifest detection.
@@ -162,43 +263,18 @@ export function runMechanical(
 }
 
 function runOne(projectRoot: string, cmd: ResolvedCommand, config: SasuConfig): MechanicalRun {
-  const commandCwd = path.resolve(projectRoot, cmd.cwd ?? ".");
-  const relativeCwd = path.relative(projectRoot, commandCwd);
-  if (relativeCwd === ".." || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
-    return {
-      kind: cmd.kind,
-      command: cmd.command,
-      cwd: cmd.cwd,
-      source: cmd.source,
-      ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
-      exitCode: 1,
-      ok: false,
-      tail: `[sasu] command cwd escapes the project root: ${cmd.cwd}`,
-    };
-  }
-  const result = spawnSync(cmd.command, {
-    cwd: commandCwd,
-    shell: true,
-    encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
-    // A hung suite must fail closed instead of hanging the gate forever
-    // (PRD judge-fanout R8); configurable via verify.commandTimeoutMs.
-    timeout: config.verify.commandTimeoutMs,
-    env: process.env,
-  });
-  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
-  const exitCode = result.status ?? 1;
-  const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+  const executed = executeMechanicalCommand(projectRoot, cmd.command, cmd.cwd, config.verify.commandTimeoutMs);
+  const combined = `${executed.stdout}\n${executed.stderr}`.trim();
   const tailLines = combined.split("\n").slice(-30);
-  if (timedOut) tailLines.push(`[sasu] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
+  if (executed.timedOut) tailLines.push(`[sasu] command timed out after ${config.verify.commandTimeoutMs}ms (verify.commandTimeoutMs)`);
   return {
     kind: cmd.kind,
     command: cmd.command,
     ...(cmd.cwd !== undefined ? { cwd: cmd.cwd } : {}),
     source: cmd.source,
     ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
-    exitCode: timedOut ? 124 : exitCode,
-    ok: !timedOut && exitCode === 0,
+    exitCode: executed.exitCode,
+    ok: !executed.timedOut && executed.exitCode === 0,
     tail: tailLines.join("\n"),
   };
 }
