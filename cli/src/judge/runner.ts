@@ -1,5 +1,5 @@
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
-import { judgeProfileFor } from "../config";
+import { BACKENDS, judgeProfileFor } from "../config";
 import { AGENTIC_READ_MAX_ROUNDS, resolveBackend, type BackendRunResult, type JudgeBackend } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
 
@@ -156,8 +156,11 @@ function persistedFallbackReason(
 export function effectiveJudgeProfile(config: SasuConfig, profile: JudgeProfile): { primary: JudgeTarget; fallback: JudgeTarget | null } {
   const configured = judgeProfileFor(config, profile);
   const override = process.env["SASU_JUDGE_BACKEND"] as BackendName | undefined;
-  if (override !== undefined && override !== "claude" && override !== "codex" && override !== "stub") {
-    throw new Error(`SASU_JUDGE_BACKEND must be claude, codex, or stub, got: ${override}`);
+  // Validated against the one exported backend list: a second hardcoded list
+  // here is how a newly added backend becomes silently unselectable by the
+  // diagnostic override while every other surface accepts it (PRINCIPLES 13).
+  if (override !== undefined && !BACKENDS.includes(override)) {
+    throw new Error(`SASU_JUDGE_BACKEND must be one of: ${BACKENDS.join(", ")}, got: ${override}`);
   }
   if (override === undefined) return configured;
 

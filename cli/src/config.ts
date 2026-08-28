@@ -116,7 +116,8 @@ const DEFAULT_JUDGE: JudgeConfig = {
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
 const PROFILE_NAMES: JudgeProfile[] = ["routine", "high-risk"];
-const BACKENDS: BackendName[] = ["claude", "codex", "api", "stub"];
+/** Every selectable backend. Exported so no second list can drift from it. */
+export const BACKENDS: BackendName[] = ["claude", "codex", "api", "stub"];
 const EFFORTS: JudgeEffort[] = ["low", "medium", "high", "xhigh", "max"];
 
 type RawTarget = Partial<JudgeTarget>;
