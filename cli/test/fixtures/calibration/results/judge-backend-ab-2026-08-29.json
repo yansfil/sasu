@@ -1,0 +1,750 @@
+{
+  "at": "2026-08-28T15:01:17.755Z",
+  "what": "Judge backend A/B: codex CLI vs Messages API through a local opencodex proxy",
+  "doc": "agents/interview/implement-check/qa-log.md (626 lines), judged as a fresh full review",
+  "arms": {
+    "codex": {
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "transport": "codex exec subprocess"
+    },
+    "api": {
+      "backend": "api",
+      "model": "anthropic/claude-opus-5",
+      "transport": "POST /v1/messages via opencodex 2.34.0 on 127.0.0.1:10100"
+    }
+  },
+  "headline": {
+    "codex/high": {
+      "medianMs": 91869,
+      "findingsAvg": 5.7,
+      "themesReproduced": "6/6",
+      "p0": 1
+    },
+    "api/medium": {
+      "medianMs": 33013,
+      "findingsAvg": 7.7,
+      "themesReproduced": "6/6",
+      "p0": 0
+    },
+    "api/high": {
+      "medianMs": 75362,
+      "findingsAvg": 9.7,
+      "themesReproduced": "6/6 (every theme in all 3 runs)",
+      "p0": 0
+    },
+    "codex/xhigh": {
+      "medianMs": 235519,
+      "findingsAvg": 6.3,
+      "themesReproduced": "5/6",
+      "p0": 4
+    }
+  },
+  "caveats": [
+    "Severity calibration differs by model and this changes gate SEMANTICS, not just counts: across 9 api runs Opus 5 emitted 43 P1 and 41 P2 and ZERO P0, while codex emitted P0s at high and xhigh. P0 is the severity that blocks even under --assume-human-findings, so a judge that never labels P0 weakens that guard. Neither arm was audited for which labelling is correct.",
+    "Wall clock measured with other agent sessions active on the machine; ratios within a sweep are trustworthy, absolute ms are not.",
+    "Reproducibility is measured on bilingual theme keys, not string overlap: the same gap appears in Korean in one run and English in the next.",
+    "One document. Re-measure before generalizing (PRINCIPLES 11)."
+  ],
+  "runs": [
+    {
+      "round": 1,
+      "effort": "medium",
+      "wallMs": 30433,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 18501,
+          "findings": 1
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 30431,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 26747,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 29521,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "D-12 makes the AC 판정 컬럼 mandatory (missing → readiness FAIL) and D-06 only scopes the no-migration rule to state schema v6/new runs, so it is undecided whether the new PRD/AC format enforcement applies to already-approved or in-flight PRDs authored under the old format."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior / recovery",
+          "missing": "The log defines finalize as refusing `complete` whenever any parked AC exists (D-19, D-37 removed the receipt score from bundle A), but never states what the run's terminal state/output is or how a human escapes it — there is no documented path to conclude a run whose AC is legitimately parked (e.g., human verification permanently unavailable), so the run can be stuck with only 'resume and make it green' as an exit."
+        },
+        {
+          "severity": "P2",
+          "area": "ux / validation",
+          "missing": "D-05 states '억지 check 금지' for judged ACs, but the error/validation behavior is unspecified: whether `check --ac` (or `--bind`) against a judged-tagged AC is rejected with a message, silently allowed, or only warned."
+        },
+        {
+          "severity": "P2",
+          "area": "compatibility",
+          "missing": "D-06 fixes 'v6 = new runs only, no migration' but does not state the observable handling when the new CLI opens an existing v5 run state (hard error vs. read-only vs. silent upgrade)."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "The append-only check-attempt and bind/rebind ledger in state.json has no stated size/retention bound (only per-execution output capture caps in D-18), so long runs' state growth and judge-input manifest size are unspecified."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The verification plan (D-17, D-31, D-33) names proofs for the ledger attachment, finalize guard, counter/decision point, park/resume and judged-evidence paths, but assigns no proof to the two security/approval enforcement behaviors the log treats as the trust boundary: bind rejecting a non-whitelisted runner fail-closed (D-23/D-30/D-35) and check refusing to run a gate:human AC without a valid one-shot --human-window quote (D-11/D-32)."
+        },
+        {
+          "severity": "P2",
+          "area": "operation",
+          "missing": "D-06 declares schema v6 supports new runs only with intentional non-support of v5, but the log does not state the observable operational behavior when the harness encounters an existing v5 state.json (clear refusal message vs. crash vs. silent read)."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "effort": "high",
+      "wallMs": 75362,
+      "verdict": "BLOCK",
+      "findingCount": 11,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 75362,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 62887,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 48814,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 71489,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The log never decides where the task↔AC coverage mapping comes from, even though the new close predicate (D-20: '매핑된 machine AC가 green or parked') and UX-01 depend on it, while D-03 records that schema v5 tasks carry no AC reference and artifacts bind only to verificationId — so the gen-prd/plan change scope promised in Q7 ('컬럼 2개 추가 + 태깅 질문') may not cover emitting per-task AC coverage."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "It is unstated whether the new mandatory 판정 column (D-12, readiness FAIL without it) and schema v6 'new runs only' rule (D-06) apply to already-approved PRDs and in-flight v5 runs, i.e. whether bundle A is in scope for existing artifacts at all."
+        },
+        {
+          "severity": "P2",
+          "area": "non-goals",
+          "missing": "D-12 defers enforcement of AC-tag ↔ V-mode consistency ('초기 비도입') without assigning a bundle or revisit trigger, unlike the other deferrals which are pinned to bundle B/C via D-24."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior",
+          "missing": "The new task close predicate depends on \"매핑된 machine AC\" (D-20), but the log never decides where the task→AC mapping comes from — gen-prd/plan authoring, a new v6 state field, or the deputy declaring it at bind time — and the cited repo evidence (types.ts v5) explicitly shows no such field exists."
+        },
+        {
+          "severity": "P2",
+          "area": "states",
+          "missing": "The AC state model (D-25) only defines pending→green via check green and park/resume, leaving judged AC lifecycle undefined: judged ACs never run check, so it is unstated whether they stay pending forever in status output and whether park is available to a judged AC whose evidence cannot be produced."
+        },
+        {
+          "severity": "P2",
+          "area": "recovery",
+          "missing": "D-34 says rebind invalidates green and returns the AC to pending, but unlike resume (D-21) it is not stated whether an already-closed task holding that AC stays closed or is reopened."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "The AC↔task mapping that the new close predicate depends on is never defined: D-20 requires \"매핑된 machine AC\" to be green/parked, but D-03 records that schema v5 has no AC fields at all and binds artifacts only to verificationId, and the log never says where AC records and their task coverage are seeded from (PRD AC table parse at run start, plan task rows, or a new v6 field) or what happens when an AC maps to no task."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "The stored content of each append-only check attempt record is unspecified — whether state.json keeps only exit code + normalized fingerprint hash + signature lines, or the captured runner output (bounded by the code default cap), which determines state.json growth over a long run and whether runner output text lands in a committed repo artifact."
+        },
+        {
+          "severity": "P2",
+          "area": "compatibility",
+          "missing": "D-06 sets schema v6 as new-runs-only with no migration, but the log does not say what the new CLI does when it opens an in-flight v5 state.json (hard refusal with message, read-only degradation, or ignore)."
+        },
+        {
+          "severity": "P1",
+          "area": "verification proof / security boundary",
+          "missing": "The proof assignment list (D-17, D-31) names tests for the ledger manifest, finalize guard, counter/decision point, park/resume and judged-missing verify, but names no proof for the two security controls the design leans on — bind-time runner whitelist fail-closed rejection (D-23/D-30/D-35) and `--human-window` enforcement (execution refused without a verbatim quote, approval expiring after one run, D-11/D-23/D-32)."
+        },
+        {
+          "severity": "P2",
+          "area": "operation",
+          "missing": "No stated bound or operator path for the stall case where a machine AC keeps failing after the decision point is posted (the agent explicitly does not stop, park requires a human, and no retry/attempt cap or 'no ready work left' behavior is decided)."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "effort": "xhigh",
+      "wallMs": 184765,
+      "verdict": "BLOCK",
+      "findingCount": 11,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 87790,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 128444,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 120176,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 184764,
+          "findings": 3
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The log makes the AC 판정 column mandatory (D-12: readiness FAIL without it) but never states whether this applies to already-approved/legacy PRDs or only to PRDs authored after Bundle A, so the team must invent whether existing PRDs suddenly fail readiness."
+        },
+        {
+          "severity": "P1",
+          "area": "non-goals",
+          "missing": "D-06's non-goal 'schema v6 supports new runs only, no migration, old schema intentionally unsupported' is sourced only to the pre-interview user invocation ref with no verbatim quote and, unlike D-04 (re-confirmed via D-26), was never re-confirmed in the Raw Q&A."
+        },
+        {
+          "severity": "P1",
+          "area": "non-goals",
+          "missing": "D-12 defers 'AC 태그 ↔ V mode 정합성 강제' as '초기 비도입' without a revisit trigger, while other deferrals (D-09/D-37, D-16) are anchored to the Bundle B/C receipt triggers in D-24."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior",
+          "missing": "The new task-close predicate depends on \"매핑된 machine AC\" (D-08/D-20), but the log never decides where the AC↔task mapping comes from - schema v5 has no AC fields (D-03), the PRD AC table has no task column (D-12), and V rows only declare lane coverage - so the implementer must invent how a task learns which ACs gate its close."
+        },
+        {
+          "severity": "P2",
+          "area": "states",
+          "missing": "D-34 says rebind invalidates green and returns the AC to pending, but unlike resume (D-21, which explicitly keeps already-closed tasks closed) it does not state what happens to a task that was already closed on the now-invalidated green AC."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "The task↔AC mapping that the new close predicate depends on is never defined: D-20/D-08 require a task's \"mapped machine ACs\" to be green-or-parked, but the PRD AC table format (D-12) has no task/covers column, schema v5 tasks carry only status+evidence (D-03), and no decision says where the AC→task binding comes from (gen-prd emitted plan field, V-row Covers, or a CLI bind step)."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility",
+          "missing": "Brownfield compatibility for existing artifacts is asserted rather than sourced: D-06's \"schema v6, no migration, new runs only (old schema intentionally unsupported)\" cites only an out-of-log user invocation with no Raw Q&A or repository evidence, and neither the behavior when the new CLI meets an in-flight v5 state.json (hard error / refuse / ignore) nor the fate of already-approved PRDs that lack the now-mandatory 판정 column under D-12 (readiness FAIL retroactively?) is decided."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "The check attempt/ledger record shape is undefined: it is unclear whether an append-only attempt stores raw captured stdout/stderr or only the exit code, extracted signature line, and normalized fingerprint hash, and consequently what portion of the ledger is materialized into the external judge's input workspace (D-13/D-31) versus only hashed in the manifest."
+        },
+        {
+          "severity": "P1",
+          "area": "security boundary / risk",
+          "missing": "The fail-closed 'runner whitelist' that gates what commands `check --bind` will let the harness execute is asserted as a reuse of an existing policy, but the only cited evidence (cli/src/judge/backends.ts command audit, /bin/zsh -lc audited wrapper, a9e3afa) describes command auditing rather than an allow/deny list, and D-35 defers even the exact citation, so the concrete allow/deny criteria - and what to do if no allowlist actually exists in code - are undefined."
+        },
+        {
+          "severity": "P2",
+          "area": "verification proof",
+          "missing": "Proof assignment (D-17, D-31) names tests for fingerprint classes, counter, decision point, park/resume, finalize guard, ledger manifest hash, and judged-evidence-missing verify FAIL, but no proof is named for the bundle's core enforcement paths: close refused when a machine AC is unbound or not green, and bind refused for a non-whitelisted command."
+        },
+        {
+          "severity": "P1",
+          "area": "operation / risk",
+          "missing": "Decision-point posting is explicitly non-blocking and, in the Bundle A transition, the only exit for a persistently failing machine AC is human verbatim park (observer path deferred to Bundle C), but the log states no terminal/blocked state or harness-owned bound for an unattended run whose remaining work is all gated on posted decision points."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "effort": "medium",
+      "wallMs": 35936,
+      "verdict": "BLOCK",
+      "findingCount": 8,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 24963,
+          "findings": 1
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 20369,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 35936,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 29918,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope/compatibility non-goal",
+          "missing": "D-06 (schema v6 with no migration, old-schema runs intentionally unsupported) is cited only to a pre-interview user invocation ref and, unlike D-04, was never explicitly reconfirmed in a Raw Q&A turn, and the log does not say what happens to runs already in flight on v5 when the new build lands."
+        },
+        {
+          "severity": "P2",
+          "area": "states",
+          "missing": "D-06 declares v5 (old-schema) runs intentionally unsupported but the log never states what the user sees when the new CLI opens an existing v5 run (clear refusal message with guidance vs. crash/undefined behavior)."
+        },
+        {
+          "severity": "P2",
+          "area": "ux",
+          "missing": "Q9's park diagram requires '승인 인용 + 사유 + 실패 증거' but D-15 only records the approval-path model, leaving the required park inputs (reason, failure evidence) and their rejection messages unspecified."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "The log never states how ACs enter the v6 state (parsed from the PRD AC table at run init vs. authored elsewhere) nor where the task↔AC mapping that D-20's close predicate depends on ('매핑된 machine AC') comes from or is stored."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility",
+          "missing": "D-06 covers state-schema forward-only support, but the log does not say what happens to already-written PRDs that lack the new mandatory 판정 column (readiness FAIL per D-12) or to an in-flight v5 run opened by the new CLI (hard error vs. ignore)."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "The persisted shape of a check attempt record is ambiguous: it is unclear whether the append-only ledger stores only exit code + normalized fingerprint hash (+signature lines) or also captured raw output subject to the code-default cap, which drives state.json growth over a long run."
+        },
+        {
+          "severity": "P2",
+          "area": "verification",
+          "missing": "D-31 assigns named proofs to the ledger attachment, finalize guard, counter/decision point, and park/resume, but does not name a specific proof for the bundle's central teeth (close refusal when a mapped machine AC is unbound or not green), leaving it implicit in the generic cli e2e suite and the UX-01 card."
+        },
+        {
+          "severity": "P2",
+          "area": "operation",
+          "missing": "D-06 declares schema v6 supports new runs only with no migration, but the log does not state the operational behavior when the upgraded CLI meets an in-flight v5 run (clear refusal message vs. undefined failure)."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "effort": "high",
+      "wallMs": 69151,
+      "verdict": "BLOCK",
+      "findingCount": 8,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 32760,
+          "findings": 1
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 44459,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 49411,
+          "findings": 2
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 69151,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P2",
+          "area": "scope",
+          "missing": "The log fixes the no-migration stance at the run/state level (D-06) but never states whether already-written PRDs that lack the new mandatory 판정 column are grandfathered or simply fail readiness after bundle A ships."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior",
+          "missing": "The task-close predicate (D-20) depends on \"매핑된 machine AC\" but the log never decides where the task↔AC mapping comes from (PRD/plan declaration, V-table Covers, manual bind) or what happens to an AC that maps to no task and therefore never gates any close."
+        },
+        {
+          "severity": "P1",
+          "area": "states",
+          "missing": "The resume recovery path (D-21) returns an AC to pending while its task stays closed and says it is \"다시 verify 대상\", but bundle A's minimal verify (D-13) only skips parked ACs and attaches the ledger, so it is undefined whether a pending, never-green machine AC makes verify non-PASS or blocks finalize (finalize only guards on parked, D-19) — allowing a run to complete with an unverified AC."
+        },
+        {
+          "severity": "P2",
+          "area": "ux",
+          "missing": "Required inputs for the park command are inconsistent: the Q9 explanation states park needs 승인 인용 + 사유 + 실패 증거, while D-15/UX-02 only make the verbatim approval mandatory, so validation/rejection copy for a park missing a reason is ambiguous."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility / migration",
+          "missing": "D-06 declares schema v6 as 'new runs only, no migration' but the log never defines the observable upgrade behavior for pre-existing artifacts — what the CLI does when it opens an in-flight v5 state.json (hard fail-closed error, read-only degrade, or silent field-add) and whether already-approved PRDs that lack the newly required 판정 column now FAIL readiness — and this policy is sourced only to a session-start user invocation that is not reproduced anywhere in the Raw Q&A."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "The persisted shape and retention of each append-only check attempt is unspecified — whether state.json stores only the exit code plus normalized fingerprint hash, or also the raw signature lines / captured output (which is also what gets hashed into the judge input manifest per D-31) — and no bound or pruning rule is given for the append-only attempts and bind-history ledger over a long run."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The verification plan (D-17/D-31/D-33) names proofs for the ledger attachment, finalize parked-guard, counter, decision point and park/resume, but names no proof for the enforcement paths that carry the accepted security risk — bind whitelist fail-closed rejection, --human-window required-and-single-use expiry with its audit record (원문+시각+대상 AC), park verbatim requirement, and verify's parked→skipped exclusion with explicit recording (D-13)."
+        },
+        {
+          "severity": "P2",
+          "area": "operation",
+          "missing": "check attempts and bind history are append-only in state.json and the ledger is attached to judge input, but no bound is stated on ledger size or how much of it is passed to the judge (per-attempt output cap is a code default; total growth is unbounded)."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "effort": "xhigh",
+      "wallMs": 99316,
+      "verdict": "BLOCK",
+      "findingCount": 10,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 87165,
+          "findings": 2
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 74782,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 85536,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 99316,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The close predicate in D-08/D-20 depends on \"매핑된 machine AC\" but the log never decides where the task↔AC mapping comes from or whether producing it is in bundle A scope (gen-prd/plan output column, implement plan seeding, or sub-agent declaration at bind time), and the cited v5 evidence only shows artifacts bound to verificationId."
+        },
+        {
+          "severity": "P2",
+          "area": "non-goals",
+          "missing": "D-12 defers enforcement of AC tag ↔ V mode consistency with \"초기 비도입\" but gives no revisit trigger, unlike the other deferrals (D-24, D-35, D-37)."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior/states",
+          "missing": "The close predicate rests on \"매핑된 machine AC\" (D-20, UX-01: T2 → AC4) but the log never states where the AC↔task mapping comes from (plan field, PRD authoring step, or manual bind), nor what close does when a task maps to zero or to ACs shared with other tasks."
+        },
+        {
+          "severity": "P1",
+          "area": "recovery/states",
+          "missing": "Bundle A allows park only via human verbatim (D-15 transitional) while close requires green-or-parked (D-20), but the log does not define the visible run state or agent behavior when a decision point is posted, no ready work remains, and no human is present (halt, blocked status, retry loop, or exit) — the exact T5 hostage situation the bundle targets."
+        },
+        {
+          "severity": "P2",
+          "area": "ux",
+          "missing": "It is unspecified whether the harness-executed check returns the captured failure output (and how truncation at the code-default cap is surfaced) to the operator/agent, or only the exit code and fingerprint."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "The AC↔task mapping that the new close predicate depends on is never defined: the log repeatedly says close requires \"매핑된 machine AC\" to be green/parked (D-08, D-20, UX-01) but never states where that mapping lives (PRD task table column, plan generation, transitive via V.Covers, or a new state v6 field), and D-03 confirms v5 tasks carry no AC references."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility",
+          "missing": "D-06's \"schema v6, no migration, old schema intentionally unsupported\" is sourced only to an out-of-conversation user-invocation ref (the same provenance defect the audit flagged for D-04 and fixed via D-26 reconfirmation) and never revisited in any Raw Q&A, and the log never says what the upgraded CLI does with an in-flight v5 run (hard error, refuse-and-instruct-restart, archive, or read-only)."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "Physical storage and judge-input projection of the append-only check ledger are unspecified: whether captured check output lives inline in state.json or in agents/runs/** files, and whether the ledger attached to judge input (D-13/D-31) is the full attempt history or a bounded summary as attempt counts grow."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "D-17/D-31 assign proofs to the ledger attachment, finalize guard, counter, decision point and park/resume, but no verification artifact is named for the bundle's actual enforcement gates: close refusal when a mapped machine AC is unbound or not green (D-20), bind rejection of non-whitelisted runners (D-23/D-30), and check refusal/expiry when --human-window verbatim is absent or already consumed (D-11/D-32)."
+        },
+        {
+          "severity": "P2",
+          "area": "operation",
+          "missing": "The check ledger and bind/rebind history are append-only in state.json and are attached to the judge input (D-13/D-25/D-29/D-31), but no bound is decided for ledger/attempt-output size, so state growth and judge-call context/cost on a long run with many attempts are undefined (only per-attempt output capture caps are mentioned)."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "effort": "medium",
+      "wallMs": 33013,
+      "verdict": "BLOCK",
+      "findingCount": 8,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 13543,
+          "findings": 1
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 24039,
+          "findings": 2
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 33012,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 27360,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P2",
+          "area": "scope",
+          "missing": "D-27 (별도 증명 매트릭스 비도입)의 재방문 조건이 '필요 시 gen-prd 단계에서 재평가'로만 적혀 있어 다른 이연 항목(D-24, D-37)과 달리 구체적 트리거가 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "states/recovery",
+          "missing": "It is unspecified whether a timed-out or interrupted gate:human check consumes the one-shot --human-window approval, i.e. whether the operator must be re-quoted for the retry (D-23/D-28 interact but neither settles it)."
+        },
+        {
+          "severity": "P2",
+          "area": "ux/validation",
+          "missing": "Required inputs for the park command are inconsistent between the Q9 diagram (approval quote + reason + failure evidence) and D-15/UX-02 (approval quote only), so validation/rejection copy for a park missing a reason is undefined."
+        },
+        {
+          "severity": "P1",
+          "area": "data/schema",
+          "missing": "The log never decides where the AC→task mapping lives (the close predicate in D-20 depends on \"매핑된 machine AC\", but the PRD AC table format in D-12 has only ID/명제/판정/증거선언 and the V table covers R/AC, not tasks), so the harness has no defined source of truth for which ACs gate which task's close."
+        },
+        {
+          "severity": "P2",
+          "area": "data/retention",
+          "missing": "The content and retention of the append-only check attempt ledger is unspecified — whether raw runner output (subject to the code-default capture cap) is persisted in state.json or only exit code + signature/fingerprint hash, and whether attempts are ever pruned across a long run."
+        },
+        {
+          "severity": "P2",
+          "area": "compatibility",
+          "missing": "D-06 sets schema v6 with no migration (new runs only) but does not state the observable behavior when the CLI encounters an existing v5 run directory (hard refusal with guidance vs. silent failure), which is the user-facing edge of that compatibility decision."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "D-31 enumerates named proofs for the ledger attachment, finalize guard, counter, decision point and park/resume, but no proof is named for the bundle's two enforcement gates — close refusal when a mapped machine AC is unbound or non-green (D-20, the bundle's only 'teeth') and bind whitelist fail-closed rejection of a non-whitelisted runner (D-23/D-30, the new execution boundary)."
+        },
+        {
+          "severity": "P2",
+          "area": "operation",
+          "missing": "D-06 states schema v6 deliberately supports new runs only with no migration, but the observable behavior when v6 code encounters an in-flight v5 state.json (clear refusal message vs. undefined failure) is not decided."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "effort": "high",
+      "wallMs": 118257,
+      "verdict": "BLOCK",
+      "findingCount": 10,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 47093,
+          "findings": 1
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 95498,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 43846,
+          "findings": 4
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 118257,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P2",
+          "area": "scope",
+          "missing": "D-12 defers enforcement of consistency between AC tags and V-table modes (\"초기 비도입\") without naming a revisit trigger, unlike other deferrals which point to bundle B/C receipts or the gen-prd step."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior",
+          "missing": "The task↔AC mapping that the new close gate depends on is never decided: D-20 gates close on \"매핑된 machine AC\" but schema v5 tasks carry only status+evidence, and the listed gen-prd changes cover only the AC tag table, so it is undefined who declares which ACs a task owns (and what happens to an AC mapped to no task)."
+        },
+        {
+          "severity": "P2",
+          "area": "states",
+          "missing": "D-34 makes rebind invalidate green (AC returns to pending) but does not say what happens to a task that was already closed on that green, unlike D-21 which explicitly keeps closed tasks closed on resume."
+        },
+        {
+          "severity": "P2",
+          "area": "ux",
+          "missing": "park command validation inputs are inconsistent: the Q9 explanation requires \"승인 인용 + 사유 + 실패 증거\" while D-15 records only the verbatim quote and parkedBy, so it is unclear whether --reason/failure evidence are required and what the rejection copy is."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility",
+          "missing": "D-12 makes the AC 판정 column mandatory (readiness FAIL if absent) but the log never says whether this applies retroactively to already-generated/approved PRDs and in-flight runs, or only to PRDs produced after the change."
+        },
+        {
+          "severity": "P1",
+          "area": "data",
+          "missing": "The persisted shape of a check attempt record is under-specified: D-04/D-10 say exit code + normalized fingerprint hash are recorded and D-13/D-31 say the ledger is attached to judge input, but it is not decided whether raw/truncated runner output (signature lines) is stored, where it lives (state.json vs agents/runs/**), and whether append-only attempt history is bounded."
+        },
+        {
+          "severity": "P2",
+          "area": "compatibility",
+          "missing": "D-06 states schema v6 supports new runs only with no migration, but the observable behavior when the upgraded CLI encounters an existing v5 run state (hard refusal with guidance vs abandonment) is not stated."
+        },
+        {
+          "severity": "P2",
+          "area": "data",
+          "missing": "For `artifact --ac`, it is not stated whether `--id V#` remains required alongside the new `acId` (i.e., whether an artifact may be AC-bound only, lane-bound only, or must carry both)."
+        },
+        {
+          "severity": "P1",
+          "area": "operation",
+          "missing": "The rollout effect of the new mandatory 판정 column on pre-existing artifacts is unstated: D-12 makes readiness FAIL for any PRD without the column and D-06 drops v5 state support, but the log never decides whether the new enforcement applies retroactively to already-approved PRDs / in-flight v5 runs or what error the operator sees."
+        },
+        {
+          "severity": "P2",
+          "area": "verification",
+          "missing": "The named proof list (D-17, D-31) covers counter/decision point/park/resume/ledger/finalize guard/judged-missing, but does not name proofs for the two security controls of this bundle - bind whitelist fail-closed rejection and --human-window single-execution expiry - relying only on the general AC/V mapping of D-27."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "effort": "xhigh",
+      "wallMs": 142032,
+      "verdict": "BLOCK",
+      "findingCount": 11,
+      "lanes": [
+        {
+          "laneId": "goal-scope",
+          "ms": 84005,
+          "findings": 3
+        },
+        {
+          "laneId": "ux-behavior",
+          "ms": 74611,
+          "findings": 3
+        },
+        {
+          "laneId": "data-tech",
+          "ms": 104733,
+          "findings": 3
+        },
+        {
+          "laneId": "risk-ops-verification",
+          "ms": 142030,
+          "findings": 2
+        }
+      ],
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The log never says where the task↔AC mapping that the new close predicate depends on comes from (gen-prd plan rows, V-table 'Covers', or an operator binding at check time), nor what happens to ACs mapped to no task, even though D-08/D-20 make 'mapped machine AC green or parked' the core gate and D-03 shows schema v5 has no AC fields to inherit a convention from."
+        },
+        {
+          "severity": "P1",
+          "area": "scope",
+          "missing": "The rollout boundary for pre-existing artifacts is unstated: D-12 makes the 판정 column mandatory with readiness FAIL and D-06 supports only new runs, but the log does not say whether already-written PRDs and in-flight v5 runs are grandfathered, hard-failed, or simply expected to be restarted."
+        },
+        {
+          "severity": "P2",
+          "area": "non-goals",
+          "missing": "D-12 defers AC-tag ↔ V-mode consistency enforcement ('초기 비도입') without any revisit trigger, unlike the other deferrals which carry explicit bundle-B/C or gen-prd triggers."
+        },
+        {
+          "severity": "P1",
+          "area": "states",
+          "missing": "The AC state machine (D-25/D-34) defines pending→green, pending→parked, parked→pending and rebind→pending, but never says what happens when a check FAILS on an already-green AC — whether the AC reverts to pending, whether the counter restarts, and whether a task already closed on that green AC becomes un-closed or stays closed (close predicate is '최신 check green')."
+        },
+        {
+          "severity": "P1",
+          "area": "behavior",
+          "missing": "The core close predicate ('매핑된 machine AC가 바인딩+green 또는 parked', D-20) depends on a task↔AC mapping, but the log never says where that mapping comes from (PRD/plan authoring, a new v6 task field, or an existing repo convention) nor what happens when a task has no AC mapping at all."
+        },
+        {
+          "severity": "P2",
+          "area": "ux",
+          "missing": "Validation behavior for invoking check/bind on a non-machine AC (judged) is only implied by '억지 check 금지' (D-05); the rejection message and whether bind is refused at bind-time or run-time is unstated, unlike the explicit refusals recorded for parked-AC check and duplicate park/resume (D-28/D-34)."
+        },
+        {
+          "severity": "P1",
+          "area": "data / schema",
+          "missing": "Schema v6 introduces per-AC state (tag, status, binding, counters, parkedBy), but the log never says where AC records come from or how ACs are mapped to tasks — the close predicate 'mapped machine ACs are green or parked' (D-20) has no defined mapping source (PRD AC table parsed at plan/init? per-task AC coverage declared by gen-prd? bound by the implementer at run time?), and v5 state (D-03) has no AC concept to inherit from."
+        },
+        {
+          "severity": "P1",
+          "area": "compatibility / migration",
+          "missing": "D-06's policy that v6 supports new runs only with no migration — i.e. in-flight v5 runs are abandoned — is cited only to an out-of-band 'user invocation' with no verbatim text and no repo file/line for the claimed 'old schema intentionally unsupported' convention, and unlike D-04 it was never reconfirmed in the Raw Q&A; the observable behavior when the CLI opens an existing v5 state.json is also unstated."
+        },
+        {
+          "severity": "P2",
+          "area": "data / retention",
+          "missing": "The per-attempt check ledger record shape and retention are undefined: whether raw/normalized runner output (or only exit code + fingerprint hash) is persisted, where it lives (state.json vs agents/runs/**), and how the append-only attempts + bind history are bounded over a long run."
+        },
+        {
+          "severity": "P1",
+          "area": "risk/security",
+          "missing": "The fail-closed runner whitelist that D-23/D-30 rely on as the sole mitigation for letting the harness execute bound Check commands is asserted as a reuse of an 'existing verify machine-runner policy', but no cited repository evidence establishes that such a whitelist exists or what it allows/denies (the only code citation, cli/src/judge/backends.ts:274,346, describes judge subprocess spawning, not a bind-time command allow-list), and D-35 defers only the file/line citation, not the allow criteria."
+        },
+        {
+          "severity": "P2",
+          "area": "verification",
+          "missing": "D-17/D-31 assign named proofs to the ledger attachment, finalize guard, counter, decision point and park/resume, but the bundle's core enforcement behaviors - the new task-close predicate (unbound or non-green machine AC blocks close), the bind-time whitelist rejection, and verify treating parked ACs as recorded 'skipped' - are covered only by the generic 'cli unit/e2e' bucket with no named test."
+        }
+      ]
+    }
+  ]
+}
