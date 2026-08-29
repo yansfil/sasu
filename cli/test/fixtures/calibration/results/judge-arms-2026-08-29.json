@@ -1,0 +1,315 @@
+{
+  "at": "2026-08-29T01:44:12.368Z",
+  "what": "Every production-allowed judge arm on one document, plus a severity-rubric prompt change that was measured and reverted",
+  "doc": "agents/interview/implement-check/qa-log.md (626 lines), fresh full review, 3 repeats unless noted",
+  "chosen": "codex/gpt-5.6-luna at laneEffort high - 92s median, 5.7 findings, all six tracked themes reproduced in every run",
+  "rejected": {
+    "claude/claude-opus-5 at high": "51s, 2.0 findings, 5 of 6 labelled P2. It sees the same gaps codex reports (retention bound, proof assignment, persisted schema shape) and ranks them below the blocking threshold, so the gate passes a document whose data lifecycle and stored shape are still undecided.",
+    "claude/claude-opus-5 at xhigh and max": "167s and 445s for 0-1 findings across 2 repeats each. More reasoning budget made it more permissive, not more thorough.",
+    "codex/gpt-5.6-sol at high": "58s, 1.7 findings. Faster than luna and finds a third as much.",
+    "severity-rubric prompt change (reverted)": "Replaced the P0 adjective list with a consequence-ranking procedure. It worked directionally - Opus 5 moved from P2-heavy to P1-heavy and its BLOCK rate went 1/3 to 2/3 - but both arms paid for it: codex 92s to 111s with findings 5.7 to 4.0, Opus 5 51s to 81s with findings 2.0 to 1.3. Reverted, because the judges spent budget grading severity instead of finding gaps, and Opus 5 still landed nowhere near codex."
+  },
+  "caveats": [
+    "Three repeats per arm on one document; wall clock measured with other agent sessions active.",
+    "The api/opus-5 arm that outperformed everything here reached the model through a local opencodex proxy, which is excluded from production use. It is recorded in judge-backend-ab-2026-08-29.json and is only reachable in production with a metered ANTHROPIC_API_KEY."
+  ],
+  "arms": {
+    "claude/opus-5 high (shipped prompt)": [
+      {
+        "round": 1,
+        "effort": "high",
+        "wallMs": 47680,
+        "verdict": "PASS",
+        "findingCount": 3,
+        "findings": [
+          {
+            "severity": "P2",
+            "area": "ux",
+            "missing": "No UX scenario card walks through the judged-AC path (evidence submission, non-blocking close, verify catching missing evidence) even though machine, decision-point, rebind, and gate:human each get a dedicated card."
+          },
+          {
+            "severity": "P2",
+            "area": "ux",
+            "missing": "No stated behavior for what happens if `check --ac --bind` is invoked against a judged-tagged AC (which has no Check command concept), i.e., a tag/command-type mismatch at bind time."
+          },
+          {
+            "severity": "P2",
+            "area": "data",
+            "missing": "Schema v6's new per-AC fields (counter, fingerprint hash, bind/rebind history, parkedBy, decision-point resolved/active markers) are described only behaviorally (D-25, D-34), not as concrete field names/types."
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "effort": "high",
+        "wallMs": 65350,
+        "verdict": "PASS",
+        "findingCount": 1,
+        "findings": [
+          {
+            "severity": "P2",
+            "area": "verification",
+            "missing": "D-31's named test inventory (ledger-hash attachment, finalize guard, counter/decision-point/park-resume) does not explicitly list a test for the --human-window single-use expiry enforcement (D-23/D-32), even though it is the sole safeguard against approval replay for gate:human AC."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "effort": "high",
+        "wallMs": 50967,
+        "verdict": "BLOCK",
+        "findingCount": 2,
+        "findings": [
+          {
+            "severity": "P2",
+            "area": "data",
+            "missing": "State.json check-attempt and bind/rebind history are decided to be append-only (D-25, D-14) with no stated retention/pruning bound, so long-running tasks could accumulate unbounded attempt logs."
+          },
+          {
+            "severity": "P1",
+            "area": "verification",
+            "missing": "The test plan (D-17, D-31) enumerates proof for the counter, decision point, park/resume, and finalize-guard behaviors, but names no explicit verification method for the security/trust-boundary controls themselves — the bind-time runner whitelist fail-closed rejection (D-23, D-30, D-35) and the single-use expiry of --human-window approval (D-23) — even though these are the risk-mitigating controls for an otherwise-new execution path."
+          }
+        ]
+      }
+    ],
+    "claude/opus-5 xhigh+max (shipped prompt)": [
+      {
+        "round": 1,
+        "effort": "xhigh",
+        "wallMs": 121978,
+        "verdict": "PASS",
+        "findingCount": 0,
+        "findings": []
+      },
+      {
+        "round": 1,
+        "effort": "max",
+        "wallMs": 444608,
+        "verdict": "BLOCK",
+        "findingCount": 1,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "compatibility",
+            "missing": "D-06's 'schema v6 supports no migration from v5, new runs only' clause has no in-log corroboration anywhere in Q1-Q14 or the UX cards and rests solely on the pre-interview seed invocation citation; unlike its sibling seed decision D-04 (core check-execution policy), which the log's own Audit 1 flagged as under-cited and then explicitly reconfirmed via in-conversation delegation (D-26), the migration/breaking-change half of D-06 was never revisited or reconfirmed, leaving the fate of in-flight v5 state.json runs on upgrade unverified against actual user intent."
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "effort": "xhigh",
+        "wallMs": 166573,
+        "verdict": "BLOCK",
+        "findingCount": 1,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "states",
+            "missing": "D-34 defines that rebind resets a machine AC from green back to pending, but the log never states whether a task that was already closed on the strength of that AC's earlier green status stays closed (as D-21 explicitly decides for resume) or must reopen, leaving a user-visible 'complete task with a pending AC underneath' state undefined."
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "effort": "max",
+        "wallMs": 286485,
+        "verdict": "PASS",
+        "findingCount": 0,
+        "findings": []
+      }
+    ],
+    "codex/gpt-5.6-sol high (shipped prompt)": [
+      {
+        "round": 1,
+        "effort": "high",
+        "wallMs": 64464,
+        "verdict": "BLOCK",
+        "findingCount": 1,
+        "findings": [
+          {
+            "severity": "P0",
+            "area": "compatibility",
+            "missing": "The policy that schema v6 supports only new runs and intentionally provides no migration for existing v5 runs is not supported by any included Raw Q&A answer, verbatim delegated invocation, or repository evidence."
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "effort": "high",
+        "wallMs": 57685,
+        "verdict": "BLOCK",
+        "findingCount": 2,
+        "findings": [
+          {
+            "severity": "P0",
+            "area": "compatibility",
+            "missing": "The decision that schema v6 will support only new runs with no migration for existing runs is attributed to an unavailable user invocation and is not supported by any verbatim Raw Q&A answer or exact repository evidence in this log."
+          },
+          {
+            "severity": "P0",
+            "area": "operation",
+            "missing": "The decision to ship schema v6 without migration and intentionally stop supporting existing v5 runs is not backed by a Raw Q&A answer, exact repository evidence, or a verbatim delegated invocation in the log, so its compatibility and rollout consent is unproven."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "effort": "high",
+        "wallMs": 39280,
+        "verdict": "BLOCK",
+        "findingCount": 2,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "data",
+            "missing": "태스크 close를 좌우하는 task-to-AC 매핑의 정본과 v6 저장 형태가 정의되지 않아 구현자가 매핑을 저장할지 PRD에서 추론할지 결정해야 한다."
+          },
+          {
+            "severity": "P0",
+            "area": "compatibility",
+            "missing": "D-06의 'v6는 마이그레이션 없이 새 run만 지원하고 구 스키마는 미지원' 정책은 제공된 Raw Q&A나 정확한 저장소 증거로 뒷받침되지 않아 호환성 포기 동의가 입증되지 않는다."
+          }
+        ]
+      }
+    ],
+    "codex/gpt-5.6-luna high (reverted severity prompt)": [
+      {
+        "round": 1,
+        "effort": "high",
+        "wallMs": 152007,
+        "verdict": "BLOCK",
+        "findingCount": 5,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "data/state transitions",
+            "missing": "The log does not define the state transition and close semantics when a previously green AC is checked again and fails, nor whether rebind is allowed while parked."
+          },
+          {
+            "severity": "P0",
+            "area": "authorization",
+            "missing": "The lifecycle and scope of verbatim park authorization are undefined, including whether a preapproval is single-use, expires, or can be reused across ACs or runs."
+          },
+          {
+            "severity": "P1",
+            "area": "operation",
+            "missing": "Repeated check attempts have no explicit concurrency, rate, cumulative budget, or runaway-execution policy beyond unspecified timeout and output caps."
+          },
+          {
+            "severity": "P1",
+            "area": "verification",
+            "missing": "The proof plan does not name observable tests for the fail-closed bind and side-effect boundary or the complete tag-specific close and state-transition invariants, including one-shot human-window use, parked-check rejection, rebind invalidation, and append-only audit history."
+          },
+          {
+            "severity": "P1",
+            "area": "verification",
+            "missing": "UX-02 says Bundle A finalize emits a \"24/26 PASS, 2 parked\" receipt, contradicting D-37, which defers receipt scoring to Bundle B and leaves Bundle A with only the parked-finalize guard."
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "effort": "high",
+        "wallMs": 109433,
+        "verdict": "BLOCK",
+        "findingCount": 2,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "risk and security proof",
+            "missing": "The security boundary is specified but lacks an explicit observable proof that forbidden runner bindings fail closed, human-window approval cannot be reused, and check execution does not gain additional environment or side-effect authority."
+          },
+          {
+            "severity": "P1",
+            "area": "verification proof",
+            "missing": "The verification plan does not explicitly assign proof to the defined interruption and transition behaviors, including interrupted checks, check on parked ACs, duplicate park/resume rejection, and tag-specific close/verify behavior for judged-only or machine-less tasks."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "effort": "high",
+        "wallMs": 110928,
+        "verdict": "BLOCK",
+        "findingCount": 5,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "states/recovery",
+            "missing": "이미 green인 AC를 다시 check했을 때 실패·타임아웃·중단이 발생하면 AC 상태, 카운터, task close, verify 판정이 어떻게 바뀌는지 정의되지 않았다."
+          },
+          {
+            "severity": "P1",
+            "area": "states/recovery",
+            "missing": "parked AC에 bind/rebind를 시도할 수 있는지, 가능하다면 parked 상태와 승인 기록·카운터·결정 지점이 어떻게 처리되는지 정의되지 않았다."
+          },
+          {
+            "severity": "P1",
+            "area": "data/schema",
+            "missing": "스키마 v6가 봉인된 AC 계약의 저장 위치와 태스크별 AC 매핑 방식을 정의하지 않아 close 판정 대상과 PRD 변경 시 런타임 계약의 불변성이 구현자 추정에 맡겨져 있다."
+          },
+          {
+            "severity": "P1",
+            "area": "data/lifecycle",
+            "missing": "park 기록에 필요한 사유·실패 증거·승인 인용의 필수 여부와 gate:human처럼 실패 전 사전 park하는 경우의 예외가 서로 일관되게 정의되어 있지 않다."
+          },
+          {
+            "severity": "P0",
+            "area": "risk/security verification",
+            "missing": "D-23/D-30 record a P0 security policy allowing check commands to write in the working tree and temporary files while relying on a whitelist to block network or system changes, but this was only an agent decision under broad Q12 delegation and lacks explicit user approval or exact evidence, with no named negative test proving the boundary."
+          }
+        ]
+      }
+    ],
+    "claude/opus-5 high (reverted severity prompt)": [
+      {
+        "round": 1,
+        "effort": "high",
+        "wallMs": 80707,
+        "verdict": "BLOCK",
+        "findingCount": 1,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "validation",
+            "missing": "D-05 states judged AC forbids a 'forced check' but the log never specifies whether `check --ac <AC> --bind` is technically rejected when the target AC is tagged judged, versus merely being a convention PRD authors are expected to follow."
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "effort": "high",
+        "wallMs": 72785,
+        "verdict": "BLOCK",
+        "findingCount": 2,
+        "findings": [
+          {
+            "severity": "P1",
+            "area": "data",
+            "missing": "The log specifies that each check attempt persists only exit code + normalized failure fingerprint (a hash) in state.json (D-04, D-10, UX-01 proof), and D-18 confirms output capture has a size cap, but nowhere does it state whether the captured raw stdout/stderr is retained anywhere (state.json, an artifact file, or run log) for later human/judge inspection at a decision point or park approval, versus being discarded once the fingerprint is derived."
+          },
+          {
+            "severity": "P2",
+            "area": "verification",
+            "missing": "D-31 assigns explicit e2e/unit test proof to the counter, decision point, park/resume, finalize guard, ledger-hash attachment, and judged-evidence-missing verify FAIL, but does not name an explicit test for the task-close gating predicate itself (D-20's per-tag rules: machine unbound-blocks, judged registration-optional, gate:human green/parked) even though this predicate is described as the bundle's core teeth."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "effort": "high",
+        "wallMs": 83591,
+        "verdict": "PASS",
+        "findingCount": 1,
+        "findings": [
+          {
+            "severity": "P2",
+            "area": "ux",
+            "missing": "The log never states what happens if `check --ac` is invoked against an AC tagged judged (which has no bind/Check command at all) or a mismatched tag."
+          }
+        ]
+      }
+    ]
+  }
+}
