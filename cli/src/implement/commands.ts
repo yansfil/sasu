@@ -29,6 +29,7 @@ import {
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
+import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -843,6 +844,22 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   });
 }
 
+/**
+ * Park is for acceptance criteria only (AC4).
+ *
+ * Without this the attempt fails as "unknown acceptance criterion S1", which
+ * is a refusal but not a reason - and the reason is the point: a suite
+ * command has no criterion to prove later, so the only way to stop running
+ * one is to remove it from the sealed list through an amendment.
+ */
+function assertNotSuiteCommand(state: ImplementState, args: ImplementArgs): void {
+  const id = (flag(args, "ac") ?? "").trim();
+  if (id === "") return;
+  const command = suiteCommandNamed(state, id);
+  if (command === null) return;
+  throw new Error(`${command.id} (${command.command}) is a sealed suite command, not an acceptance criterion; suite commands cannot be parked. Fix the command, or exclude it from the sealed list through an amendment carrying verbatim human approval.`);
+}
+
 function acceptanceCriterion(state: ImplementState, args: ImplementArgs) {
   const id = requiredFlag(args, "ac").toUpperCase();
   const criterion = state.acceptanceCriteria.find((entry) => entry.id === id);
@@ -894,6 +911,7 @@ function park(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  assertNotSuiteCommand(state, args);
   const criterion = acceptanceCriterion(state, args);
   parkCriterion(criterion, {
     approval: flag(args, "approval")?.trim() ?? "",
@@ -1207,7 +1225,7 @@ function runUnifiedBatch(
   state: ImplementState,
   units: RunUnit[],
   attemptId: string,
-): { records: MechanicalRunRecord[]; treeMoved: { before: string; after: string } | null } {
+): { records: MechanicalRunRecord[]; results: RunUnitResult[]; treeMoved: { before: string; after: string } | null } {
   const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
   const records: MechanicalRunRecord[] = [];
   const outcome = runBatch(state, workRoot, units, timeoutMs, (result) => {
@@ -1239,7 +1257,7 @@ function runUnifiedBatch(
     }
     attributeToCriteria(state, result);
   });
-  return { records, treeMoved: outcome.treeMoved };
+  return { records, results: outcome.results, treeMoved: outcome.treeMoved };
 }
 
 /** One execution, appended to every criterion ledger that named it (R1). */
@@ -2099,22 +2117,35 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     });
   }
   const units = planRunUnits(state);
-  const bindings: MechanicalBinding[] = state.suite.commands
-    .filter((command) => !state.suite.exclusions.some((exclusion) => exclusion.commandId === command.id))
+  const bindings: MechanicalBinding[] = activeSuiteCommands(state)
     .map((command) => ({ command: command.command, cwd: command.cwd, verificationIds: command.verificationIds }));
   const batch = runUnifiedBatch(recordRoot, workRoot, state, units, attemptId);
   const mechanical = batch.records;
+  // The suite axis is independent of the AC score (R2). A failing command
+  // that some criterion bound is that criterion's failure and is scored on
+  // the AC axis; a failing command no criterion bound is watching a
+  // regression nobody else is, so it blocks the run on its own - even with
+  // every AC green.
+  const orphanRed = orphanSuiteFailures(batch.results.map((entry) => ({
+    suiteCommandIds: entry.unit.suiteCommandIds,
+    criterionIds: entry.unit.criterionIds,
+    green: entry.green,
+    command: entry.unit.command,
+  })));
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
   const proofProblems = setVerificationStatuses(state, bindings, mechanical);
-  if (batch.treeMoved !== null || failedMechanical !== undefined || proofProblems.length > 0) {
+  if (batch.treeMoved !== null || orphanRed.length > 0 || failedMechanical !== undefined || proofProblems.length > 0) {
     // A tree that moved mid-batch invalidates the whole batch: the results
     // were not all earned on one tree, so none of them names a tree honestly
     // (AC2). Reported ahead of individual failures because it explains them.
+    const score = suiteScore(state);
     const message = batch.treeMoved !== null
       ? `judged source changed while mechanical commands were running (${batch.treeMoved.before.slice(0, 12)} -> ${batch.treeMoved.after.slice(0, 12)}); no result was earned on a single frozen tree`
-      : failedMechanical !== undefined
-        ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
-        : proofProblems.join("; ");
+      : orphanRed.length > 0
+        ? `suite ${score.green}/${score.total} GREEN; ${orphanRed.length} command(s) no acceptance criterion binds failed and block this run independently of the AC score: ${orphanRed.map((entry) => entry.command).join(", ")}. Fix them, or exclude one from the sealed list through an amendment carrying verbatim human approval.`
+        : failedMechanical !== undefined
+          ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
+          : proofProblems.join("; ");
     const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);

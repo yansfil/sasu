@@ -638,6 +638,73 @@ test("open tasks and mechanical failures stop before either judge", () => {
   assert.deepEqual(failed.json.detail.attempt.mechanical[0].verificationIds, ["V1", "V2"]);
 });
 
+// R2: the suite axis blocks on its own. A command no acceptance criterion
+// binds is watching a regression nobody else is, so a fully green AC score
+// cannot clear it.
+test("an orphan suite failure blocks the run with every acceptance criterion green", () => {
+  const root = makeProject({ testExit: 3 });
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  // Every AC is bound to a command that is NOT the suite command, so `npm
+  // test` ends up bound by no criterion at all.
+  startAndClose(root, { checkCommand: "node --version" });
+  for (const criterion of readState(root).acceptanceCriteria) {
+    if (criterion.judgment === "machine") assert.equal(criterion.check.status, "green", `${criterion.id} must be green for this fixture to prove anything`);
+  }
+
+  const blocked = run(root, ["implement", "verify"], { env });
+  assert.equal(blocked.status, 1);
+  assert.equal(blocked.json.detail.judgeCalls, 0, "an orphan suite failure stops before any judge");
+  assert.match(blocked.json.message, /no acceptance criterion binds failed/);
+  assert.match(blocked.json.message, /independently of the AC score/);
+  assert.match(blocked.json.message, /npm test/);
+  assert.equal(fs.existsSync(capture), false);
+
+  const state = readState(root);
+  const suiteResult = state.suite.results.find((entry) => entry.commandId === "S1");
+  assert.equal(suiteResult.status, "RED", "the suite axis records its own verdict");
+  assert.deepEqual(suiteResult.attributedCriteria, [], "and records that no criterion shares it");
+});
+
+// AC4: a suite command is not a criterion. The refusal must say why, not just
+// "unknown acceptance criterion S1".
+test("a sealed suite command cannot be parked", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  assert.equal(readState(root).suite.commands[0].id, "S1");
+
+  const refused = run(root, ["implement", "park", "--ac", "S1", "--approval", "user: park it", "--reason", "flaky"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.json.message, /sealed suite command, not an acceptance criterion/);
+  assert.match(refused.json.message, /cannot be parked/);
+  assert.match(refused.json.message, /amendment carrying verbatim human approval/);
+  assert.deepEqual(readState(root).suite.exclusions, [], "a refused park must not become an exclusion");
+});
+
+// AC5: the list is sealed at start. What the run is measured against must not
+// change because someone edited config mid-run.
+test("the sealed suite list ignores a mid-run edit of agents/config.json", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  const sealed = readState(root).suite.commands.map((entry) => entry.command);
+  assert.deepEqual(sealed, ["npm test"]);
+
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({
+    verify: { commands: { test: "node -e \"process.exit(0)\"", build: "node -e \"process.exit(0)\"" } },
+  }));
+  writeFixtureImplementation(root);
+  for (const criterion of readState(root).acceptanceCriteria) {
+    if (criterion.judgment === "machine") greenAc(root, criterion.id, { command: "node --version" });
+  }
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
+  run(root, ["implement", "verify"]);
+
+  const after = readState(root);
+  assert.deepEqual(after.suite.commands.map((entry) => entry.command), sealed, "the sealed list is the authority, not the config file");
+  assert.deepEqual(after.suite.results.map((entry) => entry.commandId), ["S1"]);
+  assert.equal(after.suite.sealedAt, readState(root).suite.sealedAt);
+});
+
 test("acceptance and fidelity run separately in parallel, then finalize converges", () => {
   const root = makeProject();
   const { file, capture } = stub(root);
