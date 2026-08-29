@@ -163,15 +163,13 @@ In a direct Herdr run, dispatch only after all of these are true:
 - every section 4 human-owned blocker and pre-work item required before implementation is resolved.
 
 Use the `Dispatch One Implementor` and `Handoff Packet` contracts in the Observer reference.
-Call the deterministic helper exactly once with the ready PRD path:
+Dispatch exactly once with the ready PRD path:
 
 ```sh
-node ~/.codex/skills/implement/scripts/herdr_observer.js dispatch \
-  --name <unique-name> \
-  --cwd "$PWD" \
-  --prd agents/prd/<topic-slug>/prd.md \
-  [--dirty-attribution <pre-existing|run-owned>] <<'SASU_HANDOFF'
-ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
+herdr agent new <unique-name> --cwd "$PWD" --no-focus \
+  --env SASU_HERDR_ROLE=implementor \
+  --prompt "$(cat <<'SASU_HANDOFF'
+ROLE: Implementor. Confirm the SASU_HERDR_ROLE marker and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim $please invocation message>
 GOAL AND CONTEXT: Implement the sealed PRD; include only operational context not represented there.
@@ -179,13 +177,14 @@ AUTHORITY: Reversible in-contract implementation defaults are autonomous; contra
 SOURCE: <cwd>; agents/prd/<topic-slug>/prd.md
 RETURN CONTRACT: Status, changed paths, assumptions, verdicts, timing, and unresolved items.
 SASU_HANDOFF
+)"
 ```
 
 Do not send `PIPELINE: please`.
 The ready PRD is the canonical implementation contract, so do not duplicate or reinterpret the full conversation in the handoff.
-After successful dispatch, the main session becomes the read-only Observer and starts the lifecycle monitor from the Observer reference.
+After successful dispatch, the main session becomes the read-only Observer and arms `sasu implement await` from the Observer reference.
 
-A marked Implementor starts here, verifies that the helper supplied a ready PRD, and proceeds to Stage 2.
+A marked Implementor starts here, verifies that the handoff supplied a ready PRD, and proceeds to Stage 2.
 It must emit `OBSERVER_BLOCK` instead of creating or repairing a missing, draft, or stale PRD.
 
 Outside Herdr, skip dispatch and continue inline to Stage 2.

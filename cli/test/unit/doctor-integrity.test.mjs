@@ -93,12 +93,12 @@ test("doctor includes executable skill scripts in the freshness contract", () =>
     path.join(repoRoot, "skills", "implement", "SKILL.md"),
     path.join(skillRoot, "SKILL.md"),
   );
-  fs.writeFileSync(path.join(skillRoot, "scripts", "herdr_observer.js"), "stale helper\n");
+  fs.writeFileSync(path.join(skillRoot, "scripts", "prd_state_harness.js"), "stale helper\n");
 
   const section = skillFreshnessSection(home, repoRoot);
   assert.equal(section.ok, false);
   assert.ok(section.lines.includes(
-    "stale installed contract: codex:implement/scripts/herdr_observer.js",
+    "stale installed contract: codex:implement/scripts/prd_state_harness.js",
   ));
 });
 

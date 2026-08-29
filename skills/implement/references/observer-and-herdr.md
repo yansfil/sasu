@@ -29,13 +29,13 @@ It must not become a second implementor or repeat verification.
 Read the runtime's Herdr skill completely before issuing a Herdr control command.
 Claude Code uses `~/.claude/skills/herdr/SKILL.md`; Codex uses `~/.agents/skills/herdr/SKILL.md` when that is the installed location.
 
-Resolve the role with the deterministic helper:
+Resolve the role from the pane environment:
 
 ```sh
-node ~/.codex/skills/implement/scripts/herdr_observer.js role
+test "$SASU_HERDR_ROLE" = implementor && echo implementor || echo observer
 ```
 
-The helper treats the Herdr pane environment value `SASU_HERDR_ROLE=implementor` as the structural Implementor marker.
+The routing treats the Herdr pane environment value `SASU_HERDR_ROLE=implementor` as the structural Implementor marker.
 The marker is injected atomically when the child pane is created, before its shell or agent can start.
 Never infer the role from pane titles, agent names, or transcript phrases.
 For `$please`, the unmarked main pane's Spec Owner phase is determined by pipeline stage, not a second environment marker.
@@ -54,13 +54,10 @@ Choose a unique agent name that describes the mode and topic and remains within 
 Build the complete Handoff Packet below, then submit it on stdin to the deterministic helper:
 
 ```sh
-node ~/.codex/skills/implement/scripts/herdr_observer.js dispatch \
-  --name <unique-name> \
-  --cwd "$PWD" \
-  --model <agent-model> \
-  --effort <reasoning-effort> \
-  --prd agents/prd/<topic-slug>/prd.md \
-  [--dirty-attribution <pre-existing|run-owned>] <<'SASU_HANDOFF'
+herdr agent new <unique-name> --cwd "$PWD" --no-focus \
+  --env SASU_HERDR_ROLE=implementor \
+  --model <agent-model> --effort <reasoning-effort> \
+  --prompt "$(cat <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
@@ -69,9 +66,11 @@ AUTHORITY: <autonomous defaults and hard stops>
 SOURCE: <cwd and ready PRD path>
 RETURN CONTRACT: <status, paths, assumptions, verdicts, timing, unresolved items>
 SASU_HANDOFF
+)"
 ```
 
-This helper is the code-owned dispatch boundary.
+Dispatch reaches herdr only through the harness's three-hole adapter
+(`spawn`, `read`, `alive`); nothing else in the harness may call herdr.
 For `$please`, the Spec Owner runs `sasu implement intake` before the first gate.
 When it reports dirty judged paths, the Spec Owner asks its returned question once and either resolves `commit-first` by committing before dispatch or passes the selected `pre-existing|run-owned` value on `--dirty-attribution`.
 The helper injects that value into the Implementor handoff and start contract; the Implementor passes it to `sasu implement start` and never asks again.
@@ -107,19 +106,23 @@ The packet must contain:
 Do not replace the PRD with a vague summary such as "implement what we discussed".
 The ready PRD is the canonical implementation contract; accepted and rejected product decisions belong there rather than in a second handoff narrative.
 The Implementor cannot read the Observer's chat history.
-The dispatch helper appends a runtime routing contract that forbids the Implementor from invoking `AskUserQuestion`, `request_user_input`, or any interactive question UI.
+The handoff must state a routing contract that forbids the Implementor from invoking `AskUserQuestion`, `request_user_input`, or any interactive question UI.
 The Implementor has no direct user channel: when blocked, it emits `OBSERVER_BLOCK` as final text and ends the turn so the Observer can decide or escalate.
 
-The helper submits the packet without focusing the new pane.
-The Observer then starts the helper's one lifecycle monitor in the foreground or as one persistent background task:
+Dispatch does not focus the new pane.
+The Observer then arms exactly one background waiter and lets go of the turn:
 
 ```sh
-node ~/.codex/skills/implement/scripts/herdr_observer.js wait --name <implementor-name>
+sasu implement await --since <last-event-id> [--pid <implementor-pid>]
 ```
 
+It returns for exactly one reason - a new event, no progress past the
+no-progress bound, or the implementor no longer being alive - and prints which.
+The wait is on the harness's own event log, never on pane text: pane output is
+not a semantic unit and cannot say what happened.
 This replaces raw `herdr agent get`, `herdr agent wait`, `herdr agent list --json`, transcript-keyword polling, and home-grown shell loops.
-When it settles, inspect `herdr agent read <implementor-name> --source recent-unwrapped --lines 120` plus Sasu status and receipts.
-Use lifecycle state and Sasu state, not transcript keywords, as the source of truth.
+On a stall wake, `herdr agent read <implementor-name> --source recent-unwrapped --lines 120` is a diagnosis tool only; when herdr is absent, `sasu implement status` names which of `spawn`, `read`, `alive` is unavailable and the run continues without pane diagnosis.
+Use Sasu state, not transcript keywords, as the source of truth.
 
 ## Exception-Only Intervention
 

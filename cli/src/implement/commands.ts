@@ -33,6 +33,7 @@ import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore
 import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { waitForEvent } from "./waiter";
+import { herdrCapabilities } from "./herdr";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -1256,8 +1257,17 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const currentInput = inputFingerprint(state, source.digest, fidelityInput);
+  // Which of the three herdr holes are open. Named per hole rather than as one
+  // boolean because "herdr is unavailable" does not tell a supervisor whether
+  // it has lost pane diagnosis or the ability to start a replacement (AC27).
+  const herdr = herdrCapabilities();
   return result("status", true, `${state.topicSlug}: ${state.status}`, {
     ...publicState(state, config.judge.retryBudget, source.digest, heldPrd.drift === null ? currentInput : "PRD_DRIFT"),
+    herdr: {
+      available: herdr.available,
+      unavailableHoles: (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]),
+      reason: herdr.reason,
+    },
     artifactProblems: problems,
     prdProblem: heldPrd.drift === null ? null : "PRD changed after implement start",
     prdDrift: heldPrd.drift,
