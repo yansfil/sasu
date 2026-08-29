@@ -28,6 +28,7 @@ import {
 } from "./convergence";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
+import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -38,6 +39,7 @@ import {
   runCriterionCheck,
   validateCheckBinding,
   parseCommandArgv,
+  fingerprintCheckOutput,
 } from "./checks";
 import {
   acceptancePrompt,
@@ -664,6 +666,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
           command: binding.command,
           argv: parseCommandArgv(binding.command),
           cwd: binding.cwd,
+          verificationIds: binding.verificationIds,
         })),
         exclusions: [],
         results: [],
@@ -1185,52 +1188,112 @@ function progress(line: string): void {
   process.stderr.write(`[implement:verify] ${line}\n`);
 }
 
-function runMechanicalBindings(
+/**
+ * Run the union of AC Check bindings and the sealed suite list once each, on
+ * one frozen tree, and attribute every result to BOTH destinations (R1).
+ *
+ * Replaces the old shell-based suite loop. Three behaviour changes come with
+ * the unification, each deliberate:
+ *   - no shell and no inherited environment: the stricter Check semantics win;
+ *   - no stop-at-first-failure: a run that declined to execute a command
+ *     cannot honestly say "suites 3/3" (R4);
+ *   - a criterion named by a unit gets a real CheckAttempt appended to its
+ *     ledger, so the AC score and the suite axis are the same measurement
+ *     read two ways rather than two measurements that can disagree.
+ */
+function runUnifiedBatch(
   recordRoot: string,
   workRoot: string,
   state: ImplementState,
-  bindings: MechanicalBinding[],
-): MechanicalRunRecord[] {
-  const records: MechanicalRunRecord[] = [];
+  units: RunUnit[],
+  attemptId: string,
+): { records: MechanicalRunRecord[]; treeMoved: { before: string; after: string } | null } {
   const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
-  for (const binding of bindings) {
-    const before = captureSourceSnapshot(workRoot);
-    const started = Date.now();
-    const startedAt = nowIso();
-    const commandCwd = normalizeProjectPath(workRoot, binding.cwd).absolute;
-    const executed = spawnSync(binding.command, {
-      cwd: commandCwd,
-      shell: true,
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-      timeout: timeoutMs,
-      env: process.env,
-    });
-    const after = captureSourceSnapshot(workRoot);
-    const timedOut = (executed.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || executed.signal === "SIGTERM";
-    const mutated = before.digest !== after.digest;
-    const exitCode = timedOut ? 124 : (executed.status ?? 1);
-    const finishedAt = nowIso();
+  const records: MechanicalRunRecord[] = [];
+  const outcome = runBatch(state, workRoot, units, timeoutMs, (result) => {
+    const binding: MechanicalBinding = {
+      command: result.unit.command,
+      cwd: result.unit.cwd,
+      verificationIds: result.unit.verificationIds,
+    };
     const base: Omit<MechanicalRunRecord, "logPath"> = {
       ...binding,
-      startedAt,
-      finishedAt,
-      durationMs: Date.now() - started,
-      exitCode: mutated && exitCode === 0 ? 1 : exitCode,
-      status: !timedOut && !mutated && exitCode === 0 ? "PASS" : "FAIL",
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+      exitCode: result.green ? 0 : (result.exitCode === 0 ? 1 : result.exitCode),
+      status: result.green ? "PASS" : "FAIL",
     };
-    const extra = [
-      timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : "",
-      mutated ? "\n[sasu] command changed judged source files and was rejected" : "",
-    ].join("");
-    const logPath = writeMechanicalLog(recordRoot, state, binding, base, executed.stdout ?? "", `${executed.stderr ?? ""}${extra}`);
+    const logPath = writeMechanicalLog(recordRoot, state, binding, base, result.stdout, result.stderr);
     const record: MechanicalRunRecord = { ...base, logPath };
     progress(`mechanical ${record.status} in ${(record.durationMs / 1000).toFixed(1)}s: ${record.command}`);
-    records.push(record);
-    upsertCommandArtifacts(state, record, recordRoot);
-    if (record.status === "FAIL") break;
+    // `attempt.mechanical` keeps its established meaning - the suite axis,
+    // the record V rows are proved from. A unit that only an AC named is
+    // executed by the same batch and scored into the AC ledger, but it does
+    // not enter this list: mixing the two would blur which record proves a V
+    // row and would pollute the attempt-reuse comparison that reads it.
+    if (result.unit.suiteCommandIds.length > 0) {
+      records.push(record);
+      upsertCommandArtifacts(state, record, recordRoot);
+      attributeToSuite(state, result, attemptId, logPath);
+    }
+    attributeToCriteria(state, result);
+  });
+  return { records, treeMoved: outcome.treeMoved };
+}
+
+/** One execution, appended to every criterion ledger that named it (R1). */
+function attributeToCriteria(state: ImplementState, result: RunUnitResult): void {
+  for (const criterionId of result.unit.criterionIds) {
+    const criterion = state.acceptanceCriteria.find((entry) => entry.id === criterionId);
+    if (criterion === undefined) continue;
+    const binding = criterion.check.bindings.at(-1);
+    if (binding === undefined) continue;
+    const fingerprints = fingerprintCheckOutput(result.stdout, result.stderr);
+    criterion.check.attempts.push({
+      id: `A${criterion.check.attempts.length + 1}`,
+      bindingId: binding.id,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      signal: result.signal,
+      outcome: result.green ? "green" : "failed",
+      outputFingerprint: fingerprints.outputFingerprint,
+      failureClass: result.green ? null : fingerprints.failureClass,
+      tree: result.tree,
+      humanWindow: null,
+    });
+    if (result.green) {
+      criterion.check.status = "green";
+      criterion.check.consecutiveFailures = 0;
+    } else {
+      criterion.check.status = "pending";
+      criterion.check.consecutiveFailures += 1;
+    }
   }
-  return records;
+}
+
+/** The same execution, recorded on the suite axis (R1, R2). */
+function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptId: string, logPath: string): void {
+  for (const commandId of result.unit.suiteCommandIds) {
+    const entry = {
+      commandId,
+      attemptId,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+      exitCode: result.exitCode,
+      status: result.green ? ("GREEN" as const) : ("RED" as const),
+      logPath,
+      attributedCriteria: [...result.unit.criterionIds],
+    };
+    // Latest result per command, replaced whole: the suite axis reports the
+    // current tree, not a history. History lives in verificationAttempts.
+    state.suite.results = state.suite.results.filter((existing) => existing.commandId !== commandId);
+    state.suite.results.push(entry);
+  }
 }
 
 function changeMaterial(projectRoot: string, state: ImplementState, current: ReturnType<typeof captureSourceSnapshot>): string {
@@ -1888,6 +1951,7 @@ function skippedAcceptanceCriteria(state: ImplementState): UnifiedVerificationAt
 }
 
 function failedAttempt(
+  attemptId: string,
   state: ImplementState,
   sourceDigest: string,
   fidelityInput: UnifiedVerificationAttempt["fidelityInput"],
@@ -1903,7 +1967,7 @@ function failedAttempt(
   verdict: VerificationStatus,
 ): UnifiedVerificationAttempt {
   return {
-    id: crypto.randomUUID(),
+    id: attemptId,
     inputFingerprint: inputFingerprint(state, sourceDigest, fidelityInput),
     sourceFingerprint: sourceDigest,
     inputManifest,
@@ -1993,13 +2057,16 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.fidelity?.result);
   const riskLineageInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.risk?.result);
   const priorRiskResult = riskLedgerPriorResult(state, riskLineageInput.result);
+  // One id for this attempt, minted before the mechanical batch so a suite
+  // result can name the attempt it was produced in while it is being produced.
+  const attemptId = crypto.randomUUID();
   const roundContexts: VerificationRoundContexts = {
     acceptance: Object.fromEntries([...acceptancePriorInputs].map(([id, input]) => [id, input.context])),
     fidelity: fidelityPriorInput.context,
     risk: state.prd.reviewProfile === "high-risk" ? riskLineageInput.context : null,
   };
   if (!lint.ok) {
-    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
+    const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     return result("verify", false, "PRD prelint failed before mechanical verification; no judge was called", {
@@ -2031,15 +2098,24 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       verificationBudget: verificationBudget(state, config.judge.retryBudget),
     });
   }
-  const bindings = mechanicalBindings(recordRoot, workRoot, state.verification);
-  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings);
+  const units = planRunUnits(state);
+  const bindings: MechanicalBinding[] = state.suite.commands
+    .filter((command) => !state.suite.exclusions.some((exclusion) => exclusion.commandId === command.id))
+    .map((command) => ({ command: command.command, cwd: command.cwd, verificationIds: command.verificationIds }));
+  const batch = runUnifiedBatch(recordRoot, workRoot, state, units, attemptId);
+  const mechanical = batch.records;
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
   const proofProblems = setVerificationStatuses(state, bindings, mechanical);
-  if (failedMechanical !== undefined || proofProblems.length > 0) {
-    const message = failedMechanical !== undefined
-      ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
-      : proofProblems.join("; ");
-    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
+  if (batch.treeMoved !== null || failedMechanical !== undefined || proofProblems.length > 0) {
+    // A tree that moved mid-batch invalidates the whole batch: the results
+    // were not all earned on one tree, so none of them names a tree honestly
+    // (AC2). Reported ahead of individual failures because it explains them.
+    const message = batch.treeMoved !== null
+      ? `judged source changed while mechanical commands were running (${batch.treeMoved.before.slice(0, 12)} -> ${batch.treeMoved.after.slice(0, 12)}); no result was earned on a single frozen tree`
+      : failedMechanical !== undefined
+        ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
+        : proofProblems.join("; ");
+    const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     const budget = verificationBudget(state, config.judge.retryBudget);
@@ -2173,7 +2249,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
   for (const item of state.verification.filter((entry) => judgeDeferred(state, entry, bindings))) item.status = verdict === "PASS" ? "PASS" : verdict;
   const attempt: UnifiedVerificationAttempt = {
-    id: crypto.randomUUID(),
+    id: attemptId,
     inputFingerprint: inputFingerprint(state, source.digest, fidelityInput),
     sourceFingerprint: source.digest,
     inputManifest,

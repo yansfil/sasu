@@ -503,6 +503,13 @@ export interface SuiteCommand {
   command: string;
   argv: string[];
   cwd: string;
+  /**
+   * Verification rows this command proves, frozen with the list. Sealed
+   * rather than re-derived per attempt for the same reason the command list
+   * is: a mid-run PRD edit must not silently remap which V row a green
+   * belongs to (AC5).
+   */
+  verificationIds: string[];
 }
 
 export interface SuiteExclusion {

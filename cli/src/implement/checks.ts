@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { executeMechanicalArgv } from "../mechanical";
+import { executeUnit } from "./runner";
 import { captureSourceSnapshot, nowIso, sha256 } from "./store";
 import type {
   AcceptanceCriterionItem,
@@ -222,31 +222,6 @@ export function fingerprintCheckOutput(stdout: string, stderr: string): { output
   };
 }
 
-function directoryDigest(root: string, skipRelative: string): string {
-  if (!fs.existsSync(root)) return sha256("[]");
-  const entries: Array<[string, string]> = [];
-  const visit = (absolute: string, relative: string): void => {
-    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) continue;
-      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (child === skipRelative || child.startsWith(`${skipRelative}/`)) continue;
-      if (entry.isDirectory()) visit(path.join(absolute, entry.name), child);
-      else if (entry.isFile()) entries.push([child, sha256(fs.readFileSync(path.join(absolute, entry.name)))]);
-    }
-  };
-  visit(root, "");
-  entries.sort(([left], [right]) => left.localeCompare(right));
-  return sha256(JSON.stringify(entries));
-}
-
-function checkTreeFingerprint(state: ImplementState, workRoot: string): CheckTreeFingerprint {
-  const product = captureSourceSnapshot(workRoot).digest;
-  const agentsRoot = path.join(workRoot, "agents");
-  const runRelativeToAgents = path.relative(agentsRoot, path.join(state.projectRoot, state.runDir)).split(path.sep).join("/");
-  const bookkeeping = directoryDigest(agentsRoot, runRelativeToAgents);
-  return { product, bookkeeping, all: sha256(JSON.stringify({ product, bookkeeping })) };
-}
-
 function openDecisionPoint(
   criterion: AcceptanceCriterionItem,
   kind: CheckDecisionPoint["kind"],
@@ -313,32 +288,26 @@ export function runCriterionCheck(
   }
   const started = Date.now();
   const startedAt = nowIso();
-  const runtimeRoot = path.join(state.projectRoot, state.runDir, "check-runtime");
-  const runtimeHome = path.join(runtimeRoot, "home");
-  const runtimeTmp = path.join(runtimeRoot, "tmp");
-  const runtimeCache = path.join(runtimeRoot, "cache");
-  fs.mkdirSync(runtimeHome, { recursive: true });
-  fs.mkdirSync(runtimeTmp, { recursive: true });
-  fs.mkdirSync(runtimeCache, { recursive: true });
-  const checkEnv: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH ?? "",
-    LANG: process.env.LANG ?? "en_US.UTF-8",
-    CI: "1",
-    NO_COLOR: "1",
-    HOME: runtimeHome,
-    TMPDIR: runtimeTmp,
-    TMP: runtimeTmp,
-    TEMP: runtimeTmp,
-    XDG_CACHE_HOME: runtimeCache,
-    npm_config_cache: path.join(runtimeCache, "npm"),
-    ...(process.platform === "win32" && process.env.SYSTEMROOT ? { SYSTEMROOT: process.env.SYSTEMROOT } : {}),
-  };
-  const executed = executeMechanicalArgv(workRoot, validated.argv, validated.cwd, IMPLEMENT_CHECK_TIMEOUT_MS, checkEnv);
+  // Single-criterion checks and the verify batch go through the SAME executor
+  // (runner.executeUnit). Two executors for one command string is exactly the
+  // split R1 closes; keeping this call here and the batch call in verify is
+  // fine, running them through different machinery is not.
+  const { execution: executed, tree } = executeUnit(
+    state,
+    workRoot,
+    { argv: validated.argv, cwd: validated.cwd },
+    IMPLEMENT_CHECK_TIMEOUT_MS,
+  );
   const finishedAt = nowIso();
   const fingerprints = fingerprintCheckOutput(
     executed.stdout,
     `${executed.stderr}${executed.timedOut ? `\n[sasu] command timed out after ${IMPLEMENT_CHECK_TIMEOUT_MS}ms` : ""}`,
   );
+  // `mutatedTree` is deliberately NOT consulted here. The frozen-tree rule is
+  // scoped to verify (AC2), where a batch of commands must all be earned on
+  // one tree; a single criterion check is an iteration tool and a criterion
+  // that writes while proving itself is caught when verify re-runs it. One
+  // executor, two policies - stated rather than left to accident.
   const green = !executed.timedOut && executed.signal === null && executed.exitCode === 0;
   const attempt: CheckAttempt = {
     id: `A${criterion.check.attempts.length + 1}`,
@@ -352,7 +321,7 @@ export function runCriterionCheck(
     outcome: green ? "green" : "failed",
     outputFingerprint: fingerprints.outputFingerprint,
     failureClass: green ? null : fingerprints.failureClass,
-    tree: checkTreeFingerprint(state, workRoot),
+    tree,
     humanWindow: criterion.judgment === "machine+gate:human"
       ? { evidence: approval, recordedAt: startedAt, criterionId: criterion.id }
       : null,
@@ -417,14 +386,19 @@ export function checkLedgerPayload(state: ImplementState): {
   sha256: string;
   bindings: Array<{ criterionId: string; bindingId: string; command: string; argv: string[]; cwd: string; classification: "asset" | "labor" }>;
 } {
+  // INPUTS only. `attempts` and `decisionPoints` are the record of past runs -
+  // outputs - and hashing them makes the fingerprint move every time anything
+  // executes. That defeats the convergence bound outright: an unchanged repeat
+  // could never be recognised as unchanged, so a no-judge round would always
+  // look like progress and never be charged (PRINCIPLES 13). `status` stays,
+  // because a criterion going pending -> green is a real change of input to
+  // the next verdict, while a failing check re-running identically is not.
   const ledger = state.acceptanceCriteria.map((criterion) => ({
     criterionId: criterion.id,
     judgment: criterion.judgment,
     evidenceDeclaration: criterion.evidenceDeclaration,
     status: criterion.check.status,
     bindings: criterion.check.bindings,
-    attempts: criterion.check.attempts,
-    decisionPoints: criterion.check.decisionPoints,
     parks: criterion.check.parks,
   }));
   const bindings = state.acceptanceCriteria.flatMap((criterion) => criterion.check.bindings.map((binding) => ({
