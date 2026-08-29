@@ -246,7 +246,10 @@ test("fan-out: criteria split into lanes, lanes merge in document order, one rou
   assert.equal(state.gates.verify.attempts, 1, "one fan-out round is ONE gate attempt");
   assert.equal(state.judgeCalls.length, 2, "one judge call per lane");
   assert.deepEqual(state.judgeCalls.map((c) => c.purpose).sort(), ["gate:verify-semantic:lane:1", "gate:verify-semantic:lane:2"]);
-  assert.ok(state.judgeCalls.every((c) => c.profile === "routine" && c.effort === "xhigh"), "lanes use the configured routine profile");
+  // Profile stays routine; the budget is verify's own measured one, not the
+  // profile's xhigh - verify is a closed diff-vs-criterion comparison where
+  // extra reasoning budget bought nothing (2026-08-29 measurement).
+  assert.ok(state.judgeCalls.every((c) => c.profile === "routine" && c.effort === "medium"), "lanes use the routine profile at verify's measured budget");
 
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
   assert.equal(artifact.lanes.length, 2);
