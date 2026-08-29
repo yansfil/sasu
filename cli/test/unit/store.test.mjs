@@ -390,7 +390,7 @@ test("GateStore rejects non-kebab-case topic slugs", () => {
   assert.throws(() => new GateStore(os.tmpdir(), "Bad Slug"), /kebab-case/);
 });
 
-function passWithInput(store, docName, content) {
+function passWithInput(store, docName, content, inputKind = "document") {
   fs.writeFileSync(path.join(store.projectRoot, docName), content);
   return recordGateResult(
     store,
@@ -400,7 +400,7 @@ function passWithInput(store, docName, content) {
       kind: "verdict",
       verdict: "PASS",
       findings: [],
-      inputs: [{ path: docName, sha256: freshnessHash(content) }],
+      inputs: [{ path: docName, sha256: freshnessHash(content, inputKind === "qa-log"), kind: inputKind }],
       artifactPayload: {},
     },
     [],
@@ -498,7 +498,7 @@ test("freshness: frontmatter lifecycle flips do not stale the gate", () => {
 test("freshness: recording the gate's own Audit History entry does not stale the gate", () => {
   const store = makeStore();
   const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- answer: yes\n\n## Audit History\n\n### Audit 1\n- result: pass\n";
-  const state = passWithInput(store, "qa-log.md", v1);
+  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
   const v2 = `${v1}\n### Audit 2\n- type: gap-audit-gate\n- result: pass\n`;
   fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
   const view = gateStatus(state, "spec", 2, store.projectRoot);
@@ -532,7 +532,7 @@ test("freshness: Audit History stripping stops at the next section", () => {
 test("freshness (AC7): editing only decision_ids after sealing does not stale the gate", () => {
   const store = makeStore();
   const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1);
+  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
   const v2 = v1.replace("- decision_ids: none", "- decision_ids: D-01");
   fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
   const view = gateStatus(state, "spec", 2, store.projectRoot);
@@ -559,7 +559,7 @@ test("freshness: the decision_ids exclusion is scoped to ## Raw Q&A, not the who
 test("freshness: a decision_ids-shaped line outside ## Raw Q&A in a qa-log still stales the gate", () => {
   const store = makeStore();
   const v1 = "# Interview Log: demo\n\n## Current Understanding\n\n- decision_ids: not a real anchor line here\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1);
+  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
   const v2 = v1.replace(
     "- decision_ids: not a real anchor line here",
     "- decision_ids: this changed outside Raw Q&A",
@@ -573,7 +573,7 @@ test("freshness: a decision_ids-shaped line outside ## Raw Q&A in a qa-log still
 test("freshness (AC8): editing any other qa-log body field after sealing still stales the gate", () => {
   const store = makeStore();
   const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1);
+  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
   const v2 = v1.replace("- answer: yes", "- answer: no");
   fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
   const view = gateStatus(state, "spec", 2, store.projectRoot);

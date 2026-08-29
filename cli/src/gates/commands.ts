@@ -135,11 +135,26 @@ interface InputFile {
   input: GateInput;
 }
 
-/** Read a gate input document and pin its freshness hash (body substance, not lifecycle bookkeeping). */
+/**
+ * Read a gate input document and pin its freshness hash (body substance, not
+ * lifecycle bookkeeping). `label` doubles as the GateInput kind when it names
+ * "qa-log" - the only call sites that pass that label are the ones reading an
+ * actual interview qa-log (gap-audit, spec), so the Raw Q&A decision_ids
+ * exclusion is scoped to exactly those documents, never guessed from path or
+ * content (PRD interview-anchor R4, 2026-08-29 fidelity review RF1).
+ */
 function readInputFile(projectRoot: string, filePath: string, label: string): InputFile {
   const content = readTextFile(projectRoot, filePath, label);
   const resolved = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
-  return { content, input: { path: path.relative(projectRoot, resolved), sha256: freshnessHash(content) } };
+  const isQaLog = label === "qa-log";
+  return {
+    content,
+    input: {
+      path: path.relative(projectRoot, resolved),
+      sha256: freshnessHash(content, isQaLog),
+      ...(isQaLog ? { kind: "qa-log" as const } : {}),
+    },
+  };
 }
 
 /**
