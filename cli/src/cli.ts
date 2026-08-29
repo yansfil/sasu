@@ -3,7 +3,6 @@ import path from "node:path";
 import fs from "node:fs";
 import { loadConfig } from "./config";
 import { runDoctor } from "./doctor";
-import { runAudit } from "./audit/runs";
 import {
   readGateStatus,
   runDelegate,
@@ -68,7 +67,6 @@ Usage:
   sasu interview checkpoint --slug <topic> --normalized <pending|"Q1,Q2"> [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
-  sasu audit runs [--project-root <path>] [--include-seen] [--json]
   sasu doctor [--json]
 
 Interview commands own the qa-log's mechanical bookkeeping (transcript source
@@ -129,19 +127,7 @@ that gate, not the profile's: gap-audit and spec at high, verify at medium
 (gap-audit and spec are open searches where budget buys coverage; verify is a
 closed diff-vs-criterion comparison where it does not). 'judge.laneEffort'
 pins one budget across all three - measure with cli/scripts/effort_sweep.mjs
-before setting it, never guess.
-
-'audit runs' is the L1 run auditor: a read-only sweep of every recorded run's
-gate state against the behavior the skills promise, built to be driven
-periodically by an agent loop. It always reports every judged gate's timeline
-(rounds, wall-clock duration) unconditionally - exit 0 means no KNOWN bad
-pattern tripped, not that every run was fast, and a slow-gate-timeline finding
-flags any gate whose duration is 3x+ its own gate type's median in this scan.
-Each finding names the PRINCIPLES item it leans
-on and whether it is a mechanical-fix candidate, a design question, or
-informational. A fingerprint ledger (agents/runs/.audit/ledger.json) reports
-each structural finding once and then only tracks it, so the loop converges;
---include-seen re-prints tracked ones. Exit 1 when NEW findings exist, else 0.`;
+before setting it, never guess.`;
 
 interface Args {
   positional: string[];
@@ -518,36 +504,6 @@ async function main(): Promise<void> {
       fail(`unknown interview subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
     }
     emitInterviewResult(interviewResult, asJson);
-  }
-
-  if (command === "audit") {
-    if (subcommand !== "runs") fail(`unknown audit subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
-    const config = loadConfig(projectRoot);
-    const rootFlag = args.flags.get("project-root");
-    const root = typeof rootFlag === "string" ? path.resolve(rootFlag) : projectRoot;
-    const result = runAudit(root, config, { includeSeen: args.flags.get("include-seen") === true });
-    if (asJson) {
-      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
-    } else {
-      process.stdout.write(`audited ${result.scannedSlugs.length} run(s) in ${root}\n`);
-      for (const f of result.findings) {
-        const badge = f.classification === "mechanical-fix-candidate" ? "FIX?" : f.classification === "design-question" ? "ASK" : "info";
-        process.stdout.write(`[${badge}] ${f.fingerprint}${f.seen ? " (seen)" : ""} - ${f.summary} (PRINCIPLES ${f.principles.join(",")})\n`);
-      }
-      process.stdout.write(`${result.newFindings} new finding(s); ledger: ${path.relative(root, result.ledgerPath)}\n`);
-      // Timelines print unconditionally: exit 0 means no KNOWN bad pattern
-      // tripped, not that every run was fast - a single-round PASS with a
-      // 20-minute wall clock trips no round-count rule.
-      if (result.timelines.length > 0) {
-        process.stdout.write(`timelines:\n`);
-        for (const t of result.timelines) {
-          const firstPass = t.firstPassAt === null ? "no PASS" : `first PASS ${t.firstPassDurationMinutes}min`;
-          const judge = t.judgeCriticalPathMinutes === null ? "judge n/a" : `judge critical path ${t.judgeCriticalPathMinutes}min`;
-          process.stdout.write(`  ${t.slug}:${t.gate} ${t.verdict ?? "?"} ${t.rounds}rd recorded span ${t.durationMinutes}min | ${firstPass} | ${judge} (${t.startedAt} -> ${t.endedAt})\n`);
-        }
-      }
-    }
-    process.exit(result.newFindings > 0 ? 1 : 0);
   }
 
   if (command === "gate") {
