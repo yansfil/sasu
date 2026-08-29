@@ -73,7 +73,8 @@ sasu interview sync --slug <slug>
 - Every imported entry carries a stable `source_ref`; rerunning `sync` is idempotent and reports already-present turns without duplicating them.
 - A resumed agent session is bound on its first `sync`; run it before asking the first resumed question so its invocation becomes the new start boundary.
 - The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
-- New raw entries start with `decision_ids: none`, `route: mixed`, and `needs_normalization: true` until their decision, provenance, and impact are normalized at a checkpoint.
+- New raw entries start with `decision_ids: none`, `route: mixed`, and `needs_normalization: true` until their provenance and impact are normalized at a checkpoint.
+- `decision_ids` is CLI-owned, not a checkpoint field: `interview decision` anchors a resolved, user-sourced decision (Kind `decision`, Status `resolved`, Source naming `user`/`사용자`) onto a Raw Q&A turn's `decision_ids` the moment it writes the Decision Register row. The default target is the most recently synced Q turn; pass `--anchor Q<n>` when the real exchange sits on an earlier turn instead, and `--anchor none` to record the row without an anchor. A decision that is not user-sourced never gets an anchor, with or without `--anchor`. Never hand-edit `decision_ids`.
 - Every mutating interview command re-runs the structural prelint (closure-only rules excluded) and prints [drift] findings; fix drift immediately.
 - `interview decision` also reports `[drift] interview-decision-cadence` once more than three separate conversation turns have each triggered a decision write since the last checkpoint.
 That is the per-turn write pattern this section forbids: when it fires, stop writing between answers and batch the D# upserts at the next checkpoint.
@@ -85,8 +86,8 @@ Count answered questions in the live conversation and checkpoint every 10 answer
 Normalize after every 2 to 3 answers for high-risk work.
 High-risk work includes production data, migrations, PII, credentials, external APIs, payments, cost, legal or compliance, irreversible side effects, and user-facing launch gates.
 Treat a checkpoint as due early when a P0 node is reopened or invalidated.
-At a checkpoint, run `interview sync` first, read the newly imported entries once, upsert their material D# rows with `interview decision`, then batch-edit only the semantic fields that code cannot infer: label, route, recommended, decision_ids, and immediate_notes.
-Link every material imported entry to its D# before marking it normalized.
+At a checkpoint, run `interview sync` first, read the newly imported entries once, upsert their material D# rows with `interview decision` (the anchor lands automatically), then batch-edit only the semantic fields code cannot infer: label, route, recommended, and immediate_notes.
+Pass `--anchor Q<n>` on the `interview decision` call itself when the real exchange sits on an earlier turn than the one just synced, and `--anchor none` when a resolved user-sourced decision genuinely has no turn to anchor to (e.g. a pre-interview fact); do this at write time, not as a later hand-edit.
 Then run one local intent, impact, and verification sweep over the resolved decisions.
 The sweep's outcome is the `--gap` value: either no material gap or the one highest-impact follow-up; do not turn it into a second user interview.
 Then record the checkpoint:
@@ -273,7 +274,7 @@ Use browser or runtime, API, DB, external, and human proof only where they prove
 - Preserve free-text reasoning, constraints, non-goals, and objections.
 - For a material free-text answer, normalize a Decision Packet before relying on it.
 - Confirm the packet only when interpretation could lose intent or alter scope.
-- Link every material Raw Q&A entry to at least one Decision Register ID; use `decision_ids: none` only when the entry has no PRD effect and explain why in `immediate_notes`.
+- `interview decision` anchors a resolved user-sourced decision onto a Raw Q&A entry automatically; use `--anchor none` only when the entry has no real turn to anchor to (a pre-interview fact, a repo-derived decision), and explain why in `immediate_notes`.
 - Do not repeat a resolved question unless new evidence reopened its node.
 - Treat I do not know as valid and classify the node as deferred or blocking.
 - If one branch dominates, revisit the highest-impact unresolved node in another selected pack.
