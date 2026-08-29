@@ -541,6 +541,35 @@ test("freshness (AC7): editing only decision_ids after sealing does not stale th
   assert.equal(view.inputsDrifted, false);
 });
 
+test("freshness: the decision_ids exclusion is scoped to ## Raw Q&A, not the whole document", () => {
+  const store = makeStore();
+  // A PRD-shaped document has no Raw Q&A section; a line that merely looks
+  // like a decision_ids line elsewhere in the body must still pin the PASS -
+  // otherwise the exception approved for qa-log anchors would silently widen
+  // to every document kind (2026-08-29 fidelity review RF1).
+  const v1 = "# PRD: demo\n\n- decision_ids: D-01\n- R1. behavior\n";
+  const state = passWithInput(store, "prd.md", v1);
+  const v2 = v1.replace("- decision_ids: D-01", "- decision_ids: D-99");
+  fs.writeFileSync(path.join(store.projectRoot, "prd.md"), v2);
+  const view = gateStatus(state, "spec", 2, store.projectRoot);
+  assert.equal(view.effective, "STALE");
+  assert.equal(view.inputsDrifted, true);
+});
+
+test("freshness: a decision_ids-shaped line outside ## Raw Q&A in a qa-log still stales the gate", () => {
+  const store = makeStore();
+  const v1 = "# Interview Log: demo\n\n## Current Understanding\n\n- decision_ids: not a real anchor line here\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
+  const state = passWithInput(store, "qa-log.md", v1);
+  const v2 = v1.replace(
+    "- decision_ids: not a real anchor line here",
+    "- decision_ids: this changed outside Raw Q&A",
+  );
+  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
+  const view = gateStatus(state, "spec", 2, store.projectRoot);
+  assert.equal(view.effective, "STALE");
+  assert.equal(view.inputsDrifted, true);
+});
+
 test("freshness (AC8): editing any other qa-log body field after sealing still stales the gate", () => {
   const store = makeStore();
   const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
