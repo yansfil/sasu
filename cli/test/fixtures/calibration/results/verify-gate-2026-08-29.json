@@ -1,0 +1,135 @@
+{
+  "at": "2026-08-29T03:03:11.086Z",
+  "what": "Verify-gate budget measurement. Unlike gap-audit and spec this gate cannot be swept from documents - it needs a real diff, criteria, and evidence - so it was run through `sasu gate verify --contract` against this repository own judge work.",
+  "diff": "e9a09f7..HEAD, the judge-budget changes themselves, --skip-mechanical so only judge wall time is measured",
+  "trueContract": {
+    "note": "8 criteria, all satisfied by the diff",
+    "medium": {
+      "ms": 124000,
+      "verdict": "PASS",
+      "criteria": "8/8"
+    },
+    "high": {
+      "ms": 237000,
+      "verdict": "PASS",
+      "criteria": "8/8"
+    },
+    "xhigh": {
+      "ms": 225000,
+      "verdict": "PASS",
+      "criteria": "8/8"
+    }
+  },
+  "minedContract": {
+    "note": "same 8 plus 3 deliberately false criteria (AC9 claims the shipped default is high, AC10 claims the api backend sends cache_control, AC11 claims runVerifyGate reads laneEffort - none are true)",
+    "medium": {
+      "ms": 251000,
+      "verdict": "BLOCKED",
+      "minesCaught": "3/3",
+      "falsePositives": 0,
+      "criteria": [
+        {
+          "id": "AC1",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC2",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC3",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC4",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC5",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC6",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC7",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC8",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC9",
+          "verdict": "FAIL"
+        },
+        {
+          "id": "AC10",
+          "verdict": "FAIL"
+        },
+        {
+          "id": "AC11",
+          "verdict": "FAIL"
+        }
+      ]
+    },
+    "high": {
+      "ms": 330000,
+      "verdict": "BLOCKED",
+      "minesCaught": "3/3",
+      "falsePositives": 0,
+      "criteria": [
+        {
+          "id": "AC1",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC2",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC3",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC4",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC5",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC6",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC7",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC8",
+          "verdict": "PASS"
+        },
+        {
+          "id": "AC9",
+          "verdict": "FAIL"
+        },
+        {
+          "id": "AC10",
+          "verdict": "FAIL"
+        },
+        {
+          "id": "AC11",
+          "verdict": "FAIL"
+        }
+      ]
+    },
+    "xhigh": {
+      "note": "not completed - the run exceeded a 10 minute measurement window"
+    }
+  },
+  "conclusion": "medium is sufficient for verify: it caught every planted false criterion with zero false positives, at 76% of high wall time on the mined contract and 52% on the true one. The shape differs from the other two gates because the question does: gap-audit and spec are open searches where budget buys coverage, while verify asks whether a diff satisfies a stated criterion - the answer is in the diff, so extra reasoning has nothing further to find.",
+  "caveat": "One contract, one run per budget, and the xhigh arm is missing. This is the weakest of the three gate measurements; re-measure with repeats before treating verify=medium as firmly as gap-audit=high and spec=high."
+}
