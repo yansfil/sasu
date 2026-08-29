@@ -194,8 +194,12 @@ export function registerTrail(
 
   // A later accepted trail replaces the earlier one rather than deleting it:
   // the record of what was driven, and against which brief, stays readable.
+  const superseded: TrailRecord[] = [];
   for (const entry of state.trails) {
-    if (entry.criterionId === input.criterionId && entry.status === "accepted") entry.status = "superseded";
+    if (entry.criterionId === input.criterionId && entry.status === "accepted") {
+      entry.status = "superseded";
+      superseded.push(entry);
+    }
   }
   const record: TrailRecord = {
     id: Math.max(0, ...state.trails.map((entry) => entry.id)) + 1,
@@ -208,5 +212,19 @@ export function registerTrail(
     status: "accepted",
   };
   state.trails.push(record);
+  // AC40: the resubmission itself is the record. A superseded trail is
+  // PRESERVED - unlike a replaced artifact it vouches for a drive that really
+  // happened, and nothing about the new drive makes the old one untrue.
+  for (const earlier of superseded) {
+    state.evidenceReplacements.push({
+      id: Math.max(0, ...state.evidenceReplacements.map((existing) => existing.id)) + 1,
+      at,
+      criterionId: input.criterionId,
+      kind: "trail",
+      previous: `trail ${earlier.id} against brief ${earlier.briefId}, driven by ${earlier.driverRole}`,
+      next: `trail ${record.id} against brief ${record.briefId}, driven by ${record.driverRole}`,
+      priorDisposition: "preserved",
+    });
+  }
   return record;
 }

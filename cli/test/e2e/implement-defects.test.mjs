@@ -407,3 +407,97 @@ test("AC44: a parked criterion carries no bookkeeping debt, and the proof surviv
     "--reason", "the deliverable depends on a decision that is not made yet"]).status, 0);
   assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "complete"]).status, 0);
 });
+
+// --- R15/AC40-AC43: what happens after a rejection --------------------------
+//
+// Every rejection rule in this PRD said what gets refused and stopped there.
+// The move a person actually makes next is to replace the evidence and try
+// again, and these pin what the record says when they do.
+
+test("AC40: replacing a criterion's evidence records what became of the old, and reopens verification", () => {
+  const root = makeProject();
+  const env = stubEnv(root);
+  proveAndClose(root);
+  fs.mkdirSync(path.join(root, "shots"), { recursive: true });
+  fs.writeFileSync(path.join(root, "shots", "run.txt"), "the first capture\n");
+  const first = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+    "--path", "shots/run.txt", "--description", "first capture"]);
+  assert.equal(first.status, 0, first.stderr + first.stdout);
+  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  const sealed = state(root).verificationAttempts.at(-1).inputFingerprint;
+  assert.deepEqual(state(root).evidenceReplacements, [], "a first registration replaces nothing");
+
+  // Re-registering identical bytes is not a resubmission: nothing was replaced.
+  const same = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+    "--path", "shots/run.txt", "--description", "first capture"]);
+  assert.equal(same.status, 0);
+  assert.equal(same.json.detail.unchanged, true);
+  assert.deepEqual(state(root).evidenceReplacements, []);
+
+  // Replacing the capture IS. The old vouch is invalidated - the file no
+  // longer holds those bytes, so keeping it would be keeping a false record.
+  fs.writeFileSync(path.join(root, "shots", "run.txt"), "the corrected capture\n");
+  const replaced = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+    "--path", "shots/run.txt", "--description", "corrected capture"]);
+  assert.equal(replaced.status, 0, replaced.stderr + replaced.stdout);
+  const record = state(root).evidenceReplacements;
+  assert.equal(record.length, 1);
+  assert.equal(record[0].criterionId, "AC1");
+  assert.equal(record[0].kind, "artifact");
+  assert.equal(record[0].priorDisposition, "invalidated");
+  assert.match(record[0].previous, /shots\/run\.txt @ [0-9a-f]{64}/);
+  assert.equal(state(root).artifacts.filter((entry) => entry.path === "shots/run.txt").length, 1, "one current vouch, not two");
+
+  // AC40: the criterion is back in front of verification - the sealed
+  // fingerprint no longer matches, so the old verdict cannot be reused.
+  assert.notEqual(state(root).verificationAttempts.at(-1).inputFingerprint, undefined);
+  const refused = run(root, ["implement", "finalize"]);
+  assert.equal(refused.status, 2, refused.stdout);
+  assert.match(refused.json.message, /fingerprint no longer matches|STALE/);
+  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  assert.notEqual(state(root).verificationAttempts.at(-1).inputFingerprint, sealed, "a fresh attempt, not the old verdict");
+  assert.equal(run(root, ["implement", "finalize"]).status, 0);
+});
+
+test("AC42: an amendment drops a suite command, and the record says what became of its result", () => {
+  const root = makeProject();
+  const env = stubEnv(root);
+  proveAndClose(root);
+  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  const sealedCommands = state(root).suite.commands.map((entry) => entry.id);
+  assert.ok(sealedCommands.length > 0, "the fixture sealed at least one suite command");
+  const victim = sealedCommands[0];
+
+  // No approval, no exclusion: the sealed list cannot shrink on judgement.
+  const bare = run(root, ["implement", "amend", "--issuer", "human", "--exclude-suite", victim, "--reason", "flaky"]);
+  assert.equal(bare.status, 2, bare.stdout);
+  assert.match(bare.json.message, /--approval/);
+  const unknown = run(root, ["implement", "amend", "--issuer", "human", "--exclude-suite", "S99",
+    "--approval", "yes", "--reason", "not ours"]);
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.json.message, /unknown suite command: S99/);
+  assert.deepEqual(state(root).suite.exclusions, [], "a refused exclusion leaves no trace");
+
+  const priorResult = state(root).suite.results.find((entry) => entry.commandId === victim)?.status ?? "none";
+  const amended = run(root, ["implement", "amend", "--issuer", "human", "--exclude-suite", victim,
+    "--approval", "그 명령은 이 저장소 것이 아니다, 빼자", "--reason", "the command belongs to a vendored tree this run does not own"]);
+  assert.equal(amended.status, 0, amended.stderr + amended.stdout);
+
+  const record = state(root).amendments.at(-1);
+  assert.equal(record.suiteSnapshotUpdated, true);
+  assert.deepEqual(record.excludedSuiteCommands.map((entry) => entry.commandId), [victim]);
+  assert.equal(record.excludedSuiteCommands[0].priorResult, priorResult, "the record names what the result WAS");
+  assert.equal(state(root).suite.exclusions.at(-1).commandId, victim);
+  assert.match(state(root).suite.exclusions.at(-1).approval, /빼자/);
+
+  // The command's last result is PRESERVED as history and stops being scored:
+  // deleting it would erase something the run really saw. The sealed list
+  // minus its exclusions is the scoring authority.
+  assert.ok(state(root).suite.results.some((entry) => entry.commandId === victim), "the result stays in the ledger");
+  assert.ok(state(root).suite.commands.some((entry) => entry.id === victim), "and so does the sealed command");
+  const summary = runPlain(root, ["implement", "status"]).stdout;
+  assert.match(summary, /suite commands excluded by amendment \(1\)/);
+  assert.match(summary, /no longer scored, their last result kept as history/);
+  // The axis now measures only what remains on the sealed list.
+  assert.ok(summary.includes(`/${sealedCommands.length - 1} GREEN`), `suite axis after exclusion:\n${summary}`);
+});

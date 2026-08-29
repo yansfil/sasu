@@ -118,6 +118,7 @@ import {
   type VerificationRoundContext,
   type VerificationRoundContexts,
   type IssuedCommand,
+  type EvidenceReplacement,
   type IssuerLabel,
   ESCALATE_LIMIT_PER_RUN,
   STALL_THRESHOLD_MS,
@@ -695,6 +696,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       events: [],
       verbs: [],
       amendments: [],
+      evidenceReplacements: [],
       // Sealed here, at start, and never re-derived: a mid-run edit of
       // agents/config.json must not change what this run is measured
       // against (AC5). From this point the sealed list is the authority and
@@ -1124,20 +1126,26 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     throw new Error(`amended PRD not found at ${state.prdPath}; edit the source PRD first, then amend`);
   }
   const text = fs.readFileSync(source.absolute, "utf8");
-  if (sha256(text) === state.prd.sha256) {
-    throw new AmendmentRejected("arguments", `${state.prdPath} is byte-identical to the pinned snapshot; there is nothing to amend. Edit the PRD first.`);
+  const excludeSuite = (flag(args, "exclude-suite") ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  // An exclusion IS the amendment's substance, so it does not also need a PRD
+  // edit to justify itself (AC42). Without one, an identical PRD means there
+  // is nothing to correct.
+  if (sha256(text) === state.prd.sha256 && excludeSuite.length === 0) {
+    throw new AmendmentRejected("arguments", `${state.prdPath} is byte-identical to the pinned snapshot; there is nothing to amend. Edit the PRD first, or name a sealed suite command with --exclude-suite.`);
   }
   const at = nowIso();
   const outcome = applyAmendment(projectRoot, state, {
     approval: flag(args, "approval")?.trim() ?? "",
     reason: flag(args, "reason")?.trim() ?? "",
     text,
+    excludeSuite,
   }, at);
   const { record, plan } = outcome;
   const summary = [
     `${plan.invalidatedCriteria.length} invalidated`,
     `${plan.addedCriteria.length} added`,
     `${plan.unchangedCriteria.length} untouched`,
+    ...(record.suiteSnapshotUpdated ? [`${record.excludedSuiteCommands!.length} suite command(s) excluded`] : []),
   ].join(", ");
   recordEvent(state, {
     kind: "amendment",
@@ -1469,6 +1477,20 @@ function bookkeepingBlockers(state: ImplementState, criterion: AcceptanceCriteri
   return blockers;
 }
 
+/** Append one resubmission to the run's evidence history (AC40). */
+export function recordEvidenceReplacement(
+  state: ImplementState,
+  entry: Omit<EvidenceReplacement, "id" | "at">,
+): EvidenceReplacement {
+  const record: EvidenceReplacement = {
+    id: Math.max(0, ...state.evidenceReplacements.map((existing) => existing.id)) + 1,
+    at: nowIso(),
+    ...entry,
+  };
+  state.evidenceReplacements.push(record);
+  return record;
+}
+
 function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
   return relative === `${state.runDir}/state.json`
     || relative === state.prd.snapshotPath
@@ -1565,6 +1587,20 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     ...inspected,
     registeredAt: nowIso(),
   };
+  // Replacing evidence is the move after a rejection, and it used to leave no
+  // trace: the old row was dropped and the record could not tell a criterion
+  // proved once from one proved on the third try (R15 ①, AC40).
+  if (previous !== undefined) {
+    recordEvidenceReplacement(state, {
+      criterionId: acceptanceCriterionId ?? verificationId ?? "run",
+      kind: "artifact",
+      previous: `${previous.path} @ ${previous.sha256} registered ${previous.registeredAt}`,
+      next: `${registered.path} @ ${registered.sha256}`,
+      // The file no longer holds those bytes, so the old vouch is not merely
+      // superseded - it is false, and a false vouch must not survive.
+      priorDisposition: "invalidated",
+    });
+  }
   state.artifacts = state.artifacts.filter((entry) => !(
     entry.verificationId === verificationId
     && entry.acceptanceCriterionId === acceptanceCriterionId
@@ -1836,6 +1872,41 @@ function statusSummary(state: ImplementState, herdr: { available: boolean; holes
   const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
   if (openTasks.length > 0) {
     lines.push("", `open tasks (${openTasks.length}): ${openTasks.map((entry) => `${entry.id} (${entry.status})`).join(", ")}`);
+  }
+
+  // AC41: what happened to the escalations, and - once the bound is spent -
+  // the fact that no further machine move exists. The refusal message says
+  // this too, but a supervisor deciding what to do next reads status, not the
+  // message from a command it has not run yet.
+  if (state.escalations.length > 0) {
+    const spent = state.escalations.length;
+    const roster = state.escalations.map((entry) => `#${entry.id} ${entry.outcome}`).join(", ");
+    lines.push("", `escalations: ${spent} of ${ESCALATE_LIMIT_PER_RUN} used (${roster})`);
+    if (spent >= ESCALATE_LIMIT_PER_RUN) {
+      lines.push(
+        "  the bound is spent - a fourth solver on the same problem is not a plan.",
+        "  this needs an operator decision: park the blocked criterion with a verbatim approval,",
+        "  amend the PRD, or close the run with `finalize --status blocked`.",
+      );
+    }
+    const failed = state.escalations.filter((entry) => entry.outcome === "summon-failed");
+    if (failed.length > 0) {
+      lines.push(`  ${failed.length} summon(s) failed, so the implementor was never reset for ${failed.map((entry) => `#${entry.id}`).join(", ")}`);
+    }
+  }
+
+  const replacements = state.evidenceReplacements;
+  if (replacements.length > 0) {
+    lines.push("", `evidence resubmitted (${replacements.length}):`);
+    for (const entry of replacements.slice(-5)) {
+      lines.push(`  ${entry.criterionId} ${entry.kind}: ${entry.next} (previous ${entry.priorDisposition})`);
+    }
+  }
+
+  const excluded = state.suite.exclusions;
+  if (excluded.length > 0) {
+    lines.push("", `suite commands excluded by amendment (${excluded.length}) - no longer scored, their last result kept as history:`);
+    for (const entry of excluded) lines.push(`  ${entry.commandId}: ${entry.reason}`);
   }
 
   // AC38 ②: what the supervisor may do about all of the above, right now.

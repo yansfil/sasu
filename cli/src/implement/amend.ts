@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseImplementContract } from "./contract";
 import { normalizeProjectPath, sha256, writeTextAtomic } from "./store";
+import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
 import type { AcceptanceCriterionItem, AmendmentRecord, ImplementState } from "./types";
 
 /**
@@ -169,6 +170,14 @@ export interface AmendmentInput {
   reason: string;
   /** The amended PRD text, already read from the source path. */
   text: string;
+  /**
+   * Sealed suite command ids to drop from the scored list (R15 ③, AC42).
+   *
+   * Exclusion rides the amendment because it is the same act: correcting what
+   * this run is measured against. It is not a separate command, so there is
+   * one door out of the sealed list and one place the approval is recorded.
+   */
+  excludeSuite?: string[];
 }
 
 export interface AmendmentOutcome {
@@ -249,6 +258,24 @@ export function applyAmendment(
   const plan = planAmendment(state, contract.acceptanceCriteria);
   const id = Math.max(0, ...state.amendments.map((entry) => entry.id)) + 1;
 
+  // Excluded first, so a refused exclusion leaves the snapshot untouched: an
+  // amendment that half-applied would be worse than one that did not run.
+  const excluded: NonNullable<AmendmentRecord["excludedSuiteCommands"]> = [];
+  for (const requested of input.excludeSuite ?? []) {
+    const commandId = requested.trim().toUpperCase();
+    const command = suiteCommandNamed(state, commandId);
+    if (command === null) {
+      throw new AmendmentRejected("arguments", `unknown suite command: ${commandId}; the sealed list holds ${state.suite.commands.map((entry) => entry.id).join(", ") || "no commands"}`);
+    }
+    // The last result STAYS in the ledger. It stops being counted because the
+    // command left the scored list, but deleting it would erase a red this
+    // run really saw (AC42: which record is authoritative, and what became of
+    // the earlier result).
+    const priorResult = state.suite.results.find((entry) => entry.commandId === commandId)?.status ?? "none";
+    excludeSuiteCommand(state, { commandId, approval: input.approval.trim(), reason: input.reason.trim() }, at);
+    excluded.push({ commandId, command: command.command, priorResult });
+  }
+
   // Archive first, then overwrite: if the archive write fails, the pinned
   // snapshot is still the one state.prd.sha256 names and the run is intact.
   const snapshotPath = state.prd.snapshotPath;
@@ -303,10 +330,8 @@ export function applyAmendment(
     invalidatedCriteria: plan.invalidatedCriteria,
     addedCriteria: plan.addedCriteria,
     unparkedCriteria: plan.unparkedCriteria,
-    // T16 owns suite exclusion through amendment (AC42); until then an
-    // amendment never touches the sealed list, and says so rather than
-    // leaving the field to be read as unknown.
-    suiteSnapshotUpdated: false,
+    suiteSnapshotUpdated: excluded.length > 0,
+    ...(excluded.length > 0 ? { excludedSuiteCommands: excluded } : {}),
   };
   state.amendments.push(record);
   return { record, plan };

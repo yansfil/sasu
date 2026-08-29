@@ -298,3 +298,81 @@ test("await names which liveness probe it used, and refuses two answers to one q
   assert.match(woke.json.detail.livenessProbe, /^unavailable: /);
   assert.match(woke.json.detail.livenessProbe, /not running under herdr/);
 });
+
+// --- AC41/AC43: what the record says after the solver path is spent ---------
+
+test("AC41: once the bound is spent, status names the run's state and the move that is left", () => {
+  const root = makeProject();
+  const env = stubEnv(root);
+  for (let i = 0; i < ESCALATE_LIMIT_PER_RUN; i += 1) {
+    const each = escalate(root, env);
+    assert.equal(each.status, 0, each.stderr + each.stdout);
+  }
+  const refused = escalate(root, env);
+  assert.notEqual(refused.status, 0, refused.stdout);
+  assert.match(refused.json.message, /used all 3 escalations/);
+  // The refusal is history too, and the roster survives it.
+  assert.equal(state(root).escalations.length, ESCALATE_LIMIT_PER_RUN, "a refused escalation summons nobody");
+
+  // AC41: the supervisor deciding what to do next reads status, not the
+  // message of a command it has not run yet.
+  const merged = { ...process.env };
+  for (const key of ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"]) delete merged[key];
+  delete merged.HERDR_ENV;
+  const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
+  assert.match(summary, /escalations: 3 of 3 used/);
+  assert.match(summary, /the bound is spent/);
+  assert.match(summary, /park the blocked criterion|amend the PRD|finalize --status blocked/);
+  // ...and the verb it can no longer issue is not offered.
+  assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
+});
+
+test("AC43: the solver's input envelope and its output both hold their declared shape", () => {
+  const root = makeProject();
+  const env = stubEnv(root);
+  const summoned = escalate(root, env);
+  assert.equal(summoned.status, 0, summoned.stderr + summoned.stdout);
+
+  // The envelope that actually reached the solver: diagnosis-only framing,
+  // plus the three things it is allowed to read.
+  const prompt = fs.readFileSync(path.join(env.capture, "implement_solver.prompt.txt"), "utf8");
+  assert.match(prompt, /Your entire job is to diagnose/);
+  assert.match(prompt, /you do not change state/);
+  assert.match(prompt, /## What the implementor is stuck on/);
+  assert.match(prompt, /## Why the supervisor escalated/);
+  assert.match(prompt, /## Sealed PRD/);
+
+  // The output shape, recorded on success.
+  const record = state(root).escalations.at(-1);
+  assert.equal(record.outcome, "diagnosed");
+  assert.equal(record.profile, "high-risk", "the solver reuses the routing table; it has no knob of its own");
+  assert.equal(record.error, null);
+  // The ledger row carries the headline; the three fields live in full in the
+  // diagnosis the replacement is handed.
+  assert.equal(record.diagnosis, DIAGNOSIS.summary);
+
+  // The three handoff artifacts, in the shape a replacement is briefed with.
+  assert.deepEqual(Object.keys(record.handoff).sort(), ["checkLedgerPath", "diagnosisPath", "prdSnapshotPath"]);
+  for (const rel of Object.values(record.handoff)) {
+    assert.ok(fs.existsSync(path.join(root, rel)), `${rel} must exist for the replacement to read`);
+  }
+  const written = fs.readFileSync(path.join(root, record.handoff.diagnosisPath), "utf8");
+  for (const field of Object.values(DIAGNOSIS)) {
+    assert.ok(written.includes(field), `the diagnosis file must carry "${field}"`);
+  }
+  const briefing = summoned.json.detail.briefing;
+  assert.match(briefing, /1\. The sealed PRD/);
+  assert.match(briefing, /2\. The solver's diagnosis/);
+  assert.match(briefing, /3\. The acceptance-criterion ledger/);
+
+  // ...and a failed summon records the other half of the shape.
+  const failing = makeProject();
+  const failEnv = stubEnv(failing, { summary: "", likelyCause: "x", suggestedNextStep: "y" });
+  const failed = escalate(failing, failEnv);
+  assert.notEqual(failed.status, 0, failed.stdout);
+  const failure = state(failing).escalations.at(-1);
+  assert.equal(failure.outcome, "summon-failed");
+  assert.equal(failure.diagnosis, null);
+  assert.equal(failure.handoff, null);
+  assert.ok(failure.error.length > 0, "a failed summon says why");
+});

@@ -51,7 +51,7 @@ Usage:
   sasu implement park     --ac <ACn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
   sasu implement resume   --ac <ACn> [--json]
   sasu implement resequence --order "<Tn,Tm,...>" [--reason "<why>"] [--json]
-  sasu implement amend    --issuer human --approval "<verbatim human approval>" --reason "<why>" [--json]
+  sasu implement amend    --issuer human --approval "<verbatim human approval>" --reason "<why>" [--exclude-suite "<S1,...>"] [--json]
     (edit the source PRD first; amend re-seals it. Human-only: the supervisor may not correct the question paper.)
   sasu implement qa-brief --ac <ACn> [--json]
   sasu implement trail    --ac <ACn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]

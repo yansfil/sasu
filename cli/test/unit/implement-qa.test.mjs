@@ -23,6 +23,7 @@ const stateWith = (criteria, artifacts = []) => ({
   artifacts,
   qaBriefs: [],
   trails: [],
+  evidenceReplacements: [],
 });
 
 const AT = "2026-08-29T12:00:00.000Z";

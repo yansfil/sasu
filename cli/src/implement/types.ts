@@ -573,6 +573,35 @@ export interface VerbRecord {
   rejection: { check: VerbRejectionCheck; message: string } | null;
 }
 
+/**
+ * One piece of evidence replaced by another, and what became of the first
+ * (R15 ①, AC40).
+ *
+ * Every rejection path in this PRD defined what gets refused and stopped
+ * there. The move a person actually makes next is to replace the evidence and
+ * resubmit, and until now that left no trace: registering a new capture for a
+ * criterion silently dropped the old row, so a reader could not tell a
+ * criterion proved once from one proved on the third try with two discarded
+ * captures behind it.
+ *
+ * `priorDisposition` is the honest half. A superseded trail is PRESERVED - it
+ * stays in the record marked superseded. A replaced artifact is INVALIDATED -
+ * the registration is gone, because the file it vouched for no longer has
+ * those bytes and a stale vouch is worse than none.
+ */
+export interface EvidenceReplacement {
+  /** Monotonic from 1, never reused. */
+  id: number;
+  at: string;
+  criterionId: string;
+  kind: "artifact" | "trail";
+  /** The evidence that was superseded, named the way its record names it. */
+  previous: string;
+  /** What replaced it. */
+  next: string;
+  priorDisposition: "preserved" | "invalidated";
+}
+
 export interface AmendmentRecord {
   id: number;
   at: string;
@@ -596,6 +625,15 @@ export interface AmendmentRecord {
   unparkedCriteria: string[];
   /** True when this amendment also excluded a sealed suite command (AC42). */
   suiteSnapshotUpdated: boolean;
+  /**
+   * Suite commands this amendment dropped from the sealed list (R15 ③, AC42).
+   *
+   * The sealed list minus its exclusions stays the scoring authority; the
+   * excluded command's last result stays in `suite.results` as the fact that
+   * it happened, and simply stops being counted. Deleting it would erase a
+   * red the run really saw.
+   */
+  excludedSuiteCommands?: Array<{ commandId: string; command: string; priorResult: "GREEN" | "RED" | "none" }>;
 }
 
 export interface SuiteCommand {
@@ -788,6 +826,8 @@ export interface ImplementState {
   // state v7 refuses to guess at (see IMPLEMENT_SCHEMA).
   /** Append-only; the waiter's `--since` cursor indexes into this (R8). */
   events: ImplementEvent[];
+  /** Append-only; every resubmission after a rejection (R15 ①). */
+  evidenceReplacements: EvidenceReplacement[];
   /** Every observer verb, accepted or refused, with which check refused it. */
   verbs: VerbRecord[];
   amendments: AmendmentRecord[];

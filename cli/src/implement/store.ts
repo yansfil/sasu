@@ -432,6 +432,32 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     assertString(entry["summary"], `events[${index}].summary`);
   }
 
+  if (candidate.evidenceReplacements === undefined) candidate.evidenceReplacements = [];
+  if (!Array.isArray(candidate.evidenceReplacements)) {
+    throw new Error("malformed implement state: evidenceReplacements must be an array");
+  }
+  let lastReplacementId = 0;
+  for (const [index, entry] of candidate.evidenceReplacements.entries()) {
+    const label = `evidenceReplacements[${index}]`;
+    assertRecord(entry, label);
+    // Append-only and monotonic, like every other ledger the record keeps: a
+    // renumbered resubmission history could hide a discarded capture.
+    if (typeof entry["id"] !== "number" || entry["id"] <= lastReplacementId) {
+      throw new Error(`malformed implement state: ${label}.id must be monotonically increasing`);
+    }
+    lastReplacementId = entry["id"] as number;
+    assertIsoTimestamp(entry["at"], `${label}.at`);
+    assertString(entry["criterionId"], `${label}.criterionId`);
+    if (entry["kind"] !== "artifact" && entry["kind"] !== "trail") {
+      throw new Error(`malformed implement state: ${label}.kind must be artifact or trail`);
+    }
+    assertString(entry["previous"], `${label}.previous`);
+    assertString(entry["next"], `${label}.next`);
+    if (entry["priorDisposition"] !== "preserved" && entry["priorDisposition"] !== "invalidated") {
+      throw new Error(`malformed implement state: ${label}.priorDisposition must be preserved or invalidated`);
+    }
+  }
+
   if (!Array.isArray(candidate.verbs)) throw new Error("malformed implement state: verbs must be an array");
   for (const [index, entry] of candidate.verbs.entries()) {
     assertRecord(entry, `verbs[${index}]`);
