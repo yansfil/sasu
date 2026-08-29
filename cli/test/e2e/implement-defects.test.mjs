@@ -459,6 +459,48 @@ test("AC40: replacing a criterion's evidence records what became of the old, and
   assert.equal(run(root, ["implement", "finalize"]).status, 0);
 });
 
+// --- RF2: registration is the last place a path can still be refused -------
+
+test("RF2: an artifact whose real target leaves the project is refused before its bytes are read", () => {
+  const root = makeProject();
+  proveAndClose(root);
+
+  // The escape is a project-relative path all the way to the judge prompt:
+  // lexical normalization sees `secrets/leak.txt`, and only realpath sees the
+  // file it actually points at.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-outside-"));
+  const secret = path.join(outside, "credentials.txt");
+  fs.writeFileSync(secret, "AKIA_FIXTURE_SECRET\n");
+  fs.mkdirSync(path.join(root, "secrets"), { recursive: true });
+  fs.symlinkSync(secret, path.join(root, "secrets", "leak.txt"));
+
+  const refused = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+    "--path", "secrets/leak.txt", "--description", "runtime capture"]);
+  assert.equal(refused.status, 2, refused.stdout);
+  assert.match(refused.json.message, /resolves outside the project/);
+  assert.match(refused.json.message, /secrets\/leak\.txt/);
+  assert.deepEqual(state(root).artifacts.filter((entry) => entry.command === undefined), [],
+    "a refused registration leaves no hash-pinned record behind");
+
+  // A symlink is not the offence; leaving the project is. An alias to a file
+  // inside the project stays registrable, or the guard would break the
+  // worktree layouts that use links.
+  fs.writeFileSync(path.join(root, "capture.txt"), "an honest capture\n");
+  fs.symlinkSync(path.join(root, "capture.txt"), path.join(root, "secrets", "inside.txt"));
+  const accepted = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+    "--path", "secrets/inside.txt", "--description", "runtime capture"]);
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+
+  // The same boundary holds for the other agent-supplied path: a bookkeeping
+  // declaration hashes the file it names, so an escaping link leaks there too.
+  fs.symlinkSync(secret, path.join(root, "agents", "leak.txt"));
+  const declared = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", "agents/leak.txt"]);
+  assert.equal(declared.status, 2, declared.stdout);
+  assert.match(declared.json.message, /resolves outside the project/);
+
+  fs.rmSync(outside, { recursive: true, force: true });
+});
+
 test("AC42: an amendment drops a suite command, and the record says what became of its result", () => {
   const root = makeProject();
   const env = stubEnv(root);

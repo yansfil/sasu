@@ -1409,6 +1409,7 @@ function declareBookkeeping(
   const at = nowIso();
   for (const entry of requested) {
     const target = normalizeProjectPath(state.projectRoot, entry);
+    assertEvidencePathInsideProject(state.projectRoot, target);
     if (!target.relative.startsWith("agents/")) {
       throw new Error(`--bookkeeping is for the bookkeeping namespace only: ${target.relative} is product tree, and a product change is already proved by the judged diff`);
     }
@@ -1491,6 +1492,38 @@ export function recordEvidenceReplacement(
   return record;
 }
 
+/**
+ * Refuse an agent-supplied evidence path whose real target leaves the project.
+ *
+ * `normalizeProjectPath` is lexical only: `agents/proof.txt` symlinked to a
+ * credential file outside the project satisfies it, and `inspectArtifactFile`
+ * then statSync/readFileSync through the link and hand those bytes to an
+ * external judge. Registration is the only place to stop that, because after
+ * it the path is hash-pinned and indistinguishable from honest evidence.
+ *
+ * The containment test is the check-binding idiom from checks.ts: walk to the
+ * nearest existing ancestor, realpath it, and refuse a relative that escapes.
+ * The ancestor walk is what still admits a bookkeeping declaration for a file
+ * this run has not written yet, while refusing a link that already escapes.
+ */
+function assertEvidencePathInsideProject(projectRoot: string, target: { absolute: string; relative: string }): void {
+  const realRoot = fs.realpathSync(projectRoot);
+  let existingAncestor = target.absolute;
+  while (!fs.existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  const real = fs.realpathSync(existingAncestor);
+  const relative = path.relative(realRoot, real);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(
+      `evidence path resolves outside the project: ${target.relative} -> ${real}.`
+        + " Registration reads the file and hands its bytes to the judge, so the real target must stay inside the record tree.",
+    );
+  }
+}
+
 function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
   return relative === `${state.runDir}/state.json`
     || relative === state.prd.snapshotPath
@@ -1544,6 +1577,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   // Artifact paths live in the RECORD tree (normally under the run dir):
   // the receipt cites them, and the record must outlive the worktree.
   const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
+  assertEvidencePathInsideProject(state.projectRoot, target);
   // A file the harness itself rewrites can never be frozen evidence: the
   // next harness write invalidates the frozen sha and the integrity
   // preflight fails forever with no unregister. 2026-08-27 crawler-arena hit
