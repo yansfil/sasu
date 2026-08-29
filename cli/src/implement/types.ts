@@ -217,6 +217,20 @@ export interface AcceptanceCriterionInvocation {
   verdict: VerificationStatus;
   judge: JudgeCallRecord | null;
   error: JudgeLaneError | null;
+  /**
+   * Whether a judge was asked at all. "judge" means the acceptance judge read
+   * an envelope and ruled. "harness" means the harness settled the criterion
+   * from its own records and summoned nobody - a machine criterion read off
+   * its Check exit code (R3, AC7), or a judged criterion refused before the
+   * call because its declared evidence was never registered.
+   *
+   * Stated rather than inferred from `judge: null`, because a null judge
+   * record is also what a judge call whose record was lost looks like. A
+   * reader has to be able to tell "nobody was asked" from "somebody was asked
+   * and the record is missing". Absent on invocations written before the
+   * acceptance lane was narrowed, which were all judge calls.
+   */
+  source?: "judge" | "harness";
   // Names the ERROR'd attempt this settled verdict was carried over from.
   // Timestamps and judge record stay those of the original judgment.
   reusedFrom?: string;

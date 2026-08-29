@@ -66,6 +66,8 @@ import {
   IMPLEMENT_REVIEW_DIFF_MAX_CHARS,
   riskPrompt,
   type AcceptancePromptMaterial,
+  type EnvelopeClaim,
+  type EnvelopeFacts,
 } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import {
@@ -1886,8 +1888,100 @@ function acceptanceMaterial(
     evidence,
     readableArtifacts,
     scenarios: mappedScenarios,
-    checkLedger: checkLedgerForCriterion(criterion),
+    facts: envelopeFacts(state, criterion),
+    claims: envelopeClaims(state),
   };
+}
+
+/**
+ * Section 2 of the envelope: what the harness executed or wrote itself (AC8).
+ *
+ * The four the requirement names - check ledger, suite results, rebind and
+ * amendment history, parked list - are here because each answers a question a
+ * judge would otherwise have to guess at: what ran, what else is red, whether
+ * the oracle was swapped mid-run, whether the question changed, and what was
+ * deliberately not proven. A judge missing the rebind history cannot tell a
+ * criterion that passed from one whose check was replaced until it passed.
+ */
+function envelopeFacts(state: ImplementState, criterion: AcceptanceCriterionItem): EnvelopeFacts {
+  const byId = new Map(state.suite.commands.map((entry) => [entry.id, entry]));
+  return {
+    checkLedger: checkLedgerForCriterion(criterion),
+    suiteResults: state.suite.results.map((entry) => ({
+      commandId: entry.commandId,
+      command: byId.get(entry.commandId)?.command ?? entry.commandId,
+      status: entry.status,
+      exitCode: entry.exitCode,
+      attributedCriteria: entry.attributedCriteria,
+    })),
+    suiteExclusions: state.suite.exclusions.map((entry) => ({ commandId: entry.commandId, at: entry.at })),
+    // Only replacements are history worth carrying: the first binding is the
+    // oracle, a later one is a decision to measure something else.
+    rebinds: state.acceptanceCriteria.flatMap((entry) => entry.check.bindings.slice(1).map((binding, index) => ({
+      criterionId: entry.id,
+      from: entry.check.bindings[index]!.command,
+      to: binding.command,
+      at: binding.boundAt,
+    }))),
+    amendments: state.amendments.map((entry) => ({
+      id: entry.id,
+      at: entry.at,
+      invalidatedCriteria: entry.invalidatedCriteria,
+      addedCriteria: entry.addedCriteria,
+      unparkedCriteria: entry.unparkedCriteria,
+    })),
+    parked: state.acceptanceCriteria
+      .filter((entry) => entry.check.status === "parked")
+      .map((entry) => ({
+        id: entry.id,
+        parkedBy: entry.check.parks.at(-1)?.parkedBy ?? "human",
+        at: entry.check.parks.at(-1)?.parkedAt ?? "unknown",
+      })),
+  };
+}
+
+/**
+ * Section 3: every sentence a person or an agent wrote, with its origin (AC8).
+ *
+ * Collected run-wide rather than per criterion on purpose. A park reason on a
+ * neighbouring criterion is context for why this run looks the way it does,
+ * and withholding it would leave the judge reconstructing the run from
+ * fragments - which is when a judge starts inferring. What it must never do
+ * is rest a verdict on any of it, and Section 3's own text says so (AC9).
+ */
+function envelopeClaims(state: ImplementState): EnvelopeClaim[] {
+  const claims: EnvelopeClaim[] = [];
+  for (const criterion of state.acceptanceCriteria) {
+    for (const park of criterion.check.parks) {
+      claims.push({
+        origin: park.parkedBy === "observer" ? "observer" : "human",
+        subject: `${criterion.id} park`,
+        text: park.parkedBy === "observer"
+          ? park.reason
+          : `${park.reason} (approval quoted: ${park.approval})`,
+      });
+    }
+  }
+  for (const amendment of state.amendments) {
+    claims.push({ origin: "human", subject: `amendment ${amendment.id}`, text: `${amendment.reason} (approval quoted: ${amendment.approval})` });
+  }
+  for (const exclusion of state.suite.exclusions) {
+    claims.push({ origin: "human", subject: `suite exclusion ${exclusion.commandId}`, text: `${exclusion.reason} (approval quoted: ${exclusion.approval})` });
+  }
+  for (const verb of state.verbs) {
+    if (verb.issuer !== "observer" || verb.reason.trim() === "") continue;
+    claims.push({ origin: "observer", subject: `${verb.verb}${verb.target === null ? "" : ` ${verb.target}`} (${verb.outcome})`, text: verb.reason });
+  }
+  for (const escalation of state.escalations) {
+    claims.push({ origin: "observer", subject: `escalation ${escalation.id} reason`, text: escalation.reason });
+    if (escalation.diagnosis !== null) {
+      claims.push({ origin: "solver", subject: `escalation ${escalation.id} diagnosis`, text: escalation.diagnosis });
+    }
+  }
+  for (const grant of state.budgetGrants ?? []) {
+    claims.push({ origin: "human", subject: "budget grant", text: grant.evidence });
+  }
+  return claims;
 }
 
 function validateFidelity(
@@ -2156,7 +2250,22 @@ async function acceptanceLane(
   // Criteria still all judge in one round and the lane still costs its
   // slowest one - the ceiling only stops a 22-criterion PRD from putting 22
   // heavyweight judge subprocesses on a box that already runs the project.
-  const runnableCriteria = state.acceptanceCriteria.filter((criterion) => criterion.check.status !== "parked");
+  // AC7: the acceptance JUDGE sees judged criteria only. A machine criterion
+  // already has an exit code against a bound command, and asking a judge to
+  // re-read it is asking a weaker instrument to second-guess a stronger one
+  // (AGENTS.md Review Guide 1). Its ledger still reaches every judge as a
+  // fact in Section 2 - demoted from a judged item to a summary, not dropped.
+  //
+  // It stays IN the lane's result, though, settled from that ledger with
+  // `source: "ledger"`. Dropping it outright was the first attempt and it was
+  // wrong: with no judged criteria the lane held zero invocations, and
+  // `every(PASS)` over an empty list is PASS - so a run with a red machine
+  // criterion printed a green acceptance lane. A record that reads green on
+  // unproven work is exactly the dishonesty PRINCIPLES 10 forbids.
+  const runnableCriteria = state.acceptanceCriteria.filter((criterion) =>
+    criterion.check.status !== "parked" && criterion.judgment === "judged");
+  const ledgerCriteria = state.acceptanceCriteria.filter((criterion) =>
+    criterion.check.status !== "parked" && criterion.judgment !== "judged");
   const perCriterion = await mapWithConcurrency(runnableCriteria, judgeFanoutLimit(), async (criterion) => {
     const prior = settled.get(criterion.id);
     if (reuse !== null && prior !== undefined) {
@@ -2181,6 +2290,9 @@ async function acceptanceLane(
           verdict: "FAIL" as const,
           judge: null,
           error: null,
+          // No judge was summoned: the declared evidence is missing, and a
+          // judge asked to rule without it would be guessing.
+          source: "harness" as const,
         },
         criteria: [{ id: criterion.id, verdict: "FAIL" as const, reason, evidence: "none registered for this acceptance criterion" }],
       };
@@ -2257,11 +2369,46 @@ async function acceptanceLane(
       verdict: record.verdict,
       judge: record.judge,
       error: record.error,
+      source: "judge",
     };
     return { invocation, criteria: record.result?.criteria ?? [] };
   });
-  const criteria = perCriterion.flatMap((entry) => entry.criteria);
-  const invocations = perCriterion.map((entry) => entry.invocation);
+  // Ledger-settled criteria. No judge is called, so these cost nothing and are
+  // recomputed every attempt rather than reused from an ERROR'd one - there is
+  // nothing expensive to carry over, and a stale carry-over would be a second
+  // record of a fact state.json already holds.
+  const fromLedger = ledgerCriteria.map((criterion) => {
+    const at = nowIso();
+    const green = criterionCheckIsGreen(criterion);
+    const binding = criterion.check.bindings.at(-1);
+    const reason = green
+      ? `the harness ran the bound Check and it exited 0`
+      : binding === undefined
+        ? "no Check binding, so nothing has measured this criterion"
+        : "the bound Check is not green";
+    progress(`acceptance ${criterion.id}: ${green ? "PASS" : "FAIL"} (from the check ledger, no judge call)`);
+    return {
+      invocation: {
+        criterionId: criterion.id,
+        invocationId: crypto.randomUUID(),
+        startedAt: at,
+        finishedAt: at,
+        durationMs: 0,
+        verdict: (green ? "PASS" : "FAIL") as VerificationStatus,
+        judge: null,
+        error: null,
+        source: "harness" as const,
+      },
+      criteria: [{
+        id: criterion.id,
+        verdict: green ? ("PASS" as const) : ("FAIL" as const),
+        reason,
+        evidence: binding === undefined ? "none" : `${binding.command} (cwd ${binding.cwd})`,
+      }],
+    };
+  });
+  const criteria = [...perCriterion, ...fromLedger].flatMap((entry) => entry.criteria);
+  const invocations = [...perCriterion, ...fromLedger].map((entry) => entry.invocation);
   const verdict: VerificationStatus = invocations.some((entry) => entry.verdict === "ERROR")
     ? "ERROR"
     : invocations.every((entry) => entry.verdict === "PASS")

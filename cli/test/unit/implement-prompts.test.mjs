@@ -136,6 +136,10 @@ test("acceptance prompt is scoped to one criterion and its mapped proof", () => 
     evidence: [{ criterionId: "AC2", path: "second.log", sha256: "b".repeat(64), bytes: 21, text: "SECOND-ARTIFACT-BODY" }],
     readableArtifacts: [{ path: "second.png", kind: "screenshot", sha256: "c".repeat(64), bytes: 42, description: "second screen", registeredAt }],
     scenarios: [],
+    // Section 2/3 of the envelope. Empty ledgers here: these two cases are
+    // about criterion scoping and scenario cards, not about the facts split.
+    facts: { checkLedger: "{}", suiteResults: [], suiteExclusions: [], rebinds: [], amendments: [], parked: [] },
+    claims: [],
   });
   assert.match(prompt, /AC2: second criterion/);
   assert.match(prompt, /"id": "AC2"/);
@@ -162,6 +166,10 @@ test("mapped scenario cards travel to the acceptance judge with their full body"
     evidence: [],
     readableArtifacts: [],
     scenarios: [{ id: "SC1", text: "Invite: Primary path: B joins. Failure state: expired link notice. Recovery: reissue works." }],
+    // Section 2/3 of the envelope. Empty ledgers here: these two cases are
+    // about criterion scoping and scenario cards, not about the facts split.
+    facts: { checkLedger: "{}", suiteResults: [], suiteExclusions: [], rebinds: [], amendments: [], parked: [] },
+    claims: [],
   });
   assert.match(prompt, /MAPPED USER SCENARIOS/);
   assert.match(prompt, /SC1: Invite: Primary path: B joins\. Failure state: expired link notice\. Recovery: reissue works\./);

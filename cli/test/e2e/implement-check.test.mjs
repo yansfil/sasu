@@ -184,7 +184,10 @@ test("readiness enforces the AC judgment table and reports tag counts", () => {
 });
 
 test("SC1 and SC3: machine close needs a harness green and rebind history remains append-only", () => {
-  const criteria = [{ id: "AC1", text: "machine flow closes", judgment: "machine" }];
+  const criteria = [
+    { id: "AC1", text: "machine flow closes", judgment: "machine" },
+    { id: "AC2", text: "the close reads honestly", judgment: "judged", evidence: "scripted status transcript" },
+  ];
   const root = makeProject(criteria);
   start(root);
 
@@ -228,6 +231,12 @@ test("SC1 and SC3: machine close needs a harness green and rebind history remain
   assert.equal(ledger.bindings[0].reason, null);
   assert.equal(ledger.bindings[1].reason, "replace the flaky checker");
 
+  fs.writeFileSync(path.join(root, "transcript.log"), "AC2 status transcript\n");
+  assert.equal(run(root, [
+    "implement", "artifact", "--ac", "AC2", "--kind", "log", "--path", "transcript.log", "--description", "status transcript",
+  ]).status, 0);
+  assert.equal(run(root, ["implement", "task", "--id", "T2"]).status, 0);
+
   const judge = stub(root, criteria);
   const verified = run(root, ["implement", "verify"], { env: judge.env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
@@ -237,10 +246,14 @@ test("SC1 and SC3: machine close needs a harness green and rebind history remain
     { criterionId: "AC1", bindingId: "B1", classification: "asset" },
     { criterionId: "AC1", bindingId: "B2", classification: "asset" },
   ]);
-  const prompt = fs.readFileSync(path.join(judge.capture, "implement_acceptance_AC1.prompt.txt"), "utf8");
+  // The machine criterion summons no judge (AC7), so the rebind reaches the
+  // judge as a FACT in the envelope of the criterion that does (AC8). Without
+  // that entry a judge could not tell a criterion that passed from one whose
+  // oracle was swapped until it passed.
+  assert.equal(fs.existsSync(path.join(judge.capture, "implement_acceptance_AC1.prompt.txt")), false);
+  const prompt = fs.readFileSync(path.join(judge.capture, "implement_acceptance_AC2.prompt.txt"), "utf8");
   assert.match(prompt, /HARNESS-OWNED ACCEPTANCE CHECK LEDGER/);
-  assert.match(prompt, /"id": "B1"/);
-  assert.match(prompt, /"id": "B2"/);
+  assert.match(prompt, /CHECK REBINDS:\n- AC1 at .*: npm test -> node --version/);
   const finalized = run(root, ["implement", "finalize"]);
   assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
   assert.deepEqual(finalized.json.detail.receipt.skippedAcceptanceCriteria, []);
