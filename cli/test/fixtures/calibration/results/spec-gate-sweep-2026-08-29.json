@@ -1,0 +1,673 @@
+{
+  "at": "2026-08-29T02:23:28.618Z",
+  "what": "Spec-gate reasoning-budget sweep, the companion to the gap-audit sweep",
+  "gate": "spec (2 lanes: fidelity, testability) judging a PRD against the interview log it came from",
+  "docs": {
+    "mined": "cli/test/fixtures/calibration/prd-mined.md against qa-log-complete.md - 3 planted violations",
+    "real-passed": "agents/prd/implement-check/prd.md (279 lines) against its own qa-log, a PRD whose spec gate PASSed in production"
+  },
+  "headline": {
+    "mined  medium": {
+      "medianMs": 23882,
+      "findingsAvg": 6,
+      "mines": "9/9"
+    },
+    "mined  high": {
+      "medianMs": 27022,
+      "findingsAvg": 6.7,
+      "mines": "9/9"
+    },
+    "mined  xhigh": {
+      "medianMs": 102214,
+      "findingsAvg": 6.7,
+      "mines": "9/9"
+    },
+    "real   medium": {
+      "medianMs": 28120,
+      "findingsAvg": 1
+    },
+    "real   high": {
+      "medianMs": 85958,
+      "findingsAvg": 4
+    },
+    "real   xhigh": {
+      "medianMs": 182337,
+      "findingsAvg": 3.3
+    }
+  },
+  "conclusion": "high is right for spec too, and the case against xhigh is stronger here than for gap-audit: on the real PRD xhigh took 2.1x the wall time of high and returned FEWER findings (3.3 vs 4.0), where gap-audit at least bought a slight gain (6.3 vs 5.7). medium collapses on the real document (1.0 findings) exactly as it did for gap-audit.",
+  "instrumentWarning": "The planted-mine PRD detects 9 of 9 mines at every effort from medium to xhigh, so like the gap-audit mine fixture it cannot rank budgets - scored alone it always nominates the cheapest option. Both gates now show this. Budget decisions must be made on a real document.",
+  "alsoObserved": "The two gates have different severity temperaments: spec emitted 3 P0 findings across 3 runs of the real PRD, gap-audit emitted 1 across 3 runs of its real log.",
+  "runs": [
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "medium",
+      "wallMs": 30342,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6와 AC6가 사용자가 명시적으로 기각한 자동 병합을 요구하고, 충돌 시 두 버전 비교 및 수동 해결 결정을 누락했다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "R13이 권한 경계를 기록하지만 사용자가 정한 ‘보안 요건 강화 시 재검토’ 조건을 보존하지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-19의 이메일/슬랙 알림 non-goal은 기록했지만 ‘관리자 다수 요청 시 재검토’ 조건이 누락됐다."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3 uses the vague acceptance language \"적절히 빠르게\" and \"사용자가 불편을 느끼지 않는다\", so it has no observable pass condition."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8 has no acceptance criterion or required verification covering tag-name matching and automatic creation of missing tags."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "V3 does not verify R2's five-minute background schedule, relative last-sync display, or header-banner failure behavior; it only states that the manual flow works."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "medium",
+      "wallMs": 28120,
+      "verdict": "PASS",
+      "findingCount": 0,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": []
+    },
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "high",
+      "wallMs": 42325,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6 and AC6 require automatic merging to the latest version, directly contradicting the user's explicit rejection of auto-merge and the required conflict-badge, side-by-side review, and manual-resolution flow."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD omits D18's revisit condition that the permission policy should be reconsidered if security requirements become stricter."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD does not represent D19's decision that repeated-failure notifications are limited to a header banner, with email and Slack explicitly excluded and revisited only after multiple administrator requests."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6/AC6 require automatic conflict merging, while the recorded user decision explicitly rejects auto-merge and requires manual resolution, so the expected behavior and its verification outcome contradict each other."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3 defines completion speed only as 'appropriately fast' and 'not inconvenient', leaving the acceptance outcome untestable."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8 has no verification entry that explicitly checks name-based tag matching and automatic creation of missing tags."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "V1's deletion pass intent does not explicitly verify trash movement, 30-day retention, and permanent deletion after retention expiry required by R5/AC5."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "high",
+      "wallMs": 99919,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "The PRD marks approval for a one-document list-format bootstrap exception, but the interview approved the AC table contract and contains no user approval for this exception."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD omits the resolved counter lifecycle rule that counters freeze while parked and persist across session restarts."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD does not explicitly preserve D-30's side-effect boundary: only working-tree writes and temporary files are allowed, while network or system-changing commands must be rejected at bind time without new secret delivery."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "R7/AC15 and V3 conflict on whether a task containing only a machine+gate:human AC may close without green or parked, so the expected observable close result is undefined."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "Human verification condition 1 permits either reaching finalize or receiving an undefined 'honest rejection', allowing an implementation failure to pass without a specified expected terminal state."
+        },
+        {
+          "severity": "P2",
+          "area": "verification",
+          "missing": "V3 does not explicitly verify R12's required preservation of artifact hash fixation and retention when adding AC binding."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "mined",
+      "effort": "xhigh",
+      "wallMs": 102214,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6와 AC6가 사용자가 명시적으로 기각한 자동 병합을 요구하며, 충돌 배지·양쪽 버전 비교·수동 해결·해결 전 동기화 제외를 누락했다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-18의 ‘보안 요건 강화 시 재검토’ 조건이 R13에 반영되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-19의 실패 안내를 목록 헤더 배너로만 제공한다는 결정과 ‘관리자 다수 요청 시 재검토’ 조건이 누락되었다."
+        },
+        {
+          "severity": "P0",
+          "area": "testability",
+          "missing": "R6/AC6 requires automatic merge while the interview explicitly rejects auto-merge and the UX scenario requires manual conflict resolution, so there is no single observable pass oracle."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3 uses the non-testable acceptance language “적절히 빠르게” and “사용자가 불편을 느끼지 않는다.”"
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8 has no required verification entry or explicit disposition for tag-name matching and automatic tag creation."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "Several verification pass intents describe tests being “fixed” or “regression protected” without observable assertions for covered sub-behaviors such as the five-minute trigger, external_id/title conversion, large-note badge recovery, and sync_events UI non-exposure."
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "wallMs": 233217,
+      "verdict": "BLOCK",
+      "findingCount": 3,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "The PRD marks the checklist as human-approved, but the cited quote does not explicitly approve the unapproved AC-list/bootstrap exception, and section 4.2 says that approval is still required."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD commits to local delivery with direct commits to main and no PR request, but this decision is absent from the interview log and lacks cited repository evidence."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The resolved trust boundary is incomplete: the PRD omits the explicit limits to working-tree or temporary writes, bind-time rejection of network or system-changing commands, and no-new-secrets environment policy."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "mined",
+      "effort": "medium",
+      "wallMs": 16332,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6 and AC6 directly contradict D-12 by requiring automatic merging, while the interview explicitly rejected auto-merge and requires conflict badges with side-by-side manual resolution."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "R13 preserves the permission-loss behavior but omits D-18's revisit condition that the policy must be reconsidered if security requirements are strengthened."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD does not represent D-19's resolved failure-notification behavior that failures are shown only as a list-header banner, despite excluding email and Slack."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6, AC6, and V1 require automatic merging despite the recorded user decision explicitly rejecting auto-merge in favor of manual conflict resolution."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3 uses the unmeasurable acceptance language “적절히 빠르게” and “사용자가 불편을 느끼지 않는다,” so it has no objective pass condition."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8’s tag name matching and automatic tag creation has no explicit required verification or disposition in the verification contract."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "medium",
+      "wallMs": 40831,
+      "verdict": "BLOCK",
+      "findingCount": 1,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-23/D-30의 명시적 부작용 경계인 워킹트리 내부 쓰기·임시 파일만 허용하고 네트워크·시스템 변경 명령은 바인딩 단계에서 fail-closed로 거부한다는 결정이 PRD에 구체적으로 반영되지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "mined",
+      "effort": "high",
+      "wallMs": 19210,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6 and AC6 directly contradict D-12 by requiring automatic merging into one latest version while omitting the required conflict badge, side-by-side comparison, manual resolution, and exclusion until resolved."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "R13 captures D-18's permission behavior but omits its revisit condition that stronger security requirements may reopen the policy."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD omits D-19's positive decision that failures surface only through a list-header banner and its revisit condition of multiple administrator requests."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6와 AC6가 사용자가 명시적으로 거부한 자동 병합을 요구하며, 수동 충돌 해결 UX 시나리오와 정면으로 충돌한다."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3의 '적절히 빠르게'와 '사용자가 불편을 느끼지 않는다'는 관찰 가능한 완료 기준이 아니다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8의 태그 이름 매칭 및 상대편 태그 자동 생성에 대한 Required Agent Verification 또는 명시적 disposition이 없다."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "high",
+      "wallMs": 83745,
+      "verdict": "BLOCK",
+      "findingCount": 4,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "PRD가 목록형 AC를 허용하는 bootstrap 예외를 사용자 승인에 포함했다고 주장하지만, 인터뷰 로그에는 이 예외에 대한 명시적 승인이나 결정이 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-30과 D-35의 신뢰 경계인 워킹트리·임시 파일만 허용, 네트워크·시스템 변경 명령 거부, 기존 셸 환경·시크릿 전달 유지가 PRD에 구체적으로 명시되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R12의 검증 의도는 AC 등록과 기존 V 경로 회귀만 확인하며, 해시 고정·보존과 AC 등록 시 해당 메커니즘의 공존을 관찰 가능한 결과로 검증하지 않는다."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "Human Verification 1번은 finalize 도달과 '정직한 거부'를 모두 통과로 허용하지만 어떤 상태가 기대 결과인지와 거부가 정직한지의 판정 기준이 정의되지 않았다."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "mined",
+      "effort": "xhigh",
+      "wallMs": 73723,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6 and AC6 directly contradict D-12 by requiring automatic latest-version merging instead of a conflict badge, side-by-side review, and manual resolution with synchronization paused until resolution."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD omits D-18's revisit condition that the permission policy should be reconsidered if security requirements become stricter."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD omits D-19's failure-notification policy: failures must use only a list-header banner, with email and Slack excluded and reconsideration triggered by multiple administrator requests."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6와 AC6은 자동 병합을 요구하지만, 인터뷰 결정 D-12는 자동 병합을 명시적으로 거부하고 충돌 배지와 수동 해결을 요구한다."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3의 '적절히 빠르게'와 '사용자가 불편을 느끼지 않는다'는 측정 가능한 관찰 기준이 없어 합격 여부를 판정할 수 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8의 태그 이름 매칭 및 상대편에 없는 태그 자동 생성에 대한 필수 검증이 Verification Contract에 없다."
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "wallMs": 166131,
+      "verdict": "BLOCK",
+      "findingCount": 4,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "The PRD marks the unapproved bootstrap exception to D-12's required AC-table format as approved, although the interview only approved the decision/evidence columns and contains no consent for exempting this PRD."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD does not preserve D-10's selected initial fingerprint behavior: exit code plus matched failure-signature lines, last-30-lines fallback, and aggressive normalization including numeric literals."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "V2/V3 do not explicitly require observable assertions for several core guard and transition outcomes they claim to cover, including decision-point state/status idempotence, parked-check rejection, resume to pending with counter reset while preserving a closed task, and unbound or non-green machine close rejection with the blocking AC."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "Human Verification item 1 permits either reaching finalize or receiving an unspecified 'honest rejection', so an unexpected failure could satisfy the required check without proving a successful end-to-end run."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "mined",
+      "effort": "medium",
+      "wallMs": 23882,
+      "verdict": "BLOCK",
+      "findingCount": 6,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6 and AC6 directly contradict D-12 by requiring automatic merging instead of conflict badges, side-by-side review, and manual resolution."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The PRD omits D-19's resolved failure-notification behavior that failures are shown only as a list-header banner, with email and Slack explicitly excluded and revisit conditions preserved."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "R13 represents D-18's permission boundary but omits its revisit condition that the policy should be reconsidered if security requirements become stricter."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3 defines completion speed and user discomfort subjectively, so it has no objective pass/fail condition."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8 requires tag-name matching and automatic tag creation, but no required verification has a pass intent that explicitly exercises either behavior."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "V3 covers R2 only through the manual flow, leaving the five-minute scheduler and relative last-sync timestamp without an explicit observable verification intent."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "medium",
+      "wallMs": 26681,
+      "verdict": "BLOCK",
+      "findingCount": 2,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "PRD가 D-10의 실패 클래스 계산 방식인 시그니처 라인 추출과 시그니처가 없을 때 마지막 30줄 fallback을 명시하지 않아 구현자가 다른 지문 범위를 선택할 수 있다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "PRD가 D-30의 명시적 side-effect 경계인 워킹트리·임시 파일 쓰기만 허용하고 네트워크·시스템 변경 명령은 바인딩 시 fail-closed로 거부한다는 정책을 충분히 보존하지 않는다."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "mined",
+      "effort": "high",
+      "wallMs": 27022,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6 contradicts D-12 by specifying automatic merging to the latest state, while the interview explicitly rejects auto-merge and requires a conflict badge, side-by-side comparison, and manual resolution with syncing paused until resolved."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-19's approved failure-notification policy is absent: failures must appear only as a header banner, with email and Slack notifications excluded and reconsidered only after multiple administrator requests."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "R13 captures D-18's current permission behavior but omits the explicit revisit condition that it may be reconsidered if security requirements become stricter."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6, AC6, and V1 require automatic conflict merging, directly contradicting the user's recorded decision to prohibit auto-merge and require manual conflict resolution with a conflict badge."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3 uses vague, non-observable acceptance language ('적절히 빠르게' and '사용자가 불편을 느끼지 않는다')."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8 has no required verification covering name-based tag matching and automatic creation of missing tags."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "The required verification intents do not explicitly cover the 30-day soft-delete retention and permanent deletion in R5, or archive release re-inclusion and prohibition of counterpart archive representations in R10."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "high",
+      "wallMs": 85958,
+      "verdict": "BLOCK",
+      "findingCount": 2,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "The PRD introduces a bootstrap exception allowing list-style AC syntax instead of the interview's required AC table format, without an explicit user decision approving that exception."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "The D-10 fingerprint decision is underspecified: the PRD does not preserve signature-line extraction, last-30-line fallback, exit-code inclusion, or the complete aggressive-normalization rule."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "mined",
+      "effort": "xhigh",
+      "wallMs": 103861,
+      "verdict": "BLOCK",
+      "findingCount": 7,
+      "minesDetected": 3,
+      "mineTotal": 3,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6는 사용자가 명시적으로 기각한 자동 병합을 요구하며, 충돌 배지·양 버전 비교·수동 해결·해결 전 동기화 제외를 누락했다."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R4가 일반 멤버에게 API 키 존재 여부를 보여준다는 보안 정책을 사용자 결정으로 기록하지 않은 채 추가했다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D18의 보안 요건 강화 시 재검토 조건이 PRD에 보존되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D19의 실패 안내를 목록 헤더 배너로만 제공한다는 동작과 관리자 다수 요청 시 재검토 조건이 요구사항에 없다."
+        },
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "R6와 AC6의 자동 병합 요구가 사용자가 명시적으로 기각한 결정(D-12)과 정면으로 충돌한다."
+        },
+        {
+          "severity": "P1",
+          "area": "testability",
+          "missing": "AC3의 ‘적절히 빠르게’와 ‘사용자가 불편을 느끼지 않는다’는 측정 가능한 완료 조건이 없어 테스트 판정이 불가능하다."
+        },
+        {
+          "severity": "P1",
+          "area": "verification",
+          "missing": "R8의 태그 이름 매칭 및 상대편 태그 자동 생성에 대응하는 acceptance criterion이나 Required Agent Verification이 없다."
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "doc": "real-passed",
+      "effort": "xhigh",
+      "wallMs": 182337,
+      "verdict": "BLOCK",
+      "findingCount": 3,
+      "minesDetected": null,
+      "mineTotal": null,
+      "findings": [
+        {
+          "severity": "P0",
+          "area": "fidelity",
+          "missing": "PRD는 인터뷰에서 승인되지 않은 AC 표 형식의 bootstrap 예외를 승인된 체크리스트로 취급하지만, 로그가 승인한 것은 판정 컬럼 필수 규칙이며 이 예외에 대한 사용자 승인은 없다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "D-10의 핵심 지문 정책인 exit code 포함, FAIL/error/panic/assert 시그니처 라인 추출과 마지막 30줄 fallback, ANSI·16진 주소 정규화가 PRD의 요구사항과 AC에 완전히 반영되지 않았다."
+        },
+        {
+          "severity": "P1",
+          "area": "fidelity",
+          "missing": "PRD의 `워킹트리 내 쓰기만 허용`은 D-30의 워킹트리 쓰기와 임시 파일 허용 범위를 좁히며, D-35의 부사수 셸과 동일한 환경 사용 및 신규 시크릿 전달 금지 결정도 명시하지 않는다."
+        }
+      ]
+    }
+  ]
+}
