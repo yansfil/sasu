@@ -1,15 +1,17 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { runPrelint, type PrelintFinding } from "../gates/prelint";
+import { isUserSourcedResolvedDecision, runPrelint, type PrelintFinding } from "../gates/prelint";
 import { cadenceDrift, clearCadence, recordDecisionTurn } from "./cadence";
 import {
+  anchorDecisionToQuestion,
   appendCheckpoint,
   appendQaEntry,
   appendTranscriptSource,
   markNormalized,
   parseTranscriptSources,
   qaSourceRefs,
+  questionNumbers,
   readQaLogState,
   refreshBookkeeping,
   renderInitialQaLog,
@@ -344,6 +346,12 @@ export interface InterviewDecisionOptions extends Partial<RegisterRow> {
   homeDir?: string;
   /** Test/embedding seam for automatic discovery; null opts out of discovery. */
   sessionId?: string | null;
+  /**
+   * `undefined` = auto-anchor to the most recently synced Q turn; "none" =
+   * explicitly refuse an anchor; "Q<n>" = anchor to that turn specifically.
+   * PRD interview-anchor R1/R3.
+   */
+  anchor?: string;
 }
 
 interface CadenceOutcome {
@@ -395,6 +403,25 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Parse a validated `--anchor Q<n>` value; throws on any other shape. */
+function parseExplicitAnchor(anchor: string): number {
+  const match = anchor.match(/^Q(\d+)$/);
+  if (!match) throw new Error(`invalid --anchor "${anchor}" (use Q<number> or none)`);
+  return Number(match[1]);
+}
+
+function noSyncedQWarning(id: string): PrelintFinding {
+  return {
+    rule: "qa-unanchored-user-decision",
+    line: null,
+    area: "prelint",
+    severity: "P2",
+    missing: `${id} is a resolved user-sourced decision, but no synced Q turn exists yet to anchor it to`,
+    recommendation: `Run sasu interview sync once a Q turn exists, then run sasu interview decision --anchor Q<n> to anchor ${id} retroactively.`,
+    requiresHuman: false,
+  };
+}
+
 export async function runInterviewDecision(
   projectRoot: string,
   options: InterviewDecisionOptions,
@@ -402,9 +429,49 @@ export async function runInterviewDecision(
   assertSlug(options.slug);
   const { file } = readQaLog(projectRoot, options.slug);
   const content = fs.readFileSync(file, "utf8");
-  const { slug: _slug, transcriptPath: _transcriptPath, homeDir: _homeDir, sessionId: _sessionId, ...patch } = options;
+  const { slug: _slug, transcriptPath: _transcriptPath, homeDir: _homeDir, sessionId: _sessionId, anchor, ...patch } = options;
+
+  // Validate an explicit target BEFORE any write: R3 requires an invalid
+  // --anchor to reject atomically, with no partial Register or Raw Q&A
+  // mutation left behind.
+  let explicitQNumber: number | null = null;
+  if (anchor !== undefined && anchor !== "none") {
+    explicitQNumber = parseExplicitAnchor(anchor);
+    if (!questionNumbers(content).includes(explicitQNumber)) {
+      throw new Error(
+        `--anchor Q${explicitQNumber} does not exist in Raw Q&A. Run sasu interview sync and retry, or pass --anchor none to skip anchoring.`,
+      );
+    }
+  }
+
   const upserted = upsertRegisterRow(content, patch);
-  const updated = refreshBookkeeping(upserted.content);
+  let anchored = upserted.content;
+  const extraDrift: PrelintFinding[] = [];
+  let anchorDetail: { anchored: boolean; q: string | null; reason: string } = {
+    anchored: false,
+    q: null,
+    reason: "not a user-sourced resolved decision",
+  };
+
+  // R2: reuse the existing prelint predicate so this call site and the
+  // qa-unanchored-user-decision warning can never disagree about what counts
+  // as user-sourced consent (no new classification rule, D-19).
+  const isUserSourced = isUserSourcedResolvedDecision(upserted.row.kind, upserted.row.status, upserted.row.source);
+  if (isUserSourced && anchor === "none") {
+    anchorDetail = { anchored: false, q: null, reason: "explicitly rejected via --anchor none" };
+  } else if (isUserSourced) {
+    const nums = questionNumbers(anchored);
+    const targetQ = explicitQNumber ?? (nums.length > 0 ? Math.max(...nums) : null);
+    if (targetQ === null) {
+      extraDrift.push(noSyncedQWarning(upserted.row.id));
+      anchorDetail = { anchored: false, q: null, reason: "no synced Q turn exists yet" };
+    } else {
+      anchored = anchorDecisionToQuestion(anchored, targetQ, upserted.row.id);
+      anchorDetail = { anchored: true, q: `Q${targetQ}`, reason: "auto" };
+    }
+  }
+
+  const updated = refreshBookkeeping(anchored);
   replaceQaLog(file, content, updated);
   const { cadence, drift } = await trackDecisionCadence(file, options);
   return result("decision", projectRoot, options.slug, updated, {
@@ -412,7 +479,8 @@ export async function runInterviewDecision(
     created: upserted.created,
     row: upserted.row,
     cadence,
-  }, drift);
+    anchor: anchorDetail,
+  }, [...extraDrift, ...drift]);
 }
 
 export interface InterviewCheckpointOptions {

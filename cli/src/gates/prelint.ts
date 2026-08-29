@@ -37,6 +37,17 @@ export interface PrelintResult {
   warnings?: PrelintFinding[];
 }
 
+/**
+ * User-sourced-consent predicate (D-19, PRD interview-anchor R2): the same
+ * three-part test the qa-unanchored-user-decision warning has always used.
+ * `sasu interview decision` reuses this exact function to decide whether a
+ * decision gets an automatic anchor, so the two call sites can never drift
+ * into disagreeing about what counts as a user-sourced decision.
+ */
+export function isUserSourcedResolvedDecision(kind: string, status: string, source: string): boolean {
+  return kind === "decision" && status === "resolved" && /(\buser\b|사용자)/iu.test(source);
+}
+
 function finding(rule: string, line: number | null, missing: string, recommendation: string): PrelintFinding {
   return { rule, line, area: "prelint", severity: "P0", missing, recommendation, requiresHuman: false };
 }
@@ -312,9 +323,7 @@ export function prelintQaLog(content: string): PrelintResult {
             const invocationSource = source.trim().match(/^user invocation:\s*(.+)$/iu);
             const isBoundInvocationDecision = invocationSource !== null && transcriptStartRefs.has(invocationSource[1]!.trim());
             if (
-              kind === "decision"
-              && status === "resolved"
-              && /(\buser\b|사용자)/iu.test(source)
+              isUserSourcedResolvedDecision(kind, status, source)
               && id !== ""
               && !qaCitedIds.has(id)
               && !isBoundInvocationDecision

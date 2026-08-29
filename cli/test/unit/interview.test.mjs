@@ -490,3 +490,100 @@ test("corrupt cadence state is reported, never raised over a completed decision 
   assert.equal(decision.detail.cadence.tracked, false);
   assert.match(readQaLogState(fs.readFileSync(qaLogPathFor(dir, slug), "utf8")).registerRows[0].text, /decision 1/);
 });
+
+/** decision_ids line for one Q turn, read straight off disk. */
+function decisionIdsOf(content, qNumber) {
+  const lines = content.split("\n");
+  const start = lines.findIndex((line) => new RegExp(`^###\\s+Q${qNumber}:`).test(line));
+  assert.notEqual(start, -1, `Q${qNumber} not found`);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^##+\s/.test(lines[i])) { end = i; break; }
+  }
+  for (let i = start + 1; i < end; i += 1) {
+    const match = lines[i].match(/^-\s*decision_ids:\s*(.*)$/);
+    if (match) return match[1].trim();
+  }
+  assert.fail(`Q${qNumber} has no decision_ids line`);
+}
+
+async function twoSyncedQuestions(dir, slug) {
+  const transcriptPath = makeCodexTranscript(dir, `${slug}-session`);
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+  appendCodexTurn(transcriptPath, 1, "first question?", "first answer");
+  appendCodexTurn(transcriptPath, 2, "second question?", "second answer");
+  await runInterviewSync(dir, { slug, transcriptPath, sessionId: null });
+  return transcriptPath;
+}
+
+test("AC1: a user-sourced resolved decision auto-anchors to the most recently synced Q", async () => {
+  const dir = makeProject();
+  const slug = "anchor-auto";
+  await twoSyncedQuestions(dir, slug);
+  await runInterviewDecision(dir, decisionInput(slug, 1, undefined));
+  const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  assert.equal(decisionIdsOf(content, 2), "D-01");
+  assert.equal(decisionIdsOf(content, 1), "none");
+  assert.deepEqual(runPrelint("qa-log", content).warnings ?? [], []);
+});
+
+test("AC2: --anchor Q<n> targets that turn instead of the latest, and leaves the other turn untouched", async () => {
+  const dir = makeProject();
+  const slug = "anchor-explicit";
+  await twoSyncedQuestions(dir, slug);
+  await runInterviewDecision(dir, { ...decisionInput(slug, 1, undefined), anchor: "Q1" });
+  const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  assert.equal(decisionIdsOf(content, 1), "D-01");
+  assert.equal(decisionIdsOf(content, 2), "none");
+});
+
+test("AC3: --anchor none records the register row and anchors no Q turn", async () => {
+  const dir = makeProject();
+  const slug = "anchor-none";
+  await twoSyncedQuestions(dir, slug);
+  const decision = await runInterviewDecision(dir, { ...decisionInput(slug, 1, undefined), anchor: "none" });
+  assert.equal(decision.detail.anchor.anchored, false);
+  const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  assert.equal(decisionIdsOf(content, 1), "none");
+  assert.equal(decisionIdsOf(content, 2), "none");
+  assert.match(readQaLogState(content).registerRows[0].id, /D-01/);
+});
+
+test("AC4: a decision that is not user-sourced (kind/status/source) never gets an anchor", async () => {
+  const dir = makeProject();
+  const slug = "anchor-not-user-sourced";
+  await twoSyncedQuestions(dir, slug);
+  await runInterviewDecision(dir, { ...decisionInput(slug, 1, undefined), kind: "fact", source: "user" });
+  await runInterviewDecision(dir, { ...decisionInput(slug, 2, undefined), status: "deferred", source: "user" });
+  await runInterviewDecision(dir, { ...decisionInput(slug, 3, undefined), source: "agent default" });
+  const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  assert.equal(decisionIdsOf(content, 1), "none");
+  assert.equal(decisionIdsOf(content, 2), "none");
+});
+
+test("AC5: no synced Q turn yet writes the register row, warns, and still succeeds", async () => {
+  const dir = makeProject();
+  const slug = "anchor-no-synced-q";
+  const transcriptPath = makeCodexTranscript(dir, "no-synced-q-session");
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath, sessionId: null });
+  const decision = await runInterviewDecision(dir, decisionInput(slug, 1, transcriptPath));
+  assert.equal(decision.ok, true);
+  assert.equal(decision.detail.anchor.anchored, false);
+  assert.ok(decision.drift.some((finding) => finding.rule === "qa-unanchored-user-decision"));
+  const content = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  assert.match(readQaLogState(content).registerRows[0].text, /decision 1/);
+});
+
+test("AC6: --anchor Q<n> for a nonexistent turn rejects atomically and offers recovery paths", async () => {
+  const dir = makeProject();
+  const slug = "anchor-missing-target";
+  await twoSyncedQuestions(dir, slug);
+  const before = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  await assert.rejects(
+    () => runInterviewDecision(dir, { ...decisionInput(slug, 1, undefined), anchor: "Q9" }),
+    /sync.*retry.*--anchor none/s,
+  );
+  const after = fs.readFileSync(qaLogPathFor(dir, slug), "utf8");
+  assert.equal(after, before);
+  assert.deepEqual(readQaLogState(after).registerRows, []);
+});

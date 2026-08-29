@@ -252,7 +252,7 @@ function validateRegisterRow(row: RegisterRow): void {
   }
 }
 
-function questionNumbers(content: string): number[] {
+export function questionNumbers(content: string): number[] {
   const numbers: number[] = [];
   for (const match of content.matchAll(/^###\s+Q(\d+):/gm)) {
     numbers.push(Number(match[1]));
@@ -355,7 +355,7 @@ export function qaSourceRefs(content: string): Set<string> {
 }
 
 /** Bounds of the `### Q<n>:` block: from its heading to the next heading. */
-function questionBlockRange(lines: string[], qNumber: string): { start: number; end: number } | null {
+export function questionBlockRange(lines: string[], qNumber: string): { start: number; end: number } | null {
   const startRe = new RegExp(`^###\\s+Q${qNumber}:`);
   const start = lines.findIndex((line) => startRe.test(line));
   if (start === -1) return null;
@@ -391,6 +391,28 @@ export function markNormalized(content: string, qIds: string[]): { content: stri
     if (!flipped) missing.push(qId);
   }
   return { content: lines.join("\n"), missing };
+}
+
+/**
+ * Add a Decision Register ID to a Raw Q&A turn's `decision_ids` line - the
+ * write half of the anchor (`sasu interview decision` owns this; see
+ * cli/src/interview/commands.ts runInterviewDecision). Idempotent: re-adding
+ * an already-cited D# is a no-op.
+ */
+export function anchorDecisionToQuestion(content: string, qNumber: number, decisionId: string): string {
+  const lines = content.split("\n");
+  const range = questionBlockRange(lines, String(qNumber));
+  if (!range) throw new Error(`Raw Q&A has no Q${qNumber} entry to anchor`);
+  for (let i = range.start + 1; i < range.end; i += 1) {
+    const match = lines[i]!.match(/^-\s*decision_ids:\s*(.*)$/);
+    if (match) {
+      const existing = match[1]!.split(",").map((token) => token.trim()).filter((token) => token !== "" && token !== "none");
+      if (!existing.includes(decisionId)) existing.push(decisionId);
+      lines[i] = `- decision_ids: ${existing.join(", ")}`;
+      return lines.join("\n");
+    }
+  }
+  throw new Error(`Q${qNumber} entry has no decision_ids line`);
 }
 
 export function appendCheckpoint(content: string, input: CheckpointInput, afterQuestion: number): { content: string; number: number } {

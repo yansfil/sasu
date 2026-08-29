@@ -5,7 +5,7 @@ const crypto = require("crypto");
 // Bump this whenever gate-input validity changes so a PASS earned under an
 // older prelint or semantic-source contract becomes STALE instead of being
 // trusted by a newer CLI without revalidation.
-const FRESHNESS_CONTRACT_VERSION = 2;
+const FRESHNESS_CONTRACT_VERSION = 3;
 
 function sha256Of(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
@@ -18,6 +18,16 @@ function sha256Of(content) {
  * legitimately AFTER a gate passes; hashing them would make every PASS
  * self-staling. Everything else in the body pins the PASS.
  *
+ * `- decision_ids: ...` lines (PRD interview-anchor R4, D-06) are excluded
+ * too: `sasu interview decision` now anchors consent onto a Raw Q&A turn at
+ * write time, and a PASS sealed before that anchor was backfilled must stay
+ * PASS so a qa-log under agents/interview/ can still be backfilled after the
+ * fact. The tradeoff, accepted by the user over the agent's recommendation: an
+ * anchor added after sealing is no longer provable against the sealed tree,
+ * so a forged post-hoc anchor cannot be told apart from a real one by this
+ * hash alone (audit falls back to the session transcript). No other line is
+ * excluded - only this one field, and only for this one reason.
+ *
  * Single source consumed by the TypeScript gate store (cli/src/gates/store.ts):
  * every reader of a pin must agree on the hash or a live PASS would read as
  * STALE.
@@ -27,6 +37,7 @@ function freshnessHash(content) {
   const frontmatter = body.match(/^---\n[\s\S]*?\n---\n/);
   if (frontmatter) body = body.slice(frontmatter[0].length);
   body = body.replace(/^## Audit History\s*$[\s\S]*?(?=^## |(?![\s\S]))/m, "");
+  body = body.replace(/^-\s*decision_ids:.*$\n?/gm, "");
   return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
 }
 

@@ -525,6 +525,33 @@ test("freshness: Audit History stripping stops at the next section", () => {
   assert.notEqual(freshnessHash(audit), freshnessHash(changedNeighbor));
 });
 
+// PRD interview-anchor R4/AC7/AC8: decision_ids is the one qa-log line
+// excluded from the sealed fingerprint so a post-hoc anchor backfill (D-06)
+// never stales an existing PASS. The negative case proves the exclusion is
+// scoped to exactly that line - no other field rides along loose.
+test("freshness (AC7): editing only decision_ids after sealing does not stale the gate", () => {
+  const store = makeStore();
+  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
+  const state = passWithInput(store, "qa-log.md", v1);
+  const v2 = v1.replace("- decision_ids: none", "- decision_ids: D-01");
+  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
+  const view = gateStatus(state, "spec", 2, store.projectRoot);
+  assert.equal(view.effective, "PASS");
+  assert.equal(view.stale, false);
+  assert.equal(view.inputsDrifted, false);
+});
+
+test("freshness (AC8): editing any other qa-log body field after sealing still stales the gate", () => {
+  const store = makeStore();
+  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
+  const state = passWithInput(store, "qa-log.md", v1);
+  const v2 = v1.replace("- answer: yes", "- answer: no");
+  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
+  const view = gateStatus(state, "spec", 2, store.projectRoot);
+  assert.equal(view.effective, "STALE");
+  assert.equal(view.inputsDrifted, true);
+});
+
 test("freshness: omitting projectRoot skips the staleness check (in-memory callers)", () => {
   const store = makeStore();
   const state = passWithInput(store, "prd.md", "# PRD v1\n");
