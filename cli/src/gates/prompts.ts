@@ -24,9 +24,18 @@ const GAP_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fenc
 }
 Rules:
 - BLOCK only for material gaps (P0/P1) that would change scope, behavior, acceptance, risk, or verification.
-- P0 is narrow: a direct contradiction of stated user intent, missing authority for a destructive,
-  production, security, privacy, cost, or irreversible data decision, or a core behavior that cannot
-  be implemented as written. Do not use P0 for ordinary implementation detail or proof not yet produced.
+- SEVERITY IS DECIDED BY CONSEQUENCE, NOT BY YOUR CONFIDENCE. For each gap, ask what a competent
+  implementer would do if it stayed unresolved, and rank the WORST plausible outcome of that guess:
+    P0 - the guess could destroy, expose, or irreversibly change data; exceed the authority this log
+         records the user granting; or contradict something the user explicitly decided.
+    P1 - the guess is recoverable, but it would change user-visible behavior, data shape, scope,
+         acceptance, or what verification proves - the user would want to have made this call.
+    P2 - a competent implementer settles it from existing repository convention, and being wrong
+         costs only local rework.
+  Rank a gap you are unsure about by that same consequence: uncertainty lowers neither its severity
+  nor your obligation to report it. Never soften a P0 or P1 to P2 because the rest of the log is
+  thorough, because the answer "will become obvious during implementation", or because reporting it
+  would block. Do not use P0 for ordinary implementation detail or for proof not yet produced.
 - List EVERY material gap you can find in THIS single pass. Do not hold findings back for a later
   round: a re-run on the fixed document should find nothing new unless the document changed.
 - Depth bar: internal API details that a competent implementer resolves by following the codebase's
