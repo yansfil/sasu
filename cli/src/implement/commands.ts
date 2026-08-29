@@ -33,6 +33,7 @@ import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore
 import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
+import { issueQaBrief, latestBriefFor, registerTrail, resolveDriverRole, TrailRejected } from "./qa";
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities } from "./herdr";
 import {
@@ -1085,6 +1086,73 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     addedCriteria: plan.addedCriteria,
     unparkedCriteria: plan.unparkedCriteria,
     unchangedCriteria: plan.unchangedCriteria,
+  });
+}
+
+/**
+ * Issue the numbered script for a driven criterion (R11, AC30).
+ *
+ * This is the ONLY briefing channel by construction, not by instruction: a
+ * trail can only name a briefId this command minted, so a drive carried out
+ * on instructions from anywhere else has nothing to register against.
+ */
+function qaBrief(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  const at = nowIso();
+  const previous = latestBriefFor(state, criterion.id);
+  const brief = issueQaBrief(state, criterion, at);
+  recordEvent(state, {
+    kind: "trail",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    summary: `qa brief ${brief.briefId} issued for ${criterion.id} (${brief.steps.length} step(s))`,
+    at,
+  });
+  persistState(statePath, state);
+  const reissue = previous === null ? "" : `; supersedes ${previous.briefId}`;
+  return result("qa-brief", true, `brief ${brief.briefId} issued for ${criterion.id} with ${brief.steps.length} step(s)${reissue}. Register the drive with \`sasu implement trail --ac ${criterion.id} --brief ${brief.briefId} --steps ${brief.steps.map((step) => step.id).join(",")} --driver <human|observer|qa-agent>\``, {
+    brief,
+    supersedes: previous?.briefId ?? null,
+  });
+}
+
+/**
+ * Register a drive against its brief (R11, AC31, AC32).
+ *
+ * The driver role is a declaration and not an authentication, exactly like
+ * the issuer label (PRD 10장). What the check buys is that an implementor
+ * driving its own work must lie in the record to do it, and the record is
+ * what a human audits.
+ */
+function trail(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  const driverRole = resolveDriverRole(flag(args, "driver"));
+  const artifactPaths = (flag(args, "artifacts") ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  const at = nowIso();
+  const record = registerTrail(state, {
+    criterionId: criterion.id,
+    briefId: requiredFlag(args, "brief").trim(),
+    driverRole,
+    coveredStepIds: (flag(args, "steps") ?? "").split(","),
+    artifactPaths,
+  }, at);
+  recordEvent(state, {
+    kind: "trail",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    summary: `trail ${record.id} accepted for ${criterion.id} against ${record.briefId}, driven by ${driverRole}`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("trail", true, `trail ${record.id} accepted for ${criterion.id}: every step of ${record.briefId} covered, driven by ${driverRole} (declared, not authenticated)`, {
+    trail: record,
+    superseded: state.trails.filter((entry) => entry.criterionId === criterion.id && entry.status === "superseded").map((entry) => entry.id),
   });
 }
 
@@ -2814,6 +2882,8 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "resume") return resume(projectRoot, args);
     if (subcommand === "resequence") return resequence(projectRoot, args);
     if (subcommand === "amend") return amend(projectRoot, args);
+    if (subcommand === "qa-brief") return qaBrief(projectRoot, args);
+    if (subcommand === "trail") return trail(projectRoot, args);
     if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
@@ -2823,7 +2893,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, amend, await, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, amend, qa-brief, trail, await, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
@@ -2832,6 +2902,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
       message: error instanceof Error ? error.message : String(error),
       ...(error instanceof VerbRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof AmendmentRejected ? { detail: { rejectedCheck: error.check } } : {}),
+      ...(error instanceof TrailRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
       ...(error instanceof VerifyInvariantError ? { detail: { reason: error.reason } } : {}),
     };

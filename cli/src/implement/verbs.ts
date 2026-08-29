@@ -70,6 +70,13 @@ export const COMMAND_AUTHORITY: Record<string, IssuerLabel[]> = {
   park: ["implementor", "observer", "human"],
   resume: ["implementor", "observer", "human"],
   resequence: ["observer", "human"],
+  // Briefing and trail registration stay open to every issuer on purpose.
+  // The gate R11 actually names is the DRIVER role recorded on the trail
+  // (AC31/AC32), and PRD 10장 already accepts that a self-declared role
+  // cannot be authenticated. Narrowing the issuer here would add friction
+  // for a QA agent the observer dispatched without closing that hole.
+  "qa-brief": ["implementor", "observer", "human"],
+  trail: ["implementor", "observer", "human"],
   escalate: ["observer", "human"],
   // Human-only. Correcting the question paper is not an agent's call (R5).
   amend: ["human"],
