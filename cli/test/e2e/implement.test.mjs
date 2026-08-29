@@ -818,6 +818,56 @@ test("binding a Check on a parked criterion is refused instead of bricking the r
   assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --version", "--reason", "swap"]).status, 0);
 });
 
+// AC24: the log is the supervisor's memory of the run. Once written, an entry
+// is never edited or removed for the life of the run.
+test("the event log grows append-only across real mutations and never replays past a cursor", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  writeFixtureImplementation(root);
+
+  const snapshots = [];
+  const record = () => { snapshots.push(readState(root).events.map((entry) => JSON.stringify(entry))); };
+  record();
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
+  record();
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0);
+  record();
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
+  record();
+
+  // Every snapshot is a prefix of the next: entries only ever get added.
+  for (let index = 1; index < snapshots.length; index += 1) {
+    const previous = snapshots[index - 1];
+    const current = snapshots[index];
+    assert.ok(current.length > previous.length, `mutation ${index} must record an event`);
+    assert.deepEqual(current.slice(0, previous.length), previous, `mutation ${index} rewrote history`);
+  }
+
+  const events = readState(root).events;
+  assert.deepEqual(events.map((entry) => entry.id), events.map((_, index) => index + 1), "ids are monotonic from 1");
+  assert.deepEqual(
+    events.map((entry) => entry.kind),
+    ["check-bound", "check-attempt", "task-status"],
+  );
+  for (const entry of events) assert.ok(["implementor", "observer", "human"].includes(entry.actor));
+
+  // A backlog past the cursor returns immediately - no waiting, no replay.
+  const woke = run(root, ["implement", "await", "--since", "1"]);
+  assert.equal(woke.status, 0, woke.stderr + woke.stdout);
+  assert.equal(woke.json.detail.reason, "event");
+  assert.equal(woke.json.detail.waitedMs, 0);
+  assert.deepEqual(woke.json.detail.events.map((entry) => entry.id), [2, 3]);
+  assert.equal(woke.json.detail.cursor, 3);
+  assert.equal(woke.json.detail.livenessProbe, "unavailable");
+
+  const caughtUp = run(root, ["implement", "await", "--since", "3", "--pid", "999999999"]);
+  assert.equal(caughtUp.status, 0);
+  assert.equal(caughtUp.json.detail.reason, "implementor-gone", "a dead pid ends the wait without burning the stall bound");
+  assert.deepEqual(caughtUp.json.detail.events, []);
+
+  assert.notEqual(run(root, ["implement", "await", "--since", "-1"]).status, 0);
+});
+
 test("acceptance and fidelity run separately in parallel, then finalize converges", () => {
   const root = makeProject();
   const { file, capture } = stub(root);

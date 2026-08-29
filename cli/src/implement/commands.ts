@@ -32,6 +32,7 @@ import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runn
 import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
 import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
+import { waitForEvent } from "./waiter";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -71,6 +72,8 @@ import {
   writeActivePointer,
   writeJsonAtomic,
   writeTextAtomic,
+
+  parseImplementState,
 } from "./store";
 import {
   IMPLEMENT_SCHEMA,
@@ -98,6 +101,7 @@ import {
   type VerificationRoundContext,
   type VerificationRoundContexts,
   type IssuerLabel,
+  STALL_THRESHOLD_MS,
 } from "./types";
 
 export interface ImplementArgs {
@@ -821,6 +825,7 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   }
   item.status = nextStatus;
   if (evidence !== "" && !item.evidence.some((entry) => entry.text === evidence)) item.evidence.push({ at: nowIso(), text: evidence });
+  recordEvent(state, { kind: "task-status", actor: resolveIssuer(flag(args, "issuer")), subject: id, summary: `${id} is ${nextStatus}`, at: nowIso() });
   persistState(statePath, state);
   const complete = new Set(state.tasks.filter((entry) => entry.status === "complete").map((entry) => entry.id));
   const remaining = state.tasks.filter((entry) => entry.status !== "complete");
@@ -888,6 +893,7 @@ function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       ...validated,
       reason: flag(args, "reason")?.trim() || null,
     });
+    recordEvent(state, { kind: "check-bound", actor: resolveIssuer(flag(args, "issuer")), subject: criterion.id, summary: `${criterion.id} bound to ${binding.command}`, at: nowIso() });
     persistState(statePath, state);
     return result("check", true, `${criterion.id} Check ${binding.id} bound (${binding.classification}); run \`sasu implement check --ac ${criterion.id}\``, {
       criterionId: criterion.id,
@@ -900,8 +906,18 @@ function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     throw new Error("--cwd and --reason are valid only with --bind");
   }
   const attempt = runCriterionCheck(state, workRoot, criterion, flag(args, "human-window")?.trim() || null);
+  const openNow = criterion.check.decisionPoints.filter((point) => point.resolvedAt === null);
+  recordEvent(state, {
+    kind: "check-attempt",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    // A newly posted decision point is the event the supervisor most needs to
+    // wake on: it is the harness saying this criterion is stuck.
+    summary: `${criterion.id} check ${attempt.outcome} (exit ${attempt.exitCode})${openNow.length > 0 ? `; decision point open: ${openNow.map((point) => point.kind).join(", ")}` : ""}`,
+    at: nowIso(),
+  });
   persistState(statePath, state);
-  const open = criterion.check.decisionPoints.filter((point) => point.resolvedAt === null);
+  const open = openNow;
   return result("check", attempt.outcome === "green", `${criterion.id} Check ${attempt.outcome} (exit ${attempt.exitCode}); consecutive failures ${criterion.check.consecutiveFailures}${open.length > 0 ? `; decision point: ${open.map((point) => point.kind).join(", ")}` : ""}`, {
     criterionId: criterion.id,
     checkStatus: criterion.check.status,
@@ -938,6 +954,46 @@ function park(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
     criterionId: criterion.id,
     issuer,
     park: criterion.check.parks.at(-1),
+  });
+}
+
+/**
+ * Wait once, in the background, for the run to do something.
+ *
+ * Read-only, and therefore absent from COMMAND_AUTHORITY: anyone may watch.
+ *
+ * Concurrency note (D-45 re-read against the code): the decision record says
+ * the event log "reuses the existing state write lock". There is no such
+ * lock - implement state is written by a plain atomic rename (persistState),
+ * and the only lock in the repository belongs to the gate store. The decision
+ * is therefore honoured as what it can mean here: the log lives INSIDE
+ * state.json and is written through the one existing CLI write path, so this
+ * PRD adds no second record and no second concurrency mechanism. The waiter
+ * only reads.
+ */
+async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
+  const { statePath } = loadState(projectRoot, stateOptions(args));
+  const sinceFlag = flag(args, "since")?.trim();
+  const since = sinceFlag === undefined || sinceFlag === "" ? null : Number(sinceFlag);
+  if (since !== null && (!Number.isInteger(since) || since < 0)) {
+    throw new Error(`--since must be a non-negative integer event id, got ${sinceFlag}`);
+  }
+  const pidFlag = flag(args, "pid")?.trim();
+  const pid = pidFlag === undefined || pidFlag === "" ? null : Number(pidFlag);
+  if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new Error(`--pid must be a positive integer, got ${pidFlag}`);
+  const outcome = await waitForEvent({
+    loadState: () => parseImplementState(fs.readFileSync(statePath, "utf8")),
+    since,
+    stallMs: STALL_THRESHOLD_MS,
+    // signal 0 tests for the process's existence without touching it.
+    isAlive: pid === null ? null : () => { try { process.kill(pid, 0); return true; } catch { return false; } },
+  });
+  return result("await", true, `woke on ${outcome.reason}: ${outcome.detail}`, {
+    reason: outcome.reason,
+    cursor: outcome.cursor,
+    waitedMs: outcome.waitedMs,
+    events: outcome.events,
+    livenessProbe: pid === null ? "unavailable" : "pid",
   });
 }
 
@@ -2690,6 +2746,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "park") return park(projectRoot, args);
     if (subcommand === "resume") return resume(projectRoot, args);
     if (subcommand === "resequence") return resequence(projectRoot, args);
+    if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
@@ -2698,7 +2755,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, await, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
