@@ -324,3 +324,86 @@ test("AC47: status answers in a summary, and the JSON record is one flag away", 
   assert.equal(machine.json.detail.acceptanceChecks.length, 1);
   assert.ok(machine.json.summary.length > 0, "the summary travels in the JSON too, for a caller that wants it");
 });
+
+// --- R16 ①/AC44: proving a change the judged diff can never see -------------
+
+test("AC44: a declared agents/** deliverable must move from its baseline and be vouched for", () => {
+  const root = makeProject();
+  stubEnv(root);
+  const target = "agents/notes/handoff.md";
+  const absolute = path.join(root, target);
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  fs.writeFileSync(absolute, "before\n");
+
+  // Product-tree paths are refused: those the judged diff already sees.
+  const product = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", "lib/remote.sh"]);
+  assert.equal(product.status, 2, product.stdout);
+  assert.match(product.json.message, /product tree, and a product change is already proved by the judged diff/);
+  // ...and so are the files the harness rewrites itself.
+  const owned = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", "agents/runs/fixture/state.json"]);
+  assert.equal(owned.status, 2, owned.stdout);
+  assert.match(owned.json.message, /harness-owned/);
+
+  const declared = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", target]);
+  assert.equal(declared.status, 0, declared.stderr + declared.stdout);
+  assert.equal(declared.json.detail.bookkeeping[0].path, target);
+  assert.equal(typeof declared.json.detail.bookkeeping[0].baselineSha256, "string");
+  // A second declaration would reset the baseline the proof stands on.
+  assert.match(run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", target]).json.message, /already declared/);
+
+  const bound = run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]);
+  assert.equal(bound.status, 0, bound.stdout);
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0, "the criterion's own command is green");
+
+  // Green command, untouched file: the assertion holds and the deliverable
+  // was never produced. This is the close that used to succeed.
+  const unchanged = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
+  assert.equal(unchanged.status, 2, unchanged.stdout);
+  assert.match(unchanged.json.message, /agents\/notes\/handoff\.md is unchanged since it was declared/);
+
+  // Changed, but nothing vouches for what it changed to.
+  fs.writeFileSync(absolute, "after: this run wrote the handoff\n");
+  const unvouched = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
+  assert.equal(unvouched.status, 2, unvouched.stdout);
+  assert.match(unvouched.json.message, /changed but no registered artifact vouches for its current content/);
+
+  const registered = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "file",
+    "--path", target, "--description", "the handoff this run wrote"]);
+  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "complete"]).status, 0);
+
+  // The artifact is pinned to CONTENT, not to the path: editing the file
+  // after registration re-opens the proof rather than riding the old vouch.
+  fs.writeFileSync(absolute, "after: someone edited it again\n");
+  const drifted = run(root, ["implement", "task", "--id", "T1", "--status", "pending"]);
+  assert.equal(drifted.status, 0);
+  const reopened = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
+  assert.equal(reopened.status, 2, reopened.stdout);
+  assert.match(reopened.json.message, /no registered artifact vouches for its current content/);
+});
+
+test("AC44: a parked criterion carries no bookkeeping debt, and the proof survives a reload", () => {
+  const root = makeProject();
+  stubEnv(root);
+  const target = "agents/notes/handoff.md";
+  fs.mkdirSync(path.join(root, "agents", "notes"), { recursive: true });
+  fs.writeFileSync(path.join(root, target), "before\n");
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", target]).status, 0);
+
+  // The declaration is in the record and the record still loads: a state a
+  // later command cannot read back is the failure mode this run has hit twice.
+  const stored = state(root).acceptanceCriteria[0].check.bookkeeping;
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].path, target);
+  assert.equal(run(root, ["implement", "status"]).status, 0, "the state reloads after the declaration");
+
+  // Parking is the sanctioned way past an unprovable criterion, and it must
+  // not be defeated by an unmet bookkeeping declaration.
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --test test/red.test.mjs"]).status, 0);
+  fs.mkdirSync(path.join(root, "test"), { recursive: true });
+  fs.writeFileSync(path.join(root, "test", "red.test.mjs"), "import test from 'node:test';\ntest('red', () => { throw new Error('nope'); });\n");
+  for (let i = 0; i < 5; i += 1) run(root, ["implement", "check", "--ac", "AC1"]);
+  assert.equal(run(root, ["implement", "park", "--issuer", "observer", "--ac", "AC1",
+    "--reason", "the deliverable depends on a decision that is not made yet"]).status, 0);
+  assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "complete"]).status, 0);
+});

@@ -99,6 +99,30 @@ export interface CheckParkRecord {
   resumedAt: string | null;
 }
 
+/**
+ * A file under `agents/**` this criterion's work is meant to change, declared
+ * before the work (R16 ①, AC44).
+ *
+ * The bookkeeping namespace is excluded from every judged diff and from the
+ * vouched fingerprint on purpose, which means a criterion whose deliverable
+ * lives there cannot prove "this run did that" the way every other criterion
+ * does. 2026-08-29, interview-anchor: the only proof available was a unit
+ * test that read the repository's live `agents/**`, which is a test coupled
+ * to bookkeeping rather than a proof of it.
+ *
+ * `baselineSha256` is the file's content when the target was declared - null
+ * when it did not exist yet. Closing requires the content to have MOVED from
+ * that baseline and a registered artifact to vouch for where it moved to:
+ * two structural facts, neither of them a diff.
+ */
+export interface BookkeepingTarget {
+  /** Project-relative, under `agents/`, never a harness-rewritten path. */
+  path: string;
+  /** Content at declaration time; null if the file did not exist. */
+  baselineSha256: string | null;
+  declaredAt: string;
+}
+
 export interface AcceptanceCheckLedger {
   status: AcceptanceCheckStatus;
   bindings: CheckBinding[];
@@ -106,6 +130,8 @@ export interface AcceptanceCheckLedger {
   consecutiveFailures: number;
   decisionPoints: CheckDecisionPoint[];
   parks: CheckParkRecord[];
+  /** Declared `agents/**` deliverables; absent when the criterion has none. */
+  bookkeeping?: BookkeepingTarget[];
 }
 
 export interface AcceptanceCriterionItem extends ContractItem {

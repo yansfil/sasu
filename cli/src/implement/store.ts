@@ -330,6 +330,28 @@ function assertAcceptanceCriteria(value: unknown, label: string): void {
         latestResume = park["resumedAt"] as string;
       }
     }
+    if (check["bookkeeping"] !== undefined) {
+      if (!Array.isArray(check["bookkeeping"])) {
+        throw new Error(`malformed implement state: ${label}[${index}].check.bookkeeping must be an array`);
+      }
+      const seen = new Set<string>();
+      for (const [targetIndex, target] of check["bookkeeping"].entries()) {
+        const targetLabel = `${label}[${index}].check.bookkeeping[${targetIndex}]`;
+        assertRecord(target, targetLabel);
+        assertString(target["path"], `${targetLabel}.path`);
+        if (!String(target["path"]).startsWith("agents/")) {
+          throw new Error(`malformed implement state: ${targetLabel}.path must be under agents/`);
+        }
+        // A duplicate would carry a second baseline for one file, and the
+        // proof is "moved from THE baseline" - two baselines is no baseline.
+        if (seen.has(String(target["path"]))) {
+          throw new Error(`malformed implement state: duplicate bookkeeping target ${target["path"]}`);
+        }
+        seen.add(String(target["path"]));
+        if (target["baselineSha256"] !== null) assertSha256(target["baselineSha256"], `${targetLabel}.baselineSha256`);
+        assertIsoTimestamp(target["declaredAt"], `${targetLabel}.declaredAt`);
+      }
+    }
     if ((check["status"] === "parked") !== activePark) throw new Error(`malformed implement state: ${label}[${index}].check.status contradicts park history`);
 
     const decisions = check["decisionPoints"] as unknown[];

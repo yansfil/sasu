@@ -839,7 +839,7 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
     const byId = new Map(state.tasks.map((entry) => [entry.id, entry]));
     const openDeps = item.dependsOn.filter((dep) => byId.get(dep)?.status !== "complete");
     if (openDeps.length > 0) throw new Error(`cannot close ${id}: depends on ${openDeps.join(", ")} (not complete)`);
-    const mechanicalBlockers = state.acceptanceCriteria
+    const mechanicalBlockers: string[] = state.acceptanceCriteria
       .filter((criterion) => item.acceptanceCriteria.includes(criterion.id))
       .filter((criterion) => criterion.judgment === "machine" || criterion.judgment === "machine+gate:human")
       .flatMap((criterion) => {
@@ -851,6 +851,15 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
         }
         return [];
       });
+    // Bookkeeping proof is scored across EVERY criterion the task covers, not
+    // only the machine ones: a green command proves the assertion holds, not
+    // that this run produced the `agents/**` file the assertion is about, and
+    // a judged criterion can have such a deliverable too (AC44).
+    const bookkeepingUnproved = state.acceptanceCriteria
+      .filter((criterion) => item.acceptanceCriteria.includes(criterion.id))
+      .filter((criterion) => criterion.check.status !== "parked")
+      .flatMap((criterion) => bookkeepingBlockers(state, criterion));
+    mechanicalBlockers.push(...bookkeepingUnproved);
     if (mechanicalBlockers.length > 0) {
       throw new Error(`cannot close ${id}; blocking acceptance criteria:\n- ${mechanicalBlockers.join("\n- ")}. Free-text --evidence is optional context and cannot satisfy this guard.`);
     }
@@ -919,6 +928,13 @@ function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     }
   }
   const command = flag(args, "bind")?.trim();
+  const bookkeeping = flag(args, "bookkeeping")?.trim();
+  if (bookkeeping !== undefined) {
+    if (command !== undefined) {
+      throw new Error("--bookkeeping declares a deliverable and --bind declares how a criterion is checked; issue them separately");
+    }
+    return declareBookkeeping(statePath, state, criterion, bookkeeping, args);
+  }
   if (command !== undefined) {
     const validated = validateCheckBinding(workRoot, command, flag(args, "cwd") ?? ".");
     const binding = bindCriterionCheck(criterion, {
@@ -1364,6 +1380,95 @@ function inspectArtifactFile(absolute: string, kind: string): { sha256: string; 
  * one as runtime evidence is self-invalidating (see the refusal site), so
  * the whole class is refused at registration and purged from legacy state.
  */
+/**
+ * Declare which `agents/**` files this criterion's work will change (AC44).
+ *
+ * The baseline is taken NOW, which is why the declaration has to precede the
+ * work: "the file changed" is only a fact relative to a moment someone
+ * recorded. Declaring after the edit leaves baseline == current, and the
+ * close refusal says exactly that rather than failing mysteriously.
+ */
+function declareBookkeeping(
+  statePath: string,
+  state: ImplementState,
+  criterion: AcceptanceCriterionItem,
+  raw: string,
+  args: ImplementArgs,
+): ImplementCommandResult {
+  const requested = raw.split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  if (requested.length === 0) throw new Error("--bookkeeping requires at least one project-relative path under agents/");
+  const declared = criterion.check.bookkeeping ?? [];
+  const at = nowIso();
+  for (const entry of requested) {
+    const target = normalizeProjectPath(state.projectRoot, entry);
+    if (!target.relative.startsWith("agents/")) {
+      throw new Error(`--bookkeeping is for the bookkeeping namespace only: ${target.relative} is product tree, and a product change is already proved by the judged diff`);
+    }
+    // The harness rewrites these itself, so "it changed" would prove the
+    // harness ran, not that this criterion delivered anything.
+    if (harnessOwnedRunPath(state, canonicalRunRelative(state, target))) {
+      throw new Error(`${target.relative} is harness-owned and rewritten by the harness; it can never be a criterion's deliverable`);
+    }
+    if (declared.some((existing) => existing.path === target.relative)) {
+      throw new Error(`${target.relative} is already declared for ${criterion.id}; a re-declaration would reset the baseline the proof rests on`);
+    }
+    declared.push({
+      path: target.relative,
+      baselineSha256: fs.existsSync(target.absolute) ? sha256(fs.readFileSync(target.absolute)) : null,
+      declaredAt: at,
+    });
+  }
+  criterion.check.bookkeeping = declared;
+  recordEvent(state, {
+    kind: "check-bound",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    summary: `${criterion.id} declares ${requested.length} bookkeeping deliverable(s)`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("check", true, `${criterion.id} declares ${declared.length} bookkeeping deliverable(s); each must move from its baseline and be registered as an artifact before close`, {
+    criterionId: criterion.id,
+    bookkeeping: declared,
+  });
+}
+
+/**
+ * Why a declared bookkeeping deliverable is not yet proved, if it is not.
+ *
+ * Two instruments, both structural: the content moved from the baseline
+ * recorded at declaration, and a registered artifact for this criterion
+ * vouches for where it moved to. Neither is a diff, which is the whole point
+ * - `agents/**` never reaches one.
+ */
+function bookkeepingBlockers(state: ImplementState, criterion: AcceptanceCriterionItem): string[] {
+  const blockers: string[] = [];
+  for (const target of criterion.check.bookkeeping ?? []) {
+    const absolute = path.join(state.projectRoot, target.path);
+    if (!fs.existsSync(absolute)) {
+      blockers.push(`${criterion.id}: declared bookkeeping deliverable ${target.path} does not exist`);
+      continue;
+    }
+    const current = sha256(fs.readFileSync(absolute));
+    if (current === target.baselineSha256) {
+      blockers.push(
+        `${criterion.id}: ${target.path} is unchanged since it was declared at ${target.declaredAt}`
+          + ` - either the work has not happened yet, or it happened before the declaration and the baseline recorded its result`,
+      );
+      continue;
+    }
+    const vouched = state.artifacts.some((entry) =>
+      entry.acceptanceCriterionId === criterion.id && entry.path === target.path && entry.sha256 === current);
+    if (!vouched) {
+      blockers.push(
+        `${criterion.id}: ${target.path} changed but no registered artifact vouches for its current content`
+          + ` - \`sasu implement artifact --ac ${criterion.id} --kind file --path ${target.path} --description "<what this run wrote>"\``,
+      );
+    }
+  }
+  return blockers;
+}
+
 function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
   return relative === `${state.runDir}/state.json`
     || relative === state.prd.snapshotPath

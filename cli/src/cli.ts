@@ -47,6 +47,7 @@ Usage:
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
   sasu implement check    --ac <ACn> [--bind "<command>" --cwd <path> [--reason "<why>"]] [--human-window "<verbatim human approval>"] [--json]
+  sasu implement check    --ac <ACn> --bookkeeping "<agents/... path,...>"   (declare an agents/** deliverable before doing the work) [--json]
   sasu implement park     --ac <ACn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
   sasu implement resume   --ac <ACn> [--json]
   sasu implement resequence --order "<Tn,Tm,...>" [--reason "<why>"] [--json]

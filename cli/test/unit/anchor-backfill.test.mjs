@@ -1,69 +1,111 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import test from "node:test";
 import { parseRegisterRows, questionBlockRange } from "../../dist/interview/qalog.js";
 import { runPrelint } from "../../dist/gates/prelint.js";
 
-// PRD interview-anchor R5/AC9: the implement-bc backfill is derived only from
-// each register row's own Source field ("user Q21 verbatim: ..."), never from
-// a hand-written mapping table (D-16). This test re-derives the expected
-// twelve-row set from Source at run time and checks it against what actually
-// landed in Q21's decision_ids, so a future edit to either side cannot drift
-// silently.
-const QA_LOG = path.join(import.meta.dirname, "..", "..", "..", "agents", "interview", "implement-bc", "qa-log.md");
+// This file used to read `agents/interview/implement-bc/qa-log.md` from the
+// live repository and shell out to `gate status --slug implement-bc`, which
+// made a permanent suite member depend on one sealed run's bookkeeping. That
+// is R16 ① seen from the other side: `agents/**` is gitignored and excluded
+// from every judged diff, so a test that reads it passes or fails on which
+// checkout it runs in and proves nothing a reviewer can see.
+//
+// What was a one-time historical fact now lives where one-time facts belong -
+// the run's own evidence ledger, registered under implement-bc AC44
+// (`agents/runs/implement-bc/artifacts/ac44-anchor-backfill-final-run.txt`;
+// both original assertions PASS, 2026-08-29). What survives here is the part
+// that IS a regression guard: the derivation RULE, exercised against a
+// fixture, so it holds for any qa-log rather than for the one document that
+// happened to motivate it (PRINCIPLES 11).
 
-test("AC9: implement-bc Q21 decision_ids contains exactly the D#s whose Source cites Q21, both directions", () => {
-  const content = fs.readFileSync(QA_LOG, "utf8");
-  const rows = parseRegisterRows(content);
-  const expected = rows
-    .filter((row) => /\bQ21\b/.test(row.source))
-    .map((row) => row.id)
-    .sort();
-  assert.ok(expected.length > 0, "no register row cites Q21 in Source - fixture drifted");
+const QA_LOG = `---
+topic: "fixture"
+status: "complete"
+where: "brownfield"
+created_at: "2026-08-29"
+updated_at: "2026-08-29"
+question_count: 2
+---
 
+## Current Understanding
+
+A fixture interview with two questions and three decisions.
+
+## Decision Register
+
+| ID | Kind | Area | Decision / fact | Priority | Source / owner | Status | PRD mapping / revisit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| D-01 | decision | scope | first decision | P1 | user Q20 verbatim: "그러자" | resolved | R1 |
+| D-02 | decision | scope | second decision | P1 | user Q21 verbatim: "다 고고" | resolved | R2 |
+| D-03 | decision | scope | third decision | P1 | user Q21 verbatim: "다 고고" | resolved | R3 |
+
+## Raw Q&A
+
+### Q20: an earlier question
+
+- decision_ids: D-01
+- route: mixed
+- asked: an earlier question
+- answered: 그러자
+
+### Q21: the question under test
+
+- decision_ids: D-02, D-03
+- route: mixed
+- asked: the question under test
+- answered: 으 너가 제안한 방향으로 우선 다 고고
+
+## Audit History
+
+None.
+`;
+
+/** The rule: a question's decision_ids are exactly the rows whose Source cites it. */
+function decisionIdsFor(content, question) {
   const lines = content.split("\n");
-  const range = questionBlockRange(lines, "21");
-  assert.ok(range, "Q21 entry not found in Raw Q&A");
-  let decisionIds = null;
+  const range = questionBlockRange(lines, question);
+  assert.ok(range, `Q${question} entry not found in Raw Q&A`);
   for (let i = range.start + 1; i < range.end; i += 1) {
     const match = lines[i].match(/^-\s*decision_ids:\s*(.*)$/);
-    if (match) { decisionIds = match[1].trim(); break; }
+    if (match) return match[1].split(",").map((token) => token.trim()).filter(Boolean).sort();
   }
-  assert.ok(decisionIds, "Q21 entry has no decision_ids line");
-  const actual = decisionIds.split(",").map((token) => token.trim()).filter(Boolean).sort();
+  return null;
+}
 
-  assert.deepEqual(actual, expected);
+test("a question's decision_ids are derived from each row's own Source, in both directions", () => {
+  const rows = parseRegisterRows(QA_LOG);
+  const expected = rows.filter((row) => /\bQ21\b/.test(row.source)).map((row) => row.id).sort();
+  assert.deepEqual(expected, ["D-02", "D-03"], "fixture drifted: no rows cite Q21");
+  assert.deepEqual(decisionIdsFor(QA_LOG, "21"), expected);
+
+  // The other direction: nothing cited by Q21 may be missing from the block,
+  // and nothing in the block may be uncited. A hand-written mapping table
+  // passes the first direction and fails this one (interview-anchor D-16).
   for (const id of expected) {
-    const row = rows.find((candidate) => candidate.id === id);
-    assert.match(row.source, /\bQ21\b/, `${id} Source must cite Q21 (derivation direction)`);
+    assert.match(rows.find((row) => row.id === id).source, /\bQ21\b/);
   }
+  assert.deepEqual(decisionIdsFor(QA_LOG, "20"), ["D-01"], "a neighbouring question keeps its own rows");
 });
 
-// PRD interview-anchor R5/AC10. Read-only: this shells out to `gate status`,
-// never `gate gap-audit`/`gate spec` - implement-bc's review cycle is
-// exhausted and its PASS was restored by a user override, so re-running
-// either gate would invalidate that recovery. "PASS" here is deliberately
-// read as the gate's `effective` verdict, which is PASS on an overridden gate
-// too - a wider reading than the PRD's literal "게이트가 PASS" text, accepted
-// by the user for exactly this case (recorded as a deviation in the
-// implementation report, not decided here).
-test("AC10: implement-bc qa-log has zero unanchored-user-decision warnings and both gates read effective PASS, not stale", () => {
-  const content = fs.readFileSync(QA_LOG, "utf8");
+const unanchored = (content) => {
   const result = runPrelint("qa-log", content);
-  const unanchored = (result.warnings ?? []).filter((warning) => warning.rule === "qa-unanchored-user-decision");
-  assert.deepEqual(unanchored, []);
+  assert.deepEqual(result.findings ?? [], [], "the fixture must clear structural prelint, or the warning pass never runs");
+  return (result.warnings ?? [])
+    .filter((entry) => entry.rule === "qa-unanchored-user-decision")
+    .map((entry) => entry.missing);
+};
 
-  const projectRoot = path.join(import.meta.dirname, "..", "..", "..");
-  const cliEntry = path.join(projectRoot, "cli", "dist", "cli.js");
-  const raw = execFileSync(process.execPath, [cliEntry, "gate", "status", "--slug", "implement-bc", "--json"], {
-    cwd: projectRoot,
-    encoding: "utf8",
-  });
-  const status = JSON.parse(raw);
-  for (const gate of ["gap-audit", "spec"]) {
-    assert.equal(status[gate].effective, "PASS", `${gate} must read effective PASS`);
-    assert.equal(status[gate].stale, false, `${gate} must not be stale`);
-  }
+test("a resolved user decision no Q&A turn cites is warned about, and an anchored one is not", () => {
+  assert.deepEqual(unanchored(QA_LOG), [], "every decision here is cited by a decision_ids line");
+
+  // ...and the guard is not vacuous: a row no turn cites must raise it, or
+  // the assertion above would pass for a document with no decisions at all.
+  const orphaned = QA_LOG.replace(
+    "\n## Raw Q&A",
+    '| D-04 | decision | scope | a decision nobody asked about | P1 | user verbatim: "ㅇㅇ" | resolved | R4 |\n\n## Raw Q&A',
+  );
+  assert.deepEqual(
+    unanchored(orphaned),
+    ["D-04 is a resolved user-sourced decision, but no Raw Q&A turn's decision_ids cites it"],
+  );
 });
