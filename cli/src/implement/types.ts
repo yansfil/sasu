@@ -83,7 +83,14 @@ export interface CheckDecisionPoint {
 
 export interface CheckParkRecord {
   parkedAt: string;
-  parkedBy: "human";
+  /**
+   * "human" parks carry a verbatim approval; "observer" parks carry a posted
+   * decision point instead. The supervisor may set aside a criterion the
+   * harness has already flagged as stuck, but it may not invent the judgment
+   * that it is stuck (AC20).
+   */
+  parkedBy: "human" | "observer";
+  /** Verbatim human approval; empty for an observer park. */
   approval: string;
   reason: string;
   evidence: string | null;

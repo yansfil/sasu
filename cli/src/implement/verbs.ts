@@ -42,6 +42,66 @@ export class VerbRejected extends Error {
  * the first time this was written, and a comment asking callers to remember
  * is a request for discipline, not a guard (AGENTS.md Review Guide 7).
  */
+/**
+ * Who may issue what.
+ *
+ * The label is a DECLARATION, not an authentication. The CLI cannot tell a
+ * supervisor typing `--issuer human` from the human (PRD 10장, D-39): this
+ * table encodes intent and produces an audit record, and the mitigation for a
+ * false declaration is the transcript, not this code. Treating it as a
+ * security boundary would be a mistake.
+ *
+ * What it does buy is the thing R16 ② asked for: the supervisor is meant to
+ * be read-only over implementation, and until now nothing but self-restraint
+ * stopped it from closing a task or registering an artifact. Now the code
+ * says so.
+ */
+export const COMMAND_AUTHORITY: Record<string, IssuerLabel[]> = {
+  // Implementation work. The supervisor plans and judges; it does not build,
+  // and it does not get to say the building is done.
+  check: ["implementor", "human"],
+  task: ["implementor", "human"],
+  artifact: ["implementor", "human"],
+  verify: ["implementor", "human"],
+  finalize: ["implementor", "human"],
+  design: ["implementor", "human"],
+  risk: ["implementor", "human"],
+  // The supervisor's own channel (R7).
+  park: ["implementor", "observer", "human"],
+  resume: ["implementor", "observer", "human"],
+  resequence: ["observer", "human"],
+  escalate: ["observer", "human"],
+  // Human-only. Correcting the question paper is not an agent's call (R5).
+  amend: ["human"],
+};
+
+export function assertCommandAuthority(command: string, issuer: IssuerLabel): void {
+  const allowed = COMMAND_AUTHORITY[command];
+  if (allowed === undefined || allowed.includes(issuer)) return;
+  throw new VerbRejected(
+    "authority",
+    `${issuer} may not issue \`sasu implement ${command}\`; this command is limited to ${allowed.join(", ")}. Issuer labels are self-declared and recorded for audit, not authenticated.`,
+  );
+}
+
+const ISSUERS: IssuerLabel[] = ["implementor", "observer", "human"];
+
+/**
+ * Resolve the declared issuer, defaulting to the commonest caller.
+ *
+ * Defaulting to `implementor` keeps every existing invocation meaning what it
+ * always meant, and makes the restricted paths the ones that must say so.
+ */
+export function resolveIssuer(declared: string | undefined): IssuerLabel {
+  const value = (declared ?? "").trim().toLowerCase();
+  if (value === "") return "implementor";
+  const match = ISSUERS.find((entry) => entry === value);
+  if (match === undefined) {
+    throw new VerbRejected("arguments", `unknown --issuer ${value}; use one of ${ISSUERS.join(", ")}`);
+  }
+  return match;
+}
+
 export function rejectVerb(
   state: ImplementState,
   entry: { verb: ObserverVerb; issuer: IssuerLabel; target: string | null; reason: string; at: string },

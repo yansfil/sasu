@@ -50,6 +50,8 @@ Usage:
   sasu implement park     --ac <ACn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
   sasu implement resume   --ac <ACn> [--json]
   sasu implement resequence --order "<Tn,Tm,...>" [--reason "<why>"] [--json]
+    (state-changing implement commands accept --issuer <implementor|observer|human>, default implementor.
+     The label is self-declared and recorded for audit; the CLI does not authenticate it.)
   sasu implement task     --id <Tn> [--status <complete|pending|blocked>] [--evidence "<context>"] [--json]
   sasu implement artifact [--id <Vn>] [--ac <ACn>] --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]

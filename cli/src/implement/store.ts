@@ -307,7 +307,7 @@ function assertAcceptanceCriteria(value: unknown, label: string): void {
       const parkLabel = `${label}[${index}].check.parks[${parkIndex}]`;
       assertRecord(park, parkLabel);
       assertIsoTimestamp(park["parkedAt"], `${parkLabel}.parkedAt`);
-      if (park["parkedBy"] !== "human") throw new Error(`malformed implement state: ${parkLabel}.parkedBy must be human`);
+      if (park["parkedBy"] !== "human" && park["parkedBy"] !== "observer") throw new Error(`malformed implement state: ${parkLabel}.parkedBy must be human or observer`);
       assertString(park["approval"], `${parkLabel}.approval`);
       assertString(park["reason"], `${parkLabel}.reason`);
       assertNullableString(park["evidence"], `${parkLabel}.evidence`);

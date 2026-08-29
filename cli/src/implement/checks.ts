@@ -173,6 +173,14 @@ export function bindCriterionCheck(
   if (criterion.judgment === "judged" || criterion.judgment === null) {
     throw new Error(`${criterion.id} is ${criterion.judgment ?? "untagged"}; only machine criteria accept a Check binding`);
   }
+  // A parked criterion has an open park record, and binding sets status back
+  // to "pending". Without this guard that combination is unrepresentable but
+  // reachable: parseImplementState refuses a status that contradicts park
+  // history, so one --bind on a parked criterion bricked the run for every
+  // later command with no recovery path. Reported by a peer review of main.
+  if (criterion.check.status === "parked") {
+    throw new Error(`${criterion.id} is parked; run \`sasu implement resume --ac ${criterion.id}\` before binding a new Check`);
+  }
   const isRebind = criterion.check.bindings.length > 0;
   if (isRebind && (input.reason === null || input.reason.trim() === "")) {
     throw new Error(`rebind for ${criterion.id} requires --reason <why the checker changed>`);
@@ -341,15 +349,29 @@ export function runCriterionCheck(
 
 export function parkCriterion(
   criterion: AcceptanceCriterionItem,
-  input: { approval: string; reason: string; evidence: string | null },
+  input: { approval: string; reason: string; evidence: string | null; parkedBy?: "human" | "observer" },
 ): void {
   if (criterion.check.status === "parked") throw new Error(`${criterion.id} is already parked`);
-  if (input.approval.trim() === "") throw new Error(`park for ${criterion.id} requires --approval <verbatim human approval>`);
+  const parkedBy = input.parkedBy ?? "human";
   if (input.reason.trim() === "") throw new Error(`park for ${criterion.id} requires --reason <why>`);
+  if (parkedBy === "observer") {
+    // The supervisor may set aside a criterion the HARNESS has already
+    // flagged as stuck; it may not be the one who decides it is stuck. A
+    // posted decision point is that flag, and it is machine-owned - which is
+    // what keeps this from becoming a way to park anything inconvenient.
+    if (!criterion.check.decisionPoints.some((point) => point.resolvedAt === null)) {
+      throw new Error(`${criterion.id} has no open decision point; the supervisor may only park a criterion the harness has already flagged. Let the check run until it posts one, or park with verbatim human approval.`);
+    }
+    if (input.approval.trim() !== "") {
+      throw new Error(`--approval belongs to a human park; an observer park is authorised by the open decision point, not by a quote it is repeating`);
+    }
+  } else if (input.approval.trim() === "") {
+    throw new Error(`park for ${criterion.id} requires --approval <verbatim human approval>`);
+  }
   const at = nowIso();
   criterion.check.parks.push({
     parkedAt: at,
-    parkedBy: "human",
+    parkedBy,
     approval: input.approval.trim(),
     reason: input.reason.trim(),
     evidence: input.evidence?.trim() || null,

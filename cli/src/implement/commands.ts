@@ -30,7 +30,8 @@ import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
 import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
-import { recordVerb, rejectVerb, resequencePendingTasks } from "./verbs";
+import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
+import { recordEvent } from "./events";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -914,15 +915,28 @@ function park(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
   assertNotSuiteCommand(state, args);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertCommandAuthority("park", issuer);
   const criterion = acceptanceCriterion(state, args);
-  parkCriterion(criterion, {
-    approval: flag(args, "approval")?.trim() ?? "",
-    reason: flag(args, "reason")?.trim() ?? "",
-    evidence: flag(args, "evidence")?.trim() || null,
-  });
+  const at = nowIso();
+  const entry = { verb: "park" as const, issuer, target: criterion.id, reason: flag(args, "reason")?.trim() ?? "", at };
+  try {
+    parkCriterion(criterion, {
+      approval: flag(args, "approval")?.trim() ?? "",
+      reason: flag(args, "reason")?.trim() ?? "",
+      evidence: flag(args, "evidence")?.trim() || null,
+      parkedBy: issuer === "observer" ? "observer" : "human",
+    });
+  } catch (error) {
+    rejectVerb(state, entry, "transition", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
+  }
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, { kind: "park", actor: issuer, subject: criterion.id, summary: `${criterion.id} parked by ${issuer}`, at });
   persistState(statePath, state);
-  return result("park", true, `${criterion.id} parked by recorded human approval; finalize remains blocked until resume and proof`, {
+  const authority = issuer === "observer" ? "an open decision point" : "recorded human approval";
+  return result("park", true, `${criterion.id} parked by ${issuer} on ${authority}; finalize remains blocked until resume and proof`, {
     criterionId: criterion.id,
+    issuer,
     park: criterion.check.parks.at(-1),
   });
 }
@@ -932,7 +946,8 @@ function resequence(projectRoot: string, args: ImplementArgs): ImplementCommandR
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
   const at = nowIso();
-  const issuer: IssuerLabel = "observer";
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertCommandAuthority("resequence", issuer);
   const reason = flag(args, "reason")?.trim() ?? "";
   const requested = requiredFlag(args, "order").split(",");
   const entry = { verb: "resequence" as const, issuer, target: null, reason, at };
@@ -946,6 +961,7 @@ function resequence(projectRoot: string, args: ImplementArgs): ImplementCommandR
     rejectVerb(state, entry, "arguments", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
   }
   recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, { kind: "resequence", actor: issuer, subject: null, summary: `pending order set to ${ordered!.join(", ")} by ${issuer}`, at });
   persistState(statePath, state);
   return result("resequence", true, `pending task order is now ${ordered!.join(", ")}; no evidence was invalidated`, {
     order: ordered!,
@@ -962,8 +978,18 @@ function resume(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertCommandAuthority("resume", issuer);
   const criterion = acceptanceCriterion(state, args);
-  resumeCriterion(criterion);
+  const at = nowIso();
+  const entry = { verb: "resume" as const, issuer, target: criterion.id, reason: flag(args, "reason")?.trim() ?? "", at };
+  try {
+    resumeCriterion(criterion);
+  } catch (error) {
+    rejectVerb(state, entry, "transition", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
+  }
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, { kind: "resume", actor: issuer, subject: criterion.id, summary: `${criterion.id} resumed by ${issuer}`, at });
   persistState(statePath, state);
   return result("resume", true, `${criterion.id} resumed to pending; consecutive failure counter reset to 0`, {
     criterionId: criterion.id,
@@ -2652,6 +2678,12 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 export async function runImplementCommand(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const subcommand = args.positional[1];
   try {
+    // Authority is checked once, here, for every state-changing command
+    // rather than inside each one. Per-command checks are a rule that has to
+    // be remembered at each new command; one gate is a rule the code keeps
+    // (AGENTS.md Review Guide 7). Read-only surfaces - intake, status - are
+    // absent from the table on purpose: anyone may look.
+    if (subcommand !== undefined) assertCommandAuthority(subcommand, resolveIssuer(flag(args, "issuer")));
     if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);
     if (subcommand === "check") return check(projectRoot, args);
@@ -2673,6 +2705,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
       action: subcommand ?? "unknown",
       exitCode: error instanceof SyntaxError || error instanceof VerifyInvariantError ? 1 : 2,
       message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof VerbRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
       ...(error instanceof VerifyInvariantError ? { detail: { reason: error.reason } } : {}),
     };

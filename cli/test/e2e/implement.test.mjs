@@ -712,12 +712,14 @@ test("resequence reorders pending tasks, refuses anything that is not a permutat
   const pending = readState(root).tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
   assert.ok(pending.length >= 1);
 
-  const partial = run(root, ["implement", "resequence", "--order", pending[0]]);
+  // resequence is a plan-layer verb and the plan belongs to the supervisor,
+  // so every call here declares that issuer.
+  const partial = run(root, ["implement", "resequence", "--order", pending[0], "--issuer", "observer"]);
   if (pending.length > 1) {
     assert.notEqual(partial.status, 0);
     assert.match(partial.json.message, /must name every pending task exactly once/);
   }
-  const unknown = run(root, ["implement", "resequence", "--order", [...pending, "T99"].join(",")]);
+  const unknown = run(root, ["implement", "resequence", "--order", [...pending, "T99"].join(","), "--issuer", "observer"]);
   assert.notEqual(unknown.status, 0);
   assert.match(unknown.json.message, /unknown task\(s\) in resequence: T99/);
 
@@ -729,13 +731,91 @@ test("resequence reorders pending tasks, refuses anything that is not a permutat
   assert.equal(refusals.at(-1).rejection.check, "arguments");
 
   const reversed = [...pending].reverse();
-  const accepted = run(root, ["implement", "resequence", "--order", reversed.join(","), "--reason", "drive the blocked one last"]);
+  const accepted = run(root, ["implement", "resequence", "--order", reversed.join(","), "--issuer", "observer", "--reason", "drive the blocked one last"]);
   assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
   const after = readState(root);
   assert.deepEqual(after.tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id), reversed);
   assert.equal(after.verbs.at(-1).outcome, "accepted");
   assert.equal(after.verbs.at(-1).reason, "drive the blocked one last");
   assert.match(accepted.json.message, /no evidence was invalidated/);
+});
+
+// R7/R16 (2): the supervisor plans and judges; it does not build, and until
+// now nothing but self-restraint stopped it from saying the building is done.
+test("the supervisor is refused implementation commands and accepted on its own verbs", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  writeFixtureImplementation(root);
+
+  for (const argv of [
+    ["implement", "task", "--id", "T1", "--evidence", "done"],
+    ["implement", "check", "--ac", "AC1", "--bind", "node --version"],
+    ["implement", "verify"],
+    ["implement", "finalize", "--status", "complete"],
+  ]) {
+    const refused = run(root, [...argv, "--issuer", "observer"]);
+    assert.notEqual(refused.status, 0, `${argv[1]} must refuse an observer`);
+    assert.match(refused.json.message, /observer may not issue/);
+    assert.equal(refused.json.detail.rejectedCheck, "authority");
+  }
+
+  const pending = readState(root).tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
+  const ok = run(root, ["implement", "resequence", "--order", [...pending].reverse().join(","), "--issuer", "observer", "--reason", "reorder"]);
+  assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+  assert.equal(readState(root).verbs.at(-1).issuer, "observer");
+
+  // An unknown label is an argument problem, not an authority one.
+  const bad = run(root, ["implement", "resume", "--ac", "AC1", "--issuer", "root"]);
+  assert.notEqual(bad.status, 0);
+  assert.equal(bad.json.detail.rejectedCheck, "arguments");
+});
+
+// AC20: the supervisor may set aside a criterion the harness already flagged,
+// and may not be the one who decides it is stuck.
+test("an observer park needs an open decision point, and a human park needs the quote", () => {
+  const root = makeProject({ testExit: 1 });
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  writeFixtureImplementation(root);
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
+
+  const unflagged = run(root, ["implement", "park", "--ac", "AC1", "--issuer", "observer", "--reason", "I would rather not"]);
+  assert.notEqual(unflagged.status, 0);
+  assert.match(unflagged.json.message, /no open decision point/);
+  assert.equal(unflagged.json.detail.rejectedCheck, "transition");
+  assert.equal(readState(root).acceptanceCriteria.find((entry) => entry.id === "AC1").check.status, "pending");
+  // The refused verb is in the history with the check that refused it.
+  assert.equal(readState(root).verbs.at(-1).rejection.check, "transition");
+
+  // Fail it until the harness posts a decision point of its own.
+  for (let round = 0; round < 6; round += 1) run(root, ["implement", "check", "--ac", "AC1"]);
+  const flagged = readState(root).acceptanceCriteria.find((entry) => entry.id === "AC1");
+  assert.ok(flagged.check.decisionPoints.some((point) => point.resolvedAt === null), "the fixture must reach an open decision point");
+
+  const parked = run(root, ["implement", "park", "--ac", "AC1", "--issuer", "observer", "--reason", "blocked on a missing fixture"]);
+  assert.equal(parked.status, 0, parked.stderr + parked.stdout);
+  const record = readState(root).acceptanceCriteria.find((entry) => entry.id === "AC1").check.parks.at(-1);
+  assert.equal(record.parkedBy, "observer");
+  assert.equal(record.approval, "");
+});
+
+// Reported by a peer review of main: one --bind on a parked criterion left
+// status "pending" against an active park record, which parseImplementState
+// refuses - bricking every later command with no recovery path.
+test("binding a Check on a parked criterion is refused instead of bricking the run", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  writeFixtureImplementation(root);
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
+  assert.equal(run(root, ["implement", "park", "--ac", "AC1", "--approval", "user: park it", "--reason", "later"]).status, 0);
+
+  const refused = run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --version", "--reason", "swap"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.json.message, /is parked; run `sasu implement resume/);
+
+  // The run is still readable and still recoverable, which is the point.
+  assert.equal(run(root, ["implement", "status"]).status, 0);
+  assert.equal(run(root, ["implement", "resume", "--ac", "AC1"]).status, 0);
+  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --version", "--reason", "swap"]).status, 0);
 });
 
 test("acceptance and fidelity run separately in parallel, then finalize converges", () => {
