@@ -15,7 +15,8 @@ The harness, not the agent, decides and creates worktrees at `sasu implement sta
 Records never move: `state.json`, receipt, PRD, config, and rules stay in the record tree's `agents/` namespace.
 The worktree holds only the judged source.
 Do not remove a run's worktree before its branch is merged or shipped; uncommitted work there is not recoverable, while the run record survives regardless.
-A local-delivery run ends on its branch - the finalize response names it and the merge command.
+A local-delivery run ends with a recorded semantic commit on its current branch;
+the finalize response names the branch or worktree and the follow-up delivery command.
 
 ## Boundary
 
@@ -25,7 +26,11 @@ Implementation completion and PR delivery are separate outcomes.
 ## Local Delivery
 
 The default delivery mode is local.
-Do not commit, push, or open a PR unless the user or repository configuration asks for it.
+After a complete receipt, run the local delivery command to validate freshness and
+rules, commit the allowlisted implementation with a semantic project message, and
+record `delivery/delivery-result.json`.
+It never pushes, opens a PR, watches CI, or merges.
+Running it again for the same receipt and HEAD is idempotent.
 
 ## PR Delivery
 
@@ -34,7 +39,7 @@ When PR delivery is authorized:
 1. Complete the implementation receipt in the intended checkout or configured worktree.
 2. Follow the repository PR template.
 3. Stage only implementation-owned changes and preserve unrelated dirty files.
-4. Use `$ship` for commit, push, PR creation, and CI handoff.
+4. Use `$ship` for the PR delivery commit, push, PR creation, and CI handoff.
 
 PR creation and CI are never required to prove implementation completion.
 

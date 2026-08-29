@@ -1,10 +1,11 @@
 ---
 name: ship
 description: |
-  Publish a completed `implement` receipt through GitHub PR delivery.
-  Use when the user invokes "$ship" or explicitly asks to open or update a PR,
-  push a completed PRD implementation, watch CI, or merge an approved green PR
-  through the recorded delivery workflow.
+  Deliver a completed `implement` receipt locally or through GitHub PR delivery.
+  Use when the user invokes "$ship" or explicitly asks to create a local
+  implementation commit, open or update a PR, push a completed PRD
+  implementation, watch CI, or merge an approved green PR through the recorded
+  delivery workflow.
   Do not use before a complete `implement` receipt exists.
 ---
 
@@ -12,8 +13,9 @@ description: |
 
 Artifact paths keep the legacy `prd-ship` naming (`delivery/ship-log.jsonl`, `prd_ship.js`).
 
-Use this skill after `implement` has produced a complete receipt and the
-delivery target is a GitHub pull request.
+Use this skill after `implement` has produced a complete receipt.
+`local` records the implementation as a semantic local commit without external
+delivery, while `ship` handles the separate GitHub pull request path.
 
 This skill is a delivery gate, not an implementation gate. Do not weaken or
 replace `implement` receipt checks. If the implementation receipt is
@@ -89,7 +91,10 @@ execution-plan write scopes.
 
 ```text
 complete implement receipt
-  -> delivery preflight (receipt, mode, freshness, base freshness, staging plan, body status)
+  -> local: validate freshness and rules, commit the allowlisted implementation,
+     record the local delivery result, stop
+  OR
+  -> PR preflight (receipt, mode, freshness, base freshness, staging plan, body status)
   -> rebase onto origin base when preflight reports the branch behind
   -> body: generate the PR body draft
   -> agent writes the prose sections of the draft
@@ -109,9 +114,12 @@ Do not move judgment into the script, and do not bypass guardrails with ad-hoc g
 Script-enforced guardrails (fail closed):
 
 - receipt must be `complete`.
-- delivery mode must be `pr`.
+- `local` accepts only local mode; it never pushes, invokes GitHub, creates a PR,
+  watches CI, or merges.
+- `ship` and `merge` accept only `pr` mode unless their documented explicit
+  mode override is supplied.
 - the implement receipt must match the fresh PASS reported by `sasu implement status` for the current worktree.
-- the branch must not be behind `origin/<base>`; `preflight` fetches and reports
+- for PR delivery, the branch must not be behind `origin/<base>`; `preflight` fetches and reports
   `baseFreshness`, and `ship` refuses a stale base (`--allow-stale-base --reason` to override).
   When behind, rebase onto the origin base, resolve conflicts, rerun the relevant
   verification, and only then ship; discovering the conflict after PR creation
@@ -143,6 +151,7 @@ or head override.
 ```sh
 node ~/.codex/skills/ship/scripts/prd_ship.js preflight --state agents/runs/<topic-slug>/state.json
 node ~/.codex/skills/ship/scripts/prd_ship.js body --state agents/runs/<topic-slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js local --state agents/runs/<topic-slug>/state.json
 node ~/.codex/skills/ship/scripts/prd_ship.js ship --state agents/runs/<topic-slug>/state.json --title "<PR title>"
 node ~/.codex/skills/ship/scripts/prd_ship.js watch-ci --state agents/runs/<topic-slug>/state.json [--timeout <seconds>]
 node ~/.codex/skills/ship/scripts/prd_ship.js merge --state agents/runs/<topic-slug>/state.json --approval "<verbatim user approval>" [--method squash|merge|rebase]
@@ -156,6 +165,17 @@ Fill every placeholder with prose grounded in `implementation-result.md` and the
 following the repository PR template rules, then run `ship`.
 `body` refuses to overwrite an existing body file without `--force`, so agent-written prose is not
 silently discarded.
+
+`local` validates the complete receipt against a fresh implementation PASS and the learned rules,
+stages only the delivery allowlist, creates one semantic commit (default message
+`Implement <topic-slug>`), and records
+`agents/runs/<topic-slug>/delivery/delivery-result.json` plus a `local` event in
+`delivery/ship-log.jsonl`.
+It does not call `gh`, push, create a PR, watch CI, or merge.
+Running it again for the same receipt and HEAD returns the recorded result without a second commit.
+If the Stop hook has already saved the same unpushed run as a `checkpoint:` commit, local delivery
+promotes that commit's message only after it proves the recorded baseline, allowlist, and remote
+reachability conditions.
 
 `ship` validates all guardrails, stages allowlisted changes, commits, pushes, creates the PR, or
 updates the body of an existing PR, then watches CI with a bounded timeout.
@@ -178,7 +198,7 @@ bypass it with a direct GitHub command.
 Use `--no-gpg-sign` only when the local git signing configuration blocks the
 delivery commit in a non-interactive session.
 
-`ship` stages only changes allowed by the completed implementation state:
+`local` and `ship` stage only changes allowed by the completed implementation state:
 
 ```text
 PRD directory
@@ -190,8 +210,8 @@ delivery.staging.include entries
 
 It always excludes volatile implementation pointers and registered artifact
 directories unless explicitly overridden by an approved include path.
-Review `preflight` and `git status --short` before running `ship`.
-If unrelated user changes are present, `ship` must fail instead of staging them.
+Review the delivery command output and `git status --short` before running `local` or `ship`.
+If unrelated user changes are present, `local` and `ship` must fail instead of staging them.
 Commit only the current PRD implementation, skill updates, or delivery artifacts
 that belong in the PR.
 

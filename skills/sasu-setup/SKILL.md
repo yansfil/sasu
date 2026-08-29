@@ -60,6 +60,8 @@ user the content, get confirmation, and rerun with `--adopt-claude-md`.
 Then interview:
 
 1. Delivery mode: `local` (default) or `pr`.
+   Local means a complete receipt ends with one semantic local commit and no
+   push, PR, or CI side effect.
    Remind the user that `pr` means implement runs end into `ship`
    (branch, PR, CI) automatically after the receipt, and that per-PRD approval
    still happens in the PRD Summary checklist.

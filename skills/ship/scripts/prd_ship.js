@@ -59,6 +59,7 @@ function main() {
   try {
     if (command === "preflight") return cmdPreflight(options);
     if (command === "body") return cmdBody(options);
+    if (command === "local") return cmdLocal(options);
     if (command === "ship") return cmdShip(options);
     if (command === "watch-ci") return cmdWatchCi(options);
     if (command === "merge") return cmdMerge(options);
@@ -74,6 +75,7 @@ function usage(exitCode) {
   process.stderr.write(`Usage:
   node prd_ship.js preflight [--state <state.json>]
   node prd_ship.js body [--state <state.json>] [--output <file>] [--force]
+  node prd_ship.js local [--state <state.json>] [--commit-message <message>] [--no-gpg-sign] [--include <path>] [--skip-rules --reason <why>]
   node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
   node prd_ship.js watch-ci [--state <state.json>] [--pr <number-or-url>] [--timeout <seconds>] [--interval <seconds>]
   node prd_ship.js merge [--state <state.json>] [--pr <number-or-url>] --approval <verbatim-user-approval> [--method squash|merge|rebase] [--delete-branch]
@@ -296,22 +298,62 @@ function assertCompleteReceipt(context) {
   }
 }
 
+function projectDeliveryConfig(context) {
+  const projectRoot = context.state && typeof context.state.projectRoot === "string"
+    ? context.state.projectRoot
+    : context.repoRoot;
+  const configPath = path.join(projectRoot, "agents", "config.json");
+  if (!fs.existsSync(configPath)) return {};
+  let parsed;
+  try {
+    parsed = readJson(configPath);
+  } catch {
+    throw new Error(`agents/config.json is not valid JSON: ${configPath}`);
+  }
+  if (parsed.delivery === undefined) return {};
+  if (!parsed.delivery || typeof parsed.delivery !== "object" || Array.isArray(parsed.delivery)) {
+    throw new Error(`agents/config.json delivery must be an object: ${configPath}`);
+  }
+  return parsed.delivery;
+}
+
 function deliveryConfig(context, options = {}) {
-  const delivery = context.state.delivery || context.receipt.delivery || {};
-  const base = String(options.base || delivery.baseBranch || "main");
-  const branch = String(options.branch || delivery.branch || `prd/${context.state.topicSlug || "work"}`);
-  const ci = delivery.ci && typeof delivery.ci === "object" ? delivery.ci : {};
+  // A run-level declaration is authoritative because it is part of the
+  // reviewed delivery contract; project config supplies the default when the
+  // run/receipt predates an explicit delivery block.
+  const project = projectDeliveryConfig(context);
+  const stateDelivery = context.state.delivery && typeof context.state.delivery === "object"
+    ? context.state.delivery
+    : {};
+  const receiptDelivery = context.receipt.delivery && typeof context.receipt.delivery === "object"
+    ? context.receipt.delivery
+    : {};
+  const delivery = { ...project, ...stateDelivery, ...receiptDelivery };
+  const staging = {
+    ...(project.staging && typeof project.staging === "object" ? project.staging : {}),
+    ...(stateDelivery.staging && typeof stateDelivery.staging === "object" ? stateDelivery.staging : {}),
+    ...(receiptDelivery.staging && typeof receiptDelivery.staging === "object" ? receiptDelivery.staging : {}),
+  };
+  const ci = {
+    ...(project.ci && typeof project.ci === "object" ? project.ci : {}),
+    ...(stateDelivery.ci && typeof stateDelivery.ci === "object" ? stateDelivery.ci : {}),
+    ...(receiptDelivery.ci && typeof receiptDelivery.ci === "object" ? receiptDelivery.ci : {}),
+  };
+  const mode = String(delivery.mode || "local").trim().toLowerCase();
+  if (!["local", "pr"].includes(mode)) {
+    throw new Error(`Unsupported delivery mode '${mode}'. Expected local or pr.`);
+  }
   return {
-    mode: String(delivery.mode || "local"),
-    branch,
-    baseBranch: base,
+    mode,
+    branch: String(options.branch || delivery.branch || `${String(delivery.branchPrefix || "prd").replace(/\/+$/, "")}/${context.state.topicSlug || "work"}`),
+    baseBranch: String(options.base || delivery.baseBranch || "main"),
     ci: {
       watch: ci.watch !== undefined ? Boolean(ci.watch) : true,
       maxFixAttempts: Number.isFinite(Number(ci.maxFixAttempts)) ? Number(ci.maxFixAttempts) : 2,
       timeoutSeconds: Number.isFinite(Number(ci.timeoutSeconds)) ? Number(ci.timeoutSeconds) : DEFAULT_CI_TIMEOUT_SECONDS,
       intervalSeconds: Number.isFinite(Number(ci.intervalSeconds)) ? Number(ci.intervalSeconds) : DEFAULT_CI_INTERVAL_SECONDS,
     },
-    staging: delivery.staging || { include: [], exclude: [] },
+    staging,
   };
 }
 
@@ -590,17 +632,43 @@ function excludedPaths(context, config, options = {}) {
   ].map(normalizeRepoPath).filter(Boolean)));
 }
 
-function stageablePaths(context, config, options = {}) {
-  const changed = gitStatusPaths(context.repoRoot);
-  // Explicit include entries (config staging.include or --include) re-admit
-  // otherwise-excluded paths, as the skill contract promises.
+function deliveryPathPolicy(context, config, options = {}) {
   const includes = Array.from(new Set([
     ...optionList(config.staging && config.staging.include),
     ...optionList(options.include),
   ].map(normalizeRepoPath).filter(Boolean)));
   const excluded = excludedPaths(context, config, options)
     .filter(item => !includes.some(include => include === item || include.startsWith(`${item}/`) || item.startsWith(`${include}/`)));
-  const allowed = defaultAllowedPaths(context, config, options);
+  return {
+    includes,
+    excluded,
+    allowed: defaultAllowedPaths(context, config, options),
+  };
+}
+
+function stagedPaths(repoRoot) {
+  return run("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot }).stdout
+    .split(/\r?\n/)
+    .map(normalizeRepoPath)
+    .filter(Boolean);
+}
+
+function assertStagedPathsArePlanned(plan, staged) {
+  const planned = new Set(plan.stage);
+  const unexpected = staged.filter(item => !planned.has(item));
+  if (unexpected.length > 0) {
+    throw new Error([
+      "Refusing to commit pre-staged paths outside the delivery plan.",
+      `Unexpected staged paths: ${unexpected.join(", ")}`,
+      "Unstage them or include them through the approved delivery allowlist before retrying.",
+    ].join("\n"));
+  }
+}
+
+function stageablePaths(context, config, options = {}) {
+  const changed = gitStatusPaths(context.repoRoot);
+  const policy = deliveryPathPolicy(context, config, options);
+  const { includes, excluded, allowed } = policy;
   for (const include of includes) {
     if (!changed.some(item => pathMatches(item, [include]))) {
       process.stderr.write(`warning: include entry '${include}' matches no changed path; it will stage nothing\n`);
@@ -625,11 +693,13 @@ function stageAndCommit(context, options, title) {
   const repoRoot = context.repoRoot;
   const config = deliveryConfig(context, options);
   const plan = stageablePaths(context, config, options);
+  assertStagedPathsArePlanned(plan, stagedPaths(repoRoot));
   if (plan.stage.length) {
     run("git", ["add", "-A", "--", ...plan.stage], { cwd: repoRoot });
   }
-  const staged = run("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot }).stdout.trim();
-  if (!staged) return { committed: false, commit: null, staged: [] };
+  const stagedPathsAfterAdd = stagedPaths(repoRoot);
+  assertStagedPathsArePlanned(plan, stagedPathsAfterAdd);
+  if (!stagedPathsAfterAdd.length) return { committed: false, commit: null, staged: [] };
   const message = String(options["commit-message"] || title || `Ship ${context.state.topicSlug || "PRD implementation"}`);
   const commitArgs = ["commit"];
   if (options["no-gpg-sign"]) commitArgs.push("--no-gpg-sign");
@@ -639,8 +709,165 @@ function stageAndCommit(context, options, title) {
   return {
     committed: true,
     commit,
-    staged: staged.split(/\r?\n/).filter(Boolean),
+    staged: stagedPathsAfterAdd,
     changed: plan.changed,
+    ignored: plan.ignored,
+    allowed: plan.allowed,
+  };
+}
+
+function baselineHead(context) {
+  const candidates = [
+    context.state.initialSource && context.state.initialSource.head,
+    context.state.baselineAttribution && context.state.baselineAttribution.head,
+  ];
+  return candidates.find(item => typeof item === "string" && item.trim() !== "") || null;
+}
+
+function isAncestor(repoRoot, ancestor, descendant) {
+  return run("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+    cwd: repoRoot,
+    allowFailure: true,
+  }).status === 0;
+}
+
+function pathsBetween(repoRoot, from, to) {
+  const result = run("git", ["diff", "--name-only", from, to], {
+    cwd: repoRoot,
+    allowFailure: true,
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not inspect the implementation range ${from}..${to}: ${(result.stderr || result.stdout).trim()}`);
+  }
+  return result.stdout.split(/\r?\n/).map(normalizeRepoPath).filter(Boolean);
+}
+
+function remoteRefsContainingHead(repoRoot) {
+  const result = run("git", ["branch", "-r", "--contains", "HEAD"], {
+    cwd: repoRoot,
+    allowFailure: true,
+  });
+  if (result.status !== 0) return null;
+  return result.stdout.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
+}
+
+function commitSubject(repoRoot) {
+  return run("git", ["log", "-1", "--format=%s"], { cwd: repoRoot }).stdout.trim();
+}
+
+function commitInfo(repoRoot) {
+  return {
+    commit: currentHead(repoRoot),
+    short: run("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot }).stdout.trim(),
+    subject: commitSubject(repoRoot),
+  };
+}
+
+function assertDeliveryPaths(context, config, paths, options, label) {
+  const policy = deliveryPathPolicy(context, config, options);
+  const forbidden = paths.filter(item => pathMatches(item, policy.excluded) || !pathMatches(item, policy.allowed));
+  if (forbidden.length > 0) {
+    throw new Error([
+      `${label} includes paths outside the PRD delivery allowlist.`,
+      `Allowed prefixes: ${policy.allowed.length ? policy.allowed.join(", ") : "(none)"}`,
+      `Excluded prefixes: ${policy.excluded.length ? policy.excluded.join(", ") : "(none)"}`,
+      `Unexpected paths: ${forbidden.join(", ")}`,
+      "Move unrelated changes out of the worktree or add an approved delivery include before retrying.",
+    ].join("\n"));
+  }
+  return policy;
+}
+
+function checkpointPromotion(context, config, options) {
+  if (!/^checkpoint:\s*/i.test(commitSubject(context.repoRoot))) return null;
+  const baseline = baselineHead(context);
+  if (!baseline) {
+    return { eligible: false, reason: "the run has no recorded baseline HEAD" };
+  }
+  const head = currentHead(context.repoRoot);
+  if (!isAncestor(context.repoRoot, baseline, head)) {
+    return { eligible: false, reason: `HEAD ${head} is not descended from baseline ${baseline}` };
+  }
+  const remoteRefs = remoteRefsContainingHead(context.repoRoot);
+  if (remoteRefs === null) {
+    return { eligible: false, reason: "could not prove that the checkpoint is absent from all remotes" };
+  }
+  if (remoteRefs.length > 0) {
+    return { eligible: false, reason: `the checkpoint is already reachable from ${remoteRefs.join(", ")}` };
+  }
+  const paths = pathsBetween(context.repoRoot, baseline, head);
+  assertDeliveryPaths(context, config, paths, options, "Existing checkpoint");
+  return { eligible: true, baseline, paths };
+}
+
+function existingLocalCommit(context, config, options) {
+  const baseline = baselineHead(context);
+  const head = currentHead(context.repoRoot);
+  if (!baseline || baseline === head) return null;
+  if (!isAncestor(context.repoRoot, baseline, head)) {
+    throw new Error(`Cannot record an existing local commit: HEAD ${head} is not descended from baseline ${baseline}.`);
+  }
+  const paths = pathsBetween(context.repoRoot, baseline, head);
+  if (!paths.length) return null;
+  assertDeliveryPaths(context, config, paths, options, "Existing implementation history");
+  const remoteRefs = remoteRefsContainingHead(context.repoRoot);
+  if (remoteRefs === null) {
+    throw new Error("Cannot record an existing local commit because remote reachability could not be checked.");
+  }
+  if (remoteRefs.length > 0) {
+    throw new Error(`Existing implementation HEAD is already reachable from ${remoteRefs.join(", ")}; local delivery will not claim an externally pushed commit.`);
+  }
+  const info = commitInfo(context.repoRoot);
+  return {
+    committed: false,
+    existing: true,
+    promotedCheckpoint: false,
+    commit: info.commit,
+    short: info.short,
+    subject: info.subject,
+    staged: [],
+    changed: paths,
+    ignored: [],
+    allowed: deliveryPathPolicy(context, config, options).allowed,
+  };
+}
+
+function localStageAndCommit(context, options) {
+  const repoRoot = context.repoRoot;
+  const config = deliveryConfig(context, options);
+  const plan = stageablePaths(context, config, options);
+  assertStagedPathsArePlanned(plan, stagedPaths(repoRoot));
+  if (plan.stage.length) run("git", ["add", "-A", "--", ...plan.stage], { cwd: repoRoot });
+  const staged = stagedPaths(repoRoot);
+  assertStagedPathsArePlanned(plan, staged);
+
+  const checkpoint = checkpointPromotion(context, config, options);
+  if (checkpoint && !checkpoint.eligible) {
+    throw new Error(`Cannot promote the automatic checkpoint into the local delivery commit: ${checkpoint.reason}. Commit the implementation manually after reviewing its history.`);
+  }
+  if (!staged.length && !checkpoint) {
+    const existing = existingLocalCommit(context, config, options);
+    if (existing) return existing;
+    throw new Error("Local delivery found no allowlisted implementation changes to commit. The receipt may have been finalized after the implementation was already committed.");
+  }
+
+  const message = String(options["commit-message"] || `Implement ${context.state.topicSlug || "PRD implementation"}`).trim();
+  if (!message) throw new Error("--commit-message must not be empty");
+  const commitArgs = ["commit"];
+  if (checkpoint) commitArgs.push("--amend");
+  if (options["no-gpg-sign"]) commitArgs.push("--no-gpg-sign");
+  commitArgs.push("-m", message);
+  run("git", commitArgs, { cwd: repoRoot });
+  const info = commitInfo(repoRoot);
+  return {
+    committed: true,
+    existing: false,
+    promotedCheckpoint: Boolean(checkpoint),
+    commit: info.commit,
+    short: info.short,
+    subject: info.subject,
+    staged,
+    changed: checkpoint ? Array.from(new Set([...checkpoint.paths, ...plan.changed])) : plan.changed,
     ignored: plan.ignored,
     allowed: plan.allowed,
   };
@@ -822,6 +1049,107 @@ function cmdBody(options) {
     bodyPath: toRepoRelative(output, context.repoRoot),
     resultReport: fs.existsSync(context.resultPath) ? toRepoRelative(context.resultPath, context.repoRoot) : null,
     next: "Fill every AGENT-FILL section with prose grounded in implementation-result.md and the recorded reviews, then run ship.",
+  }, null, 2) + "\n");
+}
+
+function readDeliveryResult(context) {
+  const resultPath = deliveryResultPath(context);
+  if (!fs.existsSync(resultPath)) return null;
+  let result;
+  try {
+    result = readJson(resultPath);
+  } catch {
+    throw new Error(`Local delivery result is not valid JSON: ${resultPath}`);
+  }
+  return result;
+}
+
+function localResult(context, config, freshness, commit, rules) {
+  return {
+    schema: "hoyeon.prd-delivery-result.v1",
+    status: "committed",
+    mode: "local",
+    recordedAt: new Date().toISOString(),
+    receipt: {
+      path: toRepoRelative(context.receiptPath, context.repoRoot),
+      status: context.receipt.status,
+      completionFingerprint: context.receipt.completionFingerprint || null,
+    },
+    branch: currentBranch(context.repoRoot),
+    implementationHead: commit.commit,
+    commit,
+    freshness: {
+      verified: freshness.ok,
+      violations: freshness.violations || [],
+    },
+    rules,
+  };
+}
+
+function cmdLocal(options) {
+  const context = resolveState(options);
+  assertCompleteReceipt(context);
+  const config = deliveryConfig(context, options);
+  if (config.mode !== "local") {
+    throw new Error([
+      `Delivery mode is '${config.mode}', not 'local'.`,
+      "Use PR delivery for a run explicitly configured for PRs, or change the reviewed delivery mode before running local.",
+    ].join("\n"));
+  }
+
+  const freshness = verifyDelivery(context);
+  if (!freshness.ok) {
+    throw new Error([
+      "Implementation state is not local-delivery-fresh:",
+      ...(freshness.violations || []).map(item => `- ${item}`),
+      "Return to implement, rerun affected verification and reviews, finalize a fresh receipt, then retry local delivery.",
+    ].join("\n"));
+  }
+
+  const recorded = readDeliveryResult(context);
+  if (recorded) {
+    if (recorded.mode !== "local" || recorded.status !== "committed" || !recorded.implementationHead) {
+      throw new Error(`Existing delivery result is not a completed local delivery: ${deliveryResultPath(context)}`);
+    }
+    const head = currentHead(context.repoRoot);
+    if (recorded.implementationHead !== head) {
+      throw new Error(`Local delivery result points to ${recorded.implementationHead}, but current HEAD is ${head}; reconcile the tree before retrying.`);
+    }
+    const dirty = gitStatus(context.repoRoot);
+    if (dirty) {
+      throw new Error(`Local delivery was already recorded at ${head}, but the worktree is dirty. Review or move these changes before retrying:\n${dirty}`);
+    }
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      ...recorded,
+      alreadyCommitted: true,
+      resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
+    }, null, 2) + "\n");
+    return;
+  }
+
+  const overrides = [];
+  const rules = runRulesGate(context, options, overrides);
+  const commit = localStageAndCommit(context, options);
+  const result = localResult(context, config, freshness, commit, { ...rules, overrides });
+  writeFile(deliveryResultPath(context), JSON.stringify(result, null, 2));
+  appendJsonl(shipLogPath(context), {
+    ts: result.recordedAt,
+    event: "local",
+    mode: "local",
+    implementationHead: result.implementationHead,
+    commit: commit.commit,
+    created: commit.committed,
+    existing: Boolean(commit.existing),
+    promotedCheckpoint: Boolean(commit.promotedCheckpoint),
+    overrides,
+    rules,
+  });
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    ...result,
+    alreadyCommitted: false,
+    resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
   }, null, 2) + "\n");
 }
 
@@ -1115,6 +1443,18 @@ function cmdMerge(options) {
 function cmdStatus(options) {
   const context = resolveState(options);
   const config = deliveryConfig(context, options);
+  if (config.mode === "local") {
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      delivery: config,
+      currentBranch: currentBranch(context.repoRoot),
+      gitStatus: gitStatus(context.repoRoot),
+      pr: null,
+      deliveryResult: readDeliveryResult(context),
+      error: null,
+    }, null, 2) + "\n");
+    return;
+  }
   const prRef = prRefFromOptions(context, options);
   const pr = run("gh", ["pr", "view", prRef, "--json", "number,url,state,isDraft,mergeStateStatus,headRefName,baseRefName,statusCheckRollup"], {
     cwd: context.repoRoot,

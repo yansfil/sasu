@@ -224,9 +224,9 @@ Rules:
 After `sasu implement finalize`:
 
 - If the effective delivery mode is `pr`, run the `ship` skill in full: preflight, body, ship, CI watch, and its failure loop.
-- If delivery mode is `local`, stop after the receipt.
+- If delivery mode is `local`, run the post-receipt local delivery command to create the semantic local commit and record its delivery result.
 
-Do not commit or push anything in local mode unless the conversation agreed to it.
+Local delivery never pushes, opens a PR, watches CI, or merges.
 
 ## Stops
 

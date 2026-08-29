@@ -39,7 +39,8 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   run("git", ["config", "user.name", "Harness Test"], { cwd: root });
   run("git", ["config", "commit.gpgsign", "false"], { cwd: root });
   write(path.join(root, "README.md"), "# Test\n");
-  run("git", ["add", "README.md"], { cwd: root });
+  write(path.join(root, ".gitignore"), "agents/runs/\nfake-bin/\n");
+  run("git", ["add", "README.md", ".gitignore"], { cwd: root });
   run("git", ["commit", "-m", "Initial"], { cwd: root });
   run("git", ["remote", "add", "origin", bare], { cwd: root });
   run("git", ["push", "-u", "origin", "main"], { cwd: root });
@@ -119,6 +120,90 @@ if (args.startsWith("rules check")) {
   };
   return { root, stateDir, statePath, head, ghLog, env };
 }
+
+function initLocalFixture({ checkpoint = false } = {}) {
+  const fixture = initMergeFixture({ includeDelivery: false });
+  const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
+  state.delivery = { mode: "local" };
+  state.initialSource = { head: fixture.head };
+  state.baselineAttribution = { head: fixture.head };
+  state.tasks = [{ writeScope: ["src"] }];
+  write(fixture.statePath, JSON.stringify(state, null, 2));
+  write(path.join(fixture.root, "src", "feature.js"), "export const ready = 'local';\n");
+  if (checkpoint) {
+    run("git", ["add", "src/feature.js"], { cwd: fixture.root });
+    run("git", ["commit", "-m", "checkpoint: src (1 edited)"], { cwd: fixture.root });
+  }
+  return fixture;
+}
+
+test("local delivery verifies, commits the allowlisted change, and never contacts GitHub", () => {
+  const fixture = initLocalFixture();
+  const result = run(process.execPath, [
+    shipScript,
+    "local",
+    "--state", fixture.statePath,
+  ], { cwd: fixture.root, env: fixture.env });
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.ok, true);
+  assert.equal(output.mode, "local");
+  assert.equal(output.status, "committed");
+  assert.equal(output.alreadyCommitted, false);
+  assert.equal(output.commit.committed, true);
+  assert.equal(output.commit.subject, "Implement merge-flow");
+  assert.deepEqual(output.commit.staged, ["src/feature.js"]);
+  assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: fixture.root }).stdout.trim(), "Implement merge-flow");
+  assert.equal(fs.existsSync(fixture.ghLog), false);
+
+  const deliveryResult = JSON.parse(fs.readFileSync(path.join(fixture.stateDir, "delivery", "delivery-result.json"), "utf8"));
+  assert.equal(deliveryResult.status, "committed");
+  assert.equal(deliveryResult.implementationHead, output.implementationHead);
+  const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
+  assert.match(shipLog, /"event":"local"/);
+});
+
+test("local delivery is idempotent and does not create a second commit", () => {
+  const fixture = initLocalFixture();
+  const args = [shipScript, "local", "--state", fixture.statePath];
+  const first = JSON.parse(run(process.execPath, args, { cwd: fixture.root, env: fixture.env }).stdout);
+  const before = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
+  const second = JSON.parse(run(process.execPath, args, { cwd: fixture.root, env: fixture.env }).stdout);
+  const after = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
+  assert.equal(second.alreadyCommitted, true);
+  assert.equal(second.implementationHead, first.implementationHead);
+  assert.equal(after, before);
+  const events = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8").trim().split(/\r?\n/);
+  assert.equal(events.length, 1);
+});
+
+test("local delivery promotes an unpushed checkpoint instead of stacking another commit", () => {
+  const fixture = initLocalFixture({ checkpoint: true });
+  const before = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
+  const result = run(process.execPath, [
+    shipScript,
+    "local",
+    "--state", fixture.statePath,
+  ], { cwd: fixture.root, env: fixture.env });
+  const output = JSON.parse(result.stdout);
+  const after = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
+  assert.equal(output.commit.promotedCheckpoint, true);
+  assert.equal(output.commit.subject, "Implement merge-flow");
+  assert.equal(after, before);
+  assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: fixture.root }).stdout.trim(), "Implement merge-flow");
+  assert.equal(fs.existsSync(fixture.ghLog), false);
+});
+
+test("local delivery refuses a PR-configured run before any delivery side effect", () => {
+  const fixture = initMergeFixture();
+  const result = run(process.execPath, [
+    shipScript,
+    "local",
+    "--state", fixture.statePath,
+  ], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not 'local'/);
+  assert.equal(fs.existsSync(fixture.ghLog), false);
+});
 
 test("merge requires explicit user approval before contacting GitHub", () => {
   const fixture = initMergeFixture();

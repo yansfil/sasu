@@ -1,4 +1,4 @@
 interface:
   display_name: "ship"
-  short_description: "Ship PRD work through PR, CI, and approved merge"
-  default_prompt: "Use $ship to publish a completed implement receipt, watch CI, and merge only with explicit approval."
+  short_description: "Deliver PRD work locally or through PR, CI, and approved merge"
+  default_prompt: "Use the post-receipt delivery workflow: commit local-mode work locally, or use $ship for PR delivery and merge only with explicit approval."

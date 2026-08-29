@@ -62,6 +62,8 @@ Read each directly linked reference completely when its condition applies.
   Never supply or synthesize them as agent evidence.
 - A parked AC may unlock task work, but it is skipped explicitly by verify and always blocks a complete finalize until resumed and proved.
 - Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.
+  Local mode uses the post-receipt local delivery command for one semantic local commit;
+  PR mode uses `$ship` for commit, push, PR creation, and CI.
 
 ## 1. Confirm Readiness
 
@@ -288,6 +290,11 @@ Do not report Done until:
 - `implementation-result.md` exists.
 - `sasu implement status` reports complete.
 - required verification is fresh PASS.
+
+Then complete the authorized delivery outcome:
+
+- local mode: run `node ~/.codex/skills/ship/scripts/prd_ship.js local --state <state.json>`.
+- PR mode: hand off to `$ship` for preflight, body, commit, push, PR, and CI.
 
 ## 7. Blocked Handoff
 
