@@ -705,6 +705,39 @@ test("the sealed suite list ignores a mid-run edit of agents/config.json", () =>
   assert.equal(after.suite.sealedAt, readState(root).suite.sealedAt);
 });
 
+// R6: one validation, one write, no invalidation.
+test("resequence reorders pending tasks, refuses anything that is not a permutation, and records both", () => {
+  const root = makeProject();
+  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
+  const pending = readState(root).tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
+  assert.ok(pending.length >= 1);
+
+  const partial = run(root, ["implement", "resequence", "--order", pending[0]]);
+  if (pending.length > 1) {
+    assert.notEqual(partial.status, 0);
+    assert.match(partial.json.message, /must name every pending task exactly once/);
+  }
+  const unknown = run(root, ["implement", "resequence", "--order", [...pending, "T99"].join(",")]);
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.json.message, /unknown task\(s\) in resequence: T99/);
+
+  // Every refusal is in the history with the check that produced it, so a
+  // supervisor can read why nothing happened.
+  const refusals = readState(root).verbs.filter((entry) => entry.outcome === "rejected");
+  assert.ok(refusals.length >= 1);
+  assert.equal(refusals.at(-1).verb, "resequence");
+  assert.equal(refusals.at(-1).rejection.check, "arguments");
+
+  const reversed = [...pending].reverse();
+  const accepted = run(root, ["implement", "resequence", "--order", reversed.join(","), "--reason", "drive the blocked one last"]);
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  const after = readState(root);
+  assert.deepEqual(after.tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id), reversed);
+  assert.equal(after.verbs.at(-1).outcome, "accepted");
+  assert.equal(after.verbs.at(-1).reason, "drive the blocked one last");
+  assert.match(accepted.json.message, /no evidence was invalidated/);
+});
+
 test("acceptance and fidelity run separately in parallel, then finalize converges", () => {
   const root = makeProject();
   const { file, capture } = stub(root);

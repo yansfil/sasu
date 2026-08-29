@@ -30,6 +30,7 @@ import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
 import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
+import { recordVerb, rejectVerb, resequencePendingTasks } from "./verbs";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -95,6 +96,7 @@ import {
   type VerificationInputManifest,
   type VerificationRoundContext,
   type VerificationRoundContexts,
+  type IssuerLabel,
 } from "./types";
 
 export interface ImplementArgs {
@@ -922,6 +924,37 @@ function park(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   return result("park", true, `${criterion.id} parked by recorded human approval; finalize remains blocked until resume and proof`, {
     criterionId: criterion.id,
     park: criterion.check.parks.at(-1),
+  });
+}
+
+function resequence(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const at = nowIso();
+  const issuer: IssuerLabel = "observer";
+  const reason = flag(args, "reason")?.trim() ?? "";
+  const requested = requiredFlag(args, "order").split(",");
+  const entry = { verb: "resequence" as const, issuer, target: null, reason, at };
+  let ordered: string[];
+  try {
+    ordered = resequencePendingTasks(state, requested);
+  } catch (error) {
+    // Recorded as an argument refusal before it is thrown: a supervisor whose
+    // order was rejected must be able to read why from the run's history, not
+    // only from the terminal it happened to be watching.
+    rejectVerb(state, entry, "arguments", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
+  }
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  persistState(statePath, state);
+  return result("resequence", true, `pending task order is now ${ordered!.join(", ")}; no evidence was invalidated`, {
+    order: ordered!,
+    pendingTasks: state.tasks.filter((entry) => entry.status === "pending").map((entry) => ({
+      id: entry.id,
+      status: entry.status,
+      dependsOn: entry.dependsOn,
+    })),
+    verb: state.verbs.at(-1),
   });
 }
 
@@ -2624,6 +2657,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "check") return check(projectRoot, args);
     if (subcommand === "park") return park(projectRoot, args);
     if (subcommand === "resume") return resume(projectRoot, args);
+    if (subcommand === "resequence") return resequence(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
@@ -2632,7 +2666,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
