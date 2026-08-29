@@ -180,13 +180,23 @@ function overrideRecovery(topic: string, gate: GateId): string {
 }
 
 /**
- * Prior-round findings for the delta re-judgment contract: only carried when
- * the last run actually blocked, so a fresh document is judged fresh.
+ * Prior-round findings for the delta re-judgment contract. Carried whenever a
+ * blocked round's ledger exists - including across a user-evidenced reopen,
+ * whose record keeps the findings (see reopenPrdGate). Only a PASS clears the
+ * ledger: its remaining findings are resolved or advisory, not open items.
+ * (2026-08-29 audit: reopen used to erase the ledger, so every reopened cycle
+ * was judged fresh, re-licensed progressive discovery, and ended in override.)
+ * P2 advisories stay out of the ledger: a demoted "[auto-demoted: cannot
+ * block]" finding that re-enters as prior-unresolved would regain blocking
+ * eligibility one cycle later (reproduced in this change's own verification),
+ * so the carryable set is blocking-grade only and can only shrink.
  */
-function priorFindingsFor(state: ReturnType<GateStore["load"]>, gate: GateId) {
+export function priorFindingsFor(state: ReturnType<GateStore["load"]>, gate: GateId) {
   const record = state.gates[gate];
-  if (!record || record.verdict === null || record.verdict === "PASS") return [];
-  return record.findings.map((f) => ({ severity: f.severity, area: f.area, missing: f.missing }));
+  if (!record || record.verdict === "PASS") return [];
+  return record.findings
+    .filter((f) => f.severity !== "P2")
+    .map((f) => ({ severity: f.severity, area: f.area, missing: f.missing }));
 }
 
 /**
@@ -463,10 +473,14 @@ async function runGapListGate(
     const records: JudgeCallRecord[] = [];
     try {
       const priorFindings = priorFindingsFor(state, gate);
-      // Convergence applies only to the one closure review. A PASS is sealed and
-      // cannot reach this path again without an explicit user-evidenced reopen,
-      // which starts a genuinely fresh full review cycle.
-      const isRerun = before.reviewPhase === "closure";
+      // Convergence applies to every semantic round after cycle 1's full
+      // review: the closure pass, and every round of a reopened cycle. A
+      // reopen admits a new user decision; it does not buy the judge a fresh
+      // exhaustive pass over text it already reviewed (PRINCIPLES 13 -
+      // 2026-08-29 audit: fresh-per-cycle review made 5/5 swift-shell-pivot
+      // cycles die in CLOSURE EXHAUSTED with zero PASSes, and a sealed,
+      // approved PRD reopened by a one-line change drew 8 new blocking P1s).
+      const isRerun = before.reviewPhase === "closure" || (before.reviewCycle ?? 1) > 1;
 
       if (!config.judge.fanout) {
         // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).

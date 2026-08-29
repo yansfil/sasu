@@ -4,30 +4,32 @@ import { gapAuditPrompt, specGatePrompt, clampDocument } from "../../dist/gates/
 
 const PRIOR = [{ severity: "P1", area: "error-handling", missing: "setPriority unknown id behavior unspecified" }];
 
-test("fresh gap-audit prompt carries no closure context", () => {
+test("fresh gap-audit prompt carries no delta context", () => {
   const prompt = gapAuditPrompt("log");
-  assert.doesNotMatch(prompt, /CLOSURE CONTEXT/);
+  assert.doesNotMatch(prompt, /DELTA REVIEW CONTEXT/);
 });
 
-test("closure gap-audit prompt carries prior findings and the terminal convergence contract", () => {
+test("delta gap-audit prompt carries prior findings and the convergence contract", () => {
   const prompt = gapAuditPrompt("log", PRIOR);
-  assert.match(prompt, /CLOSURE CONTEXT/);
+  assert.match(prompt, /DELTA REVIEW CONTEXT/);
   assert.match(prompt, /setPriority unknown id/);
   assert.match(prompt, /Do NOT open new, deeper lines of questioning/);
   assert.match(prompt, /human-required findings remain blocking/i);
   assert.match(prompt, /other new findings below P0 cannot block/i);
-  assert.match(prompt, /terminal for the current review cycle/i);
+  // The wording must hold for every delta round - the closure pass AND any
+  // round of a reopened cycle - so it must not claim to be the terminal round.
+  assert.doesNotMatch(prompt, /terminal for the current review cycle/i);
 });
 
-test("a closure lane without routed priors still permits findings requiring explicit human agreement", () => {
+test("a delta round without routed priors still permits findings requiring explicit human agreement", () => {
   const prompt = gapAuditPrompt("log", [], { rerun: true });
   assert.match(prompt, /closing\s+it requires explicit human agreement/i);
   assert.match(prompt, /keeps human-required findings blocking/i);
 });
 
-test("closure spec prompt carries prior findings", () => {
+test("delta spec prompt carries prior findings", () => {
   const prompt = specGatePrompt("prd", "log", PRIOR);
-  assert.match(prompt, /CLOSURE CONTEXT/);
+  assert.match(prompt, /DELTA REVIEW CONTEXT/);
   assert.match(prompt, /error-handling/);
 });
 

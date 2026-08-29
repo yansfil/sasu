@@ -367,14 +367,33 @@ test("PRD review cycle: full BLOCK plus closure BLOCK stops at two and only expl
   const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "user changed the requirement; review it again"]);
   assert.equal(reopened.status, 0, reopened.stdout + reopened.stderr);
   assert.match(reopened.stdout, /review cycle 2/);
+  // The reopened cycle is a delta round, not a fresh exhaustive review: the
+  // blocked cycle's findings ledger survived the reopen, origin is mandatory,
+  // and a new non-P0 non-human finding cannot block - it demotes to advisory.
   const newCycle = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, {
-      ...BLOCK_RESPONSE,
+      verdict: "BLOCK",
+      findings: [
+        BLOCK_RESPONSE.findings.map((finding) => ({ ...finding, origin: "prior-unresolved" }))[0],
+        {
+          area: "scope",
+          severity: "P1",
+          missing: "a brand-new concern the judge just thought of",
+          recommendation: "expand the review",
+          requiresHuman: false,
+          origin: "new",
+        },
+      ],
     }),
   });
-  assert.equal(newCycle.status, 1, "the reopened cycle runs a fresh full review");
+  assert.equal(newCycle.status, 1, "the unresolved prior finding still blocks the reopened cycle");
   const after = gatesState(dir, "fixture");
   assert.equal(after.gates["gap-audit"].review.cycle, 2);
+  assert.equal(after.gates["gap-audit"].review.phase, "closure", "a semantic verdict was recorded, not a judge ERROR");
+  assert.equal(after.gates["gap-audit"].consecutiveErrors, 0, "the origin-tagged stub must not fall into the invalid-output path");
+  const demoted = after.gates["gap-audit"].findings.find((finding) => finding.area === "scope");
+  assert.equal(demoted.severity, "P2", "a new non-P0 non-human finding cannot block a reopened cycle");
+  assert.match(demoted.recommendation, /auto-demoted/);
   assert.equal(after.gates["gap-audit"].reviewReopens[0].evidence, "user changed the requirement; review it again");
 });
 

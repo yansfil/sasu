@@ -156,21 +156,22 @@ enumerate micro-variants of one gap (report the one underlying decision), and ke
 function rerunContext(priorFindings: PriorFinding[], rerun = priorFindings.length > 0): string {
   if (!rerun) return "";
   if (priorFindings.length === 0) {
-    // A closure lane with no finding routed to it. A sealed PASS never reaches
-    // this prompt; input drift requires an explicit new review cycle.
+    // A delta lane with no finding routed to it: a closure lane whose areas
+    // are clean, or any round of a reopened cycle whose prior verdict was a
+    // sealed PASS (the user changed something after approval).
     return `
-CLOSURE CONTEXT: this is the one allowed closure verdict after the full review BLOCKed.
+DELTA REVIEW CONTEXT: this document already received its one exhaustive review.
 No unresolved prior finding carries over, so every finding you report MUST carry an extra field
 "origin": "new". Do NOT open new, deeper lines of questioning about aspects that were previously
 acceptable. Report a new finding only when the revision introduced it, it is a missed P0, or closing
 it requires explicit human agreement. The harness keeps human-required findings blocking on re-runs;
-other new findings below P0 cannot block. There is no third autonomous review round.
+other new findings below P0 cannot block. Do not reserve concerns for another round.
 `;
   }
   const lines = priorFindings.map((f) => `- [${f.severity}/${f.area}] ${f.missing}`).join("\n");
   return `
-CLOSURE CONTEXT: this is the one allowed closure verdict after the full review BLOCKed and the author
-revised the document. Judge the revision as follows:
+DELTA REVIEW CONTEXT: this document already received its one exhaustive review, which BLOCKed, and
+the author revised it. Your job is to close that review out, not to restart it:
 1. For each prior finding, check whether the revision resolves it. Resolved findings must NOT be
    reported again.
 2. Report a prior finding again ONLY if it remains genuinely unaddressed.
@@ -181,7 +182,7 @@ revised the document. Judge the revision as follows:
 4. On this re-run every finding MUST carry an extra field "origin": "prior-unresolved" (a prior
    finding that is still unaddressed) or "new". The harness enforces convergence mechanically:
    human-required findings remain blocking; other new findings below P0 cannot block, so label honestly.
-5. This is terminal for the current review cycle. Do not reserve concerns for another round.
+5. Do not reserve concerns for another round.
 
 PRIOR FINDINGS:
 ${lines}

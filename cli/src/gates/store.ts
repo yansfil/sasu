@@ -852,7 +852,12 @@ export function reopenPrdGate(store: GateStore, gate: PrdGateId, evidence: strin
       record.consecutiveErrors = 0;
       delete record.consecutiveErrorCause;
       record.overridden = false;
-      record.findings = [];
+      // A blocked cycle's findings survive the reopen as the next round's
+      // prior-findings ledger (delta re-judgment): erasing them here is what
+      // turned every reopened cycle into a fresh exhaustive review (2026-08-29
+      // audit). A sealed cycle carries nothing forward - its findings were
+      // resolved or advisory.
+      if (before.phase === "sealed") record.findings = [];
       record.lastRunAt = null;
       delete record.inputs;
       delete record.delegationSha256;
