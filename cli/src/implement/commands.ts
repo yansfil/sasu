@@ -37,6 +37,7 @@ import {
   resumeCriterion,
   runCriterionCheck,
   validateCheckBinding,
+  parseCommandArgv,
 } from "./checks";
 import {
   acceptancePrompt,
@@ -649,6 +650,27 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       budgetGrants: [],
       deviations: [],
       riskFindings: [],
+      events: [],
+      verbs: [],
+      amendments: [],
+      // Sealed here, at start, and never re-derived: a mid-run edit of
+      // agents/config.json must not change what this run is measured
+      // against (AC5). From this point the sealed list is the authority and
+      // the config file is only the source it was taken from.
+      suite: {
+        sealedAt: createdAt,
+        commands: mechanicalBindings(projectRoot, workRoot, contract.verification).map((binding, index) => ({
+          id: `S${index + 1}`,
+          command: binding.command,
+          argv: parseCommandArgv(binding.command),
+          cwd: binding.cwd,
+        })),
+        exclusions: [],
+        results: [],
+      },
+      qaBriefs: [],
+      trails: [],
+      escalations: [],
       retirement: null,
       completion: null,
       createdAt,

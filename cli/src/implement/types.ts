@@ -1,9 +1,13 @@
 import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 
-// v6: acceptance criteria own their mechanical check ledger, decision points,
-// and park history. Older shapes are not migrated because completion authority
-// must never guess missing bindings, attempts, or human approvals.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v6" as const;
+// v7: adds the supervision ledgers - event log, observer verb history,
+// amendment history, sealed suite list with its results, QA trails, and solver
+// escalations. Older shapes are not migrated because completion authority must
+// never guess missing bindings, attempts, human approvals, or - now - which
+// suite commands a run was sealed against. A v6 run has no sealed suite list,
+// so a v7 CLI cannot tell "no orphan suite failures" from "never sealed", and
+// the honest answer is to refuse rather than assume (PRINCIPLES 10).
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v7" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 
 export type ItemStatus = "pending" | "complete" | "blocked";
@@ -373,6 +377,243 @@ export interface UnifiedVerificationAttempt {
   error: { stage: string; code: string; message: string } | null;
 }
 
+// ---------------------------------------------------------------------------
+// v7 supervision ledgers
+//
+// Six append-only ledgers give the observer a channel and the run a memory.
+// Every one of them is a plain array on ImplementState with a monotonic
+// numeric `id` derived as max(existing) + 1. There is deliberately no
+// `nextId` counter anywhere: a counter is a second record of the same fact
+// and drifts from the array the first time a write is interrupted
+// (PRINCIPLES 10, "records stay honest and singular").
+//
+// State-transition table (what T3/T6/T7/T8/T9/T12/T13 enforce; this file only
+// fixes the shapes those transitions read and write):
+//
+//   suite command   sealed -> excluded          human approval quote required
+//                   sealed -> (never parked)    park of a suite command is refused
+//   acceptance AC   pending -> green            all bound checks green
+//                   green   -> pending          amendment changed that AC's row hash
+//                   pending -> parked           decision point posted + reason
+//                   parked  -> pending          resume, or amendment changed the row
+//   task            pending -> complete/blocked unchanged from v6
+//                   pending -> pending          resequence permutes order only
+//   amendment       accepted only while no task is in progress; never reverted
+//   escalation      accepted while count < ESCALATE_LIMIT_PER_RUN; then refused
+//   trail           accepted -> superseded      a later accepted trail for the same AC
+//
+// The one rule with no transition: events. Once appended, an event is never
+// edited or removed for the life of the run (AC24).
+// ---------------------------------------------------------------------------
+
+/**
+ * Who a state change is attributed to. The physical write path is the CLI
+ * alone (R7); this label says on whose authority the write happened.
+ *
+ * `solver` is absent by design: the solver diagnoses and never writes state
+ * (AC33), so it can never be an issuer. It appears only as a ClaimOrigin.
+ */
+export type IssuerLabel = "implementor" | "observer" | "human";
+
+/**
+ * Provenance of a narrative claim in the judge envelope's claims section.
+ * `human` marks an exercise of authority; `observer` and `solver` mark
+ * unverified assertions. None of the three may be a basis for a verdict - the
+ * envelope says so in as many words (AC9).
+ */
+export type ClaimOrigin = "human" | "observer" | "solver";
+
+export type ImplementEventKind =
+  | "task-status"
+  | "check-bound"
+  | "check-attempt"
+  | "criterion-status"
+  | "park"
+  | "resume"
+  | "amendment"
+  | "resequence"
+  | "escalate"
+  | "trail"
+  | "comment"
+  | "verify"
+  | "finalize";
+
+/**
+ * One thing that happened, in the order it happened. This is what the
+ * background waiter (`sasu implement await`) blocks on: the observer wakes on
+ * a semantic unit the harness owns, never on pane text (D-16/D-19).
+ */
+export interface ImplementEvent {
+  /** Monotonic from 1, never reused, never renumbered. */
+  id: number;
+  at: string;
+  kind: ImplementEventKind;
+  actor: IssuerLabel;
+  /** Task or criterion id this event is about; null for run-wide events. */
+  subject: string | null;
+  summary: string;
+}
+
+export type ObserverVerb = "park" | "resequence" | "escalate" | "resume";
+
+/** Which of the three CLI checks refused a verb (R7). */
+export type VerbRejectionCheck = "arguments" | "authority" | "transition";
+
+export interface VerbRecord {
+  id: number;
+  at: string;
+  verb: ObserverVerb;
+  issuer: IssuerLabel;
+  /** Task or criterion the verb was aimed at; null for run-wide verbs. */
+  target: string | null;
+  reason: string;
+  outcome: "accepted" | "rejected";
+  /** Non-null exactly when outcome is "rejected". */
+  rejection: { check: VerbRejectionCheck; message: string } | null;
+}
+
+export interface AmendmentRecord {
+  id: number;
+  at: string;
+  /**
+   * Always "human". Kept as a field rather than assumed so the record states
+   * the authority it was accepted under; a supervisor-issued amendment is
+   * refused before it ever reaches this ledger (AC12).
+   */
+  issuer: "human";
+  /** Verbatim user approval quote. */
+  approval: string;
+  reason: string;
+  prdSha256: string;
+  snapshotPath: string;
+  previousSnapshotPath: string;
+  /** Criteria whose normalized row hash changed and therefore lost green. */
+  invalidatedCriteria: string[];
+  /** Criteria that did not exist before and join unproven. */
+  addedCriteria: string[];
+  /** Parked criteria whose row changed, so their park lifted. */
+  unparkedCriteria: string[];
+  /** True when this amendment also excluded a sealed suite command (AC42). */
+  suiteSnapshotUpdated: boolean;
+}
+
+export interface SuiteCommand {
+  /** Stable `S<n>` within the sealed list. */
+  id: string;
+  command: string;
+  argv: string[];
+  cwd: string;
+}
+
+export interface SuiteExclusion {
+  at: string;
+  commandId: string;
+  /** Verbatim human approval; an exclusion without one is refused (AC6). */
+  approval: string;
+  reason: string;
+}
+
+export interface SuiteResult {
+  commandId: string;
+  /** Verification attempt this result was produced in. */
+  attemptId: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  exitCode: number;
+  status: "GREEN" | "RED";
+  logPath: string;
+  /**
+   * Criteria that share this exact `(cwd, command)` and were scored from the
+   * same single execution. Empty means the command is an orphan suite entry -
+   * the case whose failure blocks the run on its own axis (R2).
+   */
+  attributedCriteria: string[];
+}
+
+/**
+ * The suite list is sealed at `start` so a mid-run edit of agents/config.json
+ * cannot change what this run is measured against (AC5). The sealed list is
+ * the authority; `agents/config.json` is only its source at seal time.
+ */
+export interface SuiteLedger {
+  sealedAt: string;
+  commands: SuiteCommand[];
+  exclusions: SuiteExclusion[];
+  /** Latest result per command, replaced whole on each verify attempt. */
+  results: SuiteResult[];
+}
+
+export interface QaBriefStep {
+  /** `S1`..`Sn`, the identity the coverage check compares as a set (D-31). */
+  id: string;
+  text: string;
+}
+
+/**
+ * The only briefing window for a judged driving criterion (R11). Reissuing for
+ * the same criterion mints a new briefId, so a trail echoing a stale one is
+ * refused (AC30/AC31).
+ */
+export interface QaBrief {
+  briefId: string;
+  criterionId: string;
+  issuedAt: string;
+  /** PRD snapshot the script was derived from. */
+  prdSha256: string;
+  steps: QaBriefStep[];
+}
+
+/**
+ * Self-declared, never authenticated. The CLI checks the declaration and
+ * records it for audit; it cannot tell an implementor calling itself a QA
+ * agent from a real one. Same accepted trust model as D-39 (10장).
+ */
+export type DriverRole = "human" | "observer" | "qa-agent";
+
+export interface TrailRecord {
+  id: number;
+  at: string;
+  criterionId: string;
+  briefId: string;
+  driverRole: DriverRole;
+  /** Step ids the driver covered; compared as a set against the brief. */
+  coveredStepIds: string[];
+  /** Registered artifact paths carrying the capture. */
+  artifactPaths: string[];
+  /** "superseded" once a later trail is accepted for the same criterion. */
+  status: "accepted" | "superseded";
+}
+
+/**
+ * Three artifacts and nothing else go to a replacement implementor (D-22).
+ * The previous implementor's conversation is deliberately absent: escalate
+ * exists because that context stopped converging (PRINCIPLES 13).
+ */
+export interface SolverHandoff {
+  prdSnapshotPath: string;
+  diagnosisPath: string;
+  checkLedgerPath: string;
+}
+
+export interface EscalationRecord {
+  id: number;
+  at: string;
+  /** Task or criterion the implementor was stuck on. */
+  target: string | null;
+  reason: string;
+  /** Judge routing profile reused for the solver (R12); no new knob. */
+  profile: ReviewProfile;
+  model: string | null;
+  outcome: "diagnosed" | "summon-failed";
+  /** Diagnosis text on success; null when the summon failed. */
+  diagnosis: string | null;
+  /** Failure detail on summon-failed; null on success. */
+  error: string | null;
+  /** Non-null only on success, when a replacement was actually briefed. */
+  handoff: SolverHandoff | null;
+}
+
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   status: "active" | "complete" | "blocked" | "retired";
@@ -434,6 +675,20 @@ export interface ImplementState {
   // Design comments tracked across attempts with their dispositions. Absent on
   // states recorded before dispositions existed (= no tracked comments).
   designComments?: TrackedDesignComment[];
+  // --- v7 supervision ledgers. Required, not optional: a run that cannot say
+  // what suite it was sealed against or what happened in it is exactly the
+  // state v7 refuses to guess at (see IMPLEMENT_SCHEMA).
+  /** Append-only; the waiter's `--since` cursor indexes into this (R8). */
+  events: ImplementEvent[];
+  /** Every observer verb, accepted or refused, with which check refused it. */
+  verbs: VerbRecord[];
+  amendments: AmendmentRecord[];
+  suite: SuiteLedger;
+  /** Issued briefs, newest last; a criterion may have several over a run. */
+  qaBriefs: QaBrief[];
+  trails: TrailRecord[];
+  /** Escalation count is `escalations.length`, never a separate counter. */
+  escalations: EscalationRecord[];
   retirement: {
     retiredAt: string;
     retiredBySessionId: string | null;
@@ -478,3 +733,27 @@ export interface ImplementCommandResult {
   message: string;
   detail?: Record<string, unknown>;
 }
+
+/**
+ * Wake the observer when the implementor has produced no event for this long.
+ *
+ * NOT a measured value - an agent's initial default (D-18). The incident it
+ * is sized against is the 2026-08-28 herdr-ide session, where an implementor
+ * burned 4.3 hours over 8 rounds without emitting a single state event and
+ * nothing woke up. Ten minutes is short enough to catch that and long enough
+ * that a normal build-and-test cycle does not trip it. Retune by editing this
+ * constant after observing a false wake or a missed stall on a real run; it is
+ * deliberately not a config knob (AGENTS.md Review Guide 7).
+ */
+export const STALL_THRESHOLD_MS = 10 * 60 * 1000;
+
+/**
+ * Escalations allowed per run before further attempts are refused.
+ *
+ * Also an unmeasured initial default (D-46). The bound exists because a fresh
+ * adversarial diagnosis is a stage that cannot converge on its own
+ * (PRINCIPLES 13): without a cap, "reset the implementor and try again" is an
+ * unbounded loop. Three is the point past which the honest move is to stop and
+ * ask a human rather than reset a fourth time.
+ */
+export const ESCALATE_LIMIT_PER_RUN = 3;

@@ -23,7 +23,12 @@ function commandExecutable(command: string): string {
   return command.trim().split(/\s+/, 1)[0] ?? "";
 }
 
-function parseCommandArgv(command: string): string[] {
+/**
+ * Shared by check bindings and the sealed suite list so both sides of the
+ * single runner tokenize a command the same way. Two tokenizers would mean
+ * two `(cwd, command)` identities and the dedup would silently miss (R1).
+ */
+export function parseCommandArgv(command: string): string[] {
   const argv: string[] = [];
   let token = "";
   let quote: "'" | '"' | null = null;

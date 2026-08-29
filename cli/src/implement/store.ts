@@ -372,6 +372,184 @@ function assertRoundContexts(value: unknown, label: string): void {
   if (value["risk"] !== null) assertRoundContext(value["risk"], `${label}.risk`);
 }
 
+const ISSUER_LABELS = new Set(["implementor", "observer", "human"]);
+
+/**
+ * v7's six append-only ledgers. Validated as required fields rather than
+ * normalized-if-missing (the way riskFindings was in v5): a v7 state that
+ * lacks its sealed suite list cannot be told apart from one whose suite was
+ * genuinely empty, and completion authority must never guess (PRINCIPLES 10).
+ */
+function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
+  if (!Array.isArray(candidate.events)) throw new Error("malformed implement state: events must be an array");
+  let previousEventId = 0;
+  for (const [index, entry] of candidate.events.entries()) {
+    assertRecord(entry, `events[${index}]`);
+    const id = entry["id"];
+    if (typeof id !== "number" || !Number.isInteger(id) || id <= previousEventId) {
+      throw new Error(`malformed implement state: events[${index}].id must be an integer greater than the previous event id`);
+    }
+    previousEventId = id;
+    assertString(entry["at"], `events[${index}].at`);
+    assertString(entry["kind"], `events[${index}].kind`);
+    if (!ISSUER_LABELS.has(String(entry["actor"]))) {
+      throw new Error(`malformed implement state: events[${index}].actor must be implementor, observer, or human`);
+    }
+    assertNullableString(entry["subject"], `events[${index}].subject`);
+    assertString(entry["summary"], `events[${index}].summary`);
+  }
+
+  if (!Array.isArray(candidate.verbs)) throw new Error("malformed implement state: verbs must be an array");
+  for (const [index, entry] of candidate.verbs.entries()) {
+    assertRecord(entry, `verbs[${index}]`);
+    if (!["park", "resequence", "escalate", "resume"].includes(String(entry["verb"]))) {
+      throw new Error(`malformed implement state: verbs[${index}].verb must be park, resequence, escalate, or resume`);
+    }
+    if (!ISSUER_LABELS.has(String(entry["issuer"]))) {
+      throw new Error(`malformed implement state: verbs[${index}].issuer must be implementor, observer, or human`);
+    }
+    const outcome = entry["outcome"];
+    if (outcome !== "accepted" && outcome !== "rejected") {
+      throw new Error(`malformed implement state: verbs[${index}].outcome must be accepted or rejected`);
+    }
+    // The rejection detail is the record of WHICH of the three checks refused
+    // (R7). An accepted verb carrying one, or a rejected verb missing one,
+    // would make the ledger unable to answer that question honestly.
+    if (outcome === "rejected") {
+      assertRecord(entry["rejection"], `verbs[${index}].rejection`);
+      if (!["arguments", "authority", "transition"].includes(String((entry["rejection"] as Record<string, unknown>)["check"]))) {
+        throw new Error(`malformed implement state: verbs[${index}].rejection.check must be arguments, authority, or transition`);
+      }
+    } else if (entry["rejection"] !== null) {
+      throw new Error(`malformed implement state: verbs[${index}].rejection must be null when outcome is accepted`);
+    }
+  }
+
+  if (!Array.isArray(candidate.amendments)) throw new Error("malformed implement state: amendments must be an array");
+  for (const [index, entry] of candidate.amendments.entries()) {
+    assertRecord(entry, `amendments[${index}]`);
+    // Human-only issuance is the whole point of R5. A supervisor-issued
+    // amendment is refused before it reaches the ledger, so any other value
+    // here means the record itself is corrupt.
+    if (entry["issuer"] !== "human") {
+      throw new Error(`malformed implement state: amendments[${index}].issuer must be human`);
+    }
+    assertString(entry["approval"], `amendments[${index}].approval`);
+    assertString(entry["reason"], `amendments[${index}].reason`);
+    assertString(entry["prdSha256"], `amendments[${index}].prdSha256`);
+    assertString(entry["snapshotPath"], `amendments[${index}].snapshotPath`);
+    for (const field of ["invalidatedCriteria", "addedCriteria", "unparkedCriteria"]) {
+      if (!Array.isArray(entry[field])) {
+        throw new Error(`malformed implement state: amendments[${index}].${field} must be an array`);
+      }
+    }
+  }
+
+  assertRecord(candidate.suite, "suite");
+  assertString(candidate.suite["sealedAt"], "suite.sealedAt");
+  const suiteCommands = candidate.suite["commands"];
+  if (!Array.isArray(suiteCommands)) throw new Error("malformed implement state: suite.commands must be an array");
+  const suiteIds = new Set<string>();
+  for (const [index, entry] of suiteCommands.entries()) {
+    assertRecord(entry, `suite.commands[${index}]`);
+    assertString(entry["id"], `suite.commands[${index}].id`);
+    if (suiteIds.has(entry["id"] as string)) {
+      throw new Error(`malformed implement state: duplicate suite command id ${String(entry["id"])}`);
+    }
+    suiteIds.add(entry["id"] as string);
+    assertString(entry["command"], `suite.commands[${index}].command`);
+    assertString(entry["cwd"], `suite.commands[${index}].cwd`);
+    if (!Array.isArray(entry["argv"])) throw new Error(`malformed implement state: suite.commands[${index}].argv must be an array`);
+  }
+  for (const field of ["exclusions", "results"]) {
+    if (!Array.isArray(candidate.suite[field])) {
+      throw new Error(`malformed implement state: suite.${field} must be an array`);
+    }
+  }
+  for (const [index, entry] of (candidate.suite["exclusions"] as unknown[]).entries()) {
+    assertRecord(entry, `suite.exclusions[${index}]`);
+    assertString(entry["commandId"], `suite.exclusions[${index}].commandId`);
+    // An exclusion without a verbatim human approval is the exact thing AC6
+    // refuses. Storing one would launder a refused action into the record.
+    assertString(entry["approval"], `suite.exclusions[${index}].approval`);
+    assertString(entry["reason"], `suite.exclusions[${index}].reason`);
+  }
+  for (const [index, entry] of (candidate.suite["results"] as unknown[]).entries()) {
+    assertRecord(entry, `suite.results[${index}]`);
+    assertString(entry["commandId"], `suite.results[${index}].commandId`);
+    assertString(entry["attemptId"], `suite.results[${index}].attemptId`);
+    if (entry["status"] !== "GREEN" && entry["status"] !== "RED") {
+      throw new Error(`malformed implement state: suite.results[${index}].status must be GREEN or RED`);
+    }
+    if (!Array.isArray(entry["attributedCriteria"])) {
+      throw new Error(`malformed implement state: suite.results[${index}].attributedCriteria must be an array`);
+    }
+  }
+
+  if (!Array.isArray(candidate.qaBriefs)) throw new Error("malformed implement state: qaBriefs must be an array");
+  const briefIds = new Set<string>();
+  for (const [index, entry] of candidate.qaBriefs.entries()) {
+    assertRecord(entry, `qaBriefs[${index}]`);
+    assertString(entry["briefId"], `qaBriefs[${index}].briefId`);
+    // Reissuing for the same criterion must mint a distinct id, or a trail
+    // echoing a stale brief could not be told from a current one (AC30).
+    if (briefIds.has(entry["briefId"] as string)) {
+      throw new Error(`malformed implement state: duplicate qa brief id ${String(entry["briefId"])}`);
+    }
+    briefIds.add(entry["briefId"] as string);
+    assertString(entry["criterionId"], `qaBriefs[${index}].criterionId`);
+    assertString(entry["prdSha256"], `qaBriefs[${index}].prdSha256`);
+    const steps = entry["steps"];
+    if (!Array.isArray(steps)) throw new Error(`malformed implement state: qaBriefs[${index}].steps must be an array`);
+    for (const [stepIndex, step] of steps.entries()) {
+      assertRecord(step, `qaBriefs[${index}].steps[${stepIndex}]`);
+      assertString(step["id"], `qaBriefs[${index}].steps[${stepIndex}].id`);
+      assertString(step["text"], `qaBriefs[${index}].steps[${stepIndex}].text`);
+    }
+  }
+
+  if (!Array.isArray(candidate.trails)) throw new Error("malformed implement state: trails must be an array");
+  for (const [index, entry] of candidate.trails.entries()) {
+    assertRecord(entry, `trails[${index}]`);
+    assertString(entry["criterionId"], `trails[${index}].criterionId`);
+    assertString(entry["briefId"], `trails[${index}].briefId`);
+    // The implementor and the solver are absent from this set on purpose:
+    // a criterion proven by driving must not be driven by the agent whose
+    // work it judges (AC32). The check is of the declaration, not identity.
+    if (!["human", "observer", "qa-agent"].includes(String(entry["driverRole"]))) {
+      throw new Error(`malformed implement state: trails[${index}].driverRole must be human, observer, or qa-agent`);
+    }
+    if (!Array.isArray(entry["coveredStepIds"])) {
+      throw new Error(`malformed implement state: trails[${index}].coveredStepIds must be an array`);
+    }
+    if (entry["status"] !== "accepted" && entry["status"] !== "superseded") {
+      throw new Error(`malformed implement state: trails[${index}].status must be accepted or superseded`);
+    }
+  }
+
+  if (!Array.isArray(candidate.escalations)) throw new Error("malformed implement state: escalations must be an array");
+  for (const [index, entry] of candidate.escalations.entries()) {
+    assertRecord(entry, `escalations[${index}]`);
+    assertString(entry["reason"], `escalations[${index}].reason`);
+    const outcome = entry["outcome"];
+    if (outcome !== "diagnosed" && outcome !== "summon-failed") {
+      throw new Error(`malformed implement state: escalations[${index}].outcome must be diagnosed or summon-failed`);
+    }
+    // A failed summon has no diagnosis and no handoff; a successful one has
+    // both. Recording a handoff for a failed summon would claim a
+    // replacement was briefed when none was (AC35, AC41).
+    if (outcome === "summon-failed") {
+      if (entry["handoff"] !== null) {
+        throw new Error(`malformed implement state: escalations[${index}].handoff must be null when the summon failed`);
+      }
+      assertString(entry["error"], `escalations[${index}].error`);
+    } else {
+      assertRecord(entry["handoff"], `escalations[${index}].handoff`);
+      assertString(entry["diagnosis"], `escalations[${index}].diagnosis`);
+    }
+  }
+}
+
 export function parseImplementState(text: string): ImplementState {
   let parsed: unknown;
   try {
@@ -486,6 +664,8 @@ export function parseImplementState(text: string): ImplementState {
       assertString(skipped["reason"], `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}].reason`);
     }
   }
+
+  assertSupervisionLedgers(candidate);
 
   if (candidate.retirement === undefined) throw new Error("malformed implement state: retirement must be null or an object");
   if (candidate.retirement !== null) {
