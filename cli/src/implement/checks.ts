@@ -152,10 +152,41 @@ export function validateCheckBinding(
   if (executable === "npx" && !argv.includes("--no-install")) {
     throw new Error("npx check bindings require --no-install so verification cannot fetch and execute a package");
   }
-  const classification = relativeCwd === "agents" || relativeCwd.startsWith("agents/") || /(?:^|\s)(?:\.\/)?agents\//.test(trimmed)
-    ? "labor"
-    : "asset";
-  return { command: trimmed, argv, cwd: relativeCwd, classification };
+  return { command: trimmed, argv, cwd: relativeCwd, classification: classifyBinding(trimmed, argv, relativeCwd) };
+}
+
+/**
+ * Asset or labor, decided from the command's address alone (AC11, R4).
+ *
+ * The question this answers is what a run LEFT BEHIND. A check that points at
+ * a file in the product tree is an asset: the run added a durable test that
+ * guards the criterion after the run is over. A check that points into the
+ * bookkeeping namespace, or at no file at all, is labor: it proved something
+ * once and guards nothing afterwards.
+ *
+ * This is a receipt measurement and never a gate. Nothing refuses because a
+ * run's ratio looks wrong - the number exists so a ratio can be OBSERVED
+ * before anyone sets a threshold from it (D-24, PRD 3장 non-goals).
+ *
+ * ASSUMPTION, not a user decision (PRD 4.3 "에이전트 가정", 10장). Treating a
+ * command with no path argument as labor is the harness's own judgement. It
+ * misfiles a path-less command that really does check product output - `npm
+ * test` is scored as labor even though it runs the project's suite. The
+ * revisit trigger is written into the PRD: an actual run where that
+ * misfiling mattered. Until such a case is observed, this stays as it is
+ * rather than growing a smarter heuristic nobody has measured.
+ */
+export function classifyBinding(command: string, argv: string[], cwd: string): "asset" | "labor" {
+  // The bookkeeping namespace, whether entered through the cwd or named in an
+  // argument. Broader than AC11's `agents/runs/**` on purpose: every path
+  // under `agents/` is bookkeeping, so a check aimed at any of it guards no
+  // product behaviour (AGENTS.md Namespaces).
+  if (cwd === "agents" || cwd.startsWith("agents/")) return "labor";
+  if (/(?:^|\s)(?:\.\/)?agents\//.test(command)) return "labor";
+  // A path argument is what makes a check a durable address. `--flag=path`
+  // counts; a bare word that happens to be an npm script does not.
+  const namesAPath = argv.slice(1).some((token) => token.replace(/^[^=]*=/, "").includes("/"));
+  return namesAPath ? "asset" : "labor";
 }
 
 function resolveDecisionPoints(criterion: AcceptanceCriterionItem, resolution: "green" | "parked" | "rebound", at: string): void {

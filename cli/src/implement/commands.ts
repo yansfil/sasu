@@ -30,6 +30,7 @@ import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
 import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
 import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
+import { runScore, scoreLine } from "./score";
 import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
@@ -2991,7 +2992,22 @@ function implementationReport(
   const skippedLines = attempt.skippedAcceptanceCriteria.length === 0
     ? "None."
     : attempt.skippedAcceptanceCriteria.map((entry) => `- ${entry.id}: ${entry.reason}`).join("\n");
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nBind and run AC Checks -> implementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, AC Check bindings and attempts, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n### Skipped Acceptance Criteria\n\n${skippedLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
+  const score = runScore(state);
+  const measurementSection = [
+    `## Score`,
+    "",
+    scoreLine(score),
+    "",
+    score.acceptance.unproven.length === 0 ? "Unproven criteria: none." : `Unproven criteria: ${score.acceptance.unproven.join(", ")}.`,
+    "",
+    `Assets and labor, classified from each Check's address: ${score.assetLabor.asset} asset, ${score.assetLabor.labor} labor. This is a measurement, never a gate - no run is refused for its ratio.`,
+    "",
+    score.assetLabor.bindings.length === 0
+      ? "No Check bindings were recorded."
+      : score.assetLabor.bindings.map((entry) => `- ${entry.criterionId} (${entry.classification}): \`${entry.command}\` in ${entry.cwd}`).join("\n"),
+    "",
+  ].join("\n");
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}${measurementSection}\n## Public Flow\n\nBind and run AC Checks -> implementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, AC Check bindings and attempts, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n### Skipped Acceptance Criteria\n\n${skippedLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -3097,6 +3113,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         grants: view.grants,
       },
       skippedAcceptanceCriteria: latest.skippedAcceptanceCriteria,
+      score: runScore(state),
+      scoreLine: scoreLine(runScore(state)),
       openItems: blockers,
       ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
       ...(state.worktree ? { worktree: state.worktree } : {}),
@@ -3145,6 +3163,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
     },
     skippedAcceptanceCriteria: latest.skippedAcceptanceCriteria,
+    score: runScore(state),
+    scoreLine: scoreLine(runScore(state)),
     ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
     ...(state.worktree ? { worktree: state.worktree } : {}),
     executionCallsDuringFinalize: 0,

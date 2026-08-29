@@ -200,7 +200,10 @@ test("SC1 and SC3: machine close needs a harness green and rebind history remain
   assert.match(refused.json.message, /outside the allowed runner forms/);
 
   const { bound, checked } = bindAndRun(root, "AC1");
-  assert.equal(bound.json.detail.binding.classification, "asset");
+  // `npm test` names no file, so under AC11's address rule this run leaves no
+  // durable guard behind and the binding is labor. It was scored as an asset
+  // before that rule existed.
+  assert.equal(bound.json.detail.binding.classification, "labor");
   assert.equal(checked.status, 0, checked.stderr + checked.stdout);
   assert.equal(checked.json.detail.attempt.outcome, "green");
   assert.equal(typeof checked.json.detail.attempt.outputFingerprint, "string");
@@ -243,8 +246,8 @@ test("SC1 and SC3: machine close needs a harness green and rebind history remain
   const manifest = state(root).verificationAttempts.at(-1).inputManifest.checkLedger;
   assert.equal(typeof manifest.sha256, "string");
   assert.deepEqual(manifest.bindings.map(({ criterionId, bindingId, classification }) => ({ criterionId, bindingId, classification })), [
-    { criterionId: "AC1", bindingId: "B1", classification: "asset" },
-    { criterionId: "AC1", bindingId: "B2", classification: "asset" },
+    { criterionId: "AC1", bindingId: "B1", classification: "labor" },
+    { criterionId: "AC1", bindingId: "B2", classification: "labor" },
   ]);
   // The machine criterion summons no judge (AC7), so the rebind reaches the
   // judge as a FACT in the envelope of the criterion that does (AC8). Without
