@@ -55,7 +55,9 @@ Usage:
   sasu implement qa-brief --ac <ACn> [--json]
   sasu implement trail    --ac <ACn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]
     (the driver role is self-declared and recorded for audit; implementor and solver are refused by name.)
-  sasu implement await    [--since <event-id>] [--pid <implementor-pid>] [--json]
+  sasu implement escalate --reason "<what the implementor is stuck on>" [--target <Tn|ACn>] [--agent <herdr-agent>] [--json]
+    (summons a read-only solver for a diagnosis, then resets the implementor's context; ${"`"}ESCALATE_LIMIT_PER_RUN${"`"} per run.)
+  sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--json]
     (state-changing implement commands accept --issuer <implementor|observer|human>, default implementor.
      The label is self-declared and recorded for audit; the CLI does not authenticate it.)
   sasu implement task     --id <Tn> [--status <complete|pending|blocked>] [--evidence "<context>"] [--json]

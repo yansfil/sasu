@@ -34,8 +34,17 @@ import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks,
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
 import { issueQaBrief, latestBriefFor, registerTrail, resolveDriverRole, TrailRejected } from "./qa";
+import {
+  assertEscalateBudget,
+  buildHandoffBriefing,
+  EscalateRejected,
+  recordEscalation,
+  renderDiagnosis,
+  solverPrompt,
+  validateDiagnosis,
+} from "./solver";
 import { waitForEvent } from "./waiter";
-import { herdrCapabilities } from "./herdr";
+import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "./herdr";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -94,7 +103,9 @@ import {
   type MechanicalBinding,
   type MechanicalRunRecord,
   type RegisteredArtifact,
+  type ReviewProfile,
   type RiskLaneResult,
+  type SolverHandoff,
   type TaskItem,
   type TrackedRiskFinding,
   type UnifiedVerificationAttempt,
@@ -104,6 +115,7 @@ import {
   type VerificationRoundContext,
   type VerificationRoundContexts,
   type IssuerLabel,
+  ESCALATE_LIMIT_PER_RUN,
   STALL_THRESHOLD_MS,
 } from "./types";
 
@@ -984,19 +996,41 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
   const pidFlag = flag(args, "pid")?.trim();
   const pid = pidFlag === undefined || pidFlag === "" ? null : Number(pidFlag);
   if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new Error(`--pid must be a positive integer, got ${pidFlag}`);
+  const agent = flag(args, "agent")?.trim() || null;
+  if (agent !== null && pid !== null) throw new Error("--agent and --pid are two answers to the same question; give one");
+
+  // Two probes for one question, and the caller picks by what it actually
+  // knows. `--pid` is the universal one and works in a bare terminal;
+  // `--agent` routes through the herdr adapter's `alive` hole, which is what
+  // a supervisor running under herdr has a name for rather than a pid. An
+  // adapter hole that cannot answer degrades to no probe at all instead of
+  // reporting a live implementor it never checked (R9).
+  const probe = agent !== null
+    ? (() => {
+      const capabilities = herdrCapabilities();
+      if (!capabilities.holes.alive) return { probe: `unavailable: ${capabilities.reason}`, isAlive: null };
+      return {
+        probe: "herdr-adapter",
+        isAlive: () => isAgentAlive({ name: agent }).value === true,
+      };
+    })()
+    : pid !== null
+      // signal 0 tests for the process's existence without touching it.
+      ? { probe: "pid", isAlive: () => { try { process.kill(pid, 0); return true; } catch { return false; } } }
+      : { probe: "unavailable", isAlive: null };
+
   const outcome = await waitForEvent({
     loadState: () => parseImplementState(fs.readFileSync(statePath, "utf8")),
     since,
     stallMs: STALL_THRESHOLD_MS,
-    // signal 0 tests for the process's existence without touching it.
-    isAlive: pid === null ? null : () => { try { process.kill(pid, 0); return true; } catch { return false; } },
+    isAlive: probe.isAlive,
   });
   return result("await", true, `woke on ${outcome.reason}: ${outcome.detail}`, {
     reason: outcome.reason,
     cursor: outcome.cursor,
     waitedMs: outcome.waitedMs,
     events: outcome.events,
-    livenessProbe: pid === null ? "unavailable" : "pid",
+    livenessProbe: probe.probe,
   });
 }
 
@@ -1153,6 +1187,121 @@ function trail(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   return result("trail", true, `trail ${record.id} accepted for ${criterion.id}: every step of ${record.briefId} covered, driven by ${driverRole} (declared, not authenticated)`, {
     trail: record,
     superseded: state.trails.filter((entry) => entry.criterionId === criterion.id && entry.status === "superseded").map((entry) => entry.id),
+  });
+}
+
+/**
+ * Summon the solver, then reset the implementor (R12, AC33-AC35).
+ *
+ * The ordering is the guarantee. Everything before `runJudge` reads; the
+ * judge call itself runs on the read-only backend every other lane uses; and
+ * the first state write happens after it has returned. So "zero state writes
+ * during solver execution" (AC33) is a property of the call graph, not a rule
+ * somebody has to remember.
+ */
+async function escalate(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const config = loadConfig(state.projectRoot);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertEscalateBudget(state);
+  const reason = flag(args, "reason")?.trim() ?? "";
+  if (reason === "") throw new EscalateRejected("arguments", "escalate requires --reason <what the implementor is stuck on>");
+  const target = flag(args, "target")?.trim().toUpperCase() || null;
+  if (target !== null && !state.tasks.some((entry) => entry.id === target) && !state.acceptanceCriteria.some((entry) => entry.id === target)) {
+    throw new EscalateRejected("arguments", `unknown --target ${target}; name a task or an acceptance criterion in this run`);
+  }
+  const agent = flag(args, "agent")?.trim() || null;
+
+  // Read-only preparation. `readPane` is diagnosis input and nothing else: a
+  // missing pane degrades the envelope, it does not stop the escalation (R9).
+  const prd = requirePinnedPrd(projectRoot, state);
+  const ledger = JSON.stringify(checkLedgerPayload(state), null, 2);
+  const pane = agent === null
+    ? { ok: false, value: null, problem: "no --agent given, so there is no pane to read" }
+    : readPane({ name: agent });
+
+  const profile: ReviewProfile = "high-risk";
+  const lane = await judgeLane(crypto.randomUUID(), () => runJudge(
+    config,
+    "implement:solver",
+    // The solver reuses the high-risk profile's routing rather than adding a
+    // model knob of its own (R12, D-46): one routing table, not two.
+    profile,
+    solverPrompt({
+      target,
+      reason,
+      prd,
+      checkLedger: ledger,
+      paneExcerpt: pane.value,
+      paneProblem: pane.problem,
+    }),
+    (value) => validateDiagnosis(value),
+  ));
+
+  const at = nowIso();
+  if (lane.verdict === "ERROR" || lane.result === null) {
+    const failure = lane.error?.message ?? "the solver returned nothing usable";
+    const record = recordEscalation(state, {
+      at, target, reason, profile,
+      model: lane.judge?.model ?? null,
+      outcome: "summon-failed",
+      diagnosis: null,
+      error: failure,
+      handoff: null,
+    });
+    recordEvent(state, { kind: "escalate", actor: issuer, subject: target, summary: `escalation ${record.id} failed to summon a solver`, at });
+    persistState(statePath, state);
+    // A failed summon is a recorded outcome, not a thrown error: the
+    // supervisor asked a question and the honest answer is "nobody came",
+    // which belongs in the ledger where the next decision is made (AC35).
+    return result("escalate", false, `escalation ${record.id} failed: ${failure}. The implementor was NOT reset. ${ESCALATE_LIMIT_PER_RUN - state.escalations.length} escalation(s) remain.`, {
+      escalation: record,
+      escalationsRemaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length,
+    });
+  }
+
+  const diagnosis = lane.result;
+  const solverDir = `${state.runDir}/artifacts/solver`;
+  const id = Math.max(0, ...state.escalations.map((entry) => entry.id)) + 1;
+  const handoff: SolverHandoff = {
+    prdSnapshotPath: state.prd.snapshotPath,
+    diagnosisPath: `${solverDir}/diagnosis-${id}.md`,
+    checkLedgerPath: `${solverDir}/check-ledger-${id}.json`,
+  };
+  fs.mkdirSync(path.join(projectRoot, solverDir), { recursive: true });
+  writeTextAtomic(path.join(projectRoot, handoff.diagnosisPath), renderDiagnosis({ id, at, target, reason }, diagnosis));
+  writeTextAtomic(path.join(projectRoot, handoff.checkLedgerPath), `${ledger}\n`);
+
+  const briefing = buildHandoffBriefing(handoff);
+  const reset = agent === null
+    ? { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" }
+    : spawnImplementor({ name: `${agent}-r${id}`, cwd: state.worktree?.path ?? projectRoot, prompt: briefing });
+
+  const record = recordEscalation(state, {
+    at, target, reason, profile,
+    model: lane.judge?.model ?? null,
+    outcome: "diagnosed",
+    diagnosis: diagnosis.summary,
+    error: null,
+    handoff,
+  });
+  recordEvent(state, {
+    kind: "escalate",
+    actor: issuer,
+    subject: target,
+    summary: `escalation ${record.id} diagnosed${reset.ok ? " and the implementor was reset" : "; the context reset is the supervisor's to perform"}`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}`, {
+    escalation: record,
+    handoff,
+    briefing,
+    contextReset: reset.ok,
+    contextResetProblem: reset.problem,
+    escalationsRemaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length,
   });
 }
 
@@ -2884,6 +3033,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "qa-brief") return qaBrief(projectRoot, args);
     if (subcommand === "trail") return trail(projectRoot, args);
+    if (subcommand === "escalate") return await escalate(projectRoot, args);
     if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
@@ -2893,7 +3043,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, amend, qa-brief, trail, await, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, amend, qa-brief, trail, escalate, await, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
@@ -2903,6 +3053,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
       ...(error instanceof VerbRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof AmendmentRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof TrailRejected ? { detail: { rejectedCheck: error.check } } : {}),
+      ...(error instanceof EscalateRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
       ...(error instanceof VerifyInvariantError ? { detail: { reason: error.reason } } : {}),
     };
