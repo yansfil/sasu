@@ -289,6 +289,18 @@ export class ApiBackend implements JudgeBackend {
         ...(advisories.length > 0 ? { advisories } : {}),
         activity: { commands: [], toolRounds: 1 },
       };
+    } catch (error) {
+      // The overall deadline can fire while the SSE body is still streaming -
+      // recorded production lanes ran up to 540s, and thinking pings keep the
+      // stall guard fed the whole time. controller.abort() then rejects the
+      // pending reader.read() with a raw AbortError, which runner.ts rethrows
+      // unclassified: no retry, no fallback backend, no failure record.
+      // Classify it like the pre-header abort above so a mid-stream timeout
+      // degrades the same way every other backend timeout does.
+      if (!(error instanceof JudgeError) && controller.signal.aborted) {
+        throw new JudgeError("judge-timeout", "api", `Messages API call exceeded ${options.timeoutMs}ms mid-stream`);
+      }
+      throw error;
     } finally {
       clearTimeout(deadline);
     }

@@ -171,6 +171,23 @@ test("the request deadline aborts a server that never answers", async () => {
   });
 });
 
+test("a deadline firing mid-stream is classified as judge-timeout, not thrown raw", async () => {
+  // Headers arrive fast and pings keep the stall guard fed, so the only bound
+  // left is the overall deadline - it aborts the pending reader.read(), which
+  // used to escape as a raw AbortError that runner.ts rethrew with no retry,
+  // fallback, or failure record.
+  await withServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const ping = setInterval(() => res.write('event: ping\ndata: {"type":"ping"}\n\n'), 50);
+    res.on("close", () => clearInterval(ping));
+  }, async (baseUrl) => {
+    await assert.rejects(
+      () => new ApiBackend().run("judge this", { model: "claude-opus-5", timeoutMs: 300, baseUrl }),
+      (error) => error.code === "judge-timeout" && /mid-stream/.test(error.message),
+    );
+  });
+});
+
 test("the backend refuses agentic evidence access rather than judging without it", async () => {
   await assert.rejects(
     () => new ApiBackend().run("judge this", { model: "claude-opus-5", timeoutMs: 10_000, baseUrl: "http://127.0.0.1:1", agentic: true }),
