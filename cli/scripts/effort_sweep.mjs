@@ -51,7 +51,18 @@ const modelOverride = arg("model", undefined);
 if (backendOverride) process.env["SASU_JUDGE_BACKEND"] = backendOverride;
 
 const fixtures = path.join(root, "cli", "test", "fixtures", "calibration");
-const mines = JSON.parse(fs.readFileSync(path.join(fixtures, "mines-qa.json"), "utf8")).mines;
+// Which gate is under measurement. gap-audit and spec are both served by
+// runGapListGate and share the laneEffort knob, but they are different
+// semantic units - different lane counts, different inputs, different
+// question - so a budget measured on one says nothing about the other
+// (PRINCIPLES 6). verify is a third unit again and is not reachable here: it
+// needs a real diff, criteria, and evidence, not a document pair.
+const gate = arg("gate", "gap-audit");
+if (gate !== "gap-audit" && gate !== "spec") {
+  console.error("--gate must be gap-audit or spec");
+  process.exit(2);
+}
+const mines = JSON.parse(fs.readFileSync(path.join(fixtures, gate === "spec" ? "mines-prd.json" : "mines-qa.json"), "utf8")).mines;
 
 // Three documents, two expectations. The real interview log is included
 // because the synthetic fixtures are 144 lines and a real qa-log is 626 - a
@@ -63,11 +74,32 @@ const mines = JSON.parse(fs.readFileSync(path.join(fixtures, "mines-qa.json"), "
 // findings. Scoring those as false positives would have measured the fixture's
 // name instead of the judge, so it is labelled for what it demonstrably is and
 // the one real PASS control is the production log that actually PASSed.
-const DOCS = [
+const GAP_DOCS = [
   { id: "mined", file: path.join(fixtures, "qa-log-mined.md"), expect: "BLOCK", scored: true },
   { id: "complete", file: path.join(fixtures, "qa-log-complete.md"), expect: "BLOCK", scored: false },
   { id: "real-passed", file: path.join(root, "agents", "interview", "implement-check", "qa-log.md"), expect: "PASS", scored: false },
 ];
+
+// The spec gate judges a PRD against the interview log it came from, so every
+// sample is a pair. `companion` is that log.
+const SPEC_DOCS = [
+  {
+    id: "mined",
+    file: path.join(fixtures, "prd-mined.md"),
+    companion: path.join(fixtures, "qa-log-complete.md"),
+    expect: "BLOCK",
+    scored: true,
+  },
+  {
+    id: "real-passed",
+    file: path.join(root, "agents", "prd", "implement-check", "prd.md"),
+    companion: path.join(root, "agents", "interview", "implement-check", "qa-log.md"),
+    expect: "PASS",
+    scored: false,
+  },
+];
+
+const DOCS = gate === "spec" ? SPEC_DOCS : GAP_DOCS;
 
 /**
  * Alternative lane partition, measured before it is proposed (PRINCIPLES 4:
@@ -99,7 +131,9 @@ const SPLIT_LANES = [
 ];
 
 const laneSet = arg("lanes", "default");
-const lanes = laneSet === "split" ? SPLIT_LANES : prompts.GAP_AUDIT_LANES;
+const lanes = gate === "spec"
+  ? prompts.SPEC_LANES
+  : (laneSet === "split" ? SPLIT_LANES : prompts.GAP_AUDIT_LANES);
 const config = loadConfig(root);
 if (modelOverride) {
   for (const profile of Object.values(config.judge.profiles)) {
@@ -126,9 +160,11 @@ async function fanout(doc, effort) {
     try {
       const outcome = await runJudge(
         config,
-        `sweep:${doc.id}:${effort}:${lane.id}`,
+        `sweep:${gate}:${doc.id}:${effort}:${lane.id}`,
         "routine",
-        prompts.gapAuditPrompt(doc.content, [], { lane, laneCount: lanes.length }),
+        gate === "spec"
+          ? prompts.specGatePrompt(doc.content, doc.companionContent, [], { lane, laneCount: lanes.length })
+          : prompts.gapAuditPrompt(doc.content, [], { lane, laneCount: lanes.length }),
         validate,
         { effort },
       );
@@ -169,10 +205,13 @@ if (selectedDocs.length === 0) {
   console.error(`--docs matched nothing; known ids: ${DOCS.map((d) => d.id).join(",")}`);
   process.exit(2);
 }
-for (const doc of selectedDocs) doc.content = fs.readFileSync(doc.file, "utf8");
+for (const doc of selectedDocs) {
+  doc.content = fs.readFileSync(doc.file, "utf8");
+  if (doc.companion !== undefined) doc.companionContent = fs.readFileSync(doc.companion, "utf8");
+}
 
 const runs = [];
-console.error(`[sweep] efforts=${efforts.join(",")} repeats=${repeats} docs=${selectedDocs.map((d) => d.id).join(",")} lanes=${lanes.length} (${laneSet})`);
+console.error(`[sweep] gate=${gate} efforts=${efforts.join(",")} repeats=${repeats} docs=${selectedDocs.map((d) => d.id).join(",")} lanes=${lanes.length} (${laneSet})`);
 console.error(`[sweep] backend=${backendOverride ?? config.judge.profiles.routine.primary.backend} model=${modelOverride ?? config.judge.profiles.routine.primary.model}`);
 
 for (let round = 1; round <= repeats; round += 1) {
