@@ -31,7 +31,7 @@ import { mechanicalBindings, parseImplementContract, reviewProfile, type Impleme
 import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
 import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
 import { runScore, scoreLine } from "./score";
-import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
+import { assertCommandAuthority, isIssuedCommand, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
 import { issueQaBrief, latestBriefFor, registerTrail, resolveDriverRole, TrailRejected } from "./qa";
@@ -117,6 +117,7 @@ import {
   type VerificationInputManifest,
   type VerificationRoundContext,
   type VerificationRoundContexts,
+  type IssuedCommand,
   type IssuerLabel,
   ESCALATE_LIMIT_PER_RUN,
   STALL_THRESHOLD_MS,
@@ -148,8 +149,21 @@ export const DIRTY_INTAKE_OPTIONS = [
   },
 ] as const;
 
-function result(action: string, ok: boolean, message: string, detail?: Record<string, unknown>): ImplementCommandResult {
-  return { ok, action, exitCode: ok ? 0 : 1, message, ...(detail !== undefined ? { detail } : {}) };
+function result(
+  action: string,
+  ok: boolean,
+  message: string,
+  detail?: Record<string, unknown>,
+  summary?: string[],
+): ImplementCommandResult {
+  return {
+    ok,
+    action,
+    exitCode: ok ? 0 : 1,
+    message,
+    ...(detail !== undefined ? { detail } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+  };
 }
 
 class VerifyInvariantError extends Error {
@@ -1484,7 +1498,7 @@ function raiseDesignComment(
   const suggestion = requiredFlag(args, "suggestion").trim();
   // No emptiness check here: `requiredFlag` already refuses a blank value, and
   // a second one would be an unreachable branch pretending to be a guard.
-  const entry = { verb: "comment" as const, issuer, target: target.relative, reason: text, at };
+  const entry = { verb: "design-raise" as const, issuer, target: target.relative, reason: text, at };
   const tracked = state.designComments ?? [];
   const id = `D${tracked.reduce((high, existing) => Math.max(high, Number(existing.id.slice(1)) || 0), 0) + 1}`;
   const comment: TrackedDesignComment = {
@@ -1553,8 +1567,51 @@ function design(projectRoot: string, args: ImplementArgs): ImplementCommandResul
 }
 
 /** Records the user's verbatim decision to leave one risk finding unresolved. */
+/**
+ * Declares one open finding structurally unfixable (R16 ③, AC46).
+ *
+ * 2026-08-29, interview-anchor: the run is still active today because the
+ * blocked close only asked whether the judge budget was spent. Three rounds
+ * whose outcome nobody disputed stood between a known-terminal run and an
+ * honest record, so the record stayed a lie by omission instead.
+ *
+ * This is deliberately not `--accept`. Accepting says "we are shipping with
+ * this"; declaring non-convergence says "this cannot be fixed and we are
+ * closing blocked", and the finding stays OPEN in the receipt to say so.
+ */
+function riskNonConvergent(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const id = requiredFlag(args, "id").toUpperCase();
+  const approval = requiredFlag(args, "approval");
+  const reason = requiredFlag(args, "reason");
+  const entry = state.riskFindings.find((candidate) => candidate.id === id);
+  if (entry === undefined) {
+    const known = openRiskFindings(state).map((candidate) => candidate.id);
+    throw new Error(`unknown risk finding: ${id}${known.length === 0 ? "" : ` (open: ${known.join(", ")})`}`);
+  }
+  if (entry.status !== "open") {
+    throw new Error(`${id} is ${entry.status}, not open: only an open finding can be declared non-convergent`);
+  }
+  // The structural fact the harness owns: how many judged attempts this
+  // finding has already survived. Corroboration in the record, never the gate.
+  const originIndex = state.verificationAttempts.findIndex((attempt) => attempt.id === entry.originAttemptId);
+  const roundsUnchanged = originIndex === -1 ? 0 : state.verificationAttempts.length - originIndex - 1;
+  entry.nonConvergence = { at: nowIso(), approval, reason, declaredBy: "human", roundsUnchanged };
+  persistState(statePath, state);
+  return result(
+    "risk",
+    true,
+    `${id} declared non-convergent after ${roundsUnchanged} judged round(s) unchanged; it stays open and `
+      + `\`finalize --status complete\` stays refused, but \`--status blocked\` no longer waits for the judge budget`,
+    { finding: entry, open: openRiskFindings(state) },
+  );
+}
+
 function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  if (args.flags.get("accept") !== true) throw new Error("risk requires --accept");
+  if (args.flags.get("non-convergent") === true) return riskNonConvergent(projectRoot, args);
+  if (args.flags.get("accept") !== true) throw new Error("risk requires --accept or --non-convergent");
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
@@ -1586,6 +1643,104 @@ function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   });
 }
 
+/**
+ * What a person asks `status` for, in the order they ask it.
+ *
+ * 2026-08-29, interview-anchor: the parked criterion's reason was in the
+ * output and nobody could find it, because the output was 491 lines of JSON.
+ * The fix is not a shorter record - it is answering the question above the
+ * record (AC47). Sections with nothing to say print nothing, so a healthy run
+ * stays short and an unhealthy one is all signal.
+ */
+/**
+ * Write the refusal into the run's own history before it reaches the caller.
+ *
+ * 2026-08-29, interview-anchor (R16 ②): the gate refused a supervisor and the
+ * run's record said nothing had been attempted. An audit trail that only
+ * remembers what succeeded cannot answer "who tried to close this task?",
+ * which is the whole reason the issuer label exists (PRD 10장: the mitigation
+ * for a false declaration is the record, so the record has to exist).
+ *
+ * A missing or unreadable run is not an error here. The command is being
+ * refused either way, and replacing the authority message with a bookkeeping
+ * one would hide the answer the caller asked for.
+ */
+function recordAuthorityRefusal(
+  projectRoot: string,
+  args: ImplementArgs,
+  subject: IssuedCommand,
+  issuer: IssuerLabel,
+  message: string,
+): void {
+  let statePath: string;
+  let state: ImplementState;
+  try {
+    ({ statePath, state } = loadState(projectRoot, stateOptions(args)));
+  } catch {
+    return;
+  }
+  recordVerb(state, {
+    at: nowIso(),
+    verb: subject,
+    issuer,
+    target: flag(args, "ac")?.toUpperCase() ?? flag(args, "id")?.toUpperCase() ?? null,
+    reason: `refused: ${subject}`,
+    outcome: "rejected",
+    rejection: { check: "authority", message },
+  });
+  persistState(statePath, state);
+}
+
+function statusSummary(state: ImplementState, herdr: { available: boolean; holes: Record<"spawn" | "read" | "alive", boolean> }): string[] {
+  const lines: string[] = [scoreLine(runScore(state))];
+  const verdict = state.verificationAttempts.at(-1)?.verdict ?? "NOT_RUN";
+  lines.push(`verify: ${verdict}`);
+
+  const parked = state.acceptanceCriteria.filter((entry) => entry.check.status === "parked");
+  if (parked.length > 0) {
+    lines.push("", `parked (${parked.length}) - each must be resumed and proved before a complete finalize:`);
+    for (const entry of parked) {
+      const park = entry.check.parks.at(-1);
+      lines.push(`  ${entry.id} [by ${park?.parkedBy ?? "unknown"}] ${park?.reason ?? "no reason recorded"}`);
+      if (park?.evidence) lines.push(`    evidence: ${park.evidence}`);
+    }
+  }
+
+  const points = state.acceptanceCriteria.flatMap((entry) => entry.check.decisionPoints
+    .filter((point) => point.resolvedAt === null)
+    .map((point) => `  ${entry.id} [${point.kind}] ${point.message}`));
+  if (points.length > 0) lines.push("", `open decision points (${points.length}) - the supervisor may park on these:`, ...points);
+
+  const comments = openDesignComments(state);
+  if (comments.length > 0) {
+    lines.push("", `design comments awaiting a disposition (${comments.length}):`);
+    for (const entry of comments) lines.push(`  ${entry.id} [${entry.area} @ ${entry.path}] ${entry.text}`);
+  }
+
+  const risks = openRiskFindings(state);
+  if (risks.length > 0) {
+    lines.push("", `open risk findings (${risks.length}):`);
+    for (const entry of risks) {
+      lines.push(`  ${entry.id} [${entry.severity}] ${entry.text}`);
+      if (entry.nonConvergence !== undefined) {
+        lines.push(`    declared non-convergent by ${entry.nonConvergence.declaredBy} after ${entry.nonConvergence.roundsUnchanged} unchanged round(s): ${entry.nonConvergence.reason}`);
+      }
+    }
+  }
+
+  const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
+  if (openTasks.length > 0) {
+    lines.push("", `open tasks (${openTasks.length}): ${openTasks.map((entry) => `${entry.id} (${entry.status})`).join(", ")}`);
+  }
+
+  if (!herdr.available) {
+    const missing = (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]);
+    lines.push("", `herdr unavailable - no ${missing.join(", ")}; pane diagnosis and implementor replacement are the supervisor's to perform by hand`);
+  }
+  lines.push("", "full record: re-run with --json");
+  return lines;
+}
+
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { state } = loadState(projectRoot, stateOptions(args));
   const recordRoot = state.projectRoot;
@@ -1612,7 +1767,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
     artifactProblems: problems,
     prdProblem: heldPrd.drift === null ? null : "PRD changed after implement start",
     prdDrift: heldPrd.drift,
-  });
+  }, statusSummary(state, herdr));
 }
 
 function writeMechanicalLog(
@@ -3015,7 +3170,12 @@ function riskSection(state: ImplementState, attempt: UnifiedVerificationAttempt)
     const resolution = entry.resolution === undefined
       ? "none"
       : `${entry.resolution.at}: ${entry.resolution.evidence}`;
-    return `- ${entry.id} [${entry.severity}] ${entry.text}\n  Origin attempt: ${entry.originAttemptId}\n  Status: ${entry.status}\n  Resolution: ${resolution}`;
+    const declaration = entry.nonConvergence === undefined
+      ? ""
+      : `\n  Non-convergent: declared by ${entry.nonConvergence.declaredBy} at ${entry.nonConvergence.at} after `
+        + `${entry.nonConvergence.roundsUnchanged} judged round(s) unchanged - ${entry.nonConvergence.reason}`
+        + `\n  Approval: "${entry.nonConvergence.approval}"`;
+    return `- ${entry.id} [${entry.severity}] ${entry.text}\n  Origin attempt: ${entry.originAttemptId}\n  Status: ${entry.status}\n  Resolution: ${resolution}${declaration}`;
   };
   return [laneNote, state.riskFindings.map(line).join("\n")].filter((entry) => entry !== null).join("\n\n");
 }
@@ -3139,12 +3299,28 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     // terminally stuck, never as a shortcut past fixable findings: it stays
     // refused while the budget predicate says another verify could run.
     const view = verificationBudget(state, loadConfig(recordRoot).judge.retryBudget);
-    if (!view.budgetExhausted && !view.judgeErrorLoop) {
+    // The third terminal reason (R16 ③). Budget exhaustion asks "can another
+    // round run?"; this asks "could another round change anything?" - and
+    // when a human has declared every remaining finding structurally
+    // unfixable, spending the rounds only delays an honest record. It is
+    // deliberately all-or-nothing: one undeclared finding means a round could
+    // still matter, so the run is not terminal.
+    const openBlocking = openRiskFindings(state).filter((entry) => entry.severity === "blocking");
+    const nonConvergent = openBlocking.length > 0
+      && openBlocking.every((entry) => entry.nonConvergence !== undefined)
+      && openDesignComments(state).length === 0;
+    if (!view.budgetExhausted && !view.judgeErrorLoop && !nonConvergent) {
+      const undeclared = openBlocking.filter((entry) => entry.nonConvergence === undefined).map((entry) => entry.id);
       throw new Error(
-        "finalize --status blocked refused: verification can still run - fix the recorded findings and re-run `sasu implement verify`",
+        "finalize --status blocked refused: verification can still run - fix the recorded findings and re-run `sasu implement verify`"
+          + (undeclared.length === 0
+            ? ""
+            : `, or declare each structurally unfixable finding with \`sasu implement risk --non-convergent --issuer human --id <RF#> --approval "<verbatim user approval>" --reason "<why no round can fix it>"\` (undeclared: ${undeclared.join(", ")})`),
       );
     }
-    const terminalReason = view.budgetExhausted ? "budget-exhausted" : "judge-error-loop";
+    const terminalReason = view.budgetExhausted
+      ? "budget-exhausted"
+      : view.judgeErrorLoop ? "judge-error-loop" : "non-convergent-findings";
     if (state.status === "blocked" && state.completion?.fingerprint === fingerprint) {
       const receipt = path.join(recordRoot, state.completion.receiptPath);
       const report = path.join(recordRoot, state.completion.implementationResultPath);
@@ -3185,6 +3361,12 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       score: runScore(state),
       scoreLine: scoreLine(runScore(state)),
       openItems: blockers,
+      // Who declared each finding terminal, in their own words, next to the
+      // structural fact that corroborates it. A blocked close that cannot say
+      // WHY it was terminal is the record the old guard produced.
+      nonConvergentFindings: openRiskFindings(state)
+        .filter((entry) => entry.nonConvergence !== undefined)
+        .map((entry) => ({ id: entry.id, severity: entry.severity, text: entry.text, ...entry.nonConvergence })),
       ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
       ...(state.worktree ? { worktree: state.worktree } : {}),
       executionCallsDuringFinalize: 0,
@@ -3265,8 +3447,20 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     // single gate; asserting it inside `design` instead would have put the
     // rule back in the place the gate exists to empty.
     if (subcommand !== undefined) {
-      const subject = subcommand === "design" && args.flags.get("raise") === true ? "design-raise" : subcommand;
-      assertCommandAuthority(subject, resolveIssuer(flag(args, "issuer")));
+      const subject = subcommand === "design" && args.flags.get("raise") === true
+        ? "design-raise"
+        : subcommand === "risk" && args.flags.get("non-convergent") === true
+          ? "risk-non-convergent"
+          : subcommand;
+      const issuer = resolveIssuer(flag(args, "issuer"));
+      try {
+        assertCommandAuthority(subject, issuer);
+      } catch (error) {
+        if (error instanceof VerbRejected && isIssuedCommand(subject)) {
+          recordAuthorityRefusal(projectRoot, args, subject, issuer, error.message);
+        }
+        throw error;
+      }
     }
     if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);

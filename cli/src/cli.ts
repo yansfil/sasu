@@ -64,7 +64,9 @@ Usage:
   sasu implement artifact [--id <Vn>] [--ac <ACn>] --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
   sasu implement design   --id <D#> --accept "<why the comment is being left alone>" [--slug <topic> | --state <path>] [--json]
+  sasu implement design   --raise --issuer <observer|human> --area <area> --path <path> --text "<what looks wrong>" --suggestion "<what to do>" [--json]
   sasu implement risk     --accept --id <RF#> --evidence "<verbatim user approval>" [--slug <topic> | --state <path>] [--json]
+  sasu implement risk     --non-convergent --issuer human --id <RF#> --approval "<verbatim user approval>" --reason "<why no round can fix it>" [--json]
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
@@ -434,7 +436,14 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...implementResult }, null, 2)}\n`);
     } else {
       process.stdout.write(`[implement:${implementResult.action}] ${implementResult.ok ? "ok" : "FAIL"} - ${implementResult.message}\n`);
-      if (implementResult.detail !== undefined) process.stdout.write(`${JSON.stringify(implementResult.detail, null, 2)}\n`);
+      // A command that wrote a summary has already said what a person needs;
+      // appending the machine record on top is what buried it (AC47). The
+      // full record stays one `--json` away.
+      if (implementResult.summary !== undefined) {
+        process.stdout.write(`${implementResult.summary.join("\n")}\n`);
+      } else if (implementResult.detail !== undefined) {
+        process.stdout.write(`${JSON.stringify(implementResult.detail, null, 2)}\n`);
+      }
     }
     process.exit(implementResult.exitCode);
   }

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { COMMAND_AUTHORITY, VerbRejected, assertCommandAuthority, resolveIssuer } from "../../dist/implement/verbs.js";
+import fs from "node:fs";
+import path from "node:path";
+import { COMMAND_AUTHORITY, ISSUED_COMMANDS, UNGATED_COMMANDS, VerbRejected, assertCommandAuthority, isIssuedCommand, resolveIssuer } from "../../dist/implement/verbs.js";
 import { parkCriterion } from "../../dist/implement/checks.js";
 import { recordEvent, eventsSince } from "../../dist/implement/events.js";
 
@@ -31,11 +33,19 @@ test("AC19/AC45: the supervisor may not issue implementation commands", () => {
   }
 });
 
-test("AC12: amendment is human-only, refused for both agents", () => {
-  assert.doesNotThrow(() => assertCommandAuthority("amend", "human"));
-  for (const issuer of ["implementor", "observer"]) {
-    assert.throws(() => assertCommandAuthority("amend", issuer), /limited to human/);
+test("AC12/AC46: correcting the question and declaring it unanswerable are both human-only", () => {
+  for (const command of ["amend", "risk-non-convergent"]) {
+    assert.doesNotThrow(() => assertCommandAuthority(command, "human"));
+    for (const issuer of ["implementor", "observer"]) {
+      assert.throws(() => assertCommandAuthority(command, issuer), /limited to human/);
+    }
   }
+});
+
+test("AC45: the authority table and the recorded verb vocabulary are one list", () => {
+  assert.deepEqual([...ISSUED_COMMANDS].sort(), Object.keys(COMMAND_AUTHORITY).sort());
+  assert.ok(isIssuedCommand("design-raise"));
+  assert.equal(isIssuedCommand("intake"), false, "a read-only surface is not in the table and is not gated");
 });
 
 test("the implementor keeps every path it had, so the default changes nothing", () => {
@@ -45,7 +55,7 @@ test("the implementor keeps every path it had, so the default changes nothing", 
     // opposite ends of one debt (R10): the supervisor remarks, the implementor
     // answers. An implementor that could do both would clear its own guard.
     const isSupervisorOnly = ["resequence", "escalate", "design-raise"].includes(command);
-    const isHumanOnly = command === "amend";
+    const isHumanOnly = ["amend", "risk-non-convergent"].includes(command);
     assert.equal(allowed, !isSupervisorOnly && !isHumanOnly, `${command} authority for implementor`);
   }
 });
@@ -89,4 +99,22 @@ test("AC21: events carry the issuer label and a --since cursor never replays", (
   assert.deepEqual(eventsSince(state, null).map((entry) => entry.id), [1, 2]);
   assert.deepEqual(eventsSince(state, 1).map((entry) => entry.id), [2]);
   assert.deepEqual(eventsSince(state, 2), []);
+});
+
+// The gate is fail-open on an unknown command, so a command that reaches the
+// dispatcher without an authority row would open silently. Reading the
+// dispatcher itself is what makes that impossible to forget: adding a
+// subcommand and no authority row fails here, not in production.
+test("AC45: every dispatched subcommand is either gated or listed as deliberately ungated", () => {
+  const source = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "..", "src", "implement", "commands.ts"),
+    "utf8",
+  );
+  const dispatched = [...source.matchAll(/if \(subcommand === "([a-z-]+)"\)/g)].map((match) => match[1]);
+  assert.ok(dispatched.length > 10, "the dispatcher scrape found nothing - the pattern drifted");
+  const accounted = new Set([...ISSUED_COMMANDS, ...UNGATED_COMMANDS]);
+  const orphans = dispatched.filter((name) => !accounted.has(name));
+  assert.deepEqual(orphans, [], "a dispatched subcommand with no authority row would open to every issuer");
+  // ...and nothing is claimed to be ungated that the table also gates.
+  assert.deepEqual(UNGATED_COMMANDS.filter((name) => ISSUED_COMMANDS.includes(name)), []);
 });

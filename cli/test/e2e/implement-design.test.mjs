@@ -182,7 +182,7 @@ test("AC29: a supervisor raises a design comment, and it blocks finalize until a
   // Recorded as a verb AND as an event: the event is what wakes the
   // implementor's waiter, so a remark nobody is told about is not a remark.
   const verb = state(root).verbs.at(-1);
-  assert.equal(verb.verb, "comment");
+  assert.equal(verb.verb, "design-raise", "the recorded verb is the authority subject, one vocabulary");
   assert.equal(verb.issuer, "observer");
   assert.equal(verb.outcome, "accepted");
   const event = state(root).events.at(-1);

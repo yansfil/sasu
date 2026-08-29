@@ -274,6 +274,20 @@ export interface TrackedRiskFinding {
   status: "open" | "fixed" | "accepted";
   /** Judge delta proof for fixed, or verbatim user approval for accepted. */
   resolution?: { at: string; evidence: string };
+  /**
+   * Declared unfixable, so no further judge round can change it (R16 ③).
+   *
+   * The finding STAYS open - that is the point. It does not release
+   * `finalize --status complete`; it releases the honest `--status blocked`
+   * close without first burning rounds whose outcome is already known.
+   *
+   * The declaration is a human's, quoted verbatim, because whether a defect
+   * is structural is a judgment and the harness has no instrument for it
+   * (D-39). `roundsUnchanged` is the one structural fact the harness DOES
+   * own - how many judged attempts the finding survived - and it rides along
+   * as corroboration in the receipt, never as the gate.
+   */
+  nonConvergence?: { at: string; approval: string; reason: string; declaredBy: IssuerLabel; roundsUnchanged: number };
 }
 
 // The design lane is a reviewer, not a judge: it returns comments and no
@@ -488,7 +502,34 @@ export interface ImplementEvent {
   summary: string;
 }
 
-export type ObserverVerb = "park" | "resequence" | "escalate" | "resume" | "comment";
+/**
+ * Every command that passes the authority gate, which is the same set the
+ * verb history records.
+ *
+ * One vocabulary, not two. The verb list and the authority table used to be
+ * separate spellings of the same idea, and the gap between them is where a
+ * refused command went unrecorded: the gate knew it had refused an observer,
+ * and the run's history did not (R16 ②, AC45). `COMMAND_AUTHORITY` is typed
+ * against this union, so a new command cannot join one list and miss the
+ * other.
+ */
+export type IssuedCommand =
+  | "check"
+  | "task"
+  | "artifact"
+  | "verify"
+  | "finalize"
+  | "design"
+  | "design-raise"
+  | "risk"
+  | "park"
+  | "resume"
+  | "resequence"
+  | "qa-brief"
+  | "trail"
+  | "escalate"
+  | "risk-non-convergent"
+  | "amend";
 
 /** Which of the three CLI checks refused a verb (R7). */
 export type VerbRejectionCheck = "arguments" | "authority" | "transition";
@@ -496,7 +537,7 @@ export type VerbRejectionCheck = "arguments" | "authority" | "transition";
 export interface VerbRecord {
   id: number;
   at: string;
-  verb: ObserverVerb;
+  verb: IssuedCommand;
   issuer: IssuerLabel;
   /** Task or criterion the verb was aimed at; null for run-wide verbs. */
   target: string | null;
@@ -773,6 +814,15 @@ export interface ImplementCommandResult {
   exitCode: number;
   message: string;
   detail?: Record<string, unknown>;
+  /**
+   * The human-readable answer, one line per fact, printed INSTEAD of the
+   * detail dump when the caller did not ask for `--json` (R16 ③, AC47).
+   *
+   * 2026-08-29, interview-anchor: `status` answered "which criterion is
+   * parked and why" with 491 lines of JSON, so the reason was present and
+   * unreadable. A record that has the answer and buries it has not answered.
+   */
+  summary?: string[];
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { ImplementState, IssuerLabel, ObserverVerb, VerbRecord, VerbRejectionCheck } from "./types";
+import type { ImplementState, IssuedCommand, IssuerLabel, VerbRecord, VerbRejectionCheck } from "./types";
 
 /**
  * Append one verb to the run's history.
@@ -8,16 +8,6 @@ import type { ImplementState, IssuerLabel, ObserverVerb, VerbRecord, VerbRejecti
  * succeeded cannot answer "why did nothing happen when I asked?", which is
  * the question a supervisor actually has.
  */
-/**
- * The verb vocabulary, at runtime.
- *
- * The store validates against this same constant rather than its own copy of
- * the list. The copy is how `comment` first got written and then refused on
- * the next read: a second spelling of one vocabulary is a drift the type
- * checker cannot see (AGENTS.md Review Guide 3).
- */
-export const OBSERVER_VERBS: ObserverVerb[] = ["park", "resequence", "escalate", "resume", "comment"];
-
 export function recordVerb(
   state: ImplementState,
   entry: Omit<VerbRecord, "id" | "rejection"> & { rejection?: { check: VerbRejectionCheck; message: string } },
@@ -66,7 +56,7 @@ export class VerbRejected extends Error {
  * stopped it from closing a task or registering an artifact. Now the code
  * says so.
  */
-export const COMMAND_AUTHORITY: Record<string, IssuerLabel[]> = {
+export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
   // Implementation work. The supervisor plans and judges; it does not build,
   // and it does not get to say the building is done.
   check: ["implementor", "human"],
@@ -94,13 +84,43 @@ export const COMMAND_AUTHORITY: Record<string, IssuerLabel[]> = {
   // implementor answers it. Letting one actor do both would make the finalize
   // guard self-clearing.
   "design-raise": ["observer", "human"],
+  // Human-only, for the same reason as `amend`: declaring a finding
+  // structurally unfixable is a judgment about the question, and the run it
+  // closes is the one making the claim (R16 ③).
+  "risk-non-convergent": ["human"],
   // Human-only. Correcting the question paper is not an agent's call (R5).
   amend: ["human"],
 };
 
+/**
+ * The runtime spelling of the vocabulary, derived from the authority table
+ * rather than typed out beside it. The store validates against this, so a
+ * command the gate accepts can never be a verb the next read refuses - which
+ * is exactly what happened when the two lists were written separately.
+ */
+export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[];
+
+/**
+ * Subcommands that are deliberately ungated, and why.
+ *
+ * The gate is fail-open on a command it does not know, which is right for
+ * these - anyone may look at a run, and `start`/`retire`/`await` are not
+ * state changes an issuer label means anything about. It is wrong for a
+ * command someone forgets to add to the table, so the two lists are compared
+ * against the dispatcher by test (implement-authority) rather than trusted to
+ * stay in step. Fail-closed instead would mean listing every read-only
+ * surface in an authority table, which is the same list one indirection away.
+ */
+export const UNGATED_COMMANDS = ["intake", "start", "status", "retire", "await"] as const;
+
+export function isIssuedCommand(value: string): value is IssuedCommand {
+  return (ISSUED_COMMANDS as string[]).includes(value);
+}
+
 export function assertCommandAuthority(command: string, issuer: IssuerLabel): void {
+  if (!isIssuedCommand(command)) return;
   const allowed = COMMAND_AUTHORITY[command];
-  if (allowed === undefined || allowed.includes(issuer)) return;
+  if (allowed.includes(issuer)) return;
   throw new VerbRejected(
     "authority",
     `${issuer} may not issue \`sasu implement ${command}\`; this command is limited to ${allowed.join(", ")}. Issuer labels are self-declared and recorded for audit, not authenticated.`,
@@ -127,7 +147,7 @@ export function resolveIssuer(declared: string | undefined): IssuerLabel {
 
 export function rejectVerb(
   state: ImplementState,
-  entry: { verb: ObserverVerb; issuer: IssuerLabel; target: string | null; reason: string; at: string },
+  entry: { verb: IssuedCommand; issuer: IssuerLabel; target: string | null; reason: string; at: string },
   check: VerbRejectionCheck,
   message: string,
   persist: () => void,

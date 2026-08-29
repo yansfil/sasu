@@ -10,9 +10,9 @@ import {
   type DirtyAttribution,
   type SourceEntry,
   type SourceSnapshot,
-  type ObserverVerb,
+  type IssuedCommand,
 } from "./types";
-import { OBSERVER_VERBS } from "./verbs";
+import { ISSUED_COMMANDS } from "./verbs";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 
@@ -310,7 +310,16 @@ function assertAcceptanceCriteria(value: unknown, label: string): void {
       assertRecord(park, parkLabel);
       assertIsoTimestamp(park["parkedAt"], `${parkLabel}.parkedAt`);
       if (park["parkedBy"] !== "human" && park["parkedBy"] !== "observer") throw new Error(`malformed implement state: ${parkLabel}.parkedBy must be human or observer`);
-      assertString(park["approval"], `${parkLabel}.approval`);
+      // A human park quotes the approval that authorised it; an observer park
+      // has no quote to give and stands on the harness's own open decision
+      // point instead (AC20). Demanding a non-empty string from both wrote a
+      // state the next read refused - the write path and the read path
+      // disagreeing about one field, the same species as the verb vocabulary.
+      if (park["parkedBy"] === "human") {
+        assertString(park["approval"], `${parkLabel}.approval`);
+      } else if (typeof park["approval"] !== "string" || park["approval"] !== "") {
+        throw new Error(`malformed implement state: ${parkLabel}.approval must be empty for an observer park`);
+      }
       assertString(park["reason"], `${parkLabel}.reason`);
       assertNullableString(park["evidence"], `${parkLabel}.evidence`);
       if (park["resumedAt"] === null) {
@@ -404,8 +413,8 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
   if (!Array.isArray(candidate.verbs)) throw new Error("malformed implement state: verbs must be an array");
   for (const [index, entry] of candidate.verbs.entries()) {
     assertRecord(entry, `verbs[${index}]`);
-    if (!OBSERVER_VERBS.includes(String(entry["verb"]) as ObserverVerb)) {
-      throw new Error(`malformed implement state: verbs[${index}].verb must be one of ${OBSERVER_VERBS.join(", ")}`);
+    if (!ISSUED_COMMANDS.includes(String(entry["verb"]) as IssuedCommand)) {
+      throw new Error(`malformed implement state: verbs[${index}].verb must be one of ${ISSUED_COMMANDS.join(", ")}`);
     }
     if (!ISSUER_LABELS.has(String(entry["issuer"]))) {
       throw new Error(`malformed implement state: verbs[${index}].issuer must be implementor, observer, or human`);
@@ -653,6 +662,21 @@ export function parseImplementState(text: string): ImplementState {
       assertRecord(entry["resolution"], `riskFindings[${index}].resolution`);
       assertString(entry["resolution"]["at"], `riskFindings[${index}].resolution.at`);
       assertString(entry["resolution"]["evidence"], `riskFindings[${index}].resolution.evidence`);
+    }
+    if (entry["nonConvergence"] !== undefined) {
+      const label = `riskFindings[${index}].nonConvergence`;
+      assertRecord(entry["nonConvergence"], label);
+      for (const field of ["at", "approval", "reason"] as const) {
+        assertString(entry["nonConvergence"][field], `${label}.${field}`);
+      }
+      // The declaration is human-only by authority; a state claiming any
+      // other declarer is a record the gate could not have produced.
+      if (entry["nonConvergence"]["declaredBy"] !== "human") {
+        throw new Error(`malformed implement state: ${label}.declaredBy must be human`);
+      }
+      if (typeof entry["nonConvergence"]["roundsUnchanged"] !== "number") {
+        throw new Error(`malformed implement state: ${label}.roundsUnchanged must be a number`);
+      }
     }
   }
   for (const [index, attempt] of candidate.verificationAttempts.entries()) {
