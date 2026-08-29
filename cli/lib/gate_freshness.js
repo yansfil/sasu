@@ -18,26 +18,46 @@ function sha256Of(content) {
  * legitimately AFTER a gate passes; hashing them would make every PASS
  * self-staling. Everything else in the body pins the PASS.
  *
- * `- decision_ids: ...` lines (PRD interview-anchor R4, D-06) are excluded
- * too: `sasu interview decision` now anchors consent onto a Raw Q&A turn at
- * write time, and a PASS sealed before that anchor was backfilled must stay
- * PASS so a qa-log under agents/interview/ can still be backfilled after the
- * fact. The tradeoff, accepted by the user over the agent's recommendation: an
- * anchor added after sealing is no longer provable against the sealed tree,
- * so a forged post-hoc anchor cannot be told apart from a real one by this
- * hash alone (audit falls back to the session transcript). No other line is
- * excluded - only this one field, and only for this one reason.
+ * `- decision_ids: ...` lines WITHIN THE `## Raw Q&A` SECTION (PRD
+ * interview-anchor R4, D-06) are excluded too: `sasu interview decision` now
+ * anchors consent onto a Raw Q&A turn at write time, and a PASS sealed before
+ * that anchor was backfilled must stay PASS so a qa-log under
+ * agents/interview/ can still be backfilled after the fact. The tradeoff,
+ * accepted by the user over the agent's recommendation: an anchor added after
+ * sealing is no longer provable against the sealed tree, so a forged post-hoc
+ * anchor cannot be told apart from a real one by this hash alone (audit falls
+ * back to the session transcript).
+ *
+ * The exclusion is scoped to the Raw Q&A section, not applied to the whole
+ * document: only a qa-log has that section, so a PRD or contract file that
+ * happens to contain an unrelated `- decision_ids:`-shaped line keeps hashing
+ * it (2026-08-29 fidelity review RF1/D1 - a document-wide regex would let a
+ * decision_ids mutation anywhere evade staleness, which is a materially wider
+ * exception than the one the user approved). No other line and no other
+ * section is excluded.
  *
  * Single source consumed by the TypeScript gate store (cli/src/gates/store.ts):
  * every reader of a pin must agree on the hash or a live PASS would read as
  * STALE.
  */
+function stripSection(body, heading) {
+  const start = body.match(new RegExp(`^${heading}\\s*$`, "m"));
+  if (!start) return body;
+  const from = start.index;
+  const rest = body.slice(from + start[0].length);
+  const next = rest.match(/^## /m);
+  const sectionEnd = next ? from + start[0].length + next.index : body.length;
+  const section = body.slice(from, sectionEnd);
+  const strippedSection = section.replace(/^-\s*decision_ids:.*$\n?/gm, "");
+  return body.slice(0, from) + strippedSection + body.slice(sectionEnd);
+}
+
 function freshnessHash(content) {
   let body = content;
   const frontmatter = body.match(/^---\n[\s\S]*?\n---\n/);
   if (frontmatter) body = body.slice(frontmatter[0].length);
   body = body.replace(/^## Audit History\s*$[\s\S]*?(?=^## |(?![\s\S]))/m, "");
-  body = body.replace(/^-\s*decision_ids:.*$\n?/gm, "");
+  body = stripSection(body, "## Raw Q&A");
   return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}\n${body.trim()}`);
 }
 
