@@ -378,6 +378,88 @@ test("judged-only close succeeds, missing evidence fails without a judge, and AC
   assert.equal(run(root, ["implement", "finalize"]).status, 0);
 });
 
+// AC40's other half. The test above proves the recovery from a PRE-judge
+// failure: evidence was missing, so the lane failed without ever calling a
+// judge (`judge: null`, no captured prompt). The rejection a person actually
+// meets is the opposite one - the judge ran, read the evidence, and said no.
+// Nothing pinned what the record does then, which is the case AC40 names
+// first: replace the evidence of a JUDGE-REJECTED judged AC and the criterion
+// returns to verification with the rejected evidence still on the record.
+test("AC40: a judge-rejected judged AC returns to verification when its evidence is replaced", () => {
+  const criteria = [{ id: "AC1", text: "status transcript is convincing", judgment: "judged", evidence: "scripted status transcript" }];
+  const root = makeProject(criteria);
+  start(root);
+  assert.equal(run(root, ["implement", "task", "--id", "T1"]).status, 0);
+
+  fs.writeFileSync(path.join(root, "status.log"), "a transcript that does not show the transition\n");
+  const registered = run(root, [
+    "implement", "artifact", "--ac", "AC1", "--kind", "log", "--path", "status.log", "--description", "status transcript",
+  ]);
+  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+  const rejectedSha = state(root).artifacts.find((entry) => entry.path === "status.log").sha256;
+
+  const judge = stub(root, criteria, {
+    "implement:acceptance:AC1": {
+      verdict: "FAIL",
+      criteria: [{
+        id: "AC1",
+        verdict: "FAIL",
+        reason: "the transcript stops before the transition the criterion is about",
+        evidence: "status.log",
+      }],
+    },
+  });
+  const rejected = run(root, ["implement", "verify"], { env: judge.env });
+  assert.equal(rejected.status, 1, rejected.stdout);
+  assert.equal(rejected.json.detail.attempt.lanes.acceptance.verdict, "FAIL");
+
+  // This is what separates this case from the missing-evidence one: a judge
+  // was actually called on the registered evidence and returned the verdict.
+  const invocation = state(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations[0];
+  assert.equal(invocation.verdict, "FAIL");
+  assert.notEqual(invocation.judge, null, "the judge ran; this is a rejection, not a pre-judge failure");
+  assert.equal(fs.existsSync(path.join(judge.capture, "implement_acceptance_AC1.prompt.txt")), true);
+  const sealed = state(root).verificationAttempts.at(-1).inputFingerprint;
+
+  // Replace the rejected evidence. The record must keep what became of it -
+  // otherwise a run could quietly swap the bytes a judge ruled on.
+  fs.writeFileSync(path.join(root, "status.log"), "a transcript that shows the transition\n");
+  const replaced = run(root, [
+    "implement", "artifact", "--ac", "AC1", "--kind", "log", "--path", "status.log", "--description", "corrected status transcript",
+  ]);
+  assert.equal(replaced.status, 0, replaced.stderr + replaced.stdout);
+  const history = state(root).evidenceReplacements;
+  assert.equal(history.length, 1);
+  assert.equal(history[0].criterionId, "AC1");
+  assert.equal(history[0].kind, "artifact");
+  assert.equal(history[0].priorDisposition, "invalidated");
+  assert.match(history[0].previous, new RegExp(`status\\.log @ ${rejectedSha}`), "the rejected evidence is named in the record");
+  assert.equal(state(root).artifacts.filter((entry) => entry.path === "status.log").length, 1, "one current vouch, not two");
+
+  // The rejected verdict cannot be carried forward: the criterion is back in
+  // front of verification, and finalize refuses until it is re-judged.
+  const refused = run(root, ["implement", "finalize"]);
+  assert.equal(refused.status, 2, refused.stdout);
+
+  const configured = JSON.parse(fs.readFileSync(judge.file, "utf8"));
+  configured.byPurpose["implement:acceptance:AC1"] = {
+    verdict: "PASS",
+    criteria: [{
+      id: "AC1",
+      verdict: "PASS",
+      reason: "the replaced transcript shows the transition",
+      evidence: "status.log",
+      priorDisposition: { status: "resolved", reason: "the rejected transcript was replaced" },
+    }],
+  };
+  fs.writeFileSync(judge.file, JSON.stringify(configured));
+  const reverified = run(root, ["implement", "verify"], { env: judge.env });
+  assert.equal(reverified.status, 0, reverified.stdout);
+  assert.notEqual(state(root).verificationAttempts.at(-1).inputFingerprint, sealed,
+    "a fresh attempt on the replaced evidence, not the rejected verdict reused");
+  assert.equal(run(root, ["implement", "finalize"]).status, 0);
+});
+
 test("v5 state refuses check, park, and resume with new-run guidance", () => {
   const root = makeProject([{ id: "AC1", text: "legacy state", judgment: "machine" }]);
   const legacy = path.join(root, "agents", "runs", "legacy", "state.json");
