@@ -100,10 +100,28 @@ test("without an override the profile budget is still used", { skip: !built && "
   });
 });
 
-test("judge.laneEffort defaults to null so an unconfigured project keeps the profile budget", { skip: !built && "cli/dist not built" }, () => {
-  const { loadConfig } = require(configPath);
+test("an unconfigured project gets each gate's own measured budget, not one shared number", { skip: !built && "cli/dist not built" }, () => {
+  const { loadConfig, laneEffortFor, LANE_EFFORT } = require(configPath);
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-effort-proj-"));
-  assert.equal(loadConfig(project).judge.laneEffort, null);
+  const config = loadConfig(project);
+  assert.equal(config.judge.laneEffort, null, "no override by default");
+  // The three gates ask different questions and were measured separately;
+  // collapsing them to one value is the assumption this test exists to stop.
+  assert.equal(laneEffortFor(config, "gap-audit"), "high");
+  assert.equal(laneEffortFor(config, "spec"), "high");
+  assert.equal(laneEffortFor(config, "verify"), "medium");
+  assert.notEqual(LANE_EFFORT["verify"], LANE_EFFORT["gap-audit"], "verify's budget is measured, not inherited");
+});
+
+test("judge.laneEffort pins every gate to one budget when a project sets it", { skip: !built && "cli/dist not built" }, () => {
+  const { loadConfig, laneEffortFor } = require(configPath);
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-effort-proj-"));
+  fs.mkdirSync(path.join(project, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(project, "agents", "config.json"), JSON.stringify({ judge: { laneEffort: "xhigh" } }));
+  const config = loadConfig(project);
+  for (const gate of ["gap-audit", "spec", "verify"]) {
+    assert.equal(laneEffortFor(config, gate), "xhigh", `${gate} must honour the pin`);
+  }
 });
 
 test("judge.laneEffort accepts a valid budget and rejects anything else", { skip: !built && "cli/dist not built" }, () => {

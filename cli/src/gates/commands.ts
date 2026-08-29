@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { SasuConfig } from "../config";
+import { laneEffortFor, type SasuConfig } from "../config";
 import { resolveBackend } from "../judge/backends";
 import { effectiveJudgeProfile, runJudge, judgeCallRecordFrom } from "../judge/runner";
 import {
@@ -455,8 +455,13 @@ async function runGapListGate(
 
       if (!config.judge.fanout) {
         // Single-judge path, unchanged (judge.fanout: false escape hatch, R5).
-        const outcome = await runJudge(config, purpose, "routine", buildPrompt(priorFindings, { rerun: isRerun, delegationEvidence }), (value) =>
-          validateGapVerdict(value, { requireOrigin: isRerun }),
+        const outcome = await runJudge(
+          config,
+          purpose,
+          "routine",
+          buildPrompt(priorFindings, { rerun: isRerun, delegationEvidence }),
+          (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
+          { effort: laneEffortFor(config, gate) },
         );
         records.push(outcome.record);
         const humanSafe = enforceHumanBlocking(outcome.value);
@@ -519,7 +524,7 @@ async function runGapListGate(
               "routine",
               buildPrompt(routedPrior.get(lane.id) ?? [], { lane, laneCount: lanes.length, rerun: isRerun, delegationEvidence }),
               (value) => validateGapVerdict(value, { requireOrigin: isRerun }),
-              config.judge.laneEffort !== null ? { effort: config.judge.laneEffort } : {},
+              { effort: laneEffortFor(config, gate) },
             );
             return { laneId: lane.id, outcome, error: null };
           } catch (error) {
@@ -1032,6 +1037,7 @@ async function settleVerifyLanes(
             // Anchor evidence resolution to the project root. Agentic
             // backends copy exact evidencePaths into isolation.
             cwd: projectRoot,
+            effort: laneEffortFor(config, "verify"),
           },
         );
         return { lane: vl, outcome, error: null as unknown };

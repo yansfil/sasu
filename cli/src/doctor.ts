@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, type JudgeTarget, type SasuConfig } from "./config";
+import { laneEffortFor, loadConfig, type JudgeTarget, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
@@ -172,9 +172,12 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
         `${name}: primary=${target(profile.primary)} fallback=${profile.fallback === null ? "none" : target(profile.fallback)}`,
       );
     }
-    judgeLines.push(
-      `document-gate lane effort: ${config.judge.laneEffort ?? "profile default"}`,
-    );
+    // Per-gate, because they are per-gate: a single line saying "high" would
+    // hide that verify runs at a different measured budget.
+    const efforts = (["gap-audit", "spec", "verify"] as const)
+      .map((gate) => `${gate}=${laneEffortFor(config, gate)}`)
+      .join(" ");
+    judgeLines.push(`lane effort: ${efforts}${config.judge.laneEffort === null ? "" : " (all pinned by judge.laneEffort)"}`);
     judgeLines.push(`retry budget: ${config.judge.retryBudget}`);
   }
   sections.push({
