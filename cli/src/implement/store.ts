@@ -10,7 +10,9 @@ import {
   type DirtyAttribution,
   type SourceEntry,
   type SourceSnapshot,
+  type ObserverVerb,
 } from "./types";
+import { OBSERVER_VERBS } from "./verbs";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 
@@ -402,8 +404,8 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
   if (!Array.isArray(candidate.verbs)) throw new Error("malformed implement state: verbs must be an array");
   for (const [index, entry] of candidate.verbs.entries()) {
     assertRecord(entry, `verbs[${index}]`);
-    if (!["park", "resequence", "escalate", "resume"].includes(String(entry["verb"]))) {
-      throw new Error(`malformed implement state: verbs[${index}].verb must be park, resequence, escalate, or resume`);
+    if (!OBSERVER_VERBS.includes(String(entry["verb"]) as ObserverVerb)) {
+      throw new Error(`malformed implement state: verbs[${index}].verb must be one of ${OBSERVER_VERBS.join(", ")}`);
     }
     if (!ISSUER_LABELS.has(String(entry["issuer"]))) {
       throw new Error(`malformed implement state: verbs[${index}].issuer must be implementor, observer, or human`);

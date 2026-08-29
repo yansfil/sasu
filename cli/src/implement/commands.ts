@@ -1457,6 +1457,69 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 }
 
 /**
+ * Routes a supervisor's remark into the design lane's ledger (R10).
+ *
+ * No new lane, no new blocker, no second review surface: the remark becomes a
+ * `TrackedDesignComment` like any other, so it inherits the disposition
+ * command and the `finalize --status complete` refusal that already exist
+ * (D-25, AGENTS.md Review Guide 4 - this adds a verb and deletes the case for
+ * a supervisor-remark lane).
+ *
+ * The key is minted from the comment id rather than from `area::path`, which
+ * is the lane's identity rule. That rule exists so a re-worded lane comment
+ * matches its previous self across attempts; a raised comment is never
+ * re-derived, and reusing the lane key would collide a supervisor's second
+ * remark on one file with the first, and with any lane comment on it.
+ */
+function raiseDesignComment(
+  statePath: string,
+  state: ImplementState,
+  args: ImplementArgs,
+): ImplementCommandResult {
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  const at = nowIso();
+  const area = requiredFlag(args, "area").trim();
+  const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
+  const text = requiredFlag(args, "text").trim();
+  const suggestion = requiredFlag(args, "suggestion").trim();
+  // No emptiness check here: `requiredFlag` already refuses a blank value, and
+  // a second one would be an unreachable branch pretending to be a guard.
+  const entry = { verb: "comment" as const, issuer, target: target.relative, reason: text, at };
+  const tracked = state.designComments ?? [];
+  const id = `D${tracked.reduce((high, existing) => Math.max(high, Number(existing.id.slice(1)) || 0), 0) + 1}`;
+  const comment: TrackedDesignComment = {
+    area,
+    path: target.relative,
+    text,
+    suggestion,
+    id,
+    key: `raised::${id}`,
+    status: "open",
+    raisedBy: issuer,
+    accepted: null,
+    firstSeenAt: at,
+    lastSeenAt: at,
+    lastSeenAttemptId: "",
+  };
+  tracked.push(comment);
+  state.designComments = tracked;
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, {
+    kind: "comment",
+    actor: issuer,
+    subject: id,
+    summary: `${id} raised by ${issuer} on ${target.relative}`,
+    at,
+  });
+  persistState(statePath, state);
+  const open = openDesignComments(state);
+  return result("design", true, `${id} raised by ${issuer} on ${target.relative}; ${open.length} design comment(s) await a disposition`, {
+    comment,
+    open,
+  });
+}
+
+/**
  * Records the one disposition a human or agent writes by hand: why a design
  * comment is being left alone. There is deliberately no `--fixed`: a claimed
  * fix is an assertion, while a comment the lane stops reporting is a
@@ -1466,6 +1529,7 @@ function design(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  if (args.flags.get("raise") === true) return raiseDesignComment(statePath, state, args);
   const id = requiredFlag(args, "id").toUpperCase();
   const note = requiredFlag(args, "accept").trim();
   if (note === "") throw new Error("--accept requires the reason the comment is being left alone");
@@ -2102,6 +2166,7 @@ export function reconcileDesignComments(
         id: `D${next.reduce((high, entry) => Math.max(high, Number(entry.id.slice(1)) || 0), 0) + 1}`,
         key,
         status: "open",
+        raisedBy: null,
         accepted: null,
         firstSeenAt: at,
         lastSeenAt: at,
@@ -2117,7 +2182,11 @@ export function reconcileDesignComments(
     existing.lastSeenAt = at;
     existing.lastSeenAttemptId = attemptId;
   }
-  for (const entry of next) if (!seen.has(entry.key)) entry.status = "resolved";
+  // Only a lane comment resolves by absence. A supervisor-raised comment has
+  // no lane reporting it, so "the lane stopped saying it" is not evidence of
+  // anything about it; auto-resolving it here would have quietly deleted the
+  // remark on the next verify (R10: it must be answered, not outlived).
+  for (const entry of next) if (entry.raisedBy === null && !seen.has(entry.key)) entry.status = "resolved";
   return next;
 }
 
@@ -3190,7 +3259,15 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     // be remembered at each new command; one gate is a rule the code keeps
     // (AGENTS.md Review Guide 7). Read-only surfaces - intake, status - are
     // absent from the table on purpose: anyone may look.
-    if (subcommand !== undefined) assertCommandAuthority(subcommand, resolveIssuer(flag(args, "issuer")));
+    // `design --raise` and `design --accept` are opposite ends of one comment
+    // with opposite authorities (R10), so the subject the gate asks about is
+    // the operation, not the subcommand word. Resolving that here keeps the
+    // single gate; asserting it inside `design` instead would have put the
+    // rule back in the place the gate exists to empty.
+    if (subcommand !== undefined) {
+      const subject = subcommand === "design" && args.flags.get("raise") === true ? "design-raise" : subcommand;
+      assertCommandAuthority(subject, resolveIssuer(flag(args, "issuer")));
+    }
     if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);
     if (subcommand === "check") return check(projectRoot, args);

@@ -8,6 +8,16 @@ import type { ImplementState, IssuerLabel, ObserverVerb, VerbRecord, VerbRejecti
  * succeeded cannot answer "why did nothing happen when I asked?", which is
  * the question a supervisor actually has.
  */
+/**
+ * The verb vocabulary, at runtime.
+ *
+ * The store validates against this same constant rather than its own copy of
+ * the list. The copy is how `comment` first got written and then refused on
+ * the next read: a second spelling of one vocabulary is a drift the type
+ * checker cannot see (AGENTS.md Review Guide 3).
+ */
+export const OBSERVER_VERBS: ObserverVerb[] = ["park", "resequence", "escalate", "resume", "comment"];
+
 export function recordVerb(
   state: ImplementState,
   entry: Omit<VerbRecord, "id" | "rejection"> & { rejection?: { check: VerbRejectionCheck; message: string } },
@@ -78,6 +88,12 @@ export const COMMAND_AUTHORITY: Record<string, IssuerLabel[]> = {
   "qa-brief": ["implementor", "observer", "human"],
   trail: ["implementor", "observer", "human"],
   escalate: ["observer", "human"],
+  // Raising a design comment is the supervisor's remark channel (R10). It is
+  // separate from `design` above because raising and answering are opposite
+  // ends of the same comment: the supervisor says what looks wrong, the
+  // implementor answers it. Letting one actor do both would make the finalize
+  // guard self-clearing.
+  "design-raise": ["observer", "human"],
   // Human-only. Correcting the question paper is not an agent's call (R5).
   amend: ["human"],
 };

@@ -316,6 +316,17 @@ export interface TrackedDesignComment extends DesignComment {
   key: string;
   /** "open" while the lane still reports it; "resolved" once it stops. */
   status: "open" | "resolved";
+  /**
+   * `null` for a comment the design lane produced; the issuer label for one a
+   * supervisor raised by hand (R10).
+   *
+   * It decides who may retire the comment. A lane comment resolves by
+   * measurement - the lane stops reporting it. A raised comment has no lane
+   * behind it, so nothing ever stops reporting it, and auto-resolving it on
+   * the next attempt would erase the remark instead of answering it. A raised
+   * comment therefore leaves only through a recorded disposition.
+   */
+  raisedBy: IssuerLabel | null;
   /** Non-null once someone answered "not fixing, because ..."; carried across attempts. */
   accepted: { at: string; note: string } | null;
   firstSeenAt: string;
@@ -477,7 +488,7 @@ export interface ImplementEvent {
   summary: string;
 }
 
-export type ObserverVerb = "park" | "resequence" | "escalate" | "resume";
+export type ObserverVerb = "park" | "resequence" | "escalate" | "resume" | "comment";
 
 /** Which of the three CLI checks refused a verb (R7). */
 export type VerbRejectionCheck = "arguments" | "authority" | "transition";

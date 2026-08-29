@@ -26,7 +26,7 @@ test("AC19/AC45: the supervisor may not issue implementation commands", () => {
     assert.equal(error.check, "authority");
     assert.match(error.message, /not authenticated/, "the refusal must not imply this is a security boundary");
   }
-  for (const command of ["park", "resume", "resequence", "escalate"]) {
+  for (const command of ["park", "resume", "resequence", "escalate", "design-raise"]) {
     assert.doesNotThrow(() => assertCommandAuthority(command, "observer"), `${command} is the supervisor's own channel`);
   }
 });
@@ -41,7 +41,10 @@ test("AC12: amendment is human-only, refused for both agents", () => {
 test("the implementor keeps every path it had, so the default changes nothing", () => {
   for (const command of Object.keys(COMMAND_AUTHORITY)) {
     const allowed = COMMAND_AUTHORITY[command].includes("implementor");
-    const isSupervisorOnly = ["resequence", "escalate"].includes(command);
+    // design-raise joins this list because raising and answering a comment are
+    // opposite ends of one debt (R10): the supervisor remarks, the implementor
+    // answers. An implementor that could do both would clear its own guard.
+    const isSupervisorOnly = ["resequence", "escalate", "design-raise"].includes(command);
     const isHumanOnly = command === "amend";
     assert.equal(allowed, !isSupervisorOnly && !isHumanOnly, `${command} authority for implementor`);
   }
