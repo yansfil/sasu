@@ -438,6 +438,9 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     assertString(entry["reason"], `amendments[${index}].reason`);
     assertString(entry["prdSha256"], `amendments[${index}].prdSha256`);
     assertString(entry["snapshotPath"], `amendments[${index}].snapshotPath`);
+    // The archive path is what makes "this amendment replaced that text"
+    // checkable rather than asserted; a record without it cannot be audited.
+    assertString(entry["previousSnapshotPath"], `amendments[${index}].previousSnapshotPath`);
     for (const field of ["invalidatedCriteria", "addedCriteria", "unparkedCriteria"]) {
       if (!Array.isArray(entry[field])) {
         throw new Error(`malformed implement state: amendments[${index}].${field} must be an array`);

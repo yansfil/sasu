@@ -32,6 +32,7 @@ import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runn
 import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
 import { assertCommandAuthority, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
+import { AmendmentRejected, applyAmendment } from "./amend";
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities } from "./herdr";
 import {
@@ -1028,6 +1029,62 @@ function resequence(projectRoot: string, args: ImplementArgs): ImplementCommandR
       dependsOn: entry.dependsOn,
     })),
     verb: state.verbs.at(-1),
+  });
+}
+
+/**
+ * Correct the question paper (R5).
+ *
+ * `amend` is the ONLY sanctioned way past the PRD drift guard. Everywhere
+ * else a source PRD that no longer matches its pinned snapshot is a hard
+ * error, because a question paper that changes under a run makes every green
+ * on it unreadable. Amendment does not weaken that rule; it re-seals, and
+ * pays for the change by taking back exactly the greens whose rows moved.
+ *
+ * Human-only issuance is enforced by COMMAND_AUTHORITY at dispatch, before
+ * this function runs. That is a declaration and not an authentication
+ * (D-39); what it buys is that the ledger records the authority the change
+ * was accepted under, and that an `--issuer observer` amendment is refused
+ * with a reason instead of quietly succeeding.
+ */
+function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const source = normalizeProjectPath(projectRoot, state.prdPath);
+  if (!fs.existsSync(source.absolute) || !fs.statSync(source.absolute).isFile()) {
+    throw new Error(`amended PRD not found at ${state.prdPath}; edit the source PRD first, then amend`);
+  }
+  const text = fs.readFileSync(source.absolute, "utf8");
+  if (sha256(text) === state.prd.sha256) {
+    throw new AmendmentRejected("arguments", `${state.prdPath} is byte-identical to the pinned snapshot; there is nothing to amend. Edit the PRD first.`);
+  }
+  const at = nowIso();
+  const outcome = applyAmendment(projectRoot, state, {
+    approval: flag(args, "approval")?.trim() ?? "",
+    reason: flag(args, "reason")?.trim() ?? "",
+    text,
+  }, at);
+  const { record, plan } = outcome;
+  const summary = [
+    `${plan.invalidatedCriteria.length} invalidated`,
+    `${plan.addedCriteria.length} added`,
+    `${plan.unchangedCriteria.length} untouched`,
+  ].join(", ");
+  recordEvent(state, {
+    kind: "amendment",
+    actor: "human",
+    subject: null,
+    summary: `amendment ${record.id}: ${summary}`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("amend", true, `amendment ${record.id} sealed; acceptance criteria ${summary}. Previous snapshot archived at ${record.previousSnapshotPath}`, {
+    amendment: record,
+    invalidatedCriteria: plan.invalidatedCriteria,
+    addedCriteria: plan.addedCriteria,
+    unparkedCriteria: plan.unparkedCriteria,
+    unchangedCriteria: plan.unchangedCriteria,
   });
 }
 
@@ -2756,6 +2813,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "park") return park(projectRoot, args);
     if (subcommand === "resume") return resume(projectRoot, args);
     if (subcommand === "resequence") return resequence(projectRoot, args);
+    if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
@@ -2765,7 +2823,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, await, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, amend, await, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
@@ -2773,6 +2831,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
       exitCode: error instanceof SyntaxError || error instanceof VerifyInvariantError ? 1 : 2,
       message: error instanceof Error ? error.message : String(error),
       ...(error instanceof VerbRejected ? { detail: { rejectedCheck: error.check } } : {}),
+      ...(error instanceof AmendmentRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
       ...(error instanceof VerifyInvariantError ? { detail: { reason: error.reason } } : {}),
     };

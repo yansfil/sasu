@@ -50,6 +50,8 @@ Usage:
   sasu implement park     --ac <ACn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
   sasu implement resume   --ac <ACn> [--json]
   sasu implement resequence --order "<Tn,Tm,...>" [--reason "<why>"] [--json]
+  sasu implement amend    --issuer human --approval "<verbatim human approval>" --reason "<why>" [--json]
+    (edit the source PRD first; amend re-seals it. Human-only: the supervisor may not correct the question paper.)
   sasu implement await    [--since <event-id>] [--pid <implementor-pid>] [--json]
     (state-changing implement commands accept --issuer <implementor|observer|human>, default implementor.
      The label is self-declared and recorded for audit; the CLI does not authenticate it.)

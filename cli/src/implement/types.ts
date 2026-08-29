@@ -78,7 +78,9 @@ export interface CheckDecisionPoint {
   attemptId: string;
   message: string;
   resolvedAt: string | null;
-  resolution: "green" | "parked" | "rebound" | null;
+  // "amended" closes a decision point the amendment made moot: the criterion
+  // it was posted against is no longer the same question (R5).
+  resolution: "green" | "parked" | "rebound" | "amended" | null;
 }
 
 export interface CheckParkRecord {
