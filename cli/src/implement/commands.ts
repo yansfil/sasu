@@ -1838,6 +1838,27 @@ function statusSummary(state: ImplementState, herdr: { available: boolean; holes
     lines.push("", `open tasks (${openTasks.length}): ${openTasks.map((entry) => `${entry.id} (${entry.status})`).join(", ")}`);
   }
 
+  // AC38 ②: what the supervisor may do about all of the above, right now.
+  // Derived from state rather than listed as prose, so it cannot describe a
+  // verb the gate would refuse. What it deliberately does not carry is the
+  // recommended move - that is the supervisor's judgment, not the harness's.
+  const offers: string[] = [];
+  const parkable = state.acceptanceCriteria
+    .filter((entry) => entry.check.status !== "parked" && entry.check.decisionPoints.some((point) => point.resolvedAt === null))
+    .map((entry) => entry.id);
+  if (parkable.length > 0) offers.push(`park (${parkable.join(", ")})`);
+  if (parked.length > 0) offers.push(`resume (${parked.map((entry) => entry.id).join(", ")})`);
+  const pending = state.tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
+  if (pending.length > 1) offers.push(`resequence (${pending.join(", ")})`);
+  const escalationsLeft = ESCALATE_LIMIT_PER_RUN - state.escalations.length;
+  if (escalationsLeft > 0) offers.push(`escalate (${escalationsLeft} of ${ESCALATE_LIMIT_PER_RUN} left)`);
+  const drivable = state.acceptanceCriteria
+    .filter((entry) => entry.judgment === "judged" && entry.status !== "complete")
+    .map((entry) => entry.id);
+  if (drivable.length > 0) offers.push(`qa-brief (${drivable.join(", ")})`);
+  offers.push("design --raise");
+  lines.push("", `supervisor verbs available now: ${offers.join(" | ")}`);
+
   if (!herdr.available) {
     const missing = (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]);
     lines.push("", `herdr unavailable - no ${missing.join(", ")}; pane diagnosis and implementor replacement are the supervisor's to perform by hand`);
