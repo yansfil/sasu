@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { isUserSourcedResolvedDecision, runPrelint, type PrelintFinding } from "../gates/prelint";
 import { cadenceDrift, clearCadence, recordDecisionTurn } from "./cadence";
+import { GateStore, prdReviewStateFor } from "../gates/store";
 import {
   anchorDecisionToQuestion,
+  appendAddendumEntry,
   appendCheckpoint,
   appendQaEntry,
   appendTranscriptSource,
@@ -430,6 +432,35 @@ export async function runInterviewDecision(
   const { file } = readQaLog(projectRoot, options.slug);
   const content = fs.readFileSync(file, "utf8");
   const { slug: _slug, transcriptPath: _transcriptPath, homeDir: _homeDir, sessionId: _sessionId, anchor, ...patch } = options;
+
+  // A decision recorded after gap-audit sealed the log routes to the
+  // `## Addendum` section (freshness contract v4): the sealed Register and
+  // Raw Q&A stay byte-identical, so the sealed PASS stays live, and the
+  // addendum entry is its own anchor. Editing sealed sections instead is
+  // still possible - it honestly stales the PASS and costs one reopen delta
+  // round - but it is never something this command does implicitly (the
+  // 2026-08-29 anchor backfill did exactly that and cascaded an approved,
+  // in-flight run into two overrides).
+  const gapAuditRecord = new GateStore(projectRoot, options.slug).load().gates["gap-audit"];
+  if (gapAuditRecord !== undefined && prdReviewStateFor(gapAuditRecord).phase === "sealed") {
+    if (anchor !== undefined && anchor !== "none") {
+      throw new Error(
+        "gap-audit is sealed: a Raw Q&A anchor cannot be added without staling the sealed PASS. The Addendum entry is its own anchor; drop --anchor, or reopen the gate to edit sealed sections.",
+      );
+    }
+    const upserted = upsertRegisterRow(content, patch);
+    const updated = refreshBookkeeping(appendAddendumEntry(content, upserted.row, !upserted.created));
+    replaceQaLog(file, content, updated);
+    const { cadence, drift } = await trackDecisionCadence(file, options);
+    return result("decision", projectRoot, options.slug, updated, {
+      id: upserted.row.id,
+      created: upserted.created,
+      row: upserted.row,
+      cadence,
+      addendum: true,
+      anchor: { anchored: false, q: null, reason: "gap-audit is sealed; the Addendum entry is its own anchor" },
+    }, drift);
+  }
 
   // Validate an explicit target BEFORE any write: R3 requires an invalid
   // --anchor to reject atomically, with no partial Register or Raw Q&A

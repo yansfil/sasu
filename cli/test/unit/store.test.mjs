@@ -525,15 +525,28 @@ test("freshness: Audit History stripping stops at the next section", () => {
   assert.notEqual(freshnessHash(audit), freshnessHash(changedNeighbor));
 });
 
-// PRD interview-anchor R4/AC7/AC8: decision_ids is the one qa-log line
-// excluded from the sealed fingerprint so a post-hoc anchor backfill (D-06)
-// never stales an existing PASS. The negative case proves the exclusion is
-// scoped to exactly that line - no other field rides along loose.
-test("freshness (AC7): editing only decision_ids after sealing does not stale the gate", () => {
+// Freshness contract v4 (2026-08-30, user re-decision of interview-anchor
+// D-06): the sealed hash has one structural rule - frontmatter and the
+// harness-owned append sections (Audit History, Addendum) are outside it,
+// every other body byte pins the PASS, in every document kind. The
+// decision_ids line exclusion this supersedes leaked twice (RF1 document-wide
+// scope, then prose riding the excluded line into a sealed document).
+test("freshness (v4): editing a decision_ids line after sealing stales the gate", () => {
   const store = makeStore();
   const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
   const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const v2 = v1.replace("- decision_ids: none", "- decision_ids: D-01");
+  const v2 = v1.replace("- decision_ids: none", "- decision_ids: D-03 user agreed production data may be dropped");
+  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
+  const view = gateStatus(state, "spec", 2, store.projectRoot);
+  assert.equal(view.effective, "STALE");
+  assert.equal(view.inputsDrifted, true);
+});
+
+test("freshness (v4): appending an Addendum entry does not stale the sealed gate", () => {
+  const store = makeStore();
+  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
+  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
+  const v2 = `${v1}\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late decision\n  - source: user\n`;
   fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
   const view = gateStatus(state, "spec", 2, store.projectRoot);
   assert.equal(view.effective, "PASS");
@@ -541,33 +554,16 @@ test("freshness (AC7): editing only decision_ids after sealing does not stale th
   assert.equal(view.inputsDrifted, false);
 });
 
-test("freshness: the decision_ids exclusion is scoped to ## Raw Q&A, not the whole document", () => {
+test("freshness (v4): an Addendum edit next to sealed content still pins its neighbor", () => {
   const store = makeStore();
-  // A PRD-shaped document has no Raw Q&A section; a line that merely looks
-  // like a decision_ids line elsewhere in the body must still pin the PASS -
-  // otherwise the exception approved for qa-log anchors would silently widen
-  // to every document kind (2026-08-29 fidelity review RF1).
-  const v1 = "# PRD: demo\n\n- decision_ids: D-01\n- R1. behavior\n";
-  const state = passWithInput(store, "prd.md", v1);
-  const v2 = v1.replace("- decision_ids: D-01", "- decision_ids: D-99");
-  fs.writeFileSync(path.join(store.projectRoot, "prd.md"), v2);
-  const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "STALE");
-  assert.equal(view.inputsDrifted, true);
-});
-
-test("freshness: a decision_ids-shaped line outside ## Raw Q&A in a qa-log still stales the gate", () => {
-  const store = makeStore();
-  const v1 = "# Interview Log: demo\n\n## Current Understanding\n\n- decision_ids: not a real anchor line here\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
+  const v1 = "# Interview Log: demo\n\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late\n\n## Raw Q&A\n\n### Q1: x\n- answer: yes\n\n## Audit History\n\n- none\n";
   const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const v2 = v1.replace(
-    "- decision_ids: not a real anchor line here",
-    "- decision_ids: this changed outside Raw Q&A",
-  );
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
-  const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "STALE");
-  assert.equal(view.inputsDrifted, true);
+  const grown = v1.replace("): late\n", "): late\n- D-52 (decision, scope, P2, resolved, 2026-08-30): another\n");
+  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), grown);
+  assert.equal(gateStatus(state, "spec", 2, store.projectRoot).effective, "PASS", "growth inside Addendum is free");
+  const touchedNeighbor = v1.replace("- answer: yes", "- answer: no");
+  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), touchedNeighbor);
+  assert.equal(gateStatus(state, "spec", 2, store.projectRoot).effective, "STALE", "the section after Addendum is sealed input");
 });
 
 test("freshness (AC8): editing any other qa-log body field after sealing still stales the gate", () => {

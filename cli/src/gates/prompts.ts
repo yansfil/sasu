@@ -33,7 +33,9 @@ Rules:
   existing conventions - parameter type guards, null/undefined contracts, return-shape mechanics,
   which case variant gets stored - are at most P2 notes, NEVER blockers. Block only on decisions
   that change user-visible behavior, data shape, scope, or risk in a way the USER would care about.
-- CONSENT PROVENANCE: compare every resolved decision or assumption with its cited Raw Q&A answer,
+- CONSENT PROVENANCE: a decision may also be sourced from the interview log's "## Addendum" section -
+  a post-interview user decision recorded there after the log sealed is as real as a Raw Q&A answer.
+  Otherwise compare every resolved decision or assumption with its cited Raw Q&A answer,
   exact repository evidence, or the verbatim delegated invocation when one is provided below.
   A judge recommendation is not evidence or permission to resolve a
   policy. If the recorded policy is stronger or broader than the cited answer - including its scope,

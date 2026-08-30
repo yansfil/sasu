@@ -114,6 +114,33 @@ function appendToSection(lines: string[], heading: string, block: string[]): str
   return [...lines.slice(0, insertAt), "", ...block, "", ...lines.slice(end)];
 }
 
+const ADDENDUM_HEADING = "## Addendum";
+
+/**
+ * Post-seal decision ledger (2026-08-30, freshness contract v4): once
+ * gap-audit seals the log, a new or changed decision lands here as a
+ * self-contained entry instead of touching sealed sections. The freshness
+ * hash excludes this section by structure, so recording a late decision
+ * never stales the sealed PASS, and the entry carries every Register field
+ * inline because the sealed Register cannot be edited to match. The entry is
+ * its own anchor: it exists only because `sasu interview decision` wrote it,
+ * with the cadence record naming the conversation turn.
+ */
+export function appendAddendumEntry(content: string, row: RegisterRow, supersedesSealedRow: boolean): string {
+  const suffix = supersedesSealedRow ? " [supersedes the sealed Register row]" : "";
+  const entry = [
+    `- ${row.id} (${row.kind}, ${row.area}, ${row.priority}, ${row.status}, ${todayStamp()})${suffix}: ${sanitizeCell(row.text)}`,
+    `  - source: ${sanitizeCell(row.source)}`,
+    ...(row.mapping.trim() !== "" ? [`  - mapping: ${sanitizeCell(row.mapping)}`] : []),
+  ];
+  const lines = content.split("\n");
+  if (!lines.some((line) => line.trim() === ADDENDUM_HEADING)) {
+    const trimmed = content.replace(/\n+$/, "");
+    return `${trimmed}\n\n${ADDENDUM_HEADING}\n\n${entry.join("\n")}\n`;
+  }
+  return appendToSection(lines, ADDENDUM_HEADING, entry).join("\n");
+}
+
 function frontmatterEnd(lines: string[]): number {
   if (lines[0]?.trim() !== "---") throw new Error("qa-log has no frontmatter block");
   for (let i = 1; i < lines.length; i += 1) {

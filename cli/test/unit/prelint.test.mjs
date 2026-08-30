@@ -264,3 +264,13 @@ test("prd-dangling-decision-id passes when every cited D-id is registered", () =
   const result = prelintPrdDecisionIds("Decisions D-01 and D-02 trace to the interview.", qaLog);
   assert.equal(result.ok, true);
 });
+
+// Freshness contract v4: a post-seal decision lives as an Addendum bullet,
+// not a Register row. A PRD citing it cites a real decision; a D-id merely
+// mentioned in prose outside the Addendum still dangles.
+test("prd-dangling-decision-id accepts a decision defined in the qa-log Addendum", () => {
+  const qaLog = `${fixture("qa-clean.md")}\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late scope decision\n  - source: user\n`;
+  assert.equal(prelintPrdDecisionIds("D-51 sets the late scope.", qaLog).ok, true);
+  const prose = `${fixture("qa-clean.md")}\nWe once discussed D-51 in passing.\n`;
+  assert.equal(prelintPrdDecisionIds("D-51 sets the late scope.", prose).ok, false);
+});

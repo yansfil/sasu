@@ -67,14 +67,14 @@ export function sha256Of(content: string | Buffer): string {
 // Stop-hook quick guard (plain JS, no dist dependency) hashes identically.
 const freshnessLib = require("../../lib/gate_freshness.js") as {
   FRESHNESS_CONTRACT_VERSION: number;
-  freshnessHash: (content: string, isQaLogDocument?: boolean) => string;
+  freshnessHash: (content: string) => string;
   hashGateInput: (absPath: string, kind: string | undefined) => string | null;
 };
 
 export const FRESHNESS_CONTRACT_VERSION = freshnessLib.FRESHNESS_CONTRACT_VERSION;
 
-export function freshnessHash(content: string, isQaLogDocument = false): string {
-  return freshnessLib.freshnessHash(content, isQaLogDocument);
+export function freshnessHash(content: string): string {
+  return freshnessLib.freshnessHash(content);
 }
 
 /** Re-exported so the gate pins an input exactly the way staleness recomputes it. */

@@ -382,9 +382,20 @@ export function prelintQaLog(content: string): PrelintResult {
 export function prelintPrdDecisionIds(prdContent: string, qaLogContent: string): PrelintResult {
   const findings: PrelintFinding[] = [];
   const registerIds = new Set<string>();
-  for (const line of qaLogContent.split("\n")) {
-    const match = line.match(/^\|\s*(D-\d+)\s*\|/);
-    if (match) registerIds.add(match[1]!);
+  const qaLines = qaLogContent.split("\n");
+  const addendum = sectionRange(qaLines, "## Addendum");
+  for (let i = 0; i < qaLines.length; i += 1) {
+    const line = qaLines[i]!;
+    const row = line.match(/^\|\s*(D-\d+)\s*\|/);
+    if (row) registerIds.add(row[1]!);
+    // A post-seal decision lives as an Addendum bullet, not a Register row
+    // (freshness contract v4); a PRD citing it is citing a real decision.
+    // The bullet scan is scoped to the Addendum section so a D-id merely
+    // mentioned in prose elsewhere never counts as a definition.
+    if (addendum !== null && i > addendum.start && i < addendum.end) {
+      const bullet = line.match(/^\s*-\s*(D-\d+)\b/);
+      if (bullet) registerIds.add(bullet[1]!);
+    }
   }
   const seen = new Set<string>();
   prdContent.split("\n").forEach((line, index) => {

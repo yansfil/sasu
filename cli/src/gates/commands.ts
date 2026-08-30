@@ -138,10 +138,9 @@ interface InputFile {
 /**
  * Read a gate input document and pin its freshness hash (body substance, not
  * lifecycle bookkeeping). `label` doubles as the GateInput kind when it names
- * "qa-log" - the only call sites that pass that label are the ones reading an
- * actual interview qa-log (gap-audit, spec), so the Raw Q&A decision_ids
- * exclusion is scoped to exactly those documents, never guessed from path or
- * content (PRD interview-anchor R4, 2026-08-29 fidelity review RF1).
+ * "qa-log"; since freshness contract v4 the hash rule is identical for every
+ * document kind (one structural rule, no per-kind line exclusions), and the
+ * recorded kind remains as record semantics only.
  */
 function readInputFile(projectRoot: string, filePath: string, label: string): InputFile {
   const content = readTextFile(projectRoot, filePath, label);
@@ -151,7 +150,7 @@ function readInputFile(projectRoot: string, filePath: string, label: string): In
     content,
     input: {
       path: path.relative(projectRoot, resolved),
-      sha256: freshnessHash(content, isQaLog),
+      sha256: freshnessHash(content),
       ...(isQaLog ? { kind: "qa-log" as const } : {}),
     },
   };

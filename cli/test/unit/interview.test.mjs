@@ -22,6 +22,7 @@ import {
   runInterviewSync,
 } from "../../dist/interview/commands.js";
 import { runPrelint } from "../../dist/gates/prelint.js";
+import { GateStore, freshnessHash, recordGateResult } from "../../dist/gates/store.js";
 
 const INIT = {
   topic: "widget",
@@ -323,6 +324,58 @@ test("interview commands sync transcript turns idempotently and stay prelint-cle
     () => runInterviewSync(dir, { slug, transcriptPath, sessionId: null }),
     /complete and sealed; 1 later conversation turn/,
   );
+});
+
+// Freshness contract v4: once gap-audit seals the log, a decision routes to
+// the ## Addendum section - the sealed sections stay byte-identical, so the
+// sealed hash (and therefore the PASS) survives the write. This is the
+// channel that replaces the 2026-08-29 anchor-backfill cascade.
+test("decision after gap-audit sealed routes to the Addendum and keeps the sealed hash", async () => {
+  const dir = makeProject();
+  const slug = "sealed-addendum";
+  await runInterviewInit(dir, { slug, ...INIT, transcriptPath: makeCodexTranscript(dir, "sealed-addendum-s"), sessionId: null });
+  const store = new GateStore(dir, slug);
+  recordGateResult(store, store.load(), "gap-audit", { kind: "verdict", verdict: "PASS", findings: [], artifactPayload: {} }, []);
+
+  const file = qaLogPathFor(dir, slug);
+  const sealedContent = fs.readFileSync(file, "utf8");
+  const outcome = await runInterviewDecision(dir, {
+    slug,
+    id: "D-01",
+    kind: "decision",
+    area: "scope",
+    text: "late scope decision",
+    priority: "P1",
+    source: "user",
+    status: "resolved",
+    mapping: "PRD 4.3",
+    sessionId: null,
+  });
+  assert.equal(outcome.detail.addendum, true);
+  assert.match(outcome.detail.anchor.reason, /sealed/);
+
+  const after = fs.readFileSync(file, "utf8");
+  assert.match(after, /## Addendum\n\n- D-01 \(decision, scope, P1, resolved, /);
+  assert.doesNotMatch(after, /\|\s*D-01\s*\|/, "the sealed Register table gains no row");
+  assert.equal(
+    freshnessHash(after),
+    freshnessHash(sealedContent),
+    "the addendum write must be invisible to the sealed hash",
+  );
+
+  // An explicit Raw Q&A anchor would edit sealed content; refuse instead of
+  // silently staling the PASS.
+  await assert.rejects(
+    () => runInterviewDecision(dir, { slug, id: "D-02", kind: "decision", area: "scope", text: "x", priority: "P2", source: "user", status: "resolved", mapping: "n/a", anchor: "Q1", sessionId: null }),
+    /sealed/,
+  );
+
+  // A second entry appends into the existing section.
+  await runInterviewDecision(dir, { slug, id: "D-02", kind: "decision", area: "scope", text: "second late decision", priority: "P2", source: "user", status: "resolved", mapping: "n/a", sessionId: null });
+  const twice = fs.readFileSync(file, "utf8");
+  assert.equal((twice.match(/^## Addendum$/gm) ?? []).length, 1, "one Addendum section, entries append into it");
+  assert.match(twice, /- D-02 \(decision, scope, P2, resolved, /);
+  assert.equal(freshnessHash(twice), freshnessHash(sealedContent));
 });
 
 test("status surfaces open material nodes but not closure-only prelint rules", async () => {
