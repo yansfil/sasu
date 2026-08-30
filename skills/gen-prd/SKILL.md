@@ -125,10 +125,14 @@ Result Report Contract when they matter.
 `status` and `human_approval` are different gates:
 
 - `status: ready` means the agent-side quality gates and audits passed.
+  Flip it with `sasu prd ready --prd <path>` - the CLI refuses while the
+  readiness gate has blocking gaps, so never edit the line by hand.
 - `human_approval: "approved"` means the user actually reviewed the PRD and
   approved it. The PRD-writing agent always writes `pending` and never sets
-  `approved` on its own. Set `approved` only after the user explicitly approves,
-  and quote or reference that approval when updating it.
+  `approved` on its own. After the user explicitly approves, record it with
+  `sasu prd approve --prd <path> --evidence "<the user's verbatim approval>"` -
+  the CLI requires the quote and refuses a non-ready PRD, so never edit the
+  line by hand.
 - `implement` refuses to initialize against a PRD whose `human_approval` is
   not `approved`, so a PRD that skips human review cannot be executed silently.
 

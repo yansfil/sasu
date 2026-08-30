@@ -143,8 +143,10 @@ The Implementor never runs this stage.
 - Preserve a coherent production-quality product boundary, with every deliberate omission recorded as a non-goal or deferred decision with consequence, rationale, and revisit condition.
 - Assign `review_profile` semantically from the complete product and engineering effects and write a concrete `review_rationale`; use `standard` for small user-facing work and `high-risk` for sensitive or irreversible effects.
 - Run the Inline Self-Check Before Ready (including its losslessness item; do not treat silence or a topic change as approval) and the Harness Readiness Gate (`sasu prd readiness --prd`) exactly as the `gen-prd` skill requires.
-- Mark `status: ready` only when those gates pass.
-- Leave `human_approval: "pending"`.
+- Flip the status with `sasu prd ready --prd <path>` - the CLI refuses while
+  readiness has blocking gaps; never edit the frontmatter line by hand.
+- Leave `human_approval: "pending"` (`sasu prd approve` exists for the user's
+  explicit approval and has no place in the delegated path).
   Never write `approved`; the user did not review the document, and the deviation record in Stage 2 is the honest representation of what happened.
 
 Emit a compact summary of the PRD in chat before implementing: scope, non-goals, PRD-level tasks, verification modes, delivery mode, and the assumptions made.

@@ -72,6 +72,8 @@ Usage:
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
     (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>")
   sasu prd readiness       --prd <path> [--json]
+  sasu prd ready           --prd <path> [--json]   (flips status to ready; refused while readiness has blocking gaps)
+  sasu prd approve         --prd <path> --evidence "<verbatim user approval>" [--json]   (records human approval; requires status ready)
   sasu principles list     [--domain <name>] [--json]
   sasu rules <add|check|relevant> [...]
   sasu setup seed-agents-md [--project-root <path>] [--adopt-claude-md]
