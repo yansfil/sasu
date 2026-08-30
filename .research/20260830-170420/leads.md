@@ -1,0 +1,27 @@
+# Lead ledger
+
+- [open] 하네스 기여도 결론 불일치의 조절변수가 태스크 호라이즌 길이인가 — WHY sasu 같은 장기 다단계 하네스에서 하네스 투자 정당성의 방향을 결정 — ANGLE 세 논문(2606.12344, 2602.22953, 2605.23950)의 max steps/시간예산/평균 트레이스 길이 대조 + METR 2503.14499 time-horizon citing papers   (from: wave1/axis-2)
+- [open] Docent 원논문과 rubric 설계 방법론 — WHY rubric 기반 로그 플래깅이 sasu judge를 하네스 자기 실패탐지로 확장하는 기성품, TAU-bench leakage 실적 — ANGLE arxiv "Docent" transcript analysis rubric, Transluce 사이트 원문/리포   (from: wave1/axis-2)
+- [open] promptfoo/LangSmith/Braintrust의 트레이스 단위 assert API 실체 — WHY 궤적을 assert할 수 있는가가 하네스 회귀테스트 도입 가부를 가름, 1차 문서 미도달 — ANGLE github.com/promptfoo/promptfoo site/docs, docs.langchain.com/llms.txt 인덱스 경유   (from: wave1/axis-2)
+- [open] ImpossibleBench의 prompt D 전문과 abort-option 프롬프트 설계 — WHY 프롬프트 한 장으로 치팅률 92->1%, 시스템프롬프트에 직접 이식 가능한 최저비용 개선 — ANGLE arxiv html 2510.20270v1 Appendix G.2 또는 github safety-research/impossiblebench 프롬프트 파일   (from: wave1/axis-3)
+- [open] Eiras et al. 2025 오픈소스 safety judge 4종 메타평가(프롬프트·분포 민감도) — WHY 루브릭 고정의 효과에 대한 유일한 직접 증거, judge 프롬프트 변경이 판정을 흔드는 상한 — ANGLE ImpossibleBench 참고문헌에서 제목 확인 후 arXiv   (from: wave1/axis-3)
+- [open] Redwood 후속 - untrusted monitoring 하의 collusion (arXiv:2602.20628 추정) — WHY sasu judge는 피평가와 같은 급이라 untrusted monitor 상황, 79-98% safety가 collusion을 얼마나 가정하는지가 judge 독립성 설계에 직결 — ANGLE 해당 arXiv 페치 + blog.redwoodresearch.org 최근 포스트   (from: wave1/axis-3)
+- [open] SWE-bench repo state loophole (Kahn et al. 2025) — WHY 벤치마크 하네스 자체 취약점을 by-construction으로 패치한 사례, sasu의 agents/** 격리·지문 설계에 직접 대응 — ANGLE "SWE-bench repo state loophole 2025", SWE-bench 공식 블로그/GitHub issue   (from: wave1/axis-3)
+- [open] OpenAI 2026-02 SWE-bench Verified 재감사(138문제 심층, 60%+ unsolvable, 테스트 49 too narrow/26 too wide) — WHY 사실이면 "정제된 held-out조차 2년 만에 다시 썩는다"는 벤치마크 수명관리의 결정적 증거 — ANGLE latent.space "The End of SWE-Bench Verified" 원문 + OpenAI 2026-02 릴리스/SWE-bench changelog   (from: wave1/axis-4)
+- [open] HiBayES 계층 베이지안 평가 통계(UK AISI) — WHY 인스턴스 50-200개인 자체 하네스에서 CLT 근사가 깨지는데 이게 소표본 신뢰구간의 미답 부분 — ANGLE arXiv "HiBayES hierarchical Bayesian AI evaluation" 원문, 소표본 시뮬레이션과 CLT 대비 커버리지 비교표   (from: wave1/axis-4)
+- [open] Epoch AI 벤치마크 허브의 3자 재실행 error bar와 실행 횟수 규약 — WHY 자체보고 대신 통제 조건 3자 재현치가 있으면 포화 구간 동률 여부를 숫자로 확정 — ANGLE chromux로 epoch.ai 대시보드 실브라우저 열어 CSV/JSON 엔드포인트, "How we run benchmarks" 방법론 페이지   (from: wave1/axis-4)
+- [dup] Agentic Benchmark Checklist (ABC) 전체 항목 — axis-4가 arXiv:2507.02825로 실질 커버(17개 벤치마크 감사 수치 포함)
+- [open] Berkeley RDI 하네스 게이밍 실증(10줄 conftest.py로 Verified 전 인스턴스 resolve, git log 유출) — WHY 오라클이 아니라 오라클 실행기가 공격면. sasu gate verify가 프로젝트 코드를 실행하는 이상 동일 계열 취약점 — ANGLE rdi.berkeley.edu/blog/trustworthy-benchmarks 시리즈 전편 + swebench conftest.py exploit + pytest plugin harness hijack   (from: wave1/axis-1)
+- [open] SWE-smith / CodeClash / ProgramBench - SWE-bench 팀이 Verified 이후 갈아탄 것 + SWE-bench Pro 30% broken의 OpenAI 1차 발표문 — WHY 태스크 합성(SWE-smith)은 오염의 구조적 해법 후보이고 우리가 만들 합성 케이스와 직결. broken 원인 4종은 PRD 작성 규약에 직결 — ANGLE swesmith.com/codeclash.ai 직접 fetch + arXiv, openai.com/index 2026-07 포스트 순회   (from: wave1/axis-1)
+- [open] "Are Solved Issues in SWE-bench Really Solved Correctly?"(arXiv:2503.15223) + UTBoost(arXiv:2506.09289) — WHY F2P/P2P 이중집합조차 불충분하다는 정량 근거. sasu 원칙1(가장 강한 도구로 모든 AC 증명)의 상한을 정하는 데이터 — ANGLE 두 arXiv PDF에서 false-positive 비율과 UTBoost 추가 테스트로 뒤집힌 인스턴스 수 추출   (from: wave1/axis-1)
+- [open] tau2-bench compositional task generator 내부 구조 + Terminal-Bench 26개 어댑터의 최소 태스크 스키마 — WHY 소수 인스턴스 통계 무력함의 유일한 구조적 해답이고, 우리가 만들 케이스의 표현 형식에 직결 — ANGLE github.com/sierra-research/tau2-bench task generator 소스 + 논문 3.2, Terminal-Bench Appendix D + harborframework.com/docs/task-format   (from: wave2/axis-1 2차)
+- [dup] Agentic Benchmark Checklist 전체 항목 — axis-4가 이미 커버
+- [dup] UTBoost / Are Solved Issues Really Solved — 이미 wave2 워커 배정됨
+- [done] 호라이즌 조절변수 가설 -> PARTIAL, 실제 조절변수는 모델 능력 분산 + 도구·상태 결합 밀도
+- [open] "하네스는 정확도가 아니라 효율성을 움직인다" 가설 (2607.22585 40배 토큰 vs 0-8pp) — WHY 맞다면 하네스 비교 전체가 잘못된 종속변수를 보고 있다는 뜻이고, 우리 벤치마크의 주지표 선택이 여기 걸림 — ANGLE harness cost per solved task token efficiency dominates accuracy, Claw의 Dur/Turns 컬럼을 종속변수로 재분석한 후속   (from: wave2/horizon)
+- [open] promptfoo extractTrajectorySteps() 정규화 계층(OTel 스팬을 6종으로 접는 규칙) — WHY 이 도구의 표현력 상한이자 우리가 Claude Code 세션 로그를 같은 6종으로 접을 수 있는지 결정. codex.command/exec_command 특수케이싱이 일반적인지 오버핏인지(원칙 11) — ANGLE src/assertions/trajectoryUtils.ts 315-410행 + test 픽스처 raw   (from: wave2/trace-tooling)
+- [open] Inspect Scout 리포 실체(Transcript 타입, Result 스키마, non-Inspect transcript source 지원) — WHY 우리 트랜스크립트를 그대로 먹일 수 있는지, 원칙13(생성형 스테이지의 harness-owned bound)을 이미 푼 선례인지 — ANGLE github api tree meridianlabs-ai/inspect_scout, src/inspect_scout/_transcript/   (from: wave2/trace-tooling)
+- [done] 합성 태스크 생성 / SWE-smith / CodeClash / ProgramBench / SWE-bench Pro 1차출처   (from: wave2)
+- [open] Scale AI(SWE-bench Pro 제작사)의 공식 반응 — WHY 30% 주장의 반대편 1차 출처, broken이 수리로 끝나는지 폐기로 끝나는지 — ANGLE scale.com/blog, swebench.pro, arXiv 2509.16941 v2/v3 개정이력, HF 데이터셋 커밋로그   (from: wave3)
+- [open] SWE-Universe (arXiv 2602.02361) — WHY SWE-smith 5만 -> 수백만 연장선, 합성 스케일링 현재 상한 — ANGLE SWE-smith 대비 오라클 조달·언어 커버리지·평가 적합성 주장 대조   (from: wave3)
+- [open] MirrorCode (2606.30182) / NL2Repo-Bench (2512.12730) — WHY "gold 실행파일=완전 명세" vs "사람 재구현 가능한 것만 선별" 오라클 철학 분기점 — ANGLE ProgramBench의 test-overspecification 절과 교차 독해   (from: wave3)

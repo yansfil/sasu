@@ -12,3 +12,9 @@
 /benchmarks/pokemon-rpg/*
 !benchmarks/pokemon-rpg/prd.md
 !benchmarks/pokemon-rpg/benchmark.json
+
+# macOS finder metadata
+.DS_Store
+
+# transient fetch buffers from research workers (untrusted web content)
+.scratch_*.txt
