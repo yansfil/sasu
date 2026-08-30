@@ -7,7 +7,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const CASE_SCHEMA = "sasu.benchmark-case.v2";
+const {
+  caseSchemaVersion,
+  validateCaseV3Extras,
+} = require("./lib/case_contract.js");
 const RUN_SCHEMA = "sasu.benchmark-run.v1";
 const QUALITATIVE_SCHEMA = "sasu.benchmark-qualitative.v1";
 const REPORT_SCHEMA = "sasu.benchmark-report.v1";
@@ -135,7 +138,9 @@ function validateRelativePath(value, field) {
 }
 
 function validateCase(contract) {
-  if (contract.schema !== CASE_SCHEMA) throw new Error(`case.schema must be ${CASE_SCHEMA}`);
+  // v2 and v3 share every check below. v3 only adds fields; it never relaxes
+  // one, so a v2 case reaches the same verdict at the same point it always did.
+  const schemaVersion = caseSchemaVersion(contract);
   if (typeof contract.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(contract.id)) {
     throw new Error("case.id must use lowercase letters, digits, and hyphens");
   }
@@ -190,6 +195,7 @@ function validateCase(contract) {
       throw new Error(`evaluation.models.${field} is required`);
     }
   }
+  if (schemaVersion === 3) validateCaseV3Extras(contract);
   return contract;
 }
 
