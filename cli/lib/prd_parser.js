@@ -14,18 +14,54 @@ function isVerificationRequiredForDone(verification) {
   return true;
 }
 
-function stripFrontmatter(markdown) {
-  if (!markdown.startsWith("---\n")) return { frontmatter: {}, body: markdown };
-  const end = markdown.indexOf("\n---", 4);
-  if (end < 0) return { frontmatter: {}, body: markdown };
-  const raw = markdown.slice(4, end).trim();
-  const frontmatter = {};
-  for (const line of raw.split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) continue;
-    frontmatter[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, "");
+/**
+ * One frontmatter value grammar for every reader. A quoted value may carry a
+ * trailing `# comment` - real PRDs record the approval verbatim there
+ * (`human_approval: "approved"  # user 2026-08-29 verbatim: ...`). An
+ * unquoted value is taken whole, so `#` inside it never truncates. Measured
+ * 2026-08-30 before unification, the two divergent copies each had a bug the
+ * other did not: prelint's regex parsed `topic: fix #42` as "fix" and dropped
+ * the `c#-migration` key entirely, while this file's strip-quotes rule turned
+ * `"approved"  # note` into `approved"  # note` - which would refuse an
+ * approved PRD at implement start.
+ */
+function parseFrontmatterValue(raw) {
+  const trimmed = String(raw).trim();
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    const close = trimmed.indexOf(quote, 1);
+    if (close > 0) return trimmed.slice(1, close);
   }
-  return { frontmatter, body: markdown.slice(end + 5) };
+  return trimmed;
+}
+
+/**
+ * Shared frontmatter block reader: entries carry 1-based line numbers so
+ * lint-grade callers (prelint) can point findings at the exact line, and the
+ * body is what remains after the closing `---`. Returns null when the
+ * document has no frontmatter block.
+ */
+function parseFrontmatterBlock(markdown) {
+  const lines = String(markdown).split(/\r?\n/);
+  if ((lines[0] ?? "").trim() !== "---") return null;
+  for (let close = 1; close < lines.length; close += 1) {
+    if (lines[close].trim() !== "---") continue;
+    const entries = [];
+    for (let index = 1; index < close; index += 1) {
+      const match = lines[index].match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+      if (match) entries.push({ key: match[1], value: parseFrontmatterValue(match[2]), line: index + 1 });
+    }
+    return { entries, body: lines.slice(close + 1).join("\n") };
+  }
+  return null;
+}
+
+function stripFrontmatter(markdown) {
+  const parsed = parseFrontmatterBlock(markdown);
+  if (parsed === null) return { frontmatter: {}, body: markdown };
+  const frontmatter = {};
+  for (const entry of parsed.entries) frontmatter[entry.key] = entry.value;
+  return { frontmatter, body: parsed.body };
 }
 
 function extractSection(markdown, heading) {
@@ -1043,6 +1079,7 @@ function findPrdImplementationBindings(content) {
 
 module.exports = {
   stripFrontmatter,
+  parseFrontmatterBlock,
   extractSection,
   extractFirstSection,
   extractNestedSection,

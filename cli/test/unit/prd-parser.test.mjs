@@ -15,7 +15,34 @@ const {
   extractCodeSpans,
   cleanTableCell,
   parseVerification,
+  parseFrontmatterBlock,
+  stripFrontmatter,
 } = require("../../lib/prd_parser.js");
+
+// One frontmatter grammar for every reader (2026-08-30 unification). Before
+// it, prelint's copy truncated `topic: fix #42` to "fix" and dropped a
+// `c#-migration` key entirely, while this file's copy turned
+// `"approved"  # note` into `approved"  # note` - a value implement start
+// would refuse on a genuinely approved PRD.
+test("frontmatter: a quoted value keeps its trailing comment out of the value", () => {
+  const doc = '---\nhuman_approval: "approved"  # user 2026-08-29 verbatim: "승인~"\n---\nbody';
+  assert.deepEqual(stripFrontmatter(doc).frontmatter, { human_approval: "approved" });
+});
+
+test("frontmatter: an unquoted value containing '#' is taken whole, never truncated", () => {
+  const doc = "---\ntopic: fix #42 crash\nsource_intake: runs/2026#3\n---\nbody";
+  const block = parseFrontmatterBlock(doc);
+  assert.deepEqual(
+    block.entries.map((entry) => [entry.key, entry.value, entry.line]),
+    [["topic", "fix #42 crash", 2], ["source_intake", "runs/2026#3", 3]],
+  );
+  assert.equal(block.body, "body");
+});
+
+test("frontmatter: a document without a block parses as no frontmatter", () => {
+  assert.equal(parseFrontmatterBlock("# just a doc"), null);
+  assert.deepEqual(stripFrontmatter("# just a doc"), { frontmatter: {}, body: "# just a doc" });
+});
 
 // The exact live repro command, pipes and all.
 const LIVE_COMMAND = 'bash -c "for f in $(git diff --name-only); do node --check \\"$f\\" || exit 1; done"';

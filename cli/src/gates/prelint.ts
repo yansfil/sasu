@@ -17,7 +17,9 @@ import { parseContract } from "./contract";
 
 // Table-cell splitting comes from the shared parser so prelint sees exactly
 // the same cell boundaries the state parser persists.
-const { splitTableRow, findPrdImplementationBindings } = require("../../lib/prd_parser.js") as {
+const { splitTableRow, findPrdImplementationBindings, parseFrontmatterBlock, expandCoverageIds } = require("../../lib/prd_parser.js") as {
+  parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
+  expandCoverageIds(text: string, prefix: string): string[];
   splitTableRow: (text: string) => string[];
   findPrdImplementationBindings: (content: string) => { code: string; line: number; message: string }[];
 };
@@ -59,22 +61,21 @@ function warning(rule: string, line: number | null, missing: string, recommendat
 
 interface Frontmatter {
   values: Map<string, { value: string; line: number }>;
-  bodyStartIndex: number;
 }
 
+/**
+ * Delegates to the shared frontmatter engine in prd_parser.js - the same
+ * grammar implement's contract reader uses - so a document can never parse
+ * one way at the lint gate and another way at start. The local regex this
+ * replaced truncated unquoted values at " #" and dropped keys whose value
+ * contained a bare "#" (2026-08-30 unification).
+ */
 function parseFrontmatter(lines: string[]): Frontmatter | null {
-  if (lines[0]?.trim() !== "---") return null;
-  for (let i = 1; i < lines.length; i += 1) {
-    if (lines[i]!.trim() === "---") {
-      const values = new Map<string, { value: string; line: number }>();
-      for (let j = 1; j < i; j += 1) {
-        const match = lines[j]!.match(/^([A-Za-z_][A-Za-z0-9_]*):\s*(?:"([^"]*)"|([^#]*?))(?:\s+#.*)?\s*$/);
-        if (match) values.set(match[1]!, { value: (match[2] ?? match[3] ?? "").trim(), line: j + 1 });
-      }
-      return { values, bodyStartIndex: i + 1 };
-    }
-  }
-  return null;
+  const parsed = parseFrontmatterBlock(lines.join("\n"));
+  if (parsed === null) return null;
+  const values = new Map<string, { value: string; line: number }>();
+  for (const entry of parsed.entries) values.set(entry.key, { value: entry.value, line: entry.line });
+  return { values };
 }
 
 function checkEnum(
@@ -405,32 +406,22 @@ export function prelintPrdDecisionIds(prdContent: string, qaLogContent: string):
 
 // --- PRD rules (spec and verify gate entrances) ---
 
-// SC = user scenario card (gen-prd §2.1). Alternation order matters only in
-// that no prefix is a prefix of another at the same start position; "SC1"
-// cannot half-match R/AC/T/V, and "AC1" cannot match SC.
+// SC = user scenario card (gen-prd §2.1).
 const ID_DEFINITION = /^\s*-\s*(R|AC|T|V|SC)(\d+)[.:]\s/;
-const ID_TOKEN = /(R|AC|T|V|SC)(\d+)(?:\s*-\s*(?:(R|AC|T|V|SC))?(\d+))?/g;
+const COVERS_PREFIXES = ["R", "AC", "T", "V", "SC"];
 
-/** Expand one Covers token, including same-prefix ranges like R1-R4 / R1-4. */
-function expandToken(match: RegExpMatchArray): string[] {
-  const prefix = match[1]!;
-  const from = Number(match[2]!);
-  if (match[4] === undefined) return [`${prefix}${from}`];
-  const rangePrefix = match[3] ?? prefix;
-  const to = Number(match[4]!);
-  if (rangePrefix !== prefix) return [`${prefix}${from}`, `${rangePrefix}${to}`]; // "R1-AC4": two plain refs
-  if (to < from || to - from > 500) return [`${prefix}${from}`, `${prefix}${to}`];
-  const ids: string[] = [];
-  for (let n = from; n <= to; n += 1) ids.push(`${prefix}${n}`);
-  return ids;
-}
-
+/**
+ * Expand a Covers cell through the shared engine in prd_parser.js, one prefix
+ * at a time, so the lint gate and the implement contract read one grammar
+ * (ranges like R1-R4 / R1-4, case-insensitive ids, 100-step range cap). The
+ * local expander this replaced had drifted: a 500-step cap and case-sensitive
+ * matching, so the same cell could count as covered at one gate and not the
+ * other (2026-08-30 unification). Consumers do set-membership only, so the
+ * shared engine's sorted-unique output is a safe replacement for the old
+ * appearance-ordered list.
+ */
 function coversTokens(text: string): string[] {
-  const ids: string[] = [];
-  for (const match of text.matchAll(new RegExp(ID_TOKEN.source, "g"))) {
-    ids.push(...expandToken(match));
-  }
-  return ids;
+  return COVERS_PREFIXES.flatMap((prefix) => expandCoverageIds(text, prefix));
 }
 
 export function prelintPrd(content: string): PrelintResult {
