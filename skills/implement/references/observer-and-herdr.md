@@ -116,6 +116,16 @@ The Observer then arms exactly one background waiter and lets go of the turn:
 sasu implement await --since <last-event-id> [--pid <implementor-pid>]
 ```
 
+Arm it as a background task, never in the foreground.
+Under Claude Code that is the Bash tool's `run_in_background`; under Codex it is that runtime's own detached-command form.
+A foreground wait holds the turn, so the user cannot reach the Observer for as long as the run lasts, which is the one thing the Observer exists to stay available for.
+A background waiter outlives the turn and re-invokes the Observer when it exits.
+
+The waiter is a one-shot, so the loop is arm, wake, judge, arm again.
+Re-arm after every wake except `implementor-gone`, where the recovery is a replacement pane rather than another waiter.
+`await` prints the next command with the cursor already advanced and the probe flag carried over; run that, rather than rebuilding it from memory.
+Failing to re-arm does not raise an error: the implementor keeps working and nobody is watching.
+
 It returns for exactly one reason - a new event, no progress past the
 no-progress bound, or the implementor no longer being alive - and prints which.
 The wait is on the harness's own event log, never on pane text: pane output is

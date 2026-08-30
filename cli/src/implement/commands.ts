@@ -1060,12 +1060,35 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
     stallMs: STALL_THRESHOLD_MS,
     isAlive: probe.isAlive,
   });
-  return result("await", true, `woke on ${outcome.reason}: ${outcome.detail}`, {
+
+  // The supervision loop's one unguarded link: the waiter is a one-shot, so a
+  // supervisor that wakes, handles the event, and forgets to re-arm leaves the
+  // implementor working with nobody watching - silently, with no error to
+  // notice. Nothing in the harness can force the re-arm (the waiter is a
+  // detached process the CLI cannot see), so the cheapest real reduction is to
+  // hand the next command back fully assembled, with the cursor already
+  // advanced and the same probe flag carried over, instead of asking the
+  // supervisor to remember and rebuild it. Omitted on `implementor-gone`:
+  // there is nothing left to watch, and the recovery there is a replacement
+  // pane, not another waiter.
+  const rearm = outcome.reason === "implementor-gone"
+    ? null
+    : [
+      "sasu implement await",
+      ...(flag(args, "slug") !== undefined ? [`--slug ${flag(args, "slug")}`] : []),
+      ...(flag(args, "state") !== undefined ? [`--state ${flag(args, "state")}`] : []),
+      `--since ${outcome.cursor}`,
+      ...(agent !== null ? [`--agent ${agent}`] : pid !== null ? [`--pid ${pid}`] : []),
+    ].join(" ");
+
+  const message = `woke on ${outcome.reason}: ${outcome.detail}`;
+  return result("await", true, rearm === null ? message : `${message}; re-arm in the background with: ${rearm}`, {
     reason: outcome.reason,
     cursor: outcome.cursor,
     waitedMs: outcome.waitedMs,
     events: outcome.events,
     livenessProbe: probe.probe,
+    rearm,
   });
 }
 

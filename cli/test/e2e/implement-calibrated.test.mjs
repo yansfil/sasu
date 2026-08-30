@@ -398,6 +398,26 @@ test("AC19/AC23/AC25: the supervisor's channel, the waiter's backlog, and the st
   assert.equal(stalled.status, 0, stalled.stderr + stalled.stdout);
   assert.equal(stalled.json.detail.reason, "stall");
   assert.match(stalled.json.message, /woke on stall/);
+
+  // The re-arm is the loop's one unguarded link, so the wake hands it back
+  // assembled: cursor advanced past what this wake reported, probe flag
+  // carried over, ready to run as-is.
+  assert.equal(
+    backlog.json.detail.rearm,
+    `sasu implement await --since ${backlog.json.detail.events.at(-1).id}`,
+    "an event wake must hand back the next waiter with the cursor advanced",
+  );
+  const probed = run(root, ["implement", "await", "--since", String(aged.events.at(-1).id), "--pid", String(process.pid)]);
+  assert.equal(probed.json.detail.reason, "stall");
+  assert.match(probed.json.detail.rearm, new RegExp(`--pid ${process.pid}$`), "the probe flag survives the re-arm");
+  assert.match(probed.json.message, /re-arm in the background with: sasu implement await/);
+
+  // A dead implementor gets no re-arm: the recovery is a replacement pane, and
+  // another waiter on a corpse would wake instantly and forever.
+  const gone = run(root, ["implement", "await", "--since", String(aged.events.at(-1).id), "--pid", "2147483646"]);
+  assert.equal(gone.json.detail.reason, "implementor-gone");
+  assert.equal(gone.json.detail.rearm, null);
+  assert.doesNotMatch(gone.json.message, /re-arm/);
 });
 
 test("AC10 end to end: the all-green close prints both axes and calls no judge", () => {
