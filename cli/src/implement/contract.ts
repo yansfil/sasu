@@ -151,6 +151,18 @@ export function parseImplementContract(markdown: string): ImplementContract {
   );
   parser.applyTestModeDefaults(rawVerification, testModes);
 
+  // Reject duplicate AC ids at the door. parseImplementState asserts this
+  // invariant on every LOAD (store.ts), but persistState writes without
+  // validating - so a duplicate id that got past parsing let `implement
+  // start` record a state no later command could read, bricking the run with
+  // no CLI recovery (2026-08-30 code review, reproduced; task ids already had
+  // this guard in validateTaskDependencies). Refusing here covers every
+  // writer - start and amend both parse the contract first.
+  const acIds = new Set<string>();
+  for (const criterion of acceptanceCriteria) {
+    if (acIds.has(criterion.id)) throw new Error(`duplicate acceptance criterion id: ${criterion.id}`);
+    acIds.add(criterion.id);
+  }
   const acById = new Map(acceptanceCriteria.map((entry) => [entry.id, entry]));
   for (const requirement of requirements) {
     for (const acId of requirement.acceptanceCriteria) {

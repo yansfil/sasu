@@ -86,3 +86,15 @@ test("duplicate task ids are rejected at parse time", () => {
     /duplicate task id: T1/,
   );
 });
+
+// A duplicate AC id that got past parsing let `implement start` persist a
+// state every later load rejected - a bricked run with no CLI recovery
+// (2026-08-30 code review). The parse-time refusal covers start and amend
+// alike, mirroring the task-id guard above.
+test("duplicate acceptance criterion ids are rejected at parse time", () => {
+  const doc = prd(["- T1. A. Covers R1."]).replace(
+    "- AC1. The flow is verifiable.",
+    "- AC1. The flow is verifiable.\n- AC1. The flow is verifiable twice.",
+  );
+  assert.throws(() => parseImplementContract(doc), /duplicate acceptance criterion id: AC1/);
+});
