@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { executeMechanicalArgv } from "../mechanical";
+import { executeUnit } from "./runner";
 import { captureSourceSnapshot, nowIso, sha256 } from "./store";
 import type {
   AcceptanceCriterionItem,
@@ -23,7 +23,12 @@ function commandExecutable(command: string): string {
   return command.trim().split(/\s+/, 1)[0] ?? "";
 }
 
-function parseCommandArgv(command: string): string[] {
+/**
+ * Shared by check bindings and the sealed suite list so both sides of the
+ * single runner tokenize a command the same way. Two tokenizers would mean
+ * two `(cwd, command)` identities and the dedup would silently miss (R1).
+ */
+export function parseCommandArgv(command: string): string[] {
   const argv: string[] = [];
   let token = "";
   let quote: "'" | '"' | null = null;
@@ -147,10 +152,41 @@ export function validateCheckBinding(
   if (executable === "npx" && !argv.includes("--no-install")) {
     throw new Error("npx check bindings require --no-install so verification cannot fetch and execute a package");
   }
-  const classification = relativeCwd === "agents" || relativeCwd.startsWith("agents/") || /(?:^|\s)(?:\.\/)?agents\//.test(trimmed)
-    ? "labor"
-    : "asset";
-  return { command: trimmed, argv, cwd: relativeCwd, classification };
+  return { command: trimmed, argv, cwd: relativeCwd, classification: classifyBinding(trimmed, argv, relativeCwd) };
+}
+
+/**
+ * Asset or labor, decided from the command's address alone (AC11, R4).
+ *
+ * The question this answers is what a run LEFT BEHIND. A check that points at
+ * a file in the product tree is an asset: the run added a durable test that
+ * guards the criterion after the run is over. A check that points into the
+ * bookkeeping namespace, or at no file at all, is labor: it proved something
+ * once and guards nothing afterwards.
+ *
+ * This is a receipt measurement and never a gate. Nothing refuses because a
+ * run's ratio looks wrong - the number exists so a ratio can be OBSERVED
+ * before anyone sets a threshold from it (D-24, PRD 3장 non-goals).
+ *
+ * ASSUMPTION, not a user decision (PRD 4.3 "에이전트 가정", 10장). Treating a
+ * command with no path argument as labor is the harness's own judgement. It
+ * misfiles a path-less command that really does check product output - `npm
+ * test` is scored as labor even though it runs the project's suite. The
+ * revisit trigger is written into the PRD: an actual run where that
+ * misfiling mattered. Until such a case is observed, this stays as it is
+ * rather than growing a smarter heuristic nobody has measured.
+ */
+export function classifyBinding(command: string, argv: string[], cwd: string): "asset" | "labor" {
+  // The bookkeeping namespace, whether entered through the cwd or named in an
+  // argument. Broader than AC11's `agents/runs/**` on purpose: every path
+  // under `agents/` is bookkeeping, so a check aimed at any of it guards no
+  // product behaviour (AGENTS.md Namespaces).
+  if (cwd === "agents" || cwd.startsWith("agents/")) return "labor";
+  if (/(?:^|\s)(?:\.\/)?agents\//.test(command)) return "labor";
+  // A path argument is what makes a check a durable address. `--flag=path`
+  // counts; a bare word that happens to be an npm script does not.
+  const namesAPath = argv.slice(1).some((token) => token.replace(/^[^=]*=/, "").includes("/"));
+  return namesAPath ? "asset" : "labor";
 }
 
 function resolveDecisionPoints(criterion: AcceptanceCriterionItem, resolution: "green" | "parked" | "rebound", at: string): void {
@@ -167,6 +203,14 @@ export function bindCriterionCheck(
 ): CheckBinding {
   if (criterion.judgment === "judged" || criterion.judgment === null) {
     throw new Error(`${criterion.id} is ${criterion.judgment ?? "untagged"}; only machine criteria accept a Check binding`);
+  }
+  // A parked criterion has an open park record, and binding sets status back
+  // to "pending". Without this guard that combination is unrepresentable but
+  // reachable: parseImplementState refuses a status that contradicts park
+  // history, so one --bind on a parked criterion bricked the run for every
+  // later command with no recovery path. Reported by a peer review of main.
+  if (criterion.check.status === "parked") {
+    throw new Error(`${criterion.id} is parked; run \`sasu implement resume --ac ${criterion.id}\` before binding a new Check`);
   }
   const isRebind = criterion.check.bindings.length > 0;
   if (isRebind && (input.reason === null || input.reason.trim() === "")) {
@@ -215,31 +259,6 @@ export function fingerprintCheckOutput(stdout: string, stderr: string): { output
     outputFingerprint: sha256(normalized),
     failureClass: sha256(signature),
   };
-}
-
-function directoryDigest(root: string, skipRelative: string): string {
-  if (!fs.existsSync(root)) return sha256("[]");
-  const entries: Array<[string, string]> = [];
-  const visit = (absolute: string, relative: string): void => {
-    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) continue;
-      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (child === skipRelative || child.startsWith(`${skipRelative}/`)) continue;
-      if (entry.isDirectory()) visit(path.join(absolute, entry.name), child);
-      else if (entry.isFile()) entries.push([child, sha256(fs.readFileSync(path.join(absolute, entry.name)))]);
-    }
-  };
-  visit(root, "");
-  entries.sort(([left], [right]) => left.localeCompare(right));
-  return sha256(JSON.stringify(entries));
-}
-
-function checkTreeFingerprint(state: ImplementState, workRoot: string): CheckTreeFingerprint {
-  const product = captureSourceSnapshot(workRoot).digest;
-  const agentsRoot = path.join(workRoot, "agents");
-  const runRelativeToAgents = path.relative(agentsRoot, path.join(state.projectRoot, state.runDir)).split(path.sep).join("/");
-  const bookkeeping = directoryDigest(agentsRoot, runRelativeToAgents);
-  return { product, bookkeeping, all: sha256(JSON.stringify({ product, bookkeeping })) };
 }
 
 function openDecisionPoint(
@@ -308,32 +327,26 @@ export function runCriterionCheck(
   }
   const started = Date.now();
   const startedAt = nowIso();
-  const runtimeRoot = path.join(state.projectRoot, state.runDir, "check-runtime");
-  const runtimeHome = path.join(runtimeRoot, "home");
-  const runtimeTmp = path.join(runtimeRoot, "tmp");
-  const runtimeCache = path.join(runtimeRoot, "cache");
-  fs.mkdirSync(runtimeHome, { recursive: true });
-  fs.mkdirSync(runtimeTmp, { recursive: true });
-  fs.mkdirSync(runtimeCache, { recursive: true });
-  const checkEnv: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH ?? "",
-    LANG: process.env.LANG ?? "en_US.UTF-8",
-    CI: "1",
-    NO_COLOR: "1",
-    HOME: runtimeHome,
-    TMPDIR: runtimeTmp,
-    TMP: runtimeTmp,
-    TEMP: runtimeTmp,
-    XDG_CACHE_HOME: runtimeCache,
-    npm_config_cache: path.join(runtimeCache, "npm"),
-    ...(process.platform === "win32" && process.env.SYSTEMROOT ? { SYSTEMROOT: process.env.SYSTEMROOT } : {}),
-  };
-  const executed = executeMechanicalArgv(workRoot, validated.argv, validated.cwd, IMPLEMENT_CHECK_TIMEOUT_MS, checkEnv);
+  // Single-criterion checks and the verify batch go through the SAME executor
+  // (runner.executeUnit). Two executors for one command string is exactly the
+  // split R1 closes; keeping this call here and the batch call in verify is
+  // fine, running them through different machinery is not.
+  const { execution: executed, tree } = executeUnit(
+    state,
+    workRoot,
+    { argv: validated.argv, cwd: validated.cwd },
+    IMPLEMENT_CHECK_TIMEOUT_MS,
+  );
   const finishedAt = nowIso();
   const fingerprints = fingerprintCheckOutput(
     executed.stdout,
     `${executed.stderr}${executed.timedOut ? `\n[sasu] command timed out after ${IMPLEMENT_CHECK_TIMEOUT_MS}ms` : ""}`,
   );
+  // `mutatedTree` is deliberately NOT consulted here. The frozen-tree rule is
+  // scoped to verify (AC2), where a batch of commands must all be earned on
+  // one tree; a single criterion check is an iteration tool and a criterion
+  // that writes while proving itself is caught when verify re-runs it. One
+  // executor, two policies - stated rather than left to accident.
   const green = !executed.timedOut && executed.signal === null && executed.exitCode === 0;
   const attempt: CheckAttempt = {
     id: `A${criterion.check.attempts.length + 1}`,
@@ -347,7 +360,7 @@ export function runCriterionCheck(
     outcome: green ? "green" : "failed",
     outputFingerprint: fingerprints.outputFingerprint,
     failureClass: green ? null : fingerprints.failureClass,
-    tree: checkTreeFingerprint(state, workRoot),
+    tree,
     humanWindow: criterion.judgment === "machine+gate:human"
       ? { evidence: approval, recordedAt: startedAt, criterionId: criterion.id }
       : null,
@@ -367,15 +380,29 @@ export function runCriterionCheck(
 
 export function parkCriterion(
   criterion: AcceptanceCriterionItem,
-  input: { approval: string; reason: string; evidence: string | null },
+  input: { approval: string; reason: string; evidence: string | null; parkedBy?: "human" | "observer" },
 ): void {
   if (criterion.check.status === "parked") throw new Error(`${criterion.id} is already parked`);
-  if (input.approval.trim() === "") throw new Error(`park for ${criterion.id} requires --approval <verbatim human approval>`);
+  const parkedBy = input.parkedBy ?? "human";
   if (input.reason.trim() === "") throw new Error(`park for ${criterion.id} requires --reason <why>`);
+  if (parkedBy === "observer") {
+    // The supervisor may set aside a criterion the HARNESS has already
+    // flagged as stuck; it may not be the one who decides it is stuck. A
+    // posted decision point is that flag, and it is machine-owned - which is
+    // what keeps this from becoming a way to park anything inconvenient.
+    if (!criterion.check.decisionPoints.some((point) => point.resolvedAt === null)) {
+      throw new Error(`${criterion.id} has no open decision point; the supervisor may only park a criterion the harness has already flagged. Let the check run until it posts one, or park with verbatim human approval.`);
+    }
+    if (input.approval.trim() !== "") {
+      throw new Error(`--approval belongs to a human park; an observer park is authorised by the open decision point, not by a quote it is repeating`);
+    }
+  } else if (input.approval.trim() === "") {
+    throw new Error(`park for ${criterion.id} requires --approval <verbatim human approval>`);
+  }
   const at = nowIso();
   criterion.check.parks.push({
     parkedAt: at,
-    parkedBy: "human",
+    parkedBy,
     approval: input.approval.trim(),
     reason: input.reason.trim(),
     evidence: input.evidence?.trim() || null,
@@ -412,14 +439,19 @@ export function checkLedgerPayload(state: ImplementState): {
   sha256: string;
   bindings: Array<{ criterionId: string; bindingId: string; command: string; argv: string[]; cwd: string; classification: "asset" | "labor" }>;
 } {
+  // INPUTS only. `attempts` and `decisionPoints` are the record of past runs -
+  // outputs - and hashing them makes the fingerprint move every time anything
+  // executes. That defeats the convergence bound outright: an unchanged repeat
+  // could never be recognised as unchanged, so a no-judge round would always
+  // look like progress and never be charged (PRINCIPLES 13). `status` stays,
+  // because a criterion going pending -> green is a real change of input to
+  // the next verdict, while a failing check re-running identically is not.
   const ledger = state.acceptanceCriteria.map((criterion) => ({
     criterionId: criterion.id,
     judgment: criterion.judgment,
     evidenceDeclaration: criterion.evidenceDeclaration,
     status: criterion.check.status,
     bindings: criterion.check.bindings,
-    attempts: criterion.check.attempts,
-    decisionPoints: criterion.check.decisionPoints,
     parks: criterion.check.parks,
   }));
   const bindings = state.acceptanceCriteria.flatMap((criterion) => criterion.check.bindings.map((binding) => ({

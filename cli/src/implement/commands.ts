@@ -28,6 +28,24 @@ import {
 } from "./convergence";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { mechanicalBindings, parseImplementContract, reviewProfile, type ImplementContract } from "./contract";
+import { planRunUnits, runBatch, type RunUnit, type RunUnitResult } from "./runner";
+import { activeSuiteCommands, orphanSuiteFailures, suiteCommandNamed, suiteScore } from "./suite";
+import { runScore, scoreLine } from "./score";
+import { assertCommandAuthority, isIssuedCommand, recordVerb, rejectVerb, resequencePendingTasks, resolveIssuer, VerbRejected } from "./verbs";
+import { recordEvent } from "./events";
+import { AmendmentRejected, applyAmendment } from "./amend";
+import { issueQaBrief, latestBriefFor, registerTrail, resolveDriverRole, TrailRejected } from "./qa";
+import {
+  assertEscalateBudget,
+  buildHandoffBriefing,
+  EscalateRejected,
+  recordEscalation,
+  renderDiagnosis,
+  solverPrompt,
+  validateDiagnosis,
+} from "./solver";
+import { waitForEvent } from "./waiter";
+import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "./herdr";
 import {
   bindCriterionCheck,
   checkLedgerForCriterion,
@@ -37,6 +55,8 @@ import {
   resumeCriterion,
   runCriterionCheck,
   validateCheckBinding,
+  parseCommandArgv,
+  fingerprintCheckOutput,
 } from "./checks";
 import {
   acceptancePrompt,
@@ -47,6 +67,8 @@ import {
   IMPLEMENT_REVIEW_DIFF_MAX_CHARS,
   riskPrompt,
   type AcceptancePromptMaterial,
+  type EnvelopeClaim,
+  type EnvelopeFacts,
 } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import {
@@ -65,6 +87,8 @@ import {
   writeActivePointer,
   writeJsonAtomic,
   writeTextAtomic,
+
+  parseImplementState,
 } from "./store";
 import {
   IMPLEMENT_SCHEMA,
@@ -82,7 +106,9 @@ import {
   type MechanicalBinding,
   type MechanicalRunRecord,
   type RegisteredArtifact,
+  type ReviewProfile,
   type RiskLaneResult,
+  type SolverHandoff,
   type TaskItem,
   type TrackedRiskFinding,
   type UnifiedVerificationAttempt,
@@ -91,6 +117,11 @@ import {
   type VerificationInputManifest,
   type VerificationRoundContext,
   type VerificationRoundContexts,
+  type IssuedCommand,
+  type EvidenceReplacement,
+  type IssuerLabel,
+  ESCALATE_LIMIT_PER_RUN,
+  STALL_THRESHOLD_MS,
 } from "./types";
 
 export interface ImplementArgs {
@@ -119,8 +150,21 @@ export const DIRTY_INTAKE_OPTIONS = [
   },
 ] as const;
 
-function result(action: string, ok: boolean, message: string, detail?: Record<string, unknown>): ImplementCommandResult {
-  return { ok, action, exitCode: ok ? 0 : 1, message, ...(detail !== undefined ? { detail } : {}) };
+function result(
+  action: string,
+  ok: boolean,
+  message: string,
+  detail?: Record<string, unknown>,
+  summary?: string[],
+): ImplementCommandResult {
+  return {
+    ok,
+    action,
+    exitCode: ok ? 0 : 1,
+    message,
+    ...(detail !== undefined ? { detail } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+  };
 }
 
 class VerifyInvariantError extends Error {
@@ -649,6 +693,29 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       budgetGrants: [],
       deviations: [],
       riskFindings: [],
+      events: [],
+      verbs: [],
+      amendments: [],
+      evidenceReplacements: [],
+      // Sealed here, at start, and never re-derived: a mid-run edit of
+      // agents/config.json must not change what this run is measured
+      // against (AC5). From this point the sealed list is the authority and
+      // the config file is only the source it was taken from.
+      suite: {
+        sealedAt: createdAt,
+        commands: mechanicalBindings(projectRoot, workRoot, contract.verification).map((binding, index) => ({
+          id: `S${index + 1}`,
+          command: binding.command,
+          argv: parseCommandArgv(binding.command),
+          cwd: binding.cwd,
+          verificationIds: binding.verificationIds,
+        })),
+        exclusions: [],
+        results: [],
+      },
+      qaBriefs: [],
+      trails: [],
+      escalations: [],
       retirement: null,
       completion: null,
       createdAt,
@@ -774,7 +841,7 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
     const byId = new Map(state.tasks.map((entry) => [entry.id, entry]));
     const openDeps = item.dependsOn.filter((dep) => byId.get(dep)?.status !== "complete");
     if (openDeps.length > 0) throw new Error(`cannot close ${id}: depends on ${openDeps.join(", ")} (not complete)`);
-    const mechanicalBlockers = state.acceptanceCriteria
+    const mechanicalBlockers: string[] = state.acceptanceCriteria
       .filter((criterion) => item.acceptanceCriteria.includes(criterion.id))
       .filter((criterion) => criterion.judgment === "machine" || criterion.judgment === "machine+gate:human")
       .flatMap((criterion) => {
@@ -786,12 +853,22 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
         }
         return [];
       });
+    // Bookkeeping proof is scored across EVERY criterion the task covers, not
+    // only the machine ones: a green command proves the assertion holds, not
+    // that this run produced the `agents/**` file the assertion is about, and
+    // a judged criterion can have such a deliverable too (AC44).
+    const bookkeepingUnproved = state.acceptanceCriteria
+      .filter((criterion) => item.acceptanceCriteria.includes(criterion.id))
+      .filter((criterion) => criterion.check.status !== "parked")
+      .flatMap((criterion) => bookkeepingBlockers(state, criterion));
+    mechanicalBlockers.push(...bookkeepingUnproved);
     if (mechanicalBlockers.length > 0) {
       throw new Error(`cannot close ${id}; blocking acceptance criteria:\n- ${mechanicalBlockers.join("\n- ")}. Free-text --evidence is optional context and cannot satisfy this guard.`);
     }
   }
   item.status = nextStatus;
   if (evidence !== "" && !item.evidence.some((entry) => entry.text === evidence)) item.evidence.push({ at: nowIso(), text: evidence });
+  recordEvent(state, { kind: "task-status", actor: resolveIssuer(flag(args, "issuer")), subject: id, summary: `${id} is ${nextStatus}`, at: nowIso() });
   persistState(statePath, state);
   const complete = new Set(state.tasks.filter((entry) => entry.status === "complete").map((entry) => entry.id));
   const remaining = state.tasks.filter((entry) => entry.status !== "complete");
@@ -818,6 +895,22 @@ function task(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   });
 }
 
+/**
+ * Park is for acceptance criteria only (AC4).
+ *
+ * Without this the attempt fails as "unknown acceptance criterion S1", which
+ * is a refusal but not a reason - and the reason is the point: a suite
+ * command has no criterion to prove later, so the only way to stop running
+ * one is to remove it from the sealed list through an amendment.
+ */
+function assertNotSuiteCommand(state: ImplementState, args: ImplementArgs): void {
+  const id = (flag(args, "ac") ?? "").trim();
+  if (id === "") return;
+  const command = suiteCommandNamed(state, id);
+  if (command === null) return;
+  throw new Error(`${command.id} (${command.command}) is a sealed suite command, not an acceptance criterion; suite commands cannot be parked. Fix the command, or exclude it from the sealed list through an amendment carrying verbatim human approval.`);
+}
+
 function acceptanceCriterion(state: ImplementState, args: ImplementArgs) {
   const id = requiredFlag(args, "ac").toUpperCase();
   const criterion = state.acceptanceCriteria.find((entry) => entry.id === id);
@@ -837,12 +930,20 @@ function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     }
   }
   const command = flag(args, "bind")?.trim();
+  const bookkeeping = flag(args, "bookkeeping")?.trim();
+  if (bookkeeping !== undefined) {
+    if (command !== undefined) {
+      throw new Error("--bookkeeping declares a deliverable and --bind declares how a criterion is checked; issue them separately");
+    }
+    return declareBookkeeping(statePath, state, criterion, bookkeeping, args);
+  }
   if (command !== undefined) {
     const validated = validateCheckBinding(workRoot, command, flag(args, "cwd") ?? ".");
     const binding = bindCriterionCheck(criterion, {
       ...validated,
       reason: flag(args, "reason")?.trim() || null,
     });
+    recordEvent(state, { kind: "check-bound", actor: resolveIssuer(flag(args, "issuer")), subject: criterion.id, summary: `${criterion.id} bound to ${binding.command}`, at: nowIso() });
     persistState(statePath, state);
     return result("check", true, `${criterion.id} Check ${binding.id} bound (${binding.classification}); run \`sasu implement check --ac ${criterion.id}\``, {
       criterionId: criterion.id,
@@ -855,8 +956,18 @@ function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     throw new Error("--cwd and --reason are valid only with --bind");
   }
   const attempt = runCriterionCheck(state, workRoot, criterion, flag(args, "human-window")?.trim() || null);
+  const openNow = criterion.check.decisionPoints.filter((point) => point.resolvedAt === null);
+  recordEvent(state, {
+    kind: "check-attempt",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    // A newly posted decision point is the event the supervisor most needs to
+    // wake on: it is the harness saying this criterion is stuck.
+    summary: `${criterion.id} check ${attempt.outcome} (exit ${attempt.exitCode})${openNow.length > 0 ? `; decision point open: ${openNow.map((point) => point.kind).join(", ")}` : ""}`,
+    at: nowIso(),
+  });
   persistState(statePath, state);
-  const open = criterion.check.decisionPoints.filter((point) => point.resolvedAt === null);
+  const open = openNow;
   return result("check", attempt.outcome === "green", `${criterion.id} Check ${attempt.outcome} (exit ${attempt.exitCode}); consecutive failures ${criterion.check.consecutiveFailures}${open.length > 0 ? `; decision point: ${open.map((point) => point.kind).join(", ")}` : ""}`, {
     criterionId: criterion.id,
     checkStatus: criterion.check.status,
@@ -869,16 +980,369 @@ function park(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  assertNotSuiteCommand(state, args);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertCommandAuthority("park", issuer);
   const criterion = acceptanceCriterion(state, args);
-  parkCriterion(criterion, {
+  const at = nowIso();
+  const entry = { verb: "park" as const, issuer, target: criterion.id, reason: flag(args, "reason")?.trim() ?? "", at };
+  try {
+    parkCriterion(criterion, {
+      approval: flag(args, "approval")?.trim() ?? "",
+      reason: flag(args, "reason")?.trim() ?? "",
+      evidence: flag(args, "evidence")?.trim() || null,
+      parkedBy: issuer === "observer" ? "observer" : "human",
+    });
+  } catch (error) {
+    rejectVerb(state, entry, "transition", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
+  }
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, { kind: "park", actor: issuer, subject: criterion.id, summary: `${criterion.id} parked by ${issuer}`, at });
+  persistState(statePath, state);
+  const authority = issuer === "observer" ? "an open decision point" : "recorded human approval";
+  return result("park", true, `${criterion.id} parked by ${issuer} on ${authority}; finalize remains blocked until resume and proof`, {
+    criterionId: criterion.id,
+    issuer,
+    park: criterion.check.parks.at(-1),
+  });
+}
+
+/**
+ * Wait once, in the background, for the run to do something.
+ *
+ * Read-only, and therefore absent from COMMAND_AUTHORITY: anyone may watch.
+ *
+ * Concurrency note (D-45 re-read against the code): the decision record says
+ * the event log "reuses the existing state write lock". There is no such
+ * lock - implement state is written by a plain atomic rename (persistState),
+ * and the only lock in the repository belongs to the gate store. The decision
+ * is therefore honoured as what it can mean here: the log lives INSIDE
+ * state.json and is written through the one existing CLI write path, so this
+ * PRD adds no second record and no second concurrency mechanism. The waiter
+ * only reads.
+ */
+async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
+  const { statePath } = loadState(projectRoot, stateOptions(args));
+  const sinceFlag = flag(args, "since")?.trim();
+  const since = sinceFlag === undefined || sinceFlag === "" ? null : Number(sinceFlag);
+  if (since !== null && (!Number.isInteger(since) || since < 0)) {
+    throw new Error(`--since must be a non-negative integer event id, got ${sinceFlag}`);
+  }
+  const pidFlag = flag(args, "pid")?.trim();
+  const pid = pidFlag === undefined || pidFlag === "" ? null : Number(pidFlag);
+  if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new Error(`--pid must be a positive integer, got ${pidFlag}`);
+  const agent = flag(args, "agent")?.trim() || null;
+  if (agent !== null && pid !== null) throw new Error("--agent and --pid are two answers to the same question; give one");
+
+  // Two probes for one question, and the caller picks by what it actually
+  // knows. `--pid` is the universal one and works in a bare terminal;
+  // `--agent` routes through the herdr adapter's `alive` hole, which is what
+  // a supervisor running under herdr has a name for rather than a pid. An
+  // adapter hole that cannot answer degrades to no probe at all instead of
+  // reporting a live implementor it never checked (R9).
+  const probe = agent !== null
+    ? (() => {
+      const capabilities = herdrCapabilities();
+      if (!capabilities.holes.alive) return { probe: `unavailable: ${capabilities.reason}`, isAlive: null };
+      return {
+        probe: "herdr-adapter",
+        isAlive: () => isAgentAlive({ name: agent }).value === true,
+      };
+    })()
+    : pid !== null
+      // signal 0 tests for the process's existence without touching it.
+      ? { probe: "pid", isAlive: () => { try { process.kill(pid, 0); return true; } catch { return false; } } }
+      : { probe: "unavailable", isAlive: null };
+
+  const outcome = await waitForEvent({
+    loadState: () => parseImplementState(fs.readFileSync(statePath, "utf8")),
+    since,
+    stallMs: STALL_THRESHOLD_MS,
+    isAlive: probe.isAlive,
+  });
+  return result("await", true, `woke on ${outcome.reason}: ${outcome.detail}`, {
+    reason: outcome.reason,
+    cursor: outcome.cursor,
+    waitedMs: outcome.waitedMs,
+    events: outcome.events,
+    livenessProbe: probe.probe,
+  });
+}
+
+function resequence(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const at = nowIso();
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertCommandAuthority("resequence", issuer);
+  const reason = flag(args, "reason")?.trim() ?? "";
+  const requested = requiredFlag(args, "order").split(",");
+  const entry = { verb: "resequence" as const, issuer, target: null, reason, at };
+  let ordered: string[];
+  try {
+    ordered = resequencePendingTasks(state, requested);
+  } catch (error) {
+    // Recorded as an argument refusal before it is thrown: a supervisor whose
+    // order was rejected must be able to read why from the run's history, not
+    // only from the terminal it happened to be watching.
+    rejectVerb(state, entry, "arguments", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
+  }
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, { kind: "resequence", actor: issuer, subject: null, summary: `pending order set to ${ordered!.join(", ")} by ${issuer}`, at });
+  persistState(statePath, state);
+  return result("resequence", true, `pending task order is now ${ordered!.join(", ")}; no evidence was invalidated`, {
+    order: ordered!,
+    pendingTasks: state.tasks.filter((entry) => entry.status === "pending").map((entry) => ({
+      id: entry.id,
+      status: entry.status,
+      dependsOn: entry.dependsOn,
+    })),
+    verb: state.verbs.at(-1),
+  });
+}
+
+/**
+ * Correct the question paper (R5).
+ *
+ * `amend` is the ONLY sanctioned way past the PRD drift guard. Everywhere
+ * else a source PRD that no longer matches its pinned snapshot is a hard
+ * error, because a question paper that changes under a run makes every green
+ * on it unreadable. Amendment does not weaken that rule; it re-seals, and
+ * pays for the change by taking back exactly the greens whose rows moved.
+ *
+ * Human-only issuance is enforced by COMMAND_AUTHORITY at dispatch, before
+ * this function runs. That is a declaration and not an authentication
+ * (D-39); what it buys is that the ledger records the authority the change
+ * was accepted under, and that an `--issuer observer` amendment is refused
+ * with a reason instead of quietly succeeding.
+ */
+function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const source = normalizeProjectPath(projectRoot, state.prdPath);
+  if (!fs.existsSync(source.absolute) || !fs.statSync(source.absolute).isFile()) {
+    throw new Error(`amended PRD not found at ${state.prdPath}; edit the source PRD first, then amend`);
+  }
+  const text = fs.readFileSync(source.absolute, "utf8");
+  const excludeSuite = (flag(args, "exclude-suite") ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  // An exclusion IS the amendment's substance, so it does not also need a PRD
+  // edit to justify itself (AC42). Without one, an identical PRD means there
+  // is nothing to correct.
+  if (sha256(text) === state.prd.sha256 && excludeSuite.length === 0) {
+    throw new AmendmentRejected("arguments", `${state.prdPath} is byte-identical to the pinned snapshot; there is nothing to amend. Edit the PRD first, or name a sealed suite command with --exclude-suite.`);
+  }
+  const at = nowIso();
+  const outcome = applyAmendment(projectRoot, state, {
     approval: flag(args, "approval")?.trim() ?? "",
     reason: flag(args, "reason")?.trim() ?? "",
-    evidence: flag(args, "evidence")?.trim() || null,
+    text,
+    excludeSuite,
+  }, at);
+  const { record, plan } = outcome;
+  const summary = [
+    `${plan.invalidatedCriteria.length} invalidated`,
+    `${plan.addedCriteria.length} added`,
+    `${plan.unchangedCriteria.length} untouched`,
+    ...(record.suiteSnapshotUpdated ? [`${record.excludedSuiteCommands!.length} suite command(s) excluded`] : []),
+  ].join(", ");
+  recordEvent(state, {
+    kind: "amendment",
+    actor: "human",
+    subject: null,
+    summary: `amendment ${record.id}: ${summary}`,
+    at,
   });
   persistState(statePath, state);
-  return result("park", true, `${criterion.id} parked by recorded human approval; finalize remains blocked until resume and proof`, {
+  return result("amend", true, `amendment ${record.id} sealed; acceptance criteria ${summary}. Previous snapshot archived at ${record.previousSnapshotPath}`, {
+    amendment: record,
+    invalidatedCriteria: plan.invalidatedCriteria,
+    addedCriteria: plan.addedCriteria,
+    unparkedCriteria: plan.unparkedCriteria,
+    unchangedCriteria: plan.unchangedCriteria,
+  });
+}
+
+/**
+ * Issue the numbered script for a driven criterion (R11, AC30).
+ *
+ * This is the ONLY briefing channel by construction, not by instruction: a
+ * trail can only name a briefId this command minted, so a drive carried out
+ * on instructions from anywhere else has nothing to register against.
+ */
+function qaBrief(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  const at = nowIso();
+  const previous = latestBriefFor(state, criterion.id);
+  const brief = issueQaBrief(state, criterion, at);
+  recordEvent(state, {
+    kind: "trail",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    summary: `qa brief ${brief.briefId} issued for ${criterion.id} (${brief.steps.length} step(s))`,
+    at,
+  });
+  persistState(statePath, state);
+  const reissue = previous === null ? "" : `; supersedes ${previous.briefId}`;
+  return result("qa-brief", true, `brief ${brief.briefId} issued for ${criterion.id} with ${brief.steps.length} step(s)${reissue}. Register the drive with \`sasu implement trail --ac ${criterion.id} --brief ${brief.briefId} --steps ${brief.steps.map((step) => step.id).join(",")} --driver <human|observer|qa-agent>\``, {
+    brief,
+    supersedes: previous?.briefId ?? null,
+  });
+}
+
+/**
+ * Register a drive against its brief (R11, AC31, AC32).
+ *
+ * The driver role is a declaration and not an authentication, exactly like
+ * the issuer label (PRD 10장). What the check buys is that an implementor
+ * driving its own work must lie in the record to do it, and the record is
+ * what a human audits.
+ */
+function trail(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const criterion = acceptanceCriterion(state, args);
+  const driverRole = resolveDriverRole(flag(args, "driver"));
+  const artifactPaths = (flag(args, "artifacts") ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  const at = nowIso();
+  const record = registerTrail(state, {
     criterionId: criterion.id,
-    park: criterion.check.parks.at(-1),
+    briefId: requiredFlag(args, "brief").trim(),
+    driverRole,
+    coveredStepIds: (flag(args, "steps") ?? "").split(","),
+    artifactPaths,
+  }, at);
+  recordEvent(state, {
+    kind: "trail",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    summary: `trail ${record.id} accepted for ${criterion.id} against ${record.briefId}, driven by ${driverRole}`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("trail", true, `trail ${record.id} accepted for ${criterion.id}: every step of ${record.briefId} covered, driven by ${driverRole} (declared, not authenticated)`, {
+    trail: record,
+    superseded: state.trails.filter((entry) => entry.criterionId === criterion.id && entry.status === "superseded").map((entry) => entry.id),
+  });
+}
+
+/**
+ * Summon the solver, then reset the implementor (R12, AC33-AC35).
+ *
+ * The ordering is the guarantee. Everything before `runJudge` reads; the
+ * judge call itself runs on the read-only backend every other lane uses; and
+ * the first state write happens after it has returned. So "zero state writes
+ * during solver execution" (AC33) is a property of the call graph, not a rule
+ * somebody has to remember.
+ */
+async function escalate(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const config = loadConfig(state.projectRoot);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertEscalateBudget(state);
+  const reason = flag(args, "reason")?.trim() ?? "";
+  if (reason === "") throw new EscalateRejected("arguments", "escalate requires --reason <what the implementor is stuck on>");
+  const target = flag(args, "target")?.trim().toUpperCase() || null;
+  if (target !== null && !state.tasks.some((entry) => entry.id === target) && !state.acceptanceCriteria.some((entry) => entry.id === target)) {
+    throw new EscalateRejected("arguments", `unknown --target ${target}; name a task or an acceptance criterion in this run`);
+  }
+  const agent = flag(args, "agent")?.trim() || null;
+
+  // Read-only preparation. `readPane` is diagnosis input and nothing else: a
+  // missing pane degrades the envelope, it does not stop the escalation (R9).
+  const prd = requirePinnedPrd(projectRoot, state);
+  const ledger = JSON.stringify(checkLedgerPayload(state), null, 2);
+  const pane = agent === null
+    ? { ok: false, value: null, problem: "no --agent given, so there is no pane to read" }
+    : readPane({ name: agent });
+
+  const profile: ReviewProfile = "high-risk";
+  const lane = await judgeLane(crypto.randomUUID(), () => runJudge(
+    config,
+    "implement:solver",
+    // The solver reuses the high-risk profile's routing rather than adding a
+    // model knob of its own (R12, D-46): one routing table, not two.
+    profile,
+    solverPrompt({
+      target,
+      reason,
+      prd,
+      checkLedger: ledger,
+      paneExcerpt: pane.value,
+      paneProblem: pane.problem,
+    }),
+    (value) => validateDiagnosis(value),
+  ));
+
+  const at = nowIso();
+  if (lane.verdict === "ERROR" || lane.result === null) {
+    const failure = lane.error?.message ?? "the solver returned nothing usable";
+    const record = recordEscalation(state, {
+      at, target, reason, profile,
+      model: lane.judge?.model ?? null,
+      outcome: "summon-failed",
+      diagnosis: null,
+      error: failure,
+      handoff: null,
+    });
+    recordEvent(state, { kind: "escalate", actor: issuer, subject: target, summary: `escalation ${record.id} failed to summon a solver`, at });
+    persistState(statePath, state);
+    // A failed summon is a recorded outcome, not a thrown error: the
+    // supervisor asked a question and the honest answer is "nobody came",
+    // which belongs in the ledger where the next decision is made (AC35).
+    return result("escalate", false, `escalation ${record.id} failed: ${failure}. The implementor was NOT reset. ${ESCALATE_LIMIT_PER_RUN - state.escalations.length} escalation(s) remain.`, {
+      escalation: record,
+      escalationsRemaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length,
+    });
+  }
+
+  const diagnosis = lane.result;
+  const solverDir = `${state.runDir}/artifacts/solver`;
+  const id = Math.max(0, ...state.escalations.map((entry) => entry.id)) + 1;
+  const handoff: SolverHandoff = {
+    prdSnapshotPath: state.prd.snapshotPath,
+    diagnosisPath: `${solverDir}/diagnosis-${id}.md`,
+    checkLedgerPath: `${solverDir}/check-ledger-${id}.json`,
+  };
+  fs.mkdirSync(path.join(projectRoot, solverDir), { recursive: true });
+  writeTextAtomic(path.join(projectRoot, handoff.diagnosisPath), renderDiagnosis({ id, at, target, reason }, diagnosis));
+  writeTextAtomic(path.join(projectRoot, handoff.checkLedgerPath), `${ledger}\n`);
+
+  const briefing = buildHandoffBriefing(handoff);
+  const reset = agent === null
+    ? { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" }
+    : spawnImplementor({ name: `${agent}-r${id}`, cwd: state.worktree?.path ?? projectRoot, prompt: briefing });
+
+  const record = recordEscalation(state, {
+    at, target, reason, profile,
+    model: lane.judge?.model ?? null,
+    outcome: "diagnosed",
+    diagnosis: diagnosis.summary,
+    error: null,
+    handoff,
+  });
+  recordEvent(state, {
+    kind: "escalate",
+    actor: issuer,
+    subject: target,
+    summary: `escalation ${record.id} diagnosed${reset.ok ? " and the implementor was reset" : "; the context reset is the supervisor's to perform"}`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}`, {
+    escalation: record,
+    handoff,
+    briefing,
+    contextReset: reset.ok,
+    contextResetProblem: reset.problem,
+    escalationsRemaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length,
   });
 }
 
@@ -886,8 +1350,18 @@ function resume(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  assertCommandAuthority("resume", issuer);
   const criterion = acceptanceCriterion(state, args);
-  resumeCriterion(criterion);
+  const at = nowIso();
+  const entry = { verb: "resume" as const, issuer, target: criterion.id, reason: flag(args, "reason")?.trim() ?? "", at };
+  try {
+    resumeCriterion(criterion);
+  } catch (error) {
+    rejectVerb(state, entry, "transition", error instanceof Error ? error.message : String(error), () => persistState(statePath, state));
+  }
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, { kind: "resume", actor: issuer, subject: criterion.id, summary: `${criterion.id} resumed by ${issuer}`, at });
   persistState(statePath, state);
   return result("resume", true, `${criterion.id} resumed to pending; consecutive failure counter reset to 0`, {
     criterionId: criterion.id,
@@ -914,6 +1388,142 @@ function inspectArtifactFile(absolute: string, kind: string): { sha256: string; 
  * one as runtime evidence is self-invalidating (see the refusal site), so
  * the whole class is refused at registration and purged from legacy state.
  */
+/**
+ * Declare which `agents/**` files this criterion's work will change (AC44).
+ *
+ * The baseline is taken NOW, which is why the declaration has to precede the
+ * work: "the file changed" is only a fact relative to a moment someone
+ * recorded. Declaring after the edit leaves baseline == current, and the
+ * close refusal says exactly that rather than failing mysteriously.
+ */
+function declareBookkeeping(
+  statePath: string,
+  state: ImplementState,
+  criterion: AcceptanceCriterionItem,
+  raw: string,
+  args: ImplementArgs,
+): ImplementCommandResult {
+  const requested = raw.split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  if (requested.length === 0) throw new Error("--bookkeeping requires at least one project-relative path under agents/");
+  const declared = criterion.check.bookkeeping ?? [];
+  const at = nowIso();
+  for (const entry of requested) {
+    const target = normalizeProjectPath(state.projectRoot, entry);
+    assertEvidencePathInsideProject(state.projectRoot, target);
+    if (!target.relative.startsWith("agents/")) {
+      throw new Error(`--bookkeeping is for the bookkeeping namespace only: ${target.relative} is product tree, and a product change is already proved by the judged diff`);
+    }
+    // The harness rewrites these itself, so "it changed" would prove the
+    // harness ran, not that this criterion delivered anything.
+    if (harnessOwnedRunPath(state, canonicalRunRelative(state, target))) {
+      throw new Error(`${target.relative} is harness-owned and rewritten by the harness; it can never be a criterion's deliverable`);
+    }
+    if (declared.some((existing) => existing.path === target.relative)) {
+      throw new Error(`${target.relative} is already declared for ${criterion.id}; a re-declaration would reset the baseline the proof rests on`);
+    }
+    declared.push({
+      path: target.relative,
+      baselineSha256: fs.existsSync(target.absolute) ? sha256(fs.readFileSync(target.absolute)) : null,
+      declaredAt: at,
+    });
+  }
+  criterion.check.bookkeeping = declared;
+  recordEvent(state, {
+    kind: "check-bound",
+    actor: resolveIssuer(flag(args, "issuer")),
+    subject: criterion.id,
+    summary: `${criterion.id} declares ${requested.length} bookkeeping deliverable(s)`,
+    at,
+  });
+  persistState(statePath, state);
+  return result("check", true, `${criterion.id} declares ${declared.length} bookkeeping deliverable(s); each must move from its baseline and be registered as an artifact before close`, {
+    criterionId: criterion.id,
+    bookkeeping: declared,
+  });
+}
+
+/**
+ * Why a declared bookkeeping deliverable is not yet proved, if it is not.
+ *
+ * Two instruments, both structural: the content moved from the baseline
+ * recorded at declaration, and a registered artifact for this criterion
+ * vouches for where it moved to. Neither is a diff, which is the whole point
+ * - `agents/**` never reaches one.
+ */
+function bookkeepingBlockers(state: ImplementState, criterion: AcceptanceCriterionItem): string[] {
+  const blockers: string[] = [];
+  for (const target of criterion.check.bookkeeping ?? []) {
+    const absolute = path.join(state.projectRoot, target.path);
+    if (!fs.existsSync(absolute)) {
+      blockers.push(`${criterion.id}: declared bookkeeping deliverable ${target.path} does not exist`);
+      continue;
+    }
+    const current = sha256(fs.readFileSync(absolute));
+    if (current === target.baselineSha256) {
+      blockers.push(
+        `${criterion.id}: ${target.path} is unchanged since it was declared at ${target.declaredAt}`
+          + ` - either the work has not happened yet, or it happened before the declaration and the baseline recorded its result`,
+      );
+      continue;
+    }
+    const vouched = state.artifacts.some((entry) =>
+      entry.acceptanceCriterionId === criterion.id && entry.path === target.path && entry.sha256 === current);
+    if (!vouched) {
+      blockers.push(
+        `${criterion.id}: ${target.path} changed but no registered artifact vouches for its current content`
+          + ` - \`sasu implement artifact --ac ${criterion.id} --kind file --path ${target.path} --description "<what this run wrote>"\``,
+      );
+    }
+  }
+  return blockers;
+}
+
+/** Append one resubmission to the run's evidence history (AC40). */
+export function recordEvidenceReplacement(
+  state: ImplementState,
+  entry: Omit<EvidenceReplacement, "id" | "at">,
+): EvidenceReplacement {
+  const record: EvidenceReplacement = {
+    id: Math.max(0, ...state.evidenceReplacements.map((existing) => existing.id)) + 1,
+    at: nowIso(),
+    ...entry,
+  };
+  state.evidenceReplacements.push(record);
+  return record;
+}
+
+/**
+ * Refuse an agent-supplied evidence path whose real target leaves the project.
+ *
+ * `normalizeProjectPath` is lexical only: `agents/proof.txt` symlinked to a
+ * credential file outside the project satisfies it, and `inspectArtifactFile`
+ * then statSync/readFileSync through the link and hand those bytes to an
+ * external judge. Registration is the only place to stop that, because after
+ * it the path is hash-pinned and indistinguishable from honest evidence.
+ *
+ * The containment test is the check-binding idiom from checks.ts: walk to the
+ * nearest existing ancestor, realpath it, and refuse a relative that escapes.
+ * The ancestor walk is what still admits a bookkeeping declaration for a file
+ * this run has not written yet, while refusing a link that already escapes.
+ */
+function assertEvidencePathInsideProject(projectRoot: string, target: { absolute: string; relative: string }): void {
+  const realRoot = fs.realpathSync(projectRoot);
+  let existingAncestor = target.absolute;
+  while (!fs.existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  const real = fs.realpathSync(existingAncestor);
+  const relative = path.relative(realRoot, real);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(
+      `evidence path resolves outside the project: ${target.relative} -> ${real}.`
+        + " Registration reads the file and hands its bytes to the judge, so the real target must stay inside the record tree.",
+    );
+  }
+}
+
 function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
   return relative === `${state.runDir}/state.json`
     || relative === state.prd.snapshotPath
@@ -967,6 +1577,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   // Artifact paths live in the RECORD tree (normally under the run dir):
   // the receipt cites them, and the record must outlive the worktree.
   const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
+  assertEvidencePathInsideProject(state.projectRoot, target);
   // A file the harness itself rewrites can never be frozen evidence: the
   // next harness write invalidates the frozen sha and the integrity
   // preflight fails forever with no unregister. 2026-08-27 crawler-arena hit
@@ -1010,6 +1621,20 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     ...inspected,
     registeredAt: nowIso(),
   };
+  // Replacing evidence is the move after a rejection, and it used to leave no
+  // trace: the old row was dropped and the record could not tell a criterion
+  // proved once from one proved on the third try (R15 ①, AC40).
+  if (previous !== undefined) {
+    recordEvidenceReplacement(state, {
+      criterionId: acceptanceCriterionId ?? verificationId ?? "run",
+      kind: "artifact",
+      previous: `${previous.path} @ ${previous.sha256} registered ${previous.registeredAt}`,
+      next: `${registered.path} @ ${registered.sha256}`,
+      // The file no longer holds those bytes, so the old vouch is not merely
+      // superseded - it is false, and a false vouch must not survive.
+      priorDisposition: "invalidated",
+    });
+  }
   state.artifacts = state.artifacts.filter((entry) => !(
     entry.verificationId === verificationId
     && entry.acceptanceCriterionId === acceptanceCriterionId
@@ -1018,6 +1643,69 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   state.artifacts.push(registered);
   persistState(statePath, state);
   return result("artifact", true, `artifact registered for ${targetLabel}: ${target.relative}`, { artifact: registered });
+}
+
+/**
+ * Routes a supervisor's remark into the design lane's ledger (R10).
+ *
+ * No new lane, no new blocker, no second review surface: the remark becomes a
+ * `TrackedDesignComment` like any other, so it inherits the disposition
+ * command and the `finalize --status complete` refusal that already exist
+ * (D-25, AGENTS.md Review Guide 4 - this adds a verb and deletes the case for
+ * a supervisor-remark lane).
+ *
+ * The key is minted from the comment id rather than from `area::path`, which
+ * is the lane's identity rule. That rule exists so a re-worded lane comment
+ * matches its previous self across attempts; a raised comment is never
+ * re-derived, and reusing the lane key would collide a supervisor's second
+ * remark on one file with the first, and with any lane comment on it.
+ */
+function raiseDesignComment(
+  statePath: string,
+  state: ImplementState,
+  args: ImplementArgs,
+): ImplementCommandResult {
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  const at = nowIso();
+  const area = requiredFlag(args, "area").trim();
+  const target = normalizeProjectPath(state.projectRoot, requiredFlag(args, "path"));
+  const text = requiredFlag(args, "text").trim();
+  const suggestion = requiredFlag(args, "suggestion").trim();
+  // No emptiness check here: `requiredFlag` already refuses a blank value, and
+  // a second one would be an unreachable branch pretending to be a guard.
+  const entry = { verb: "design-raise" as const, issuer, target: target.relative, reason: text, at };
+  const tracked = state.designComments ?? [];
+  const id = `D${tracked.reduce((high, existing) => Math.max(high, Number(existing.id.slice(1)) || 0), 0) + 1}`;
+  const comment: TrackedDesignComment = {
+    area,
+    path: target.relative,
+    text,
+    suggestion,
+    id,
+    key: `raised::${id}`,
+    status: "open",
+    raisedBy: issuer,
+    accepted: null,
+    firstSeenAt: at,
+    lastSeenAt: at,
+    lastSeenAttemptId: "",
+  };
+  tracked.push(comment);
+  state.designComments = tracked;
+  recordVerb(state, { ...entry, outcome: "accepted" });
+  recordEvent(state, {
+    kind: "comment",
+    actor: issuer,
+    subject: id,
+    summary: `${id} raised by ${issuer} on ${target.relative}`,
+    at,
+  });
+  persistState(statePath, state);
+  const open = openDesignComments(state);
+  return result("design", true, `${id} raised by ${issuer} on ${target.relative}; ${open.length} design comment(s) await a disposition`, {
+    comment,
+    open,
+  });
 }
 
 /**
@@ -1030,6 +1718,7 @@ function design(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  if (args.flags.get("raise") === true) return raiseDesignComment(statePath, state, args);
   const id = requiredFlag(args, "id").toUpperCase();
   const note = requiredFlag(args, "accept").trim();
   if (note === "") throw new Error("--accept requires the reason the comment is being left alone");
@@ -1053,8 +1742,51 @@ function design(projectRoot: string, args: ImplementArgs): ImplementCommandResul
 }
 
 /** Records the user's verbatim decision to leave one risk finding unresolved. */
+/**
+ * Declares one open finding structurally unfixable (R16 ③, AC46).
+ *
+ * 2026-08-29, interview-anchor: the run is still active today because the
+ * blocked close only asked whether the judge budget was spent. Three rounds
+ * whose outcome nobody disputed stood between a known-terminal run and an
+ * honest record, so the record stayed a lie by omission instead.
+ *
+ * This is deliberately not `--accept`. Accepting says "we are shipping with
+ * this"; declaring non-convergence says "this cannot be fixed and we are
+ * closing blocked", and the finding stays OPEN in the receipt to say so.
+ */
+function riskNonConvergent(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const id = requiredFlag(args, "id").toUpperCase();
+  const approval = requiredFlag(args, "approval");
+  const reason = requiredFlag(args, "reason");
+  const entry = state.riskFindings.find((candidate) => candidate.id === id);
+  if (entry === undefined) {
+    const known = openRiskFindings(state).map((candidate) => candidate.id);
+    throw new Error(`unknown risk finding: ${id}${known.length === 0 ? "" : ` (open: ${known.join(", ")})`}`);
+  }
+  if (entry.status !== "open") {
+    throw new Error(`${id} is ${entry.status}, not open: only an open finding can be declared non-convergent`);
+  }
+  // The structural fact the harness owns: how many judged attempts this
+  // finding has already survived. Corroboration in the record, never the gate.
+  const originIndex = state.verificationAttempts.findIndex((attempt) => attempt.id === entry.originAttemptId);
+  const roundsUnchanged = originIndex === -1 ? 0 : state.verificationAttempts.length - originIndex - 1;
+  entry.nonConvergence = { at: nowIso(), approval, reason, declaredBy: "human", roundsUnchanged };
+  persistState(statePath, state);
+  return result(
+    "risk",
+    true,
+    `${id} declared non-convergent after ${roundsUnchanged} judged round(s) unchanged; it stays open and `
+      + `\`finalize --status complete\` stays refused, but \`--status blocked\` no longer waits for the judge budget`,
+    { finding: entry, open: openRiskFindings(state) },
+  );
+}
+
 function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  if (args.flags.get("accept") !== true) throw new Error("risk requires --accept");
+  if (args.flags.get("non-convergent") === true) return riskNonConvergent(projectRoot, args);
+  if (args.flags.get("accept") !== true) throw new Error("risk requires --accept or --non-convergent");
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
@@ -1086,6 +1818,160 @@ function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   });
 }
 
+/**
+ * What a person asks `status` for, in the order they ask it.
+ *
+ * 2026-08-29, interview-anchor: the parked criterion's reason was in the
+ * output and nobody could find it, because the output was 491 lines of JSON.
+ * The fix is not a shorter record - it is answering the question above the
+ * record (AC47). Sections with nothing to say print nothing, so a healthy run
+ * stays short and an unhealthy one is all signal.
+ */
+/**
+ * Write the refusal into the run's own history before it reaches the caller.
+ *
+ * 2026-08-29, interview-anchor (R16 ②): the gate refused a supervisor and the
+ * run's record said nothing had been attempted. An audit trail that only
+ * remembers what succeeded cannot answer "who tried to close this task?",
+ * which is the whole reason the issuer label exists (PRD 10장: the mitigation
+ * for a false declaration is the record, so the record has to exist).
+ *
+ * A missing or unreadable run is not an error here. The command is being
+ * refused either way, and replacing the authority message with a bookkeeping
+ * one would hide the answer the caller asked for.
+ */
+function recordAuthorityRefusal(
+  projectRoot: string,
+  args: ImplementArgs,
+  subject: IssuedCommand,
+  issuer: IssuerLabel,
+  message: string,
+): void {
+  let statePath: string;
+  let state: ImplementState;
+  try {
+    ({ statePath, state } = loadState(projectRoot, stateOptions(args)));
+  } catch {
+    return;
+  }
+  recordVerb(state, {
+    at: nowIso(),
+    verb: subject,
+    issuer,
+    target: flag(args, "ac")?.toUpperCase() ?? flag(args, "id")?.toUpperCase() ?? null,
+    reason: `refused: ${subject}`,
+    outcome: "rejected",
+    rejection: { check: "authority", message },
+  });
+  persistState(statePath, state);
+}
+
+function statusSummary(state: ImplementState, herdr: { available: boolean; holes: Record<"spawn" | "read" | "alive", boolean> }): string[] {
+  const lines: string[] = [scoreLine(runScore(state))];
+  const verdict = state.verificationAttempts.at(-1)?.verdict ?? "NOT_RUN";
+  lines.push(`verify: ${verdict}`);
+
+  const parked = state.acceptanceCriteria.filter((entry) => entry.check.status === "parked");
+  if (parked.length > 0) {
+    lines.push("", `parked (${parked.length}) - each must be resumed and proved before a complete finalize:`);
+    for (const entry of parked) {
+      const park = entry.check.parks.at(-1);
+      lines.push(`  ${entry.id} [by ${park?.parkedBy ?? "unknown"}] ${park?.reason ?? "no reason recorded"}`);
+      if (park?.evidence) lines.push(`    evidence: ${park.evidence}`);
+    }
+  }
+
+  const points = state.acceptanceCriteria.flatMap((entry) => entry.check.decisionPoints
+    .filter((point) => point.resolvedAt === null)
+    .map((point) => `  ${entry.id} [${point.kind}] ${point.message}`));
+  if (points.length > 0) lines.push("", `open decision points (${points.length}) - the supervisor may park on these:`, ...points);
+
+  const comments = openDesignComments(state);
+  if (comments.length > 0) {
+    lines.push("", `design comments awaiting a disposition (${comments.length}):`);
+    for (const entry of comments) lines.push(`  ${entry.id} [${entry.area} @ ${entry.path}] ${entry.text}`);
+  }
+
+  const risks = openRiskFindings(state);
+  if (risks.length > 0) {
+    lines.push("", `open risk findings (${risks.length}):`);
+    for (const entry of risks) {
+      lines.push(`  ${entry.id} [${entry.severity}] ${entry.text}`);
+      if (entry.nonConvergence !== undefined) {
+        lines.push(`    declared non-convergent by ${entry.nonConvergence.declaredBy} after ${entry.nonConvergence.roundsUnchanged} unchanged round(s): ${entry.nonConvergence.reason}`);
+      }
+    }
+  }
+
+  const openTasks = state.tasks.filter((entry) => entry.status !== "complete");
+  if (openTasks.length > 0) {
+    lines.push("", `open tasks (${openTasks.length}): ${openTasks.map((entry) => `${entry.id} (${entry.status})`).join(", ")}`);
+  }
+
+  // AC41: what happened to the escalations, and - once the bound is spent -
+  // the fact that no further machine move exists. The refusal message says
+  // this too, but a supervisor deciding what to do next reads status, not the
+  // message from a command it has not run yet.
+  if (state.escalations.length > 0) {
+    const spent = state.escalations.length;
+    const roster = state.escalations.map((entry) => `#${entry.id} ${entry.outcome}`).join(", ");
+    lines.push("", `escalations: ${spent} of ${ESCALATE_LIMIT_PER_RUN} used (${roster})`);
+    if (spent >= ESCALATE_LIMIT_PER_RUN) {
+      lines.push(
+        "  the bound is spent - a fourth solver on the same problem is not a plan.",
+        "  this needs an operator decision: park the blocked criterion with a verbatim approval,",
+        "  amend the PRD, or close the run with `finalize --status blocked`.",
+      );
+    }
+    const failed = state.escalations.filter((entry) => entry.outcome === "summon-failed");
+    if (failed.length > 0) {
+      lines.push(`  ${failed.length} summon(s) failed, so the implementor was never reset for ${failed.map((entry) => `#${entry.id}`).join(", ")}`);
+    }
+  }
+
+  const replacements = state.evidenceReplacements;
+  if (replacements.length > 0) {
+    lines.push("", `evidence resubmitted (${replacements.length}):`);
+    for (const entry of replacements.slice(-5)) {
+      lines.push(`  ${entry.criterionId} ${entry.kind}: ${entry.next} (previous ${entry.priorDisposition})`);
+    }
+  }
+
+  const excluded = state.suite.exclusions;
+  if (excluded.length > 0) {
+    lines.push("", `suite commands excluded by amendment (${excluded.length}) - no longer scored, their last result kept as history:`);
+    for (const entry of excluded) lines.push(`  ${entry.commandId}: ${entry.reason}`);
+  }
+
+  // AC38 ②: what the supervisor may do about all of the above, right now.
+  // Derived from state rather than listed as prose, so it cannot describe a
+  // verb the gate would refuse. What it deliberately does not carry is the
+  // recommended move - that is the supervisor's judgment, not the harness's.
+  const offers: string[] = [];
+  const parkable = state.acceptanceCriteria
+    .filter((entry) => entry.check.status !== "parked" && entry.check.decisionPoints.some((point) => point.resolvedAt === null))
+    .map((entry) => entry.id);
+  if (parkable.length > 0) offers.push(`park (${parkable.join(", ")})`);
+  if (parked.length > 0) offers.push(`resume (${parked.map((entry) => entry.id).join(", ")})`);
+  const pending = state.tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
+  if (pending.length > 1) offers.push(`resequence (${pending.join(", ")})`);
+  const escalationsLeft = ESCALATE_LIMIT_PER_RUN - state.escalations.length;
+  if (escalationsLeft > 0) offers.push(`escalate (${escalationsLeft} of ${ESCALATE_LIMIT_PER_RUN} left)`);
+  const drivable = state.acceptanceCriteria
+    .filter((entry) => entry.judgment === "judged" && entry.status !== "complete")
+    .map((entry) => entry.id);
+  if (drivable.length > 0) offers.push(`qa-brief (${drivable.join(", ")})`);
+  offers.push("design --raise");
+  lines.push("", `supervisor verbs available now: ${offers.join(" | ")}`);
+
+  if (!herdr.available) {
+    const missing = (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]);
+    lines.push("", `herdr unavailable - no ${missing.join(", ")}; pane diagnosis and implementor replacement are the supervisor's to perform by hand`);
+  }
+  lines.push("", "full record: re-run with --json");
+  return lines;
+}
+
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { state } = loadState(projectRoot, stateOptions(args));
   const recordRoot = state.projectRoot;
@@ -1098,12 +1984,21 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const sourceContext = fidelitySource(recordRoot, contract, specGateIsFresh(recordRoot, state));
   const fidelityInput = { routing: sourceContext.routing, contentSha256: sha256(sourceContext.content) };
   const currentInput = inputFingerprint(state, source.digest, fidelityInput);
+  // Which of the three herdr holes are open. Named per hole rather than as one
+  // boolean because "herdr is unavailable" does not tell a supervisor whether
+  // it has lost pane diagnosis or the ability to start a replacement (AC27).
+  const herdr = herdrCapabilities();
   return result("status", true, `${state.topicSlug}: ${state.status}`, {
     ...publicState(state, config.judge.retryBudget, source.digest, heldPrd.drift === null ? currentInput : "PRD_DRIFT"),
+    herdr: {
+      available: herdr.available,
+      unavailableHoles: (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]),
+      reason: herdr.reason,
+    },
     artifactProblems: problems,
     prdProblem: heldPrd.drift === null ? null : "PRD changed after implement start",
     prdDrift: heldPrd.drift,
-  });
+  }, statusSummary(state, herdr));
 }
 
 function writeMechanicalLog(
@@ -1163,52 +2058,112 @@ function progress(line: string): void {
   process.stderr.write(`[implement:verify] ${line}\n`);
 }
 
-function runMechanicalBindings(
+/**
+ * Run the union of AC Check bindings and the sealed suite list once each, on
+ * one frozen tree, and attribute every result to BOTH destinations (R1).
+ *
+ * Replaces the old shell-based suite loop. Three behaviour changes come with
+ * the unification, each deliberate:
+ *   - no shell and no inherited environment: the stricter Check semantics win;
+ *   - no stop-at-first-failure: a run that declined to execute a command
+ *     cannot honestly say "suites 3/3" (R4);
+ *   - a criterion named by a unit gets a real CheckAttempt appended to its
+ *     ledger, so the AC score and the suite axis are the same measurement
+ *     read two ways rather than two measurements that can disagree.
+ */
+function runUnifiedBatch(
   recordRoot: string,
   workRoot: string,
   state: ImplementState,
-  bindings: MechanicalBinding[],
-): MechanicalRunRecord[] {
-  const records: MechanicalRunRecord[] = [];
+  units: RunUnit[],
+  attemptId: string,
+): { records: MechanicalRunRecord[]; results: RunUnitResult[]; treeMoved: { before: string; after: string } | null } {
   const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
-  for (const binding of bindings) {
-    const before = captureSourceSnapshot(workRoot);
-    const started = Date.now();
-    const startedAt = nowIso();
-    const commandCwd = normalizeProjectPath(workRoot, binding.cwd).absolute;
-    const executed = spawnSync(binding.command, {
-      cwd: commandCwd,
-      shell: true,
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-      timeout: timeoutMs,
-      env: process.env,
-    });
-    const after = captureSourceSnapshot(workRoot);
-    const timedOut = (executed.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || executed.signal === "SIGTERM";
-    const mutated = before.digest !== after.digest;
-    const exitCode = timedOut ? 124 : (executed.status ?? 1);
-    const finishedAt = nowIso();
+  const records: MechanicalRunRecord[] = [];
+  const outcome = runBatch(state, workRoot, units, timeoutMs, (result) => {
+    const binding: MechanicalBinding = {
+      command: result.unit.command,
+      cwd: result.unit.cwd,
+      verificationIds: result.unit.verificationIds,
+    };
     const base: Omit<MechanicalRunRecord, "logPath"> = {
       ...binding,
-      startedAt,
-      finishedAt,
-      durationMs: Date.now() - started,
-      exitCode: mutated && exitCode === 0 ? 1 : exitCode,
-      status: !timedOut && !mutated && exitCode === 0 ? "PASS" : "FAIL",
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+      exitCode: result.green ? 0 : (result.exitCode === 0 ? 1 : result.exitCode),
+      status: result.green ? "PASS" : "FAIL",
     };
-    const extra = [
-      timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : "",
-      mutated ? "\n[sasu] command changed judged source files and was rejected" : "",
-    ].join("");
-    const logPath = writeMechanicalLog(recordRoot, state, binding, base, executed.stdout ?? "", `${executed.stderr ?? ""}${extra}`);
+    const logPath = writeMechanicalLog(recordRoot, state, binding, base, result.stdout, result.stderr);
     const record: MechanicalRunRecord = { ...base, logPath };
     progress(`mechanical ${record.status} in ${(record.durationMs / 1000).toFixed(1)}s: ${record.command}`);
-    records.push(record);
-    upsertCommandArtifacts(state, record, recordRoot);
-    if (record.status === "FAIL") break;
+    // `attempt.mechanical` keeps its established meaning - the suite axis,
+    // the record V rows are proved from. A unit that only an AC named is
+    // executed by the same batch and scored into the AC ledger, but it does
+    // not enter this list: mixing the two would blur which record proves a V
+    // row and would pollute the attempt-reuse comparison that reads it.
+    if (result.unit.suiteCommandIds.length > 0) {
+      records.push(record);
+      upsertCommandArtifacts(state, record, recordRoot);
+      attributeToSuite(state, result, attemptId, logPath);
+    }
+    attributeToCriteria(state, result);
+  });
+  return { records, results: outcome.results, treeMoved: outcome.treeMoved };
+}
+
+/** One execution, appended to every criterion ledger that named it (R1). */
+function attributeToCriteria(state: ImplementState, result: RunUnitResult): void {
+  for (const criterionId of result.unit.criterionIds) {
+    const criterion = state.acceptanceCriteria.find((entry) => entry.id === criterionId);
+    if (criterion === undefined) continue;
+    const binding = criterion.check.bindings.at(-1);
+    if (binding === undefined) continue;
+    const fingerprints = fingerprintCheckOutput(result.stdout, result.stderr);
+    criterion.check.attempts.push({
+      id: `A${criterion.check.attempts.length + 1}`,
+      bindingId: binding.id,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      signal: result.signal,
+      outcome: result.green ? "green" : "failed",
+      outputFingerprint: fingerprints.outputFingerprint,
+      failureClass: result.green ? null : fingerprints.failureClass,
+      tree: result.tree,
+      humanWindow: null,
+    });
+    if (result.green) {
+      criterion.check.status = "green";
+      criterion.check.consecutiveFailures = 0;
+    } else {
+      criterion.check.status = "pending";
+      criterion.check.consecutiveFailures += 1;
+    }
   }
-  return records;
+}
+
+/** The same execution, recorded on the suite axis (R1, R2). */
+function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptId: string, logPath: string): void {
+  for (const commandId of result.unit.suiteCommandIds) {
+    const entry = {
+      commandId,
+      attemptId,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+      exitCode: result.exitCode,
+      status: result.green ? ("GREEN" as const) : ("RED" as const),
+      logPath,
+      attributedCriteria: [...result.unit.criterionIds],
+    };
+    // Latest result per command, replaced whole: the suite axis reports the
+    // current tree, not a history. History lives in verificationAttempts.
+    state.suite.results = state.suite.results.filter((existing) => existing.commandId !== commandId);
+    state.suite.results.push(entry);
+  }
 }
 
 function changeMaterial(projectRoot: string, state: ImplementState, current: ReturnType<typeof captureSourceSnapshot>): string {
@@ -1384,8 +2339,100 @@ function acceptanceMaterial(
     evidence,
     readableArtifacts,
     scenarios: mappedScenarios,
-    checkLedger: checkLedgerForCriterion(criterion),
+    facts: envelopeFacts(state, criterion),
+    claims: envelopeClaims(state),
   };
+}
+
+/**
+ * Section 2 of the envelope: what the harness executed or wrote itself (AC8).
+ *
+ * The four the requirement names - check ledger, suite results, rebind and
+ * amendment history, parked list - are here because each answers a question a
+ * judge would otherwise have to guess at: what ran, what else is red, whether
+ * the oracle was swapped mid-run, whether the question changed, and what was
+ * deliberately not proven. A judge missing the rebind history cannot tell a
+ * criterion that passed from one whose check was replaced until it passed.
+ */
+function envelopeFacts(state: ImplementState, criterion: AcceptanceCriterionItem): EnvelopeFacts {
+  const byId = new Map(state.suite.commands.map((entry) => [entry.id, entry]));
+  return {
+    checkLedger: checkLedgerForCriterion(criterion),
+    suiteResults: state.suite.results.map((entry) => ({
+      commandId: entry.commandId,
+      command: byId.get(entry.commandId)?.command ?? entry.commandId,
+      status: entry.status,
+      exitCode: entry.exitCode,
+      attributedCriteria: entry.attributedCriteria,
+    })),
+    suiteExclusions: state.suite.exclusions.map((entry) => ({ commandId: entry.commandId, at: entry.at })),
+    // Only replacements are history worth carrying: the first binding is the
+    // oracle, a later one is a decision to measure something else.
+    rebinds: state.acceptanceCriteria.flatMap((entry) => entry.check.bindings.slice(1).map((binding, index) => ({
+      criterionId: entry.id,
+      from: entry.check.bindings[index]!.command,
+      to: binding.command,
+      at: binding.boundAt,
+    }))),
+    amendments: state.amendments.map((entry) => ({
+      id: entry.id,
+      at: entry.at,
+      invalidatedCriteria: entry.invalidatedCriteria,
+      addedCriteria: entry.addedCriteria,
+      unparkedCriteria: entry.unparkedCriteria,
+    })),
+    parked: state.acceptanceCriteria
+      .filter((entry) => entry.check.status === "parked")
+      .map((entry) => ({
+        id: entry.id,
+        parkedBy: entry.check.parks.at(-1)?.parkedBy ?? "human",
+        at: entry.check.parks.at(-1)?.parkedAt ?? "unknown",
+      })),
+  };
+}
+
+/**
+ * Section 3: every sentence a person or an agent wrote, with its origin (AC8).
+ *
+ * Collected run-wide rather than per criterion on purpose. A park reason on a
+ * neighbouring criterion is context for why this run looks the way it does,
+ * and withholding it would leave the judge reconstructing the run from
+ * fragments - which is when a judge starts inferring. What it must never do
+ * is rest a verdict on any of it, and Section 3's own text says so (AC9).
+ */
+function envelopeClaims(state: ImplementState): EnvelopeClaim[] {
+  const claims: EnvelopeClaim[] = [];
+  for (const criterion of state.acceptanceCriteria) {
+    for (const park of criterion.check.parks) {
+      claims.push({
+        origin: park.parkedBy === "observer" ? "observer" : "human",
+        subject: `${criterion.id} park`,
+        text: park.parkedBy === "observer"
+          ? park.reason
+          : `${park.reason} (approval quoted: ${park.approval})`,
+      });
+    }
+  }
+  for (const amendment of state.amendments) {
+    claims.push({ origin: "human", subject: `amendment ${amendment.id}`, text: `${amendment.reason} (approval quoted: ${amendment.approval})` });
+  }
+  for (const exclusion of state.suite.exclusions) {
+    claims.push({ origin: "human", subject: `suite exclusion ${exclusion.commandId}`, text: `${exclusion.reason} (approval quoted: ${exclusion.approval})` });
+  }
+  for (const verb of state.verbs) {
+    if (verb.issuer !== "observer" || verb.reason.trim() === "") continue;
+    claims.push({ origin: "observer", subject: `${verb.verb}${verb.target === null ? "" : ` ${verb.target}`} (${verb.outcome})`, text: verb.reason });
+  }
+  for (const escalation of state.escalations) {
+    claims.push({ origin: "observer", subject: `escalation ${escalation.id} reason`, text: escalation.reason });
+    if (escalation.diagnosis !== null) {
+      claims.push({ origin: "solver", subject: `escalation ${escalation.id} diagnosis`, text: escalation.diagnosis });
+    }
+  }
+  for (const grant of state.budgetGrants ?? []) {
+    claims.push({ origin: "human", subject: "budget grant", text: grant.evidence });
+  }
+  return claims;
 }
 
 function validateFidelity(
@@ -1505,6 +2552,7 @@ export function reconcileDesignComments(
         id: `D${next.reduce((high, entry) => Math.max(high, Number(entry.id.slice(1)) || 0), 0) + 1}`,
         key,
         status: "open",
+        raisedBy: null,
         accepted: null,
         firstSeenAt: at,
         lastSeenAt: at,
@@ -1520,7 +2568,11 @@ export function reconcileDesignComments(
     existing.lastSeenAt = at;
     existing.lastSeenAttemptId = attemptId;
   }
-  for (const entry of next) if (!seen.has(entry.key)) entry.status = "resolved";
+  // Only a lane comment resolves by absence. A supervisor-raised comment has
+  // no lane reporting it, so "the lane stopped saying it" is not evidence of
+  // anything about it; auto-resolving it here would have quietly deleted the
+  // remark on the next verify (R10: it must be answered, not outlived).
+  for (const entry of next) if (entry.raisedBy === null && !seen.has(entry.key)) entry.status = "resolved";
   return next;
 }
 
@@ -1654,7 +2706,22 @@ async function acceptanceLane(
   // Criteria still all judge in one round and the lane still costs its
   // slowest one - the ceiling only stops a 22-criterion PRD from putting 22
   // heavyweight judge subprocesses on a box that already runs the project.
-  const runnableCriteria = state.acceptanceCriteria.filter((criterion) => criterion.check.status !== "parked");
+  // AC7: the acceptance JUDGE sees judged criteria only. A machine criterion
+  // already has an exit code against a bound command, and asking a judge to
+  // re-read it is asking a weaker instrument to second-guess a stronger one
+  // (AGENTS.md Review Guide 1). Its ledger still reaches every judge as a
+  // fact in Section 2 - demoted from a judged item to a summary, not dropped.
+  //
+  // It stays IN the lane's result, though, settled from that ledger with
+  // `source: "ledger"`. Dropping it outright was the first attempt and it was
+  // wrong: with no judged criteria the lane held zero invocations, and
+  // `every(PASS)` over an empty list is PASS - so a run with a red machine
+  // criterion printed a green acceptance lane. A record that reads green on
+  // unproven work is exactly the dishonesty PRINCIPLES 10 forbids.
+  const runnableCriteria = state.acceptanceCriteria.filter((criterion) =>
+    criterion.check.status !== "parked" && criterion.judgment === "judged");
+  const ledgerCriteria = state.acceptanceCriteria.filter((criterion) =>
+    criterion.check.status !== "parked" && criterion.judgment !== "judged");
   const perCriterion = await mapWithConcurrency(runnableCriteria, judgeFanoutLimit(), async (criterion) => {
     const prior = settled.get(criterion.id);
     if (reuse !== null && prior !== undefined) {
@@ -1679,6 +2746,9 @@ async function acceptanceLane(
           verdict: "FAIL" as const,
           judge: null,
           error: null,
+          // No judge was summoned: the declared evidence is missing, and a
+          // judge asked to rule without it would be guessing.
+          source: "harness" as const,
         },
         criteria: [{ id: criterion.id, verdict: "FAIL" as const, reason, evidence: "none registered for this acceptance criterion" }],
       };
@@ -1755,11 +2825,46 @@ async function acceptanceLane(
       verdict: record.verdict,
       judge: record.judge,
       error: record.error,
+      source: "judge",
     };
     return { invocation, criteria: record.result?.criteria ?? [] };
   });
-  const criteria = perCriterion.flatMap((entry) => entry.criteria);
-  const invocations = perCriterion.map((entry) => entry.invocation);
+  // Ledger-settled criteria. No judge is called, so these cost nothing and are
+  // recomputed every attempt rather than reused from an ERROR'd one - there is
+  // nothing expensive to carry over, and a stale carry-over would be a second
+  // record of a fact state.json already holds.
+  const fromLedger = ledgerCriteria.map((criterion) => {
+    const at = nowIso();
+    const green = criterionCheckIsGreen(criterion);
+    const binding = criterion.check.bindings.at(-1);
+    const reason = green
+      ? `the harness ran the bound Check and it exited 0`
+      : binding === undefined
+        ? "no Check binding, so nothing has measured this criterion"
+        : "the bound Check is not green";
+    progress(`acceptance ${criterion.id}: ${green ? "PASS" : "FAIL"} (from the check ledger, no judge call)`);
+    return {
+      invocation: {
+        criterionId: criterion.id,
+        invocationId: crypto.randomUUID(),
+        startedAt: at,
+        finishedAt: at,
+        durationMs: 0,
+        verdict: (green ? "PASS" : "FAIL") as VerificationStatus,
+        judge: null,
+        error: null,
+        source: "harness" as const,
+      },
+      criteria: [{
+        id: criterion.id,
+        verdict: green ? ("PASS" as const) : ("FAIL" as const),
+        reason,
+        evidence: binding === undefined ? "none" : `${binding.command} (cwd ${binding.cwd})`,
+      }],
+    };
+  });
+  const criteria = [...perCriterion, ...fromLedger].flatMap((entry) => entry.criteria);
+  const invocations = [...perCriterion, ...fromLedger].map((entry) => entry.invocation);
   const verdict: VerificationStatus = invocations.some((entry) => entry.verdict === "ERROR")
     ? "ERROR"
     : invocations.every((entry) => entry.verdict === "PASS")
@@ -1866,6 +2971,7 @@ function skippedAcceptanceCriteria(state: ImplementState): UnifiedVerificationAt
 }
 
 function failedAttempt(
+  attemptId: string,
   state: ImplementState,
   sourceDigest: string,
   fidelityInput: UnifiedVerificationAttempt["fidelityInput"],
@@ -1881,7 +2987,7 @@ function failedAttempt(
   verdict: VerificationStatus,
 ): UnifiedVerificationAttempt {
   return {
-    id: crypto.randomUUID(),
+    id: attemptId,
     inputFingerprint: inputFingerprint(state, sourceDigest, fidelityInput),
     sourceFingerprint: sourceDigest,
     inputManifest,
@@ -1971,13 +3077,16 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.fidelity?.result);
   const riskLineageInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.risk?.result);
   const priorRiskResult = riskLedgerPriorResult(state, riskLineageInput.result);
+  // One id for this attempt, minted before the mechanical batch so a suite
+  // result can name the attempt it was produced in while it is being produced.
+  const attemptId = crypto.randomUUID();
   const roundContexts: VerificationRoundContexts = {
     acceptance: Object.fromEntries([...acceptancePriorInputs].map(([id, input]) => [id, input.context])),
     fidelity: fidelityPriorInput.context,
     risk: state.prd.reviewProfile === "high-risk" ? riskLineageInput.context : null,
   };
   if (!lint.ok) {
-    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
+    const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     return result("verify", false, "PRD prelint failed before mechanical verification; no judge was called", {
@@ -2009,15 +3118,37 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       verificationBudget: verificationBudget(state, config.judge.retryBudget),
     });
   }
-  const bindings = mechanicalBindings(recordRoot, workRoot, state.verification);
-  const mechanical = runMechanicalBindings(recordRoot, workRoot, state, bindings);
+  const units = planRunUnits(state);
+  const bindings: MechanicalBinding[] = activeSuiteCommands(state)
+    .map((command) => ({ command: command.command, cwd: command.cwd, verificationIds: command.verificationIds }));
+  const batch = runUnifiedBatch(recordRoot, workRoot, state, units, attemptId);
+  const mechanical = batch.records;
+  // The suite axis is independent of the AC score (R2). A failing command
+  // that some criterion bound is that criterion's failure and is scored on
+  // the AC axis; a failing command no criterion bound is watching a
+  // regression nobody else is, so it blocks the run on its own - even with
+  // every AC green.
+  const orphanRed = orphanSuiteFailures(batch.results.map((entry) => ({
+    suiteCommandIds: entry.unit.suiteCommandIds,
+    criterionIds: entry.unit.criterionIds,
+    green: entry.green,
+    command: entry.unit.command,
+  })));
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
   const proofProblems = setVerificationStatuses(state, bindings, mechanical);
-  if (failedMechanical !== undefined || proofProblems.length > 0) {
-    const message = failedMechanical !== undefined
-      ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
-      : proofProblems.join("; ");
-    const attempt = failedAttempt(state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
+  if (batch.treeMoved !== null || orphanRed.length > 0 || failedMechanical !== undefined || proofProblems.length > 0) {
+    // A tree that moved mid-batch invalidates the whole batch: the results
+    // were not all earned on one tree, so none of them names a tree honestly
+    // (AC2). Reported ahead of individual failures because it explains them.
+    const score = suiteScore(state);
+    const message = batch.treeMoved !== null
+      ? `judged source changed while mechanical commands were running (${batch.treeMoved.before.slice(0, 12)} -> ${batch.treeMoved.after.slice(0, 12)}); no result was earned on a single frozen tree`
+      : orphanRed.length > 0
+        ? `suite ${score.green}/${score.total} GREEN; ${orphanRed.length} command(s) no acceptance criterion binds failed and block this run independently of the AC score: ${orphanRed.map((entry) => entry.command).join(", ")}. Fix them, or exclude one from the sealed list through an amendment carrying verbatim human approval.`
+        : failedMechanical !== undefined
+          ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
+          : proofProblems.join("; ");
+    const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
     state.verificationAttempts.push(attempt);
     persistState(statePath, state);
     const budget = verificationBudget(state, config.judge.retryBudget);
@@ -2151,7 +3282,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   }
   for (const item of state.verification.filter((entry) => judgeDeferred(state, entry, bindings))) item.status = verdict === "PASS" ? "PASS" : verdict;
   const attempt: UnifiedVerificationAttempt = {
-    id: crypto.randomUUID(),
+    id: attemptId,
     inputFingerprint: inputFingerprint(state, source.digest, fidelityInput),
     sourceFingerprint: source.digest,
     inputManifest,
@@ -2270,7 +3401,12 @@ function riskSection(state: ImplementState, attempt: UnifiedVerificationAttempt)
     const resolution = entry.resolution === undefined
       ? "none"
       : `${entry.resolution.at}: ${entry.resolution.evidence}`;
-    return `- ${entry.id} [${entry.severity}] ${entry.text}\n  Origin attempt: ${entry.originAttemptId}\n  Status: ${entry.status}\n  Resolution: ${resolution}`;
+    const declaration = entry.nonConvergence === undefined
+      ? ""
+      : `\n  Non-convergent: declared by ${entry.nonConvergence.declaredBy} at ${entry.nonConvergence.at} after `
+        + `${entry.nonConvergence.roundsUnchanged} judged round(s) unchanged - ${entry.nonConvergence.reason}`
+        + `\n  Approval: "${entry.nonConvergence.approval}"`;
+    return `- ${entry.id} [${entry.severity}] ${entry.text}\n  Origin attempt: ${entry.originAttemptId}\n  Status: ${entry.status}\n  Resolution: ${resolution}${declaration}`;
   };
   return [laneNote, state.riskFindings.map(line).join("\n")].filter((entry) => entry !== null).join("\n\n");
 }
@@ -2316,7 +3452,22 @@ function implementationReport(
   const skippedLines = attempt.skippedAcceptanceCriteria.length === 0
     ? "None."
     : attempt.skippedAcceptanceCriteria.map((entry) => `- ${entry.id}: ${entry.reason}`).join("\n");
-  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}## Public Flow\n\nBind and run AC Checks -> implementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, AC Check bindings and attempts, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n### Skipped Acceptance Criteria\n\n${skippedLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
+  const score = runScore(state);
+  const measurementSection = [
+    `## Score`,
+    "",
+    scoreLine(score),
+    "",
+    score.acceptance.unproven.length === 0 ? "Unproven criteria: none." : `Unproven criteria: ${score.acceptance.unproven.join(", ")}.`,
+    "",
+    `Assets and labor, classified from each Check's address: ${score.assetLabor.asset} asset, ${score.assetLabor.labor} labor. This is a measurement, never a gate - no run is refused for its ratio.`,
+    "",
+    score.assetLabor.bindings.length === 0
+      ? "No Check bindings were recorded."
+      : score.assetLabor.bindings.map((entry) => `- ${entry.criterionId} (${entry.classification}): \`${entry.command}\` in ${entry.cwd}`).join("\n"),
+    "",
+  ].join("\n");
+  return `# Implementation Result: ${state.topicSlug}\n\n${statusLine}\n\n${openItemsSection}${measurementSection}\n## Public Flow\n\nBind and run AC Checks -> implementation complete -> final evidence registered -> \`sasu implement verify\` -> \`sasu implement finalize\`.\n\n## Structure And Removal\n\nThe TypeScript CLI owns implement state, AC Check bindings and attempts, artifact registration, unified verification, and state-only finalization.\n\nThe old dispatcher, manual review recording, separate completion ledgers, and final reverification are not completion surfaces.\n\n\`state.json\` is the only machine record and the receipt plus this report are derived outputs.\n\nPinned PRD: \`${state.prd.snapshotPath}\` (${state.prd.sha256}).\n\nBaseline attribution: ${state.baselineAttribution.disposition}, digest ${state.baselineAttribution.baselineDigest}.\n\n## Tasks\n\n${taskLines}\n\n## Requirements\n\n${requirementLines}\n\n## Acceptance Criteria\n\n${acLines}\n\n### Skipped Acceptance Criteria\n\n${skippedLines}\n\n## Verification\n\n${verificationLines}\n\nUnified verdict: ${attempt.verdict}.\n\nInput fingerprint: ${attempt.inputFingerprint}.\n\nSource fingerprint: ${attempt.sourceFingerprint}.\n\n### Mechanical Runs\n\n${mechanicalLines}\n\n### Judge Lanes\n\n${laneLine("acceptance", attempt.lanes.acceptance)}\n${laneLine("fidelity", attempt.lanes.fidelity)}\n${laneLine("risk", attempt.lanes.risk)}\n${laneLine("design", attempt.lanes.design ?? null)}\n\nMechanical failures call zero judges by contract and regression test.\n\nFinalize execution calls: 0.\n\nCompletion fingerprint: ${fingerprint}.\n\n## Design Comments\n\nComments from the design lane and how each was answered. A comment is answered by being fixed (the lane stops reporting it) or by a recorded acceptance; \`finalize --status complete\` refuses while any comment is unanswered.\n\n${designSection(state, attempt)}\n\n## Risk Findings\n\nFindings from the risk lane and each ledger disposition. A blocking finding must be fixed by a later delta-grounded review or accepted with verbatim user approval before \`finalize --status complete\`. Advisory findings remain visible but do not block finalize.\n\n${riskSection(state, attempt)}\n\n## Deviations, Risks, And Follow-Ups\n\n${followUpLines.length === 0 ? "None." : followUpLines.join("\n")}\n`;
 }
 
 function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -2379,12 +3530,28 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     // terminally stuck, never as a shortcut past fixable findings: it stays
     // refused while the budget predicate says another verify could run.
     const view = verificationBudget(state, loadConfig(recordRoot).judge.retryBudget);
-    if (!view.budgetExhausted && !view.judgeErrorLoop) {
+    // The third terminal reason (R16 ③). Budget exhaustion asks "can another
+    // round run?"; this asks "could another round change anything?" - and
+    // when a human has declared every remaining finding structurally
+    // unfixable, spending the rounds only delays an honest record. It is
+    // deliberately all-or-nothing: one undeclared finding means a round could
+    // still matter, so the run is not terminal.
+    const openBlocking = openRiskFindings(state).filter((entry) => entry.severity === "blocking");
+    const nonConvergent = openBlocking.length > 0
+      && openBlocking.every((entry) => entry.nonConvergence !== undefined)
+      && openDesignComments(state).length === 0;
+    if (!view.budgetExhausted && !view.judgeErrorLoop && !nonConvergent) {
+      const undeclared = openBlocking.filter((entry) => entry.nonConvergence === undefined).map((entry) => entry.id);
       throw new Error(
-        "finalize --status blocked refused: verification can still run - fix the recorded findings and re-run `sasu implement verify`",
+        "finalize --status blocked refused: verification can still run - fix the recorded findings and re-run `sasu implement verify`"
+          + (undeclared.length === 0
+            ? ""
+            : `, or declare each structurally unfixable finding with \`sasu implement risk --non-convergent --issuer human --id <RF#> --approval "<verbatim user approval>" --reason "<why no round can fix it>"\` (undeclared: ${undeclared.join(", ")})`),
       );
     }
-    const terminalReason = view.budgetExhausted ? "budget-exhausted" : "judge-error-loop";
+    const terminalReason = view.budgetExhausted
+      ? "budget-exhausted"
+      : view.judgeErrorLoop ? "judge-error-loop" : "non-convergent-findings";
     if (state.status === "blocked" && state.completion?.fingerprint === fingerprint) {
       const receipt = path.join(recordRoot, state.completion.receiptPath);
       const report = path.join(recordRoot, state.completion.implementationResultPath);
@@ -2422,7 +3589,15 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         grants: view.grants,
       },
       skippedAcceptanceCriteria: latest.skippedAcceptanceCriteria,
+      score: runScore(state),
+      scoreLine: scoreLine(runScore(state)),
       openItems: blockers,
+      // Who declared each finding terminal, in their own words, next to the
+      // structural fact that corroborates it. A blocked close that cannot say
+      // WHY it was terminal is the record the old guard produced.
+      nonConvergentFindings: openRiskFindings(state)
+        .filter((entry) => entry.nonConvergence !== undefined)
+        .map((entry) => ({ id: entry.id, severity: entry.severity, text: entry.text, ...entry.nonConvergence })),
       ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
       ...(state.worktree ? { worktree: state.worktree } : {}),
       executionCallsDuringFinalize: 0,
@@ -2470,6 +3645,8 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       risk: latest.lanes.risk?.verdict ?? "NOT_REQUIRED",
     },
     skippedAcceptanceCriteria: latest.skippedAcceptanceCriteria,
+    score: runScore(state),
+    scoreLine: scoreLine(runScore(state)),
     ...((state.adoptions ?? []).length > 0 ? { adoptions: state.adoptions } : {}),
     ...(state.worktree ? { worktree: state.worktree } : {}),
     executionCallsDuringFinalize: 0,
@@ -2490,11 +3667,43 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 export async function runImplementCommand(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const subcommand = args.positional[1];
   try {
+    // Authority is checked once, here, for every state-changing command
+    // rather than inside each one. Per-command checks are a rule that has to
+    // be remembered at each new command; one gate is a rule the code keeps
+    // (AGENTS.md Review Guide 7). Read-only surfaces - intake, status - are
+    // absent from the table on purpose: anyone may look.
+    // `design --raise` and `design --accept` are opposite ends of one comment
+    // with opposite authorities (R10), so the subject the gate asks about is
+    // the operation, not the subcommand word. Resolving that here keeps the
+    // single gate; asserting it inside `design` instead would have put the
+    // rule back in the place the gate exists to empty.
+    if (subcommand !== undefined) {
+      const subject = subcommand === "design" && args.flags.get("raise") === true
+        ? "design-raise"
+        : subcommand === "risk" && args.flags.get("non-convergent") === true
+          ? "risk-non-convergent"
+          : subcommand;
+      const issuer = resolveIssuer(flag(args, "issuer"));
+      try {
+        assertCommandAuthority(subject, issuer);
+      } catch (error) {
+        if (error instanceof VerbRejected && isIssuedCommand(subject)) {
+          recordAuthorityRefusal(projectRoot, args, subject, issuer, error.message);
+        }
+        throw error;
+      }
+    }
     if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);
     if (subcommand === "check") return check(projectRoot, args);
     if (subcommand === "park") return park(projectRoot, args);
     if (subcommand === "resume") return resume(projectRoot, args);
+    if (subcommand === "resequence") return resequence(projectRoot, args);
+    if (subcommand === "amend") return amend(projectRoot, args);
+    if (subcommand === "qa-brief") return qaBrief(projectRoot, args);
+    if (subcommand === "trail") return trail(projectRoot, args);
+    if (subcommand === "escalate") return await escalate(projectRoot, args);
+    if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "task") return task(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
@@ -2503,13 +3712,17 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, task, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, resequence, amend, qa-brief, trail, escalate, await, task, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
       action: subcommand ?? "unknown",
       exitCode: error instanceof SyntaxError || error instanceof VerifyInvariantError ? 1 : 2,
       message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof VerbRejected ? { detail: { rejectedCheck: error.check } } : {}),
+      ...(error instanceof AmendmentRejected ? { detail: { rejectedCheck: error.check } } : {}),
+      ...(error instanceof TrailRejected ? { detail: { rejectedCheck: error.check } } : {}),
+      ...(error instanceof EscalateRejected ? { detail: { rejectedCheck: error.check } } : {}),
       ...(error instanceof PrdDriftError ? { detail: { prdDrift: error.diagnostic } } : {}),
       ...(error instanceof VerifyInvariantError ? { detail: { reason: error.reason } } : {}),
     };

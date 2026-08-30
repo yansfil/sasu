@@ -310,6 +310,127 @@ Report:
 
 Do not use overrides on the user's behalf.
 
+## The Whole Flow
+
+Two actors, one record. The supervisor plans and judges; the implementor
+builds and is the only writer of implementation results. Everything either one
+does goes through the CLI, which is the only thing that writes `state.json`.
+
+```text
+  supervisor (observer)                 implementor
+  ---------------------                 -----------
+  start ── seals PRD snapshot ──────────►
+        └─ seals the suite list         │
+                                        ├─ check --bind / check   ─┐
+  await ◄──── event ────────────────────┤                          │ per AC
+        │                               ├─ artifact                │
+        ├─ park / resume ──────────────►│  (or qa-brief ► trail    │
+        ├─ resequence ─────────────────►│   when a person drives)  │
+        ├─ design --raise ─────────────►│                         ─┘
+        ├─ escalate ► solver ──────────►│  (diagnosis only, ≤3)
+        │                               └─ task --status complete
+        │                                       │
+  human ├─ amend (question was wrong) ──────────┤
+        └─ risk --non-convergent ───────────────┤
+                                                ▼
+                                        verify ── one runner, frozen tree
+                                                ├─ AC ledger  ─┐ two
+                                                └─ suite axis ─┘ axes
+                                                       │
+                                        finalize ── receipt + report
+                                                    (runs nothing)
+```
+
+Nothing above waits on a timer. `await` blocks on the event log and returns on
+a new event, a stall, or the implementor's death.
+
+## One Run, Start To Finish
+
+A four-criterion run where one criterion is parked and one is driven by a
+person. Every line is a real command; nothing is elided.
+
+```sh
+# The supervisor opens the run. The PRD snapshot and the suite list seal here.
+sasu implement start --prd agents/prd/checkout-retry/prd.md
+
+# AC1, AC2, AC4 are machine criteria: bind a command, then run it.
+sasu implement check --ac AC1 --bind 'npm test' --cwd .
+sasu implement check --ac AC1                      # -> green
+
+# AC2 cannot be proved on this runner. Five failures open a decision point,
+# and the supervisor parks it on that - not on its own opinion.
+sasu implement check --ac AC2 --bind 'npm run e2e:ios' --cwd .
+sasu implement check --ac AC2                      # -> red, x5
+sasu implement park --issuer observer --ac AC2 --reason 'no iOS runner here'
+
+# AC3 is judged and shown on a screen, so a person drives it. The implementor
+# may not register its own drive.
+sasu implement qa-brief --ac AC3                   # -> brief AC3-B1-9f2c...
+sasu implement artifact --ac AC3 --kind screenshot --path shots/retry.png   --description 'the retry banner after a failed charge'
+sasu implement trail --ac AC3 --brief AC3-B1-9f2c1e --steps S1,S2,S3   --driver human --artifacts shots/retry.png
+
+# AC4's PRD row turns out to be wrong. Only a human may correct the question,
+# and only AC4 loses its green.
+sasu implement amend --issuer human   --approval '맞다 AC4 문장이 틀렸다, 고치고 가자'   --reason 'the row asked for a retry count the product never had'
+sasu implement check --ac AC4 --bind 'npm test' --cwd . --reason 're-proved after amendment'
+sasu implement check --ac AC4                      # -> green
+
+sasu implement task --id T1 --status complete
+sasu implement task --id T2 --status complete
+
+# One runner, frozen tree, each command once. Then the receipt.
+sasu implement verify
+sasu implement resume --ac AC2                     # AC2 must still be proved
+sasu implement check --ac AC2                      # -> green on a runner that has iOS
+sasu implement verify
+sasu implement finalize
+# receipt: AC: 4/4 PASS | suite: 2/2 GREEN
+```
+
+The parked criterion is why the first `finalize` would have been refused:
+a park defers proof, it never replaces it.
+
+## Command Contract
+
+Every `sasu implement` command and the flags it accepts.
+A test compares this table against `sasu --help` in both directions and against the CLI's own command registry, so a command that appears in one place and not the others fails the harness rather than misleading a reader.
+Global flags omitted from the table because every command takes them: `--json`, `--slug`, `--state`, `--adopt`, `--issuer`.
+
+| Command | Required | Optional | Issuer |
+| --- | --- | --- | --- |
+| `intake` | - | - | anyone |
+| `start` | `--prd` | `--allow-unapproved-prd`, `--dirty-attribution` | anyone |
+| `check` | `--ac` | `--bind`, `--cwd`, `--reason`, `--human-window`, `--bookkeeping` | implementor, human |
+| `park` | `--ac`, `--approval`, `--reason` | `--evidence` | implementor, observer, human |
+| `resume` | `--ac` | - | implementor, observer, human |
+| `resequence` | `--order` | `--reason` | observer, human |
+| `amend` | `--approval`, `--reason` | `--exclude-suite` | human |
+| `qa-brief` | `--ac` | - | implementor, observer, human |
+| `trail` | `--ac`, `--brief`, `--steps`, `--driver` | `--artifacts` | implementor, observer, human |
+| `escalate` | `--reason` | `--target`, `--agent` | observer, human |
+| `await` | - | `--since`, `--pid`, `--agent` | anyone |
+| `task` | `--id` | `--status`, `--evidence` | implementor, human |
+| `artifact` | `--kind`, `--path`, `--description` | `--id`, `--ac` | implementor, human |
+| `status` | - | - | anyone |
+| `design` | `--id`, `--accept` | - | implementor, human |
+| `design --raise` | `--area`, `--path`, `--text`, `--suggestion` | - | observer, human |
+| `risk` | `--accept`, `--id`, `--evidence` | - | implementor, human |
+| `risk --non-convergent` | `--id`, `--approval`, `--reason` | - | human |
+| `verify` | - | `--grant-budget` | implementor, human |
+| `retire` | - | - | anyone |
+| `finalize` | - | `--status` | implementor, human |
+
+Three of these carry a rule the flag name does not carry on its own:
+
+- `check --bookkeeping <agents/... path>` declares a file under `agents/**` that this criterion's work will change, and it must be issued **before** the work.
+  The baseline is taken when the target is declared, so a declaration made after the edit records the finished state and the close refuses with "unchanged since it was declared".
+  Closing the task then requires both that the content moved from that baseline and that a registered artifact vouches for the current bytes.
+  This exists because `agents/**` is excluded from every judged diff, so nothing there can be proved the way product changes are.
+- `risk --non-convergent` declares one open finding structurally unfixable.
+  The finding stays open and `finalize --status complete` stays refused; what it opens is `--status blocked` without first spending judge rounds whose outcome is already known.
+- `amend --exclude-suite <S#>` drops a command from the sealed suite list.
+  The command and its last result stay in the ledger as history and simply stop being scored; the sealed list minus its exclusions is the scoring authority.
+
 ## Hard Stops
 
 Stop and ask when:

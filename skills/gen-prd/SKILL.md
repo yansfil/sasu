@@ -334,6 +334,17 @@ Do not infer `machine+gate:human` merely because a V row names a human judgment;
 
 `sasu prd readiness` rejects list-form or untagged ACs, rejects a `judged` row without an evidence declaration, and reports counts for all three tags.
 
+One boundary the tag does not cover: an AC whose deliverable is a file under
+`agents/**`.
+That namespace is bookkeeping and is excluded from every judged diff, so
+"this run produced it" cannot be shown the way a product change is.
+Such an AC is still `machine`, and the implementation declares the target with
+`sasu implement check --ac <ACn> --bookkeeping <path>` before doing the work;
+closing then requires the file to have moved from the declared baseline and a
+registered artifact vouching for its current bytes.
+Write the criterion so that obligation is visible - name the file the AC is
+about rather than describing the change abstractly.
+
 Task rules:
 
 - Every task traces to at least one requirement unless it is pure verification

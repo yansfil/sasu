@@ -16,7 +16,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
     const file = path.join(root, "agents", "runs", slug, "state.json");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({
-      schema: "sasu.implement.state.v6",
+      schema: "sasu.implement.state.v7",
       topicSlug: slug,
       projectRoot: root,
       runDir: `agents/runs/${slug}`,
@@ -31,6 +31,13 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
       artifacts: [],
       verificationAttempts: [],
       deviations: [],
+      events: [],
+      verbs: [],
+      amendments: [],
+      suite: { sealedAt: "2026-08-29T00:00:00.000Z", commands: [], exclusions: [], results: [] },
+      qaBriefs: [],
+      trails: [],
+      escalations: [],
       retirement: null,
       completion: null,
       ...state,
@@ -49,7 +56,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
   assert.ok(section.lines.includes(
-    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v6; use a matching CLI to inspect or retire it, or start a new slug",
+    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v7; use a matching CLI to inspect or retire it, or start a new slug",
   ));
 });
 
@@ -86,12 +93,12 @@ test("doctor includes executable skill scripts in the freshness contract", () =>
     path.join(repoRoot, "skills", "implement", "SKILL.md"),
     path.join(skillRoot, "SKILL.md"),
   );
-  fs.writeFileSync(path.join(skillRoot, "scripts", "herdr_observer.js"), "stale helper\n");
+  fs.writeFileSync(path.join(skillRoot, "scripts", "prd_state_harness.js"), "stale helper\n");
 
   const section = skillFreshnessSection(home, repoRoot);
   assert.equal(section.ok, false);
   assert.ok(section.lines.includes(
-    "stale installed contract: codex:implement/scripts/herdr_observer.js",
+    "stale installed contract: codex:implement/scripts/prd_state_harness.js",
   ));
 });
 

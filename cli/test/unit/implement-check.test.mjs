@@ -64,7 +64,12 @@ test("cargo, vitest, and pytest output golden pairs ignore volatile paths, times
 test("binding policy fails closed and records asset versus labor addresses", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-bind-"));
   fs.mkdirSync(path.join(root, "agents", "tools"), { recursive: true });
-  assert.equal(validateCheckBinding(root, "npm test", ".").classification, "asset");
+  // Asset means the run left a durable guard behind, and the address is what
+  // says so. `npm test` names no file, so under AC11 it is labor even though
+  // it runs the project's suite - the assumption PRD 10장 records, with its
+  // revisit trigger. It was scored as an asset before that rule existed.
+  assert.equal(validateCheckBinding(root, "npm test", ".").classification, "labor");
+  assert.equal(validateCheckBinding(root, "node test/guard.test.mjs", ".").classification, "asset");
   assert.equal(validateCheckBinding(root, "node agents/check.mjs", ".").classification, "labor");
   assert.equal(validateCheckBinding(root, "node check.mjs", "agents/tools").classification, "labor");
   assert.throws(() => validateCheckBinding(root, "curl https://example.com", "."), /outside the allowed runner forms/);

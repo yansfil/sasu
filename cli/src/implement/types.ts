@@ -1,9 +1,13 @@
 import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 
-// v6: acceptance criteria own their mechanical check ledger, decision points,
-// and park history. Older shapes are not migrated because completion authority
-// must never guess missing bindings, attempts, or human approvals.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v6" as const;
+// v7: adds the supervision ledgers - event log, observer verb history,
+// amendment history, sealed suite list with its results, QA trails, and solver
+// escalations. Older shapes are not migrated because completion authority must
+// never guess missing bindings, attempts, human approvals, or - now - which
+// suite commands a run was sealed against. A v6 run has no sealed suite list,
+// so a v7 CLI cannot tell "no orphan suite failures" from "never sealed", and
+// the honest answer is to refuse rather than assume (PRINCIPLES 10).
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v7" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 
 export type ItemStatus = "pending" | "complete" | "blocked";
@@ -74,16 +78,49 @@ export interface CheckDecisionPoint {
   attemptId: string;
   message: string;
   resolvedAt: string | null;
-  resolution: "green" | "parked" | "rebound" | null;
+  // "amended" closes a decision point the amendment made moot: the criterion
+  // it was posted against is no longer the same question (R5).
+  resolution: "green" | "parked" | "rebound" | "amended" | null;
 }
 
 export interface CheckParkRecord {
   parkedAt: string;
-  parkedBy: "human";
+  /**
+   * "human" parks carry a verbatim approval; "observer" parks carry a posted
+   * decision point instead. The supervisor may set aside a criterion the
+   * harness has already flagged as stuck, but it may not invent the judgment
+   * that it is stuck (AC20).
+   */
+  parkedBy: "human" | "observer";
+  /** Verbatim human approval; empty for an observer park. */
   approval: string;
   reason: string;
   evidence: string | null;
   resumedAt: string | null;
+}
+
+/**
+ * A file under `agents/**` this criterion's work is meant to change, declared
+ * before the work (R16 ①, AC44).
+ *
+ * The bookkeeping namespace is excluded from every judged diff and from the
+ * vouched fingerprint on purpose, which means a criterion whose deliverable
+ * lives there cannot prove "this run did that" the way every other criterion
+ * does. 2026-08-29, interview-anchor: the only proof available was a unit
+ * test that read the repository's live `agents/**`, which is a test coupled
+ * to bookkeeping rather than a proof of it.
+ *
+ * `baselineSha256` is the file's content when the target was declared - null
+ * when it did not exist yet. Closing requires the content to have MOVED from
+ * that baseline and a registered artifact to vouch for where it moved to:
+ * two structural facts, neither of them a diff.
+ */
+export interface BookkeepingTarget {
+  /** Project-relative, under `agents/`, never a harness-rewritten path. */
+  path: string;
+  /** Content at declaration time; null if the file did not exist. */
+  baselineSha256: string | null;
+  declaredAt: string;
 }
 
 export interface AcceptanceCheckLedger {
@@ -93,6 +130,8 @@ export interface AcceptanceCheckLedger {
   consecutiveFailures: number;
   decisionPoints: CheckDecisionPoint[];
   parks: CheckParkRecord[];
+  /** Declared `agents/**` deliverables; absent when the criterion has none. */
+  bookkeeping?: BookkeepingTarget[];
 }
 
 export interface AcceptanceCriterionItem extends ContractItem {
@@ -204,6 +243,20 @@ export interface AcceptanceCriterionInvocation {
   verdict: VerificationStatus;
   judge: JudgeCallRecord | null;
   error: JudgeLaneError | null;
+  /**
+   * Whether a judge was asked at all. "judge" means the acceptance judge read
+   * an envelope and ruled. "harness" means the harness settled the criterion
+   * from its own records and summoned nobody - a machine criterion read off
+   * its Check exit code (R3, AC7), or a judged criterion refused before the
+   * call because its declared evidence was never registered.
+   *
+   * Stated rather than inferred from `judge: null`, because a null judge
+   * record is also what a judge call whose record was lost looks like. A
+   * reader has to be able to tell "nobody was asked" from "somebody was asked
+   * and the record is missing". Absent on invocations written before the
+   * acceptance lane was narrowed, which were all judge calls.
+   */
+  source?: "judge" | "harness";
   // Names the ERROR'd attempt this settled verdict was carried over from.
   // Timestamps and judge record stay those of the original judgment.
   reusedFrom?: string;
@@ -247,6 +300,20 @@ export interface TrackedRiskFinding {
   status: "open" | "fixed" | "accepted";
   /** Judge delta proof for fixed, or verbatim user approval for accepted. */
   resolution?: { at: string; evidence: string };
+  /**
+   * Declared unfixable, so no further judge round can change it (R16 ③).
+   *
+   * The finding STAYS open - that is the point. It does not release
+   * `finalize --status complete`; it releases the honest `--status blocked`
+   * close without first burning rounds whose outcome is already known.
+   *
+   * The declaration is a human's, quoted verbatim, because whether a defect
+   * is structural is a judgment and the harness has no instrument for it
+   * (D-39). `roundsUnchanged` is the one structural fact the harness DOES
+   * own - how many judged attempts the finding survived - and it rides along
+   * as corroboration in the receipt, never as the gate.
+   */
+  nonConvergence?: { at: string; approval: string; reason: string; declaredBy: IssuerLabel; roundsUnchanged: number };
 }
 
 // The design lane is a reviewer, not a judge: it returns comments and no
@@ -289,6 +356,17 @@ export interface TrackedDesignComment extends DesignComment {
   key: string;
   /** "open" while the lane still reports it; "resolved" once it stops. */
   status: "open" | "resolved";
+  /**
+   * `null` for a comment the design lane produced; the issuer label for one a
+   * supervisor raised by hand (R10).
+   *
+   * It decides who may retire the comment. A lane comment resolves by
+   * measurement - the lane stops reporting it. A raised comment has no lane
+   * behind it, so nothing ever stops reporting it, and auto-resolving it on
+   * the next attempt would erase the remark instead of answering it. A raised
+   * comment therefore leaves only through a recorded disposition.
+   */
+  raisedBy: IssuerLabel | null;
   /** Non-null once someone answered "not fixing, because ..."; carried across attempts. */
   accepted: { at: string; note: string } | null;
   firstSeenAt: string;
@@ -373,6 +451,315 @@ export interface UnifiedVerificationAttempt {
   error: { stage: string; code: string; message: string } | null;
 }
 
+// ---------------------------------------------------------------------------
+// v7 supervision ledgers
+//
+// Six append-only ledgers give the observer a channel and the run a memory.
+// Every one of them is a plain array on ImplementState with a monotonic
+// numeric `id` derived as max(existing) + 1. There is deliberately no
+// `nextId` counter anywhere: a counter is a second record of the same fact
+// and drifts from the array the first time a write is interrupted
+// (PRINCIPLES 10, "records stay honest and singular").
+//
+// State-transition table (what T3/T6/T7/T8/T9/T12/T13 enforce; this file only
+// fixes the shapes those transitions read and write):
+//
+//   suite command   sealed -> excluded          human approval quote required
+//                   sealed -> (never parked)    park of a suite command is refused
+//   acceptance AC   pending -> green            all bound checks green
+//                   green   -> pending          amendment changed that AC's row hash
+//                   pending -> parked           decision point posted + reason
+//                   parked  -> pending          resume, or amendment changed the row
+//   task            pending -> complete/blocked unchanged from v6
+//                   pending -> pending          resequence permutes order only
+//   amendment       accepted only while no task is in progress; never reverted
+//   escalation      accepted while count < ESCALATE_LIMIT_PER_RUN; then refused
+//   trail           accepted -> superseded      a later accepted trail for the same AC
+//
+// The one rule with no transition: events. Once appended, an event is never
+// edited or removed for the life of the run (AC24).
+// ---------------------------------------------------------------------------
+
+/**
+ * Who a state change is attributed to. The physical write path is the CLI
+ * alone (R7); this label says on whose authority the write happened.
+ *
+ * `solver` is absent by design: the solver diagnoses and never writes state
+ * (AC33), so it can never be an issuer. It appears only as a ClaimOrigin.
+ */
+export type IssuerLabel = "implementor" | "observer" | "human";
+
+/**
+ * Provenance of a narrative claim in the judge envelope's claims section.
+ * `human` marks an exercise of authority; `observer` and `solver` mark
+ * unverified assertions. None of the three may be a basis for a verdict - the
+ * envelope says so in as many words (AC9).
+ */
+export type ClaimOrigin = "human" | "observer" | "solver";
+
+export type ImplementEventKind =
+  | "task-status"
+  | "check-bound"
+  | "check-attempt"
+  | "criterion-status"
+  | "park"
+  | "resume"
+  | "amendment"
+  | "resequence"
+  | "escalate"
+  | "trail"
+  | "comment"
+  | "verify"
+  | "finalize";
+
+/**
+ * One thing that happened, in the order it happened. This is what the
+ * background waiter (`sasu implement await`) blocks on: the observer wakes on
+ * a semantic unit the harness owns, never on pane text (D-16/D-19).
+ */
+export interface ImplementEvent {
+  /** Monotonic from 1, never reused, never renumbered. */
+  id: number;
+  at: string;
+  kind: ImplementEventKind;
+  actor: IssuerLabel;
+  /** Task or criterion id this event is about; null for run-wide events. */
+  subject: string | null;
+  summary: string;
+}
+
+/**
+ * Every command that passes the authority gate, which is the same set the
+ * verb history records.
+ *
+ * One vocabulary, not two. The verb list and the authority table used to be
+ * separate spellings of the same idea, and the gap between them is where a
+ * refused command went unrecorded: the gate knew it had refused an observer,
+ * and the run's history did not (R16 ②, AC45). `COMMAND_AUTHORITY` is typed
+ * against this union, so a new command cannot join one list and miss the
+ * other.
+ */
+export type IssuedCommand =
+  | "check"
+  | "task"
+  | "artifact"
+  | "verify"
+  | "finalize"
+  | "design"
+  | "design-raise"
+  | "risk"
+  | "park"
+  | "resume"
+  | "resequence"
+  | "qa-brief"
+  | "trail"
+  | "escalate"
+  | "risk-non-convergent"
+  | "amend";
+
+/** Which of the three CLI checks refused a verb (R7). */
+export type VerbRejectionCheck = "arguments" | "authority" | "transition";
+
+export interface VerbRecord {
+  id: number;
+  at: string;
+  verb: IssuedCommand;
+  issuer: IssuerLabel;
+  /** Task or criterion the verb was aimed at; null for run-wide verbs. */
+  target: string | null;
+  reason: string;
+  outcome: "accepted" | "rejected";
+  /** Non-null exactly when outcome is "rejected". */
+  rejection: { check: VerbRejectionCheck; message: string } | null;
+}
+
+/**
+ * One piece of evidence replaced by another, and what became of the first
+ * (R15 ①, AC40).
+ *
+ * Every rejection path in this PRD defined what gets refused and stopped
+ * there. The move a person actually makes next is to replace the evidence and
+ * resubmit, and until now that left no trace: registering a new capture for a
+ * criterion silently dropped the old row, so a reader could not tell a
+ * criterion proved once from one proved on the third try with two discarded
+ * captures behind it.
+ *
+ * `priorDisposition` is the honest half. A superseded trail is PRESERVED - it
+ * stays in the record marked superseded. A replaced artifact is INVALIDATED -
+ * the registration is gone, because the file it vouched for no longer has
+ * those bytes and a stale vouch is worse than none.
+ */
+export interface EvidenceReplacement {
+  /** Monotonic from 1, never reused. */
+  id: number;
+  at: string;
+  criterionId: string;
+  kind: "artifact" | "trail";
+  /** The evidence that was superseded, named the way its record names it. */
+  previous: string;
+  /** What replaced it. */
+  next: string;
+  priorDisposition: "preserved" | "invalidated";
+}
+
+export interface AmendmentRecord {
+  id: number;
+  at: string;
+  /**
+   * Always "human". Kept as a field rather than assumed so the record states
+   * the authority it was accepted under; a supervisor-issued amendment is
+   * refused before it ever reaches this ledger (AC12).
+   */
+  issuer: "human";
+  /** Verbatim user approval quote. */
+  approval: string;
+  reason: string;
+  prdSha256: string;
+  snapshotPath: string;
+  previousSnapshotPath: string;
+  /** Criteria whose normalized row hash changed and therefore lost green. */
+  invalidatedCriteria: string[];
+  /** Criteria that did not exist before and join unproven. */
+  addedCriteria: string[];
+  /** Parked criteria whose row changed, so their park lifted. */
+  unparkedCriteria: string[];
+  /** True when this amendment also excluded a sealed suite command (AC42). */
+  suiteSnapshotUpdated: boolean;
+  /**
+   * Suite commands this amendment dropped from the sealed list (R15 ③, AC42).
+   *
+   * The sealed list minus its exclusions stays the scoring authority; the
+   * excluded command's last result stays in `suite.results` as the fact that
+   * it happened, and simply stops being counted. Deleting it would erase a
+   * red the run really saw.
+   */
+  excludedSuiteCommands?: Array<{ commandId: string; command: string; priorResult: "GREEN" | "RED" | "none" }>;
+}
+
+export interface SuiteCommand {
+  /** Stable `S<n>` within the sealed list. */
+  id: string;
+  command: string;
+  argv: string[];
+  cwd: string;
+  /**
+   * Verification rows this command proves, frozen with the list. Sealed
+   * rather than re-derived per attempt for the same reason the command list
+   * is: a mid-run PRD edit must not silently remap which V row a green
+   * belongs to (AC5).
+   */
+  verificationIds: string[];
+}
+
+export interface SuiteExclusion {
+  at: string;
+  commandId: string;
+  /** Verbatim human approval; an exclusion without one is refused (AC6). */
+  approval: string;
+  reason: string;
+}
+
+export interface SuiteResult {
+  commandId: string;
+  /** Verification attempt this result was produced in. */
+  attemptId: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  exitCode: number;
+  status: "GREEN" | "RED";
+  logPath: string;
+  /**
+   * Criteria that share this exact `(cwd, command)` and were scored from the
+   * same single execution. Empty means the command is an orphan suite entry -
+   * the case whose failure blocks the run on its own axis (R2).
+   */
+  attributedCriteria: string[];
+}
+
+/**
+ * The suite list is sealed at `start` so a mid-run edit of agents/config.json
+ * cannot change what this run is measured against (AC5). The sealed list is
+ * the authority; `agents/config.json` is only its source at seal time.
+ */
+export interface SuiteLedger {
+  sealedAt: string;
+  commands: SuiteCommand[];
+  exclusions: SuiteExclusion[];
+  /** Latest result per command, replaced whole on each verify attempt. */
+  results: SuiteResult[];
+}
+
+export interface QaBriefStep {
+  /** `S1`..`Sn`, the identity the coverage check compares as a set (D-31). */
+  id: string;
+  text: string;
+}
+
+/**
+ * The only briefing window for a judged driving criterion (R11). Reissuing for
+ * the same criterion mints a new briefId, so a trail echoing a stale one is
+ * refused (AC30/AC31).
+ */
+export interface QaBrief {
+  briefId: string;
+  criterionId: string;
+  issuedAt: string;
+  /** PRD snapshot the script was derived from. */
+  prdSha256: string;
+  steps: QaBriefStep[];
+}
+
+/**
+ * Self-declared, never authenticated. The CLI checks the declaration and
+ * records it for audit; it cannot tell an implementor calling itself a QA
+ * agent from a real one. Same accepted trust model as D-39 (10장).
+ */
+export type DriverRole = "human" | "observer" | "qa-agent";
+
+export interface TrailRecord {
+  id: number;
+  at: string;
+  criterionId: string;
+  briefId: string;
+  driverRole: DriverRole;
+  /** Step ids the driver covered; compared as a set against the brief. */
+  coveredStepIds: string[];
+  /** Registered artifact paths carrying the capture. */
+  artifactPaths: string[];
+  /** "superseded" once a later trail is accepted for the same criterion. */
+  status: "accepted" | "superseded";
+}
+
+/**
+ * Three artifacts and nothing else go to a replacement implementor (D-22).
+ * The previous implementor's conversation is deliberately absent: escalate
+ * exists because that context stopped converging (PRINCIPLES 13).
+ */
+export interface SolverHandoff {
+  prdSnapshotPath: string;
+  diagnosisPath: string;
+  checkLedgerPath: string;
+}
+
+export interface EscalationRecord {
+  id: number;
+  at: string;
+  /** Task or criterion the implementor was stuck on. */
+  target: string | null;
+  reason: string;
+  /** Judge routing profile reused for the solver (R12); no new knob. */
+  profile: ReviewProfile;
+  model: string | null;
+  outcome: "diagnosed" | "summon-failed";
+  /** Diagnosis text on success; null when the summon failed. */
+  diagnosis: string | null;
+  /** Failure detail on summon-failed; null on success. */
+  error: string | null;
+  /** Non-null only on success, when a replacement was actually briefed. */
+  handoff: SolverHandoff | null;
+}
+
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   status: "active" | "complete" | "blocked" | "retired";
@@ -434,6 +821,22 @@ export interface ImplementState {
   // Design comments tracked across attempts with their dispositions. Absent on
   // states recorded before dispositions existed (= no tracked comments).
   designComments?: TrackedDesignComment[];
+  // --- v7 supervision ledgers. Required, not optional: a run that cannot say
+  // what suite it was sealed against or what happened in it is exactly the
+  // state v7 refuses to guess at (see IMPLEMENT_SCHEMA).
+  /** Append-only; the waiter's `--since` cursor indexes into this (R8). */
+  events: ImplementEvent[];
+  /** Append-only; every resubmission after a rejection (R15 ①). */
+  evidenceReplacements: EvidenceReplacement[];
+  /** Every observer verb, accepted or refused, with which check refused it. */
+  verbs: VerbRecord[];
+  amendments: AmendmentRecord[];
+  suite: SuiteLedger;
+  /** Issued briefs, newest last; a criterion may have several over a run. */
+  qaBriefs: QaBrief[];
+  trails: TrailRecord[];
+  /** Escalation count is `escalations.length`, never a separate counter. */
+  escalations: EscalationRecord[];
   retirement: {
     retiredAt: string;
     retiredBySessionId: string | null;
@@ -477,4 +880,37 @@ export interface ImplementCommandResult {
   exitCode: number;
   message: string;
   detail?: Record<string, unknown>;
+  /**
+   * The human-readable answer, one line per fact, printed INSTEAD of the
+   * detail dump when the caller did not ask for `--json` (R16 ③, AC47).
+   *
+   * 2026-08-29, interview-anchor: `status` answered "which criterion is
+   * parked and why" with 491 lines of JSON, so the reason was present and
+   * unreadable. A record that has the answer and buries it has not answered.
+   */
+  summary?: string[];
 }
+
+/**
+ * Wake the observer when the implementor has produced no event for this long.
+ *
+ * NOT a measured value - an agent's initial default (D-18). The incident it
+ * is sized against is the 2026-08-28 herdr-ide session, where an implementor
+ * burned 4.3 hours over 8 rounds without emitting a single state event and
+ * nothing woke up. Ten minutes is short enough to catch that and long enough
+ * that a normal build-and-test cycle does not trip it. Retune by editing this
+ * constant after observing a false wake or a missed stall on a real run; it is
+ * deliberately not a config knob (AGENTS.md Review Guide 7).
+ */
+export const STALL_THRESHOLD_MS = 10 * 60 * 1000;
+
+/**
+ * Escalations allowed per run before further attempts are refused.
+ *
+ * Also an unmeasured initial default (D-46). The bound exists because a fresh
+ * adversarial diagnosis is a stage that cannot converge on its own
+ * (PRINCIPLES 13): without a cap, "reset the implementor and try again" is an
+ * unbounded loop. Three is the point past which the honest move is to stop and
+ * ask a human rather than reset a fourth time.
+ */
+export const ESCALATE_LIMIT_PER_RUN = 3;

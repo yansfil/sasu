@@ -105,6 +105,41 @@ prose is a request for discipline, not a guard (items 7 and 13). Any hook this
 installer has ever registered must stay listed in `HARNESS_HOOK_MARKERS`, or a
 later run cannot retract it without disturbing a foreign hook.
 
+**Supervision and state attribution.** `state.json` has one physical writer,
+the CLI, and every change is attributed to an issuer: `implementor`,
+`observer`, or `human`. The label is a declaration, not an authentication -
+the CLI cannot tell a supervisor typing `--issuer human` from the human, and
+the mitigation is the transcript, not the code. What the gate does buy is that
+the supervisor is read-only over implementation: one dispatch gate refuses
+`check`, `task`, `artifact`, `verify`, `finalize`, `design --accept`, and
+`risk --accept` from an `observer` and records the refusal in the run's verb
+history. `amend` and `risk --non-convergent` are human-only. The gate is
+fail-open on a command it does not know, so a test reads the dispatcher and
+fails if a subcommand reaches it with no authority row. The full table lives
+in `skills/implement/SKILL.md`'s Command Contract, which a test compares
+against `sasu --help` in both directions and against the authority table
+itself.
+
+**Event wake, not polling.** `sasu implement await` is a background one-shot
+that blocks on the append-only event log inside `state.json` and exits for
+exactly one of three reasons: a new event past its `--since` cursor, a
+no-progress stall past a code constant, or the implementor's death. Events
+already past the cursor return immediately, so an event raised while nobody
+watched is not lost. A refused verb raises no event - nothing changed, so
+nobody needs waking. This registers no hook; see Lifecycle hooks.
+
+**Correcting a run in flight.** `amend` re-seals the PRD snapshot and
+invalidates only the acceptance rows whose text actually changed, archiving
+the superseded snapshot under its amendment id; it is refused while a task is
+in progress. `resequence` reorders pending tasks and moves no evidence.
+`amend --exclude-suite` is the only door out of the sealed suite list, and the
+excluded command's last result stays in the ledger as history rather than
+being deleted. A criterion proved by driving a screen is scripted by
+`qa-brief` and registered by `trail`, which checks the brief id echo, the
+covered step set, and the declared driver role - the implementor may not
+register its own drive. Replacing evidence after a rejection is recorded:
+a superseded trail is preserved, a replaced artifact is invalidated.
+
 **Judge policy.** Judge model routing is project-configurable only through the
 `routine` and `high-risk` profiles in `agents/config.json`.
 Both profiles default to Codex Luna max as the primary; they differ only in
