@@ -5,6 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { loadState, persistState } from "../../dist/implement/store.js";
+
 // --- R16: the three defects the 2026-08-29 live run exposed -----------------
 //
 // Each of these is a rule that was written without its exception. The
@@ -457,6 +459,63 @@ test("AC40: replacing a criterion's evidence records what became of the old, and
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
   assert.notEqual(state(root).verificationAttempts.at(-1).inputFingerprint, sealed, "a fresh attempt, not the old verdict");
   assert.equal(run(root, ["implement", "finalize"]).status, 0);
+});
+
+// --- RF1: a write built on a stale read is refused, never silently applied -
+
+test("RF1: a stale write is refused and the retry keeps both sessions' history", () => {
+  const root = makeProject();
+
+  // Session A reads the record. Everything it decides from here - including
+  // the next event id - is derived from these bytes.
+  const held = loadState(root, { slug: "fixture" });
+  const before = held.state.events.map((entry) => entry.id);
+
+  // Session B is a real second process, writing in the same window. This is
+  // the concurrency the workflow intends, not a pathological case.
+  const other = run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]);
+  assert.equal(other.status, 0, other.stderr + other.stdout);
+  const landed = state(root).events;
+  assert.ok(landed.length > before.length, "the other session's write appended to the log");
+
+  // Session A now writes what it decided against bytes that are gone. Before
+  // the check, this rename discarded session B's append and the record looked
+  // complete anyway (RF1).
+  held.state.events.push({
+    id: Math.max(0, ...before) + 1,
+    at: new Date().toISOString(),
+    kind: "note",
+    actor: "implementor",
+    subject: null,
+    summary: "a write built on the stale read",
+  });
+  assert.throws(() => persistState(held.statePath, held.state), /changed on disk since this command read it/);
+  assert.deepEqual(
+    state(root).events.map((entry) => `${entry.id}:${entry.summary}`),
+    landed.map((entry) => `${entry.id}:${entry.summary}`),
+    "the refused write left the record exactly as the other session wrote it",
+  );
+
+  // The recovery is the one the message names: reload, re-apply, write.
+  const reloaded = loadState(root, { slug: "fixture" });
+  reloaded.state.events.push({
+    id: Math.max(0, ...reloaded.state.events.map((entry) => entry.id)) + 1,
+    at: new Date().toISOString(),
+    kind: "note",
+    actor: "implementor",
+    subject: null,
+    summary: "a write built on the stale read",
+  });
+  persistState(reloaded.statePath, reloaded.state);
+
+  const merged = state(root).events;
+  assert.equal(merged.at(-1).summary, "a write built on the stale read", "session A's record survives the retry");
+  for (const entry of landed) {
+    assert.ok(merged.some((event) => event.id === entry.id && event.summary === entry.summary),
+      `session B's event ${entry.id} survives`);
+  }
+  assert.equal(new Set(merged.map((entry) => entry.id)).size, merged.length, "no id was minted twice");
+  assert.equal(run(root, ["implement", "status"]).status, 0, "the merged record still parses");
 });
 
 // --- RF2: registration is the last place a path can still be refused -------

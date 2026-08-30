@@ -761,15 +761,73 @@ export function parseImplementState(text: string): ImplementState {
   return candidate as ImplementState;
 }
 
+/**
+ * What `state.json` held when this state object was read from it.
+ *
+ * RF1 (2026-08-29 risk lane): persistState was an unlocked
+ * load-modify-atomic-rename, and event ids are derived from the caller's
+ * in-memory snapshot. Two commands that loaded the same state - the intended
+ * supervisor/implementor concurrency - could both mint the same next id, and
+ * the second rename silently discarded the first's event, verb, artifact, or
+ * transition. The run's sole evidence record could therefore end up complete
+ * on its face and missing what actually happened.
+ *
+ * The repair is the smallest one that makes the silent discard impossible:
+ * remember the bytes the writer's decisions were made against, and refuse the
+ * rename if the file no longer holds them. No lock file, no daemon, no wait
+ * loop - D-45's "no new concurrency mechanism" stands, re-read by the user as
+ * approving this check ("사수 권고대로 가자", 2026-08-30): the device count
+ * stays at zero and only the quiet overwrite is removed. A refused writer
+ * reloads and re-applies; a lost write cannot be reloaded.
+ *
+ * Keyed by the state object so the baseline cannot be serialized into the
+ * record - the check is about the file, and state.json stays the only record.
+ */
+const stateBaseline = new WeakMap<ImplementState, { statePath: string; digest: string }>();
+
+function stateFileDigest(statePath: string): string | null {
+  if (!fs.existsSync(statePath)) return null;
+  return sha256(fs.readFileSync(statePath));
+}
+
 export function loadState(projectRoot: string, options: { slug?: string; state?: string } = {}): { statePath: string; state: ImplementState } {
   const statePath = resolveStatePath(projectRoot, options);
   if (!fs.existsSync(statePath)) throw new Error(`implement state not found: ${path.relative(projectRoot, statePath)}`);
-  return { statePath, state: parseImplementState(fs.readFileSync(statePath, "utf8")) };
+  const text = fs.readFileSync(statePath, "utf8");
+  const state = parseImplementState(text);
+  stateBaseline.set(state, { statePath, digest: sha256(text) });
+  return { statePath, state };
 }
 
 export function persistState(statePath: string, state: ImplementState): void {
+  const baseline = stateBaseline.get(state);
+  const onDisk = stateFileDigest(statePath);
+  if (baseline !== undefined && baseline.statePath === statePath) {
+    if (onDisk !== baseline.digest) {
+      throw new Error(
+        "implement state changed on disk since this command read it, so writing now would discard the other write."
+          + " Nothing was written. Re-run the command: it will reload the current record and re-apply against it."
+          + ` (${path.basename(statePath)})`,
+      );
+    }
+  } else if (onDisk !== null) {
+    // A state object this process built rather than loaded (only `start`
+    // does) must never land on top of an existing record; `start` already
+    // refuses an existing slug, so reaching here means the file appeared
+    // underneath it.
+    throw new Error(
+      `implement state appeared at ${path.basename(statePath)} while this run was being created; nothing was written.`,
+    );
+  }
   state.updatedAt = nowIso();
-  writeJsonAtomic(statePath, state);
+  // Serialized once and written, so the baseline is the exact bytes on disk
+  // rather than a second serialization that could drift from them.
+  const text = `${JSON.stringify(state, null, 2)}\n`;
+  writeTextAtomic(statePath, text);
+  // The bytes just written are the new baseline: several commands persist
+  // twice (ownership adoption, then the command's own change), and the second
+  // write is not a conflict with the first.
+  stateBaseline.set(state, { statePath, digest: sha256(text) });
   writeActivePointer(state.projectRoot, state);
 }
 
