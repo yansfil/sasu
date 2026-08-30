@@ -11,6 +11,11 @@ const {
   caseSchemaVersion,
   validateCaseV3Extras,
 } = require("./lib/case_contract.js");
+const {
+  assertSealIntact,
+  loadSealedManifest,
+  verifySealedHash,
+} = require("./lib/sealing.js");
 const RUN_SCHEMA = "sasu.benchmark-run.v1";
 const QUALITATIVE_SCHEMA = "sasu.benchmark-qualitative.v1";
 const REPORT_SCHEMA = "sasu.benchmark-report.v1";
@@ -311,6 +316,14 @@ function commandPrepareRun(options) {
   const prdRelative = requireInside(projectRoot, prdPath, "benchmark PRD");
   if (!fs.existsSync(prdPath)) throw new Error(`benchmark PRD not found: ${prdPath}`);
   const prdReadiness = validateBenchmarkPrd(projectRoot, prdPath, prdRelative);
+  // A v3 case is refused before a run is reserved when its scoring
+  // specification is reachable from the repository or when the manifest does
+  // not resolve outside the project root. Reserving first and checking later
+  // would leave a numbered run whose numbers are meaningless.
+  const sealed = caseSchemaVersion(contract) === 3
+    ? (assertSealIntact(projectRoot, contract.id),
+       loadSealedManifest(projectRoot, contract.sealedPath, { caseId: contract.id }))
+    : null;
   const topic = prdTopic(prdPath);
   const headSha = runGit(
     projectRoot,
@@ -328,6 +341,10 @@ function commandPrepareRun(options) {
     createdAt,
     casePath: caseRelative,
     caseHash: sha256File(casePath),
+    // Hash-bound, not merely hidden. Confidentiality without integrity is the
+    // SWE-Lancer failure mode: the specification was locked and still
+    // overwritable. `report` rechecks this hash before it scores anything.
+    ...(sealed ? { sealedPath: contract.sealedPath, sealedHash: sealed.hash } : {}),
     prdPath: prdRelative,
     prdHash: sha256File(prdPath),
     prdReadiness,
@@ -724,6 +741,14 @@ function commandReport(options) {
   const prdPath = path.resolve(path.dirname(casePath), contract.prd);
   if (!fs.existsSync(prdPath)) throw new Error(`benchmark PRD not found: ${prdPath}`);
   const prepared = readPreparedRun(projectRoot, contract, casePath, prdPath, runId);
+  // Report-time integrity recheck. A manifest that moved, vanished, or changed
+  // since preparation means the scoring specification in force during the run
+  // is not the one being scored against, so the run is marked invalid and no
+  // score is emitted rather than a score being emitted with a warning beside
+  // it - a number that is read is a number that is believed.
+  const sealedVerdict = caseSchemaVersion(contract) === 3
+    ? verifySealedHash(projectRoot, prepared.record.sealedPath, prepared.record.sealedHash)
+    : null;
   const runDir = path.resolve(projectRoot, requireOption(options, "run-dir"));
   if (canonicalPath(runDir) !== canonicalPath(prepared.record.runDir)) {
     throw new Error(`--run-dir does not match the prepared fresh environment: ${prepared.record.runDir}`);
@@ -850,7 +875,19 @@ function commandReport(options) {
       caseHash: sha256File(casePath),
       prdPath: toProjectPath(projectRoot, prdPath),
       prdHash: sha256File(prdPath),
+      ...(sealedVerdict
+        ? {
+            sealed: {
+              hash: prepared.record.sealedHash,
+              intact: sealedVerdict.valid,
+              reason: sealedVerdict.reason,
+            },
+          }
+        : {}),
     },
+    ...(sealedVerdict && !sealedVerdict.valid
+      ? { valid: false, invalidReason: sealedVerdict.reason }
+      : {}),
     run: {
       id: runId,
       executor: { runtime, model: options.model || null },
@@ -944,6 +981,14 @@ function commandReport(options) {
       qualitative: qualitativePath ? { path: toProjectPath(projectRoot, qualitativePath), hash: sha256File(qualitativePath) } : null,
     },
   };
+  // An invalid seal withholds the scoreboard outright. Emitting scores beside a
+  // warning would leave numbers that read as measurements on a page where the
+  // measuring specification is not the one the run was scored against.
+  if (sealedVerdict && !sealedVerdict.valid) {
+    for (const block of ["efficiency", "honesty", "qualitative"]) {
+      report[block] = { withheld: true, reason: sealedVerdict.reason };
+    }
+  }
   const output = path.resolve(projectRoot, options.output || path.join("agents", "benchmarks", contract.id, runId, "report.json"));
   writeJsonAtomic(output, report);
   if (prepared.record.status === "prepared") {
@@ -954,7 +999,12 @@ function commandReport(options) {
       reportPath: toProjectPath(projectRoot, output),
     });
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, output: toProjectPath(projectRoot, output), validRun: report.outcome.validRun })}\n`);
+  process.stdout.write(`${JSON.stringify({
+    ok: true,
+    output: toProjectPath(projectRoot, output),
+    validRun: report.outcome.validRun,
+    ...(sealedVerdict ? { sealIntact: sealedVerdict.valid } : {}),
+  })}\n`);
 }
 
 function comparableReasons(baseline, candidate) {
