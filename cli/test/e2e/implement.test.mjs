@@ -2483,3 +2483,28 @@ test("a legacy agent-registered harness log is purged so the run can verify agai
     "the poisoned entry must be gone from the record",
   );
 });
+
+// PRD gate-loop R9/AC15: a PRD with no interview qa-log has no user
+// utterances for the specification judges to compare against, so start does
+// not require gap-audit/spec and the receipt says the judge did not run
+// instead of implying a judgment that never happened.
+test("AC15: a conversation-only PRD starts without judge PASS and its receipt records why the judge did not run", () => {
+  const root = makeProject();
+  const { file, capture } = stub(root);
+  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "gates")), false, "no gate ever ran");
+  startAndClose(root);
+  const judge = readState(root).prd.judge;
+  assert.equal(judge.required, false);
+  assert.match(judge.skippedReason, /^judge not run: no user utterances to judge against \(source_intake is "current conversation", not an interview qa-log\)$/);
+  assert.equal(judge.gapAudit, null);
+  assert.equal(judge.spec, null);
+
+  const verified = run(root, ["implement", "verify"], { env });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  const finalized = run(root, ["implement", "finalize"], { env });
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, finalized.json.detail.completion.receiptPath), "utf8"));
+  assert.deepEqual(receipt.prdJudge, judge, "the receipt carries the reason verbatim from start");
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "gates")), false, "still no gate ran");
+});
