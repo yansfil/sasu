@@ -19,7 +19,7 @@ import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../m
 import type { ImplementState } from "../implement/types";
 import { implementStatePathFor } from "../runs/paths";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
-import { prelintPrdDecisionIds, runPrelint, type PrelintResult } from "./prelint";
+import { prelintPrdCitedQuestions, prelintPrdDecisionIds, runPrelint, type PrelintResult } from "./prelint";
 
 const { parseAcceptanceCriteria } = require("../../lib/prd_parser.js") as {
   parseAcceptanceCriteria: (section: string) => Array<{ id: string; text: string }>;
@@ -37,7 +37,7 @@ import {
   type JudgeLane,
   type PriorFinding,
 } from "./prompts";
-import { appendQaEntry, refreshBookkeeping, replaceQaLog, setFrontmatterValue } from "../interview/qalog";
+import { appendAuditEntry, appendQaEntry, refreshBookkeeping, replaceQaLog, setQaLogStatus, type AuditEntryInput } from "../interview/qalog";
 import {
   answerPrdGate,
   clearDelegation,
@@ -481,6 +481,44 @@ export function applyOpenSetContract(input: {
   };
 }
 
+/**
+ * Record a PRD-gate round in the judged qa-log's Audit History and move its
+ * lifecycle status (PRD gate-loop R5): gap-audit PASS completes the log,
+ * nothing else touches the status here (reopen reactivates it in runReopen).
+ * The log is re-read right before the append so the compare-and-swap only
+ * ever fails on a genuinely concurrent write, not on the minutes the judge
+ * took. Both the Audit History section and the status line are outside the
+ * decision-cell pin, so this write never stales the verdict it records.
+ */
+function recordQaLogAudit(
+  projectRoot: string,
+  qaLogInput: GateInput | undefined,
+  gate: Extract<GateId, "gap-audit" | "spec">,
+  entry: Omit<AuditEntryInput, "type">,
+): void {
+  if (qaLogInput === undefined) return;
+  const file = path.join(projectRoot, qaLogInput.path);
+  const original = fs.readFileSync(file, "utf8");
+  let updated = appendAuditEntry(original, { ...entry, type: gate === "gap-audit" ? "gap-audit-gate" : "spec-gate" }).content;
+  if (gate === "gap-audit" && (entry.result === "pass" || entry.result === "answered")) {
+    updated = setQaLogStatus(updated, "complete");
+  }
+  replaceQaLog(file, original, refreshBookkeeping(updated));
+}
+
+function auditEntryFor(state: GatesState, gate: Extract<GateId, "gap-audit" | "spec">, result: AuditEntryInput["result"], note?: string): Omit<AuditEntryInput, "type"> {
+  const record = state.gates[gate];
+  return {
+    result,
+    at: record.lastRunAt ?? new Date().toISOString(),
+    cycle: (record.reviewReopens?.length ?? 0) + 1,
+    open: record.findings,
+    warnings: record.warnings ?? [],
+    artifact: record.history.at(-1)?.artifact ?? null,
+    ...(note !== undefined ? { note } : {}),
+  };
+}
+
 async function runGapListGate(
   projectRoot: string,
   config: SasuConfig,
@@ -663,7 +701,7 @@ async function runGapListGate(
           const detail = first instanceof Error ? first.message : String(first);
           const laneList = failures.map((entry) => entry.lane.id).join(", ");
           const laneError = new JudgeError(code, backend, `lane failed [${laneList}]: ${detail}`, reason);
-          return recordJudgeFailure(store, state, gate, config, laneError, records, topic);
+          return recordJudgeFailure(store, state, gate, config, laneError, records, topic, undefined, inputs.find((input) => input.kind === "qa-log"));
         }
         judged = settled.map((entry) => ({
           laneId: entry.lane.id,
@@ -718,10 +756,16 @@ async function runGapListGate(
         },
         records,
       );
+      recordQaLogAudit(
+        projectRoot,
+        inputs.find((input) => input.kind === "qa-log"),
+        gate,
+        auditEntryFor(state, gate, outcome.verdict === "PASS" ? "pass" : outcome.verdict === "NEEDS_HUMAN" ? "needs-human" : "block"),
+      );
       const status = gateStatus(state, gate, config.judge.retryBudget, projectRoot);
       return { ok: status.effective === "PASS", status };
     } catch (error) {
-      return recordJudgeFailure(store, state, gate, config, error, records, topic);
+      return recordJudgeFailure(store, state, gate, config, error, records, topic, undefined, inputs.find((input) => input.kind === "qa-log"));
     }
   } finally {
     releaseRunLock();
@@ -771,6 +815,10 @@ export async function runSpecGate(
   // instead of costing a judge round.
   const cross = prelintPrdDecisionIds(prd.content, qaLog.content);
   if (!cross.ok) return prelintBlock(projectRoot, config, topic, "spec", cross);
+  // Same shape, one level deeper (PRD gate-loop R8): a cited Q turn must
+  // hold the user's answer, not just exist.
+  const cited = prelintPrdCitedQuestions(prd.content, qaLog.content);
+  if (!cited.ok) return prelintBlock(projectRoot, config, topic, "spec", cited);
   emitPrelintWarnings(prelint);
   const result = await runGapListGate(
     projectRoot,
@@ -2013,6 +2061,7 @@ function recordJudgeFailure(
   records: JudgeCallRecord[],
   topic: string,
   artifactPayload?: unknown,
+  qaLogInput?: GateInput,
 ): GateCommandResult {
   if (!(error instanceof JudgeError)) throw error;
   const failureRecord = judgeCallRecordFrom(error);
@@ -2029,6 +2078,9 @@ function recordJudgeFailure(
     },
     records,
   );
+  if (gate !== "verify") {
+    recordQaLogAudit(store.projectRoot, qaLogInput, gate, auditEntryFor(state, gate, "error", error.message));
+  }
   // The auth recovery is built from the failure record, never hardcoded to a
   // topology. 2026-08-27 modakbul gap-audit: the primary was Codex (failed at
   // preflight) and Claude was the fallback that terminally failed, but this
@@ -2119,8 +2171,12 @@ export function runReopen(
     answer: evidence.trim(),
     notes: "Recorded by sasu gate reopen from the user's own words; normalize the decisions it carries into the Decision Register before re-running the gate.",
   });
-  const reactivated = setFrontmatterValue(appended.content, "status", "active", true);
-  replaceQaLog(qaLogFile, original, refreshBookkeeping(reactivated));
+  const reactivated = setQaLogStatus(appended.content, "active");
+  const audited = appendAuditEntry(reactivated, {
+    ...auditEntryFor(state, gate, "reopened", `Q${appended.qNumber} records the user's change request`),
+    type: gate === "gap-audit" ? "gap-audit-gate" : "spec-gate",
+  }).content;
+  replaceQaLog(qaLogFile, original, refreshBookkeeping(audited));
   return gateStatus(state, gate, config.judge.retryBudget, projectRoot);
 }
 
@@ -2173,6 +2229,7 @@ export function runAnswer(
     return { ...input, sha256 };
   });
   const state = answerPrdGate(store, gate, evidence, inputs, question);
+  recordQaLogAudit(projectRoot, qaLogInput, gate, auditEntryFor(state, gate, "answered", `Q${appended.qNumber} records the user's answer to the bundle`));
   return gateStatus(state, gate, config.judge.retryBudget, projectRoot);
 }
 

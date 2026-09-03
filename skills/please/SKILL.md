@@ -105,7 +105,7 @@ sasu gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/q
 ```
 
 Run gap-audit and, after an agent-fixable BLOCK, fix the open findings and re-run under the gate rules below.
-Do not draft the PRD until gap-audit is PASS and the qa-log is marked `status: complete` under the `interview-me` closure contract.
+Do not draft the PRD until gap-audit is PASS, which marks the qa-log `status: complete` under the `interview-me` closure contract.
 Conversation-only PRDs have no qa-log and skip this gate rather than manufacturing an intake artifact.
 
 ## Ambiguity Policy

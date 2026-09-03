@@ -296,7 +296,8 @@ Record the packet as the imported entry's `immediate_notes` value during checkpo
 ## Artifacts
 
 Use this qa-log.md structure.
-The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks, Audit History) and the manual fallback when sasu is unavailable.
+The interview CLI creates it and owns the mechanical fields; the template below is the contract for the agent-owned sections (Current Understanding, UX Scenario Cards, Evidence, Documented Domain Checks) and the manual fallback when sasu is unavailable.
+`## Audit History` and the frontmatter `status` are harness-owned: every `sasu gate gap-audit`, `gate spec`, `gate answer`, and `gate reopen` run records itself there, and never write into that section yourself.
 Keep raw capture light during the interview.
 Complete every normalized field before marking the file PRD-ready.
 
@@ -372,16 +373,6 @@ normalization_checkpoint_every: 10
 - highest_remaining_gap:
 
 ## Audit History
-
-### Audit N
-- type: gap-audit-gate | local-fallback | independent-auditor
-- result: pass | fail | unavailable | skipped
-- missing decision_ids:
-- unsupported assumptions:
-- UX or behavior gap:
-- highest-risk blocker:
-- final-blocking-question:
-- PRD impact:
 ~~~
 
 ## Loop And Closure
@@ -397,7 +388,7 @@ normalization_checkpoint_every: 10
 9. Run `interview sync` again, then full normalization and `interview checkpoint`.
 10. Run the sasu gap-audit gate. Fall back to one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback only when the `sasu` binary or its judge backend is unavailable.
 11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
-12. Mark qa-log.md `status: complete` only when the gate and closure are ready, then suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
+12. The gate marks qa-log.md `status: complete` when it seals PASS; once it has, suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
 ## Gap-Audit Gate (sasu)
 
@@ -436,8 +427,8 @@ judge and never consume the retry budget.
   `--grant-budget` retries only a repaired judge backend after its error streak; it never changes the open set.
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback as the closure audit.
 - Never run `sasu gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
-- Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.
-- The PASS is pinned to the qa-log's content hash and seals the review cycle (frontmatter and the `## Audit History` section are exempt as lifecycle bookkeeping): any other qa-log edit afterwards makes `sasu gate status` report `STALE`, and the CLI refuses automatic re-judgment until the input is restored or the user explicitly authorizes `gate reopen`.
+- The gate records each run in the qa-log's `## Audit History` and moves `status` itself; report the printed result, and if the judge was unavailable and a fallback auditor was used, report that in the conversation rather than writing into the log.
+- The PASS is pinned to the Decision Register's decision cells (id, kind, area, decision text, priority, status) and seals the review cycle: Q anchors, Audit History, frontmatter, and the Register's source and mapping cells may change afterwards without effect, while a changed decision makes `sasu gate status` report `STALE`, and the CLI refuses automatic re-judgment until the decision is restored or the user explicitly authorizes `gate reopen`.
 - PASS may retain P2 advisory notes; record them without editing the qa-log merely to chase them.
 - The gate returns a findings list, never a numeric score; the numeric-gate ban in the Core Contract stands.
 

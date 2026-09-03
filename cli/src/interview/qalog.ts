@@ -461,6 +461,63 @@ export function anchorDecisionToQuestion(content: string, qNumber: number, decis
   throw new Error(`Q${qNumber} entry has no decision_ids line`);
 }
 
+const AUDIT_HEADING = "## Audit History";
+
+export interface AuditEntryInput {
+  type: "gap-audit-gate" | "spec-gate";
+  result: "pass" | "block" | "needs-human" | "error" | "answered" | "reopened";
+  at: string;
+  cycle: number;
+  /** Open findings after the round, rendered one per line. */
+  open: { id?: string; severity: string; area: string; missing: string }[];
+  warnings: { id?: string; severity: string; area: string; missing: string }[];
+  artifact: string | null;
+  note?: string;
+}
+
+function renderFindingLines(findings: AuditEntryInput["open"]): string[] {
+  if (findings.length === 0) return ["none"];
+  return findings.map((f) => `${f.id !== undefined ? `${f.id} ` : ""}[${f.severity}/${f.area}] ${sanitizeCell(f.missing)}`);
+}
+
+/**
+ * The gate's own record of a round in the log it judged (PRD gate-loop
+ * D-06/R5): written by the harness at every judged, errored, answered, or
+ * reopened round, never by the agent (hide-rebrand 2026-08-29: the agent
+ * hand-wrote the block three times with python and left "placeholder
+ * written - will update result after gate run"). The section is outside the
+ * freshness pin, so recording never stales the seal. A log without the
+ * section gets one appended at the end; the gap-audit prelint requires it,
+ * so this only happens on a log the gate never saw.
+ */
+export function appendAuditEntry(content: string, entry: AuditEntryInput): { content: string; number: number } {
+  const numbers = [0];
+  for (const match of content.matchAll(/^###\s+Audit\s+(\d+)$/gm)) numbers.push(Number(match[1]));
+  const number = Math.max(...numbers) + 1;
+  const block = [
+    `### Audit ${number}`,
+    `- type: ${entry.type}`,
+    `- at: ${entry.at}`,
+    `- cycle: ${entry.cycle}`,
+    `- result: ${entry.result}`,
+    `- open findings: ${renderFindingLines(entry.open).join("\n  ")}`,
+    `- warnings: ${renderFindingLines(entry.warnings).join("\n  ")}`,
+    `- artifact: ${entry.artifact ?? "none"}`,
+    ...(entry.note !== undefined && entry.note.trim() !== "" ? [`- note: ${bulletValue(entry.note)}`] : []),
+  ];
+  const lines = content.split("\n");
+  if (!lines.some((line) => line.trim() === AUDIT_HEADING)) {
+    const trimmed = content.replace(/\n+$/, "");
+    return { content: `${trimmed}\n\n${AUDIT_HEADING}\n\n${block.join("\n")}\n`, number };
+  }
+  return { content: appendToSection(lines, AUDIT_HEADING, block).join("\n"), number };
+}
+
+/** Lifecycle status is harness-owned (PRD gate-loop D-06): gap-audit PASS completes a log, reopen reactivates it. */
+export function setQaLogStatus(content: string, status: "active" | "paused" | "complete"): string {
+  return setFrontmatterValue(content, "status", status, true);
+}
+
 export function appendCheckpoint(content: string, input: CheckpointInput, afterQuestion: number): { content: string; number: number } {
   const numbers = [0];
   for (const match of content.matchAll(/^###\s+Checkpoint\s+(\d+)$/gm)) numbers.push(Number(match[1]));

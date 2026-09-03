@@ -418,3 +418,93 @@ test("AC11: gate reopen is refused before any verdict and records nothing", () =
   assert.match(refused.stderr, /no judged verdict to reopen/);
   assert.equal(fs.readFileSync(path.join(dir, "qa-log.md"), "utf8"), QA_FIXTURE);
 });
+
+// Everything the harness wrote into the log for a round, removed again, must
+// give back the log as it was: that is the "no agent write in the diff" half
+// of AC9, checked structurally rather than by eyeballing a diff.
+function stripHarnessWrites(content) {
+  return content
+    .replace(/^status: ".*"$/m, 'status: "?"')
+    .replace(/^updated_at: ".*"$/m, 'updated_at: "?"')
+    .replace(/## Audit History[\s\S]*$/, "## Audit History\n");
+}
+
+test("AC9: a gap-audit run records itself in the qa-log's Audit History, moves the status, and writes nothing else", () => {
+  const dir = makeProject();
+  const before = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
+  const blocked = gapAudit(dir, THREE_OPEN);
+  assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
+  const afterBlock = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
+  const audit1 = afterBlock.slice(afterBlock.indexOf("### Audit 1"));
+  assert.match(audit1, /^### Audit 1\n- type: gap-audit-gate\n- at: \d{4}-\d{2}-\d{2}T/);
+  assert.match(audit1, /- cycle: 1\n- result: block\n/);
+  assert.match(audit1, /- open findings: F1 \[P1\/ux\] empty list state undecided\n  F2 \[P1\/ux\] undo after delete undecided\n  F3 \[P0\/risk\] no proof named/);
+  assert.match(audit1, /- warnings: none\n- artifact: agents\/runs\/fixture\/gates\/artifacts\/gap-audit-/);
+  assert.match(afterBlock, /^status: "active"$/m, "a BLOCK leaves the log active");
+  assert.equal(stripHarnessWrites(afterBlock), stripHarnessWrites(before), "only the Audit block and lifecycle fields changed");
+
+  const passed = gapAudit(dir, { byPurpose: { default: PASS } });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+  const afterPass = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
+  assert.match(afterPass, /### Audit 2\n- type: gap-audit-gate\n- at: [^\n]+\n- cycle: 1\n- result: pass\n- open findings: none\n- warnings: none\n/);
+  assert.match(afterPass, /^status: "complete"$/m, "a sealed PASS completes the log");
+  assert.equal(stripHarnessWrites(afterPass), stripHarnessWrites(before));
+  assert.equal(statusJson(dir)["gap-audit"].effective, "PASS", "the harness's own writes never stale the seal");
+});
+
+test("AC9: a judge error and a spec run are recorded too; spec never moves the qa-log status", () => {
+  const dir = makeProject();
+  const errored = gapAudit(dir, "garbage that is not json");
+  assert.equal(errored.status, 1);
+  const afterError = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
+  assert.match(afterError, /### Audit 1\n- type: gap-audit-gate\n- at: [^\n]+\n- cycle: 1\n- result: error\n- open findings: none\n- warnings: none\n- artifact: none\n- note: [^\n]*lane failed \[/);
+  assert.match(afterError, /^status: "active"$/m);
+
+  const spec = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { default: PASS } }),
+  });
+  assert.equal(spec.status, 0, spec.stdout + spec.stderr);
+  const afterSpec = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
+  assert.match(afterSpec, /### Audit 2\n- type: spec-gate\n- at: [^\n]+\n- cycle: 1\n- result: pass\n/);
+  assert.match(afterSpec, /^status: "active"$/m, "the spec gate judges the PRD; the log's lifecycle belongs to gap-audit");
+  assert.equal(statusJson(dir).spec.effective, "PASS");
+});
+
+function specGate(dir, prdContent, qaLogContent) {
+  fs.writeFileSync(path.join(dir, "prd.md"), prdContent);
+  fs.writeFileSync(path.join(dir, "qa-log.md"), qaLogContent);
+  return runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { default: PASS } }),
+  });
+}
+
+test("AC14: a PRD citing a Q turn with an empty answer is blocked by prd-cited-question-unanswered at $0", () => {
+  const dir = makeProject();
+  const prd = PRD_FIXTURE.replace("- R1. the widget renders and persists its state", "- R1. the widget renders and persists its state (Q2)");
+  const emptied = QA_FIXTURE.replace("- answer: yes, ask first", "- answer:");
+  const blocked = specGate(dir, prd, emptied);
+  assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
+  const parsed = JSON.parse(blocked.stdout);
+  assert.equal(parsed.prelint.ok, false);
+  assert.equal(parsed.prelint.findings[0].rule, "prd-cited-question-unanswered");
+  assert.match(parsed.prelint.findings[0].missing, /PRD cites Q2, but that Raw Q&A turn has an empty answer/);
+  assert.equal(parsed.prelint.findings[0].line, PRD_FIXTURE.split("\n").findIndex((line) => line.startsWith("- R1.")) + 1);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false, "no judge, no state");
+
+  const missing = specGate(dir, prd.replace("(Q2)", "(Q9)"), QA_FIXTURE);
+  assert.equal(missing.status, 1);
+  assert.match(JSON.parse(missing.stdout).prelint.findings[0].missing, /PRD cites Q9, but that Raw Q&A turn does not exist/);
+});
+
+test("AC14: a PRD citing an answered Q turn passes the rule, and a quarter is not a citation", () => {
+  const dir = makeProject();
+  const prd = PRD_FIXTURE
+    .replace("- R1. the widget renders and persists its state", "- R1. the widget renders and persists its state (Q2)")
+    .replace("Users need a widget.", "Users need a widget by Q4 2026.");
+  const passed = specGate(dir, prd, QA_FIXTURE);
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+  const parsed = JSON.parse(passed.stdout);
+  assert.equal(parsed.prelint.ok, true);
+  assert.ok(!(parsed.prelint.findings ?? []).some((f) => f.rule === "prd-cited-question-unanswered"));
+  assert.equal(parsed.status.effective, "PASS");
+});

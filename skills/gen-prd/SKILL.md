@@ -610,12 +610,13 @@ prelint already reports uncovered ACs and dangling Covers references at $0.
   and recovery, and treat the PRD as not `ready` until the user decides.
 - Never run `sasu gate override` yourself; it is user-only, and the
   recorded deviation must carry the user's own reason.
-- The PASS is pinned to the content hash of the PRD and qa-log bodies and seals
-  the review cycle.
+- The PASS is pinned to the PRD body and the qa-log's Decision Register
+  decision cells and seals the review cycle
   (frontmatter is exempt, so flipping `status`/`human_approval` after the gate
-  is fine): any body edit afterwards makes `sasu gate status` report
-  `STALE`; the CLI refuses automatic re-judgment until the input is restored or
-  the user explicitly authorizes `gate reopen`.
+  is fine): any PRD body edit or qa-log decision change afterwards makes
+  `sasu gate status` report `STALE`; the CLI refuses automatic re-judgment
+  until the input is restored or the user explicitly authorizes `gate reopen`.
+  The gate records each run in the qa-log's `## Audit History` itself.
 - PASS may retain P2 advisory notes.
   Do not edit the PRD and invalidate the seal merely to remove those notes.
 - When no intake qa-log exists (conversation-only PRD), record that the spec

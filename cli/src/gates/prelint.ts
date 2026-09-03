@@ -415,6 +415,57 @@ export function prelintPrdDecisionIds(prdContent: string, qaLogContent: string):
   return { ok: findings.length === 0, doc: "prd", findings };
 }
 
+/**
+ * Cross-document rule for the spec gate (PRD gate-loop D-09/R8): every Raw
+ * Q&A turn the PRD cites (`Q<n>`) must exist and carry a non-empty user
+ * answer. A PRD that cites a question nobody answered is quoting consent
+ * that does not exist, which is the P0 class the judges keep catching one
+ * paid round at a time. Calibration (2026-09-03, every PRD+qa-log pair on
+ * this machine): zero hits on healthy pairs; interview-anchor's PRD cites
+ * Q15 and Q21 that its log never held, and its spec review had stalled.
+ * Quarter-style tokens (`Q4 2026`) are excluded by the year lookahead.
+ */
+export function prelintPrdCitedQuestions(prdContent: string, qaLogContent: string): PrelintResult {
+  const findings: PrelintFinding[] = [];
+  const qaLines = qaLogContent.split("\n");
+  const rawQa = sectionRange(qaLines, "## Raw Q&A");
+  /** Q number -> whether its `- answer:` line carries text. */
+  const answered = new Map<string, boolean>();
+  if (rawQa !== null) {
+    let current: string | null = null;
+    for (let i = rawQa.start + 1; i < rawQa.end; i += 1) {
+      const line = qaLines[i]!;
+      const heading = line.match(/^###\s*Q(\d+)\b/);
+      if (heading) {
+        current = `Q${heading[1]}`;
+        answered.set(current, false);
+        continue;
+      }
+      if (current === null) continue;
+      const answer = line.match(/^\s*-\s*answer:\s*(.*)$/);
+      if (answer && answer[1]!.trim() !== "") answered.set(current, true);
+    }
+  }
+  const seen = new Set<string>();
+  prdContent.split("\n").forEach((line, index) => {
+    for (const match of line.matchAll(/\bQ(\d+)\b(?!\s*\d{4})/g)) {
+      const token = `Q${match[1]}`;
+      if (seen.has(token) || answered.get(token) === true) continue;
+      seen.add(token);
+      const state = answered.has(token) ? "has an empty answer" : "does not exist";
+      findings.push(
+        finding(
+          "prd-cited-question-unanswered",
+          index + 1,
+          `PRD cites ${token}, but that Raw Q&A turn ${state} in the interview log`,
+          `Only a turn with the user's own answer text can back a decision: run sasu interview sync so the real exchange lands under ${token}, or cite the turn that actually holds the answer, or drop the citation.`,
+        ),
+      );
+    }
+  });
+  return { ok: findings.length === 0, doc: "prd", findings };
+}
+
 // --- PRD rules (spec and verify gate entrances) ---
 
 // SC = user scenario card (gen-prd §2.1).

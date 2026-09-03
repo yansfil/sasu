@@ -20,6 +20,18 @@ function walk(dir, out = []) {
   return out;
 }
 
+test("AC10: no skill asks an agent to write the qa-log's Audit History or flip its status by hand", () => {
+  for (const name of ["interview-me", "gen-prd", "please"]) {
+    const skill = fs.readFileSync(path.join(repoRoot, "skills", name, "SKILL.md"), "utf8");
+    assert.doesNotMatch(skill, /Record the gate result as an Audit entry/i, name);
+    assert.doesNotMatch(skill, /type: gap-audit-gate \| local-fallback/, `${name} must not carry the hand-written Audit template`);
+    assert.doesNotMatch(skill, /Mark qa-log\.md `status: complete`/, name);
+  }
+  const interview = fs.readFileSync(path.join(repoRoot, "skills", "interview-me", "SKILL.md"), "utf8");
+  assert.match(interview, /harness-owned: every `sasu gate gap-audit`/);
+  assert.match(interview, /never write into that section yourself/);
+});
+
 const RETIRED = ["closure-blocked", "closureExhausted", "closure-exhausted", "judgedRounds", "reviewRound", "reviewPhase", "semantic rounds"];
 
 test("AC3: no round counter or closure phase survives in the harness code or the skills", () => {
