@@ -2,7 +2,7 @@
 topic: "게이트 루프: judge 한 번은 빠른데 사이클이 느린 문제를 배관에서 고친다"
 status: "ready"
 # human_approval evidence - user 2026-09-03 verbatim: "ㅇㅇ 그렇게 하자", "자 그럼이제 이것들 바탕으로 PRD 만들어보자"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-03 verbatim: 승인하고 fable 5.1 pane 띄워서 구현 시작해
 review_profile: "high-risk"
 review_rationale: "사람이 개입하는 지점을 줄이는 변경이다. 잘못 줄이면 에이전트가 자기 제안을 승인으로 둔갑시키는 실패(7084c601에서 4회 관측)가 다시 통과한다. 반대로 지금 상태는 사용자가 빈 evidence로 reopen을 치는 버튼 노릇을 하고 있어, 사람 접점이 있어도 판단이 없다."
 source_intake: "current conversation"
