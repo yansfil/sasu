@@ -439,11 +439,19 @@ test("a failed visual judge does not fall back to Claude without image attachmen
   }
 });
 
+// The fallback tests below run the fake `codex` twice under the same
+// judge.timeoutMs as the primary: once for its preflight, once for the call.
+// At 1000ms that budget lost to parallel suite load about one run in five
+// (2026-09-04, measured: the fallback timed out too and the lane surfaced
+// judge-timeout after ~2.3s), so the budget is sized for two shell spawns
+// under load, and the fake `claude` sleeps well past it either way.
+const FALLBACK_TIMEOUT_MS = 3000;
+
 test("without an override, runJudge falls back from a Claude timeout to Codex", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
-  fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 5\n");
+  fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 30\n");
   fs.writeFileSync(
     fakeCodex,
     fakeCodexProgram([
@@ -457,7 +465,7 @@ test("without an override, runJudge falls back from a Claude timeout to Codex", 
   const previousPath = process.env.PATH;
   delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
-  const fastConfig = { ...claudePrimaryConfig, judge: { ...claudePrimaryConfig.judge, timeoutMs: 1000 } };
+  const fastConfig = { ...claudePrimaryConfig, judge: { ...claudePrimaryConfig.judge, timeoutMs: FALLBACK_TIMEOUT_MS } };
   try {
     const outcome = await runJudge(fastConfig, "gate:test", "routine", "prompt", validateGapVerdict);
     assert.equal(outcome.value.verdict, "PASS");
@@ -479,7 +487,7 @@ test("without an override, an agentic Claude failure falls back to Codex with on
   const fakeCodex = path.join(binDir, "codex");
   fs.writeFileSync(path.join(binDir, "allowed.txt"), "READY\n");
   fs.writeFileSync(path.join(binDir, "decoy.txt"), "MUST NOT COPY\n");
-  fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 5\n");
+  fs.writeFileSync(fakeClaude, "#!/bin/sh\n/bin/sleep 30\n");
   fs.writeFileSync(fakeCodex, fakeCodexProgram([
     'test -f "$root/allowed.txt" || exit 41',
     'test ! -e "$root/decoy.txt" || exit 42',
@@ -493,7 +501,7 @@ test("without an override, an agentic Claude failure falls back to Codex with on
   const previousPath = process.env.PATH;
   delete process.env.SASU_JUDGE_BACKEND;
   process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
-  const fastConfig = { ...claudePrimaryConfig, judge: { ...claudePrimaryConfig.judge, timeoutMs: 1000 } };
+  const fastConfig = { ...claudePrimaryConfig, judge: { ...claudePrimaryConfig.judge, timeoutMs: FALLBACK_TIMEOUT_MS } };
   try {
     const outcome = await runJudge(
       fastConfig,
