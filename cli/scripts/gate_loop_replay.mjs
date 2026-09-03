@@ -27,12 +27,13 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--run-dir") { runDir = path.resolve(argv[i + 1]); i += 1; continue; }
     if (arg === "--max-rounds") { maxRounds = Number(argv[i + 1]); i += 1; continue; }
+    if (arg === "--render-only") continue;
     const eq = arg.indexOf("=");
     if (eq <= 0) throw new Error(`expected <slug>=<qa-log.md>, got: ${arg}`);
     sources.push({ slug: arg.slice(0, eq), file: path.resolve(arg.slice(eq + 1)) });
   }
   if (!runDir) throw new Error("--run-dir <agents/runs/gate-loop> is required");
-  if (sources.length === 0) throw new Error("at least one <slug>=<qa-log.md> is required");
+  if (sources.length === 0 && !argv.includes("--render-only")) throw new Error("at least one <slug>=<qa-log.md> is required");
   return { runDir, maxRounds, sources };
 }
 
@@ -110,7 +111,14 @@ function render(results, maxRounds) {
   for (const r of results) {
     const last = r.rounds.at(-1);
     const calls = r.rounds.reduce((n, round) => n + round.laneCalls, 0);
-    const ending = last.verdict === "PASS" ? "sealed PASS" : last.verdict === "NEEDS_HUMAN" ? `NEEDS_HUMAN (${last.open.length} question(s) in one bundle)` : last.verdict === "BLOCK" ? `BLOCK-stable (${last.open.length} agent-fixable finding(s) nobody could fix on a copy)` : `ERROR: ${last.error?.code ?? "?"}`;
+    const human = last.open.filter((f) => f.requiresHuman).length;
+    const ending = last.verdict === "PASS"
+      ? "sealed PASS"
+      : last.verdict === "NEEDS_HUMAN"
+        ? `NEEDS_HUMAN (${last.open.length} question(s) in one bundle)`
+        : last.verdict === "BLOCK"
+          ? `BLOCK-stable (${last.open.length} open: ${human} need a human decision, ${last.open.length - human} agent-fixable; nothing can be fixed on a copy)`
+          : `ERROR: ${last.error?.code ?? "?"}`;
     lines.push(`| ${r.slug} | ${r.rounds.length} | ${calls} | ${minutes(r.startedAt, r.finishedAt)} | ${ending} | ${last.open.length} |`);
   }
   lines.push("");
@@ -133,6 +141,14 @@ function render(results, maxRounds) {
 }
 
 const { runDir, maxRounds, sources } = parseArgs(process.argv.slice(2));
+// --render-only rewrites replay.md from the recorded replay.json without a
+// judge call, so a wording fix in the record never costs another live run.
+if (process.argv.includes("--render-only")) {
+  const recorded = JSON.parse(fs.readFileSync(path.join(runDir, "replay.json"), "utf8"));
+  fs.writeFileSync(path.join(runDir, "replay.md"), render(recorded, maxRounds));
+  process.stdout.write(`${path.join(runDir, "replay.md")}\n`);
+  process.exit(0);
+}
 const results = [];
 for (const source of sources) {
   process.stderr.write(`[replay] ${source.slug}: ${source.file}\n`);
