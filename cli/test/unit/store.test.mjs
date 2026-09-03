@@ -48,23 +48,55 @@ test("state machine: BLOCK increments attempts and stays blocked", () => {
   assert.equal(view.requiresHuman, true);
 });
 
-test("state machine: a second PRD BLOCK exhausts the one closure round", () => {
+// PRD gate-loop R2: there is no round budget. Repeated BLOCKs stay BLOCKED
+// and keep accepting rounds; only a sealed PASS refuses a further record.
+test("state machine: repeated PRD BLOCKs never exhaust anything, and a sealed PASS refuses a direct write", () => {
   const store = makeStore();
   let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
-  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
-  const view = gateStatus(state, "gap-audit", 2);
-  assert.equal(view.budgetExhausted, false, "numeric budget does not govern PRD semantics");
-  assert.equal(view.reviewPhase, "closure-blocked");
-  assert.equal(view.closureExhausted, true);
+  for (let round = 1; round <= 5; round += 1) {
+    state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
+    const view = gateStatus(state, "gap-audit", 2);
+    assert.equal(view.effective, "BLOCKED", `round ${round} stays blocked`);
+    assert.equal(view.budgetExhausted, false, "numeric budget does not govern PRD semantics");
+    assert.equal(view.sealed, false);
+    assert.equal(view.reviewCycle, 1);
+  }
+  state = recordGateResult(store, state, "gap-audit", { kind: "verdict", verdict: "PASS", findings: [], artifactPayload: {} }, []);
+  assert.equal(gateStatus(state, "gap-audit", 2).sealed, true);
   const before = JSON.stringify(store.load());
   const artifactsBefore = fs.readdirSync(store.artifactsDir).sort();
   assert.throws(
     () => recordGateResult(store, state, "gap-audit", blockOutcome(), []),
-    /reopen it before recording another result/,
+    /is sealed; reopen it before recording another result/,
   );
-  assert.equal(JSON.stringify(store.load()), before, "a terminal direct write cannot mutate the ledger");
+  assert.equal(JSON.stringify(store.load()), before, "a sealed direct write cannot mutate the ledger");
   assert.deepEqual(fs.readdirSync(store.artifactsDir).sort(), artifactsBefore, "a refused direct write cannot orphan an artifact");
+});
+
+test("state machine: a PRD gate finding gets a harness id that is never reused on that gate", () => {
+  const store = makeStore();
+  let state = store.load();
+  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
+  assert.equal(state.gates["gap-audit"].findings[0].id, "F1");
+  state = recordGateResult(store, state, "gap-audit", {
+    kind: "verdict",
+    verdict: "BLOCK",
+    findings: [{ ...BLOCK_FINDING, id: "F1" }, { ...BLOCK_FINDING, missing: "another" }],
+    warnings: [{ ...BLOCK_FINDING, severity: "P2", requiresHuman: false, missing: "note" }],
+    artifactPayload: {},
+  }, []);
+  assert.deepEqual(state.gates["gap-audit"].findings.map((f) => f.id), ["F1", "F2"], "an echoed id is kept, a new finding gets the next one");
+  assert.deepEqual(state.gates["gap-audit"].warnings.map((f) => f.id), ["F3"], "warnings draw from the same sequence");
+  assert.equal(state.gates["gap-audit"].findingSeq, 3);
+  assert.equal(state.gates.verify.findingSeq, undefined, "verify findings are criteria, not an open set");
+});
+
+test("loader: a gates.json still carrying the retired review lifecycle is refused, not coerced", () => {
+  const store = makeStore();
+  const state = recordGateResult(store, store.load(), "spec", blockOutcome(), []);
+  state.gates.spec.review = { cycle: 1, phase: "sealed", judgedRounds: 1, openedAt: "x", openedBy: "initial" };
+  fs.writeFileSync(store.statePath, JSON.stringify(state));
+  assert.throws(() => store.load(), /retired bounded-review state on gate spec/);
 });
 
 test("state machine: PASS resets attempts and closes the gate", () => {

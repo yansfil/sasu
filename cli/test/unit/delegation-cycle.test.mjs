@@ -1,11 +1,12 @@
-// Standing delegation record + bounded PRD review cycles.
+// Standing delegation record + PRD review cycles.
 // Measured 2026-08-20: delegated runs lost their assumption mode and PRD
-// gates cycled 7-15 times. The product contract now permits one exhaustive
-// verdict and, only after BLOCK, one closure verdict. PASS seals the cycle;
-// only user-evidenced reopen starts another one (PRINCIPLES 2, 7, 10, 13).
-// A reopened blocked cycle keeps its findings ledger so the next round is a
-// delta re-judgment, not a fresh exhaustive review (2026-08-29 audit: the
-// erased ledger made 5/5 reopened cycles die unconverged, ending in override).
+// gates cycled 7-15 times. The round budget that replaced that loop was
+// retired in turn (PRD gate-loop R2, 2026-09-03: every recorded reopen was a
+// button press, not a decision); the loop is now bounded by the open
+// findings set, which a rerun can only shrink. PASS seals the cycle; only a
+// user-evidenced reopen starts another one, and it keeps the open set so the
+// next round is a delta re-judgment (2026-08-29 audit: an erased ledger made
+// 5/5 reopened cycles die unconverged, ending in override).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -69,107 +70,88 @@ test("a delegated PRD verdict is pinned to the invocation that the judge receive
   assert.deepEqual(changed.staleInputs, [{ path: "<delegated-invocation>", reason: "changed" }]);
 });
 
-test("review cycle: a first-pass PASS seals after one semantic round", () => {
-  const store = new GateStore(makeProject(), "topic-a");
-  let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", outcome("PASS"), []);
-  const view = gateStatus(state, "gap-audit", 5);
-  assert.equal(view.reviewPhase, "sealed");
-  assert.equal(view.reviewRound, 1);
-  assert.equal(view.sealed, true);
-});
-
-test("review cycle: BLOCK opens one closure round and closure PASS seals", () => {
+test("review cycle: a PASS seals, a BLOCK stays open, and no round count exists", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
   state = recordGateResult(store, state, "spec", outcome("BLOCK"), []);
-  assert.equal(gateStatus(state, "spec", 5).reviewPhase, "closure");
+  let view = gateStatus(state, "spec", 5);
+  assert.equal(view.sealed, false);
+  assert.equal(view.effective, "BLOCKED");
+  assert.equal(view.reviewCycle, 1);
+  state = recordGateResult(store, state, "spec", outcome("BLOCK"), []);
+  state = recordGateResult(store, state, "spec", outcome("BLOCK"), []);
+  assert.equal(gateStatus(state, "spec", 5).effective, "BLOCKED", "a third BLOCK is just another round");
   state = recordGateResult(store, state, "spec", outcome("PASS"), []);
-  const view = gateStatus(state, "spec", 5);
-  assert.equal(view.reviewPhase, "sealed");
-  assert.equal(view.reviewRound, 2);
+  view = gateStatus(state, "spec", 5);
+  assert.equal(view.sealed, true);
+  assert.equal(view.effective, "PASS");
+  assert.equal("reviewRound" in view, false);
+  assert.equal("closureExhausted" in view, false);
 });
 
-test("review cycle: closure BLOCK is terminal and a third command costs zero judge calls", async () => {
+test("review cycle: a sealed PASS is cached and a further gate command costs zero judge calls", async () => {
   const projectRoot = makeProject();
   const store = new GateStore(projectRoot, "topic-a");
   const config = loadConfig(projectRoot);
-  let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
-  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
   const qaLogPath = path.join(projectRoot, "qa-log.md");
   fs.copyFileSync(path.join(FIXTURES, "qa-clean.md"), qaLogPath);
+  const { hashGateInput } = await import("../../dist/gates/store.js");
+  let state = store.load();
+  state = recordGateResult(store, state, "gap-audit", {
+    ...outcome("PASS"),
+    inputs: [{ path: "qa-log.md", sha256: hashGateInput(qaLogPath, "qa-log"), kind: "qa-log" }],
+  }, []);
   const before = JSON.stringify(new GateStore(projectRoot, "topic-a").load());
   const result = await runGapAudit(projectRoot, config, "topic-a", qaLogPath);
-  assert.equal(result.ok, false);
+  assert.equal(result.ok, true);
   assert.equal(result.zeroJudgeCalls, true);
-  assert.equal(result.error.code, "closure-exhausted");
-  assert.match(result.error.message, /no judge was called/);
   assert.equal(JSON.stringify(new GateStore(projectRoot, "topic-a").load()), before);
 });
 
-test("review cycle: user-evidenced reopen starts a fresh cycle and preserves its ledger", () => {
+test("review cycle: user-evidenced reopen opens the next cycle from any judged verdict and keeps the open set", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
   state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
   state = reopenPrdGate(store, "gap-audit", "요구사항을 바꿨으니 다시 봐줘");
   const view = gateStatus(state, "gap-audit", 5);
   assert.equal(view.reviewCycle, 2);
-  assert.equal(view.reviewPhase, "full");
-  assert.equal(view.reviewRound, 0);
+  assert.equal(view.sealed, false);
   assert.equal(view.effective, "NOT_RUN");
   assert.equal(state.gates["gap-audit"].reviewReopens[0].evidence, "요구사항을 바꿨으니 다시 봐줘");
-});
-
-test("review cycle: reopening a blocked cycle carries its findings as the delta ledger", () => {
-  const store = new GateStore(makeProject(), "topic-a");
-  let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
-  state = recordGateResult(store, state, "gap-audit", outcome("BLOCK"), []);
-  state = reopenPrdGate(store, "gap-audit", "그 지적들 반영했으니 다시 봐줘");
-  assert.deepEqual(state.gates["gap-audit"].findings, [FINDING]);
+  assert.equal(state.gates["gap-audit"].reviewReopens[0].verdictBefore, "BLOCK");
+  assert.deepEqual(state.gates["gap-audit"].findings.map((f) => f.id), ["F1"], "the open set survives the reopen");
   assert.deepEqual(
     priorFindingsFor(state, "gap-audit"),
-    [{ severity: FINDING.severity, area: FINDING.area, missing: FINDING.missing }],
-    "the carried ledger reaches the next round's judge even though the verdict was reset",
+    [{ id: "F1", severity: FINDING.severity, area: FINDING.area, missing: FINDING.missing }],
+    "the carried set reaches the next round's judge even though the verdict was reset",
   );
 });
 
-test("review cycle: demoted P2 advisories never re-enter the ledger with blocking eligibility", () => {
+test("review cycle: warnings never re-enter the open set on a reopen", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
   state = recordGateResult(store, state, "gap-audit", {
     kind: "verdict",
     verdict: "BLOCK",
-    findings: [
-      FINDING,
-      { area: "scope", severity: "P2", missing: "demoted", recommendation: "[auto-demoted] r", requiresHuman: false },
-    ],
+    findings: [FINDING],
+    warnings: [{ area: "scope", severity: "P2", missing: "advisory", recommendation: "r", requiresHuman: false }],
     artifactPayload: {},
   }, []);
-  assert.deepEqual(
-    priorFindingsFor(state, "gap-audit").map((f) => f.area),
-    [FINDING.area],
-    "only blocking-grade findings carry; a P2 that could not block must not resurrect as prior-unresolved",
-  );
+  state = reopenPrdGate(store, "gap-audit", "그 지적들 반영했으니 다시 봐줘");
+  assert.deepEqual(priorFindingsFor(state, "gap-audit").map((f) => f.area), [FINDING.area]);
 });
 
-test("review cycle: reopening a sealed cycle carries no findings forward", () => {
+test("review cycle: reopening a sealed PASS succeeds and carries an empty open set", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", {
-    kind: "verdict",
-    verdict: "PASS",
-    findings: [{ ...FINDING, severity: "P2", requiresHuman: false }],
-    artifactPayload: {},
-  }, []);
+  state = recordGateResult(store, state, "gap-audit", { ...outcome("PASS"), warnings: [{ ...FINDING, severity: "P2", requiresHuman: false }] }, []);
   state = reopenPrdGate(store, "gap-audit", "한 가지만 더 추가하자");
   assert.deepEqual(state.gates["gap-audit"].findings, []);
+  assert.equal(state.gates["gap-audit"].reviewReopens[0].verdictBefore, "PASS");
   assert.equal(gateStatus(state, "gap-audit", 5).reviewCycle, 2);
 });
 
-test("review cycle: reopen is refused before a cycle is terminal", () => {
+test("review cycle: reopen is refused before any verdict exists", () => {
   const store = new GateStore(makeProject(), "topic-a");
-  assert.throws(() => reopenPrdGate(store, "gap-audit", "다시 봐줘"), /not terminal/);
+  assert.throws(() => reopenPrdGate(store, "gap-audit", "다시 봐줘"), /no judged verdict to reopen/);
 });

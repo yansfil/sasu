@@ -168,7 +168,7 @@ The prompt limits reads to the copied working set, and the CLI audits Codex's JS
 Accepted command traces are recorded with the judge call so later review can answer what the judge inspected.
 Claude fallback sessions grant only `Read` and `Grep` for the same prompt-level allowlist.
 Gates are hard blocks, and every judgment, reopen, and override lands in `agents/runs/<topic>/gates/` for the receipt.
-Gap-audit and spec each get one full semantic review and, only after a BLOCK, one closure review; a second BLOCK stops the cycle, while a PASS seals it so advisory findings cannot start another loop.
+Gap-audit and spec keep an open findings set: a rerun judges only the findings still open, by id, and may add one only in a lane whose Decision Register rows changed, so the set can only shrink; a BLOCK means an agent-fixable finding is open, NEEDS_HUMAN hands every remaining question to the user as one bundle that `sasu gate answer` seals on their words, and a PASS seals the cycle so warnings cannot start another loop.
 Only an explicit user-evidenced `sasu gate reopen` starts another PRD review cycle; `--grant-budget` is reserved for retrying a repaired judge backend that failed without returning a verdict.
 Unified implement verification uses the same configured bound: non-PASS results spend the fix budget, judge-only failures use a separate consecutive-error gauge, and the CLI refuses more work after either terminal condition instead of relying on an agent to stop looping.
 A PASS is pinned to the content hash of its input documents; editing the qa-log or PRD afterwards turns the gate `STALE` in `gate status` and requires restoring the sealed input or an explicit reopen, so a gate can never silently re-judge changed requirements.

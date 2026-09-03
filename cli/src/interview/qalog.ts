@@ -12,6 +12,10 @@
  * value accepted here must never be rejected there.
  */
 
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
 export const QA_WHERE = ["greenfield", "brownfield", "docs-only", "unknown"] as const;
 export const QA_KINDS = ["fact", "decision", "assumption"] as const;
 export const QA_PRIORITIES = ["P0", "P1", "P2"] as const;
@@ -72,6 +76,31 @@ const RAW_QA_HEADING = "## Raw Q&A";
 const CURSOR_HEADING = "## Intake Cursor";
 const TRANSCRIPT_SOURCES_HEADING = "## Transcript Sources";
 const CHECKPOINT_HEADING = "## Checkpoint And Sweep History";
+
+function temporarySibling(file: string): string {
+  return path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+}
+
+/**
+ * Atomic compare-and-replace of a qa-log: the write lands only if the file
+ * still holds the content the mutation was computed from, so two writers
+ * (an interview command and a gate recording its Audit entry) can never
+ * silently drop each other's edit.
+ */
+export function replaceQaLog(file: string, expected: string, content: string): void {
+  if (content === expected) return;
+  const temporary = temporarySibling(file);
+  try {
+    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
+    const current = fs.readFileSync(file, "utf8");
+    if (current !== expected) {
+      throw new Error(`qa-log changed outside this command while it was running: ${file} (retry from fresh state)`);
+    }
+    fs.renameSync(temporary, file);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
 
 export function todayStamp(): string {
   const now = new Date();
@@ -181,28 +210,18 @@ function parseFrontmatterNumber(content: string, key: string, fallback: number):
   return match ? Number(match[1]) : fallback;
 }
 
+const registerLib = require("../../lib/qa_register.js") as {
+  parseRegisterRows: (content: string) => RegisterRow[] | null;
+};
+
+/**
+ * Register rows via the shared plain-JS reader (cli/lib/qa_register.js), the
+ * same parser the gate freshness pin and the rerun lane digests use, so one
+ * document can never mean two different sets of decisions.
+ */
 export function parseRegisterRows(content: string): RegisterRow[] {
-  const lines = content.split("\n");
-  const { start, end } = sectionRange(lines, REGISTER_HEADING);
-  const rows: RegisterRow[] = [];
-  for (let i = start + 1; i < end; i += 1) {
-    const line = lines[i]!;
-    if (!line.trim().startsWith("|")) continue;
-    const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
-    if (cells.every((c) => /^:?-+:?$/.test(c) || c === "")) continue;
-    if (cells[0] === "ID") continue;
-    if (cells.length < 8) continue;
-    rows.push({
-      id: cells[0]!,
-      kind: cells[1]!,
-      area: cells[2]!,
-      text: cells[3]!,
-      priority: cells[4]!,
-      source: cells[5]!,
-      status: cells[6]!,
-      mapping: cells[7]!,
-    });
-  }
+  const rows = registerLib.parseRegisterRows(content);
+  if (rows === null) throw new Error(`qa-log is missing the "${REGISTER_HEADING}" section`);
   return rows;
 }
 

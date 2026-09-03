@@ -136,13 +136,18 @@ export interface JudgeCallRecord {
 }
 
 export interface Finding {
+  /**
+   * Harness-assigned id on PRD-gate findings (`F<n>`, cli/src/gates/store.ts
+   * recordGateResult). A rerun judge echoes it to report a prior finding as
+   * still open; a finding it returns without one is new. Absent on verify
+   * criteria findings and on freshly judged output before it is recorded.
+   */
+  id?: string;
   area: string;
   severity: "P0" | "P1" | "P2";
   missing: string;
   recommendation: string;
   requiresHuman: boolean;
-  /** Present on re-run judgments only (delta contract): where this finding came from. */
-  origin?: "prior-unresolved" | "new";
 }
 
 export interface GapVerdict {
@@ -177,7 +182,7 @@ function asString(v: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
 
-export function validateGapVerdict(value: unknown, options: { requireOrigin?: boolean } = {}): GapVerdict | string {
+export function validateGapVerdict(value: unknown): GapVerdict | string {
   if (!isRecord(value)) return "output is not a JSON object";
   const verdict = asString(value["verdict"]);
   if (verdict !== "PASS" && verdict !== "BLOCK") return `verdict must be PASS or BLOCK, got: ${String(value["verdict"])}`;
@@ -190,10 +195,10 @@ export function validateGapVerdict(value: unknown, options: { requireOrigin?: bo
     const area = asString(f["area"]);
     const missing = asString(f["missing"]);
     if (area === null || missing === null || missing.trim() === "") return `findings[${i}] needs area and missing strings`;
-    const origin = asString(f["origin"]);
-    if (options.requireOrigin && origin !== "prior-unresolved" && origin !== "new") {
-      return `findings[${i}].origin must be "prior-unresolved" or "new" on a re-run judgment`;
-    }
+    // An echoed prior-finding id; any other shape is treated as "no id" by
+    // the open-set contract (commands.ts applyOpenSetContract), never as an
+    // error - the judge's job is the judgment, the harness owns the ids.
+    const id = asString(f["id"]);
     const requiresHuman = f["requiresHuman"];
     if (typeof requiresHuman !== "boolean") return `findings[${i}].requiresHuman must be a boolean`;
     findings.push({
@@ -202,7 +207,7 @@ export function validateGapVerdict(value: unknown, options: { requireOrigin?: bo
       missing,
       recommendation: asString(f["recommendation"]) ?? "",
       requiresHuman,
-      ...(origin === "prior-unresolved" || origin === "new" ? { origin } : {}),
+      ...(id !== null && id.trim() !== "" ? { id: id.trim() } : {}),
     });
   }
   if (verdict === "BLOCK" && findings.length === 0) return "BLOCK verdict requires at least one finding";

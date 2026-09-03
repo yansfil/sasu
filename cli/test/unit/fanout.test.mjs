@@ -3,7 +3,7 @@
 // are pure functions - any drift here silently changes gate verdicts.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeLaneFindings, routePriorFindings } from "../../dist/gates/commands.js";
+import { applyOpenSetContract, mergeLaneFindings, routePriorFindings } from "../../dist/gates/commands.js";
 import { GAP_AUDIT_LANES, SPEC_LANES, gapAuditPrompt, specGatePrompt } from "../../dist/gates/prompts.js";
 
 function finding(overrides = {}) {
@@ -144,8 +144,58 @@ test("spec lanes: two lanes remain and old verification/coverage findings route 
   assert.equal(routed.get("fidelity").length, 0);
 });
 
-test("lane prompts: fan-out rerun with no routed priors still demands origin labels", () => {
-  const prompt = gapAuditPrompt("qa log body", [], { lane: GAP_AUDIT_LANES[0], laneCount: 4, rerun: true });
-  assert.match(prompt, /No unresolved prior finding carries over/);
-  assert.match(prompt, /"origin": "new"/);
+test("lane prompts: a rerun lane with no routed open finding is told so, and told whether new findings are admissible", () => {
+  const unchanged = gapAuditPrompt("qa log body", [], { lane: GAP_AUDIT_LANES[0], laneCount: 4, rerun: true, decisionsChanged: false });
+  assert.match(unchanged, /No open finding is assigned to your lane/);
+  assert.match(unchanged, /did NOT change since the previous round, so no new finding is\s+admissible/);
+  assert.doesNotMatch(unchanged, /origin/);
+  const changed = gapAuditPrompt("qa log body", [], { lane: GAP_AUDIT_LANES[0], laneCount: 4, rerun: true, decisionsChanged: true });
+  assert.match(changed, /CHANGED since the previous round, so you may report a genuinely\s+NEW gap/);
+});
+
+// PRD gate-loop R3: goal-scope and data-tech findings are recorded but do not
+// block; a requiresHuman finding blocks whichever lane reported it.
+test("merge: a non-blocking lane's finding is an advisory unless it needs a human decision", () => {
+  const scope = { area: "scope", severity: "P1", missing: "non-goal missing", recommendation: "r", requiresHuman: false };
+  const human = { area: "data", severity: "P1", missing: "retention", recommendation: "r", requiresHuman: true };
+  const merged = mergeLaneFindings([
+    { laneId: "goal-scope", blocking: false, findings: [scope] },
+    { laneId: "data-tech", blocking: false, findings: [human] },
+    { laneId: "ux-behavior", blocking: true, findings: [] },
+  ]);
+  assert.deepEqual(merged.advisories.map((f) => f.missing), ["non-goal missing"]);
+  assert.deepEqual(merged.findings.map((f) => f.missing), ["retention"]);
+  assert.equal(merged.verdict, "BLOCK");
+  const blockingTwin = mergeLaneFindings([
+    { laneId: "goal-scope", blocking: false, findings: [scope] },
+    { laneId: "ux-behavior", blocking: true, findings: [{ ...scope, area: "ux" }] },
+  ]);
+  assert.equal(blockingTwin.advisories.length, 0, "the same gap reported by a blocking lane blocks");
+  assert.equal(blockingTwin.dedupedCount, 1);
+});
+
+test("open set: on a rerun only echoed ids survive, and new findings need a changed lane", () => {
+  const prior = [{ id: "F1", severity: "P1", area: "ux", missing: "a" }, { id: "F2", severity: "P1", area: "ux", missing: "b" }];
+  const base = { area: "ux", severity: "P1", recommendation: "r", requiresHuman: false };
+  const out = applyOpenSetContract({
+    prior,
+    rerun: true,
+    lanes: [
+      { laneId: "ux-behavior", blocking: true, decisionsChanged: false, findings: [{ ...base, id: "F1", missing: "a still" }, { ...base, missing: "new c" }] },
+      { laneId: "risk-ops-verification", blocking: true, decisionsChanged: true, findings: [{ ...base, area: "risk", missing: "new d" }, { ...base, id: "F9", missing: "unknown id" }] },
+    ],
+  });
+  assert.deepEqual(out.findings.map((f) => f.id ?? f.missing), ["F1", "new d", "unknown id"], "an unknown id is a new finding, admitted only because its lane changed");
+  assert.deepEqual(out.resolved.map((f) => f.id), ["F2"]);
+  assert.deepEqual(out.dropped.map((f) => f.missing), ["new c"]);
+  assert.equal(out.verdict, "BLOCK");
+  const allHuman = applyOpenSetContract({
+    prior: [],
+    rerun: false,
+    lanes: [{ laneId: "ux-behavior", blocking: true, decisionsChanged: false, findings: [{ ...base, missing: "needs a person", requiresHuman: true, id: "F7" }] }],
+  });
+  assert.equal(allHuman.verdict, "NEEDS_HUMAN");
+  assert.equal(allHuman.findings[0].id, undefined, "a first round strips any id the judge invented");
+  const empty = applyOpenSetContract({ prior: [], rerun: false, lanes: [] });
+  assert.equal(empty.verdict, "PASS");
 });

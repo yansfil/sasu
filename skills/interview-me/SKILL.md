@@ -416,19 +416,24 @@ A `[prelint]` failure is a $0 structural defect with a rule ID and line
 number: fix the document and re-run freely - prelint failures never call the
 judge and never consume the retry budget.
 
-- The first run is the one exhaustive gap review.
-  If it BLOCKs, resolve all agent-fixable findings together and run exactly one closure review.
-  A closure BLOCK is terminal for that cycle; do not call the judge a third time.
+- The gate keeps an open findings set, not a round budget. Every judged run ends in one of three states:
+  - `BLOCK`: at least one open finding is agent-fixable (`requiresHuman: false`).
+    Resolve every such finding in the qa-log, then re-run.
+    The rerun judges only the findings still open (by their `F<n>` id) and may add a finding only in a lane whose Decision Register rows changed, so the set can only shrink.
+  - `NEEDS_HUMAN`: every open finding needs a human decision.
+    Ask the user the whole bundle in one message, record the decisions they give in the Decision Register, then record their words with `sasu gate answer --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
+    That seals PASS without another judge call; do not re-run the gate to "confirm" an answer.
+  - `PASS`: the cycle is sealed.
 - A gap finding is not an answer; treat it only as evidence that a decision or source is missing.
 - `requiresHuman: false` does not authorize resolution.
   Close such a finding only with an explicit user answer, exact repository evidence recorded as a fact, or a reversible P2 internal default that satisfies the silent-default rule.
-  Otherwise ask one focused question or defer it with an owner and revisit trigger, then use the one closure run.
+  Otherwise ask one focused question or defer it with an owner and revisit trigger, then re-run.
 - Never promote a judge recommendation into a user decision or strengthen its scope, duration, lifecycle, compatibility, security, cost, or launch policy beyond the cited answer.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
-- Only a later explicit user change request may open another bounded cycle with
-  `sasu gate reopen --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
-  `--grant-budget` retries only a repaired judge backend after its error streak; it never adds semantic rounds.
+- Only a later explicit user change request may open another cycle with
+  `sasu gate reopen --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`; it works on a sealed log too.
+  `--grant-budget` retries only a repaired judge backend after its error streak; it never changes the open set.
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback as the closure audit.
 - Never run `sasu gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.
 - Record the gate result as an Audit entry (`type: gap-audit-gate`) in qa-log.md.

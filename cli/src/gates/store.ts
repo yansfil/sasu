@@ -15,18 +15,6 @@ import { gatesDirFor } from "../runs/paths";
 
 export type GateId = "gap-audit" | "spec" | "verify";
 export type PrdGateId = Extract<GateId, "gap-audit" | "spec">;
-export type PrdReviewPhase = "full" | "closure" | "sealed" | "closure-blocked";
-
-export interface PrdReviewState {
-  cycle: number;
-  phase: PrdReviewPhase;
-  /** Semantic verdict rounds in this cycle. Judge errors do not advance it. */
-  judgedRounds: number;
-  openedAt: string;
-  openedBy: "initial" | "user";
-  reopenEvidence?: string;
-  sealedAt?: string;
-}
 
 /**
  * A gate input pinned by content hash at the moment the gate ran.
@@ -103,7 +91,7 @@ export type VerifyFailedStage = "mechanical" | "evidence" | "human" | "semantic"
 
 export interface GateRunSummary {
   at: string;
-  verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR";
+  verdict: "PASS" | "BLOCK" | "NEEDS_HUMAN" | "FAIL" | "ERROR";
   findingCount: number;
   requiresHuman: boolean;
   error: string | null;
@@ -142,7 +130,18 @@ export interface VouchedTreeFingerprint {
 
 
 export interface GateRecord {
-  verdict: "PASS" | "BLOCK" | "FAIL" | "ERROR" | null;
+  /**
+   * PRD gates (gap-audit/spec) end a judged round in one of three states
+   * derived from the open findings set alone: PASS (empty, sealed),
+   * NEEDS_HUMAN (every open finding requires a human decision - the bundle
+   * goes to the user and `gate answer` seals it without another judge call),
+   * or BLOCK (at least one agent-fixable finding is open). There is no round
+   * budget: the set can only shrink between reruns (see priorFindingsFor /
+   * applyOpenSetContract in commands.ts), so the loop is bounded by the
+   * document, not by a counter. Verify keeps PASS/FAIL. ERROR is a judge
+   * failure on any gate.
+   */
+  verdict: "PASS" | "BLOCK" | "NEEDS_HUMAN" | "FAIL" | "ERROR" | null;
   /**
    * Fix-budget gauge: counts consecutive JUDGED non-PASS runs and RESETS to 0
    * on PASS. A judge ERROR deliberately does NOT move it - see
@@ -189,7 +188,33 @@ export interface GateRecord {
   /** Failure class whose current consecutiveErrors streak is counting. */
   consecutiveErrorCause?: JudgeFailureCause;
   overridden: boolean;
+  /**
+   * PRD gates: the OPEN findings set after the last judged round - every
+   * finding that still blocks (P0/P1) or needs a human decision, each with a
+   * harness-assigned id (`F<n>`, never reused on this gate). A rerun's judge
+   * receives exactly this set and may only echo ids from it, so the set is
+   * the whole loop state. Verify: the failed criteria of the last round.
+   */
   findings: Finding[];
+  /**
+   * PRD gates: findings recorded but not blocking - P2 advisories, findings
+   * from a non-blocking lane (goal-scope, data-tech) that need no human
+   * decision, and human findings assumed under a delegated run. Kept apart
+   * from `findings` so an advisory can never re-enter the open set on a
+   * later rerun as if it had blocked (2026-08-29: demoted P2s resurrected as
+   * prior-unresolved one cycle later).
+   */
+  warnings?: Finding[];
+  /** Next harness finding id on this gate; ids are never reused across reruns or reopens. */
+  findingSeq?: number;
+  /**
+   * PRD gates: per-lane digest of the Decision Register's decision cells as
+   * routed to that lane, pinned at the last judged round. A rerun lane may
+   * report a NEW finding only when its digest changed since (PRD gate-loop
+   * R1): the interview log is the only thing a rerun may learn from, so an
+   * unchanged lane gets no new line of questioning.
+   */
+  laneDigests?: Record<string, string>;
   lastRunAt: string | null;
   history: GateRunSummary[];
   /** Input documents hashed at the last verdict run; absent on pre-0.2 state files. */
@@ -292,17 +317,23 @@ export interface GateRecord {
    */
   humanAssumptions?: { at: string; evidence: string; findings: Finding[] }[];
   /**
-   * Bounded PRD review lifecycle. Gap/spec get one exhaustive verdict and, only
-   * after a BLOCK, one closure verdict. PASS is sealed instead of being fed
-   * back into an open-ended generative loop (PRINCIPLES 2, 10, 13).
+   * PRD gates: the user's answers to a NEEDS_HUMAN bundle, recorded by
+   * `gate answer`. `evidence` quotes the user's words verbatim and `findings`
+   * keeps the bundle they answered, so the seal names what was decided by a
+   * person and not by a judge. Same trust model as budgetGrants: a record the
+   * user can falsify, not a check the harness can make.
    */
-  review?: PrdReviewState;
-  /** User-authorized review-cycle reopenings, kept as an append-only ledger. */
+  humanAnswers?: { at: string; evidence: string; findings: Finding[]; question: string }[];
+  /**
+   * User-authorized review-cycle reopenings, kept as an append-only ledger.
+   * The review cycle number is derived from this ledger (reopens + 1) and
+   * nowhere else.
+   */
   reviewReopens?: {
     at: string;
     evidence: string;
     cycleBefore: number;
-    phaseBefore: PrdReviewPhase;
+    verdictBefore: GateRecord["verdict"];
   }[];
 }
 
@@ -372,7 +403,24 @@ export class GateStore {
         judgeCalls: [],
       };
     }
-    return JSON.parse(fs.readFileSync(this.statePath, "utf8")) as GatesState;
+    const state = JSON.parse(fs.readFileSync(this.statePath, "utf8")) as GatesState;
+    // The bounded review lifecycle (full/closure/sealed/closure-blocked, round
+    // counters) was retired by PRD gate-loop R2/R10 with no compatibility
+    // read: a record still carrying it was written under a contract this CLI
+    // no longer evaluates, and reading its verdict as if it were an open
+    // findings set would silently coerce a spent closure into a live loop.
+    // Refuse structurally, on the field's presence, so no retired value is
+    // ever matched here.
+    for (const [gate, record] of Object.entries(state.gates ?? {})) {
+      if (record !== null && typeof record === "object" && "review" in record) {
+        throw new Error(
+          `${path.relative(this.projectRoot, this.statePath)} carries the retired bounded-review state on gate ${gate} (gates.${gate}.review); `
+          + "this CLI has no compatibility read for it. Move the file aside (or delete the record's review key) and re-run the gate: "
+          + "a PASS re-seals from the documents, a BLOCK re-derives its open findings from a fresh round.",
+        );
+      }
+    }
+    return state;
   }
 
   save(state: GatesState): void {
@@ -511,8 +559,10 @@ const gitLib = require("../../lib/git.js") as {
 
 export interface GateStatusView {
   gate: GateId;
+  /** Topic slug the view belongs to, so a printed recovery command names the real run. */
+  topic: string;
   verdict: GateRecord["verdict"];
-  effective: "PASS" | "STALE" | "BLOCKED" | "NOT_RUN";
+  effective: "PASS" | "STALE" | "BLOCKED" | "NEEDS_HUMAN" | "NOT_RUN";
   /** True only when drift downgrades an otherwise-passing gate. */
   stale: boolean;
   /**
@@ -554,41 +604,32 @@ export interface GateStatusView {
    */
   cycleExhausted: boolean;
   requiresHuman: boolean;
+  /** PRD gates: the open findings set (see GateRecord.findings). */
   findings: Finding[];
+  /** PRD gates: recorded advisories that do not block (see GateRecord.warnings). */
+  warnings: Finding[];
   /** Count of user budget grants recorded on this gate (GateRecord.budgetGrants). */
   grants: number;
   /** Human-consent findings assumed under a delegated run (GateRecord.humanAssumptions), summed across rounds. */
   assumedHumanFindings: number;
-  /** Bounded PRD review state; null for verify. */
+  /** PRD review cycle: user-evidenced reopens + 1; null for verify. */
   reviewCycle: number | null;
-  reviewPhase: PrdReviewPhase | null;
-  /** Human-readable semantic round position: 0, 1, or 2. */
-  reviewRound: number | null;
+  /** PRD gates: a judged PASS. Sealed to the pinned inputs until a user-evidenced reopen. */
   sealed: boolean;
-  closureExhausted: boolean;
-  /** A terminal PRD review needs an explicit user-evidenced `gate reopen`. */
+  /** A sealed PASS whose pinned input changed needs an explicit user-evidenced `gate reopen`. */
   reopenRequired: boolean;
   /** A judge process currently owns this topic/gate admission lock. */
   inFlight: boolean;
 }
 
-/**
- * Read old gates.json files under the new bounded contract without migration.
- * A legacy PASS is already sealed. One legacy non-PASS has its closure round
- * left; two or more have already spent it and stop.
- */
-export function prdReviewStateFor(record: GateRecord): PrdReviewState {
-  if (record.review !== undefined) return record.review;
-  const openedAt = record.history[0]?.at ?? record.lastRunAt ?? "legacy";
-  if (record.verdict === "PASS") {
-    return { cycle: 1, phase: "sealed", judgedRounds: 1, openedAt, openedBy: "initial", sealedAt: record.lastRunAt ?? openedAt };
-  }
-  const nonPass = Number.isInteger(record.totalNonPassAttempts)
-    ? (record.totalNonPassAttempts as number)
-    : record.history.filter((entry) => entry.verdict === "BLOCK" || entry.verdict === "FAIL").length;
-  if (nonPass === 0) return { cycle: 1, phase: "full", judgedRounds: 0, openedAt, openedBy: "initial" };
-  if (nonPass === 1) return { cycle: 1, phase: "closure", judgedRounds: 1, openedAt, openedBy: "initial" };
-  return { cycle: 1, phase: "closure-blocked", judgedRounds: 2, openedAt, openedBy: "initial" };
+/** PRD review cycle number: one plus the user-evidenced reopens on the record. */
+export function reviewCycleOf(record: GateRecord): number {
+  return (record.reviewReopens?.length ?? 0) + 1;
+}
+
+/** A PRD gate is sealed exactly when its last judged verdict is PASS. */
+export function isSealed(record: GateRecord): boolean {
+  return record.verdict === "PASS";
 }
 
 /**
@@ -714,13 +755,19 @@ export function gateStatus(
   const grantBase = lastGrant === null ? 0 : Number.isInteger(lastGrant.nonPassCountBefore) ? (lastGrant.nonPassCountBefore as number) : Math.min(lastGrant.attemptCountBefore, totalNonPass);
   const roundsSinceGrant = Math.max(0, totalNonPass - grantBase);
   const cycleCap = budget * 3;
-  const review = gate === "verify" ? null : prdReviewStateFor(record);
-  const prdGate = review !== null;
-  const closureExhausted = review?.phase === "closure-blocked";
+  const prdGate = gate !== "verify";
+  const sealed = prdGate && isSealed(record);
   return {
     gate,
+    topic: state.topic,
     verdict: record.verdict,
-    effective: passed ? (stale ? "STALE" : "PASS") : record.verdict === null ? "NOT_RUN" : "BLOCKED",
+    effective: passed
+      ? (stale ? "STALE" : "PASS")
+      : record.verdict === null
+        ? "NOT_RUN"
+        : record.verdict === "NEEDS_HUMAN"
+          ? "NEEDS_HUMAN"
+          : "BLOCKED",
     stale,
     inputsDrifted: staleInputs.length > 0,
     staleInputs,
@@ -742,14 +789,12 @@ export function gateStatus(
     cycleExhausted: !prdGate && budget > 0 && record.verdict !== null && roundsSinceGrant >= cycleCap,
     requiresHuman: record.findings.some((f) => f.requiresHuman),
     findings: record.findings,
+    warnings: record.warnings ?? [],
     grants: record.budgetGrants?.length ?? 0,
     assumedHumanFindings: (record.humanAssumptions ?? []).reduce((sum, entry) => sum + entry.findings.length, 0),
-    reviewCycle: review?.cycle ?? null,
-    reviewPhase: review?.phase ?? null,
-    reviewRound: review?.judgedRounds ?? null,
-    sealed: review?.phase === "sealed",
-    closureExhausted,
-    reopenRequired: closureExhausted || (review?.phase === "sealed" && stale),
+    reviewCycle: prdGate ? reviewCycleOf(record) : null,
+    sealed,
+    reopenRequired: sealed && stale,
     inFlight,
   };
 }
@@ -801,7 +846,7 @@ export function grantGateBudget(store: GateStore, _state: GatesState, gate: Gate
     if (!grantable) {
       const recovery = gate === "verify"
         ? `the ${gate} fix budget is not exhausted; run the gate without it`
-        : `${gate} semantic review is not reopened by a budget grant; use 'sasu gate reopen --gate ${gate} --evidence "<the user's words>"' after a sealed or closure-blocked cycle`;
+        : `${gate} semantic review is not reopened by a budget grant; a new user decision is recorded with 'sasu gate reopen --gate ${gate} --evidence "<the user's words>"'`;
       throw new Error(`--grant-budget refused: ${recovery}`);
     }
     const record = state.gates[gate]!;
@@ -821,7 +866,14 @@ export function grantGateBudget(store: GateStore, _state: GatesState, gate: Gate
   });
 }
 
-/** Start a fresh bounded PRD review cycle with explicit user evidence. */
+/**
+ * Open the next PRD review cycle on a user's recorded words. Any judged
+ * verdict may be reopened - a sealed PASS whose author wants a change
+ * reviewed, a NEEDS_HUMAN bundle the user answered by changing the document,
+ * a BLOCK the user re-decided (PRD gate-loop D-07: a reopen against a sealed
+ * log used to exit 1, and the user's words were lost). Only an unjudged gate
+ * has nothing to reopen.
+ */
 export function reopenPrdGate(store: GateStore, gate: PrdGateId, evidence: string): GatesState {
   const trimmed = evidence.trim();
   if (trimmed === "") throw new Error("gate reopen requires the user's verbatim approval or change request");
@@ -830,34 +882,24 @@ export function reopenPrdGate(store: GateStore, gate: PrdGateId, evidence: strin
   try {
     return store.update((state) => {
       const record = state.gates[gate] ?? { ...EMPTY_GATE };
-      const before = prdReviewStateFor(record);
-      if (before.phase !== "sealed" && before.phase !== "closure-blocked") {
-        throw new Error(`gate reopen refused: ${gate} cycle ${before.cycle} is ${before.phase}, not terminal`);
+      if (record.verdict === null) {
+        throw new Error(`gate reopen refused: ${gate} has no judged verdict to reopen; run the gate first`);
       }
       const at = new Date().toISOString();
       record.reviewReopens = [
         ...(record.reviewReopens ?? []),
-        { at, evidence: trimmed, cycleBefore: before.cycle, phaseBefore: before.phase },
+        { at, evidence: trimmed, cycleBefore: reviewCycleOf(record), verdictBefore: record.verdict },
       ];
-      record.review = {
-        cycle: before.cycle + 1,
-        phase: "full",
-        judgedRounds: 0,
-        openedAt: at,
-        openedBy: "user",
-        reopenEvidence: trimmed,
-      };
       record.verdict = null;
       record.attempts = 0;
       record.consecutiveErrors = 0;
       delete record.consecutiveErrorCause;
       record.overridden = false;
-      // A blocked cycle's findings survive the reopen as the next round's
-      // prior-findings ledger (delta re-judgment): erasing them here is what
-      // turned every reopened cycle into a fresh exhaustive review (2026-08-29
-      // audit). A sealed cycle carries nothing forward - its findings were
-      // resolved or advisory.
-      if (before.phase === "sealed") record.findings = [];
+      // The open findings set and the lane digests survive the reopen: the
+      // next round is a delta re-judgment of exactly what was still open,
+      // against exactly the decisions that changed since. Erasing the set is
+      // what turned every reopened cycle into a fresh exhaustive review
+      // (2026-08-29 audit). A sealed PASS has an empty set by definition.
       record.lastRunAt = null;
       delete record.inputs;
       delete record.delegationSha256;
@@ -880,8 +922,13 @@ export function recordGateResult(
   outcome:
     | {
         kind: "verdict";
-        verdict: GapVerdict["verdict"] | "FAIL";
+        verdict: GapVerdict["verdict"] | "NEEDS_HUMAN" | "FAIL";
+        /** PRD gates: the open set; verify: failed criteria. */
         findings: Finding[];
+        /** PRD gates: recorded advisories (see GateRecord.warnings). */
+        warnings?: Finding[];
+        /** PRD gates: per-lane decision-cell digests pinned with this verdict (see GateRecord.laneDigests). */
+        laneDigests?: Record<string, string>;
         artifactPayload: unknown;
         inputs?: GateInput[];
         /** PRD-gate semantic source pin; omitted when no delegation was present. */
@@ -905,9 +952,9 @@ export function recordGateResult(
   const at = new Date().toISOString();
   return store.update((state) => {
     const record = state.gates[gate] ?? { ...EMPTY_GATE };
-    const reviewBefore = gate === "verify" ? null : prdReviewStateFor(record);
-    if (reviewBefore?.phase === "sealed" || reviewBefore?.phase === "closure-blocked") {
-      throw new Error(`${gate} review cycle ${reviewBefore.cycle} is ${reviewBefore.phase}; reopen it before recording another result`);
+    const prdGate = gate !== "verify";
+    if (prdGate && isSealed(record)) {
+      throw new Error(`${gate} review cycle ${reviewCycleOf(record)} is sealed; reopen it before recording another result`);
     }
     // Write the artifact only after admission has been checked against the
     // latest serialized state. A refused duplicate must leave neither a state
@@ -931,7 +978,23 @@ export function recordGateResult(
     let summary: GateRunSummary;
     if (outcome.kind === "verdict") {
     record.verdict = outcome.verdict;
-    record.findings = outcome.findings;
+    if (prdGate) {
+      // Harness-assigned finding ids: a rerun judge echoes them to say "still
+      // open", so they must be stable and never reused on this gate. Findings
+      // that arrive with an id already carry a prior round's.
+      let seq = record.findingSeq ?? 0;
+      const stamp = (finding: Finding): Finding => {
+        if (typeof finding.id === "string" && finding.id !== "") return finding;
+        seq += 1;
+        return { ...finding, id: `F${seq}` };
+      };
+      record.findings = outcome.findings.map(stamp);
+      record.warnings = (outcome.warnings ?? []).map(stamp);
+      record.findingSeq = seq;
+      if (outcome.laneDigests !== undefined) record.laneDigests = outcome.laneDigests;
+    } else {
+      record.findings = outcome.findings;
+    }
     record.inputs = outcome.inputs ?? [];
     if (outcome.delegationSha256 !== undefined) record.delegationSha256 = outcome.delegationSha256;
     else delete record.delegationSha256;
@@ -974,14 +1037,6 @@ export function recordGateResult(
     // red-team fix (101 alternating rounds plateaued at 14/15).
     if (outcome.verdict !== "PASS" && failedStage !== "declared-gap") {
       record.totalNonPassAttempts = (record.totalNonPassAttempts ?? 0) + 1;
-    }
-    if (reviewBefore !== null) {
-      const judgedRounds = reviewBefore.judgedRounds + 1;
-      record.review = outcome.verdict === "PASS"
-        ? { ...reviewBefore, phase: "sealed", judgedRounds, sealedAt: at }
-        : reviewBefore.phase === "full"
-          ? { ...reviewBefore, phase: "closure", judgedRounds }
-          : { ...reviewBefore, phase: "closure-blocked", judgedRounds };
     }
     // ANY judged verdict clears the error streak, FAIL and BLOCK included: the
     // judge answered the question, which is the whole thing the streak counts.
@@ -1037,7 +1092,6 @@ export function recordGateResult(
       ? (record.consecutiveErrors ?? 0) + 1
       : 1;
     record.consecutiveErrorCause = outcome.cause;
-    if (reviewBefore !== null) record.review = reviewBefore;
     summary = {
       at,
       verdict: "ERROR",
@@ -1053,6 +1107,55 @@ export function recordGateResult(
     state.gates[gate] = record;
     state.judgeCalls = [...state.judgeCalls, ...judgeRecords];
   });
+}
+
+/**
+ * Seal a NEEDS_HUMAN bundle on the user's recorded answer without another
+ * judge call (PRD gate-loop R2/AC4). The bundle's findings were, by the
+ * judge's own labelling, closable only by a human decision, so the judge has
+ * nothing further to say once that decision exists; re-consulting it is what
+ * the old loop did and what ended in overrides. The caller pins the inputs
+ * as they stand at answer time: the document edits that record the
+ * decision (Register rows, PRD text) happen BEFORE this call, so the seal
+ * vouches for the document the user's answer landed in.
+ */
+export function answerPrdGate(
+  store: GateStore,
+  gate: PrdGateId,
+  evidence: string,
+  inputs: GateInput[],
+  question: string,
+): GatesState {
+  const trimmed = evidence.trim();
+  if (trimmed === "") throw new Error("gate answer requires the user's verbatim answer to the open human questions");
+  const release = store.tryAcquireRunLock(gate);
+  if (release === null) throw new Error(`${gate} is currently in flight; wait for that judge run to finish before answering it`);
+  try {
+    return store.update((state) => {
+      const record = state.gates[gate] ?? { ...EMPTY_GATE };
+      if (record.verdict !== "NEEDS_HUMAN") {
+        throw new Error(
+          `gate answer refused: ${gate} is ${record.verdict ?? "not run"}, not NEEDS_HUMAN; only a bundle of human questions is sealed by an answer`,
+        );
+      }
+      const at = new Date().toISOString();
+      record.humanAnswers = [...(record.humanAnswers ?? []), { at, evidence: trimmed, findings: record.findings, question }];
+      record.verdict = "PASS";
+      record.findings = [];
+      record.inputs = inputs;
+      record.attempts = 0;
+      record.overridden = false;
+      record.lastRunAt = at;
+      record.totalAttempts = (record.totalAttempts ?? 0) + 1;
+      record.history = [
+        ...record.history.slice(-19),
+        { at, verdict: "PASS", findingCount: 0, requiresHuman: false, error: null, artifact: null, judgedDiffSha256: null },
+      ];
+      state.gates[gate] = record;
+    });
+  } finally {
+    release();
+  }
 }
 
 export function overrideGate(store: GateStore, _state: GatesState, gate: GateId, reason: string): GatesState {
