@@ -5,12 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createRequire } from "node:module";
-import { freshnessHash, GateStore, gateStatus, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
+import { freshnessHash, GateStore, gateStatus, hashGateInput, overrideGate, recordGateResult, sha256Of } from "../../dist/gates/store.js";
 import { JUDGE_ERROR_LOOP_THRESHOLD } from "../../dist/judge/types.js";
 
 const require = createRequire(import.meta.url);
 const { judgedDiffSha256 } = require(
   path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "lib", "git.js"),
+);
+const { qaLogDecisionHash } = require(
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "lib", "gate_freshness.js"),
 );
 
 function makeStore() {
@@ -424,6 +427,9 @@ test("GateStore rejects non-kebab-case topic slugs", () => {
 
 function passWithInput(store, docName, content, inputKind = "document") {
   fs.writeFileSync(path.join(store.projectRoot, docName), content);
+  // Pinned the way the gate pins it: through hashGateInput by kind, so the
+  // pin and the staleness recompute can never use two different rules.
+  const sha256 = hashGateInput(path.join(store.projectRoot, docName), inputKind);
   return recordGateResult(
     store,
     store.load(),
@@ -432,7 +438,7 @@ function passWithInput(store, docName, content, inputKind = "document") {
       kind: "verdict",
       verdict: "PASS",
       findings: [],
-      inputs: [{ path: docName, sha256: freshnessHash(content, inputKind === "qa-log"), kind: inputKind }],
+      inputs: [{ path: docName, sha256, kind: inputKind }],
       artifactPayload: {},
     },
     [],
@@ -527,15 +533,81 @@ test("freshness: frontmatter lifecycle flips do not stale the gate", () => {
   assert.equal(view.stale, false);
 });
 
-test("freshness: recording the gate's own Audit History entry does not stale the gate", () => {
+const QA_V1 = [
+  "---",
+  'status: "active"',
+  "---",
+  "# Interview Log: demo",
+  "",
+  "## Decision Register",
+  "",
+  "| ID | Kind | Area | Decision / fact | Priority | Source / owner | Status | PRD mapping / revisit |",
+  "| --- | --- | --- | --- | --- | --- | --- | --- |",
+  "| D-01 | decision | ux | widget renders a list | P1 | user, Q1 | resolved | R1 |",
+  "",
+  "## Raw Q&A",
+  "",
+  "### Q1: x",
+  "- decision_ids: D-01",
+  "- answer: yes",
+  "",
+  "## Audit History",
+  "",
+  "- none",
+  "",
+].join("\n");
+
+// PRD gate-loop R4: a qa-log pin covers the Decision Register's decision
+// cells and nothing else. Every bookkeeping edit below is one the harness or
+// the agent legitimately makes after the seal; the implement-bc run
+// (2026-08-30) lost a sealed PASS to exactly the first of them.
+test("freshness (qa-log R4): anchors, Audit History, status, and bookkeeping cells never stale the seal", () => {
   const store = makeStore();
-  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- answer: yes\n\n## Audit History\n\n### Audit 1\n- result: pass\n";
-  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const v2 = `${v1}\n### Audit 2\n- type: gap-audit-gate\n- result: pass\n`;
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
-  const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "PASS");
-  assert.equal(view.stale, false);
+  const state = passWithInput(store, "qa-log.md", QA_V1, "qa-log");
+  const edits = [
+    ["a Q anchor line", QA_V1.replace("- decision_ids: D-01", "- decision_ids: D-01, D-02")],
+    ["an Audit History block", `${QA_V1}\n### Audit 2\n- type: gap-audit-gate\n- result: pass\n`],
+    ["the frontmatter status", QA_V1.replace('status: "active"', 'status: "complete"')],
+    ["the Source/owner cell", QA_V1.replace("| user, Q1 |", "| user, Q1, Q4 |")],
+    ["the PRD mapping cell", QA_V1.replace("| resolved | R1 |", "| resolved | R1, R2 |")],
+    ["an Addendum entry", `${QA_V1}\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late decision\n  - source: user\n`],
+    ["a Raw Q&A answer", QA_V1.replace("- answer: yes", "- answer: no")],
+  ];
+  for (const [label, content] of edits) {
+    fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), content);
+    const view = gateStatus(state, "spec", 2, store.projectRoot);
+    assert.equal(view.effective, "PASS", `${label} must not stale the seal`);
+    assert.equal(view.inputsDrifted, false, label);
+  }
+});
+
+test("freshness (qa-log R4): a changed decision cell stales the seal", () => {
+  const store = makeStore();
+  const state = passWithInput(store, "qa-log.md", QA_V1, "qa-log");
+  const edits = [
+    ["the decision text", QA_V1.replace("widget renders a list", "widget renders a grid")],
+    ["the priority", QA_V1.replace("| P1 | user, Q1 |", "| P0 | user, Q1 |")],
+    ["the status", QA_V1.replace("| resolved | R1 |", "| rejected | R1 |")],
+    ["the kind", QA_V1.replace("| D-01 | decision |", "| D-01 | assumption |")],
+    ["a new row", QA_V1.replace("| resolved | R1 |\n", "| resolved | R1 |\n| D-02 | decision | data | keep 30 days | P1 | user, Q1 | resolved | R2 |\n")],
+    ["a deleted Register", QA_V1.replace("## Decision Register", "## Decisions")],
+  ];
+  for (const [label, content] of edits) {
+    fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), content);
+    const view = gateStatus(state, "spec", 2, store.projectRoot);
+    assert.equal(view.effective, "STALE", `${label} must stale the seal`);
+    assert.deepEqual(view.staleInputs, [{ path: "qa-log.md", reason: "changed" }], label);
+  }
+});
+
+test("freshness (qa-log R4): the decision digest is order-independent and ignores bookkeeping cells", () => {
+  const two = QA_V1.replace("| resolved | R1 |\n", "| resolved | R1 |\n| D-02 | decision | data | keep 30 days | P1 | user, Q1 | resolved | R2 |\n");
+  const swapped = two
+    .replace("| D-01 | decision | ux | widget renders a list | P1 | user, Q1 | resolved | R1 |\n", "")
+    .replace("| D-02 | decision | data | keep 30 days | P1 | user, Q1 | resolved | R2 |\n",
+      "| D-02 | decision | data | keep 30 days | P1 | user, Q1 | resolved | R2 |\n| D-01 | decision | ux | widget renders a list | P1 | user, Q3 | resolved | R9 |\n");
+  assert.equal(qaLogDecisionHash(two), qaLogDecisionHash(swapped));
+  assert.notEqual(qaLogDecisionHash(two), qaLogDecisionHash(QA_V1));
 });
 
 test("freshness: substance edits still stale the gate even with frontmatter present", () => {
@@ -557,57 +629,9 @@ test("freshness: Audit History stripping stops at the next section", () => {
   assert.notEqual(freshnessHash(audit), freshnessHash(changedNeighbor));
 });
 
-// Freshness contract v4 (2026-08-30, user re-decision of interview-anchor
-// D-06): the sealed hash has one structural rule - frontmatter and the
-// harness-owned append sections (Audit History, Addendum) are outside it,
-// every other body byte pins the PASS, in every document kind. The
-// decision_ids line exclusion this supersedes leaked twice (RF1 document-wide
-// scope, then prose riding the excluded line into a sealed document).
-test("freshness (v4): editing a decision_ids line after sealing stales the gate", () => {
-  const store = makeStore();
-  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const v2 = v1.replace("- decision_ids: none", "- decision_ids: D-03 user agreed production data may be dropped");
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
-  const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "STALE");
-  assert.equal(view.inputsDrifted, true);
-});
 
-test("freshness (v4): appending an Addendum entry does not stale the sealed gate", () => {
-  const store = makeStore();
-  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const v2 = `${v1}\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late decision\n  - source: user\n`;
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
-  const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "PASS");
-  assert.equal(view.stale, false);
-  assert.equal(view.inputsDrifted, false);
-});
 
-test("freshness (v4): an Addendum edit next to sealed content still pins its neighbor", () => {
-  const store = makeStore();
-  const v1 = "# Interview Log: demo\n\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late\n\n## Raw Q&A\n\n### Q1: x\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const grown = v1.replace("): late\n", "): late\n- D-52 (decision, scope, P2, resolved, 2026-08-30): another\n");
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), grown);
-  assert.equal(gateStatus(state, "spec", 2, store.projectRoot).effective, "PASS", "growth inside Addendum is free");
-  const touchedNeighbor = v1.replace("- answer: yes", "- answer: no");
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), touchedNeighbor);
-  assert.equal(gateStatus(state, "spec", 2, store.projectRoot).effective, "STALE", "the section after Addendum is sealed input");
-});
 
-test("freshness (AC8): editing any other qa-log body field after sealing still stales the gate", () => {
-  const store = makeStore();
-  const v1 = "# Interview Log: demo\n\n## Raw Q&A\n\n### Q1: x\n- decision_ids: none\n- answer: yes\n\n## Audit History\n\n- none\n";
-  const state = passWithInput(store, "qa-log.md", v1, "qa-log");
-  const v2 = v1.replace("- answer: yes", "- answer: no");
-  fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), v2);
-  const view = gateStatus(state, "spec", 2, store.projectRoot);
-  assert.equal(view.effective, "STALE");
-  assert.equal(view.inputsDrifted, true);
-});
 
 test("freshness: omitting projectRoot skips the staleness check (in-memory callers)", () => {
   const store = makeStore();

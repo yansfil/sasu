@@ -37,7 +37,7 @@ import {
   type JudgeLane,
   type PriorFinding,
 } from "./prompts";
-import { appendQaEntry, refreshBookkeeping, replaceQaLog } from "../interview/qalog";
+import { appendQaEntry, refreshBookkeeping, replaceQaLog, setFrontmatterValue } from "../interview/qalog";
 import {
   answerPrdGate,
   clearDelegation,
@@ -2083,7 +2083,15 @@ export function runOverride(
   return gateStatus(state, gate, Number.MAX_SAFE_INTEGER, projectRoot);
 }
 
-/** CLI seam for the only operation that opens a new gap/spec review cycle. */
+/**
+ * CLI seam for the only operation that opens a new gap/spec review cycle.
+ * The user's words are the new decision the next round judges, so they land
+ * in the interview log as a Raw Q&A turn (PRD gate-loop R6) - the one place
+ * the judges read user intent from - and a sealed log becomes active again
+ * so `interview sync` and normalization can follow. The state is reopened
+ * first: the evidence is already preserved in the reopen ledger, so a qa-log
+ * write that fails afterwards loses nothing the record does not hold.
+ */
 export function runReopen(
   projectRoot: string,
   config: SasuConfig,
@@ -2092,7 +2100,27 @@ export function runReopen(
   evidence: string,
 ): GateStatusView {
   const store = new GateStore(projectRoot, topic);
+  const record = store.load().gates[gate];
+  const qaLogInput = (record?.inputs ?? []).find((input) => input.kind === "qa-log");
+  if (record !== undefined && record.verdict !== null && qaLogInput === undefined) {
+    throw new Error(`gate reopen refused: ${gate} has no pinned qa-log input to record the user's words in; re-run the gate first`);
+  }
   const state = reopenPrdGate(store, gate, evidence);
+  const qaLogFile = path.join(projectRoot, qaLogInput!.path);
+  const original = fs.readFileSync(qaLogFile, "utf8");
+  const at = new Date().toISOString();
+  const appended = appendQaEntry(original, {
+    label: `${gate} reopen`,
+    route: "user-decision",
+    decisionIds: [],
+    sourceRef: `gate:${gate}:reopen:${at}`,
+    asked: `The ${gate} review cycle was reopened on the user's request; what changed?`,
+    recommended: "none",
+    answer: evidence.trim(),
+    notes: "Recorded by sasu gate reopen from the user's own words; normalize the decisions it carries into the Decision Register before re-running the gate.",
+  });
+  const reactivated = setFrontmatterValue(appended.content, "status", "active", true);
+  replaceQaLog(qaLogFile, original, refreshBookkeeping(reactivated));
   return gateStatus(state, gate, config.judge.retryBudget, projectRoot);
 }
 

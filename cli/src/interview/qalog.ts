@@ -535,6 +535,12 @@ export function refreshBookkeeping(content: string, options: { nextQuestion?: st
   let updated = content;
   updated = setFrontmatterValue(updated, "question_count", String(state.questionCount), false);
   updated = setFrontmatterValue(updated, "updated_at", todayStamp(), true);
+  // The Intake Cursor is the live interview's convenience block, not a gate
+  // requirement (the gap-audit prelint lists the required sections and it is
+  // not one). A gate command that appends a turn to a log written without it
+  // - the older template, a hand-assembled fixture - keeps the frontmatter
+  // counts honest and leaves the absent cursor absent.
+  if (!content.split("\n").some((line) => line.trim() === CURSOR_HEADING)) return updated;
   updated = setCursorValue(updated, "next_decision_id", state.nextDecisionId);
   updated = setCursorValue(updated, "outstanding_raw_entries", state.outstanding.length > 0 ? state.outstanding.join(", ") : "none");
   updated = setCursorValue(updated, "next_checkpoint_at", state.nextCheckpointAt);

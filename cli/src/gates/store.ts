@@ -20,22 +20,23 @@ export type PrdGateId = Extract<GateId, "gap-audit" | "spec">;
  * A gate input pinned by content hash at the moment the gate ran.
  *
  * `document` inputs (the default) hash the markdown body only, so lifecycle
- * frontmatter flips do not stale a PASS. `qa-log` hashes the same way but
- * additionally excludes Raw Q&A `decision_ids` lines (PRD interview-anchor
- * R4) - the call site that reads a qa-log already knows it is one
- * (cli/src/gates/commands.ts readInputFile), so this rides along as recorded
- * fact rather than being re-guessed from the path or content later. `evidence`
- * inputs are the quick path's proof artifacts - logs, API dumps, screenshots -
- * and hash their raw bytes: every byte is substance there, and a screenshot is
- * not text.
+ * frontmatter flips do not stale a PASS. `qa-log` inputs hash the Decision
+ * Register's decision cells only (PRD gate-loop R4): Raw Q&A anchors, Audit
+ * History, frontmatter status, and the Register's bookkeeping cells are
+ * outside the pin. The call site that reads a qa-log already knows it is one
+ * (cli/src/gates/commands.ts readInputFile), so the kind rides along as
+ * recorded fact rather than being re-guessed from the path or content later.
+ * `evidence` inputs are the quick path's proof artifacts - logs, API dumps,
+ * screenshots - and hash their raw bytes: every byte is substance there, and
+ * a screenshot is not text.
  */
 export interface GateInput {
   path: string;
   sha256: string;
   /**
    * How the pin is recomputed (cli/lib/gate_freshness.js hashGateInput):
-   * `document` strips lifecycle bookkeeping, `qa-log` does the same plus the
-   * Raw Q&A decision_ids exclusion, `evidence` hashes raw bytes, and `config`
+   * `document` strips lifecycle bookkeeping, `qa-log` digests the Decision
+   * Register's decision cells, `evidence` hashes raw bytes, and `config`
    * hashes raw bytes AND pins absence with a sentinel, because "no
    * agents/config.json" is itself a declaration about which checks run.
    */

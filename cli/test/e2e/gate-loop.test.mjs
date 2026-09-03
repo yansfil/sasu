@@ -329,3 +329,92 @@ test("AC6: a data-tech lane P2 marked requiresHuman is promoted into the bundle 
   assert.equal(status.verdict, "NEEDS_HUMAN");
   assert.equal(status.findings[0].severity, "P1");
 });
+
+function sealPass(dir) {
+  const passed = gapAudit(dir, { byPurpose: { default: PASS } });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+  assert.equal(statusJson(dir)["gap-audit"].sealed, true);
+}
+
+function writeQaLog(dir, content) {
+  fs.writeFileSync(path.join(dir, "qa-log.md"), content);
+}
+
+test("AC7: after a sealed PASS, a Q anchor line, an Audit History block, and the status value do not make the gate STALE", () => {
+  const dir = makeProject();
+  sealPass(dir);
+  const edits = [
+    ["Q anchor", QA_FIXTURE.replace("- decision_ids: D-01", "- decision_ids: D-01, D-03")],
+    ["Audit History block", `${QA_FIXTURE}\n### Audit 1\n- type: gap-audit-gate\n- result: pass\n`],
+    ["status value", QA_FIXTURE.replace('status: "active"', 'status: "complete"')],
+    ["all three at once", `${QA_FIXTURE.replace("- decision_ids: D-01", "- decision_ids: D-01, D-03").replace('status: "active"', 'status: "complete"')}\n### Audit 1\n- result: pass\n`],
+  ];
+  for (const [label, content] of edits) {
+    writeQaLog(dir, content);
+    const view = statusJson(dir)["gap-audit"];
+    assert.equal(view.effective, "PASS", `${label} must leave the seal live`);
+    assert.deepEqual(view.staleInputs, [], label);
+    const text = runCli(dir, ["gate", "status", "--slug", "fixture"]);
+    assert.match(text.stdout, /\[gate:gap-audit\] PASS \|/, label);
+    assert.doesNotMatch(text.stdout, /STALE|stale:/, label);
+  }
+  // And the sealed PASS is still cached at $0 on the edited log.
+  const cached = gapAudit(dir, "poison: a live seal must not call the judge");
+  assert.equal(cached.status, 0, cached.stdout + cached.stderr);
+});
+
+test("AC8: after a sealed PASS, one changed Decision Register decision cell makes the gate STALE", () => {
+  const dir = makeProject();
+  sealPass(dir);
+  writeQaLog(dir, QA_FIXTURE.replace("deleting a task asks for confirmation first", "deleting a task never asks"));
+  const view = statusJson(dir)["gap-audit"];
+  assert.equal(view.effective, "STALE");
+  assert.deepEqual(view.staleInputs, [{ path: "qa-log.md", reason: "changed" }]);
+  assert.equal(view.reopenRequired, true);
+  const text = runCli(dir, ["gate", "status", "--slug", "fixture"]);
+  assert.match(text.stdout, /\[gate:gap-audit\] STALE/);
+  assert.match(text.stdout, /REOPEN REQUIRED/);
+  const refused = gapAudit(dir, "poison: a stale seal is not re-judged on the agent's initiative");
+  assert.equal(refused.status, 1);
+  assert.equal(JSON.parse(refused.stdout).error.code, "reopen-required");
+});
+
+test("AC11: gate reopen on a complete, sealed qa-log exits 0 and appends the evidence as a new Raw Q&A turn", () => {
+  const dir = makeProject();
+  sealPass(dir);
+  writeQaLog(dir, QA_FIXTURE.replace('status: "active"', 'status: "complete"'));
+  assert.equal(statusJson(dir)["gap-audit"].sealed, true, "the seal is live on the completed log");
+
+  const evidence = "삭제 확인 대신 5초 undo로 가자";
+  const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", evidence]);
+  assert.equal(reopened.status, 0, reopened.stdout + reopened.stderr);
+  assert.match(reopened.stdout, /gap-audit review reopened with recorded user evidence/);
+  assert.match(reopened.stdout, /\[gate:gap-audit\] NOT_RUN \| review cycle 2/);
+
+  const qaLog = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
+  const rawQa = qaLog.slice(qaLog.indexOf("## Raw Q&A"), qaLog.indexOf("## Checkpoint And Sweep History"));
+  const lastTurn = rawQa.slice(rawQa.lastIndexOf("### Q"));
+  assert.match(lastTurn, /^### Q4: gap-audit reopen/);
+  assert.match(lastTurn, new RegExp(`- answer: ${evidence}`));
+  assert.match(lastTurn, /- source_ref: gate:gap-audit:reopen:/);
+  assert.match(lastTurn, /- needs_normalization: true/);
+  assert.match(qaLog, /^status: "active"$/m, "a reopened log is active again so sync and normalization can continue");
+  assert.match(qaLog, /^question_count: 4$/m);
+  const record = gatesState(dir).gates["gap-audit"];
+  assert.equal(record.reviewReopens.length, 1);
+  assert.equal(record.reviewReopens[0].evidence, evidence);
+  assert.equal(record.reviewReopens[0].verdictBefore, "PASS");
+
+  // The next round runs as a delta review and can seal again.
+  const resealed = gapAudit(dir, { byPurpose: { default: PASS } });
+  assert.equal(resealed.status, 0, resealed.stdout + resealed.stderr);
+  assert.equal(statusJson(dir)["gap-audit"].reviewCycle, 2);
+});
+
+test("AC11: gate reopen is refused before any verdict and records nothing", () => {
+  const dir = makeProject();
+  const refused = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "premature"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /no judged verdict to reopen/);
+  assert.equal(fs.readFileSync(path.join(dir, "qa-log.md"), "utf8"), QA_FIXTURE);
+});
