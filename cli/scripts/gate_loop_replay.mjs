@@ -140,10 +140,6 @@ function judgeRounds(scratch, slug, firstRound, lastRound, fix) {
   return rounds;
 }
 
-function minutes(a, b) {
-  return ((Date.parse(b) - Date.parse(a)) / 60_000).toFixed(1);
-}
-
 function render(results) {
   const lines = [
     "# gate-loop replay",
@@ -152,7 +148,7 @@ function render(results) {
     "",
     "## Summary",
     "",
-    "| session | rounds | lane calls | wall clock (min) | ending | open at end |",
+    "| session | rounds | lane calls | judged wall clock (min) | ending | open at end |",
     "|---|---|---|---|---|---|",
   ];
   for (const r of results) {
@@ -166,7 +162,10 @@ function render(results) {
         : last.verdict === "BLOCK"
           ? `BLOCK-stable (${last.open.length} open: ${human} need a human decision, ${last.open.length - human} agent-fixable)`
           : `ERROR: ${last.error?.code ?? "?"}`;
-    lines.push(`| ${r.slug} | ${r.rounds.length} | ${calls} | ${minutes(r.startedAt, r.finishedAt)} | ${ending} | ${last.open.length} |`);
+    // Sum of the rounds' own wall time: a continued loop has idle time
+    // between its recorded end and the fix, which is not judging.
+    const judgedMinutes = (r.rounds.reduce((n, round) => n + round.durationMs, 0) / 60_000).toFixed(1);
+    lines.push(`| ${r.slug} | ${r.rounds.length} | ${calls} | ${judgedMinutes} | ${ending} | ${last.open.length} |`);
   }
   lines.push("");
   for (const r of results) {
