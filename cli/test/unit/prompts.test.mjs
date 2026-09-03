@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gapAuditPrompt, specGatePrompt, clampDocument } from "../../dist/gates/prompts.js";
+import { FIDELITY_EVIDENCE_SENTENCE, SPEC_LANES, gapAuditPrompt, specGatePrompt, clampDocument } from "../../dist/gates/prompts.js";
 
 const PRIOR = [{ id: "F1", severity: "P1", area: "error-handling", missing: "setPriority unknown id behavior unspecified" }];
 
@@ -27,6 +27,20 @@ test("a delta round on a lane whose decisions changed admits new findings withou
   const prompt = gapAuditPrompt("log", PRIOR, { rerun: true, decisionsChanged: true });
   assert.match(prompt, /CHANGED since the previous round, so you may report a genuinely\s+NEW gap/);
   assert.match(prompt, /A new finding carries NO "id" field/);
+});
+
+// PRD gate-loop D-08 / AC12: the fidelity judgment names its evidence.
+test("AC12: the spec fidelity prompt states that Raw Q&A answer text is the decision basis and a resolved mark is not evidence", () => {
+  assert.match(FIDELITY_EVIDENCE_SENTENCE, /user's own answer text in the Raw Q&A/);
+  assert.match(FIDELITY_EVIDENCE_SENTENCE, /`resolved` mark in the Decision Register is written by the agent and is not evidence/);
+  const fidelity = SPEC_LANES.find((lane) => lane.id === "fidelity");
+  assert.ok(fidelity.scope.includes(FIDELITY_EVIDENCE_SENTENCE), "the lane scope carries the sentence");
+  const lanePrompt = specGatePrompt("prd", "log", [], { lane: fidelity, laneCount: SPEC_LANES.length });
+  assert.ok(lanePrompt.includes(FIDELITY_EVIDENCE_SENTENCE), "the fan-out fidelity lane prompt carries it");
+  const singlePrompt = specGatePrompt("prd", "log");
+  assert.ok(singlePrompt.includes(FIDELITY_EVIDENCE_SENTENCE), "the single-judge prompt's fidelity axis carries it");
+  const testability = specGatePrompt("prd", "log", [], { lane: SPEC_LANES[1], laneCount: SPEC_LANES.length });
+  assert.ok(!testability.includes(FIDELITY_EVIDENCE_SENTENCE), "the testability lane is unchanged");
 });
 
 test("delta spec prompt carries prior findings", () => {

@@ -127,12 +127,22 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
  * lives on in the testability lane below. Old "verification"/"coverage" areas
  * from prior-round findings route there via its merged areaHints.
  */
+/**
+ * PRD gate-loop D-08: gap-audit caught an agent marking its own proposal
+ * `resolved` three times on one run (7084c601); with fewer gap-audit cycles
+ * the spec fidelity lane has to carry that catch too, so its judgment names
+ * where decision evidence lives and what is not evidence.
+ */
+export const FIDELITY_EVIDENCE_SENTENCE =
+  "The basis of a decision is the user's own answer text in the Raw Q&A turn it cites; a `resolved` mark in the Decision Register is written by the agent and is not evidence.";
+
 export const SPEC_LANES: JudgeLane[] = [
   {
     id: "fidelity",
     title: "fidelity to the interview log",
     scope:
-      "Every material decision in the interview log's Decision Register must be represented in the PRD without distortion: rejected options stayed rejected, deferred items kept their revisit conditions, and agent assumptions were not upgraded into user decisions.",
+      "Every material decision in the interview log's Decision Register must be represented in the PRD without distortion: rejected options stayed rejected, deferred items kept their revisit conditions, and agent assumptions were not upgraded into user decisions. "
+      + FIDELITY_EVIDENCE_SENTENCE,
     areaHints: ["fidelity", "intent", "decision", "traceability"],
     blocking: true,
   },
@@ -284,6 +294,7 @@ ${options.lane.scope}`
 (a) FIDELITY: every material decision in the interview log's Decision Register is represented in the
     PRD without distortion. Rejected options stayed rejected. Deferred items stayed deferred with a
     revisit condition. Agent assumptions were not upgraded into user decisions.
+    ${FIDELITY_EVIDENCE_SENTENCE}
 (b) TESTABILITY AND VERIFICATION INTENT: every acceptance criterion is an observable, testable
     statement - flag vague qualifiers ("적절히", "빠르게", "appropriately", "robust") used as
     acceptance language. Required verification states an observable pass intent, every
