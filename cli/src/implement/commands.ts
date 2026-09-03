@@ -2114,8 +2114,13 @@ function runUnifiedBatch(
       startedAt: result.startedAt,
       finishedAt: result.finishedAt,
       durationMs: result.durationMs,
-      exitCode: result.green ? 0 : (result.exitCode === 0 ? 1 : result.exitCode),
-      status: result.green ? "PASS" : "FAIL",
+      // The real exit code. This used to be rewritten to 1 when the tree moved
+      // so that "FAIL implies non-zero" held - the same dropped bit the AC
+      // ledger lost, wearing the opposite disguise. `mutatedTree` now carries
+      // the reason, so the exit code can stay true (PRINCIPLES 10).
+      exitCode: result.exitCode,
+      mutatedTree: result.mutatedTree,
+      status: result.outcome === "green" ? "PASS" : "FAIL",
     };
     const logPath = writeMechanicalLog(recordRoot, state, binding, base, result.stdout, result.stderr);
     const record: MechanicalRunRecord = { ...base, logPath };
@@ -2152,13 +2157,14 @@ function attributeToCriteria(state: ImplementState, result: RunUnitResult): void
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       signal: result.signal,
-      outcome: result.green ? "green" : "failed",
+      mutatedTree: result.mutatedTree,
+      outcome: result.outcome,
       outputFingerprint: fingerprints.outputFingerprint,
-      failureClass: result.green ? null : fingerprints.failureClass,
+      failureClass: result.outcome === "failed" ? fingerprints.failureClass : null,
       tree: result.tree,
       humanWindow: null,
     });
-    if (result.green) {
+    if (result.outcome === "green") {
       criterion.check.status = "green";
       criterion.check.consecutiveFailures = 0;
     } else {
@@ -2178,7 +2184,8 @@ function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptI
       finishedAt: result.finishedAt,
       durationMs: result.durationMs,
       exitCode: result.exitCode,
-      status: result.green ? ("GREEN" as const) : ("RED" as const),
+      mutatedTree: result.mutatedTree,
+      status: result.outcome === "green" ? ("GREEN" as const) : ("RED" as const),
       logPath,
       attributedCriteria: [...result.unit.criterionIds],
     };
@@ -3154,7 +3161,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const orphanRed = orphanSuiteFailures(batch.results.map((entry) => ({
     suiteCommandIds: entry.unit.suiteCommandIds,
     criterionIds: entry.unit.criterionIds,
-    green: entry.green,
+    green: entry.outcome === "green",
     command: entry.unit.command,
   })));
   const failedMechanical = mechanical.find((entry) => entry.status === "FAIL");
@@ -3169,7 +3176,9 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       : orphanRed.length > 0
         ? `suite ${score.green}/${score.total} GREEN; ${orphanRed.length} command(s) no acceptance criterion binds failed and block this run independently of the AC score: ${orphanRed.map((entry) => entry.command).join(", ")}. Fix them, or exclude one from the sealed list through an amendment carrying verbatim human approval.`
         : failedMechanical !== undefined
-          ? `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
+          ? failedMechanical.mutatedTree
+            ? `${failedMechanical.command} rewrote judged source while it ran (exit ${failedMechanical.exitCode}); a command may not move the tree it is proving`
+            : `${failedMechanical.command} failed with exit ${failedMechanical.exitCode}`
           : proofProblems.join("; ");
     const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, mechanical, "mechanical", "mechanical-failed", message, "FAIL");
     state.verificationAttempts.push(attempt);

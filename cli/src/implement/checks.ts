@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { executeUnit } from "./runner";
 import { captureSourceSnapshot, nowIso, sha256 } from "./store";
+import { mechanicalOutcome } from "./verdict";
 import type {
   AcceptanceCriterionItem,
   CheckAttempt,
@@ -331,7 +332,7 @@ export function runCriterionCheck(
   // (runner.executeUnit). Two executors for one command string is exactly the
   // split R1 closes; keeping this call here and the batch call in verify is
   // fine, running them through different machinery is not.
-  const { execution: executed, tree } = executeUnit(
+  const { execution: executed, mutatedTree, tree } = executeUnit(
     state,
     workRoot,
     { argv: validated.argv, cwd: validated.cwd },
@@ -342,12 +343,13 @@ export function runCriterionCheck(
     executed.stdout,
     `${executed.stderr}${executed.timedOut ? `\n[sasu] command timed out after ${IMPLEMENT_CHECK_TIMEOUT_MS}ms` : ""}`,
   );
-  // `mutatedTree` is deliberately NOT consulted here. The frozen-tree rule is
-  // scoped to verify (AC2), where a batch of commands must all be earned on
-  // one tree; a single criterion check is an iteration tool and a criterion
-  // that writes while proving itself is caught when verify re-runs it. One
-  // executor, two policies - stated rather than left to accident.
-  const green = !executed.timedOut && executed.signal === null && executed.exitCode === 0;
+  // A single check used to ignore `mutatedTree` and leave the frozen-tree
+  // rule to verify. That exemption cannot survive a reader that re-derives
+  // every verdict from the persisted inputs: nothing on the record says which
+  // policy produced it, so the reader would have to accept two verdicts for
+  // one set of inputs - two definitions again. One executor, one policy: a
+  // check that rewrites the tree it is proving learns so now, not at verify.
+  const outcome = mechanicalOutcome({ exitCode: executed.exitCode, timedOut: executed.timedOut, signal: executed.signal, mutatedTree });
   const attempt: CheckAttempt = {
     id: `A${criterion.check.attempts.length + 1}`,
     bindingId: binding.id,
@@ -357,16 +359,17 @@ export function runCriterionCheck(
     exitCode: executed.exitCode,
     timedOut: executed.timedOut,
     signal: executed.signal,
-    outcome: green ? "green" : "failed",
+    mutatedTree,
+    outcome,
     outputFingerprint: fingerprints.outputFingerprint,
-    failureClass: green ? null : fingerprints.failureClass,
+    failureClass: outcome === "failed" ? fingerprints.failureClass : null,
     tree,
     humanWindow: criterion.judgment === "machine+gate:human"
       ? { evidence: approval, recordedAt: startedAt, criterionId: criterion.id }
       : null,
   };
   criterion.check.attempts.push(attempt);
-  if (green) {
+  if (outcome === "green") {
     criterion.check.status = "green";
     criterion.check.consecutiveFailures = 0;
     resolveDecisionPoints(criterion, "green", finishedAt);

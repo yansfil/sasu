@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import {
   IMPLEMENT_ACTIVE_SCHEMA,
   IMPLEMENT_SCHEMA,
+  type AmendmentRecord,
   type ImplementActivePointer,
   type ImplementState,
   type DirtyAttribution,
@@ -13,6 +14,7 @@ import {
   type IssuedCommand,
 } from "./types";
 import { ISSUED_COMMANDS } from "./verbs";
+import { mechanicalOutcome } from "./verdict";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 
@@ -208,7 +210,27 @@ function assertRoundContext(value: unknown, label: string): void {
   }
 }
 
-function assertAcceptanceCriteria(value: unknown, label: string): void {
+/**
+ * An amendment that rewrote a criterion's row voids the proof filed against
+ * the old text (amend.ts mergeCriteria), so its attempts stop counting from
+ * the amendment's timestamp - the same boundary a park's resume draws. The
+ * reader used to know only the resume boundary, so `amend` on a green row
+ * wrote status "pending" over a green attempt the reader still counted, and
+ * the file it left was one no later command could open. Found by the
+ * write-time parse the day it landed (2026-09-03).
+ */
+function latestInvalidationByCriterion(amendments: AmendmentRecord[]): Map<string, string> {
+  const boundary = new Map<string, string>();
+  for (const amendment of amendments) {
+    for (const criterionId of amendment.invalidatedCriteria) {
+      const held = boundary.get(criterionId);
+      if (held === undefined || held < amendment.at) boundary.set(criterionId, amendment.at);
+    }
+  }
+  return boundary;
+}
+
+function assertAcceptanceCriteria(value: unknown, label: string, invalidatedAt: Map<string, string>): void {
   if (!Array.isArray(value)) throw new Error(`malformed implement state: ${label} must be an array`);
   const criterionIds = new Set<string>();
   for (const [index, entry] of value.entries()) {
@@ -277,16 +299,25 @@ function assertAcceptanceCriteria(value: unknown, label: string): void {
       if (attempt["signal"] !== null && (typeof attempt["signal"] !== "string" || !/^SIG[A-Z0-9]+$/.test(attempt["signal"]))) {
         throw new Error(`malformed implement state: ${attemptLabel}.signal is invalid`);
       }
-      if (attempt["outcome"] !== "green" && attempt["outcome"] !== "failed") {
+      if (attempt["mutatedTree"] === undefined) migrateDroppedMutatedTree(attempt);
+      if (typeof attempt["mutatedTree"] !== "boolean") throw new Error(`malformed implement state: ${attemptLabel}.mutatedTree must be boolean`);
+      if (attempt["outcome"] !== "green" && attempt["outcome"] !== "failed" && attempt["outcome"] !== "tree-moved") {
         throw new Error(`malformed implement state: ${attemptLabel}.outcome is invalid`);
       }
-      const isGreen = attempt["exitCode"] === 0 && attempt["timedOut"] === false && attempt["signal"] === null;
-      if ((attempt["outcome"] === "green") !== isGreen) throw new Error(`malformed implement state: ${attemptLabel}.outcome contradicts the recorded process result`);
+      const expectedOutcome = mechanicalOutcome({
+        exitCode: attempt["exitCode"] as number,
+        timedOut: attempt["timedOut"] as boolean,
+        signal: attempt["signal"] as string | null,
+        mutatedTree: attempt["mutatedTree"] as boolean,
+      });
+      if (attempt["outcome"] !== expectedOutcome) {
+        throw new Error(`malformed implement state: ${attemptLabel}.outcome ${String(attempt["outcome"])} contradicts the recorded process result (expected ${expectedOutcome})`);
+      }
       assertSha256(attempt["outputFingerprint"], `${attemptLabel}.outputFingerprint`);
-      if (isGreen) {
-        if (attempt["failureClass"] !== null) throw new Error(`malformed implement state: ${attemptLabel}.failureClass must be null for green`);
-      } else {
+      if (expectedOutcome === "failed") {
         assertSha256(attempt["failureClass"], `${attemptLabel}.failureClass`);
+      } else if (attempt["failureClass"] !== null) {
+        throw new Error(`malformed implement state: ${attemptLabel}.failureClass must be null for ${expectedOutcome}`);
       }
       assertRecord(attempt["tree"], `${attemptLabel}.tree`);
       for (const field of ["all", "product", "bookkeeping"] as const) assertSha256(attempt["tree"][field], `${attemptLabel}.tree.${field}`);
@@ -371,7 +402,13 @@ function assertAcceptanceCriteria(value: unknown, label: string): void {
         if (decision["resolvedAt"] !== null || resolution !== null) throw new Error(`malformed implement state: ${decisionLabel} must resolve time and outcome together`);
       } else {
         assertIsoTimestamp(decision["resolvedAt"], `${decisionLabel}.resolvedAt`);
-        if (resolution !== "green" && resolution !== "parked" && resolution !== "rebound") throw new Error(`malformed implement state: ${decisionLabel}.resolution is invalid`);
+        // "amended" is what amend.ts writes when it lifts a stuck row's open
+        // decision point; the reader knew only the other three, which the
+        // write-time parse would have surfaced on the first amend of a stuck
+        // criterion.
+        if (resolution !== "green" && resolution !== "parked" && resolution !== "rebound" && resolution !== "amended") {
+          throw new Error(`malformed implement state: ${decisionLabel}.resolution is invalid`);
+        }
       }
     }
 
@@ -380,10 +417,13 @@ function assertAcceptanceCriteria(value: unknown, label: string): void {
       ? []
       : attempts.filter((attempt) => (attempt as Record<string, unknown>)["bindingId"] === currentBinding["id"]) as Array<Record<string, unknown>>;
     const latestAttempt = currentAttempts.at(-1);
-    const attemptAfterResume = latestAttempt !== undefined && (latestResume === null || (latestAttempt["finishedAt"] as string) >= latestResume);
+    const invalidation = invalidatedAt.get(entry["id"] as string) ?? null;
+    const boundary = [latestResume, invalidation].filter((at): at is string => at !== null).sort().at(-1) ?? null;
+    const attemptCounts = (attempt: Record<string, unknown>): boolean => boundary === null || (attempt["finishedAt"] as string) >= boundary;
+    const attemptAfterResume = latestAttempt !== undefined && attemptCounts(latestAttempt);
     const derivedStatus = activePark ? "parked" : attemptAfterResume && latestAttempt?.["outcome"] === "green" ? "green" : "pending";
     if (check["status"] !== derivedStatus) throw new Error(`malformed implement state: ${label}[${index}].check.status ${String(check["status"])} contradicts the harness-owned attempt ledger (expected ${derivedStatus})`);
-    const attemptsAfterResume = currentAttempts.filter((attempt) => latestResume === null || (attempt["finishedAt"] as string) >= latestResume);
+    const attemptsAfterResume = currentAttempts.filter(attemptCounts);
     let derivedFailures = 0;
     for (const attempt of attemptsAfterResume.slice().reverse()) {
       if (attempt["outcome"] === "green") break;
@@ -540,8 +580,23 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     assertRecord(entry, `suite.results[${index}]`);
     assertString(entry["commandId"], `suite.results[${index}].commandId`);
     assertString(entry["attemptId"], `suite.results[${index}].attemptId`);
+    if (!Number.isInteger(entry["exitCode"])) throw new Error(`malformed implement state: suite.results[${index}].exitCode must be an integer`);
+    // Written before mutatedTree existed: that writer rewrote a moved tree's
+    // exit code to 1, so its RED rows are exit-consistent as they stand and
+    // nothing distinguishes one from a genuine failure. `false` is the value
+    // consistent with the recorded status, not a measurement.
+    if (entry["mutatedTree"] === undefined) entry["mutatedTree"] = false;
+    if (typeof entry["mutatedTree"] !== "boolean") throw new Error(`malformed implement state: suite.results[${index}].mutatedTree must be boolean`);
     if (entry["status"] !== "GREEN" && entry["status"] !== "RED") {
       throw new Error(`malformed implement state: suite.results[${index}].status must be GREEN or RED`);
+    }
+    // The suite row records no timeout or signal. That is safe because the
+    // executor never pairs either with exit 0: a timeout records 124 and a
+    // signal death records 1 (mechanical.ts executeMechanicalArgv), so the
+    // exit code alone carries the process verdict here.
+    const expectedStatus = mechanicalOutcome({ exitCode: entry["exitCode"] as number, timedOut: false, signal: null, mutatedTree: entry["mutatedTree"] as boolean }) === "green" ? "GREEN" : "RED";
+    if (entry["status"] !== expectedStatus) {
+      throw new Error(`malformed implement state: suite.results[${index}].status ${String(entry["status"])} contradicts the recorded process result (expected ${expectedStatus})`);
     }
     if (!Array.isArray(entry["attributedCriteria"])) {
       throw new Error(`malformed implement state: suite.results[${index}].attributedCriteria must be an array`);
@@ -612,6 +667,37 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
   }
 }
 
+/**
+ * Restore the one input the pre-verdict writer measured and dropped.
+ *
+ * Before `mutatedTree` was persisted, the verify batch folded it into its
+ * verdict and wrote `outcome: "failed"` beside a true exit code of 0. The
+ * reader derived green from the exit code alone and refused the file, so a
+ * finished run bricked every later command (2026-09-02 herdr-ide
+ * hide-ux-round4: six such attempts, all from a `cargo build` writing
+ * target/ under the old readdir exclusion rule). Exit 0, no timeout, no
+ * signal, outcome "failed", mutatedTree absent has exactly one origin - that
+ * writer on a moved tree - so stamping the bit records what the harness knew,
+ * not what anyone claims. Any other absent-mutatedTree record is stamped
+ * `false`: consistent with its recorded verdict, and not a measurement, since
+ * the single-check writer never recorded the bit at all. Keyed on shape, not
+ * on a schema bump, so nothing else about the run is touched and no repair
+ * verb exists for an agent to rewrite the ledger with.
+ */
+function migrateDroppedMutatedTree(attempt: Record<string, unknown>): void {
+  const droppedByOldBatchWriter = attempt["exitCode"] === 0
+    && attempt["timedOut"] === false
+    && attempt["signal"] === null
+    && attempt["outcome"] === "failed";
+  if (droppedByOldBatchWriter) {
+    attempt["mutatedTree"] = true;
+    attempt["outcome"] = "tree-moved";
+    attempt["failureClass"] = null;
+  } else {
+    attempt["mutatedTree"] = false;
+  }
+}
+
 export function parseImplementState(text: string): ImplementState {
   let parsed: unknown;
   try {
@@ -677,7 +763,10 @@ export function parseImplementState(text: string): ImplementState {
     || !Array.isArray(candidate.deviations)) {
     throw new Error("malformed implement state: tasks, requirements, acceptanceCriteria, verification, and deviations must be arrays");
   }
-  assertAcceptanceCriteria(candidate.acceptanceCriteria, "acceptanceCriteria");
+  // The supervision ledgers are validated first because the acceptance
+  // ledger's derivation reads the amendment history.
+  assertSupervisionLedgers(candidate);
+  assertAcceptanceCriteria(candidate.acceptanceCriteria, "acceptanceCriteria", latestInvalidationByCriterion(candidate.amendments as AmendmentRecord[]));
   if (!Array.isArray(candidate.artifacts) || !Array.isArray(candidate.verificationAttempts)) {
     throw new Error("malformed implement state: artifacts and verificationAttempts must be arrays");
   }
@@ -741,8 +830,6 @@ export function parseImplementState(text: string): ImplementState {
       assertString(skipped["reason"], `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}].reason`);
     }
   }
-
-  assertSupervisionLedgers(candidate);
 
   if (candidate.retirement === undefined) throw new Error("malformed implement state: retirement must be null or an object");
   if (candidate.retirement !== null) {
@@ -823,6 +910,16 @@ export function persistState(statePath: string, state: ImplementState): void {
   // Serialized once and written, so the baseline is the exact bytes on disk
   // rather than a second serialization that could drift from them.
   const text = `${JSON.stringify(state, null, 2)}\n`;
+  // The reader runs over the exact bytes before they land. A writer and the
+  // reader disagreeing about one field has bricked a run three times (verb
+  // vocabulary, observer park approval, attempt outcome); refusing here
+  // leaves nothing on disk and names the field, instead of leaving a file
+  // every later command refuses to open.
+  try {
+    parseImplementState(text);
+  } catch (error) {
+    throw new Error(`refusing to write implement state that its own reader rejects; nothing was written: ${error instanceof Error ? error.message : String(error)}`);
+  }
   writeTextAtomic(statePath, text);
   // The bytes just written are the new baseline: several commands persist
   // twice (ownership adoption, then the command's own change), and the second
@@ -831,7 +928,15 @@ export function persistState(statePath: string, state: ImplementState): void {
   writeActivePointer(state.projectRoot, state);
 }
 
-const SNAPSHOT_EXCLUDES = new Set([".git", "node_modules", "dist", "coverage", ".next", ".turbo"]);
+/**
+ * Non-git fallback only. Inside a repository the judged source set is what
+ * git lists (see sourceFiles), which is also what the gate's judged diff reads
+ * in lib/git.js; a second hand-maintained definition of "judged" is what let
+ * a Rust target/ tree be hashed and scored as source (2026-09-02 herdr-ide:
+ * 3.9 GB across 14,900 files read four times per unit, and every build
+ * flagged as a moved tree).
+ */
+const NON_GIT_SNAPSHOT_EXCLUDES = new Set([".git", "node_modules", "dist", "coverage", ".next", ".turbo"]);
 
 function repositoryHead(projectRoot: string): string | null {
   // `git rev-parse` covers both a normal checkout (.git directory) and a
@@ -855,14 +960,43 @@ function isGitWorkTree(projectRoot: string): boolean {
   return resolved.status === 0 && resolved.stdout.trim() === "true";
 }
 
+/**
+ * Judged source is what git sees: tracked files plus untracked files the
+ * ignore rules do not exclude, minus the harness's own agents/ namespace. A
+ * tracked file stays judged even if a later ignore rule matches it. Symlinks,
+ * submodule entries, and index entries deleted from the working tree are
+ * skipped, matching the readdir walk's regular-file semantics.
+ */
 function sourceFiles(projectRoot: string): string[] {
+  if (isGitWorkTree(projectRoot)) {
+    const listed = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    if (listed.error !== undefined || listed.status !== 0) {
+      throw new Error(`git ls-files failed while listing judged source: ${(listed.stderr || listed.error?.message || "unknown error").trim()}`);
+    }
+    const files = new Set<string>();
+    for (const relative of listed.stdout.split("\0")) {
+      if (relative === "" || snapshotExcluded(relative)) continue;
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(path.join(projectRoot, relative));
+      } catch {
+        continue;
+      }
+      if (stat.isFile()) files.add(relative);
+    }
+    return [...files].sort();
+  }
   const files: string[] = [];
   const visit = (absoluteDir: string, relativeDir: string): void => {
     for (const entry of fs.readdirSync(absoluteDir, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) continue;
       const relative = relativeDir === "" ? entry.name : `${relativeDir}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (SNAPSHOT_EXCLUDES.has(entry.name) || (relativeDir === "" && entry.name === "agents")) continue;
+        if (NON_GIT_SNAPSHOT_EXCLUDES.has(entry.name) || snapshotExcluded(relative)) continue;
         visit(path.join(absoluteDir, entry.name), relative);
       } else if (entry.isFile()) {
         files.push(relative);
@@ -885,10 +1019,9 @@ export function captureSourceSnapshot(projectRoot: string): SourceSnapshot {
   return { head, entries, digest: sha256(JSON.stringify({ entries })) };
 }
 
+/** The harness's own namespace is bookkeeping, never a verification input. */
 function snapshotExcluded(relative: string): boolean {
-  const segments = relative.split("/");
-  if (segments[0] === "agents") return true;
-  return segments.some((segment) => SNAPSHOT_EXCLUDES.has(segment));
+  return relative.split("/")[0] === "agents";
 }
 
 /**

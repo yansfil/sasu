@@ -155,6 +155,56 @@ function bindAndRun(root, ac, command = "npm test", extra = []) {
   return { bound, checked };
 }
 
+// The incident: a check whose command rewrote judged source was recorded in a
+// shape the loader refused, and every later command on the run failed before
+// its verb ran. The observable contract is that the check is scored
+// "tree-moved" and the run stays loadable.
+test("a check that rewrites judged source is scored tree-moved and the run still loads", () => {
+  const root = makeProject([{ id: "AC1", text: "machine proof", judgment: "machine" }]);
+  start(root);
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "scripts", "writes.cjs"), "require('node:fs').writeFileSync('generated.txt', 'built\\n'); console.log('ok');\n");
+  const { checked } = bindAndRun(root, "AC1", "node scripts/writes.cjs");
+  assert.equal(checked.status, 1, checked.stderr + checked.stdout);
+  assert.equal(checked.json.detail.attempt.outcome, "tree-moved");
+  assert.equal(checked.json.detail.attempt.exitCode, 0);
+  assert.equal(checked.json.detail.attempt.mutatedTree, true);
+  assert.equal(checked.json.detail.attempt.failureClass, null);
+  assert.equal(checked.json.detail.checkStatus, "pending");
+  const status = run(root, ["implement", "status"]);
+  assert.equal(status.status, 0, status.stderr + status.stdout);
+  assert.equal(state(root).acceptanceCriteria[0].check.attempts[0].outcome, "tree-moved");
+});
+
+// amend lifts a stuck row's open decision point with resolution "amended";
+// the reader has to accept that word or the amended run cannot be opened.
+// The stuck row belongs to a closed task, because amend refuses while a
+// pending task holds a bound or attempted criterion.
+test("amending a criterion stuck on an open decision point succeeds and the run still loads", () => {
+  const root = makeProject([{ id: "AC1", text: "machine proof", judgment: "machine" }]);
+  start(root);
+  const { checked } = bindAndRun(root, "AC1");
+  assert.equal(checked.json.detail.attempt.outcome, "green");
+  assert.equal(run(root, ["implement", "task", "--id", "T1"]).status, 0);
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "scripts", "fail.cjs"), "console.error('Error: fixture still failing'); process.exit(1);\n");
+  const rebound = run(root, ["implement", "check", "--ac", "AC1", "--bind", "node scripts/fail.cjs", "--reason", "the checker regressed"]);
+  assert.equal(rebound.status, 0, rebound.stderr + rebound.stdout);
+  for (let index = 0; index < 3; index += 1) run(root, ["implement", "check", "--ac", "AC1"]);
+  assert.ok(state(root).acceptanceCriteria[0].check.decisionPoints.some((point) => point.resolvedAt === null), "the harness flagged the row as stuck");
+
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8").replace("| AC1 | machine proof | machine | - |", "| AC1 | machine proof, restated | machine | - |"));
+  const amended = run(root, ["implement", "amend", "--issuer", "human", "--approval", "the row was wrong", "--reason", "restate AC1"]);
+  assert.equal(amended.status, 0, amended.stderr + amended.stdout);
+  const status = run(root, ["implement", "status"]);
+  assert.equal(status.status, 0, status.stderr + status.stdout);
+  const check = state(root).acceptanceCriteria[0].check;
+  assert.ok(check.decisionPoints.length > 0 && check.decisionPoints.every((point) => point.resolution === "amended"));
+  assert.equal(check.status, "pending");
+  assert.equal(check.consecutiveFailures, 0);
+});
+
 test("readiness enforces the AC judgment table and reports tag counts", () => {
   const criteria = [
     { id: "AC1", text: "machine proof", judgment: "machine" },

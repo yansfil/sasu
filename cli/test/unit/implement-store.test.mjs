@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, parseImplementState } from "../../dist/implement/store.js";
+import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, parseImplementState, persistState } from "../../dist/implement/store.js";
 
 test("v6 state is rejected instead of being migrated into the v7 supervision contract", () => {
   assert.throws(() => parseImplementState(JSON.stringify({
@@ -191,6 +191,101 @@ const v7Fixture = (overrides = {}) => JSON.stringify({
   retirement: null,
   completion: null,
   ...overrides,
+});
+
+const SHA = "a".repeat(64);
+const machineCriterion = (attempts, check = {}) => ({
+  id: "AC1",
+  judgment: "machine",
+  evidenceDeclaration: null,
+  check: {
+    status: "pending",
+    consecutiveFailures: 1,
+    bindings: [{ id: "B1", command: "npm test", argv: ["npm", "test"], cwd: ".", classification: "labor", boundAt: "2026-08-29T00:00:00.000Z", reason: null }],
+    attempts,
+    decisionPoints: [],
+    parks: [],
+    ...check,
+  },
+});
+const attempt = (overrides) => ({
+  id: "A1",
+  bindingId: "B1",
+  startedAt: "2026-08-29T00:00:01.000Z",
+  finishedAt: "2026-08-29T00:00:02.000Z",
+  durationMs: 1000,
+  exitCode: 0,
+  timedOut: false,
+  signal: null,
+  outputFingerprint: SHA,
+  tree: { all: SHA, product: SHA, bookkeeping: SHA },
+  humanWindow: null,
+  ...overrides,
+});
+
+// The shape only the pre-verdict verify writer could produce: it folded a
+// moved tree into "failed" beside a true exit code of 0 and never persisted
+// the bit. Six such attempts bricked herdr-ide hide-ux-round4 (2026-09-02).
+test("an attempt written as exit 0 / failed with no mutatedTree loads as tree-moved, and survives a persist round-trip", () => {
+  const old = attempt({ outcome: "failed", failureClass: SHA });
+  const loaded = parseImplementState(v7Fixture({ acceptanceCriteria: [machineCriterion([old])] }));
+  const migrated = loaded.acceptanceCriteria[0].check.attempts[0];
+  assert.equal(migrated.outcome, "tree-moved");
+  assert.equal(migrated.mutatedTree, true);
+  assert.equal(migrated.failureClass, null, "a moved tree is not an output class");
+  assert.equal(migrated.exitCode, 0, "the true exit code is kept");
+  assert.equal(loaded.acceptanceCriteria[0].check.status, "pending");
+  assert.equal(parseImplementState(JSON.stringify(loaded)).acceptanceCriteria[0].check.attempts[0].outcome, "tree-moved");
+
+  // A genuine failure is untouched by the migration and still fails.
+  const real = parseImplementState(v7Fixture({ acceptanceCriteria: [machineCriterion([attempt({ exitCode: 1, outcome: "failed", failureClass: SHA })])] }));
+  assert.equal(real.acceptanceCriteria[0].check.attempts[0].outcome, "failed");
+  assert.equal(real.acceptanceCriteria[0].check.attempts[0].mutatedTree, false);
+});
+
+test("a verdict that contradicts its recorded inputs is refused on read and on write, with nothing written", () => {
+  const forged = attempt({ mutatedTree: true, outcome: "green", failureClass: null });
+  assert.throws(
+    () => parseImplementState(v7Fixture({ acceptanceCriteria: [machineCriterion([forged], { status: "green", consecutiveFailures: 0 })] })),
+    /attempts\[0\]\.outcome green contradicts the recorded process result \(expected tree-moved\)/,
+  );
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-store-persist-"));
+  try {
+    const statePath = path.join(root, "agents", "runs", "fixture", "state.json");
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    const honest = attempt({ mutatedTree: true, outcome: "tree-moved", failureClass: null });
+    fs.writeFileSync(statePath, v7Fixture({ projectRoot: root, acceptanceCriteria: [machineCriterion([honest])] }));
+    const { state } = loadState(root, { slug: "fixture" });
+    const before = fs.readFileSync(statePath, "utf8");
+    state.acceptanceCriteria[0].check.attempts[0].outcome = "green";
+    state.acceptanceCriteria[0].check.status = "green";
+    state.acceptanceCriteria[0].check.consecutiveFailures = 0;
+    assert.throws(() => persistState(statePath, state), /refusing to write implement state.*attempts\[0\]\.outcome green contradicts/);
+    assert.equal(fs.readFileSync(statePath, "utf8"), before, "the refused write left the file untouched");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// `amend` voids the proof filed against a rewritten row; the reader must draw
+// the same boundary or the file amend writes is one nothing can open.
+test("a green attempt earned before an amendment invalidated its row no longer counts", () => {
+  const amendment = {
+    id: 1, at: "2026-08-29T01:00:00.000Z", issuer: "human", approval: "a", reason: "r", prdSha256: "p",
+    snapshotPath: "s", previousSnapshotPath: "q", invalidatedCriteria: ["AC1"], addedCriteria: [], unparkedCriteria: [], suiteSnapshotUpdated: false,
+  };
+  const green = attempt({ mutatedTree: false, outcome: "green", failureClass: null });
+  const pendingAfterAmend = machineCriterion([green], { status: "pending", consecutiveFailures: 0 });
+  assert.equal(parseImplementState(v7Fixture({ amendments: [amendment], acceptanceCriteria: [pendingAfterAmend] })).acceptanceCriteria[0].check.status, "pending");
+  assert.throws(
+    () => parseImplementState(v7Fixture({ acceptanceCriteria: [pendingAfterAmend] })),
+    /check\.status pending contradicts the harness-owned attempt ledger \(expected green\)/,
+    "without the amendment the same green attempt still proves the row",
+  );
+  const reproved = attempt({ id: "A2", startedAt: "2026-08-29T02:00:00.000Z", finishedAt: "2026-08-29T02:00:01.000Z", mutatedTree: false, outcome: "green", failureClass: null });
+  const greenAgain = machineCriterion([green, reproved], { status: "green", consecutiveFailures: 0 });
+  assert.equal(parseImplementState(v7Fixture({ amendments: [amendment], acceptanceCriteria: [greenAgain] })).acceptanceCriteria[0].check.status, "green");
 });
 
 test("a v7 state carrying all six supervision ledgers loads", () => {

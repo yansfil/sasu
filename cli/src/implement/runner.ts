@@ -3,6 +3,7 @@ import path from "node:path";
 import { executeMechanicalArgv, type MechanicalExecution } from "../mechanical";
 import { captureSourceSnapshot, sha256 } from "./store";
 import type { CheckTreeFingerprint, ImplementState } from "./types";
+import { mechanicalOutcome, type MechanicalOutcome } from "./verdict";
 
 /**
  * One command, executed once, scored for everything that asked for it.
@@ -36,9 +37,9 @@ export interface RunUnitResult {
   exitCode: number;
   timedOut: boolean;
   signal: NodeJS.Signals | null;
-  /** True when the command rewrote judged source; treated as a failure. */
+  /** True when the command rewrote judged source; scored as "tree-moved". */
   mutatedTree: boolean;
-  green: boolean;
+  outcome: MechanicalOutcome;
   stdout: string;
   stderr: string;
   tree: CheckTreeFingerprint;
@@ -201,7 +202,6 @@ export function runBatch(
     const started = Date.now();
     const startedAt = new Date().toISOString();
     const { execution, mutatedTree, tree } = executeUnit(state, workRoot, unit, timeoutMs);
-    const green = !execution.timedOut && execution.signal === null && execution.exitCode === 0 && !mutatedTree;
     const result: RunUnitResult = {
       unit,
       startedAt,
@@ -211,7 +211,7 @@ export function runBatch(
       timedOut: execution.timedOut,
       signal: execution.signal,
       mutatedTree,
-      green,
+      outcome: mechanicalOutcome({ exitCode: execution.exitCode, timedOut: execution.timedOut, signal: execution.signal, mutatedTree }),
       stdout: execution.stdout,
       stderr: `${execution.stderr}${execution.timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : ""}${mutatedTree ? "\n[sasu] command changed judged source files and was rejected" : ""}`,
       tree,

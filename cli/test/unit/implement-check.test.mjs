@@ -109,7 +109,10 @@ test("check execution uses a bookkeeping HOME and does not inherit agent secrets
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-env-"));
   const item = criterion();
   const runState = state(root, [item]);
-  bind(root, item, script(root, "env.cjs", "const fs=require('node:fs'); fs.writeFileSync('env.json', JSON.stringify({secret:process.env.SASU_TEST_SECRET ?? null, home:process.env.HOME}));\n"));
+  // Written into the bookkeeping HOME rather than the project root: a check
+  // that rewrites judged source is scored "tree-moved", and this test is
+  // about the environment, not the tree.
+  bind(root, item, script(root, "env.cjs", "const fs=require('node:fs'); const path=require('node:path'); fs.writeFileSync(path.join(process.env.HOME, 'env.json'), JSON.stringify({secret:process.env.SASU_TEST_SECRET ?? null, home:process.env.HOME}));\n"));
   const previous = process.env.SASU_TEST_SECRET;
   process.env.SASU_TEST_SECRET = "must-not-cross-check-boundary";
   try {
@@ -118,7 +121,7 @@ test("check execution uses a bookkeeping HOME and does not inherit agent secrets
     if (previous === undefined) delete process.env.SASU_TEST_SECRET;
     else process.env.SASU_TEST_SECRET = previous;
   }
-  const observed = JSON.parse(fs.readFileSync(path.join(root, "env.json"), "utf8"));
+  const observed = JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", "fixture", "check-runtime", "home", "env.json"), "utf8"));
   assert.equal(observed.secret, null);
   assert.equal(observed.home, path.join(root, "agents", "runs", "fixture", "check-runtime", "home"));
 });

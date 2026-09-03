@@ -1,4 +1,5 @@
 import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
+import type { MechanicalOutcome } from "./verdict";
 
 // v7: adds the supervision ledgers - event log, observer verb history,
 // amendment history, sealed suite list with its results, QA trails, and solver
@@ -64,8 +65,12 @@ export interface CheckAttempt {
   exitCode: number;
   timedOut: boolean;
   signal: NodeJS.Signals | null;
-  outcome: "green" | "failed";
+  /** Input to `outcome`, recorded beside the exit code it qualifies. */
+  mutatedTree: boolean;
+  /** Derived by `mechanicalOutcome` from the four fields above; never set by hand. */
+  outcome: MechanicalOutcome;
   outputFingerprint: string;
+  /** Non-null exactly when outcome is "failed"; a moved tree is not an output class. */
   failureClass: string | null;
   tree: CheckTreeFingerprint;
   humanWindow: { evidence: string; recordedAt: string; criterionId: string } | null;
@@ -207,7 +212,9 @@ export interface MechanicalRunRecord extends MechanicalBinding {
   startedAt: string;
   finishedAt: string;
   durationMs: number;
+  /** The real exit code, even when the record is FAIL for a moved tree. */
   exitCode: number;
+  mutatedTree: boolean;
   status: "PASS" | "FAIL";
   logPath: string;
 }
@@ -667,6 +674,7 @@ export interface SuiteResult {
   finishedAt: string;
   durationMs: number;
   exitCode: number;
+  mutatedTree: boolean;
   status: "GREEN" | "RED";
   logPath: string;
   /**

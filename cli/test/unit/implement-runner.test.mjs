@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { planRunUnits, runBatch } from "../../dist/implement/runner.js";
@@ -115,7 +116,7 @@ test("AC1: one unit runs exactly once even though two destinations claim it", ()
   };
   const outcome = runBatch(state, root, [unit], 60_000);
   assert.equal(outcome.results.length, 1);
-  assert.equal(outcome.results[0].green, true);
+  assert.equal(outcome.results[0].outcome, "green");
   assert.equal(fs.readFileSync(counter, "utf8"), "x", "the command executed exactly once");
 });
 
@@ -138,8 +139,33 @@ test("AC2: every result names the tree it was earned on, and a batch whose tree 
   };
   const moved = runBatch(state, root, [mutator], 60_000);
   assert.equal(moved.results[0].mutatedTree, true, "a command that rewrites judged source is rejected");
-  assert.equal(moved.results[0].green, false, "exit 0 does not save a command that moved the goalposts");
+  assert.equal(moved.results[0].outcome, "tree-moved", "exit 0 does not save a command that moved the goalposts");
+  assert.equal(moved.results[0].exitCode, 0, "the real exit code survives beside the verdict");
   assert.notEqual(moved.treeMoved, null, "the batch reports that it was not earned on one frozen tree");
+});
+
+// Judged source is what git lists. A build that writes into a gitignored
+// directory has not moved the tree anyone judges; before this rule the
+// readdir walk hashed a Rust target/ as source and every cargo build in a
+// verify batch was scored as a moved tree (2026-09-02 herdr-ide).
+test("a build writing into a gitignored directory is not a moved tree, an untracked file is", () => {
+  const { root, state } = scratchState();
+  fs.writeFileSync(path.join(root, ".gitignore"), "target/\n");
+  fs.writeFileSync(path.join(root, "source.txt"), "source\n");
+  for (const args of [["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"]]) {
+    assert.equal(spawnSync("git", args, { cwd: root, encoding: "utf8" }).status, 0);
+  }
+  const write = (relative) => `require("fs").mkdirSync(require("path").dirname(${JSON.stringify(path.join(root, relative))}), {recursive:true}); require("fs").writeFileSync(${JSON.stringify(path.join(root, relative))}, "built\\n")`;
+  const build = { key: "b", command: "b", argv: ["node", "-e", write("target/release/lib.a")], cwd: ".", criterionIds: ["AC1"], suiteCommandIds: [], verificationIds: [] };
+  const built = runBatch(state, root, [build], 60_000);
+  assert.equal(built.results[0].outcome, "green");
+  assert.equal(built.results[0].mutatedTree, false);
+  assert.equal(built.treeMoved, null);
+
+  const leak = { key: "l", command: "l", argv: ["node", "-e", write("generated.txt")], cwd: ".", criterionIds: ["AC1"], suiteCommandIds: [], verificationIds: [] };
+  const leaked = runBatch(state, root, [leak], 60_000);
+  assert.equal(leaked.results[0].outcome, "tree-moved");
+  assert.equal(leaked.results[0].mutatedTree, true);
 });
 
 // The old suite loop stopped at the first failure, which is why a run could
@@ -150,7 +176,7 @@ test("a failing unit does not stop the batch", () => {
   const pass = { key: "p", command: "p", argv: ["node", "--version"], cwd: ".", criterionIds: [], suiteCommandIds: ["S2"], verificationIds: [] };
   const outcome = runBatch(state, root, [fail, pass], 60_000);
   assert.equal(outcome.results.length, 2);
-  assert.equal(outcome.results[0].green, false);
+  assert.equal(outcome.results[0].outcome, "failed");
   assert.equal(outcome.results[0].exitCode, 3);
-  assert.equal(outcome.results[1].green, true);
+  assert.equal(outcome.results[1].outcome, "green");
 });
