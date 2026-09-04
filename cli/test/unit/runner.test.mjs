@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { beforeEach } from "node:test";
 import { resetJudgeHealth, runJudge } from "../../dist/judge/runner.js";
+import { AGENTIC_READ_MAX_ROUNDS } from "../../dist/judge/backends.js";
 import { validateGapVerdict } from "../../dist/judge/types.js";
 import { loadConfig } from "../../dist/config.js";
 
@@ -713,8 +714,8 @@ test("an agentic claude call stopped by the turn cap is retried as a read-budget
     type: "result",
     subtype: "error_max_turns",
     is_error: true,
-    num_turns: 18,
-    errors: ["Reached maximum number of turns (17)"],
+    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
+    errors: [`Reached maximum number of turns (${AGENTIC_READ_MAX_ROUNDS + 1})`],
   });
   const answered = JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: JSON.stringify({ verdict: "PASS", findings: [] }) });
   const callCount = path.join(binDir, "calls");
@@ -765,11 +766,11 @@ test("an agentic claude call stopped by the turn cap is retried as a read-budget
     assert.equal(outcome.record.retries.length, 1);
     assert.equal(outcome.record.retries[0].code, "judge-invalid-output");
     assert.equal(outcome.record.retries[0].reason, "read-budget-exceeded");
-    assert.match(outcome.record.retries[0].detail, /17-turn cap/);
+    assert.match(outcome.record.retries[0].detail, new RegExp(`${AGENTIC_READ_MAX_ROUNDS + 1}-turn cap`));
     const argv = fs.readFileSync(argvLog, "utf8");
-    assert.match(argv, /--max-turns 17/);
+    assert.match(argv, new RegExp(`--max-turns ${AGENTIC_READ_MAX_ROUNDS + 1}`));
     const retryPrompt = fs.readFileSync(path.join(binDir, "retry-prompt"), "utf8");
-    assert.match(retryPrompt, /^Your previous attempt was rejected: judge hit the 17-turn cap/, "the retry names the overrun so attempt 2 reads selectively");
+    assert.match(retryPrompt, new RegExp(`^Your previous attempt was rejected: judge hit the ${AGENTIC_READ_MAX_ROUNDS + 1}-turn cap`), "the retry names the overrun so attempt 2 reads selectively");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;

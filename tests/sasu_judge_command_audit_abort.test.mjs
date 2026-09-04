@@ -20,6 +20,7 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "
 const require = createRequire(import.meta.url);
 const runnerPath = path.join(repoRoot, "cli", "dist", "judge", "runner.js");
 const configPath = path.join(repoRoot, "cli", "dist", "config.js");
+const backendsPath = path.join(repoRoot, "cli", "dist", "judge", "backends.js");
 const typesPath = path.join(repoRoot, "cli", "dist", "judge", "types.js");
 
 const HANG_SECONDS = 10;
@@ -195,11 +196,13 @@ test("exceeding the agentic read budget aborts the call with its own reason", { 
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "fixture evidence\n");
-  // 17 individually allowed reads: one past AGENTIC_READ_MAX_ROUNDS (16).
+  // AGENTIC_READ_MAX_ROUNDS + 1 individually allowed reads: one past the budget.
   // Every command passes the allowlist, so only the budget can abort this.
   const tracePath = path.join(binDir, "trace.jsonl");
   const line = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "sed -n '1,10p' evidence.md", aggregated_output: "fixture evidence\n" } });
-  fs.writeFileSync(tracePath, Array.from({ length: 17 }, () => line).join("\n") + "\n");
+  const { AGENTIC_READ_MAX_ROUNDS } = require(backendsPath);
+  const reads = AGENTIC_READ_MAX_ROUNDS + 1;
+  fs.writeFileSync(tracePath, Array.from({ length: reads }, () => line).join("\n") + "\n");
   const fake = path.join(binDir, "codex");
   fs.writeFileSync(fake, `#!/bin/sh\n${CODEX_PREFLIGHT_PRELUDE}cat ${JSON.stringify(tracePath)}\n/bin/sleep ${HANG_SECONDS}\n`);
   fs.chmodSync(fake, 0o755);
@@ -218,7 +221,7 @@ test("exceeding the agentic read budget aborts the call with its own reason", { 
         (error) => {
           assert.equal(error.code, "judge-invalid-output");
           assert.equal(error.reason, "read-budget-exceeded", `expected the budget to abort, got ${error.reason}: ${error.detail}`);
-          assert.match(error.detail, /17 read rounds/);
+          assert.match(error.detail, new RegExp(`${reads} read rounds`));
           return true;
         },
       );
@@ -322,10 +325,12 @@ test("an agentic claude judge that over-reads is rejected by the post-hoc round 
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "fixture evidence\n");
   // Claude has no streaming trace; num_turns is the only read signal its
-  // surface admits. 25 turns = 24 tool rounds, past the 16-round budget. A
+  // surface admits. Budget + 9 tool rounds, reported as one more turn. A
   // budget living only on the codex stream would route exactly the
   // over-reading calls to this unbounded path.
-  const envelope = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 25 });
+  const { AGENTIC_READ_MAX_ROUNDS } = require(backendsPath);
+  const rounds = AGENTIC_READ_MAX_ROUNDS + 8;
+  const envelope = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: rounds + 1 });
   fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${envelope.replace(/'/g, "'\\''")}'\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const config = loadConfig(project);
@@ -350,7 +355,7 @@ test("an agentic claude judge that over-reads is rejected by the post-hoc round 
       (error) => {
         assert.equal(error.code, "judge-invalid-output");
         assert.equal(error.reason, "read-budget-exceeded", `expected the post-hoc budget, got ${error.reason}: ${error.detail}`);
-        assert.match(error.detail, /24 tool rounds/);
+        assert.match(error.detail, new RegExp(`${rounds} tool rounds`));
         return true;
       },
     );

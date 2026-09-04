@@ -863,8 +863,16 @@ function codexTurnProblem(stdout: string): JudgeError | null {
  * session at the cap, see ClaudeBackend.run for what comes back), and every
  * agentic backend post-hoc in the runner through reported tool rounds, so a
  * backend that reports rounds but honours no cap is still bounded.
+ *
+ * 2026-09-04: raised from 16 to 29 (a 30-turn claude cap) by operator
+ * decision, provisionally, after the herdr-ide design lane hit 37 rounds
+ * against 16. The chunked diff and the in-flight cap landed the same day and
+ * were expected to bring the count down on their own; 16 was the healthy
+ * 0-15 range above with one round of slack, 29 is a looser bound to measure
+ * against before deciding where the knee really is. Re-measure on the next
+ * run and lower it back if the healthy calls stay under 16.
  */
-export const AGENTIC_READ_MAX_ROUNDS = 16;
+export const AGENTIC_READ_MAX_ROUNDS = 29;
 export const AGENTIC_READ_MAX_OUTPUT_CHARS = 384_000;
 
 function codexTraceItem(line: string): CodexTraceItem | null {
