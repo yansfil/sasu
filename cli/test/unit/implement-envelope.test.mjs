@@ -120,7 +120,7 @@ test("AC9: each label's meaning is spelled out, including what is and is not ver
 // leaked into another lane's prompt, that lane's contract changed without a
 // requirement asking for it.
 test("the fidelity, design, and risk lanes did not inherit the envelope structure", () => {
-  const design = designPrompt("PRD BODY", "run-owned diff", "change material");
+  const design = designPrompt("PRD BODY", "run-owned diff", [{ path: "src/a.ts", body: "change material" }]);
   const risk = riskPrompt("PRD BODY", "change material", { verdict: "PASS" }, { verdict: "PASS" });
   for (const body of [design, risk]) {
     assert.doesNotMatch(body, /=== SECTION \d OF 3/);

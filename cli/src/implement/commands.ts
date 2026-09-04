@@ -67,6 +67,7 @@ import {
   IMPLEMENT_REVIEW_DIFF_MAX_CHARS,
   riskPrompt,
   type AcceptancePromptMaterial,
+  type ChangeFile,
   type EnvelopeClaim,
   type EnvelopeFacts,
 } from "./prompts";
@@ -2196,25 +2197,15 @@ function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptI
   }
 }
 
-function changeMaterial(projectRoot: string, state: ImplementState, current: ReturnType<typeof captureSourceSnapshot>): string {
-  const paths = changedPathsSince(state.initialSource, current);
-  if (paths.length === 0) return "No run-owned source changes were detected.";
-  const sections: string[] = [`Changed paths since implement start:\n${paths.map((entry) => `- ${entry}`).join("\n")}`];
-  for (const relative of paths) {
+function changeMaterial(projectRoot: string, state: ImplementState, current: ReturnType<typeof captureSourceSnapshot>): ChangeFile[] {
+  return changedPathsSince(state.initialSource, current).map((relative) => {
     const absolute = path.join(projectRoot, relative);
-    if (!fs.existsSync(absolute)) {
-      sections.push(`FILE ${relative}\n[deleted]`);
-      continue;
-    }
+    if (!fs.existsSync(absolute)) return { path: relative, body: "[deleted]" };
     const buffer = fs.readFileSync(absolute);
-    if (buffer.includes(0)) {
-      sections.push(`FILE ${relative}\n[binary ${buffer.length} bytes]`);
-      continue;
-    }
+    if (buffer.includes(0)) return { path: relative, body: `[binary ${buffer.length} bytes]` };
     const text = buffer.toString("utf8");
-    sections.push(`FILE ${relative}\n${text.length > 24_000 ? `${text.slice(0, 12_000)}\n[... truncated ...]\n${text.slice(-12_000)}` : text}`);
-  }
-  return sections.join("\n\n");
+    return { path: relative, body: text.length > 24_000 ? `${text.slice(0, 12_000)}\n[... truncated ...]\n${text.slice(-12_000)}` : text };
+  });
 }
 
 /**

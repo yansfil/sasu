@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, riskPrompt } from "../../dist/implement/prompts.js";
+import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, IMPLEMENT_REVIEW_DIFF_MAX_CHARS, reviewDiffMaterial, riskPrompt } from "../../dist/implement/prompts.js";
 import { mechanicalBindings, parseImplementContract } from "../../dist/implement/contract.js";
 
 function contract(sourceIntake) {
@@ -36,8 +36,9 @@ test("fidelity source routing uses decision trace for conversation and fresh spe
 
 test("fidelity prompt keeps the fixed five-question rubric without rejudging code proof", () => {
   const source = { routing: "decision-traceability", content: "D-01", explanation: "fixture" };
-  const prompt = fidelityPrompt("FULL PRD", contract("current conversation"), state, source, "changed file");
+  const prompt = fidelityPrompt("FULL PRD", contract("current conversation"), state, source, [{ path: "src/changed.ts", body: "changed file" }]);
   for (const id of ["F1", "F2", "F3", "F4", "F5"]) assert.match(prompt, new RegExp(`- ${id} `));
+  assert.match(prompt, /Changed paths since implement start:\n- src\/changed\.ts\n\nFILE src\/changed\.ts\nchanged file/);
   assert.match(prompt, /Do not repeat code-correctness, per-verification artifact sufficiency/);
   assert.match(prompt, /Acceptance-criterion statuses are intentionally omitted/);
   assert.doesNotMatch(prompt, /AC1=complete/);
@@ -51,7 +52,8 @@ test("full qa-log supplements rather than replaces PRD decision traceability", (
   fs.writeFileSync(path.join(root, "qa-log.md"), "FULL QA LOG");
   const parsed = contract("qa-log.md");
   const source = fidelitySource(root, parsed, false);
-  const prompt = fidelityPrompt("FULL PRD", parsed, state, source, "changed file");
+  const prompt = fidelityPrompt("FULL PRD", parsed, state, source, []);
+  assert.match(prompt, /No run-owned source changes were detected/);
   assert.match(prompt, /CANONICAL INTENT SOURCE:\nFULL QA LOG/);
   assert.match(prompt, /DECISION TRACEABILITY:\nD-01 preserve the user's chosen flow/);
   assert.match(prompt, /FULL APPROVED PRD:\nFULL PRD/);
@@ -86,18 +88,79 @@ test("risk prompt receives the complete artifact roster and the exact round-2 de
   assert.match(prompt, /Artifact bytes remain in the record tree and are not readable in this lane/);
 });
 
-test("design and risk prompts bound oversized diffs and name the isolated read surface", () => {
-  const completeDiff = `FIRST_CHANGED_LINE\n${"x".repeat(130_000)}\nLAST_CHANGED_LINE`;
-  const readable = ["src/large.ts"];
-  const design = designPrompt("PRD", completeDiff, "BOUNDED FILE BODY", readable);
+/** A unified diff block for one file, the shape `git diff` and `git diff --no-index` both emit. */
+function diffBlock(file, { added = [], removed = [], newFile = false } = {}) {
+  const lines = [
+    `diff --git a/${file} b/${file}`,
+    ...(newFile ? ["new file mode 100644", `--- /dev/null`] : [`--- a/${file}`]),
+    `+++ b/${file}`,
+    `@@ -1,${removed.length} +1,${added.length} @@`,
+    ...removed.map((line) => `-${line}`),
+    ...added.map((line) => `+${line}`),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+test("an oversized diff is chunked per file: whole blocks fill the budget, the rest are listed with counts", () => {
+  const huge = diffBlock("src/huge.ts", { added: Array.from({ length: 1300 }, (_, i) => `HUGE_LINE_${i} ${"x".repeat(100)}`), removed: ["OLD_HUGE"] });
+  const small = diffBlock("src/small.ts", { added: ["SMALL_ADDED_ONE", "SMALL_ADDED_TWO"], removed: ["SMALL_REMOVED"] });
+  const fresh = diffBlock("docs/new.md", { added: ["FRESH_LINE"], newFile: true });
+  const image = `diff --git a/img/logo.png b/img/logo.png\nBinary files a/img/logo.png and b/img/logo.png differ\n`;
+  const completeDiff = `${huge}${small}${fresh}${image}`;
+  assert.ok(completeDiff.length > IMPLEMENT_REVIEW_DIFF_MAX_CHARS, "fixture must exceed the budget");
+  const readable = ["src/huge.ts", "src/small.ts", "docs/new.md"];
+
+  const review = reviewDiffMaterial(completeDiff, readable);
+  assert.deepEqual(review.inlinedPaths, ["src/small.ts", "docs/new.md", "img/logo.png"], "a block that does not fit must not starve the ones after it");
+  assert.deepEqual(review.listedPaths, ["src/huge.ts"]);
+  assert.ok(review.text.length <= IMPLEMENT_REVIEW_DIFF_MAX_CHARS, `chunked material must stay inside the budget, got ${review.text.length}`);
+  assert.match(review.text, /1 file\(s\) listed by path only/);
+  assert.match(review.text, /^- src\/huge\.ts \(\+1300\/-1\)$/m);
+  assert.doesNotMatch(review.text, /\[not readable\]/, "every listed path here is readable text");
+  assert.match(review.text, /SMALL_ADDED_ONE/);
+  assert.match(review.text, /FRESH_LINE/);
+  assert.doesNotMatch(review.text, /HUGE_LINE_/);
+
+  const design = designPrompt("PRD", completeDiff, [
+    { path: "src/huge.ts", body: "HUGE BODY" },
+    { path: "src/small.ts", body: "SMALL BODY" },
+    { path: "docs/new.md", body: "NEW BODY" },
+  ], readable);
   const risk = riskPrompt("PRD", completeDiff, { verdict: "PASS" }, { verdict: "PASS" }, [], null, undefined, readable);
   for (const prompt of [design, risk]) {
-    assert.match(prompt, /1300\d+-character diff omitted/);
+    assert.match(prompt, /exceeds the 120000-character review input limit, so it is shown per file/);
     assert.match(prompt, /isolated read-only access/);
-    assert.match(prompt, /- src\/large\.ts/);
-    assert.doesNotMatch(prompt, /FIRST_CHANGED_LINE|LAST_CHANGED_LINE/);
-    assert.ok(prompt.length < 125_000);
+    assert.match(prompt, /SMALL_ADDED_ONE/);
+    assert.doesNotMatch(prompt, /HUGE_LINE_/);
   }
+  // The design lane spends the freed room on the files it could not show,
+  // not on a second copy of the ones it did.
+  assert.match(design, /FILE src\/huge\.ts\nHUGE BODY/);
+  assert.doesNotMatch(design, /SMALL BODY|NEW BODY/);
+  assert.match(design, /files whose diff is inline above are left out here/);
+});
+
+test("chunking marks listed paths the judge cannot read and inlines a later round's changed paths first", () => {
+  const first = diffBlock("src/first.ts", { added: Array.from({ length: 700 }, (_, i) => `FIRST_${i} ${"a".repeat(100)}`) });
+  const second = diffBlock("src/second.ts", { added: Array.from({ length: 700 }, (_, i) => `SECOND_${i} ${"b".repeat(100)}`) });
+  const completeDiff = `${first}${second}`;
+  assert.ok(first.length < IMPLEMENT_REVIEW_DIFF_MAX_CHARS && completeDiff.length > IMPLEMENT_REVIEW_DIFF_MAX_CHARS);
+
+  const plain = reviewDiffMaterial(completeDiff, ["src/first.ts"]);
+  assert.deepEqual(plain.inlinedPaths, ["src/first.ts"], "in order, the first block wins the budget");
+  assert.match(plain.text, /^- src\/second\.ts \(\+700\/-0\) \[not readable\]$/m);
+
+  const prioritized = reviewDiffMaterial(completeDiff, ["src/first.ts", "src/second.ts"], ["src/second.ts"]);
+  assert.deepEqual(prioritized.inlinedPaths, ["src/second.ts"], "a path the judge is told to re-examine must be the one shown");
+  assert.deepEqual(prioritized.listedPaths, ["src/first.ts"]);
+});
+
+test("a diff inside the budget is passed through whole with every path attributed", () => {
+  const completeDiff = `${diffBlock("a.ts", { added: ["A"] })}${diffBlock("b.ts", { removed: ["B"] })}`;
+  const review = reviewDiffMaterial(completeDiff, ["a.ts", "b.ts"]);
+  assert.equal(review.text, completeDiff);
+  assert.deepEqual(review.inlinedPaths, ["a.ts", "b.ts"]);
+  assert.deepEqual(review.listedPaths, []);
 });
 
 test("explicit verify commands bind nested product checks instead of detected harness checks", () => {
@@ -185,7 +248,7 @@ test("implement contract parses 2.1 scenario cards and carries SC ids into V cov
 });
 
 test("design prompt carries no verdict, anchors every comment to a path, and shows the diff with bounded file context", () => {
-  const prompt = designPrompt("PRD BODY", "RUN OWNED DIFF", "CURRENT FILE BODY");
+  const prompt = designPrompt("PRD BODY", "RUN OWNED DIFF", [{ path: "src/a.ts", body: "CURRENT FILE BODY" }]);
   assert.match(prompt, /design reviewer/);
   assert.match(prompt, /You have no verdict/);
   // The lane must not be able to emit a verdict at all: a verdict field in the

@@ -37,10 +37,103 @@ function artifactSummary(artifacts: RegisteredArtifact[]): string {
     .join("\n");
 }
 
-function reviewDiffMaterial(runOwnedDiff: string, readablePaths: string[]): string {
-  if (runOwnedDiff.length <= IMPLEMENT_REVIEW_DIFF_MAX_CHARS) return runOwnedDiff;
-  const paths = readablePaths.length === 0 ? "- none" : readablePaths.map((entry) => `- ${entry}`).join("\n");
-  return `[${runOwnedDiff.length}-character diff omitted because it exceeds the ${IMPLEMENT_REVIEW_DIFF_MAX_CHARS}-character review input limit. The judge has isolated read-only access to the exact text files below and must inspect only what it needs.]\n\nREADABLE RUN-OWNED CHANGED PATHS:\n${paths}`;
+/** One changed file's current body, already bounded by the caller. */
+export interface ChangeFile {
+  path: string;
+  body: string;
+}
+
+/**
+ * The curated whole-file view of the run's changes, kept structured until the
+ * prompt is rendered so a lane can leave out the files it already shows as a
+ * diff. It used to travel as one flat string with `FILE <path>` markers, which
+ * no prompt could split without guessing at file contents.
+ */
+export function renderChangeMaterial(files: ChangeFile[], omit: ReadonlySet<string> = new Set()): string {
+  if (files.length === 0) return "No run-owned source changes were detected.";
+  const sections = [`Changed paths since implement start:\n${files.map((entry) => `- ${entry.path}`).join("\n")}`];
+  for (const entry of files) {
+    if (!omit.has(entry.path)) sections.push(`FILE ${entry.path}\n${entry.body}`);
+  }
+  return sections.join("\n\n");
+}
+
+interface DiffBlock {
+  /** Project-relative path from the `diff --git` header; null for text no header claims. */
+  path: string | null;
+  text: string;
+  added: number;
+  removed: number;
+}
+
+function splitDiffBlocks(diff: string): DiffBlock[] {
+  return diff.split(/^(?=diff --git )/m).filter((segment) => segment !== "").map((text) => {
+    const header = /^diff --git "?a\/.*?"? "?b\/(.+?)"?$/m.exec(text.slice(0, text.indexOf("\n") < 0 ? text.length : text.indexOf("\n")));
+    let added = 0;
+    let removed = 0;
+    for (const line of text.split("\n")) {
+      if (line.startsWith("+") && !line.startsWith("+++ ")) added += 1;
+      else if (line.startsWith("-") && !line.startsWith("--- ")) removed += 1;
+    }
+    return { path: header === null ? null : header[1]!, text, added, removed };
+  });
+}
+
+export interface ReviewDiffMaterial {
+  text: string;
+  /** Paths whose whole diff block is in `text`. */
+  inlinedPaths: string[];
+  /** Paths that exceeded the budget and are named only, with their +/- counts. */
+  listedPaths: string[];
+}
+
+/**
+ * The run-owned diff, bounded per file rather than all-or-nothing.
+ *
+ * Before 2026-09-04 a diff over the limit was replaced by a bare path list,
+ * so the judge had to Read every file to see what changed. On the herdr-ide
+ * hide-agent-attention run (31 files, +3468/-857) that cost the design lane
+ * 37 tool rounds, a discarded 455s attempt, and 749s per round. Whole-file
+ * blocks now fill the same budget in order - a block that does not fit is
+ * listed by path and count and the fill continues, so one large file cannot
+ * starve the small ones after it. `priorityPaths` (a later round's changed
+ * paths) are placed first so the paths a judge is told to re-examine are
+ * the ones guaranteed to be inline. The budget itself is unchanged: the
+ * fix is what fills it, not how big it is.
+ */
+export function reviewDiffMaterial(runOwnedDiff: string, readablePaths: string[], priorityPaths: string[] = []): ReviewDiffMaterial {
+  const blocks = splitDiffBlocks(runOwnedDiff);
+  const attributed = blocks.map((block) => block.path).filter((entry): entry is string => entry !== null);
+  if (runOwnedDiff.length <= IMPLEMENT_REVIEW_DIFF_MAX_CHARS) {
+    return { text: runOwnedDiff, inlinedPaths: attributed, listedPaths: [] };
+  }
+  const readable = new Set(readablePaths);
+  const listingLine = (block: DiffBlock): string => block.path === null
+    ? `- [unattributed diff segment, ${block.text.length} chars, not shown]`
+    : `- ${block.path} (+${block.added}/-${block.removed})${readable.has(block.path) ? "" : " [not readable]"}`;
+  // Reserve room for the worst case listing (every block listed) so the
+  // rendered section stays inside the budget whatever the fill decides.
+  const reserved = blocks.reduce((total, block) => total + listingLine(block).length + 1, 0);
+  const priority = new Set(priorityPaths);
+  const fillOrder = [
+    ...blocks.filter((block) => block.path !== null && priority.has(block.path)),
+    ...blocks.filter((block) => block.path === null || !priority.has(block.path)),
+  ];
+  const inline = new Set<DiffBlock>();
+  let used = 0;
+  for (const block of fillOrder) {
+    if (block.path === null || used + block.text.length > IMPLEMENT_REVIEW_DIFF_MAX_CHARS - reserved) continue;
+    inline.add(block);
+    used += block.text.length;
+  }
+  const shown = blocks.filter((block) => inline.has(block));
+  const listed = blocks.filter((block) => !inline.has(block));
+  const listing = listed.map(listingLine).join("\n");
+  return {
+    text: `[The ${runOwnedDiff.length}-character run-owned diff exceeds the ${IMPLEMENT_REVIEW_DIFF_MAX_CHARS}-character review input limit, so it is shown per file: ${shown.length} file(s) inline in full, ${listed.length} file(s) listed by path only. The judge has isolated read-only access to every listed path that is readable text and must inspect only what it needs.]\n\n${shown.map((block) => block.text.trimEnd()).join("\n")}\n\nRUN-OWNED CHANGED PATHS NOT SHOWN ABOVE (+added/-removed lines):\n${listing}`,
+    inlinedPaths: shown.map((block) => block.path!),
+    listedPaths: listed.map((block) => block.path).filter((entry): entry is string => entry !== null),
+  };
 }
 
 function roundDeltaSection(
@@ -313,7 +406,7 @@ export function fidelityPrompt(
   contract: ImplementContract,
   state: ImplementState,
   source: FidelitySource,
-  changeMaterial: string,
+  changeMaterial: ChangeFile[],
   prior: { verdict: "PASS" | "FAIL"; checks: FidelityCheckResult[] } | null = null,
   roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
 ): string {
@@ -371,15 +464,20 @@ ${artifactSummary(state.artifacts)}
 ${roundDeltaSection(roundContext, "PRIOR FIDELITY RESULT", prior)}
 
 CURATED RUN-OWNED CHANGE SUMMARY:
-${clamp(changeMaterial)}`;
+${clamp(renderChangeMaterial(changeMaterial))}`;
 }
 
 export function designPrompt(
   prdText: string,
   runOwnedDiff: string,
-  changeMaterial: string,
+  changeMaterial: ChangeFile[],
   readablePaths: string[] = [],
 ): string {
+  const review = reviewDiffMaterial(runOwnedDiff, readablePaths);
+  // A file whose whole diff is inline gains little from a second, bounded copy
+  // of its body in a shape review; when the diff had to be chunked, that room
+  // is better spent on the files that were only listed.
+  const bodiesOmitted = review.listedPaths.length > 0 ? new Set(review.inlinedPaths) : new Set<string>();
   return `You are the design reviewer for a completed implementation. You leave comments on the shape of the code. You have no verdict: you cannot pass or fail this run, and an empty comment list is a fully valid answer.
 
 Every comment you leave must be answered before the run can be finalized - either by the defect being fixed (you will simply stop seeing it) or by a human recording why it is being left alone. So a comment is a bill someone has to pay. Leave the ones worth paying.
@@ -404,10 +502,10 @@ ${JSON_RULE}
 There is no verdict field. Do not emit one.
 
 RUN-OWNED DIFF (what this run changed, against the pre-run commit):
-${reviewDiffMaterial(runOwnedDiff, readablePaths)}
+${review.text}
 
-BOUNDED CURRENT BODIES OF CHANGED FILES (context for judging the surrounding shape):
-${clamp(changeMaterial)}
+BOUNDED CURRENT BODIES OF CHANGED FILES (context for judging the surrounding shape${bodiesOmitted.size > 0 ? "; files whose diff is inline above are left out here" : ""}):
+${clamp(renderChangeMaterial(changeMaterial, bodiesOmitted))}
 
 PRD (for the structure-changes section and guardrails):
 ${clamp(prdText)}`;
@@ -415,7 +513,7 @@ ${clamp(prdText)}`;
 
 export function riskPrompt(
   prdText: string,
-  changeMaterial: string,
+  runOwnedDiff: string,
   acceptance: unknown,
   fidelity: unknown,
   artifacts: RegisteredArtifact[] = [],
@@ -453,7 +551,7 @@ ${artifactSummary(artifacts)}
 ${roundDeltaSection(roundContext, "PRIOR RISK RESULT", prior)}
 
 RUN-OWNED CHANGE MATERIAL:
-${reviewDiffMaterial(changeMaterial, readablePaths)}
+${reviewDiffMaterial(runOwnedDiff, readablePaths, roundContext.changedPaths).text}
 
 PRD:
 ${clamp(prdText)}`;
