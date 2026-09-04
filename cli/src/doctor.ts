@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { laneEffortFor, loadConfig, type JudgeTarget, type SasuConfig } from "./config";
+import { LANE_EFFORT, laneEffortFor, loadConfig, type JudgeTarget, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
@@ -172,10 +172,11 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
         `${name}: primary=${target(profile.primary)} fallback=${profile.fallback === null ? "none" : target(profile.fallback)}`,
       );
     }
-    // Per-gate, because they are per-gate: a single line saying "high" would
-    // hide that verify runs at a different measured budget.
-    const efforts = (["gap-audit", "spec", "verify"] as const)
-      .map((gate) => `${gate}=${laneEffortFor(config, gate)}`)
+    // Per-lane, because they are per-lane: a single line saying "high" would
+    // hide that verify runs at a different measured budget. Read from the
+    // table so a lane added there cannot be missing here.
+    const efforts = (Object.keys(LANE_EFFORT) as Array<keyof typeof LANE_EFFORT>)
+      .map((lane) => `${lane}=${laneEffortFor(config, lane)}`)
       .join(" ");
     judgeLines.push(`lane effort: ${efforts}${config.judge.laneEffort === null ? "" : " (all pinned by judge.laneEffort)"}`);
     judgeLines.push(`retry budget: ${config.judge.retryBudget}`);

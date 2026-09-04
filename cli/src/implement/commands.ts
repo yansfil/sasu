@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { loadConfig } from "../config";
+import { laneEffortFor, loadConfig } from "../config";
 import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
 import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
@@ -3242,9 +3242,14 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
           "routine",
           designPrompt(prdText, reviewDiff, material, reviewEvidencePaths, openLaneComments, designRoundContext),
           validateDesign,
-          reviewNeedsAgentic
-            ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
-            : {},
+          {
+            // The lane's own measured budget, below the profile's: it has no
+            // verdict to carry (LANE_EFFORT in config.ts has the numbers).
+            effort: laneEffortFor(config, "design"),
+            ...(reviewNeedsAgentic
+              ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }
+              : {}),
+          },
         ),
       ).then((record) => {
         const summary = record.verdict === "ERROR"

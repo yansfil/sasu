@@ -1040,12 +1040,14 @@ test("oversized design and risk diffs switch to isolated changed-file access", (
 
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  for (const purpose of ["implement_design", "implement_risk"]) {
+  // Design runs at its own measured budget; risk carries a verdict and keeps
+  // the high-risk profile's.
+  for (const [purpose, effort] of [["implement_design", "high"], ["implement_risk", "xhigh"]]) {
     const prompt = fs.readFileSync(path.join(capture, `${purpose}.prompt.txt`), "utf8");
     const options = JSON.parse(fs.readFileSync(path.join(capture, `${purpose}.options.json`), "utf8"));
     assert.match(prompt, /exceeds the 120000-character review input limit, so it is shown per file/);
     assert.match(prompt, /^- large\.ts \(\+1\/-0\)$/m, "the oversized file is listed with its counts, not shown");
-    assert.deepEqual(options, { agentic: true, cwd: fs.realpathSync(root), effort: "xhigh" });
+    assert.deepEqual(options, { agentic: true, cwd: fs.realpathSync(root), effort });
   }
 });
 

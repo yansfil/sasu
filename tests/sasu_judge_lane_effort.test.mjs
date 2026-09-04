@@ -111,6 +111,11 @@ test("an unconfigured project gets each gate's own measured budget, not one shar
   assert.equal(laneEffortFor(config, "spec"), "high");
   assert.equal(laneEffortFor(config, "verify"), "medium");
   assert.notEqual(LANE_EFFORT["verify"], LANE_EFFORT["gap-audit"], "verify's budget is measured, not inherited");
+  // The implement design lane is loose by design and carries no verdict, so
+  // it runs below the profile's xhigh; the verdict-carrying implement lanes
+  // are not in this table and keep the profile budget.
+  assert.equal(laneEffortFor(config, "design"), "high");
+  assert.deepEqual(Object.keys(LANE_EFFORT).sort(), ["design", "gap-audit", "spec", "verify"]);
 });
 
 test("judge.laneEffort pins every gate to one budget when a project sets it", { skip: !built && "cli/dist not built" }, () => {
@@ -119,8 +124,8 @@ test("judge.laneEffort pins every gate to one budget when a project sets it", { 
   fs.mkdirSync(path.join(project, "agents"), { recursive: true });
   fs.writeFileSync(path.join(project, "agents", "config.json"), JSON.stringify({ judge: { laneEffort: "xhigh" } }));
   const config = loadConfig(project);
-  for (const gate of ["gap-audit", "spec", "verify"]) {
-    assert.equal(laneEffortFor(config, gate), "xhigh", `${gate} must honour the pin`);
+  for (const lane of ["gap-audit", "spec", "verify", "design"]) {
+    assert.equal(laneEffortFor(config, lane), "xhigh", `${lane} must honour the pin`);
   }
 });
 
