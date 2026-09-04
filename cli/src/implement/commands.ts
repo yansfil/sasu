@@ -2493,6 +2493,16 @@ function validateFidelity(
   return { verdict: raw.verdict, checks };
 }
 
+/**
+ * Deliberately NOT scoped to the round's re-review paths (designReviewPaths),
+ * unlike the risk lane's deltaBasis rule. The lane misses a real defect
+ * roughly one attempt in eight (measured 2026-08-20, see
+ * reconcileDesignComments), so a comment at an unchanged path on a later
+ * round is as likely a late catch as a re-read; rejecting it would discard a
+ * finding to save a re-read, for a lane whose only consequence is a
+ * disposition. The round contract narrows attention in the prompt and the
+ * chunker; identity by path (designCommentKey) bounds the damage of a repeat.
+ */
 function validateDesign(value: unknown): { comments: DesignComment[] } | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "output is not an object";
   const raw = value as { comments?: unknown };
@@ -2506,11 +2516,12 @@ function validateDesign(value: unknown): { comments: DesignComment[] } | string 
       if (typeof held !== "string" || held.trim() === "") return `comments[${index}].${field} must be a non-empty string`;
     }
     if (typeof comment["suggestion"] !== "string") return `comments[${index}].suggestion must be a string`;
+    // Normalized here and nowhere else: `path` is half the identity key, so
+    // a leading "./" would silently fork one comment into two.
+    const commentPath = (comment["path"] as string).trim().replace(/^\.\//, "");
     comments.push({
       area: (comment["area"] as string).trim(),
-      // Normalized here and nowhere else: `path` is half the identity key, so
-      // a leading "./" would silently fork one comment into two.
-      path: (comment["path"] as string).trim().replace(/^\.\//, ""),
+      path: commentPath,
       text: (comment["text"] as string).trim(),
       suggestion: comment["suggestion"] as string,
     });
@@ -3098,6 +3109,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const fidelityPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.fidelity?.result);
   const riskLineageInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.risk?.result);
   const priorRiskResult = riskLedgerPriorResult(state, riskLineageInput.result);
+  const designPriorInput = priorLaneInput(state, inputManifest, (attempt) => attempt.lanes.design?.result);
   // One id for this attempt, minted before the mechanical batch so a suite
   // result can name the attempt it was produced in while it is being produced.
   const attemptId = crypto.randomUUID();
@@ -3105,6 +3117,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     acceptance: Object.fromEntries([...acceptancePriorInputs].map(([id, input]) => [id, input.context])),
     fidelity: fidelityPriorInput.context,
     risk: state.prd.reviewProfile === "high-risk" ? riskLineageInput.context : null,
+    design: state.prd.reviewProfile === "trivial" ? null : designPriorInput.context,
   };
   if (!lint.ok) {
     const attempt = failedAttempt(attemptId, state, source.digest, fidelityInput, inputManifest, roundContexts, started, startedAt, prelint, [], "prelint", "prd-prelint", "PRD prelint failed", "FAIL");
@@ -3213,6 +3226,13 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   // of pure wait, 41% of that run's total verify wall clock (PRINCIPLES 5).
   // It settles alongside risk and is awaited once, after.
   const runDesignLane = state.prd.reviewProfile !== "trivial";
+  // What the re-review carries: the lane's own open comments. A supervisor-
+  // raised comment has no lane behind it, so it is neither re-examined nor
+  // droppable by the lane (see reconcileDesignComments).
+  const openLaneComments = (state.designComments ?? [])
+    .filter((entry) => entry.status === "open" && entry.raisedBy === null)
+    .map((entry) => ({ id: entry.id, area: entry.area, path: entry.path, text: entry.text }));
+  const designRoundContext = designPriorInput.context;
   const designPending: Promise<LaneRecord<{ comments: DesignComment[] }> | null> = !runDesignLane
     ? Promise.resolve(null)
     : judgeLane(crypto.randomUUID(), () =>
@@ -3220,7 +3240,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
           config,
           "implement:design",
           "routine",
-          designPrompt(prdText, reviewDiff, material, reviewEvidencePaths),
+          designPrompt(prdText, reviewDiff, material, reviewEvidencePaths, openLaneComments, designRoundContext),
           validateDesign,
           reviewNeedsAgentic
             ? { agentic: true, cwd: workRoot, evidencePaths: reviewEvidencePaths }

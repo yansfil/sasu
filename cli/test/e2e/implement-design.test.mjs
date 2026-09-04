@@ -230,12 +230,45 @@ test("AC29: a raised remark and a lane comment share one ledger, one numbering, 
   // The lane goes quiet on the next attempt: that resolves ITS comment only.
   stubEnv(root, []);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  // The re-review was handed the lane's own open comment to carry or drop,
+  // and not the raised one, which has no lane behind it.
+  const rereview = fs.readFileSync(path.join(root, "agents", "captures", "implement_design.prompt.txt"), "utf8");
+  assert.match(rereview, /OPEN COMMENTS FROM THE PRIOR ROUND:\n- D1 \[dead-weight\] lib\/common\.sh: the helper has no second caller/);
+  assert.doesNotMatch(rereview, /D2 \[/);
   const tracked = state(root).designComments;
   assert.equal(tracked.find((entry) => entry.id === "D1").status, "resolved", "the lane went quiet, so its comment is fixed");
   assert.equal(tracked.find((entry) => entry.id === "D2").status, "open", "the same silence proves nothing about a raised remark");
   const refused = run(root, ["implement", "finalize"]);
   assert.equal(refused.status, 2);
   assert.match(refused.json.message, /design comment D2 .* has no disposition/);
+});
+
+test("a later design round is told what changed since the lane last looked, and records that context on the attempt", () => {
+  const root = makeProject();
+  const env = stubEnv(root, []);
+  proveAndClose(root);
+  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  assert.equal(state(root).verificationAttempts.at(-1).roundContexts.design.priorAttemptId, null, "round 1 has no prior");
+  const first = fs.readFileSync(path.join(root, "agents", "captures", "implement_design.prompt.txt"), "utf8");
+  assert.doesNotMatch(first, /ROUND-2\+ CONTRACT/);
+
+  // Round 2: one file changed, nothing open. The re-review is pointed at
+  // that file, and the context is recorded like every other lane's.
+  fs.appendFileSync(path.join(root, "implementation.txt"), "second pass\n");
+  stubEnv(root, [{ area: "dead-weight", path: "lib/remote.sh", text: "echo helper unused", suggestion: "delete it" }]);
+  const second = run(root, ["implement", "verify"], env);
+  assert.equal(second.status, 0, second.stderr + second.stdout);
+  const rereview = fs.readFileSync(path.join(root, "agents", "captures", "implement_design.prompt.txt"), "utf8");
+  assert.match(rereview, /ROUND-2\+ CONTRACT/);
+  assert.match(rereview, /OPEN COMMENTS FROM THE PRIOR ROUND:\n- none/);
+  assert.match(rereview, /CHANGED PATHS SINCE THE PRIOR ROUND:\n- implementation\.txt/);
+  const context = state(root).verificationAttempts.at(-1).roundContexts.design;
+  assert.equal(context.priorAttemptId, state(root).verificationAttempts.at(-2).id, "the prior is the attempt whose design lane last answered");
+  assert.deepEqual(context.changedPaths, ["implementation.txt"]);
+  // A comment at an unchanged path is still accepted: the lane misses a real
+  // defect about one attempt in eight, so a late catch is worth more than the
+  // re-read it may represent (validateDesign says why).
+  assert.deepEqual(second.json.detail.design.open.map((entry) => entry.path), ["lib/remote.sh"]);
 });
 
 test("AC29/AC45: the implementor may not raise a remark, and every field is required", () => {

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acceptancePrompt, designPrompt, fidelityPrompt, fidelitySource, IMPLEMENT_REVIEW_DIFF_MAX_CHARS, reviewDiffMaterial, riskPrompt } from "../../dist/implement/prompts.js";
+import { acceptancePrompt, designPrompt, designReviewPaths, fidelityPrompt, fidelitySource, IMPLEMENT_REVIEW_DIFF_MAX_CHARS, reviewDiffMaterial, riskPrompt } from "../../dist/implement/prompts.js";
 import { mechanicalBindings, parseImplementContract } from "../../dist/implement/contract.js";
 
 function contract(sourceIntake) {
@@ -270,6 +270,39 @@ test("design prompt carries no verdict, anchors every comment to a path, and sho
   assert.match(prompt, /BOUNDED CURRENT BODIES OF CHANGED FILES/);
   assert.match(prompt, /CURRENT FILE BODY/);
   assert.match(prompt, /PRD BODY/);
+});
+
+test("design prompt on round 2+ names the open comments and changed paths, and only those may be commented on", () => {
+  const files = [{ path: "src/a.ts", body: "A BODY" }, { path: "src/b.ts", body: "B BODY" }];
+  const open = [{ id: "D1", area: "dead-weight", path: "src/a.ts", text: "unused helper" }];
+  const first = designPrompt("PRD", "RUN OWNED DIFF", files, [], open, { priorAttemptId: null, changedPaths: [], newEvidence: [] });
+  assert.doesNotMatch(first, /ROUND-2\+ CONTRACT|OPEN COMMENTS FROM THE PRIOR ROUND/, "round 1 has nothing to carry forward");
+  assert.equal(designReviewPaths({ priorAttemptId: null, changedPaths: [], newEvidence: [] }, open), null, "round 1 is unrestricted");
+
+  const context = { priorAttemptId: "attempt-1", changedPaths: ["src/b.ts"], newEvidence: [] };
+  const second = designPrompt("PRD", "RUN OWNED DIFF", files, [], open, context);
+  assert.match(second, /ROUND-2\+ CONTRACT/);
+  assert.match(second, /PRIOR ATTEMPT: attempt-1/);
+  assert.match(second, /OPEN COMMENTS FROM THE PRIOR ROUND:\n- D1 \[dead-weight\] src\/a\.ts: unused helper/);
+  assert.match(second, /CHANGED PATHS SINCE THE PRIOR ROUND:\n- src\/b\.ts/);
+  assert.match(second, /Re-examine only the paths under CHANGED PATHS SINCE THE PRIOR ROUND and the paths of the OPEN COMMENTS/);
+  assert.match(second, /Carry an open comment forward, at the same path/);
+  assert.match(second, /A new comment belongs at a path in CHANGED PATHS SINCE THE PRIOR ROUND or at the path of an open comment/);
+  // Still no verdict, still one comment per file: the round contract narrows
+  // the lane's attention, not its output shape.
+  assert.doesNotMatch(second, /"verdict"/);
+  assert.deepEqual([...designReviewPaths(context, open)].sort(), ["src/a.ts", "src/b.ts"]);
+});
+
+test("on a later round the chunked diff inlines the paths the design lane is told to re-examine", () => {
+  const first = diffBlock("src/first.ts", { added: Array.from({ length: 700 }, (_, i) => `FIRST_${i} ${"a".repeat(100)}`) });
+  const flagged = diffBlock("src/flagged.ts", { added: Array.from({ length: 700 }, (_, i) => `FLAGGED_${i} ${"b".repeat(100)}`) });
+  const readable = ["src/first.ts", "src/flagged.ts"];
+  const open = [{ id: "D1", area: "accretion", path: "src/flagged.ts", text: "layered special cases" }];
+  const context = { priorAttemptId: "attempt-1", changedPaths: [], newEvidence: [] };
+  const prompt = designPrompt("PRD", `${first}${flagged}`, [], readable, open, context);
+  assert.match(prompt, /FLAGGED_0 /, "the open comment's path is shown in full");
+  assert.match(prompt, /^- src\/first\.ts \(\+700\/-0\)$/m, "the unflagged, unchanged file is the one listed");
 });
 
 test("implement contract extracts nested Decision Traceability content", () => {

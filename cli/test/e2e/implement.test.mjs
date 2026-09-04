@@ -523,6 +523,10 @@ test("a real second unified round dispositions prior findings and admits only de
   assert.deepEqual(latest.roundContexts.acceptance.AC1.changedPaths, ["impl.txt"]);
   assert.deepEqual(latest.roundContexts.fidelity.changedPaths, ["impl.txt"]);
   assert.deepEqual(latest.roundContexts.risk.changedPaths, ["impl.txt"]);
+  // The design lane shares the same round shape: one prior attempt, the same
+  // changed-path delta, recorded on the attempt like every other lane's.
+  assert.deepEqual(latest.roundContexts.design.changedPaths, ["impl.txt"]);
+  assert.equal(latest.roundContexts.design.priorAttemptId, latest.roundContexts.risk.priorAttemptId);
   assert.equal(latest.lanes.acceptance.result.criteria[0].priorDisposition.status, "resolved");
   assert.deepEqual(latest.lanes.acceptance.result.criteria[0].deltaBasis, { kind: "changed-path", value: "impl.txt" });
   assert.equal(latest.lanes.fidelity.result.checks[0].priorDisposition.status, "resolved");

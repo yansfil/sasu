@@ -410,6 +410,12 @@ export interface VerificationRoundContexts {
   acceptance: Record<string, VerificationRoundContext>;
   fidelity: VerificationRoundContext;
   risk: VerificationRoundContext | null;
+  /**
+   * Null when the lane did not run (trivial profile); absent on attempts
+   * recorded before the design lane had a round context, the same way
+   * `lanes.design` is absent on attempts that predate the lane.
+   */
+  design?: VerificationRoundContext | null;
 }
 
 export interface LaneRecord<T> {

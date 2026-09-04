@@ -136,13 +136,17 @@ export function reviewDiffMaterial(runOwnedDiff: string, readablePaths: string[]
   };
 }
 
+function pathList(paths: readonly string[]): string {
+  return paths.length === 0 ? "- none" : paths.map((entry) => `- ${entry}`).join("\n");
+}
+
 function roundDeltaSection(
   context: VerificationRoundContext,
   priorLabel: string,
   prior: unknown,
 ): string {
   if (context.priorAttemptId === null) return "";
-  const changedPaths = context.changedPaths.length === 0 ? "- none" : context.changedPaths.map((entry) => `- ${entry}`).join("\n");
+  const changedPaths = pathList(context.changedPaths);
   const newEvidence = context.newEvidence.length === 0
     ? "- none"
     : context.newEvidence.map((entry) => `- ${entry.acceptanceCriterionId ?? entry.verificationId}:${entry.path} sha256=${entry.sha256}`).join("\n");
@@ -467,13 +471,63 @@ CURATED RUN-OWNED CHANGE SUMMARY:
 ${clamp(renderChangeMaterial(changeMaterial))}`;
 }
 
+/** A lane comment still open from an earlier round, as the re-review sees it. */
+export interface OpenDesignComment {
+  id: string;
+  area: string;
+  path: string;
+  text: string;
+}
+
+/**
+ * The paths a round-2+ design review is told to re-examine: what changed
+ * since the lane last looked, plus what it already flagged. They are also
+ * the chunker's priority, so they are the paths guaranteed to be inline. Not
+ * a validation rule - see validateDesign for why a comment elsewhere is
+ * still accepted.
+ */
+export function designReviewPaths(context: VerificationRoundContext, openComments: readonly OpenDesignComment[]): Set<string> | null {
+  if (context.priorAttemptId === null) return null;
+  return new Set([...context.changedPaths, ...openComments.map((comment) => comment.path)]);
+}
+
+/**
+ * Round context for the design lane, shaped like the other lanes' delta
+ * contract but without findings or ids: a comment's identity is its path, so
+ * carrying one forward or dropping it is done by path. Before 2026-09-04 the
+ * lane had no round context at all and re-read the whole run every round.
+ */
+function designRoundSection(context: VerificationRoundContext, openComments: readonly OpenDesignComment[]): string {
+  if (context.priorAttemptId === null) return "";
+  const open = openComments.length === 0
+    ? "- none"
+    : openComments.map((comment) => `- ${comment.id} [${comment.area}] ${comment.path}: ${comment.text}`).join("\n");
+  return `
+ROUND-2+ CONTRACT (this is a re-review of a run you have already commented on):
+- Re-examine only the paths under CHANGED PATHS SINCE THE PRIOR ROUND and the paths of the OPEN COMMENTS below. The rest of the diff is context you have already reviewed; do not re-read it.
+- Carry an open comment forward, at the same path, while the defect is still there. The harness matches comments by path, so the same path keeps its id and its history.
+- Leave an open comment out when the defect is gone. That is how a fix is recorded; never report a comment as fixed.
+- A new comment belongs at a path in CHANGED PATHS SINCE THE PRIOR ROUND or at the path of an open comment. A comment anywhere else is a defect you missed on the prior round: leave it only if it would change what a maintainer does next.
+
+PRIOR ATTEMPT: ${context.priorAttemptId}
+
+OPEN COMMENTS FROM THE PRIOR ROUND:
+${open}
+
+CHANGED PATHS SINCE THE PRIOR ROUND:
+${pathList(context.changedPaths)}
+`;
+}
+
 export function designPrompt(
   prdText: string,
   runOwnedDiff: string,
   changeMaterial: ChangeFile[],
   readablePaths: string[] = [],
+  openComments: readonly OpenDesignComment[] = [],
+  roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
 ): string {
-  const review = reviewDiffMaterial(runOwnedDiff, readablePaths);
+  const review = reviewDiffMaterial(runOwnedDiff, readablePaths, [...(designReviewPaths(roundContext, openComments) ?? [])]);
   // A file whose whole diff is inline gains little from a second, bounded copy
   // of its body in a shape review; when the diff had to be chunked, that room
   // is better spent on the files that were only listed.
@@ -500,7 +554,7 @@ DISCIPLINE:
 ${JSON_RULE}
 { "comments": [{ "area": "one-cause-n-symptoms | accretion | structure-drift | complexity | dead-weight", "path": "project/relative/file", "text": "what and where", "suggestion": "smallest fix" }] }
 There is no verdict field. Do not emit one.
-
+${designRoundSection(roundContext, openComments)}
 RUN-OWNED DIFF (what this run changed, against the pre-run commit):
 ${review.text}
 

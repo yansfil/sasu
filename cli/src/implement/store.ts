@@ -443,6 +443,7 @@ function assertRoundContexts(value: unknown, label: string): void {
   }
   assertRoundContext(value["fidelity"], `${label}.fidelity`);
   if (value["risk"] !== null) assertRoundContext(value["risk"], `${label}.risk`);
+  if (value["design"] !== undefined && value["design"] !== null) assertRoundContext(value["design"], `${label}.design`);
 }
 
 const ISSUER_LABELS = new Set(["implementor", "observer", "human"]);
