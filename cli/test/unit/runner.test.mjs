@@ -702,6 +702,83 @@ test("without an override, runJudge falls back from a Codex runtime failure to C
   }
 });
 
+// The turn cap is what makes over-reading cheap; this pins what the harness
+// does with the call it cut. The envelope is the one measured 2026-09-04 on
+// claude 2.1.260: exit 1, subtype error_max_turns, no result field.
+test("an agentic claude call stopped by the turn cap is retried as a read-budget overrun, not crossed to the fallback", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-capped-proj-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const capped = JSON.stringify({
+    type: "result",
+    subtype: "error_max_turns",
+    is_error: true,
+    num_turns: 18,
+    errors: ["Reached maximum number of turns (17)"],
+  });
+  const answered = JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: JSON.stringify({ verdict: "PASS", findings: [] }) });
+  const callCount = path.join(binDir, "calls");
+  const argvLog = path.join(binDir, "argv");
+  // First call: capped, exit 1. Second call: answers. The argv of each call
+  // is recorded so the test can see the cap travelled and the retry preamble
+  // named the overrun.
+  fs.writeFileSync(path.join(binDir, "claude"), [
+    "#!/bin/sh",
+    `printf '%s\\n' "$*" >> ${JSON.stringify(argvLog)}`,
+    `count=0; test ! -f ${JSON.stringify(callCount)} || count=$(cat ${JSON.stringify(callCount)})`,
+    `count=$((count + 1)); printf '%s' "$count" > ${JSON.stringify(callCount)}`,
+    `if [ "$count" = "1" ]; then printf '%s' '${capped}'; exit 1; fi`,
+    `cat > ${JSON.stringify(path.join(binDir, "retry-prompt"))}`,
+    `printf '%s' '${answered}'`,
+    "",
+  ].join("\n"));
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  // Claude primary with a fallback declared, so a wrong classification would
+  // be visible as a crossing rather than masked by having nowhere to go.
+  const cappedConfig = {
+    ...config,
+    judge: {
+      ...config.judge,
+      profiles: {
+        ...config.judge.profiles,
+        routine: {
+          primary: { backend: "claude", model: null, effort: "high" },
+          fallback: { backend: "codex", model: null, effort: "high" },
+        },
+      },
+    },
+  };
+  try {
+    const outcome = await runJudge(cappedConfig, "regression:turn-cap", "routine", "prompt", validateGapVerdict, {
+      agentic: true,
+      cwd: project,
+      evidencePaths: ["evidence.md"],
+    });
+    assert.equal(outcome.value.verdict, "PASS");
+    assert.equal(outcome.record.backend, "claude");
+    assert.equal(outcome.record.attempts, 2, "the capped attempt is retried in place");
+    assert.equal(outcome.record.fallback, undefined, "an over-read is not a backend failure; no crossing");
+    assert.equal(outcome.record.retries.length, 1);
+    assert.equal(outcome.record.retries[0].code, "judge-invalid-output");
+    assert.equal(outcome.record.retries[0].reason, "read-budget-exceeded");
+    assert.match(outcome.record.retries[0].detail, /17-turn cap/);
+    const argv = fs.readFileSync(argvLog, "utf8");
+    assert.match(argv, /--max-turns 17/);
+    const retryPrompt = fs.readFileSync(path.join(binDir, "retry-prompt"), "utf8");
+    assert.match(retryPrompt, /^Your previous attempt was rejected: judge hit the 17-turn cap/, "the retry names the overrun so attempt 2 reads selectively");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test("claude num_turns rides into validator activity; a missing field stays unknown", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const verdict = JSON.stringify({ verdict: "PASS", findings: [] });

@@ -167,6 +167,14 @@ export function claudePrintArgs(options: { model: string | null; effort?: JudgeE
   ];
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
+  // In-flight read bound. One turn is one model call: a judge that reads
+  // AGENTIC_READ_MAX_ROUNDS files and then answers spends the budget plus
+  // one turn, so that is the cap; the next read past it stops the process
+  // there instead of after the whole over-read completes (2026-09-04
+  // herdr-ide: a 37-round attempt ran 455s to completion, was then rejected
+  // by the post-hoc check, and paid for from scratch). What a capped call
+  // returns is handled in ClaudeBackend.run.
+  if (options.agentic) args.push("--max-turns", String(AGENTIC_READ_MAX_ROUNDS + 1));
   return args;
 }
 
@@ -307,8 +315,30 @@ export class ClaudeBackend implements JudgeBackend {
         env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
         ...(evidenceRoot !== undefined ? { cwd: evidenceRoot } : cwd !== undefined ? { cwd } : {}),
       });
-      interpretSpawnFailure(this.name, result);
       const envelope = safeParse(result.stdout);
+      // A call stopped by --max-turns is a read-budget overrun, not a runtime
+      // failure, and it must be told apart before the exit code is read:
+      // measured 2026-09-04 (claude 2.1.260, --max-turns 2 against a
+      // three-file read chain) the CLI exits 1 with subtype "error_max_turns",
+      // errors ["Reached maximum number of turns (2)"] and NO result field.
+      // Left to interpretSpawnFailure that is "exit code 1", classified
+      // judge-auth-or-runtime: a health strike plus a crossing to the
+      // fallback for what is really the judge over-reading. There is also
+      // nothing to accept from it - the cap fires on a turn that wanted
+      // another tool call, so no answer was ever produced - which is why a
+      // capped call takes the same retry path as the post-hoc budget check
+      // rather than an accept-with-warning path.
+      if (envelope && typeof envelope === "object" && !Array.isArray(envelope)
+        && (envelope as Record<string, unknown>)["subtype"] === "error_max_turns") {
+        const cap = AGENTIC_READ_MAX_ROUNDS + 1;
+        throw new JudgeError(
+          "judge-invalid-output",
+          this.name,
+          `judge hit the ${cap}-turn cap (${AGENTIC_READ_MAX_ROUNDS} read rounds plus the answer) without answering; batch reads and inspect only the paths the criterion needs`,
+          "read-budget-exceeded",
+        );
+      }
+      interpretSpawnFailure(this.name, result);
       if (envelope && typeof envelope === "object" && !Array.isArray(envelope)) {
         const rec = envelope as Record<string, unknown>;
         if (rec["is_error"] === true) {
@@ -827,11 +857,12 @@ function codexTurnProblem(stdout: string): JudgeError | null {
  * runner retries once with the rejection in the preamble, so attempt 2 reads
  * selectively instead of exhaustively.
  *
- * Enforced twice, once per surface: codex mid-flight through the streaming
- * auditor below (kill before paying the next model turn), and every agentic
- * backend post-hoc in the runner through reported tool rounds - claude
- * exposes only num_turns after the fact, and a budget that lived only on the
- * codex stream would route over-reading to the unbounded fallback.
+ * Enforced in flight on both surfaces, and once more after the fact: codex
+ * through the streaming auditor below (kill before paying the next model
+ * turn), claude through `--max-turns` in claudePrintArgs (the CLI stops the
+ * session at the cap, see ClaudeBackend.run for what comes back), and every
+ * agentic backend post-hoc in the runner through reported tool rounds, so a
+ * backend that reports rounds but honours no cap is still bounded.
  */
 export const AGENTIC_READ_MAX_ROUNDS = 16;
 export const AGENTIC_READ_MAX_OUTPUT_CHARS = 384_000;

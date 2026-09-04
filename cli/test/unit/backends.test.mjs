@@ -4,7 +4,7 @@
 // refactor cannot silently broaden judge activity.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -17,6 +17,17 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
   assert.match(args[denied + 1], /Bash/);
   assert.match(args[denied + 1], /Write/);
   assert.doesNotMatch(args[tools + 1], /Glob|Bash|Write/);
+  // Bounded in flight: the read budget plus the answering turn. A judge that
+  // needs a 17th read is stopped there rather than after it finishes.
+  const cap = args.indexOf("--max-turns");
+  assert.ok(cap >= 0, "agentic calls must carry a turn cap");
+  assert.equal(args[cap + 1], String(AGENTIC_READ_MAX_ROUNDS + 1));
+});
+
+test("prompt-only Claude judge has no tools and therefore no turn cap", () => {
+  const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low" });
+  assert.equal(args[args.indexOf("--tools") + 1], "");
+  assert.ok(!args.includes("--max-turns"), "a one-shot reply is one turn; a cap would only add a way to fail");
 });
 
 test("codex judge argv carries the full isolation set", () => {

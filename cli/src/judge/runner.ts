@@ -407,14 +407,14 @@ export async function runJudge<T>(
       }
       throw error;
     }
-    // Read-budget backstop for every agentic surface. Codex is bounded
-    // mid-flight by the streaming auditor (kill before paying the next model
-    // turn); Claude's surface exposes only num_turns after the fact, so the
-    // post-hoc check is the strongest instrument that path admits
-    // (PRINCIPLES 1). Without it, two codex budget aborts would cross the
-    // call to an UNBOUNDED claude read - reproducing on the fallback exactly
-    // the 575s over-reading the budget exists to stop. null stays unknown,
-    // never "read nothing".
+    // Read-budget backstop for every agentic surface. Both real backends are
+    // bounded in flight (codex by the streaming auditor, claude by
+    // --max-turns), so an honest over-read never reaches this line. It stays
+    // because the in-flight bounds live in each backend, and a backend that
+    // reports tool rounds without honouring a cap (the stub, a CLI whose
+    // flag stopped working) would otherwise route over-reading to an
+    // UNBOUNDED read - the 575s failure the budget exists to stop
+    // (PRINCIPLES 1). null stays unknown, never "read nothing".
     if (options.agentic === true && attemptActivity.toolRounds !== null && attemptActivity.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
