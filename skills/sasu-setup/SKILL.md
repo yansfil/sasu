@@ -115,7 +115,10 @@ Then interview:
      disposable read-only workspace, while Claude fallback grants Read/Grep.
    - `verify.commands`: mechanical verify commands (`test`, `lint`,
      `typecheck`, `build`). Declared commands win; otherwise sasu
-     detects from manifests and suggests pinning here.
+     detects from manifests and suggests pinning here. Each entry is one
+     command run as argv without a shell, so `a && b` is refused at load;
+     use one runner invocation (for example one `node --test` with several
+     globs) instead of shell composition.
    - `verify.commandTimeoutMs`: per-command timeout for mechanical verify
      runs (default 600000 = 10 minutes); a hung suite fails closed at the
      timeout instead of hanging the gate.

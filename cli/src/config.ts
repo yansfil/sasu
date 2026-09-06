@@ -244,6 +244,27 @@ export function loadConfig(projectRoot: string): SasuConfig {
   if (!Number.isInteger(commandTimeoutMs) || commandTimeoutMs <= 0) {
     throw new Error(`verify.commandTimeoutMs must be a positive integer, got: ${String(commandTimeoutMs)}`);
   }
+  for (const [kind, command] of Object.entries(verifyRaw.commands ?? {})) {
+    if (typeof command !== "string" || command.trim() === "") {
+      throw new Error(`verify.commands.${kind} must be a non-empty string`);
+    }
+    // One command per entry, no shell composition. The quick path runs these
+    // through a shell but the implement sealed suite runs them as argv, so a
+    // value like "a && b" passes doctor and the quick guard and then bricks
+    // every implement verify: `&&` arrives as a literal token and node --test
+    // opens "cli" as a test file (gate-loop run, 2026-09-03/06, two RED S2
+    // results at 67 s each, and a human amendment to get out). Refusing it
+    // here, at the one place every consumer loads config, is cheaper than
+    // teaching each runner to explain the same failure.
+    // Quoted text is an argument, not composition: `node -e "a => b"` is one
+    // command. Only what a shell would read as an operator is refused.
+    const unquoted = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "");
+    if (/(?:;|\|\||&&|(?<!\|)\|(?!\|)|[<>]|`|\$\(|&)/.test(unquoted)) {
+      throw new Error(
+        `verify.commands.${kind} must be one command without shell composition, redirection, or substitution (implement runs it as argv, without a shell); split it into separate entries or one runner invocation, got: ${command}`,
+      );
+    }
+  }
   const worktreeRaw = (raw["worktree"] ?? {}) as Partial<WorktreeConfig>;
   const stringList = (value: unknown, label: string): string[] => {
     if (value === undefined) return [];

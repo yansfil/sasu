@@ -79,6 +79,34 @@ test("invalid profile targets and timeouts fail explicitly", () => {
   assert.throws(() => loadConfig(tempProject({ verify: { commandTimeoutMs: 0 } })), /commandTimeoutMs/);
 });
 
+// The implement sealed suite runs verify.commands as argv without a shell, so
+// a shell-composed value is accepted by doctor and the quick path and then
+// fails every implement verify with an unrelated-looking error (gate-loop,
+// 2026-09-06: "&&" became a literal argv token). It must be refused at load.
+test("loadConfig refuses shell composition in verify.commands and names the entry", () => {
+  for (const command of [
+    "node --test tests/*.test.mjs && npm --prefix cli test",
+    "npm test || true",
+    "npm test; npm run build",
+    "npm test | tee out.log",
+    "npm test > out.log",
+    "npm run $(cat cmd)",
+    "npm test &",
+  ]) {
+    assert.throws(
+      () => loadConfig(tempProject({ verify: { commands: { test: command } } })),
+      /verify\.commands\.test must be one command without shell composition/,
+      command,
+    );
+  }
+  assert.throws(() => loadConfig(tempProject({ verify: { commands: { build: "   " } } })), /verify\.commands\.build must be a non-empty string/);
+  const ok = loadConfig(tempProject({ verify: { commands: { test: "node --test tests/*.test.mjs cli/test/unit/*.test.mjs", build: "npm --prefix cli run build" } } }));
+  assert.equal(ok.verify.commands.test, "node --test tests/*.test.mjs cli/test/unit/*.test.mjs");
+  // Operators inside a quoted argument are data, not composition.
+  const quoted = loadConfig(tempProject({ verify: { commands: { test: "node -e \"setTimeout(() => {}, 10) && 0\"" } } }));
+  assert.match(quoted.verify.commands.test, /setTimeout/);
+});
+
 test("loadConfig rejects invalid JSON with a clear error", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-config-"));
   fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
