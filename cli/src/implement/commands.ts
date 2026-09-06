@@ -82,6 +82,8 @@ import {
   normalizeProjectPath,
   nowIso,
   persistState,
+  persistClose,
+  jsonText,
   requireWorkRoot,
   sha256,
   statePathFor,
@@ -3315,14 +3317,12 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       ...(state.worktree ? { worktree: state.worktree } : {}),
       executionCallsDuringFinalize: 0,
     };
-    writeJsonAtomic(path.join(recordRoot, receiptPath), receipt);
-    writeTextAtomic(
-      path.join(recordRoot, implementationResultPath),
-      implementationReport(state, latest, fingerprint, { terminalReason, openItems: blockers }),
-    );
     state.status = "blocked";
     state.completion = { fingerprint, completedAt: blockedAt, receiptPath, implementationResultPath };
-    persistState(statePath, state);
+    persistClose(statePath, state, [
+      { file: path.join(recordRoot, receiptPath), text: jsonText(receipt) },
+      { file: path.join(recordRoot, implementationResultPath), text: implementationReport(state, latest, fingerprint, { terminalReason, openItems: blockers }) },
+    ]);
     return result(
       "finalize",
       true,
@@ -3370,14 +3370,10 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   state.status = closing;
   state.completion = { fingerprint, completedAt, receiptPath, implementationResultPath };
   recordEvent(state, { kind: "finalize", actor: resolveIssuer(flag(args, "issuer")), subject: null, summary: `run closed ${closing}`, at: completedAt });
-  // State first, derived files after. `persistState` is the one
-  // compare-and-swap in the run; a receipt written before it could survive a
-  // rejected state write and contradict the record (risk finding RF1 on the
-  // prd-template run, 2026-09-06). Written after, the receipt is always a
-  // projection of a state that landed.
-  persistState(statePath, state);
-  writeJsonAtomic(path.join(recordRoot, receiptPath), receipt);
-  writeTextAtomic(path.join(recordRoot, implementationResultPath), implementationReport(state, latest, fingerprint));
+  persistClose(statePath, state, [
+    { file: path.join(recordRoot, receiptPath), text: jsonText(receipt) },
+    { file: path.join(recordRoot, implementationResultPath), text: implementationReport(state, latest, fingerprint) },
+  ]);
   // A worktree run's code lives only on its branch until someone collects it;
   // the close must say so or the work silently strands in the worktree.
   const handoff = state.worktree
@@ -3430,13 +3426,9 @@ function confirm(projectRoot: string, args: ImplementArgs): ImplementCommandResu
   }
   const completion = state.completion;
   if (completion === null) throw new Error("closed run has no completion record");
-  // State first, derived files after: two confirms racing on one record must
-  // not leave the losing call's receipt on disk next to the winning call's
-  // state (risk finding RF1, 2026-09-06). `persistState` rejects the loser
-  // before anything derived is touched.
-  persistState(statePath, state);
   // The receipt is rewritten in place: same fingerprint, same attempt, the
-  // rows and status refreshed from the record (R8, R9).
+  // rows and status refreshed from the record (R8, R9). `persistClose` lands
+  // the state before the receipt and holds the run's close lock across both.
   const receiptFile = path.join(state.projectRoot, completion.receiptPath);
   const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as Record<string, unknown>;
   receipt["status"] = closing;
@@ -3444,9 +3436,11 @@ function confirm(projectRoot: string, args: ImplementArgs): ImplementCommandResu
   receipt["score"] = runScore(state);
   receipt["scoreLine"] = scoreLine(runScore(state));
   receipt["confirmedAt"] = at;
-  writeJsonAtomic(receiptFile, receipt);
   const latest = state.verificationAttempts.at(-1)!;
-  writeTextAtomic(path.join(state.projectRoot, completion.implementationResultPath), implementationReport(state, latest, completion.fingerprint));
+  persistClose(statePath, state, [
+    { file: receiptFile, text: jsonText(receipt) },
+    { file: path.join(state.projectRoot, completion.implementationResultPath), text: implementationReport(state, latest, completion.fingerprint) },
+  ]);
   const open = state.rows.filter((candidate) => candidate.status === "OPEN").map((candidate) => candidate.id);
   return result("confirm", true, reject
     ? `${row.id} stays OPEN (rejected: ${evidence}); ${open.length} human: row(s) still OPEN`

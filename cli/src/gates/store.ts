@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   JUDGE_ERROR_LOOP_THRESHOLD,
@@ -12,6 +11,7 @@ import {
   type JudgeFailureCause,
 } from "../judge/types";
 import { gatesDirFor } from "../runs/paths";
+import { removeDeadOwnerLock, tryAcquireLock } from "../runs/lock";
 
 export type GateId = "gap-audit" | "spec" | "verify";
 export type PrdGateId = Extract<GateId, "gap-audit" | "spec">;
@@ -499,57 +499,11 @@ export class GateStore {
   }
 
   private tryAcquireLock(lockPath: string, recoverDeadOwner: boolean): (() => void) | null {
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    const token = crypto.randomUUID();
-    const metadata = {
-      token,
-      pid: process.pid,
-      hostname: os.hostname(),
-      topic: this.topic,
-      startedAt: new Date().toISOString(),
-    };
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        fs.writeFileSync(lockPath, `${JSON.stringify(metadata)}\n`, { flag: "wx" });
-        return () => {
-          try {
-            const current = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { token?: string };
-            if (current.token === token) fs.unlinkSync(lockPath);
-          } catch (error) {
-            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-          }
-        };
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-        if (!recoverDeadOwner || !this.removeDeadOwnerLock(lockPath)) return null;
-      }
-    }
-    return null;
+    return tryAcquireLock(lockPath, { recoverDeadOwner, topic: this.topic });
   }
 
-  /** Recover only a demonstrably dead PID on this host. Live and remote locks stand. */
   private removeDeadOwnerLock(lockPath: string): boolean {
-    let owner: { pid?: unknown; hostname?: unknown; token?: unknown };
-    try {
-      owner = JSON.parse(fs.readFileSync(lockPath, "utf8")) as typeof owner;
-    } catch {
-      return false;
-    }
-    if (owner.hostname !== os.hostname() || !Number.isInteger(owner.pid)) return false;
-    try {
-      process.kill(owner.pid as number, 0);
-      return false;
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
-    }
-    try {
-      const latest = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { token?: unknown };
-      if (latest.token !== owner.token) return false;
-      fs.unlinkSync(lockPath);
-      return true;
-    } catch {
-      return false;
-    }
+    return removeDeadOwnerLock(lockPath);
   }
 }
 
