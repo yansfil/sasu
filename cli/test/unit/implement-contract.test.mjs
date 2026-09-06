@@ -18,7 +18,7 @@ test("a clean six-section PRD parses into rows with their kind, payload and cite
   assert.equal(contract.rows[1].check.evidence, "a before/after screenshot pair registered for B2");
   assert.equal(contract.rows[2].check.confirmation, "the user reloads and says the widget kept their state");
   assert.deepEqual(contract.rows[1].decisionIds, ["D-01"]);
-  assert.deepEqual(contract.decisions, [{ id: "D-01", decision: "the widget persists to local storage", rationale: "Q3: the user wants state to survive reload" }]);
+  assert.deepEqual(contract.decisions, [{ id: "D-01", decision: "the widget persists to local storage", rationale: "Q2: the user wants state to survive reload" }]);
   assert.match(contract.goal, /renders and persists/);
   assert.match(contract.nonGoals, /No theming/);
   assert.match(contract.technicalStructure, /storage adapter/);

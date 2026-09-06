@@ -12,13 +12,11 @@ const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).path
 // call, so gate fixtures must be structurally healthy for the judge path to
 // be exercised at all.
 const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "utf8");
-// The clean PRD cites Q3 in its Decisions table; qa-clean.md holds Q1 and Q2
-// only, and the cross-document rule prd-cited-question-unanswered is one of
-// the three kept lint rules. Re-pointing the citation at the answered
-// persistence turn keeps the spec gate's fixture pair prelint-clean.
-const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8")
-  .replace("Q3: the user wants state to survive reload", "Q2: the user wants state to survive reload");
-assert.match(PRD_FIXTURE, /Q2: the user wants state to survive reload/, "the fixture's Q citation moved; re-point it");
+// The clean PRD cites Q2 in its Decisions table and qa-clean.md answers Q2,
+// so the pair stays clean under the kept cross-document rule
+// prd-cited-question-unanswered.
+const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8");
+assert.match(PRD_FIXTURE, /Q2: the user wants state to survive reload/, "the fixture's Q citation moved; keep it on an answered turn");
 
 function gitCommitAll(dir, message, paths = ["-A"]) {
   for (const args of [["init", "-q"], ["add", ...paths], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]]) {

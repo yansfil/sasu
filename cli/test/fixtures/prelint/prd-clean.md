@@ -19,7 +19,7 @@ A widget that renders and persists.
 
 | D-n | 결정 | 근거 |
 | --- | --- | --- |
-| D-01 | the widget persists to local storage | Q3: the user wants state to survive reload |
+| D-01 | the widget persists to local storage | Q2: the user wants state to survive reload |
 
 ## Behaviors
 
