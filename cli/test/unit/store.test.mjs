@@ -596,6 +596,9 @@ test("freshness (qa-log R4): a changed decision cell stales the seal", () => {
     // emptying it after the seal must not leave a cached PASS standing (RF2).
     ["a Raw Q&A answer", QA_V1.replace("- answer: yes", "- answer: no")],
     ["an emptied Raw Q&A answer", QA_V1.replace("- answer: yes", "- answer:")],
+    // appendQaEntry keeps a multi-line answer in one bullet by indenting the
+    // continuation lines; a decision that lives on line two is still consent.
+    ["a Raw Q&A answer continuation line", QA_V1.replace("- answer: yes", "- answer: yes\n  but never on shared accounts")],
   ];
   for (const [label, content] of edits) {
     fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), content);

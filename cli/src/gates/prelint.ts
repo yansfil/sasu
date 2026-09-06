@@ -17,6 +17,9 @@ import { parseContract } from "./contract";
 
 // Table-cell splitting comes from the shared parser so prelint sees exactly
 // the same cell boundaries the state parser persists.
+const { parseQaAnswers } = require("../../lib/qa_register.js") as {
+  parseQaAnswers: (content: string) => Array<{ question: string; answer: string }> | null;
+};
 const { splitTableRow, findPrdImplementationBindings, parseFrontmatterBlock, expandCoverageIds } = require("../../lib/prd_parser.js") as {
   parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
   expandCoverageIds(text: string, prefix: string): string[];
@@ -427,25 +430,13 @@ export function prelintPrdDecisionIds(prdContent: string, qaLogContent: string):
  */
 export function prelintPrdCitedQuestions(prdContent: string, qaLogContent: string): PrelintResult {
   const findings: PrelintFinding[] = [];
-  const qaLines = qaLogContent.split("\n");
-  const rawQa = sectionRange(qaLines, "## Raw Q&A");
-  /** Q number -> whether its `- answer:` line carries text. */
+  /**
+   * Q number -> whether its answer bullet carries text, read through the one
+   * Raw Q&A parser the freshness pin also uses, so "answered" here and
+   * "pinned" there can never disagree about the same turn.
+   */
   const answered = new Map<string, boolean>();
-  if (rawQa !== null) {
-    let current: string | null = null;
-    for (let i = rawQa.start + 1; i < rawQa.end; i += 1) {
-      const line = qaLines[i]!;
-      const heading = line.match(/^###\s*Q(\d+)\b/);
-      if (heading) {
-        current = `Q${heading[1]}`;
-        answered.set(current, false);
-        continue;
-      }
-      if (current === null) continue;
-      const answer = line.match(/^\s*-\s*answer:\s*(.*)$/);
-      if (answer && answer[1]!.trim() !== "") answered.set(current, true);
-    }
-  }
+  for (const entry of parseQaAnswers(qaLogContent) ?? []) answered.set(`Q${entry.question}`, entry.answer !== "");
   const seen = new Set<string>();
   prdContent.split("\n").forEach((line, index) => {
     for (const match of line.matchAll(/\bQ(\d+)\b(?!\s*\d{4})/g)) {

@@ -74,26 +74,42 @@ function sha256Of(content) {
 
 /**
  * The user's answer text of every `## Raw Q&A` turn, keyed by question
- * number, or null when the section is absent. Only the `- answer:` line
- * counts: the turn's label, anchors (`- decision_ids:`), route, source_ref,
- * asked/recommended text and notes are the agent's bookkeeping. Answers are
- * the evidence a spec judge compares decisions against (PRD gate-loop D-08),
- * which is why they are pinned with the decision cells (gate_freshness.js).
+ * number, or null when the section is absent. Every `### Q<n>` heading
+ * yields one entry, with `answer: ""` when the turn has no `- answer:`
+ * bullet or an empty one. Only the answer bullet counts: the turn's label,
+ * anchors (`- decision_ids:`), route, source_ref, asked/recommended text and
+ * notes are the agent's bookkeeping. Answers are the evidence a spec judge
+ * compares decisions against (PRD gate-loop D-08), which is why they are
+ * pinned with the decision cells (gate_freshness.js) and why the prelint
+ * cited-question rule reads them through this same function.
+ *
+ * `appendQaEntry` keeps a multi-line answer inside one bullet by indenting
+ * its continuation lines, so the bullet ends at the next column-0 line;
+ * reading only the first line left every continuation unpinned (gate-loop
+ * verify RF2 second round, 2026-09-06).
  */
 function parseQaAnswers(content) {
   const lines = content.split("\n");
   const range = sectionRange(lines, RAW_QA_HEADING);
   if (range === null) return null;
   const answers = [];
-  let question = null;
+  let current = null;
   for (let i = range.start + 1; i < range.end; i += 1) {
     const heading = lines[i].match(/^###\s+Q(\d+)\b/);
     if (heading) {
-      question = heading[1];
+      current = { question: heading[1], answer: "" };
+      answers.push(current);
       continue;
     }
+    if (current === null) continue;
     const answer = lines[i].match(/^-\s*answer:(.*)$/);
-    if (answer && question !== null) answers.push({ question, answer: answer[1].trim() });
+    if (!answer) continue;
+    const parts = [answer[1]];
+    while (i + 1 < range.end && /^\s+\S/.test(lines[i + 1])) {
+      i += 1;
+      parts.push(lines[i]);
+    }
+    current.answer = parts.map((part) => part.trim()).join("\n").trim();
   }
   return answers;
 }
