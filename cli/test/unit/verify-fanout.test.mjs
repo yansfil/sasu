@@ -373,66 +373,34 @@ review_profile: "standard"
 
 # PRD: fixture
 
-## 1. Summary
+## Goal
 
 A widget that renders and persists.
 
-## 2. Problem, Goal, And Users
+## Non-goals
 
-Users need a widget.
+Nothing beyond the widget.
 
-## 3. Scope And Non-Goals
+## Decisions
 
-In scope: the widget.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | 위젯 상태는 로컬에 저장한다 | 서버가 없다 |
 
-## 4. Pre-Work And Required Decisions
+## Behaviors
 
-None required.
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | the widget renders | judge: the diff adds a render path | D-01 |
+| B2 | the widget persists its state | judge: the diff writes state on change | D-01 |
 
-## 5. Major Technical Structure Changes
+## Technical structure
 
 No major technical structure change expected.
 
-## 6. Requirements
-
-- R1. the widget renders and persists its state
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | the widget renders | machine | - |
-| AC2 | the widget persists its state | machine | - |
-
-## 8. PRD-Level Tasks
-
-- T1. build the widget. Covers R1, AC1, AC2.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | core behavior | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, AC1, AC2 | behavior covered by automated test | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand scope.
-
-## 12. Implementation Result Report Contract
-
-Report status and evidence.
 `;
   fs.writeFileSync(path.join(dir, "prd.md"), prd);
   return "prd.md";
@@ -445,11 +413,11 @@ test("PRD path: every semantic lane receives the full curated diff", async () =>
   const prdPath = writeSemanticPrd(dir);
   const result = await withStub(
     dir,
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "AC2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
+    { verdict: "PASS", criteria: [{ id: "B1", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }, { id: "B2", verdict: "PASS", reason: "ok", evidence: "src/widget.ts" }] },
     () => runVerifyGate(dir, loadConfig(dir), "t", { prdPath, diffText: TWO_FILE_DIFF, skipMechanical: true }),
   );
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.judgedCriteriaIds, ["AC1", "AC2"]);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.judgedCriteriaIds, ["B1", "B2"]);
   const artifact = readArtifacts(dir).find((a) => a.stage === "semantic");
   assert.equal(artifact.lanes[0].scope, undefined);
   assert.equal(artifact.lanes[0].diffChars, TWO_FILE_DIFF.length);

@@ -16,7 +16,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
     const file = path.join(root, "agents", "runs", slug, "state.json");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({
-      schema: "sasu.implement.state.v7",
+      schema: "sasu.implement.state.v8",
       topicSlug: slug,
       projectRoot: root,
       runDir: `agents/runs/${slug}`,
@@ -24,12 +24,13 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
       prd: { sha256: "prd-hash", snapshotPath: `agents/runs/${slug}/prd.md`, reviewProfile: "standard" },
       initialSource: { head: "head", digest: "source-hash", entries: [] },
       baselineAttribution: { disposition: "clean", paths: [], baselineDigest: "source-hash", head: "head" },
-      tasks: [],
-      requirements: [],
-      acceptanceCriteria: [],
-      verification: [],
+      rows: [{
+        id: "B1", behavior: "the widget renders", check: { kind: "check", command: "node --version", argv: ["node", "--version"] },
+        decisionIds: [], status: "pending", attempts: [], consecutiveFailures: 0, parks: [], verdict: null, human: null, rejections: [],
+      }],
       artifacts: [],
       verificationAttempts: [],
+      riskFindings: [],
       deviations: [],
       events: [],
       verbs: [],
@@ -51,12 +52,12 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
 
   const section = runIntegritySection(root, null);
   assert.equal(section.ok, false);
-  assert.ok(section.lines.includes("retire candidate: active-run owner=session-a command=sasu implement retire --slug active-run --adopt \"<verbatim user approval>\""));
+  assert.ok(section.lines.includes("retire candidate: active-run owner=session-a command=sasu implement retire --slug active-run --adopt \"<verbatim user approval>\""), section.lines.join("\n"));
   assert.ok(section.lines.includes(`orphan worktree: ended-run status=retired path=${worktree} branch=sasu/ended-run`));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
   assert.ok(section.lines.includes(
-    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v7; use a matching CLI to inspect or retire it, or start a new slug",
+    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v8; use a matching CLI to inspect or retire it, or start a new slug",
   ));
 });
 

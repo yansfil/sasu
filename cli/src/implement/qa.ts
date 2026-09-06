@@ -165,7 +165,7 @@ export function registerTrail(
   const brief = state.qaBriefs.find((entry) => entry.briefId === input.briefId);
   if (brief === undefined) {
     const latest = latestBriefFor(state, input.rowId);
-    throw new TrailRejected("arguments", `no brief ${input.briefId} was issued for this run; ${latest === null ? `issue one with \`sasu implement qa-brief --ac ${input.rowId}\`` : `the current brief for ${input.rowId} is ${latest.briefId}`}. qa-brief is the only briefing channel, so a drive with no brief behind it cannot be registered.`);
+    throw new TrailRejected("arguments", `no brief ${input.briefId} was issued for this run; ${latest === null ? `issue one with \`sasu implement qa-brief --row ${input.rowId}\`` : `the current brief for ${input.rowId} is ${latest.briefId}`}. qa-brief is the only briefing channel, so a drive with no brief behind it cannot be registered.`);
   }
   if (brief.rowId !== input.rowId) {
     throw new TrailRejected("arguments", `brief ${brief.briefId} was issued for ${brief.rowId}, not ${input.rowId}`);

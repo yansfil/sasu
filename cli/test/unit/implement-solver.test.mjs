@@ -116,7 +116,7 @@ test("AC35: escalations are accepted below the constant bound and refused at it"
     assert.match(error.message, new RegExp(`used all ${ESCALATE_LIMIT_PER_RUN} escalations`));
     // A refusal that does not say what to do instead leaves the supervisor
     // with nowhere to go, which is how a run gets abandoned instead of closed.
-    assert.match(error.message, /park the criterion, amend the PRD, or finalize blocked/);
+    assert.match(error.message, /park the row, amend the PRD, or finalize blocked/);
     return true;
   });
 });

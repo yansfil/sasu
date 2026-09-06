@@ -1,100 +1,57 @@
-// Task dependency grammar: `Depends on:` is an executable declaration — the
-// close guard in `sasu implement task` enforces exactly what parses here, so
-// every default, override, and rejection is pinned.
+// The six-section contract (prd-template R1, R2): what `implement start`
+// reads and what it refuses. Every refusal here is the same line prelint
+// would flag, because both read the one grammar in cli/lib/prd_parser.js.
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
-import { parseImplementContract } from "../../dist/implement/contract.js";
+import { LEGACY_PRD_LAST_COMMIT, parseImplementContract } from "../../dist/implement/contract.js";
 
-function prd(taskLines) {
-  return `---
-topic: "contract fixture"
-status: "ready"
----
+const FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
+const clean = () => fs.readFileSync(path.join(FIXTURES, "prd-clean.md"), "utf8");
+const B1 = "| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |";
 
-# PRD: contract fixture
-
-## 6. Requirements
-
-- R1. The flow completes. Covers AC1.
-
-## 7. Acceptance Criteria
-
-- AC1. The flow is verifiable.
-
-## 8. PRD-Level Tasks
-
-${taskLines.join("\n")}
-
-## 9. Verification Contract
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, AC1 | flow passes | yes | no |
-`;
-}
-
-test("tasks without a Depends on clause chain to the previous task", () => {
-  const contract = parseImplementContract(prd([
-    "- T1. First. Covers R1.",
-    "- T2. Second. Covers R1.",
-    "- T3. Third. Covers R1.",
-  ]));
-  assert.deepEqual(contract.tasks.map((task) => task.dependsOn), [[], ["T1"], ["T2"]]);
+test("a clean six-section PRD parses into rows with their kind, payload and cited decisions", () => {
+  const contract = parseImplementContract(clean());
+  assert.deepEqual(contract.rows.map((row) => [row.id, row.check.kind]), [["B1", "check"], ["B2", "judge"], ["B3", "human"]]);
+  assert.deepEqual(contract.rows[0].check, { kind: "check", command: "node --test test/widget.test.mjs", argv: ["node", "--test", "test/widget.test.mjs"] });
+  assert.equal(contract.rows[1].check.evidence, "a before/after screenshot pair registered for B2");
+  assert.equal(contract.rows[2].check.confirmation, "the user reloads and says the widget kept their state");
+  assert.deepEqual(contract.rows[1].decisionIds, ["D-01"]);
+  assert.deepEqual(contract.decisions, [{ id: "D-01", decision: "the widget persists to local storage", rationale: "Q3: the user wants state to survive reload" }]);
+  assert.match(contract.goal, /renders and persists/);
+  assert.match(contract.nonGoals, /No theming/);
+  assert.match(contract.technicalStructure, /storage adapter/);
 });
 
-test("an explicit Depends on list overrides the chain and none clears it", () => {
-  const contract = parseImplementContract(prd([
-    "- T1. Base. Covers R1.",
-    "- T2. Adapter A. Covers R1. Depends on: T1.",
-    "- T3. Adapter B. Covers R1. Depends on: T1.",
-    "- T4. Standalone doc. Covers R1. Depends on: none.",
-    "- T5. Integration. Covers R1. Depends on: T2, T3.",
-  ]));
-  assert.deepEqual(contract.tasks.map((task) => task.dependsOn), [[], ["T1"], ["T1"], [], ["T2", "T3"]]);
+// AC2: the refusal names the format and the last commit that reads it, so
+// the holder of an old PRD knows which checkout still runs it.
+test("a five-axis PRD is refused as the old format, naming the last commit that read it", () => {
+  const legacy = clean().replace("## Behaviors", "## 7. Acceptance Criteria");
+  assert.throws(() => parseImplementContract(legacy), (error) => {
+    assert.match(error.message, /구 형식/);
+    assert.match(error.message, new RegExp(`이 형식을 읽는 마지막 커밋은 \\x60${LEGACY_PRD_LAST_COMMIT}\\x60`));
+    return true;
+  });
+  assert.match(LEGACY_PRD_LAST_COMMIT, /^[0-9a-f]{40}$/);
 });
 
-test("a dependency on an unknown task is rejected at parse time", () => {
-  assert.throws(
-    () => parseImplementContract(prd(["- T1. Only. Covers R1. Depends on: T9."])),
-    /T1 depends on unknown task T9/,
-  );
+test("a missing section is refused by title", () => {
+  assert.throws(() => parseImplementContract(clean().replace("## Risks\n\nNone.\n", "")), /missing section\(s\): ## Risks/);
 });
 
-test("a self-dependency is rejected at parse time", () => {
-  assert.throws(
-    () => parseImplementContract(prd(["- T1. Only. Covers R1. Depends on: T1."])),
-    /T1 cannot depend on itself/,
-  );
+test("row defects are refused with the row's line, the same defects prelint reports", () => {
+  const cases = [
+    ["| B1 | check: `x` the widget renders | judge: the diff | - |", /line 28 \(B1\): behavior cell carries a check:/],
+    ["| B1 | the widget renders | verify by hand | - |", /line 28 \(B1\): check cell must start with one of check:, judge:, human:/],
+    ["| B1 | the widget renders | check: `a && b` | - |", /line 28 \(B1\): check: command must be one command/],
+    ["| B1 | the widget renders | check: `npm test` | D-09 |", /line 28 \(B1\): cites D-09, which is not in the Decisions table/],
+  ];
+  for (const [row, pattern] of cases) assert.throws(() => parseImplementContract(clean().replace(B1, row)), pattern);
+  assert.throws(() => parseImplementContract(clean().replace(/\| B[123] \|.*\n/g, "")), /has no table rows/);
 });
 
-test("a dependency cycle is rejected at parse time", () => {
-  assert.throws(
-    () => parseImplementContract(prd([
-      "- T1. A. Covers R1. Depends on: T2.",
-      "- T2. B. Covers R1. Depends on: T1.",
-    ])),
-    /task dependency cycle: T1 -> T2 -> T1/,
-  );
-});
-
-test("duplicate task ids are rejected at parse time", () => {
-  assert.throws(
-    () => parseImplementContract(prd([
-      "- T1. A. Covers R1.",
-      "- T1. A again. Covers R1.",
-    ])),
-    /duplicate task id: T1/,
-  );
-});
-
-// A duplicate AC id that got past parsing let `implement start` persist a
-// state every later load rejected - a bricked run with no CLI recovery
-// (2026-08-30 code review). The parse-time refusal covers start and amend
-// alike, mirroring the task-id guard above.
-test("duplicate acceptance criterion ids are rejected at parse time", () => {
-  const doc = prd(["- T1. A. Covers R1."]).replace(
-    "- AC1. The flow is verifiable.",
-    "- AC1. The flow is verifiable.\n- AC1. The flow is verifiable twice.",
-  );
-  assert.throws(() => parseImplementContract(doc), /duplicate acceptance criterion id: AC1/);
+test("a check: command tokenizes the way the runner executes it, quotes included", () => {
+  const contract = parseImplementContract(clean().replace(B1, "| B1 | the widget renders | check: `node --test --test-name-pattern \"a && b\" test/widget.test.mjs` | - |"));
+  assert.deepEqual(contract.rows[0].check.argv, ["node", "--test", "--test-name-pattern", "a && b", "test/widget.test.mjs"]);
 });

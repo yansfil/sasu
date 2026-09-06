@@ -14,9 +14,13 @@ const {
   splitTableRow,
   extractCodeSpans,
   cleanTableCell,
-  parseVerification,
   parseFrontmatterBlock,
   stripFrontmatter,
+  parseCheckCell,
+  commandCompositionDefect,
+  parseBehaviorRows,
+  missingPrdSections,
+  isLegacyFiveAxisPrd,
 } = require("../../lib/prd_parser.js");
 
 // One frontmatter grammar for every reader (2026-08-30 unification). Before
@@ -100,34 +104,33 @@ test("cleanTableCell protects code-span content from cosmetic transforms", () =>
   assert.equal(cleanTableCell("a<br>b `x<br>y`"), "a; b `x<br>y`");
 });
 
-test("parseVerification keeps only semantic matrix fields", () => {
-  const section = [
-    "### 9.2 Required Agent Verification",
-    "",
-    "| ID | Mode | Covers | Method | Artifact | Pass Intent | Required For Done | Can Be Blocked |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
-    `| V1 | build/static | R1 | Run \`${LIVE_COMMAND}\` | command-log | exits zero | yes | no |`,
-    "",
-  ].join("\n");
-  const items = parseVerification(section);
-  assert.equal(items.length, 1);
-  assert.equal(items[0].id, "V1");
-  assert.equal(items[0].matrix.method, undefined);
-  assert.equal(items[0].matrix.artifact, undefined);
-  assert.equal(items[0].matrix.passCriteria, "exits zero");
+test("parseCheckCell reads the prefix, unwraps one code span, and refuses composition", () => {
+  assert.deepEqual(parseCheckCell("check: `node --test a.mjs`"), { kind: "check", payload: "node --test a.mjs", defect: null });
+  assert.deepEqual(parseCheckCell("judge: the diff"), { kind: "judge", payload: "the diff", defect: null });
+  assert.equal(parseCheckCell("human:").defect, "human: cell has no payload after the prefix");
+  assert.match(parseCheckCell("verify by hand").defect, /must start with one of check:, judge:, human:/);
+  assert.match(parseCheckCell("check: a | b").defect, /shell composition/);
+  assert.equal(parseCheckCell("check: node -e \"a && b\"").defect, null, "quoted text is an argument");
 });
 
-test("parseVerification preserves an approved side-effect boundary without treating it as an executor", () => {
-  const section = [
-    "### 9.2 Required Agent Verification",
-    "",
-    "| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Allowed Side Effect | Sensitive Data Policy |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
-    "| V1 | live external API | R1, AC1 | sandbox behavior is proven | no | yes | sandbox record only when approved | redact tokens |",
-    "",
-  ].join("\n");
-  const [item] = parseVerification(section);
-  assert.equal(item.matrix.sideEffect, "sandbox record only when approved");
-  assert.equal(item.matrix.sensitiveDataPolicy, "redact tokens");
+test("commandCompositionDefect is the one rule config and cells share", () => {
+  assert.equal(commandCompositionDefect("npm test"), null);
+  for (const bad of ["a && b", "a; b", "a | b", "a > out", "$(a)", "a &", "`a`"]) assert.match(commandCompositionDefect(bad) ?? "", /shell composition/, bad);
 });
 
+test("parseBehaviorRows returns every row with defects instead of dropping it", () => {
+  const doc = "## Behaviors\n\n| # | a | b | c |\n| --- | --- | --- | --- |\n| B1 | ok | check: `x` | D-01, D-02 |\n| bad | | | |\n";
+  const parsed = parseBehaviorRows(doc);
+  assert.equal(parsed.section.line, 1);
+  assert.deepEqual(parsed.rows.map((row) => [row.id, row.line, row.defects.length]), [["B1", 5, 0], [null, 6, 3]]);
+  assert.deepEqual(parsed.rows[0].decisionIds, ["D-01", "D-02"]);
+  assert.deepEqual(parseBehaviorRows("# nothing"), { section: null, rows: [] });
+});
+
+test("missingPrdSections and isLegacyFiveAxisPrd key on heading structure only", () => {
+  assert.deepEqual(missingPrdSections("## Goal\n## Behaviors\n"), ["Non-goals", "Decisions", "Technical structure", "Risks"]);
+  assert.deepEqual(missingPrdSections("## goal\n## NON-GOALS\n## Decisions\n## Behaviors\n## Technical structure\n## Risks\n"), []);
+  assert.equal(isLegacyFiveAxisPrd("## 7. Acceptance Criteria\n"), true);
+  assert.equal(isLegacyFiveAxisPrd("## 7. Acceptance Criteria\n## Behaviors\n"), false);
+  assert.equal(isLegacyFiveAxisPrd("## Goal\n"), false);
+});
