@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { scratchDir } from "../scratch.mjs";
 
 const require = createRequire(import.meta.url);
 const libDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "lib");
@@ -25,7 +25,7 @@ function git(dir, ...args) {
 }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-vouched-"));
+  const dir = scratchDir("sasu-vouched-");
   git(dir, "init", "-q");
   write(dir, "src/app.js", "console.log('app')\n");
   write(dir, "docs/readme.md", "# readme\n");
@@ -184,14 +184,14 @@ test("vouched fingerprint: deletions and executable-bit flips move it", () => {
 });
 
 test("vouched fingerprint: unborn HEAD and non-git directories degrade cleanly", () => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-vouched-empty-"));
+  const empty = scratchDir("sasu-vouched-empty-");
   git(empty, "init", "-q");
   write(empty, "seed.txt", "first file, no commit yet\n");
   const unborn = vouchedTreeFingerprint({ projectRoot: empty });
   assert.ok(unborn && typeof unborn.vouched === "string", "an unborn HEAD still fingerprints the untracked tree");
   assert.equal(unborn.entryCount, 1);
 
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-vouched-plain-"));
+  const plain = scratchDir("sasu-vouched-plain-");
   assert.equal(vouchedTreeFingerprint({ projectRoot: plain }), null, "a non-git directory has no fingerprint");
 });
 

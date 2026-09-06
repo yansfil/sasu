@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { scratchDir } from "../scratch.mjs";
 
 import { planRunUnits, runBatch } from "../../dist/implement/runner.js";
 
@@ -38,7 +38,7 @@ test("an excluded suite command is not planned", () => {
 });
 
 const scratchState = () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-runner-"));
+  const root = scratchDir("sasu-runner-");
   fs.mkdirSync(path.join(root, "agents", "runs", "fixture"), { recursive: true });
   return { root, state: stateWith(root, []) };
 };
@@ -47,7 +47,7 @@ test("one unit runs exactly once", () => {
   const { root, state } = scratchState();
   // Outside the judged tree on purpose: a counter written inside it would
   // trip the mutation guard and prove nothing about execution count.
-  const counter = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-runner-count-")), "runs.txt");
+  const counter = path.join(scratchDir("sasu-runner-count-"), "runs.txt");
   const outcome = runBatch(state, root, [unit("S1", ["node", "-e", `require("fs").appendFileSync(${JSON.stringify(counter)}, "x")`])], 60_000);
   assert.equal(outcome.results.length, 1);
   assert.equal(outcome.results[0].outcome, "green");

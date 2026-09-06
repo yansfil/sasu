@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { scratchDir } from "../scratch.mjs";
 
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, parseImplementState, persistState } from "../../dist/implement/store.js";
 
@@ -33,7 +33,7 @@ test("v5, v6 and v7 states are refused with one explicit error, never migrated",
 });
 
 test("source freshness is commit-invariant when judged bytes do not change", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-fingerprint-"));
+  const root = scratchDir("sasu-source-fingerprint-");
   fs.writeFileSync(path.join(root, "source.txt"), "same bytes\n");
   for (const args of [["init", "-q"], ["config", "user.name", "fixture"], ["config", "user.email", "fixture@example.com"], ["config", "commit.gpgsign", "false"]]) {
     assert.equal(spawnSync("git", args, { cwd: root }).status, 0);
@@ -47,7 +47,7 @@ test("source freshness is commit-invariant when judged bytes do not change", () 
 });
 
 test("baseline snapshot pins dirty paths to HEAD so pre-start work stays run-owned", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-baseline-"));
+  const root = scratchDir("sasu-baseline-");
   try {
     fs.writeFileSync(path.join(root, "base.txt"), "committed body\n");
     fs.writeFileSync(path.join(root, "gone.txt"), "deleted later\n");
@@ -91,7 +91,7 @@ test("baseline snapshot pins dirty paths to HEAD so pre-start work stays run-own
 });
 
 test("baseline snapshot without a git HEAD is the working tree", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-baseline-plain-"));
+  const root = scratchDir("sasu-baseline-plain-");
   try {
     fs.writeFileSync(path.join(root, "only.txt"), "no repository here\n");
     const baseline = captureBaselineSnapshot(root, []);
@@ -103,7 +103,7 @@ test("baseline snapshot without a git HEAD is the working tree", () => {
 });
 
 function captureSourceSnapshotSha(body) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-sha-"));
+  const dir = scratchDir("sasu-sha-");
   try {
     fs.writeFileSync(path.join(dir, "f"), body);
     return captureSourceSnapshot(dir).entries[0].sha256;
@@ -113,7 +113,7 @@ function captureSourceSnapshotSha(body) {
 }
 
 test("source snapshot excludes only the root agents bookkeeping namespace", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-agents-"));
+  const root = scratchDir("sasu-source-agents-");
   try {
     fs.mkdirSync(path.join(root, "agents", "implement"), { recursive: true });
     fs.mkdirSync(path.join(root, "src", "agents"), { recursive: true });
@@ -129,7 +129,7 @@ test("source snapshot excludes only the root agents bookkeeping namespace", () =
 });
 
 test("artifact integrity pins file identity without coupling it to the source tree", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-artifact-integrity-"));
+  const root = scratchDir("sasu-artifact-integrity-");
   try {
     fs.mkdirSync(path.join(root, "proof"), { recursive: true });
     fs.writeFileSync(path.join(root, "source.txt"), "implementation\n");
@@ -291,7 +291,7 @@ test("a verdict that contradicts its recorded inputs is refused on read and on w
   const { mutatedTree, ...legacy } = attempt({});
   assert.throws(() => parseImplementState(v8Fixture({ rows: [checkRow([legacy], { status: "green" })] })), /mutatedTree must be boolean/);
 
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-store-persist-"));
+  const root = scratchDir("sasu-store-persist-");
   try {
     const statePath = path.join(root, "agents", "runs", "fixture", "state.json");
     fs.mkdirSync(path.dirname(statePath), { recursive: true });

@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { scratchDir } from "../scratch.mjs";
 
 import { loadConfig } from "../../dist/config.js";
 import { runPrinciplesCommand } from "../../dist/principles/commands.js";
 
 function tempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 function tempProject(configJson) {

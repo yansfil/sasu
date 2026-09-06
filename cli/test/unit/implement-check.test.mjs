@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { scratchDir } from "../scratch.mjs";
 
 import {
   assertCheckRow,
@@ -59,7 +59,7 @@ test("cargo, vitest, and pytest output golden pairs ignore volatile paths, times
 // R2: a check: cell is the same shape verify.commands accepts - one argv,
 // no shell composition - plus the confinement rules an executed command needs.
 test("a check: command fails closed on composition, escape, inline code, and fetching", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-validate-"));
+  const root = scratchDir("sasu-check-validate-");
   assert.deepEqual(validateCheckCommand(root, "npm test").argv, ["npm", "test"]);
   assert.deepEqual(validateCheckCommand(root, "node test/guard.test.mjs").argv, ["node", "test/guard.test.mjs"]);
   assert.throws(() => validateCheckCommand(root, "curl https://example.com"), /outside the allowed runner forms/);
@@ -86,7 +86,7 @@ test("a check: command fails closed on composition, escape, inline code, and fet
     "node --require=/tmp/evil.js scripts/check.mjs",
   ]) assert.throws(() => validateCheckCommand(root, command), /(ambiguous attached path|path resolves outside|paths must be project-relative)/, command);
 
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-outside-"));
+  const outside = scratchDir("sasu-check-outside-");
   fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
   fs.writeFileSync(path.join(outside, "escape.mjs"), "console.log('outside');\n");
   fs.symlinkSync(path.join(outside, "escape.mjs"), path.join(root, "scripts", "escape.mjs"));
@@ -104,7 +104,7 @@ test("judge: and human: rows are refused by check with their own channel named",
 });
 
 test("check execution uses a bookkeeping HOME and does not inherit agent secrets", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-env-"));
+  const root = scratchDir("sasu-check-env-");
   // Written into the bookkeeping HOME rather than the project root: a check
   // that rewrites judged source is scored "tree-moved", and this test is
   // about the environment, not the tree.
@@ -124,7 +124,7 @@ test("check execution uses a bookkeeping HOME and does not inherit agent secrets
 });
 
 test("exit 0 is green, anything else is fail, and attempts append with consecutive failures counted", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-ledger-"));
+  const root = scratchDir("sasu-check-ledger-");
   const row = checkRow(root, script(root, "variant.cjs", "const fs=require('fs'); const word=fs.readFileSync('variant.txt','utf8').trim(); if (word==='green') process.exit(0); console.error(`Error: ${word}`); process.exit(1);\n"));
   const runState = state(root, [row]);
   for (const word of ["alpha", "bravo"]) {
@@ -151,7 +151,7 @@ test("exit 0 is green, anything else is fail, and attempts append with consecuti
 });
 
 test("a check that rewrites judged source is tree-moved even on exit 0, and an interrupted run is a failed attempt", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-tree-"));
+  const root = scratchDir("sasu-check-tree-");
   const mover = checkRow(root, script(root, "move.cjs", "require('fs').writeFileSync('generated.txt', 'moved');\n"));
   const moved = runRowCheck(state(root, [mover]), root, mover);
   assert.equal(moved.exitCode, 0);
@@ -168,7 +168,7 @@ test("a check that rewrites judged source is tree-moved even on exit 0, and an i
 });
 
 test("a sealed command that no longer tokenizes the same way is refused instead of run", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-sealed-"));
+  const root = scratchDir("sasu-check-sealed-");
   const row = checkRow(root, script(root, "pass.mjs", "console.log('green');\n"));
   row.check.argv = ["node", "scripts/other.mjs"];
   assert.throws(() => runRowCheck(state(root, [row]), root, row), /no longer tokenizes to what was sealed at start; amend the row/);
@@ -176,7 +176,7 @@ test("a sealed command that no longer tokenizes the same way is refused instead 
 });
 
 test("park and resume preserve audit history while resetting only live state", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-park-"));
+  const root = scratchDir("sasu-check-park-");
   const row = checkRow(root, script(root, "pass.mjs", "console.log('green');\n"));
   assert.throws(() => parkRow(row, { approval: "", reason: "later", evidence: null }), /requires --approval/);
   parkRow(row, { approval: "operator said park", reason: "waiting for hardware", evidence: "ticket-1" });
