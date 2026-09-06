@@ -36,65 +36,33 @@ source_intake: "current conversation"
 
 # PRD: implement design fixture
 
-## 1. Summary
-
-Exercise the design comment ledger from both ends.
-
-## 2. Problem, Goal, And Users
+## Goal
 
 A supervisor's remark has to be answered, not outlived.
 
-## 3. Scope And Non-Goals
+## Non-goals
 
-Only the design comment lifecycle is in scope.
+Nothing beyond the design comment lifecycle.
 
-## 4. Pre-Work And Required Decisions
+## Decisions
 
-None required.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | a raised remark rides the design lane's own ledger | a second review surface would need a second guard |
 
-## 5. Major Technical Structure Changes
+## Behaviors
+
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | The runner executes each command once. | check: \`npm test\` | D-01 |
+
+## Technical structure
 
 No fixture structure change.
 
-## 6. Requirements
-
-- R1. The machine criterion works. Covers AC1.
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | The runner executes each command once. Covers R1. | machine | - |
-
-## 8. PRD-Level Tasks
-
-- T1. Implement AC1. Covers R1, AC1. Depends on: none.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | fixture lifecycle | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, AC1 | fixture lifecycle passes | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand the fixture.
-
-## 12. Implementation Result Report Contract
-
-Report the design comment ledger.
 `;
 }
 
@@ -153,12 +121,10 @@ function stubEnv(root, comments = []) {
   return { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
 }
 
-function proveAndClose(root) {
-  const bound = run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]);
-  assert.equal(bound.status, 0, bound.stderr + bound.stdout);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0);
-  const closed = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
-  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+/** Prove the one check: row on the current tree, so verify has nothing to refuse. */
+function prove(root) {
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
 }
 
 const raise = (root, extra = []) => run(root, [
@@ -170,7 +136,7 @@ const raise = (root, extra = []) => run(root, [
 test("AC29: a supervisor raises a design comment, and it blocks finalize until answered", () => {
   const root = makeProject();
   const env = stubEnv(root);
-  proveAndClose(root);
+  prove(root);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
 
   const raised = raise(root);
@@ -221,7 +187,7 @@ test("AC29: a raised remark and a lane comment share one ledger, one numbering, 
     text: "the helper has no second caller",
     suggestion: "inline it",
   }]);
-  proveAndClose(root);
+  prove(root);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
   assert.equal(raise(root).json.detail.comment.id, "D2", "ids are minted from one high-water mark, not per origin");
 
@@ -246,15 +212,18 @@ test("AC29: a raised remark and a lane comment share one ledger, one numbering, 
 test("a later design round is told what changed since the lane last looked, and records that context on the attempt", () => {
   const root = makeProject();
   const env = stubEnv(root, []);
-  proveAndClose(root);
+  prove(root);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
   assert.equal(state(root).verificationAttempts.at(-1).roundContexts.design.priorAttemptId, null, "round 1 has no prior");
   const first = fs.readFileSync(path.join(root, "agents", "captures", "implement_design.prompt.txt"), "utf8");
   assert.doesNotMatch(first, /ROUND-2\+ CONTRACT/);
 
   // Round 2: one file changed, nothing open. The re-review is pointed at
-  // that file, and the context is recorded like every other lane's.
+  // that file, and the context is recorded like every other lane's. The
+  // check: row is re-proved first, because its green names the tree it was
+  // earned on and that tree just moved.
   fs.appendFileSync(path.join(root, "implementation.txt"), "second pass\n");
+  prove(root);
   stubEnv(root, [{ area: "dead-weight", path: "lib/remote.sh", text: "echo helper unused", suggestion: "delete it" }]);
   const second = run(root, ["implement", "verify"], env);
   assert.equal(second.status, 0, second.stderr + second.stdout);

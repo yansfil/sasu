@@ -11,9 +11,9 @@ const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", 
 const SESSION_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
 
 const DIAGNOSIS = {
-  summary: "the implementor keeps rebinding the same failing command",
-  likelyCause: "the check runs in the wrong cwd and never sees the built output",
-  suggestedNextStep: "rebind with --cwd cli and run the check once",
+  summary: "the implementor keeps re-running the same failing command",
+  likelyCause: "the check reads a fixture the run never wrote, so it never sees the built output",
+  suggestedNextStep: "write the fixture, then run the check once from the repository root",
 };
 
 function prd() {
@@ -28,65 +28,33 @@ source_intake: "current conversation"
 
 # PRD: implement solver fixture
 
-## 1. Summary
-
-Exercise escalation, diagnosis, and the context reset.
-
-## 2. Problem, Goal, And Users
+## Goal
 
 A stuck implementor has to be recovered by an event, not by waiting.
 
-## 3. Scope And Non-Goals
+## Non-goals
 
-Only the escalate lifecycle is in scope.
+Nothing beyond the escalate lifecycle.
 
-## 4. Pre-Work And Required Decisions
+## Decisions
 
-None required.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | the solver diagnoses and never writes | a solver that acts inherits the stuck reasoning |
 
-## 5. Major Technical Structure Changes
+## Behaviors
+
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | The runner executes each command once. | check: \`npm test\` | D-01 |
+
+## Technical structure
 
 No fixture structure change.
 
-## 6. Requirements
-
-- R1. The machine criterion works. Covers AC1.
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | The runner executes each command once. Covers R1. | machine | - |
-
-## 8. PRD-Level Tasks
-
-- T1. Implement AC1. Covers R1, AC1. Depends on: none.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | fixture lifecycle | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, AC1 | fixture lifecycle passes | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand the fixture.
-
-## 12. Implementation Result Report Contract
-
-Report the escalation ledger.
 `;
 }
 
@@ -137,7 +105,7 @@ function stubEnv(root, diagnosis = DIAGNOSIS) {
 }
 
 const escalate = (root, env, extra = []) => run(root, [
-  "implement", "escalate", "--issuer", "observer", "--reason", "eight rounds on one binding", ...extra,
+  "implement", "escalate", "--issuer", "observer", "--reason", "eight rounds on one row", ...extra,
 ], env);
 
 // --- AC33: no state write during the solver's execution ---------------------
@@ -147,7 +115,7 @@ test("AC33: the solver runs read-only and the run's only write happens after it 
   const env = stubEnv(root);
   const before = state(root);
 
-  const escalated = escalate(root, env, ["--target", "T1"]);
+  const escalated = escalate(root, env, ["--target", "B1"]);
   assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
 
   // The stub writes its capture at the moment the solver is called. The state
@@ -157,7 +125,7 @@ test("AC33: the solver runs read-only and the run's only write happens after it 
   assert.ok(fs.statSync(path.join(root, STATE_REL)).mtimeMs >= capturedAt);
 
   // And the write that did happen changed only the escalation ledger and the
-  // event log - no task, criterion, or verification moved under the solver.
+  // event log - no row or verification moved under the solver.
   const after = state(root);
   const changed = Object.keys(after).filter((key) => JSON.stringify(after[key]) !== JSON.stringify(before[key]));
   assert.deepEqual(changed.sort(), ["escalations", "events", "updatedAt"]);
@@ -176,9 +144,9 @@ test("AC33: what comes back is a diagnosis, and it is recorded as text", () => {
   assert.equal(record.error, null);
 
   const written = fs.readFileSync(path.join(root, record.handoff.diagnosisPath), "utf8");
-  assert.match(written, /rebinding the same failing command|rebinding the same failing/);
-  assert.match(written, /wrong cwd/);
-  assert.match(written, /rebind with --cwd cli/);
+  assert.match(written, /re-running the same failing command/);
+  assert.match(written, /never wrote/);
+  assert.match(written, /run the check once from the repository root/);
 });
 
 test("AC33: a solver that returns anything but the three fields is not accepted", () => {
@@ -195,7 +163,7 @@ test("AC33: a solver that returns anything but the three fields is not accepted"
 test("AC34: the replacement briefing carries the three artifacts and no conversation", () => {
   const root = makeProject();
   const env = stubEnv(root);
-  const escalated = escalate(root, env, ["--target", "AC1"]);
+  const escalated = escalate(root, env, ["--target", "B1"]);
   assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
 
   const { handoff, briefing } = escalated.json.detail;
@@ -207,9 +175,10 @@ test("AC34: the replacement briefing carries the three artifacts and no conversa
   assert.match(briefing, /clean context/);
   assert.match(briefing, /previous implementor's conversation is not available/);
 
-  // The ledger handed over is the criterion ledger, not a transcript.
+  // The ledger handed over is the row ledger, not a transcript.
   const ledger = JSON.parse(fs.readFileSync(path.join(root, handoff.checkLedgerPath), "utf8"));
-  assert.ok(Array.isArray(ledger.bindings));
+  assert.ok(Array.isArray(ledger.rows));
+  assert.equal(ledger.rows[0].rowId, "B1");
   assert.equal(typeof ledger.sha256, "string");
 });
 
@@ -254,7 +223,7 @@ test("AC35: the run-wide bound refuses the escalation past the constant", () => 
   assert.notEqual(refused.status, 0);
   assert.equal(refused.json.detail.rejectedCheck, "transition");
   assert.match(refused.json.message, new RegExp(`used all ${ESCALATE_LIMIT_PER_RUN} escalations`));
-  assert.match(refused.json.message, /park the criterion, amend the PRD, or finalize blocked/);
+  assert.match(refused.json.message, /park the row, amend the PRD, or finalize blocked/);
   assert.equal(state(root).escalations.length, ESCALATE_LIMIT_PER_RUN, "a refused escalation is not charged");
 });
 
@@ -265,9 +234,9 @@ test("AC35: escalate needs a reason and a target that exists", () => {
   assert.notEqual(noReason.status, 0);
   assert.match(noReason.json.message, /requires --reason/);
 
-  const badTarget = escalate(root, env, ["--target", "T9"]);
+  const badTarget = escalate(root, env, ["--target", "B9"]);
   assert.notEqual(badTarget.status, 0);
-  assert.match(badTarget.json.message, /unknown --target T9/);
+  assert.match(badTarget.json.message, /unknown --target B9; name a Behaviors row/);
   assert.equal(state(root).escalations.length, 0, "neither refusal spent an escalation");
 });
 
@@ -289,7 +258,8 @@ test("await names which liveness probe it used, and refuses two answers to one q
 
   // Give the waiter an event to return on, or it would sit until the stall
   // bound - correct behaviour, but not what this test is about.
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "blocked"]).status, 0);
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
 
   // Without herdr the adapter's alive hole is shut, so the waiter says the
   // probe was unavailable rather than assuming a live implementor.
@@ -317,12 +287,12 @@ test("AC41: once the bound is spent, status names the run's state and the move t
   // AC41: the supervisor deciding what to do next reads status, not the
   // message of a command it has not run yet.
   const merged = { ...process.env };
-  for (const key of ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"]) delete merged[key];
+  for (const key of SESSION_KEYS) delete merged[key];
   delete merged.HERDR_ENV;
   const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
   assert.match(summary, /escalations: 3 of 3 used/);
   assert.match(summary, /the bound is spent/);
-  assert.match(summary, /park the blocked criterion|amend the PRD|finalize --status blocked/);
+  assert.match(summary, /park the blocked row|amend the PRD|finalize --status blocked/);
   // ...and the verb it can no longer issue is not offered.
   assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
 });
@@ -341,6 +311,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   assert.match(prompt, /## What the implementor is stuck on/);
   assert.match(prompt, /## Why the supervisor escalated/);
   assert.match(prompt, /## Sealed PRD/);
+  assert.match(prompt, /## Behaviors row ledger/);
 
   // The output shape, recorded on success.
   const record = state(root).escalations.at(-1);
@@ -363,7 +334,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   const briefing = summoned.json.detail.briefing;
   assert.match(briefing, /1\. The sealed PRD/);
   assert.match(briefing, /2\. The solver's diagnosis/);
-  assert.match(briefing, /3\. The acceptance-criterion ledger/);
+  assert.match(briefing, /3\. The row ledger/);
 
   // ...and a failed summon records the other half of the shape.
   const failing = makeProject();

@@ -19,7 +19,8 @@ import { loadState, persistState } from "../../dist/implement/store.js";
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
 const SESSION_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
 
-function prd() {
+/** `checkCommand` is B1's sealed check: cell; the default shares the suite's own command. */
+function prd(checkCommand = "npm test") {
   return `---
 topic: "implement defects fixture"
 status: "ready"
@@ -31,65 +32,33 @@ source_intake: "current conversation"
 
 # PRD: implement defects fixture
 
-## 1. Summary
-
-Exercise the three defects the 2026-08-29 live run exposed.
-
-## 2. Problem, Goal, And Users
+## Goal
 
 A run that cannot converge has to be able to close honestly.
 
-## 3. Scope And Non-Goals
+## Non-goals
 
-Only the R16 defect paths are in scope.
+Nothing beyond the R16 defect paths.
 
-## 4. Pre-Work And Required Decisions
+## Decisions
 
-None required.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | the supervisor is read-only over implementation | self-restraint is not a guard |
 
-## 5. Major Technical Structure Changes
+## Behaviors
+
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | The runner executes each command once. | check: \`${checkCommand}\` | D-01 |
+
+## Technical structure
 
 No fixture structure change.
 
-## 6. Requirements
-
-- R1. The machine criterion works. Covers AC1.
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | The runner executes each command once. Covers R1. | machine | - |
-
-## 8. PRD-Level Tasks
-
-- T1. Implement AC1. Covers R1, AC1. Depends on: none.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | fixture lifecycle | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, AC1 | fixture lifecycle passes | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand the fixture.
-
-## 12. Implementation Result Report Contract
-
-Report the terminal reason.
 `;
 }
 
@@ -117,10 +86,10 @@ function runPlain(root, args) {
   return spawnSync(process.execPath, [CLI, ...args], { cwd: root, encoding: "utf8", env: merged });
 }
 
-function makeProject() {
+function makeProject({ checkCommand } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-implement-defects-e2e-"));
   fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
-  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd());
+  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd(checkCommand));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('fixture suite green')\"" } }));
   fs.mkdirSync(path.join(root, "lib"), { recursive: true });
   fs.writeFileSync(path.join(root, "lib", "remote.sh"), "#!/bin/sh\necho remote\n");
@@ -158,14 +127,11 @@ function stubEnv(root, findings = []) {
   return { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
 }
 
-function proveAndClose(root) {
-  const bound = run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]);
-  assert.equal(bound.status, 0, bound.stderr + bound.stdout);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0);
-  const closed = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
-  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+/** Prove the one check: row on the current tree, so verify has nothing to refuse. */
+function prove(root) {
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
 }
-
 
 // --- R16 ②/AC45: the supervisor is read-only, in code and in the record -----
 
@@ -173,29 +139,30 @@ test("AC45: a supervisor-labelled state change is refused and recorded as an aut
   const root = makeProject();
   stubEnv(root);
 
-  // Closing a task is the exact move that used to rest on self-restraint.
-  const refused = run(root, ["implement", "task", "--issuer", "observer", "--id", "T1", "--status", "complete"]);
+  // Running a row's check is the exact move that used to rest on self-restraint.
+  const refused = run(root, ["implement", "check", "--issuer", "observer", "--row", "B1"]);
   assert.equal(refused.status, 2, refused.stdout);
-  assert.match(refused.json.message, /observer may not issue `sasu implement task`/);
+  assert.match(refused.json.message, /observer may not issue `sasu implement check`/);
   assert.match(refused.json.message, /not authenticated/, "the message must not claim to be a security boundary");
   assert.equal(refused.json.detail.rejectedCheck, "authority");
-  assert.equal(state(root).tasks.find((entry) => entry.id === "T1").status, "pending", "the refusal changed nothing");
+  assert.equal(state(root).rows.find((entry) => entry.id === "B1").status, "pending", "the refusal changed nothing");
+  assert.deepEqual(state(root).rows.find((entry) => entry.id === "B1").attempts, []);
 
   // The refusal is IN the run's history. Without this the gate knew it had
   // refused and the record said nothing was ever attempted.
   const recorded = state(root).verbs.at(-1);
-  assert.equal(recorded.verb, "task");
+  assert.equal(recorded.verb, "check");
   assert.equal(recorded.issuer, "observer");
   assert.equal(recorded.outcome, "rejected");
   assert.equal(recorded.rejection.check, "authority");
-  assert.equal(recorded.target, "T1");
+  assert.equal(recorded.target, "B1");
 
   // Every implementation command, not just the one that hurt.
   for (const argv of [
-    ["implement", "check", "--issuer", "observer", "--ac", "AC1", "--bind", "npm test"],
-    ["implement", "artifact", "--issuer", "observer", "--ac", "AC1", "--kind", "log", "--path", "lib/remote.sh", "--description", "x"],
+    ["implement", "artifact", "--issuer", "observer", "--row", "B1", "--kind", "log", "--path", "lib/remote.sh", "--description", "x"],
     ["implement", "finalize", "--issuer", "observer"],
     ["implement", "verify", "--issuer", "observer"],
+    ["implement", "confirm", "--issuer", "observer", "--row", "B1", "--evidence", "x"],
   ]) {
     const each = run(root, argv);
     assert.equal(each.status, 2, `${argv[1]} must refuse an observer: ${each.stdout}`);
@@ -204,7 +171,7 @@ test("AC45: a supervisor-labelled state change is refused and recorded as an aut
   const history = state(root).verbs;
   assert.deepEqual(
     history.filter((entry) => entry.outcome === "rejected").map((entry) => entry.verb),
-    ["task", "check", "artifact", "finalize", "verify"],
+    ["check", "artifact", "finalize", "verify", "confirm"],
     "every refusal lands, in order",
   );
   // Read-only surfaces are not in the table, so anyone may look.
@@ -216,7 +183,7 @@ test("AC45: a supervisor-labelled state change is refused and recorded as an aut
 test("AC46: a non-convergent finding closes the run blocked, and the receipt says who declared it", () => {
   const root = makeProject();
   const env = stubEnv(root, [{ severity: "blocking", text: "the fixture pins a platform the harness cannot install" }]);
-  proveAndClose(root);
+  prove(root);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
   // A blocking finding does not fail the unified verdict; it blocks the
   // COMPLETE close, which is the state this test is about.
@@ -272,7 +239,7 @@ test("AC46: one undeclared finding is enough to keep the run non-terminal", () =
     { severity: "blocking", text: "the fixture pins an unavailable platform" },
     { severity: "blocking", text: "the second finding is an ordinary fixable bug" },
   ]);
-  proveAndClose(root);
+  prove(root);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
 
   assert.equal(run(root, ["implement", "risk", "--non-convergent", "--issuer", "human", "--id", "RF1",
@@ -295,119 +262,36 @@ test("AC46: one undeclared finding is enough to keep the run non-terminal", () =
 // --- R16/AC47: the answer above the record ----------------------------------
 
 test("AC47: status answers in a summary, and the JSON record is one flag away", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
+  const root = makeProject({ checkCommand: "node --test test/red.test.mjs" });
+  stubEnv(root);
   fs.mkdirSync(path.join(root, "test"), { recursive: true });
   fs.writeFileSync(path.join(root, "test", "red.test.mjs"), "import test from 'node:test';\ntest('red', () => { throw new Error('the fixture binary is missing'); });\n");
-  const bound = run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --test test/red.test.mjs"]);
-  assert.equal(bound.status, 0, bound.stdout);
-  // Fail it enough times to open a decision point, then park it as the
-  // supervisor - the exact state whose reason went missing in 491 lines.
-  for (let i = 0; i < 5; i += 1) run(root, ["implement", "check", "--ac", "AC1"]);
-  const parked = run(root, ["implement", "park", "--issuer", "observer", "--ac", "AC1",
+  // Fail it a few times, then park it with the human's words - the exact
+  // state whose reason went missing in 491 lines.
+  for (let i = 0; i < 3; i += 1) assert.notEqual(run(root, ["implement", "check", "--row", "B1"]).status, 0);
+  const parked = run(root, ["implement", "park", "--issuer", "observer", "--row", "B1",
+    "--approval", "TEST-FIXTURE-APPROVAL: not a real human quote",
     "--reason", "the fixture binary is missing on this runner"]);
   assert.equal(parked.status, 0, parked.stdout);
 
   const human = runPlain(root, ["implement", "status"]);
   assert.equal(human.status, 0, human.stderr + human.stdout);
   const printed = human.stdout;
-  assert.doesNotMatch(printed, /"acceptanceChecks"/, "the machine record must not be dumped on top of the answer");
+  assert.doesNotMatch(printed, /"verificationAttempts"/, "the machine record must not be dumped on top of the answer");
   assert.ok(printed.split("\n").length < 40, `the summary must stay readable, got ${printed.split("\n").length} lines`);
   // The three things a person opens status for.
-  assert.match(printed, /AC: \d+\/\d+ PASS/);
+  assert.match(printed, /기계·판사: \d+\/\d+ PASS/);
   assert.match(printed, /parked \(1\)/);
-  assert.match(printed, /AC1 \[by observer\] the fixture binary is missing on this runner/);
+  assert.match(printed, /B1 the fixture binary is missing on this runner/);
   assert.match(printed, /full record: re-run with --json/);
 
   // Nothing was taken away: --json still carries the whole record.
   const machine = run(root, ["implement", "status", "--json"]);
   assert.equal(machine.status, 0);
   assert.equal(machine.json.detail.parked.length, 1);
-  assert.equal(machine.json.detail.acceptanceChecks.length, 1);
+  assert.equal(machine.json.detail.rows.length, 1);
+  assert.equal(machine.json.detail.rows[0].attempts, 3);
   assert.ok(machine.json.summary.length > 0, "the summary travels in the JSON too, for a caller that wants it");
-});
-
-// --- R16 ①/AC44: proving a change the judged diff can never see -------------
-
-test("AC44: a declared agents/** deliverable must move from its baseline and be vouched for", () => {
-  const root = makeProject();
-  stubEnv(root);
-  const target = "agents/notes/handoff.md";
-  const absolute = path.join(root, target);
-  fs.mkdirSync(path.dirname(absolute), { recursive: true });
-  fs.writeFileSync(absolute, "before\n");
-
-  // Product-tree paths are refused: those the judged diff already sees.
-  const product = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", "lib/remote.sh"]);
-  assert.equal(product.status, 2, product.stdout);
-  assert.match(product.json.message, /product tree, and a product change is already proved by the judged diff/);
-  // ...and so are the files the harness rewrites itself.
-  const owned = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", "agents/runs/fixture/state.json"]);
-  assert.equal(owned.status, 2, owned.stdout);
-  assert.match(owned.json.message, /harness-owned/);
-
-  const declared = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", target]);
-  assert.equal(declared.status, 0, declared.stderr + declared.stdout);
-  assert.equal(declared.json.detail.bookkeeping[0].path, target);
-  assert.equal(typeof declared.json.detail.bookkeeping[0].baselineSha256, "string");
-  // A second declaration would reset the baseline the proof stands on.
-  assert.match(run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", target]).json.message, /already declared/);
-
-  const bound = run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]);
-  assert.equal(bound.status, 0, bound.stdout);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0, "the criterion's own command is green");
-
-  // Green command, untouched file: the assertion holds and the deliverable
-  // was never produced. This is the close that used to succeed.
-  const unchanged = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
-  assert.equal(unchanged.status, 2, unchanged.stdout);
-  assert.match(unchanged.json.message, /agents\/notes\/handoff\.md is unchanged since it was declared/);
-
-  // Changed, but nothing vouches for what it changed to.
-  fs.writeFileSync(absolute, "after: this run wrote the handoff\n");
-  const unvouched = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
-  assert.equal(unvouched.status, 2, unvouched.stdout);
-  assert.match(unvouched.json.message, /changed but no registered artifact vouches for its current content/);
-
-  const registered = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "file",
-    "--path", target, "--description", "the handoff this run wrote"]);
-  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "complete"]).status, 0);
-
-  // The artifact is pinned to CONTENT, not to the path: editing the file
-  // after registration re-opens the proof rather than riding the old vouch.
-  fs.writeFileSync(absolute, "after: someone edited it again\n");
-  const drifted = run(root, ["implement", "task", "--id", "T1", "--status", "pending"]);
-  assert.equal(drifted.status, 0);
-  const reopened = run(root, ["implement", "task", "--id", "T1", "--status", "complete"]);
-  assert.equal(reopened.status, 2, reopened.stdout);
-  assert.match(reopened.json.message, /no registered artifact vouches for its current content/);
-});
-
-test("AC44: a parked criterion carries no bookkeeping debt, and the proof survives a reload", () => {
-  const root = makeProject();
-  stubEnv(root);
-  const target = "agents/notes/handoff.md";
-  fs.mkdirSync(path.join(root, "agents", "notes"), { recursive: true });
-  fs.writeFileSync(path.join(root, target), "before\n");
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", target]).status, 0);
-
-  // The declaration is in the record and the record still loads: a state a
-  // later command cannot read back is the failure mode this run has hit twice.
-  const stored = state(root).acceptanceCriteria[0].check.bookkeeping;
-  assert.equal(stored.length, 1);
-  assert.equal(stored[0].path, target);
-  assert.equal(run(root, ["implement", "status"]).status, 0, "the state reloads after the declaration");
-
-  // Parking is the sanctioned way past an unprovable criterion, and it must
-  // not be defeated by an unmet bookkeeping declaration.
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --test test/red.test.mjs"]).status, 0);
-  fs.mkdirSync(path.join(root, "test"), { recursive: true });
-  fs.writeFileSync(path.join(root, "test", "red.test.mjs"), "import test from 'node:test';\ntest('red', () => { throw new Error('nope'); });\n");
-  for (let i = 0; i < 5; i += 1) run(root, ["implement", "check", "--ac", "AC1"]);
-  assert.equal(run(root, ["implement", "park", "--issuer", "observer", "--ac", "AC1",
-    "--reason", "the deliverable depends on a decision that is not made yet"]).status, 0);
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "complete"]).status, 0);
 });
 
 // --- R15/AC40-AC43: what happens after a rejection --------------------------
@@ -416,49 +300,55 @@ test("AC44: a parked criterion carries no bookkeeping debt, and the proof surviv
 // The move a person actually makes next is to replace the evidence and try
 // again, and these pin what the record says when they do.
 
-test("AC40: replacing a criterion's evidence records what became of the old, and reopens verification", () => {
+test("AC40: replacing a row's evidence records what became of the old, and reopens verification", () => {
   const root = makeProject();
   const env = stubEnv(root);
-  proveAndClose(root);
-  fs.mkdirSync(path.join(root, "shots"), { recursive: true });
-  fs.writeFileSync(path.join(root, "shots", "run.txt"), "the first capture\n");
-  const first = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
-    "--path", "shots/run.txt", "--description", "first capture"]);
+  prove(root);
+  // The capture lives under agents/, outside the judged tree: this test is
+  // about the evidence ledger reopening verification, not about the tree
+  // moving, and a capture in the product tree would move it.
+  fs.mkdirSync(path.join(root, "agents", "evidence"), { recursive: true });
+  const capture = path.join(root, "agents", "evidence", "run.txt");
+  fs.writeFileSync(capture, "the first capture\n");
+  const first = run(root, ["implement", "artifact", "--row", "B1", "--kind", "log",
+    "--path", "agents/evidence/run.txt", "--description", "first capture"]);
   assert.equal(first.status, 0, first.stderr + first.stdout);
-  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  const verified = run(root, ["implement", "verify"], env);
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
   const sealed = state(root).verificationAttempts.at(-1).inputFingerprint;
   assert.deepEqual(state(root).evidenceReplacements, [], "a first registration replaces nothing");
 
   // Re-registering identical bytes is not a resubmission: nothing was replaced.
-  const same = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
-    "--path", "shots/run.txt", "--description", "first capture"]);
+  const same = run(root, ["implement", "artifact", "--row", "B1", "--kind", "log",
+    "--path", "agents/evidence/run.txt", "--description", "first capture"]);
   assert.equal(same.status, 0);
   assert.equal(same.json.detail.unchanged, true);
   assert.deepEqual(state(root).evidenceReplacements, []);
 
   // Replacing the capture IS. The old vouch is invalidated - the file no
   // longer holds those bytes, so keeping it would be keeping a false record.
-  fs.writeFileSync(path.join(root, "shots", "run.txt"), "the corrected capture\n");
-  const replaced = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
-    "--path", "shots/run.txt", "--description", "corrected capture"]);
+  fs.writeFileSync(capture, "the corrected capture\n");
+  const replaced = run(root, ["implement", "artifact", "--row", "B1", "--kind", "log",
+    "--path", "agents/evidence/run.txt", "--description", "corrected capture"]);
   assert.equal(replaced.status, 0, replaced.stderr + replaced.stdout);
   const record = state(root).evidenceReplacements;
   assert.equal(record.length, 1);
-  assert.equal(record[0].criterionId, "AC1");
+  assert.equal(record[0].rowId, "B1");
   assert.equal(record[0].kind, "artifact");
   assert.equal(record[0].priorDisposition, "invalidated");
-  assert.match(record[0].previous, /shots\/run\.txt @ [0-9a-f]{64}/);
-  assert.equal(state(root).artifacts.filter((entry) => entry.path === "shots/run.txt").length, 1, "one current vouch, not two");
+  assert.match(record[0].previous, /agents\/evidence\/run\.txt @ [0-9a-f]{64}/);
+  assert.equal(state(root).artifacts.filter((entry) => entry.path === "agents/evidence/run.txt").length, 1, "one current vouch, not two");
 
-  // AC40: the criterion is back in front of verification - the sealed
-  // fingerprint no longer matches, so the old verdict cannot be reused.
-  assert.notEqual(state(root).verificationAttempts.at(-1).inputFingerprint, undefined);
+  // AC40: the row is back in front of verification - the sealed fingerprint
+  // no longer matches, so the old verdict cannot be reused.
   const refused = run(root, ["implement", "finalize"]);
   assert.equal(refused.status, 2, refused.stdout);
-  assert.match(refused.json.message, /fingerprint no longer matches|STALE/);
-  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  assert.match(refused.json.message, /fingerprint no longer matches/);
+  const reverified = run(root, ["implement", "verify"], env);
+  assert.equal(reverified.status, 0, reverified.stderr + reverified.stdout);
   assert.notEqual(state(root).verificationAttempts.at(-1).inputFingerprint, sealed, "a fresh attempt, not the old verdict");
-  assert.equal(run(root, ["implement", "finalize"]).status, 0);
+  const finalized = run(root, ["implement", "finalize"]);
+  assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
 });
 
 // --- RF1: a write built on a stale read is refused, never silently applied -
@@ -473,7 +363,7 @@ test("RF1: a stale write is refused and the retry keeps both sessions' history",
 
   // Session B is a real second process, writing in the same window. This is
   // the concurrency the workflow intends, not a pathological case.
-  const other = run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]);
+  const other = run(root, ["implement", "check", "--row", "B1"]);
   assert.equal(other.status, 0, other.stderr + other.stdout);
   const landed = state(root).events;
   assert.ok(landed.length > before.length, "the other session's write appended to the log");
@@ -522,7 +412,7 @@ test("RF1: a stale write is refused and the retry keeps both sessions' history",
 
 test("RF2: an artifact whose real target leaves the project is refused before its bytes are read", () => {
   const root = makeProject();
-  proveAndClose(root);
+  prove(root);
 
   // The escape is a project-relative path all the way to the judge prompt:
   // lexical normalization sees `secrets/leak.txt`, and only realpath sees the
@@ -533,7 +423,7 @@ test("RF2: an artifact whose real target leaves the project is refused before it
   fs.mkdirSync(path.join(root, "secrets"), { recursive: true });
   fs.symlinkSync(secret, path.join(root, "secrets", "leak.txt"));
 
-  const refused = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+  const refused = run(root, ["implement", "artifact", "--row", "B1", "--kind", "log",
     "--path", "secrets/leak.txt", "--description", "runtime capture"]);
   assert.equal(refused.status, 2, refused.stdout);
   assert.match(refused.json.message, /resolves outside the project/);
@@ -546,16 +436,9 @@ test("RF2: an artifact whose real target leaves the project is refused before it
   // worktree layouts that use links.
   fs.writeFileSync(path.join(root, "capture.txt"), "an honest capture\n");
   fs.symlinkSync(path.join(root, "capture.txt"), path.join(root, "secrets", "inside.txt"));
-  const accepted = run(root, ["implement", "artifact", "--ac", "AC1", "--kind", "log",
+  const accepted = run(root, ["implement", "artifact", "--row", "B1", "--kind", "log",
     "--path", "secrets/inside.txt", "--description", "runtime capture"]);
   assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
-
-  // The same boundary holds for the other agent-supplied path: a bookkeeping
-  // declaration hashes the file it names, so an escaping link leaks there too.
-  fs.symlinkSync(secret, path.join(root, "agents", "leak.txt"));
-  const declared = run(root, ["implement", "check", "--ac", "AC1", "--bookkeeping", "agents/leak.txt"]);
-  assert.equal(declared.status, 2, declared.stdout);
-  assert.match(declared.json.message, /resolves outside the project/);
 
   fs.rmSync(outside, { recursive: true, force: true });
 });
@@ -563,7 +446,7 @@ test("RF2: an artifact whose real target leaves the project is refused before it
 test("AC42: an amendment drops a suite command, and the record says what became of its result", () => {
   const root = makeProject();
   const env = stubEnv(root);
-  proveAndClose(root);
+  prove(root);
   assert.equal(run(root, ["implement", "verify"], env).status, 0);
   const sealedCommands = state(root).suite.commands.map((entry) => entry.id);
   assert.ok(sealedCommands.length > 0, "the fixture sealed at least one suite command");
@@ -579,6 +462,13 @@ test("AC42: an amendment drops a suite command, and the record says what became 
   assert.match(unknown.json.message, /unknown suite command: S99/);
   assert.deepEqual(state(root).suite.exclusions, [], "a refused exclusion leaves no trace");
 
+  // Exclusion changes what the run is measured against, so the observer may
+  // not issue it: the sealed list shrinks on the human's words alone.
+  const byObserver = run(root, ["implement", "amend", "--issuer", "observer", "--exclude-suite", victim,
+    "--approval", "yes", "--reason", "not ours"]);
+  assert.equal(byObserver.status, 2, byObserver.stdout);
+  assert.match(byObserver.json.message, /amend refused for observer/);
+
   const priorResult = state(root).suite.results.find((entry) => entry.commandId === victim)?.status ?? "none";
   const amended = run(root, ["implement", "amend", "--issuer", "human", "--exclude-suite", victim,
     "--approval", "그 명령은 이 저장소 것이 아니다, 빼자", "--reason", "the command belongs to a vendored tree this run does not own"]);
@@ -586,6 +476,7 @@ test("AC42: an amendment drops a suite command, and the record says what became 
 
   const record = state(root).amendments.at(-1);
   assert.equal(record.suiteSnapshotUpdated, true);
+  assert.equal(record.scope, "check-cells", "no Behaviors row moved");
   assert.deepEqual(record.excludedSuiteCommands.map((entry) => entry.commandId), [victim]);
   assert.equal(record.excludedSuiteCommands[0].priorResult, priorResult, "the record names what the result WAS");
   assert.equal(state(root).suite.exclusions.at(-1).commandId, victim);

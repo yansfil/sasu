@@ -7,65 +7,37 @@ review_profile: "standard"
 
 # PRD: gate-loop-ac13
 
-## 1. Summary
+## Goal
 
 A task list that renders, persists, and purges deleted tasks after a retention period.
 
-## 2. Problem, Goal, And Users
+## Non-goals
 
-Users need a widget.
+- No sharing between users.
+- No telemetry.
 
-## 3. Scope And Non-Goals
+## Decisions
 
-In scope: the widget.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | only a single local user; no sharing | the user answered so in the interview |
+| D-02 | deleted tasks are kept for 30 days and then purged | the register marks the retention decision resolved |
+| D-03 | tasks persist to local storage as JSON | repo: src/store.js already does this |
+| D-04 | no telemetry is collected | the user refused telemetry outright |
 
-## 4. Pre-Work And Required Decisions
+## Behaviors
 
-None required.
-
-## 5. Major Technical Structure Changes
-
-No major technical structure change expected.
-
-## 6. Requirements
-
-- R1. the widget renders and persists its state
-- R2. deleted tasks are kept for 30 days and then purged (D-02)
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
 | --- | --- | --- | --- |
-| AC1 | the widget renders | machine | - |
-| AC2 | the widget persists its state | machine | - |
-| AC3 | a task deleted 30 days ago is purged and a task deleted 29 days ago is not | machine | - |
+| B1 | the widget renders the task list | check: `node --test test/render.test.mjs` | D-01 |
+| B2 | the widget persists its tasks across a reload | check: `node --test test/persist.test.mjs` | D-03 |
+| B3 | a task deleted 30 days ago is purged and a task deleted 29 days ago is not | check: `node --test test/retention.test.mjs` | D-02 |
+| B4 | no request leaves the machine while the widget is used | judge: the diff adds no network call and the registered request log for B4 is empty | D-04 |
 
-## 8. PRD-Level Tasks
+## Technical structure
 
-- T1. build the widget and its retention purge. Covers R1, R2, AC1, AC2, AC3.
+One widget module, a storage adapter over local storage, and a retention sweep that runs on load.
 
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | core behavior | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, R2, AC1, AC2, AC3 | behavior covered by automated test | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand scope.
-
-## 12. Implementation Result Report Contract
-
-Report status and evidence.
