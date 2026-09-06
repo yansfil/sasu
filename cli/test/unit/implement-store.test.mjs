@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { scratchDir } from "../scratch.mjs";
 
-import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, parseImplementState, persistState } from "../../dist/implement/store.js";
+import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, parseImplementState, persistClose, persistState } from "../../dist/implement/store.js";
 
 // R10: one loader, one schema. Every earlier schema is refused with the same
 // sentence rather than migrated, so a v8 CLI can never half-read a v7 run.
@@ -304,6 +304,38 @@ test("a verdict that contradicts its recorded inputs is refused on read and on w
     state.rows[0].consecutiveFailures = 0;
     assert.throws(() => persistState(statePath, state), /refusing to write implement state.*attempts\[0\]\.outcome green contradicts/);
     assert.equal(fs.readFileSync(statePath, "utf8"), before, "the refused write left the file untouched");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A close is state first, derived files after: the receipt on disk must be a
+// projection of a state that landed (risk finding RF1, prd-template run,
+// 2026-09-06). A rejected state write leaves no derived file and no stray
+// temporary behind.
+test("a close whose state write is rejected writes no derived file", () => {
+  const root = scratchDir("sasu-store-close-");
+  try {
+    const runDir = path.join(root, "agents", "runs", "fixture");
+    const statePath = path.join(runDir, "state.json");
+    fs.mkdirSync(runDir, { recursive: true });
+    const honest = attempt({ mutatedTree: false, outcome: "green" });
+    fs.writeFileSync(statePath, v8Fixture({ projectRoot: root, rows: [checkRow([honest], { status: "green" })] }));
+    const receipt = path.join(runDir, "receipt.json");
+
+    // Another closer replaced the record after this one loaded it.
+    const { state: stale } = loadState(root, { slug: "fixture" });
+    const { state: winner } = loadState(root, { slug: "fixture" });
+    persistState(statePath, winner);
+    assert.throws(() => persistClose(statePath, stale, [{ file: receipt, text: "stale\n" }]), /implement state changed on disk/);
+    assert.equal(fs.existsSync(receipt), false, "a rejected state write leaves no derived file behind");
+    assert.deepEqual(fs.readdirSync(runDir).filter((name) => name.endsWith(".tmp")), [], "no staged temporary survives the refusal");
+
+    // The ordinary close lands state and derived files, in that order.
+    const { state: fresh } = loadState(root, { slug: "fixture" });
+    persistClose(statePath, fresh, [{ file: receipt, text: "landed\n" }]);
+    assert.equal(fs.readFileSync(receipt, "utf8"), "landed\n");
+    assert.deepEqual(fs.readdirSync(runDir).filter((name) => name.endsWith(".tmp")), []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

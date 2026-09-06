@@ -37,8 +37,12 @@ export function normalizeProjectPath(projectRoot: string, input: string): { abso
   return { absolute, relative: relative || "." };
 }
 
+export function jsonText(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
 export function writeJsonAtomic(file: string, value: unknown): void {
-  writeTextAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
+  writeTextAtomic(file, jsonText(value));
 }
 
 export function writeTextAtomic(file: string, value: string): void {
@@ -771,6 +775,14 @@ export function parseImplementState(text: string): ImplementState {
  * stays at zero and only the quiet overwrite is removed. A refused writer
  * reloads and re-applies; a lost write cannot be reloaded.
  *
+ * 2026-09-06 (prd-template run, risk findings RF1-RF3): what this check does
+ * not cover is the window between a state that landed and the receipt derived
+ * from it - a closer resuming after a later closer, or a derived write that
+ * fails after the commit. `persistClose` narrows it by ordering alone (derived
+ * files staged before the commit, renamed after it); closing it fully needs a
+ * write lock, which D-45 forbids without the user's say. The residual race is
+ * on the risk ledger for that decision.
+ *
  * Keyed by the state object so the baseline cannot be serialized into the
  * record - the check is about the file, and state.json stays the only record.
  */
@@ -830,6 +842,34 @@ export function persistState(statePath: string, state: ImplementState): void {
   // write is not a conflict with the first.
   stateBaseline.set(state, { statePath, digest: sha256(text) });
   writeActivePointer(state.projectRoot, state);
+}
+
+/**
+ * Close a run record: persist the state, then put the files derived from it
+ * in place.
+ *
+ * State first, because `persistState` is the compare-and-swap: a receipt
+ * written before it could survive a rejected state write and contradict the
+ * record (risk finding RF1, prd-template run, 2026-09-06). The derived files
+ * are staged as temporaries before the commit, so a write that fails leaves
+ * nothing committed, and only renames follow the commit. What ordering alone
+ * cannot remove - two closers interleaving after both committed - is recorded
+ * on the risk ledger under D-45 (no lock file without the user's say).
+ */
+export function persistClose(statePath: string, state: ImplementState, derived: Array<{ file: string; text: string }>): void {
+  const staged = derived.map((entry) => {
+    fs.mkdirSync(path.dirname(entry.file), { recursive: true });
+    const temporary = `${entry.file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temporary, entry.text);
+    return { file: entry.file, temporary };
+  });
+  try {
+    persistState(statePath, state);
+  } catch (error) {
+    for (const entry of staged) fs.rmSync(entry.temporary, { force: true });
+    throw error;
+  }
+  for (const entry of staged) fs.renameSync(entry.temporary, entry.file);
 }
 
 /**
