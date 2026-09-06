@@ -9,7 +9,10 @@ const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", 
 const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
 const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "utf8");
 
-function prd(profile = "standard", sourceIntake = "current conversation") {
+/** One more judge: row for fixtures that need a second judged question. */
+const judgeRow = (id, behavior) => `| ${id} | ${behavior} | judge: the log at agents/runs/fixture/artifacts/${id.toLowerCase()}.log | D-01 |`;
+
+function prd({ profile = "standard", sourceIntake = "current conversation", checkCommand = "npm test", extraRows = [] } = {}) {
   return `---
 topic: "implement fixture"
 status: "ready"
@@ -21,92 +24,41 @@ source_intake: "${sourceIntake}"
 
 # PRD: implement fixture
 
-## 1. Summary
+## Goal
 
-Prove the implement command flow.
+Prove the implement command flow through one state.
 
-## 2. Problem, Goal, And Users
+## Non-goals
 
-The caller needs one closing flow.
+A second state store.
 
-## 3. Scope And Non-Goals
+## Decisions
 
-Only the CLI flow is included.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | one verify command with separate acceptance and fidelity judges | the two questions have different owners |
 
-## 4. Pre-Work And Required Decisions
+## Behaviors
 
-### 4.1 Pre-Work Before Implementation
-
-None required.
-
-### 4.2 Human Decisions Before PRD Approval
-
-None required.
-
-### 4.3 Decision Traceability For Fidelity Review
-
-- D-01 (user, resolved): use one verify command with separate acceptance and fidelity judges.
-
-## 5. Major Technical Structure Changes
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | A proved row can be verified and finalized from one state. | check: \`${checkCommand}\` | D-01 |
+| B2 | The finalized state reads honestly to its operator. | judge: the log at agents/runs/fixture/artifacts/b2.log | D-01 |
+${extraRows.map((row) => `${row}\n`).join("")}
+## Technical structure
 
 The CLI owns state.
 
-## 6. Requirements
-
-- R1. The flow completes through one state. Covers AC1.
-- R2. The finalized state reads honestly. Covers AC2.
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | A completed task can be verified and finalized from one state. | machine | - |
-| AC2 | The finalized state reads honestly to its operator. | judged | agents/runs/fixture/artifacts/ac2.log |
-
-## 8. PRD-Level Tasks
-
-- T1. Implement the flow. Covers R1.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | state flow | none |
-| live judge runtime | yes | judge lanes | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, R2, AC1, AC2 | public state flow passes its automated check | yes | no |
-| V2 | automated behavior | R1, R2, AC1, AC2 | the same public state flow remains idempotent | yes | no |
-| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |
-| V4 | live judge runtime | R2, AC2 | the finalized state's honesty is judged from the implementation | yes | no |
-
-### 9.3 Human Verification
-
-None required.
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not add another state store.
-
-## 12. Implementation Result Report Contract
-
-Report the receipt.
 `;
 }
 
-function makeProject({ profile = "standard", testExit = 0, sourceIntake = "current conversation" } = {}) {
+function makeProject({ profile = "standard", testExit = 0, sourceIntake = "current conversation", checkCommand = "npm test", extraRows = [] } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-implement-"));
   fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
-  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd(profile, sourceIntake));
+  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd({ profile, sourceIntake, checkCommand, extraRows }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `node -e "console.log('MECHANICAL-PROOF'); process.exit(${testExit})"` } }));
   for (const args of [["init", "-q"], ["add", "package.json"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"]]) {
     const run = spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -120,9 +72,9 @@ function stub(root, profile = "standard") {
   const file = path.join(root, "agents", "judge.json");
   fs.writeFileSync(file, JSON.stringify({
     byPurpose: {
-      "implement:acceptance:AC2": {
+      "implement:acceptance:B2": {
         verdict: "PASS",
-        criteria: [{ id: "AC2", verdict: "PASS", reason: "the finalized state reads honestly", evidence: "public CLI transcript" }],
+        criteria: [{ id: "B2", verdict: "PASS", reason: "the finalized state reads honestly", evidence: "public CLI transcript" }],
       },
       "implement:fidelity": {
         verdict: "PASS",
@@ -169,41 +121,43 @@ function writeFixtureImplementation(root) {
   fs.writeFileSync(path.join(workRoot, "fixture-implementation.txt"), "fixture implementation created after start\n");
 }
 
-function greenAc(root, ac = "AC1", { command = "npm test", env } = {}) {
-  const options = env === undefined ? {} : { env };
-  const bound = run(root, ["implement", "check", "--ac", ac, "--bind", command], options);
-  assert.equal(bound.status, 0, bound.stderr + bound.stdout);
-  const checked = run(root, ["implement", "check", "--ac", ac], options);
+function greenRow(root, row = "B1", { env } = {}) {
+  const checked = run(root, ["implement", "check", "--row", row], env === undefined ? {} : { env });
   assert.equal(checked.status, 0, checked.stderr + checked.stdout);
 }
 
-function registerDeclaredEvidence(root, ac = "AC2", { env } = {}) {
-  const rel = path.posix.join("agents", "runs", "fixture", "artifacts", `${ac.toLowerCase()}.log`);
+// A check: row's green names the tree it was earned on, and verify refuses a
+// green earned on an older tree. Every fixture that edits judged source after
+// proving its rows re-proves them here before it verifies.
+function greenChecks(root, { env } = {}) {
+  for (const row of readState(root).rows) {
+    if (row.check.kind === "check" && row.status !== "parked") greenRow(root, row.id, { env });
+  }
+}
+
+function registerDeclaredEvidence(root, row = "B2", { env } = {}) {
+  const rel = path.posix.join("agents", "runs", "fixture", "artifacts", `${row.toLowerCase()}.log`);
   fs.mkdirSync(path.join(root, "agents", "runs", "fixture", "artifacts"), { recursive: true });
-  fs.writeFileSync(path.join(root, rel), `${ac} declared evidence\n`);
+  fs.writeFileSync(path.join(root, rel), `${row} declared evidence\n`);
   const registered = run(root, [
-    "implement", "artifact", "--ac", ac, "--kind", "log", "--path", rel, "--description", `${ac} declared evidence`,
+    "implement", "artifact", "--row", row, "--kind", "log", "--path", rel, "--description", `${row} declared evidence`,
   ], env === undefined ? {} : { env });
   assert.equal(registered.status, 0, registered.stderr + registered.stdout);
 }
 
-function startAndClose(root, { sourceChange = true, checkCommand = "npm test", leaveUnregistered = [] } = {}) {
+function startAndProve(root, { sourceChange = true, leaveUnregistered = [] } = {}) {
   const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]);
   assert.equal(started.status, 0, started.stderr + started.stdout);
-  // A completed task normally represents source work after the baseline was
+  // A proved run normally represents source work after the baseline was
   // captured. The 2026-08-25 empty-diff incident proved that fixtures which
-  // close tasks without making that work accidentally exercise an invalid run.
+  // prove rows without making that work accidentally exercise an invalid run.
   if (sourceChange) writeFixtureImplementation(root);
-  for (const criterion of readState(root).acceptanceCriteria) {
-    if (criterion.judgment === "machine") greenAc(root, criterion.id, { command: checkCommand });
-    // A judged criterion is refused before its judge is summoned unless the
-    // evidence its row declares is registered, so the fixture registers it.
-    if (criterion.judgment === "judged" && !leaveUnregistered.includes(criterion.id)) {
-      registerDeclaredEvidence(root, criterion.id);
-    }
+  for (const row of readState(root).rows) {
+    // A judge: row is refused before its judge is summoned unless the
+    // evidence its cell declares is registered, so the fixture registers it.
+    if (row.check.kind === "judge" && !leaveUnregistered.includes(row.id)) registerDeclaredEvidence(root, row.id);
   }
-  const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
-  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+  greenChecks(root);
 }
 
 test("a qa-log-backed PRD cannot start before both PRD review gates pass", () => {
@@ -222,7 +176,7 @@ test("a qa-log-backed PRD cannot start before both PRD review gates pass", () =>
 
 test("a legacy agents/implement/<slug> run resolves by slug and by legacy active pointer", () => {
   const root = makeProject();
-  startAndClose(root);
+  startAndProve(root);
   // Simulate a run recorded before the unified layout: state under the legacy
   // namespace, pointer at the legacy location, nothing under agents/runs.
   fs.mkdirSync(path.join(root, "agents", "implement"), { recursive: true });
@@ -437,12 +391,11 @@ test("an unborn Git repository still requires attribution and keeps its files in
 
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  greenAc(root);
   registerDeclaredEvidence(root);
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
+  greenChecks(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  const prompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC2.prompt.txt"), "utf8");
+  const prompt = fs.readFileSync(path.join(capture, "implement_acceptance_B2.prompt.txt"), "utf8");
   assert.match(prompt, /- impl\.txt \[text,/);
   assert.match(prompt, /- package\.json \[text,/);
 });
@@ -452,9 +405,9 @@ test("a real second unified round dispositions prior findings and admits only de
   const { file, capture } = stub(root, "high-risk");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   const configured = JSON.parse(fs.readFileSync(file, "utf8"));
-  configured.byPurpose["implement:acceptance:AC2"] = {
+  configured.byPurpose["implement:acceptance:B2"] = {
     verdict: "FAIL",
-    criteria: [{ id: "AC2", verdict: "FAIL", reason: "the first failure remains", evidence: "" }],
+    criteria: [{ id: "B2", verdict: "FAIL", reason: "the first failure remains", evidence: "" }],
   };
   configured.byPurpose["implement:fidelity"] = {
     verdict: "FAIL",
@@ -470,15 +423,17 @@ test("a real second unified round dispositions prior findings and admits only de
     findings: [{ severity: "blocking", text: "first blocking risk" }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
-  startAndClose(root);
+  startAndProve(root);
   const first = run(root, ["implement", "verify"], { env });
   assert.equal(first.status, 1, first.stderr + first.stdout);
+  assert.equal(readState(root).rows.find((row) => row.id === "B2").status, "FAIL", "a judge: row takes the lane's verdict as its status");
 
   fs.writeFileSync(path.join(root, "impl.txt"), "round two changed this exact path\n");
-  configured.byPurpose["implement:acceptance:AC2"] = {
+  greenChecks(root);
+  configured.byPurpose["implement:acceptance:B2"] = {
     verdict: "FAIL",
     criteria: [{
-      id: "AC2",
+      id: "B2",
       verdict: "FAIL",
       reason: "a different changed-path defect exists",
       evidence: "impl.txt",
@@ -520,15 +475,16 @@ test("a real second unified round dispositions prior findings and admits only de
   assert.equal(second.json.detail.attempt.lanes.risk.verdict, "FAIL");
 
   const latest = readState(root).verificationAttempts.at(-1);
-  assert.deepEqual(latest.roundContexts.acceptance.AC1.changedPaths, ["impl.txt"]);
+  assert.deepEqual(latest.roundContexts.acceptance.B2.changedPaths, ["impl.txt"]);
   assert.deepEqual(latest.roundContexts.fidelity.changedPaths, ["impl.txt"]);
   assert.deepEqual(latest.roundContexts.risk.changedPaths, ["impl.txt"]);
   // The design lane shares the same round shape: one prior attempt, the same
   // changed-path delta, recorded on the attempt like every other lane's.
   assert.deepEqual(latest.roundContexts.design.changedPaths, ["impl.txt"]);
   assert.equal(latest.roundContexts.design.priorAttemptId, latest.roundContexts.risk.priorAttemptId);
-  assert.equal(latest.lanes.acceptance.result.criteria[0].priorDisposition.status, "resolved");
-  assert.deepEqual(latest.lanes.acceptance.result.criteria[0].deltaBasis, { kind: "changed-path", value: "impl.txt" });
+  const judged = latest.lanes.acceptance.result.criteria.find((entry) => entry.id === "B2");
+  assert.equal(judged.priorDisposition.status, "resolved");
+  assert.deepEqual(judged.deltaBasis, { kind: "changed-path", value: "impl.txt" });
   assert.equal(latest.lanes.fidelity.result.checks[0].priorDisposition.status, "resolved");
   assert.deepEqual(latest.lanes.risk.result.priorDispositions, [{
     id: "RF1",
@@ -553,16 +509,16 @@ test("a partial judge error cannot erase older unresolved acceptance or risk fin
   const { file, capture } = stub(root, "high-risk");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   const configured = JSON.parse(fs.readFileSync(file, "utf8"));
-  configured.byPurpose["implement:acceptance:AC2"] = {
+  configured.byPurpose["implement:acceptance:B2"] = {
     verdict: "FAIL",
-    criteria: [{ id: "AC2", verdict: "FAIL", reason: "older unresolved acceptance", evidence: "" }],
+    criteria: [{ id: "B2", verdict: "FAIL", reason: "older unresolved acceptance", evidence: "" }],
   };
   configured.byPurpose["implement:risk"] = {
     verdict: "FAIL",
     findings: [{ severity: "blocking", text: "older unresolved risk" }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
-  startAndClose(root);
+  startAndProve(root);
 
   const first = run(root, ["implement", "verify"], { env });
   assert.equal(first.status, 1, first.stderr + first.stdout);
@@ -570,8 +526,8 @@ test("a partial judge error cannot erase older unresolved acceptance or risk fin
 
   // Both outputs are invalid only for their own lane. Fidelity still settles,
   // leaving a mixed partial attempt that must not become the lineage source
-  // for acceptance AC1 or risk.
-  configured.byPurpose["implement:acceptance:AC2"] = { verdict: "PASS", criteria: [] };
+  // for acceptance B2 or risk.
+  configured.byPurpose["implement:acceptance:B2"] = { verdict: "PASS", criteria: [] };
   configured.byPurpose["implement:risk"] = { verdict: "PASS", findings: [] };
   fs.writeFileSync(file, JSON.stringify(configured));
   const partial = run(root, ["implement", "verify"], { env });
@@ -580,10 +536,11 @@ test("a partial judge error cannot erase older unresolved acceptance or risk fin
   assert.equal(partial.json.detail.attempt.lanes.risk.verdict, "ERROR");
 
   fs.writeFileSync(path.join(root, "impl.txt"), "the recovery changed this path\n");
-  configured.byPurpose["implement:acceptance:AC2"] = {
+  greenChecks(root);
+  configured.byPurpose["implement:acceptance:B2"] = {
     verdict: "PASS",
     criteria: [{
-      id: "AC2",
+      id: "B2",
       verdict: "PASS",
       reason: "older acceptance is fixed",
       evidence: "impl.txt",
@@ -605,7 +562,7 @@ test("a partial judge error cannot erase older unresolved acceptance or risk fin
   assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
 
   const latest = readState(root).verificationAttempts.at(-1);
-  assert.equal(latest.lanes.acceptance.result.criteria[0].priorDisposition.status, "resolved");
+  assert.equal(latest.lanes.acceptance.result.criteria.find((entry) => entry.id === "B2").priorDisposition.status, "resolved");
   assert.deepEqual(latest.lanes.risk.result.priorDispositions, [
     {
       id: "RF1",
@@ -614,23 +571,23 @@ test("a partial judge error cannot erase older unresolved acceptance or risk fin
       deltaBasis: { kind: "changed-path", value: "impl.txt" },
     },
   ]);
-  for (const name of ["implement_acceptance_AC2.prompt.txt", "implement_risk.prompt.txt"]) {
+  for (const name of ["implement_acceptance_B2.prompt.txt", "implement_risk.prompt.txt"]) {
     const prompt = fs.readFileSync(path.join(capture, name), "utf8");
     assert.match(prompt, new RegExp(`PRIOR ATTEMPT: ${firstAttempt.id}`));
     assert.match(prompt, /older unresolved/);
   }
 });
 
-test("verify refuses a completed run whose run-owned change set is empty", () => {
+test("verify refuses a proved run whose run-owned change set is empty", () => {
   const root = makeProject();
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root, { sourceChange: false });
+  startAndProve(root, { sourceChange: false });
 
   const refused = run(root, ["implement", "verify"], { env });
   assert.equal(refused.status, 1, refused.stderr + refused.stdout);
   assert.equal(refused.json.detail.reason, "empty-run-owned-change-set");
-  assert.match(refused.json.message, /run-owned change set is empty after 1 complete task/);
+  assert.match(refused.json.message, /run-owned change set is empty/);
   assert.match(refused.json.message, /`sasu implement start` ran after the implementation was committed/);
   assert.match(refused.json.message, /dispositioned pre-existing at start/);
   assert.match(refused.json.message, /`sasu implement retire`/);
@@ -640,71 +597,56 @@ test("verify refuses a completed run whose run-owned change set is empty", () =>
   assert.equal(fs.existsSync(capture), false, "no judge may run for an empty change set");
 });
 
-test("open tasks and mechanical failures stop before either judge", () => {
-  const root = makeProject({ testExit: 3 });
+// R3/R4: an unproved check: row stops verify before anything runs, and the
+// suite axis blocks on its own. A command no row names is watching a
+// regression nobody else is, so a fully green row score cannot clear it.
+test("an unproved check: row and a red suite command each stop before either judge", () => {
+  const root = makeProject({ testExit: 3, checkCommand: "node --version" });
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]).status, 0);
-  const open = run(root, ["implement", "verify"], { env });
-  assert.equal(open.status, 2);
-  assert.match(open.json.message, /open: T1/);
+  const unproved = run(root, ["implement", "verify"], { env });
+  assert.equal(unproved.status, 2);
+  assert.match(unproved.json.message, /verify requires every check: row green on the current tree; B1 is pending/);
+  assert.match(unproved.json.message, /sasu implement check --row B<n>/);
   assert.equal(fs.existsSync(capture), false);
+  assert.equal(readState(root).verificationAttempts.length, 0, "a refusal before any command must not spend an attempt");
 
   writeFixtureImplementation(root);
-  greenAc(root, "AC1", { command: "node --version" });
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
-  const failed = run(root, ["implement", "verify"], { env });
-  assert.equal(failed.status, 1);
-  assert.equal(failed.json.detail.judgeCalls, 0);
-  assert.equal(fs.existsSync(capture), false);
-  assert.equal(failed.json.detail.attempt.mechanical.length, 1, "V1 and V2 share one (cwd, command) execution");
-  assert.deepEqual(failed.json.detail.attempt.mechanical[0].verificationIds, ["V1", "V2"]);
-});
-
-// R2: the suite axis blocks on its own. A command no acceptance criterion
-// binds is watching a regression nobody else is, so a fully green AC score
-// cannot clear it.
-test("an orphan suite failure blocks the run with every acceptance criterion green", () => {
-  const root = makeProject({ testExit: 3 });
-  const { file, capture } = stub(root);
-  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  // Every AC is bound to a command that is NOT the suite command, so `npm
-  // test` ends up bound by no criterion at all.
-  startAndClose(root, { checkCommand: "node --version" });
-  for (const criterion of readState(root).acceptanceCriteria) {
-    if (criterion.judgment === "machine") assert.equal(criterion.check.status, "green", `${criterion.id} must be green for this fixture to prove anything`);
-  }
-
+  registerDeclaredEvidence(root);
+  greenChecks(root);
+  assert.equal(readState(root).rows.find((row) => row.id === "B1").status, "green", "B1 must be green for this fixture to prove anything");
   const blocked = run(root, ["implement", "verify"], { env });
   assert.equal(blocked.status, 1);
-  assert.equal(blocked.json.detail.judgeCalls, 0, "an orphan suite failure stops before any judge");
-  assert.match(blocked.json.message, /no acceptance criterion binds failed/);
-  assert.match(blocked.json.message, /independently of the AC score/);
-  assert.match(blocked.json.message, /npm test/);
+  assert.equal(blocked.json.detail.judgeCalls, 0, "a red suite command stops before any judge");
+  assert.match(blocked.json.message, /suite 0\/1 GREEN; npm test failed with exit 3/);
+  assert.match(blocked.json.message, /amendment carrying verbatim human approval/);
   assert.equal(fs.existsSync(capture), false);
+  assert.equal(blocked.json.detail.attempt.mechanical.length, 1);
+  assert.equal(blocked.json.detail.attempt.mechanical[0].command, "npm test");
 
   const state = readState(root);
   const suiteResult = state.suite.results.find((entry) => entry.commandId === "S1");
   assert.equal(suiteResult.status, "RED", "the suite axis records its own verdict");
-  assert.deepEqual(suiteResult.attributedCriteria, [], "and records that no criterion shares it");
+  assert.equal(state.rows.find((row) => row.id === "B1").status, "green", "the row axis is untouched by the suite's red");
 });
 
-// AC4: a suite command is not a criterion. The refusal must say why, not just
-// "unknown acceptance criterion S1".
+// A suite command is not a row. The refusal must say why, not just
+// "unknown row S1".
 test("a sealed suite command cannot be parked", () => {
   const root = makeProject();
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
   assert.equal(readState(root).suite.commands[0].id, "S1");
 
-  const refused = run(root, ["implement", "park", "--ac", "S1", "--approval", "user: park it", "--reason", "flaky"]);
+  const refused = run(root, ["implement", "park", "--row", "S1", "--approval", "user: park it", "--reason", "flaky"]);
   assert.notEqual(refused.status, 0);
-  assert.match(refused.json.message, /sealed suite command, not an acceptance criterion/);
+  assert.match(refused.json.message, /sealed suite command, not a Behaviors row/);
   assert.match(refused.json.message, /cannot be parked/);
   assert.match(refused.json.message, /amendment carrying verbatim human approval/);
   assert.deepEqual(readState(root).suite.exclusions, [], "a refused park must not become an exclusion");
 });
 
-// AC5: the list is sealed at start. What the run is measured against must not
+// The list is sealed at start. What the run is measured against must not
 // change because someone edited config mid-run.
 test("the sealed suite list ignores a mid-run edit of agents/config.json", () => {
   const root = makeProject();
@@ -716,10 +658,8 @@ test("the sealed suite list ignores a mid-run edit of agents/config.json", () =>
     verify: { commands: { test: "node -e \"process.exit(0)\"", build: "node -e \"process.exit(0)\"" } },
   }));
   writeFixtureImplementation(root);
-  for (const criterion of readState(root).acceptanceCriteria) {
-    if (criterion.judgment === "machine") greenAc(root, criterion.id, { command: "node --version" });
-  }
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
+  registerDeclaredEvidence(root);
+  greenChecks(root);
   run(root, ["implement", "verify"]);
 
   const after = readState(root);
@@ -728,51 +668,16 @@ test("the sealed suite list ignores a mid-run edit of agents/config.json", () =>
   assert.equal(after.suite.sealedAt, readState(root).suite.sealedAt);
 });
 
-// R6: one validation, one write, no invalidation.
-test("resequence reorders pending tasks, refuses anything that is not a permutation, and records both", () => {
-  const root = makeProject();
-  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
-  const pending = readState(root).tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
-  assert.ok(pending.length >= 1);
-
-  // resequence is a plan-layer verb and the plan belongs to the supervisor,
-  // so every call here declares that issuer.
-  const partial = run(root, ["implement", "resequence", "--order", pending[0], "--issuer", "observer"]);
-  if (pending.length > 1) {
-    assert.notEqual(partial.status, 0);
-    assert.match(partial.json.message, /must name every pending task exactly once/);
-  }
-  const unknown = run(root, ["implement", "resequence", "--order", [...pending, "T99"].join(","), "--issuer", "observer"]);
-  assert.notEqual(unknown.status, 0);
-  assert.match(unknown.json.message, /unknown task\(s\) in resequence: T99/);
-
-  // Every refusal is in the history with the check that produced it, so a
-  // supervisor can read why nothing happened.
-  const refusals = readState(root).verbs.filter((entry) => entry.outcome === "rejected");
-  assert.ok(refusals.length >= 1);
-  assert.equal(refusals.at(-1).verb, "resequence");
-  assert.equal(refusals.at(-1).rejection.check, "arguments");
-
-  const reversed = [...pending].reverse();
-  const accepted = run(root, ["implement", "resequence", "--order", reversed.join(","), "--issuer", "observer", "--reason", "drive the blocked one last"]);
-  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
-  const after = readState(root);
-  assert.deepEqual(after.tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id), reversed);
-  assert.equal(after.verbs.at(-1).outcome, "accepted");
-  assert.equal(after.verbs.at(-1).reason, "drive the blocked one last");
-  assert.match(accepted.json.message, /no evidence was invalidated/);
-});
-
-// R7/R16 (2): the supervisor plans and judges; it does not build, and until
-// now nothing but self-restraint stopped it from saying the building is done.
+// The supervisor plans and judges; it does not build, and until now nothing
+// but self-restraint stopped it from saying the building is done.
 test("the supervisor is refused implementation commands and accepted on its own verbs", () => {
   const root = makeProject();
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
   writeFixtureImplementation(root);
 
   for (const argv of [
-    ["implement", "task", "--id", "T1", "--evidence", "done"],
-    ["implement", "check", "--ac", "AC1", "--bind", "node --version"],
+    ["implement", "check", "--row", "B1"],
+    ["implement", "artifact", "--row", "B2", "--kind", "log", "--path", "package.json", "--description", "not evidence"],
     ["implement", "verify"],
     ["implement", "finalize", "--status", "complete"],
   ]) {
@@ -781,68 +686,48 @@ test("the supervisor is refused implementation commands and accepted on its own 
     assert.match(refused.json.message, /observer may not issue/);
     assert.equal(refused.json.detail.rejectedCheck, "authority");
   }
+  assert.equal(readState(root).rows.find((row) => row.id === "B1").attempts.length, 0, "a refused check must not run the command");
 
-  const pending = readState(root).tasks.filter((entry) => entry.status === "pending").map((entry) => entry.id);
-  const ok = run(root, ["implement", "resequence", "--order", [...pending].reverse().join(","), "--issuer", "observer", "--reason", "reorder"]);
+  // A park is the supervisor's own channel, and still needs the human's words.
+  const unquoted = run(root, ["implement", "park", "--row", "B1", "--issuer", "observer", "--reason", "I would rather not"]);
+  assert.notEqual(unquoted.status, 0);
+  assert.match(unquoted.json.message, /requires --approval/);
+  assert.equal(unquoted.json.detail.rejectedCheck, "transition");
+  assert.equal(readState(root).verbs.at(-1).rejection.check, "transition", "the refused verb is in the history with the check that refused it");
+  const ok = run(root, ["implement", "park", "--row", "B1", "--issuer", "observer", "--approval", "user: park B1 for now", "--reason", "blocked on a missing fixture"]);
   assert.equal(ok.status, 0, ok.stderr + ok.stdout);
   assert.equal(readState(root).verbs.at(-1).issuer, "observer");
+  assert.equal(readState(root).rows.find((row) => row.id === "B1").parks.at(-1).approval, "user: park B1 for now");
 
   // An unknown label is an argument problem, not an authority one.
-  const bad = run(root, ["implement", "resume", "--ac", "AC1", "--issuer", "root"]);
+  const bad = run(root, ["implement", "resume", "--row", "B1", "--issuer", "root"]);
   assert.notEqual(bad.status, 0);
   assert.equal(bad.json.detail.rejectedCheck, "arguments");
 });
 
-// AC20: the supervisor may set aside a criterion the harness already flagged,
-// and may not be the one who decides it is stuck.
-test("an observer park needs an open decision point, and a human park needs the quote", () => {
-  const root = makeProject({ testExit: 1 });
-  assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
-  writeFixtureImplementation(root);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
-
-  const unflagged = run(root, ["implement", "park", "--ac", "AC1", "--issuer", "observer", "--reason", "I would rather not"]);
-  assert.notEqual(unflagged.status, 0);
-  assert.match(unflagged.json.message, /no open decision point/);
-  assert.equal(unflagged.json.detail.rejectedCheck, "transition");
-  assert.equal(readState(root).acceptanceCriteria.find((entry) => entry.id === "AC1").check.status, "pending");
-  // The refused verb is in the history with the check that refused it.
-  assert.equal(readState(root).verbs.at(-1).rejection.check, "transition");
-
-  // Fail it until the harness posts a decision point of its own.
-  for (let round = 0; round < 6; round += 1) run(root, ["implement", "check", "--ac", "AC1"]);
-  const flagged = readState(root).acceptanceCriteria.find((entry) => entry.id === "AC1");
-  assert.ok(flagged.check.decisionPoints.some((point) => point.resolvedAt === null), "the fixture must reach an open decision point");
-
-  const parked = run(root, ["implement", "park", "--ac", "AC1", "--issuer", "observer", "--reason", "blocked on a missing fixture"]);
-  assert.equal(parked.status, 0, parked.stderr + parked.stdout);
-  const record = readState(root).acceptanceCriteria.find((entry) => entry.id === "AC1").check.parks.at(-1);
-  assert.equal(record.parkedBy, "observer");
-  assert.equal(record.approval, "");
-});
-
-// Reported by a peer review of main: one --bind on a parked criterion left
-// status "pending" against an active park record, which parseImplementState
-// refuses - bricking every later command with no recovery path.
-test("binding a Check on a parked criterion is refused instead of bricking the run", () => {
+// One check on a parked row used to leave status "pending" against an active
+// park record, which parseImplementState refuses - bricking every later
+// command with no recovery path.
+test("a check on a parked row is refused instead of bricking the run", () => {
   const root = makeProject();
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
   writeFixtureImplementation(root);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
-  assert.equal(run(root, ["implement", "park", "--ac", "AC1", "--approval", "user: park it", "--reason", "later"]).status, 0);
+  greenRow(root);
+  assert.equal(run(root, ["implement", "park", "--row", "B1", "--approval", "user: park it", "--reason", "later"]).status, 0);
 
-  const refused = run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --version", "--reason", "swap"]);
+  const refused = run(root, ["implement", "check", "--row", "B1"]);
   assert.notEqual(refused.status, 0);
   assert.match(refused.json.message, /is parked; run `sasu implement resume/);
 
   // The run is still readable and still recoverable, which is the point.
   assert.equal(run(root, ["implement", "status"]).status, 0);
-  assert.equal(run(root, ["implement", "resume", "--ac", "AC1"]).status, 0);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "node --version", "--reason", "swap"]).status, 0);
+  assert.equal(run(root, ["implement", "resume", "--row", "B1"]).status, 0);
+  greenRow(root);
+  assert.equal(readState(root).rows.find((row) => row.id === "B1").attempts.length, 2, "a park never deletes prior attempts");
 });
 
-// AC24: the log is the supervisor's memory of the run. Once written, an entry
-// is never edited or removed for the life of the run.
+// The log is the supervisor's memory of the run. Once written, an entry is
+// never edited or removed for the life of the run.
 test("the event log grows append-only across real mutations and never replays past a cursor", () => {
   const root = makeProject();
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md", "--dirty-attribution", "run-owned"]).status, 0);
@@ -851,11 +736,11 @@ test("the event log grows append-only across real mutations and never replays pa
   const snapshots = [];
   const record = () => { snapshots.push(readState(root).events.map((entry) => JSON.stringify(entry))); };
   record();
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
+  greenRow(root);
   record();
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0);
+  assert.equal(run(root, ["implement", "park", "--row", "B1", "--approval", "user: park it", "--reason", "later"]).status, 0);
   record();
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "done"]).status, 0);
+  assert.equal(run(root, ["implement", "resume", "--row", "B1"]).status, 0);
   record();
 
   // Every snapshot is a prefix of the next: entries only ever get added.
@@ -870,7 +755,7 @@ test("the event log grows append-only across real mutations and never replays pa
   assert.deepEqual(events.map((entry) => entry.id), events.map((_, index) => index + 1), "ids are monotonic from 1");
   assert.deepEqual(
     events.map((entry) => entry.kind),
-    ["check-bound", "check-attempt", "task-status"],
+    ["check-attempt", "row-status", "park", "row-status", "resume", "row-status"],
   );
   for (const entry of events) assert.ok(["implementor", "observer", "human"].includes(entry.actor));
 
@@ -879,11 +764,11 @@ test("the event log grows append-only across real mutations and never replays pa
   assert.equal(woke.status, 0, woke.stderr + woke.stdout);
   assert.equal(woke.json.detail.reason, "event");
   assert.equal(woke.json.detail.waitedMs, 0);
-  assert.deepEqual(woke.json.detail.events.map((entry) => entry.id), [2, 3]);
-  assert.equal(woke.json.detail.cursor, 3);
+  assert.deepEqual(woke.json.detail.events.map((entry) => entry.id), [2, 3, 4, 5, 6]);
+  assert.equal(woke.json.detail.cursor, 6);
   assert.equal(woke.json.detail.livenessProbe, "unavailable");
 
-  const caughtUp = run(root, ["implement", "await", "--since", "3", "--pid", "999999999"]);
+  const caughtUp = run(root, ["implement", "await", "--since", "6", "--pid", "999999999"]);
   assert.equal(caughtUp.status, 0);
   assert.equal(caughtUp.json.detail.reason, "implementor-gone", "a dead pid ends the wait without burning the stall bound");
   assert.deepEqual(caughtUp.json.detail.events, []);
@@ -895,22 +780,23 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   const root = makeProject();
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   fs.writeFileSync(path.join(root, "source.txt"), "SOURCE-BODY-MUST-NOT-BE-INLINED\n");
   fs.writeFileSync(path.join(root, "runtime.log"), "REGISTERED-RUNTIME-EVIDENCE\n");
   const registered = run(root, [
-    "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof body",
+    "implement", "artifact", "--row", "B2", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof body",
   ]);
   assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+  greenChecks(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
   // Lane progress is observable from outside the process while stdout stays
   // pure JSON: an opaque verify forces callers into ps-polling loops.
   assert.match(verified.stderr, /\[implement:verify\] mechanical PASS in [\d.]+s: npm test/);
-  // The judged criterion is timed because a judge ran; the machine one reports
-  // that nobody was called (AC7).
-  assert.match(verified.stderr, /\[implement:verify\] acceptance AC2: PASS \(\d+s\)/);
-  assert.match(verified.stderr, /\[implement:verify\] acceptance AC1: PASS \(from the check ledger, no judge call\)/);
+  // The judge: row is timed because a judge ran; the check: row reports
+  // that nobody was called (R4).
+  assert.match(verified.stderr, /\[implement:verify\] acceptance B2: PASS \(\d+s\)/);
+  assert.match(verified.stderr, /\[implement:verify\] acceptance B1: PASS \(from the check ledger, no judge call\)/);
   assert.match(verified.stderr, /\[implement:verify\] fidelity: PASS \(\d+s\)/);
   assert.match(verified.stderr, /\[implement:verify\] unified verification PASS in \d+s/);
   assert.doesNotMatch(verified.stdout, /\[implement:verify\]/, "progress must not corrupt the JSON stdout");
@@ -918,12 +804,13 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.equal(attempt.verdict, "PASS");
   assert.notEqual(attempt.lanes.acceptance.invocationId, attempt.lanes.fidelity.invocationId);
   const acceptanceInvocations = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations;
-  // Both criteria are in the lane's result; only the judged one summoned a
-  // judge, and each invocation says which happened (AC7).
+  // Both rows are in the lane's result; only the judge: row summoned a
+  // judge, and each invocation says which happened (R4).
   assert.deepEqual(
-    acceptanceInvocations.map((entry) => [entry.criterionId, entry.source]).sort(),
-    [["AC1", "harness"], ["AC2", "judge"]],
+    acceptanceInvocations.map((entry) => [entry.rowId, entry.source]).sort(),
+    [["B1", "harness"], ["B2", "judge"]],
   );
+  assert.equal(readState(root).rows.find((row) => row.id === "B2").status, "PASS");
   assert.ok(attempt.lanes.acceptance.startedAt <= attempt.lanes.fidelity.finishedAt);
   assert.ok(attempt.lanes.fidelity.startedAt <= attempt.lanes.acceptance.finishedAt);
   assert.equal(attempt.lanes.risk, null);
@@ -931,15 +818,15 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
 
   const fidelityPrompt = fs.readFileSync(path.join(capture, "implement_fidelity.prompt.txt"), "utf8");
   assert.match(fidelityPrompt, /F1 Original goal preserved/);
-  assert.match(fidelityPrompt, /SOURCE ROUTING: decision-traceability/);
+  assert.match(fidelityPrompt, /SOURCE ROUTING: decisions/);
   assert.match(fidelityPrompt, /Do not repeat code-correctness/);
   const registeredProvenance = `agent-registered at ${registered.json.detail.artifact.registeredAt}; treat as the implementer's claim, not a harness observation`;
   assert.ok(fidelityPrompt.includes(registeredProvenance));
 
-  const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC2.prompt.txt"), "utf8");
-  const acceptanceOptions = JSON.parse(fs.readFileSync(path.join(capture, "implement_acceptance_AC2.options.json"), "utf8"));
-  assert.match(acceptancePrompt, /"id": "AC2"/);
-  assert.match(acceptancePrompt, /MECHANICAL-PROOF/);
+  const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_B2.prompt.txt"), "utf8");
+  const acceptanceOptions = JSON.parse(fs.readFileSync(path.join(capture, "implement_acceptance_B2.options.json"), "utf8"));
+  assert.match(acceptancePrompt, /"id": "B2"/);
+  assert.match(acceptancePrompt, /- S1 GREEN \(exit 0\): npm test/, "the suite result reaches the judge as a fact");
   assert.match(acceptancePrompt, /REGISTERED-RUNTIME-EVIDENCE/);
   assert.ok(acceptancePrompt.includes(registeredProvenance));
   assert.match(acceptancePrompt, /source\.txt \[text, \d+ bytes\]/);
@@ -959,6 +846,10 @@ test("acceptance and fidelity run separately in parallel, then finalize converge
   assert.equal(first.status, 0, first.stderr + first.stdout);
   assert.equal(first.json.detail.executionCalls, 0);
   assert.equal(fs.existsSync(sentinel), false, "finalize must not call a test, judge, browser, or capture executable");
+  assert.equal(first.json.detail.receipt.schema, "sasu.implement.receipt.v4");
+  assert.equal(first.json.detail.receipt.status, "complete");
+  assert.deepEqual(first.json.detail.receipt.behaviors.map((entry) => [entry.id, entry.result.status]), [["B1", "green"], ["B2", "PASS"]]);
+  assert.equal(first.json.detail.receipt.scoreLine, "기계·판사: 2/2 PASS | suite: 1/1 GREEN");
   const receiptPath = path.join(root, first.json.detail.completion.receiptPath);
   const firstReceipt = fs.readFileSync(receiptPath, "utf8");
   const second = run(root, ["implement", "finalize"], { env: finalizeEnv });
@@ -975,10 +866,10 @@ test("work done before implement start is still judged as run-owned", () => {
   fs.writeFileSync(path.join(root, "impl.txt"), "implementation written before start\n");
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_AC2.prompt.txt"), "utf8");
+  const acceptancePrompt = fs.readFileSync(path.join(capture, "implement_acceptance_B2.prompt.txt"), "utf8");
   assert.match(acceptancePrompt, /impl\.txt \[text, \d+ bytes\]/);
   const fidelityPrompt = fs.readFileSync(path.join(capture, "implement_fidelity.prompt.txt"), "utf8");
   assert.match(fidelityPrompt, /implementation written before start/);
@@ -993,14 +884,14 @@ test("a backend without read-only file access fails acceptance observably instea
     SASU_JUDGE_STUB_CAPTURE_DIR: capture,
     SASU_JUDGE_STUB_NO_AGENTIC: "1",
   };
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 1);
   const attempt = verified.json.detail.attempt;
   assert.equal(attempt.verdict, "ERROR");
   assert.equal(attempt.lanes.acceptance.verdict, "ERROR");
   assert.match(attempt.lanes.acceptance.error.message, /requires isolated read-only evidence access/);
-  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC2.prompt.txt")), false);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_B2.prompt.txt")), false);
   assert.equal(fs.existsSync(path.join(capture, "implement_fidelity.prompt.txt")), true);
 });
 
@@ -1008,7 +899,7 @@ test("high-risk runs the risk judge only after both base lanes complete", () => 
   const root = makeProject({ profile: "high-risk" });
   const { file, capture } = stub(root, "high-risk");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
   const lanes = verified.json.detail.attempt.lanes;
@@ -1024,7 +915,7 @@ test("high-risk runs the risk judge only after both base lanes complete", () => 
     SASU_JUDGE_STUB_FILE: trivialStub.file,
     SASU_JUDGE_STUB_CAPTURE_DIR: trivialStub.capture,
   };
-  startAndClose(trivialRoot);
+  startAndProve(trivialRoot);
   const trivial = run(trivialRoot, ["implement", "verify"], { env: trivialEnv });
   assert.equal(trivial.status, 0, trivial.stderr + trivial.stdout);
   assert.equal(trivial.json.detail.attempt.lanes.risk, null);
@@ -1035,8 +926,9 @@ test("oversized design and risk diffs switch to isolated changed-file access", (
   const root = makeProject({ profile: "high-risk" });
   const { file, capture } = stub(root, "high-risk");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   fs.writeFileSync(path.join(root, "large.ts"), `export const large = "${"x".repeat(130_000)}";\n`);
+  greenChecks(root);
 
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
@@ -1061,7 +953,7 @@ test("an open blocking risk is ledgered outside the unified verdict, blocks fina
     findings: [{ severity: "advisory", text: "consider rate limiting the retry path" }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
-  startAndClose(root);
+  startAndProve(root);
 
   const advisory = run(root, ["implement", "verify"], { env });
   assert.equal(advisory.status, 0, advisory.stderr + advisory.stdout);
@@ -1087,6 +979,7 @@ test("an open blocking risk is ledgered outside the unified verdict, blocks fina
   // A later blocking finding fails only the lane. The unified acceptance and
   // fidelity verdict stays PASS, while the ledger becomes finalize authority.
   fs.writeFileSync(path.join(root, "impl.txt"), "a changed risk-bearing path\n");
+  greenChecks(root);
   const blockingText = "credentials are written to a world-readable log and remain visible to every local account on the host";
   configured.byPurpose["implement:risk"] = {
     verdict: "FAIL",
@@ -1169,7 +1062,7 @@ test("a risk ERROR stays in the attempt record without changing the unified verd
     findings: [{ severity: "blocking", text: "unsafe destructive write" }],
   };
   fs.writeFileSync(file, JSON.stringify(configured));
-  startAndClose(root);
+  startAndProve(root);
   const first = run(root, ["implement", "verify"], { env });
   assert.equal(first.status, 0, first.stderr + first.stdout);
   const before = readState(root).riskFindings;
@@ -1196,7 +1089,7 @@ test("lane failure and malformed judge output remain independent and block final
   configured.byPurpose["implement:fidelity"].checks[2].verdict = "FAIL";
   fs.writeFileSync(file, JSON.stringify(configured));
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
 
   const failed = run(root, ["implement", "verify"], { env });
   assert.equal(failed.status, 1);
@@ -1220,9 +1113,9 @@ test("lane failure and malformed judge output remain independent and block final
 test("registered runtime evidence stays source-independent while file identity failures remain observable", () => {
   const root = makeProject();
   fs.writeFileSync(path.join(root, "runtime.log"), "runtime proof\n");
-  startAndClose(root);
+  startAndProve(root);
   const register = () => run(root, [
-    "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
+    "implement", "artifact", "--row", "B2", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
   ]);
   const registered = register();
   assert.equal(registered.status, 0);
@@ -1246,7 +1139,7 @@ test("a source change after unified PASS makes finalize refuse the stale attempt
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   fs.writeFileSync(path.join(root, "source.txt"), "judged source\n");
-  startAndClose(root);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   fs.writeFileSync(path.join(root, "source.txt"), "changed after pass\n");
   for (let index = 0; index < 21; index += 1) {
@@ -1257,6 +1150,8 @@ test("a source change after unified PASS makes finalize refuse the stale attempt
   assert.equal(stale.json.detail.verification.verdict, "STALE");
   const finalized = run(root, ["implement", "finalize", "--status", "complete"]);
   assert.equal(finalized.status, 2);
+  // The row's own green names the tree it was earned on, so it is stale too.
+  assert.match(finalized.json.message, /B1 is green on tree [0-9a-f]{12}, but the judged tree is now/);
   assert.match(finalized.json.message, /STALE because judged source changed/);
   assert.match(finalized.json.message, /changed paths since judged attempt .+ \(first 20 of 22\): source\.txt/);
   assert.match(finalized.json.message, /z-post-pass-18\.txt/);
@@ -1277,10 +1172,10 @@ test("a routed qa-log change after PASS stales status and blocks finalize", () =
   assert.equal(spec.status, 0, spec.stderr + spec.stdout);
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  assert.equal(verified.json.detail.attempt.fidelityInput.routing, "decision-traceability");
+  assert.equal(verified.json.detail.attempt.fidelityInput.routing, "decisions");
 
   fs.writeFileSync(path.join(root, qaLog), "changed user decisions\n");
   const stale = run(root, ["implement", "status"]);
@@ -1294,7 +1189,7 @@ test("an approved PRD change after PASS stales status and blocks finalize", () =
   const root = makeProject();
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
   fs.appendFileSync(prdPath, "\nPost-approval mutation.\n");
@@ -1311,7 +1206,7 @@ test("an approved PRD change after completion blocks repeated finalize", () => {
   const root = makeProject();
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   assert.equal(run(root, ["implement", "finalize"]).status, 0);
   fs.appendFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), "\nChanged after completion.\n");
@@ -1323,7 +1218,7 @@ test("an approved PRD change after completion blocks repeated finalize", () => {
 
 test("missing or malformed PRD, state, artifact, and judge input fail closed with an observable cause", () => {
   const missingPrdRoot = makeProject();
-  startAndClose(missingPrdRoot);
+  startAndProve(missingPrdRoot);
   fs.rmSync(path.join(missingPrdRoot, "agents", "prd", "fixture", "prd.md"));
   const missingPrd = run(missingPrdRoot, ["implement", "verify"]);
   assert.equal(missingPrd.status, 2);
@@ -1332,7 +1227,7 @@ test("missing or malformed PRD, state, artifact, and judge input fail closed wit
   assert.equal(missingPrd.json.detail.prdDrift.code, "prd-drift");
 
   const malformedStateRoot = makeProject();
-  startAndClose(malformedStateRoot);
+  startAndProve(malformedStateRoot);
   fs.writeFileSync(path.join(malformedStateRoot, "agents", "runs", "fixture", "state.json"), "{bad json");
   const malformedState = run(malformedStateRoot, ["implement", "status"]);
   assert.notEqual(malformedState.status, 0);
@@ -1346,11 +1241,12 @@ test("missing or malformed PRD, state, artifact, and judge input fail closed wit
     SASU_JUDGE_STUB_CAPTURE_DIR: artifactStub.capture,
   };
   fs.writeFileSync(path.join(missingArtifactRoot, "runtime.log"), "proof\n");
-  startAndClose(missingArtifactRoot);
+  startAndProve(missingArtifactRoot);
   assert.equal(run(missingArtifactRoot, [
-    "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "proof",
+    "implement", "artifact", "--row", "B2", "--kind", "log", "--path", "runtime.log", "--description", "proof",
   ]).status, 0);
   fs.rmSync(path.join(missingArtifactRoot, "runtime.log"));
+  greenChecks(missingArtifactRoot);
   const missingArtifact = run(missingArtifactRoot, ["implement", "verify"], { env: artifactEnv });
   assert.equal(missingArtifact.status, 1);
   assert.match(missingArtifact.json.message, /artifact integrity preflight failed/);
@@ -1367,7 +1263,7 @@ test("missing or malformed PRD, state, artifact, and judge input fail closed wit
     SASU_JUDGE_STUB_FILE: judgeStub.file,
     SASU_JUDGE_STUB_CAPTURE_DIR: judgeStub.capture,
   };
-  startAndClose(malformedJudgeRoot);
+  startAndProve(malformedJudgeRoot);
   const malformedJudge = run(malformedJudgeRoot, ["implement", "verify"], { env: judgeEnv });
   assert.equal(malformedJudge.status, 1);
   assert.equal(malformedJudge.json.detail.attempt.verdict, "ERROR");
@@ -1379,9 +1275,9 @@ test("artifact registration and verify converge safely when each operation runs 
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   fs.writeFileSync(path.join(root, "runtime.log"), "runtime proof\n");
-  startAndClose(root);
+  startAndProve(root);
   const command = [
-    "implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
+    "implement", "artifact", "--row", "B2", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof",
   ];
   const first = run(root, command);
   const second = run(root, [...command.slice(0, -1), "attempted metadata-only relabel"]);
@@ -1391,10 +1287,10 @@ test("artifact registration and verify converge safely when each operation runs 
   assert.equal(second.json.detail.unchanged, true);
   assert.equal(
     second.json.message,
-    `artifact unchanged since ${first.json.detail.artifact.registeredAt}; registration timestamp preserved for V1: runtime.log`,
+    `artifact unchanged since ${first.json.detail.artifact.registeredAt}; registration timestamp preserved for B2: runtime.log`,
   );
   assert.deepEqual(
-    readState(root).artifacts.filter((entry) => entry.verificationId === "V1"),
+    readState(root).artifacts.filter((entry) => entry.rowId === "B2" && entry.path === "runtime.log"),
     [first.json.detail.artifact],
     "same bytes must preserve the entire prior artifact record",
   );
@@ -1407,72 +1303,15 @@ test("artifact registration and verify converge safely when each operation runs 
   assert.notEqual(changed.json.detail.artifact.registeredAt, first.json.detail.artifact.registeredAt);
   assert.equal(Object.hasOwn(changed.json.detail.artifact, "sourceFingerprint"), false);
 
+  greenChecks(root);
   const verifiedOnce = run(root, ["implement", "verify"], { env });
   const verifiedTwice = run(root, ["implement", "verify"], { env });
-  assert.equal(verifiedOnce.status, 0);
-  assert.equal(verifiedTwice.status, 0);
+  assert.equal(verifiedOnce.status, 0, verifiedOnce.stderr + verifiedOnce.stdout);
+  assert.equal(verifiedTwice.status, 0, verifiedTwice.stderr + verifiedTwice.stdout);
   assert.equal(readState(root).verificationAttempts.length, 2);
   assert.equal(readState(root).verificationAttempts.every((attempt) => attempt.verdict === "PASS"), true);
   assert.equal(verifiedTwice.json.detail.verificationBudget.fixAttempts, 0);
   assert.equal(verifiedTwice.json.detail.verificationBudget.consecutiveErrors, 0);
-});
-
-test("closing a task reports the remaining open tasks in the response", () => {
-  const root = makeProject();
-  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
-  assert.equal(started.status, 0, started.stderr + started.stdout);
-
-  greenAc(root);
-  registerDeclaredEvidence(root);
-  const closed = run(root, ["implement", "task", "--id", "T1", "--evidence", "fixture implementation complete"]);
-  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
-  assert.match(closed.json.message, /remaining: none - all tasks closed/);
-  assert.deepEqual(closed.json.detail.remainingTasks, []);
-
-  const reopened = run(root, ["implement", "task", "--id", "T1", "--status", "pending"]);
-  assert.equal(reopened.status, 0, reopened.stderr + reopened.stdout);
-  assert.match(reopened.json.message, /remaining: T1 \(/);
-  assert.equal(reopened.json.detail.remainingTasks.length, 1);
-  assert.equal(reopened.json.detail.remainingTasks[0].id, "T1");
-  assert.equal(reopened.json.detail.remainingTasks[0].status, "pending");
-});
-
-test("task dependencies gate closing order and the response marks ready tasks", () => {
-  const root = makeProject();
-  const parallelPrd = prd().replace(
-    "- T1. Implement the flow. Covers R1.",
-    [
-      "- T1. Base interface. Covers R1.",
-      "- T2. Adapter A. Covers R1. Depends on: T1.",
-      "- T3. Adapter B. Covers R1. Depends on: T1.",
-      "- T4. Integration. Covers R1. Depends on: T2, T3.",
-    ].join("\n"),
-  );
-  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), parallelPrd);
-  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
-  assert.equal(started.status, 0, started.stderr + started.stdout);
-
-  const early = run(root, ["implement", "task", "--id", "T4", "--evidence", "premature"]);
-  assert.notEqual(early.status, 0);
-  assert.match(early.json.message, /cannot close T4: depends on T2, T3 \(not complete\)/);
-
-  greenAc(root);
-  registerDeclaredEvidence(root);
-  const base = run(root, ["implement", "task", "--id", "T1", "--evidence", "base done"]);
-  assert.equal(base.status, 0, base.stderr + base.stdout);
-  assert.match(base.json.message, /T2 \(Adapter A, ready\)/);
-  assert.match(base.json.message, /T3 \(Adapter B, ready\)/);
-  assert.match(base.json.message, /T4 \(Integration, waiting on T2, T3\)/);
-  const byId = Object.fromEntries(base.json.detail.remainingTasks.map((entry) => [entry.id, entry]));
-  assert.equal(byId.T2.ready, true);
-  assert.equal(byId.T4.ready, false);
-  assert.deepEqual(byId.T4.dependsOn, ["T2", "T3"]);
-
-  assert.equal(run(root, ["implement", "task", "--id", "T2", "--evidence", "adapter a done"]).status, 0);
-  assert.equal(run(root, ["implement", "task", "--id", "T3", "--evidence", "adapter b done"]).status, 0);
-  const last = run(root, ["implement", "task", "--id", "T4", "--evidence", "integration done"]);
-  assert.equal(last.status, 0, last.stderr + last.stdout);
-  assert.match(last.json.message, /remaining: none - all tasks closed/);
 });
 
 test("the conversation-approved please chain reaches a finalized receipt", () => {
@@ -1492,9 +1331,8 @@ test("the conversation-approved please chain reaches a finalized receipt", () =>
   assert.equal(readState(root).prd.approval.source, "conversation");
   assert.equal(readState(root).prd.approval.evidence, invocation);
   writeFixtureImplementation(root);
-  greenAc(root);
   registerDeclaredEvidence(root);
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented from the approved conversation"]).status, 0);
+  greenChecks(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const finalized = run(root, ["implement", "finalize"]);
   assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
@@ -1502,7 +1340,7 @@ test("the conversation-approved please chain reaches a finalized receipt", () =>
 });
 
 test("implement verify stops at the configured fix budget before running more work", () => {
-  const root = makeProject();
+  const root = makeProject({ checkCommand: "node --version" });
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
@@ -1510,7 +1348,7 @@ test("implement verify stops at the configured fix budget before running more wo
       test: "node -e \"const fs=require('fs');const p='agents/verify-count';const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8')):0;fs.writeFileSync(p,String(n+1));process.exit(1)\"",
     },
   }));
-  startAndClose(root, { checkCommand: "node --version" });
+  startAndProve(root);
 
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const second = run(root, ["implement", "verify"]);
@@ -1532,11 +1370,11 @@ test("an explicit user grant opens one fresh fix budget inside the same state re
   // 2026-08-13 creator-assist: with no grant path, "새 검증 런을 허용한다"
   // was honored by archiving state.json and starting a fresh run three
   // times, scattering the record and re-judging everything from zero.
-  const root = makeProject();
+  const root = makeProject({ checkCommand: "node --version" });
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"process.exit(1)\"" } }));
-  startAndClose(root, { checkCommand: "node --version" });
+  startAndProve(root);
 
   // A grant before exhaustion is refused: it would widen the configured budget.
   const early = run(root, ["implement", "verify", "--grant-budget", "go ahead"]);
@@ -1584,7 +1422,7 @@ test("implement verify bounds consecutive judge errors without spending the fix 
   const { file, capture } = stub(root);
   fs.writeFileSync(file, "{bad json");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
 
   assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
   const second = run(root, ["implement", "verify"], { env });
@@ -1609,24 +1447,15 @@ test("implement verify bounds consecutive judge errors without spending the fix 
 });
 
 test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree only", () => {
-  const root = makeProject();
-  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
-  let text = fs.readFileSync(prdPath, "utf8");
-  // Both criteria are JUDGED: the acceptance judge is only summoned for judged
-  // criteria (AC7), so reuse across an ERROR'd attempt - the behaviour this
-  // test protects - can only be exercised through criteria that reach one.
-  text = text.replace(
-    "| AC2 | The finalized state reads honestly to its operator. | judged | agents/runs/fixture/artifacts/ac2.log |",
-    "| AC2 | The finalized state reads honestly to its operator. | judged | agents/runs/fixture/artifacts/ac2.log |\n| AC3 | The same flow reports its status honestly. | judged | agents/runs/fixture/artifacts/ac3.log |",
-  );
-  text = text.replaceAll("R2, AC2", "R2, AC2, AC3");
-  text = text.replace("Covers AC2.", "Covers AC2, AC3.");
-  fs.writeFileSync(prdPath, text);
+  // Two judge: rows: the acceptance judge is only summoned for judge: rows
+  // (R4), so reuse across an ERROR'd attempt - the behaviour this test
+  // protects - can only be exercised through rows that reach one.
+  const root = makeProject({ extraRows: [judgeRow("B3", "The same flow reports its status honestly.")] });
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
 
-  // AC3 has no stub entry, so its judge call errors while AC2 and fidelity settle.
+  // B3 has no stub entry, so its judge call errors while B2 and fidelity settle.
   const errored = run(root, ["implement", "verify"], { env });
   assert.equal(errored.status, 1);
   const first = errored.json.detail.attempt;
@@ -1634,15 +1463,15 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   assert.equal(first.lanes.acceptance.verdict, "ERROR");
   assert.equal(first.lanes.fidelity.verdict, "PASS");
   // Per-invocation detail lives only in state.json; the response carries a summary.
-  const settledAc2 = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations.find((entry) => entry.criterionId === "AC2");
-  assert.equal(settledAc2.verdict, "PASS");
-  assert.equal(settledAc2.source, "judge");
+  const settledB2 = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations.find((entry) => entry.rowId === "B2");
+  assert.equal(settledB2.verdict, "PASS");
+  assert.equal(settledB2.source, "judge");
   assert.equal(errored.json.detail.verificationBudget.fixAttempts, 0, "an infrastructure ERROR spends no fix budget");
 
   const stubJson = JSON.parse(fs.readFileSync(file, "utf8"));
-  stubJson.byPurpose["implement:acceptance:AC3"] = {
+  stubJson.byPurpose["implement:acceptance:B3"] = {
     verdict: "PASS",
-    criteria: [{ id: "AC3", verdict: "PASS", reason: "status honest", evidence: "transcript" }],
+    criteria: [{ id: "B3", verdict: "PASS", reason: "status honest", evidence: "transcript" }],
   };
   fs.writeFileSync(file, JSON.stringify(stubJson));
   fs.rmSync(capture, { recursive: true, force: true });
@@ -1652,32 +1481,33 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   const second = reused.json.detail.attempt;
   assert.equal(second.verdict, "PASS");
   const secondState = readState(root).verificationAttempts.at(-1);
-  const byId = Object.fromEntries(secondState.lanes.acceptance.result.invocations.map((entry) => [entry.criterionId, entry]));
-  assert.equal(byId.AC2.reusedFrom, first.id);
-  assert.equal(byId.AC2.invocationId, settledAc2.invocationId);
-  assert.equal(byId.AC3.reusedFrom, undefined);
-  // The machine criterion is recomputed every attempt, never carried over:
-  // there is no expensive judgment to preserve, and a carry-over would be a
-  // second record of what state.json already holds.
-  assert.equal(byId.AC1.reusedFrom, undefined);
-  assert.equal(byId.AC1.source, "harness");
+  const byId = Object.fromEntries(secondState.lanes.acceptance.result.invocations.map((entry) => [entry.rowId, entry]));
+  assert.equal(byId.B2.reusedFrom, first.id);
+  assert.equal(byId.B2.invocationId, settledB2.invocationId);
+  assert.equal(byId.B3.reusedFrom, undefined);
+  // The check: row is recomputed every attempt, never carried over: there is
+  // no expensive judgment to preserve, and a carry-over would be a second
+  // record of what state.json already holds.
+  assert.equal(byId.B1.reusedFrom, undefined);
+  assert.equal(byId.B1.source, "harness");
   assert.equal(second.lanes.fidelity.reusedFrom, first.id);
-  assert.deepEqual(secondState.lanes.acceptance.result.criteria.map((entry) => entry.id).sort(), ["AC1", "AC2", "AC3"]);
-  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC2.prompt.txt")), false, "a reused criterion must not re-call its judge");
+  assert.deepEqual(secondState.lanes.acceptance.result.criteria.map((entry) => entry.id).sort(), ["B1", "B2", "B3"]);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_B2.prompt.txt")), false, "a reused row must not re-call its judge");
   assert.equal(fs.existsSync(path.join(capture, "implement_fidelity.prompt.txt")), false, "a reused fidelity lane must not re-call its judge");
-  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC3.prompt.txt")), true);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_B3.prompt.txt")), true);
 
   // ERROR again, then move the tree: nothing may be reused across a source change.
-  delete stubJson.byPurpose["implement:acceptance:AC3"];
+  delete stubJson.byPurpose["implement:acceptance:B3"];
   fs.writeFileSync(file, JSON.stringify(stubJson));
   assert.equal(run(root, ["implement", "verify"], { env }).json.detail.attempt.verdict, "ERROR");
 
-  stubJson.byPurpose["implement:acceptance:AC3"] = {
+  stubJson.byPurpose["implement:acceptance:B3"] = {
     verdict: "PASS",
-    criteria: [{ id: "AC3", verdict: "PASS", reason: "status honest", evidence: "transcript" }],
+    criteria: [{ id: "B3", verdict: "PASS", reason: "status honest", evidence: "transcript" }],
   };
   fs.writeFileSync(file, JSON.stringify(stubJson));
   fs.writeFileSync(path.join(root, "changed.txt"), "the judged tree moved\n");
+  greenChecks(root);
   fs.rmSync(capture, { recursive: true, force: true });
   const fresh = run(root, ["implement", "verify"], { env });
   assert.equal(fresh.status, 0, fresh.stderr + fresh.stdout);
@@ -1685,18 +1515,18 @@ test("settled verdicts from an ERROR'd attempt are reused on the unchanged tree 
   assert.equal(third.verdict, "PASS");
   assert.ok(readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations.every((entry) => entry.reusedFrom === undefined));
   assert.equal(third.lanes.fidelity.reusedFrom, undefined);
-  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC2.prompt.txt")), true, "a changed tree re-judges every criterion");
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_B2.prompt.txt")), true, "a changed tree re-judges every row");
 });
 
 test("a terminally stuck run closes through an explicit blocked finalize and can recover", () => {
-  const root = makeProject();
+  const root = makeProject({ checkCommand: "node --version" });
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
   const failingTest = JSON.stringify({ scripts: { test: "node -e \"process.exit(1)\"" } });
   fs.writeFileSync(path.join(root, "package.json"), failingTest);
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root, { checkCommand: "node --version" });
+  startAndProve(root);
 
   // A blocked close is refused while the budget still allows a fix loop.
   assert.equal(run(root, ["implement", "verify"], { env }).status, 1);
@@ -1735,7 +1565,11 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 5 } }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('MECHANICAL-PROOF')\"" } }));
   const recovered = run(root, ["implement", "verify"], { env });
-  assert.equal(recovered.status, 0, recovered.stderr + recovered.stdout);
+  assert.equal(recovered.status, 2, "a blocked run still refuses a stale check: row before it reactivates");
+  assert.match(recovered.json.message, /B1 is green on tree/);
+  greenChecks(root);
+  const reactivated = run(root, ["implement", "verify"], { env });
+  assert.equal(reactivated.status, 0, reactivated.stderr + reactivated.stdout);
   assert.equal(readState(root).status, "active");
   const finalized = run(root, ["implement", "finalize"]);
   assert.equal(finalized.status, 0, finalized.stderr + finalized.stdout);
@@ -1743,76 +1577,61 @@ test("a terminally stuck run closes through an explicit blocked finalize and can
   assert.equal(readState(root).status, "complete");
 });
 
-test("a judged criterion without AC-bound evidence fails before a judge call", () => {
-  const root = makeProject();
-  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
-  let text = fs.readFileSync(prdPath, "utf8");
-  text = text.replace(
-    "| AC2 | The finalized state reads honestly to its operator. | judged | agents/runs/fixture/artifacts/ac2.log |",
-    "| AC2 | The finalized state reads honestly to its operator. | judged | agents/runs/fixture/artifacts/ac2.log |\n| AC3 | The same flow reports its status honestly. | judged | agents/runs/fixture/artifacts/status.log |",
-  );
-  // AC3 hangs off its own requirement covered ONLY by a live-judge
-  // verification: coverage expands through requirements, so the mechanical
-  // rows must not reach AC3 or its checks would count as inlined proof.
-  text = text.replace(
-    "- R2. The finalized state reads honestly. Covers AC2.",
-    "- R2. The finalized state reads honestly. Covers AC2.\n- R3. The flow reports its status honestly. Covers AC3.",
-  );
-  text = text.replace(
-    "| V4 | live judge runtime | R2, AC2 | the finalized state's honesty is judged from the implementation | yes | no |",
-    "| V4 | live judge runtime | R2, AC2 | the finalized state's honesty is judged from the implementation | yes | no |\n| V5 | live judge runtime | R3, AC3 | the status report criterion is judged from the implementation | yes | no |",
-  );
-  fs.writeFileSync(prdPath, text);
+test("a judge: row without its declared evidence fails before a judge call", () => {
+  const root = makeProject({ extraRows: [judgeRow("B3", "The same flow reports its status honestly.")] });
   const { file, capture } = stub(root);
   const stubJson = JSON.parse(fs.readFileSync(file, "utf8"));
-  stubJson.byPurpose["implement:acceptance:AC3"] = {
+  stubJson.byPurpose["implement:acceptance:B3"] = {
     verdict: "PASS",
-    criteria: [{ id: "AC3", verdict: "PASS", reason: "status honest", evidence: "src/status.ts" }],
+    criteria: [{ id: "B3", verdict: "PASS", reason: "status honest", evidence: "src/status.ts" }],
   };
   fs.writeFileSync(file, JSON.stringify(stubJson));
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root, { leaveUnregistered: ["AC3"] });
+  startAndProve(root, { leaveUnregistered: ["B3"] });
 
-  // A declaration is not evidence. The harness fails AC3 before provider
+  // A declaration is not evidence. The harness fails B3 before provider
   // routing and still lets the other two settle normally.
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 1);
   const attempt = verified.json.detail.attempt;
   assert.equal(attempt.lanes.acceptance.verdict, "FAIL");
   const invocations = readState(root).verificationAttempts.at(-1).lanes.acceptance.result.invocations;
-  const byId = Object.fromEntries(invocations.map((entry) => [entry.criterionId, entry]));
-  // AC1 is machine: it stays in the lane's result but is settled from its own
-  // exit code, and the record says so rather than leaving a null judge to be
-  // read as a lost record (AC7).
-  assert.equal(byId.AC1.verdict, "PASS");
-  assert.equal(byId.AC1.source, "harness", "settled from its own exit code");
-  assert.equal(byId.AC1.judge, null);
-  // AC2's evidence is registered, so its judge was summoned and ruled.
-  assert.equal(byId.AC2.verdict, "PASS");
-  assert.equal(byId.AC2.source, "judge");
-  // AC3 declared evidence nobody registered, so nobody was summoned for it.
-  assert.equal(byId.AC3.verdict, "FAIL");
-  assert.equal(byId.AC3.source, "harness", "refused before the judge was summoned, for want of the declared evidence");
-  assert.equal(byId.AC3.judge, null);
-  assert.equal(byId.AC3.error, null);
-  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_AC3.prompt.txt")), false);
+  const byId = Object.fromEntries(invocations.map((entry) => [entry.rowId, entry]));
+  // B1 is a check: row: it stays in the lane's result but is settled from
+  // its own exit code, and the record says so rather than leaving a null
+  // judge to be read as a lost record (R4).
+  assert.equal(byId.B1.verdict, "PASS");
+  assert.equal(byId.B1.source, "harness", "settled from its own exit code");
+  assert.equal(byId.B1.judge, null);
+  // B2's evidence is registered, so its judge was summoned and ruled.
+  assert.equal(byId.B2.verdict, "PASS");
+  assert.equal(byId.B2.source, "judge");
+  // B3 declared evidence nobody registered, so nobody was summoned for it.
+  assert.equal(byId.B3.verdict, "FAIL");
+  assert.equal(byId.B3.source, "harness", "refused before the judge was summoned, for want of the declared evidence");
+  assert.equal(byId.B3.judge, null);
+  assert.equal(byId.B3.error, null);
+  assert.equal(readState(root).rows.find((row) => row.id === "B3").status, "FAIL");
+  assert.match(attempt.lanes.acceptance.failing[0].evidence, /sasu implement artifact --row B3/);
+  assert.equal(fs.existsSync(path.join(capture, "implement_acceptance_B3.prompt.txt")), false);
 
-  // Registering the declared evidence against AC3 admits its judge.
+  // Registering the declared evidence against B3 admits its judge.
   fs.mkdirSync(path.join(root, "agents", "runs", "fixture", "artifacts"), { recursive: true });
-  fs.writeFileSync(path.join(root, "agents", "runs", "fixture", "artifacts", "status.log"), "status lifecycle proof\n");
+  fs.writeFileSync(path.join(root, "agents", "runs", "fixture", "artifacts", "b3.log"), "status lifecycle proof\n");
   const registered = run(root, [
-    "implement", "artifact", "--ac", "AC3", "--kind", "log",
-    "--path", "agents/runs/fixture/artifacts/status.log", "--description", "status lifecycle proof",
+    "implement", "artifact", "--row", "B3", "--kind", "log",
+    "--path", "agents/runs/fixture/artifacts/b3.log", "--description", "status lifecycle proof",
   ]);
   assert.equal(registered.status, 0, registered.stderr + registered.stdout);
-  stubJson.byPurpose["implement:acceptance:AC3"].criteria[0].priorDisposition = {
+  stubJson.byPurpose["implement:acceptance:B3"].criteria[0].priorDisposition = {
     status: "resolved",
-    reason: "the declared status evidence is now registered against AC3",
+    reason: "the declared status evidence is now registered against B3",
   };
   fs.writeFileSync(file, JSON.stringify(stubJson));
   const attested = run(root, ["implement", "verify"], { env });
   assert.equal(attested.status, 0, attested.stderr + attested.stdout);
   assert.equal(attested.json.detail.attempt.verdict, "PASS");
+  assert.equal(readState(root).rows.find((row) => row.id === "B3").status, "PASS");
 });
 
 test("per-session pointers keep two sessions' bare commands on their own runs", () => {
@@ -1845,15 +1664,14 @@ test("a run owned by another session refuses mutation without --adopt and record
   const sessionB = { CLAUDE_CODE_SESSION_ID: "session-b" };
   assert.equal(run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], { env: sessionA }).status, 0);
   writeFixtureImplementation(root);
-  greenAc(root, "AC1", { env: sessionA });
-  registerDeclaredEvidence(root, "AC2", { env: sessionA });
-  const refused = run(root, ["implement", "task", "--id", "T1", "--evidence", "done", "--slug", "fixture"], { env: sessionB });
+  registerDeclaredEvidence(root, "B2", { env: sessionA });
+  const refused = run(root, ["implement", "check", "--row", "B1", "--slug", "fixture"], { env: sessionB });
   assert.equal(refused.status, 2);
   assert.match(refused.json.message, /owned by another session \(session-a\)/);
   assert.equal(readState(root).ownerSessionId, "session-a");
   const adopted = run(
     root,
-    ["implement", "task", "--id", "T1", "--evidence", "done", "--slug", "fixture", "--adopt", "user said take it over"],
+    ["implement", "check", "--row", "B1", "--slug", "fixture", "--adopt", "user said take it over"],
     { env: sessionB },
   );
   assert.equal(adopted.status, 0, adopted.stderr + adopted.stdout);
@@ -1889,9 +1707,7 @@ test("a sessionless run stays on the shared pointer and is claimed by its first 
   // and its first mutation claims ownership, closing the unowned window that
   // let a bystander session become a run's owner (pokemon-rpg-run-1).
   const sessionC = { CLAUDE_CODE_SESSION_ID: "session-c" };
-  greenAc(root, "AC1", { env: sessionC });
-  const claimed = run(root, ["implement", "task", "--id", "T1", "--evidence", "done"], { env: sessionC });
-  assert.equal(claimed.status, 0, claimed.stderr + claimed.stdout);
+  greenRow(root, "B1", { env: sessionC });
   assert.equal(readState(root).ownerSessionId, "session-c");
 });
 
@@ -1920,9 +1736,13 @@ test("a second start in an occupied tree diverts to an isolated worktree and com
   // Session B implements in the worktree while the record tree keeps churning.
   fs.writeFileSync(path.join(wt, "beta.txt"), "beta implementation\n");
   fs.writeFileSync(path.join(root, "alpha.txt"), "concurrent unrelated edit in the record tree\n");
-  greenAc(root, "AC1", { env: b });
-  registerDeclaredEvidence(root, "AC2", { env: b });
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--evidence", "implemented in worktree"], { env: b }).status, 0);
+  fs.mkdirSync(path.join(root, "agents", "runs", "fixture-b", "artifacts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "agents", "runs", "fixture-b", "artifacts", "b2.log"), "B2 declared evidence\n");
+  const registered = run(root, [
+    "implement", "artifact", "--row", "B2", "--kind", "log", "--path", "agents/runs/fixture-b/artifacts/b2.log", "--description", "B2 declared evidence",
+  ], { env: b });
+  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+  greenRow(root, "B1", { env: b });
   const { file, capture } = stub(root);
   const env = { ...b, SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   const verified = run(root, ["implement", "verify"], { env });
@@ -2029,10 +1849,10 @@ test("a first round that called no judge is free, while unchanged repeats remain
   // failure). Only 2 real judged rounds were spendable and an otherwise
   // finished run closed as blocked. A failing test suite converges; the
   // budget exists for the stage that does not (PRINCIPLES 13).
-  const root = makeProject({ testExit: 1 });
+  const root = makeProject({ testExit: 1, checkCommand: "node --version" });
   fs.mkdirSync(path.join(root, "agents"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ judge: { retryBudget: 2 } }));
-  startAndClose(root, { checkCommand: "node --version" });
+  startAndProve(root);
 
   // The first deterministic failure did not invoke a generative stage, so it
   // cannot spend the budget that exists to bound that stage.
@@ -2041,6 +1861,7 @@ test("a first round that called no judge is free, while unchanged repeats remain
 
   // A real fix lands in the judged tree; the next mechanical failure is free.
   fs.writeFileSync(path.join(root, "fix-one.txt"), "a real change between rounds\n");
+  greenChecks(root);
   assert.equal(run(root, ["implement", "verify"]).status, 1);
   const afterFix = run(root, ["implement", "status"]).json.detail.verification.budget;
   assert.equal(afterFix.fixAttempts, 0, "a no-judge round that followed real work spends nothing");
@@ -2088,7 +1909,7 @@ test("an unanswered design comment blocks finalize, and accepting it with a reas
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   designStub(root, [DUPLICATE_COMMENT]);
-  startAndClose(root);
+  startAndProve(root);
 
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
@@ -2141,7 +1962,7 @@ test("a re-worded repeat is the same comment; a fixed one resolves itself withou
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   designStub(root, [DUPLICATE_COMMENT]);
-  startAndClose(root);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
 
   // Same defect, different words, different language, and a different area
@@ -2195,7 +2016,7 @@ test("the design lane is shown the run's own diff and cannot answer with a verdi
   fs.writeFileSync(path.join(root, "impl.txt"), "DIFF-ONLY-LINE\n");
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const prompt = fs.readFileSync(path.join(capture, "implement_design.prompt.txt"), "utf8");
   assert.match(prompt, /RUN-OWNED DIFF/);
@@ -2235,7 +2056,7 @@ test("an ERROR'd design lane never resolves the comments it failed to look at", 
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   designStub(root, [DUPLICATE_COMMENT]);
-  startAndClose(root);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
 
   const configured = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -2255,7 +2076,7 @@ test("a trivial-profile run skips the design lane entirely and finalizes with no
   const { file, capture } = stub(root, "trivial");
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   designStub(root, [DUPLICATE_COMMENT]);
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
   assert.equal(verified.json.detail.design.ran, false);
@@ -2281,7 +2102,7 @@ test("a slow design lane does not delay the risk lane", () => {
     // enough to false-fail a small delay.
     SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:design": 3000 }),
   };
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
 
@@ -2315,7 +2136,7 @@ test("a design lane outside the risk barrier still records its comments on the a
     SASU_JUDGE_STUB_FILE: file,
     SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:design": 300 }),
   };
-  startAndClose(root);
+  startAndProve(root);
   const verified = run(root, ["implement", "verify"], { env });
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
 
@@ -2326,108 +2147,36 @@ test("a design lane outside the risk barrier still records its comments on the a
   assert.equal(verified.json.detail.design.open.length, 1, "the caller must still be handed the comment it owes an answer for");
 });
 
-// The unified judge verdict is the ONLY promotion authority for a
-// verification item whose proof is agent-registered runtime evidence. The
-// harness used to stamp PASS on the artifact's mere existence while the
-// acceptance judge was told the same artifact is "the implementer's claim" -
-// two authorities over one proof, disagreeing forever (2026-08-27
-// crawler-arena, 66h without a receipt).
-test("an artifact-only verification item inherits the judged verdict instead of a harness stamp", () => {
-  const root = makeProject();
-  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
-  // Add a runtime-mode item no branch of commandsForVerification can bind.
-  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8")
-    .replace(
-      "| live judge runtime | yes | judge lanes | none |",
-      "| live judge runtime | yes | judge lanes | none |\n| browser runtime capture | yes | browser surface | none |",
-    )
-    .replace(
-      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |",
-      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |\n| V4 | browser runtime capture | R1, AC1 | the public flow renders in a real browser | yes | no |",
-    ));
-  const { file, capture } = stub(root);
-  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
-
-  // No binding, no artifact: nothing for any authority to weigh - fail
-  // before a judge is called.
-  const bare = run(root, ["implement", "verify"], { env });
-  assert.equal(bare.status, 1);
-  assert.equal(bare.json.detail.judgeCalls, 0);
-  assert.match(bare.json.message, /V4: no command binding or registered runtime artifact/);
-  assert.equal(readState(root).verification.find((entry) => entry.id === "V4").status, "NOT_RUN");
-
-  // With an artifact the item defers to the judges; on a judged PASS it
-  // inherits PASS exactly like a live-judge item.
-  fs.writeFileSync(path.join(root, "browser.log"), "BROWSER-RUNTIME-EVIDENCE\n");
-  assert.equal(run(root, ["implement", "artifact", "--id", "V4", "--kind", "log", "--path", "browser.log", "--description", "browser runtime proof"]).status, 0);
-  const verified = run(root, ["implement", "verify"], { env });
-  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  const after = readState(root);
-  assert.equal(after.verification.find((entry) => entry.id === "V4").status, "PASS");
-  assert.equal(after.verification.find((entry) => entry.id === "V3").status, "PASS");
-  assert.equal(run(root, ["implement", "finalize"], { env }).status, 0);
-});
-
-test("a mechanical failure leaves artifact-only items unstamped instead of PASS", () => {
-  const root = makeProject({ testExit: 7 });
-  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
-  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8")
-    .replace(
-      "| live judge runtime | yes | judge lanes | none |",
-      "| live judge runtime | yes | judge lanes | none |\n| browser runtime capture | yes | browser surface | none |",
-    )
-    .replace(
-      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |",
-      "| V3 | live judge runtime | R1, AC1 | separate acceptance and fidelity judge verdicts are recorded | yes | no |\n| V4 | browser runtime capture | R1, AC1 | the public flow renders in a real browser | yes | no |",
-    ));
-  const { file, capture } = stub(root);
-  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root, { checkCommand: "node --version" });
-  fs.writeFileSync(path.join(root, "browser.log"), "BROWSER-RUNTIME-EVIDENCE\n");
-  assert.equal(run(root, ["implement", "artifact", "--id", "V4", "--kind", "log", "--path", "browser.log", "--description", "browser runtime proof"]).status, 0);
-  const failed = run(root, ["implement", "verify"], { env });
-  assert.equal(failed.status, 1);
-  assert.equal(failed.json.detail.judgeCalls, 0);
-  // The artifact alone must never look like a proof: no judge ran, so the
-  // item stays NOT_RUN rather than carrying a stamp no authority earned.
-  assert.equal(readState(root).verification.find((entry) => entry.id === "V4").status, "NOT_RUN");
-});
-
 test("a harness-owned mechanical log cannot be registered as runtime evidence", () => {
   const root = makeProject();
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
-  fs.writeFileSync(path.join(root, "runtime.log"), "REGISTERED-RUNTIME-EVIDENCE\n");
-  assert.equal(run(root, ["implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof"]).status, 0);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   const logPath = readState(root).artifacts.find((entry) => entry.command !== undefined).path;
   // 2026-08-27 crawler-arena: this exact registration deadlocked the run -
   // the harness rewrites its log every verify, so the frozen sha could never
   // match again and the integrity preflight failed forever.
-  const refused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "log", "--path", logPath, "--description", "harness log as claim"]);
+  const refused = run(root, ["implement", "artifact", "--row", "B2", "--kind", "log", "--path", logPath, "--description", "harness log as claim"]);
   assert.equal(refused.status, 2, refused.stderr + refused.stdout);
   assert.match(refused.json.message ?? refused.stderr, /harness-owned and rewritten by the harness/);
 });
 
 test("harness-owned files and their symlink aliases cannot be registered as evidence", () => {
   const root = makeProject();
-  const { file, capture } = stub(root);
-  const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
+  startAndProve(root);
   // state.json is self-invalidating evidence: registering it freezes a sha
   // that the registration's own persistState immediately rewrites, after
   // which every verify fails the integrity preflight forever.
-  const stateRefused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "file", "--path", "agents/runs/fixture/state.json", "--description", "self-referential claim"]);
+  const stateRefused = run(root, ["implement", "artifact", "--row", "B2", "--kind", "file", "--path", "agents/runs/fixture/state.json", "--description", "self-referential claim"]);
   assert.equal(stateRefused.status, 2, stateRefused.stderr + stateRefused.stdout);
   assert.match(stateRefused.json.message ?? stateRefused.stderr, /harness-owned and rewritten by the harness/);
-  const prdRefused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "file", "--path", "agents/runs/fixture/prd.md", "--description", "pinned prd as claim"]);
+  const prdRefused = run(root, ["implement", "artifact", "--row", "B2", "--kind", "file", "--path", "agents/runs/fixture/prd.md", "--description", "pinned prd as claim"]);
   assert.equal(prdRefused.status, 2);
   // A project-internal symlink alias points at the same harness-owned file;
   // the refusal resolves realpath, so the alias is judged by its target.
   fs.symlinkSync(path.join(root, "agents", "runs", "fixture", "state.json"), path.join(root, "alias-state.json"));
-  const aliasRefused = run(root, ["implement", "artifact", "--id", "V3", "--kind", "file", "--path", "alias-state.json", "--description", "alias claim"]);
+  const aliasRefused = run(root, ["implement", "artifact", "--row", "B2", "--kind", "file", "--path", "alias-state.json", "--description", "alias claim"]);
   assert.equal(aliasRefused.status, 2, aliasRefused.stderr + aliasRefused.stdout);
   assert.match(aliasRefused.json.message ?? aliasRefused.stderr, /harness-owned/);
 });
@@ -2436,9 +2185,7 @@ test("a legacy agent-registered harness log is purged so the run can verify agai
   const root = makeProject();
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-  startAndClose(root);
-  fs.writeFileSync(path.join(root, "runtime.log"), "REGISTERED-RUNTIME-EVIDENCE\n");
-  assert.equal(run(root, ["implement", "artifact", "--id", "V1", "--kind", "log", "--path", "runtime.log", "--description", "runtime proof"]).status, 0);
+  startAndProve(root);
   assert.equal(run(root, ["implement", "verify"], { env }).status, 0);
   // Reproduce the poisoned shape directly: an agent-registered copy of the
   // harness's own mechanical log, sha frozen at a value the next mechanical
@@ -2447,7 +2194,7 @@ test("a legacy agent-registered harness log is purged so the run can verify agai
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
   const commandLog = state.artifacts.find((entry) => entry.command !== undefined);
   state.artifacts.push({
-    verificationId: "V3",
+    rowId: "B2",
     kind: "log",
     path: commandLog.path,
     description: "poisoned legacy registration",
@@ -2459,7 +2206,7 @@ test("a legacy agent-registered harness log is purged so the run can verify agai
   // persistState rewrites. The purge must cover the harness-owned class,
   // not one log directory.
   state.artifacts.push({
-    verificationId: "V3",
+    rowId: "B2",
     kind: "file",
     path: "agents/runs/fixture/state.json",
     description: "poisoned self-referential registration",
@@ -2471,7 +2218,7 @@ test("a legacy agent-registered harness log is purged so the run can verify agai
   // whose stored string names the alias, not the harness-owned target.
   fs.symlinkSync(path.join(root, "agents", "runs", "fixture", "state.json"), path.join(root, "legacy-alias.json"));
   state.artifacts.push({
-    verificationId: "V3",
+    rowId: "B2",
     kind: "file",
     path: "legacy-alias.json",
     description: "poisoned legacy alias registration",
@@ -2480,6 +2227,8 @@ test("a legacy agent-registered harness log is purged so the run can verify agai
     registeredAt: new Date().toISOString(),
   });
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  // The alias symlink is judged source, so the row is re-proved on it first.
+  greenChecks(root);
   const repaired = run(root, ["implement", "verify"], { env });
   assert.equal(repaired.status, 0, repaired.stderr + repaired.stdout);
   assert.match(repaired.stderr, /dropped 3 agent-registered artifact\(s\) on harness-owned path\(s\)/);
@@ -2499,7 +2248,7 @@ test("AC15: a conversation-only PRD starts without judge PASS and its receipt re
   const { file, capture } = stub(root);
   const env = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
   assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "gates")), false, "no gate ever ran");
-  startAndClose(root);
+  startAndProve(root);
   const judge = readState(root).prd.judge;
   assert.equal(judge.required, false);
   assert.match(judge.skippedReason, /^judge not run: no user utterances to judge against \(source_intake is "current conversation", not an interview qa-log\)$/);
