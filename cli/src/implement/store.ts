@@ -16,7 +16,6 @@ import {
 import { ISSUED_COMMANDS } from "./verbs";
 import { mechanicalOutcome } from "./verdict";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
-import { tryAcquireLock } from "../runs/lock";
 import { currentSessionId } from "../runs/session";
 
 export const ACTIVE_POINTER = ACTIVE_POINTER_REL;
@@ -38,12 +37,8 @@ export function normalizeProjectPath(projectRoot: string, input: string): { abso
   return { absolute, relative: relative || "." };
 }
 
-export function jsonText(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
 export function writeJsonAtomic(file: string, value: unknown): void {
-  writeTextAtomic(file, jsonText(value));
+  writeTextAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function writeTextAtomic(file: string, value: string): void {
@@ -835,35 +830,6 @@ export function persistState(statePath: string, state: ImplementState): void {
   // write is not a conflict with the first.
   stateBaseline.set(state, { statePath, digest: sha256(text) });
   writeActivePointer(state.projectRoot, state);
-}
-
-/**
- * Close a run record: persist the state, then write the files derived from
- * it, as one exclusive step.
- *
- * Order and exclusion both matter. State first, because `persistState` is the
- * compare-and-swap: a receipt written before it could survive a rejected state
- * write and contradict the record. Exclusive, because two closers that both
- * persist in sequence could still interleave their derived writes - the
- * earlier closer resuming after the later one and stamping an older receipt
- * over the newer state (risk finding RF1 on the prd-template run,
- * 2026-09-06). A closer that finds the lock held is refused with nothing
- * written; a closer that loaded a state the lock holder has since replaced is
- * refused by the compare-and-swap. Either way the receipt on disk is a
- * projection of the state on disk.
- */
-export function persistClose(statePath: string, state: ImplementState, derived: Array<{ file: string; text: string }>): void {
-  const lockPath = path.join(state.projectRoot, state.runDir, ".close.lock");
-  const release = tryAcquireLock(lockPath, { recoverDeadOwner: true, topic: state.topicSlug });
-  if (release === null) {
-    throw new Error(`another finalize or confirm is writing this run's record (${path.relative(state.projectRoot, lockPath)}); nothing was written. Re-run the command.`);
-  }
-  try {
-    persistState(statePath, state);
-    for (const entry of derived) writeTextAtomic(entry.file, entry.text);
-  } finally {
-    release();
-  }
 }
 
 /**
