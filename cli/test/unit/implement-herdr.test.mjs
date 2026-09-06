@@ -37,7 +37,7 @@ test("AC27: each hole degrades to a named problem rather than an exception", () 
 });
 
 test("all three holes work when herdr answers", () => {
-  const env = { HERDR_ENV: "1" };
+  const env = { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" };
   const agents = JSON.stringify({ result: { agents: [{ name: "impl", status: "running" }, { name: "old", status: "exited" }] } });
   assert.equal(spawnImplementor({ name: "impl", cwd: ".", prompt: "p" }, { env, run: ok('{"result":{}}') }).ok, true);
   assert.equal(readPane({ name: "impl" }, { env, run: ok("pane text") }).value, "pane text");
@@ -51,9 +51,54 @@ test("all three holes work when herdr answers", () => {
 test("a failed spawn redacts the prompt from its problem line", () => {
   const outcome = spawnImplementor(
     { name: "impl", cwd: ".", prompt: "SECRET-OPERATIONAL-CONTEXT" },
-    { env: { HERDR_ENV: "1" }, run: (args) => (args[1] === "list" ? { status: 0, stdout: "{}", stderr: "" } : { status: 1, stdout: "SECRET-OPERATIONAL-CONTEXT", stderr: "SECRET-OPERATIONAL-CONTEXT" }) },
+    { env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" }, run: (args) => (args[1] === "list" ? { status: 0, stdout: "{}", stderr: "" } : { status: 1, stdout: "SECRET-OPERATIONAL-CONTEXT", stderr: "SECRET-OPERATIONAL-CONTEXT" }) },
   );
   assert.equal(outcome.ok, false);
   assert.doesNotMatch(outcome.problem, /SECRET-OPERATIONAL-CONTEXT/);
   assert.match(outcome.problem, /<redacted prompt>/);
+});
+
+// herdr derives the new agent's parent lineage from the dispatching pane, so
+// a spawn without it leaves an orphan the supervisor cannot trace back.
+test("a dispatch carries the dispatching pane so the implementor keeps its lineage", () => {
+  const argv = [];
+  spawnImplementor(
+    { name: "impl", cwd: "/repo", prompt: "p" },
+    {
+      env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" },
+      run: (args) => {
+        argv.push(args);
+        return { status: 0, stdout: "{}", stderr: "" };
+      },
+    },
+  );
+  const dispatch = argv.find((args) => args[1] === "new");
+  assert.deepEqual(dispatch.slice(0, 5), ["agent", "new", "impl", "--from-pane", "w4G:p12"]);
+});
+
+test("an unset pane id closes spawn alone and never dispatches without lineage", () => {
+  const env = { HERDR_ENV: "1" };
+  const capabilities = herdrCapabilities({ env, run: ok("{}") });
+  assert.deepEqual(capabilities.holes, { spawn: false, read: true, alive: true });
+  assert.match(capabilities.reason, /HERDR_PANE_ID is unset/);
+
+  let dispatched = false;
+  const outcome = spawnImplementor(
+    { name: "impl", cwd: "/repo", prompt: "p" },
+    {
+      env,
+      run: (args) => {
+        if (args[1] === "new") dispatched = true;
+        return { status: 0, stdout: "{}", stderr: "" };
+      },
+    },
+  );
+  assert.equal(outcome.ok, false);
+  assert.equal(dispatched, false, "a lineage-less dispatch must be refused, not sent");
+  assert.match(outcome.problem, /^spawn unavailable:/);
+});
+
+test("a blank pane id is treated as unset rather than dispatched verbatim", () => {
+  const capabilities = herdrCapabilities({ env: { HERDR_ENV: "1", HERDR_PANE_ID: "   " }, run: ok("{}") });
+  assert.equal(capabilities.holes.spawn, false);
 });

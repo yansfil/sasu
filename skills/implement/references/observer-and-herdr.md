@@ -54,7 +54,7 @@ Choose a unique agent name that describes the mode and topic and remains within 
 Build the complete Handoff Packet below, then submit it on stdin to the deterministic helper:
 
 ```sh
-herdr agent new <unique-name> --cwd "$PWD" --no-focus \
+herdr agent new <unique-name> --from-pane "$HERDR_PANE_ID" --cwd "$PWD" --no-focus \
   --env SASU_HERDR_ROLE=implementor \
   --model <agent-model> --effort <reasoning-effort> \
   --prompt "$(cat <<'SASU_HANDOFF'
@@ -68,6 +68,9 @@ RETURN CONTRACT: <status, paths, assumptions, verdicts, timing, unresolved items
 SASU_HANDOFF
 )"
 ```
+
+`--from-pane "$HERDR_PANE_ID"` is not optional: herdr derives the new agent's parent lineage from it, and a dispatch without it leaves an orphan pane that no longer traces back to the Observer that asked for it.
+When `HERDR_PANE_ID` is unset, do not dispatch; `sasu implement status` reports `spawn` closed for exactly this reason while pane diagnosis and liveness stay open.
 
 Dispatch reaches herdr only through the harness's three-hole adapter
 (`spawn`, `read`, `alive`); nothing else in the harness may call herdr.

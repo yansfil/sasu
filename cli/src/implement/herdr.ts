@@ -16,6 +16,15 @@ import { spawnSync } from "node:child_process";
  */
 export type HerdrHole = "spawn" | "read" | "alive";
 
+/**
+ * The pane this process occupies. herdr derives the new agent's parent
+ * lineage from it, so a dispatch that omits it produces an orphan pane that
+ * no longer traces back to the supervisor that asked for it. It is the spawn
+ * hole's own precondition and nothing else's, which is why a missing value
+ * closes `spawn` alone and leaves pane diagnosis and liveness open.
+ */
+const PANE_ID_ENV_KEY = "HERDR_PANE_ID";
+
 export interface HerdrCapabilities {
   available: boolean;
   /** Per-hole availability, so status can name what specifically is missing. */
@@ -53,7 +62,18 @@ export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapa
       reason: `herdr is present but not answering (\`herdr agent list\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis`,
     };
   }
+  if (paneId(env) === "") {
+    return {
+      available: false,
+      holes: { spawn: false, read: true, alive: true },
+      reason: `herdr is answering but ${PANE_ID_ENV_KEY} is unset, so a dispatched implementor would have no parent lineage; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
+    };
+  }
   return { available: true, holes: { spawn: true, read: true, alive: true }, reason: null };
+}
+
+function paneId(env: NodeJS.ProcessEnv): string {
+  return env[PANE_ID_ENV_KEY]?.trim() ?? "";
 }
 
 export interface HoleResult<T> {
@@ -81,7 +101,10 @@ export function spawnImplementor(
   const capabilities = herdrCapabilities(environment);
   if (!capabilities.holes.spawn) return { ok: false, value: null, problem: `spawn unavailable: ${capabilities.reason}` };
   const run = environment.run ?? defaultRun;
-  const executed = run(["agent", "new", input.name, "--cwd", input.cwd, "--prompt", input.prompt], input.cwd);
+  // The hole being open is what guarantees the pane id is a real value, so
+  // this composes it with no fallback: an orphan implementor is worse than a
+  // refused dispatch.
+  const executed = run(["agent", "new", input.name, "--from-pane", paneId(environment.env ?? process.env), "--cwd", input.cwd, "--prompt", input.prompt], input.cwd);
   if (executed.status !== 0) {
     // The prompt carries the whole handoff in one argv entry, and a failing
     // wrapper may echo argv. Never retain output for this call: it would
