@@ -144,20 +144,15 @@ function mergeRows(state: ImplementState, next: ImplementContract, plan: Amendme
     const park = existing.parks.at(-1);
     if (existing.status === "parked" && park !== undefined && park.resumedAt === null) park.resumedAt = at;
     const kindChanged = existing.check.kind !== row.check.kind;
+    // The reset row is exactly what `start` would seal, plus the history it
+    // keeps: one definition of "unproven" for both paths, so a new check kind
+    // or a new reset rule lands in `sealRow` once. Attempts and parks belong
+    // to a check: row; a row that changed kind starts its ledger over, because
+    // an exit code proves nothing about a judge: question.
     return {
-      ...existing,
-      behavior: row.behavior,
-      check: row.check,
-      decisionIds: [...row.decisionIds],
-      status: row.check.kind === "human" ? "OPEN" : "pending",
-      // Attempts and parks belong to a check: row; a row that changed kind
-      // starts its ledger over, because an exit code proves nothing about a
-      // judge: question.
+      ...sealRow(row),
       attempts: kindChanged ? [] : existing.attempts,
       parks: kindChanged ? [] : existing.parks,
-      consecutiveFailures: 0,
-      verdict: null,
-      human: null,
       rejections: kindChanged ? [] : existing.rejections,
     };
   });
