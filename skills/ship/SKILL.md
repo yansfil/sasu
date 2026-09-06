@@ -113,7 +113,7 @@ Do not move judgment into the script, and do not bypass guardrails with ad-hoc g
 
 Script-enforced guardrails (fail closed):
 
-- receipt must be `complete`.
+- receipt must be `complete` or `complete-pending-human` (every check:/judge: row proved; OPEN human: rows travel in the PR body and never block merge).
 - `local` accepts only local mode; it never pushes, invokes GitHub, creates a PR,
   watches CI, or merges.
 - `ship` and `merge` accept only `pr` mode unless their documented explicit

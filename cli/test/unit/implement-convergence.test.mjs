@@ -46,11 +46,11 @@ test("round context names exact changed paths and new evidence, and a new FAIL m
   const prior = { id: "attempt-1", inputManifest: firstManifest };
   const current = verificationInputManifest(initial, snapshot([
     { path: "src/a.ts", state: "present", sha256: "two" },
-  ]), [{ verificationId: "V1", path: "proof.log", sha256: "proof", command: undefined }]);
+  ]), [{ rowId: "B1", path: "proof.log", sha256: "proof" }]);
   const context = verificationRoundContext(current, prior);
 
   assert.deepEqual(context.changedPaths, ["src/a.ts"]);
-  assert.deepEqual(context.newEvidence, [{ verificationId: "V1", path: "proof.log", sha256: "proof" }]);
+  assert.deepEqual(context.newEvidence, [{ rowId: "B1", path: "proof.log", sha256: "proof" }]);
   assert.deepEqual(validateVerdictDelta({
     origin: "new",
     deltaBasis: { kind: "changed-path", value: "src/a.ts" },

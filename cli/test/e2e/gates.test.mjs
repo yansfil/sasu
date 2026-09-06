@@ -12,7 +12,11 @@ const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).path
 // call, so gate fixtures must be structurally healthy for the judge path to
 // be exercised at all.
 const QA_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "qa-clean.md"), "utf8");
+// The clean PRD cites Q2 in its Decisions table and qa-clean.md answers Q2,
+// so the pair stays clean under the kept cross-document rule
+// prd-cited-question-unanswered.
 const PRD_FIXTURE = fs.readFileSync(path.join(PRELINT_FIXTURES, "prd-clean.md"), "utf8");
+assert.match(PRD_FIXTURE, /Q2: the user wants state to survive reload/, "the fixture's Q citation moved; keep it on an answered turn");
 
 function gitCommitAll(dir, message, paths = ["-A"]) {
   for (const args of [["init", "-q"], ["add", ...paths], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]]) {
@@ -197,14 +201,15 @@ test("verify FAILs semantically with per-criterion reasons after mechanical pass
     stub: stubFile(dir, {
       verdict: "FAIL",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "render() added in widget.js", evidence: "diff hunk" },
-        { id: "AC2", verdict: "FAIL", reason: "no persistence code in the diff" },
+        { id: "B1", verdict: "PASS", reason: "render() added in widget.js", evidence: "diff hunk" },
+        { id: "B2", verdict: "FAIL", reason: "no persistence code in the diff" },
+        { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
       ],
     }),
   });
   assert.equal(result.status, 1);
   assert.match(result.stdout, /mechanical:test.*ok/);
-  assert.match(result.stdout, /AC2: no persistence code/);
+  assert.match(result.stdout, /B2: no persistence code/);
 });
 
 test("verify PASSes end to end and records judge usage for the receipt", () => {
@@ -216,8 +221,9 @@ test("verify PASSes end to end and records judge usage for the receipt", () => {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
-        { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+        { id: "B1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+        { id: "B2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+        { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
       ],
     }),
   });
@@ -240,8 +246,9 @@ test("verify auto-detects commands from package.json and suggests pinning them",
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
-        { id: "AC2", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
+        { id: "B1", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
+        { id: "B2", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
+        { id: "B3", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
       ],
     }),
   });
@@ -348,14 +355,15 @@ test("verify PASS prints a per-criterion semantic summary", () => {
     stub: stubFile(dir, {
       verdict: "PASS",
       criteria: [
-        { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
-        { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+        { id: "B1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+        { id: "B2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+        { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
       ],
     }),
   });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /\[semantic\] AC1 PASS - render\(\) added/);
-  assert.match(result.stdout, /\[semantic\] AC2 PASS - persist\(\) added/);
+  assert.match(result.stdout, /\[semantic\] B1 PASS - render\(\) added/);
+  assert.match(result.stdout, /\[semantic\] B2 PASS - persist\(\) added/);
 });
 
 test("fan-out: one blocking lane blocks the merged gate and per-lane records land in the artifact", () => {
@@ -591,12 +599,16 @@ test("prelint: verify blocks on a broken PRD before the mechanical commands run 
     config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mechanical-ran.marker','x')\"" } } },
     git: true,
   });
-  fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE.replace("Covers R1, AC1, AC2.", "Covers R9, AC1, AC2."));
+  // A missing required section is a single-document defect, so it fires
+  // without the qa-log the cross-document rules need.
+  const broken = PRD_FIXTURE.replace(/## Non-goals\n[\s\S]*?(?=## Decisions)/, "");
+  assert.notEqual(broken, PRD_FIXTURE, "the Non-goals section this test removes moved");
+  fs.writeFileSync(path.join(dir, "prd.md"), broken);
   const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "poison"),
   });
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /\[prelint\] prd-dangling-ref/);
+  assert.match(result.stdout, /\[prelint\] prd-section-missing/);
   assert.equal(fs.existsSync(path.join(dir, "mechanical-ran.marker")), false, "mechanical checks must not run after a prelint failure");
   assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false);
 });
@@ -676,13 +688,14 @@ test("json contract: doctor, status, and override all emit contractVersion-tagge
   assert.equal(overrideParsed.status.effective, "PASS");
 });
 
-// --- verify open-task guard + mechanical fresh-pass reuse -------------------
+// --- verify open-row guard + mechanical fresh-pass reuse --------------------
 
 const PASS_STUB = {
   verdict: "PASS",
   criteria: [
-    { id: "AC1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
-    { id: "AC2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+    { id: "B1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
+    { id: "B2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
+    { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
   ],
 };
 
@@ -695,61 +708,62 @@ function writeImplementState(dir, slug, state, { legacy = false } = {}) {
   );
 }
 
-test("verify refuses a mid-run call while implement tasks are open, at zero cost", () => {
+/** The slice of a v8 row the guard reads: kind and status. */
+const row = (id, kind, status) => ({ id, check: { kind }, status });
+
+test("verify refuses a mid-run call while a check: row is not green, at zero cost", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
     git: true,
   });
   writeImplementState(dir, "fixture", {
-    tasks: [
-      { id: "T1", title: "done already", status: "complete" },
-      { id: "T2", title: "build the widget", status: "pending" },
-    ],
+    rows: [row("B1", "check", "green"), row("B2", "check", "pending")],
   });
   const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "should never be consumed"),
   });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /open task/);
-  assert.match(result.stderr, /T2 \(build the widget\)/);
-  assert.match(result.stderr, /--allow-open-tasks/);
+  assert.match(result.stderr, /check: row\(s\) not green/);
+  assert.match(result.stderr, /B2 \(pending\)/);
+  assert.match(result.stderr, /--allow-open-rows/);
   assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "mechanical stage must not run");
   assert.ok(!fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), "no gate attempt may be recorded");
 });
 
-test("verify open-task guard still reads a legacy agents/implement/<slug> run", () => {
+test("verify open-row guard still reads a legacy agents/implement/<slug> run", () => {
   const dir = makeProject({
     config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
     git: true,
   });
-  writeImplementState(dir, "fixture", {
-    tasks: [{ id: "T1", title: "legacy open task", status: "pending" }],
-  }, { legacy: true });
+  writeImplementState(dir, "fixture", { rows: [row("B1", "check", "fail")] }, { legacy: true });
   const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
     stub: stubFile(dir, "should never be consumed"),
   });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /open task/);
-  assert.match(result.stderr, /T1 \(legacy open task\)/);
+  assert.match(result.stderr, /check: row\(s\) not green/);
+  assert.match(result.stderr, /B1 \(fail\)/);
 });
 
-test("verify open-task guard: --allow-open-tasks proceeds with a warning", () => {
+test("verify open-row guard: --allow-open-rows proceeds with a warning", () => {
   const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
-  writeImplementState(dir, "fixture", { tasks: [{ id: "T1", title: "still open", status: "pending" }] });
+  writeImplementState(dir, "fixture", { rows: [row("B1", "check", "pending")] });
   const result = runCli(
     dir,
-    ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-tasks"],
+    ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-rows"],
     { stub: stubFile(dir, PASS_STUB) },
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stderr, /proceeding despite 1 open implement task/);
+  assert.match(result.stderr, /proceeding despite 1 open check: row\(s\)/);
   assert.equal(gatesState(dir, "fixture").gates.verify.verdict, "PASS");
 });
 
-test("verify open-task guard fails open: closed tasks, corrupt state, and missing state all proceed", () => {
+// judge: rows wait for implement verify and human: rows for confirm, so
+// neither means the implementor is mid-run; a parked check: row was set aside
+// on the human's word. Only an unproved check: row is work in flight.
+test("verify open-row guard fails open: proved or parked rows, judge/human rows, corrupt state, and missing state all proceed", () => {
   for (const state of [
-    { tasks: [{ id: "T1", status: "complete" }, { id: "T2", status: "blocked" }, { id: "T3", status: "deferred" }] },
-    { tasks: "not-an-array", verification: {} },
+    { rows: [row("B1", "check", "green"), row("B2", "check", "parked"), row("B3", "judge", "pending"), row("B4", "human", "OPEN")] },
+    { rows: "not-an-array" },
     "{ not json at all",
     null,
   ]) {
@@ -781,8 +795,9 @@ test("verify short-circuit: an identical semantic FAIL rerun refuses; a correcte
   const failStub = {
     verdict: "FAIL",
     criteria: [
-      { id: "AC1", verdict: "PASS", reason: "render() present", evidence: "notes.js hunk" },
-      { id: "AC2", verdict: "FAIL", reason: "no persistence code in the diff" },
+      { id: "B1", verdict: "PASS", reason: "render() present", evidence: "notes.js hunk" },
+      { id: "B2", verdict: "FAIL", reason: "no persistence code in the diff" },
+      { id: "B3", verdict: "PASS", reason: "nothing to judge yet", evidence: "notes.js hunk" },
     ],
   };
   const first = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });

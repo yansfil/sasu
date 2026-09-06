@@ -39,10 +39,9 @@ test("gen-prd routes readiness through the spec gate", () => {
   assert.doesNotMatch(skill, /closure BLOCK is terminal|closure review|third time/i);
   assert.match(skill, /fidelity/i);
   assert.match(skill, /Never run `sasu gate override` yourself/);
-  assert.match(skill, /\| ID \| Criterion \| Judgment \| Evidence Declaration \|/);
-  assert.match(skill, /`machine\+gate:human`/);
-  assert.match(skill, /Ask a contract-breaking tagging question only when/);
-  assert.match(skill, /judged AC without its Evidence Declaration/);
+  assert.match(skill, /\| # \| 사용자가 관찰하는 행동 \| 검사 방법 \| 결정 \|/);
+  assert.match(skill, /prd-behavior-row/);
+  assert.match(skill, /Ask a contract-breaking question only when the choice between/);
 });
 
 test("implement routes changed-code tasks through unified implement verify", () => {
@@ -50,10 +49,10 @@ test("implement routes changed-code tasks through unified implement verify", () 
   assert.match(skill, /sasu implement verify/);
   assert.match(skill, /mechanical/i);
   assert.match(skill, /Do not use overrides on the user's behalf/);
-  assert.match(skill, /sasu implement check --ac AC1 --bind/);
+  assert.match(skill, /sasu implement check --row B1/);
   assert.match(skill, /sasu implement park/);
-  assert.match(skill, /sasu implement resume --ac AC1/);
-  assert.match(skill, /parked AC.*blocks a complete finalize/is);
+  assert.match(skill, /sasu implement resume --row B1/);
+  assert.match(skill, /parked row.*blocks a complete finalize/is);
 });
 
 test("please runs each PRD gate on its open findings set and hands a NEEDS_HUMAN bundle to the user", () => {

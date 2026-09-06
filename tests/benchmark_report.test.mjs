@@ -24,14 +24,14 @@ function run(root, args) {
 }
 
 function git(root, args) {
-  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  const result = spawnSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`);
   return result.stdout.trim();
 }
 
 function benchmarkPrd({ approval = "approved", includeSections = true } = {}) {
   const approved = cleanPrd.replace('human_approval: "approved"', `human_approval: "${approval}"`);
-  return includeSections ? approved : approved.replace(/## 12\. Implementation Result Report Contract[\s\S]*$/, "");
+  return includeSections ? approved : approved.replace(/## Risks[\s\S]*$/, "");
 }
 
 test("report and comparison preserve hard outcomes while scoring only evidenced process behavior", t => {

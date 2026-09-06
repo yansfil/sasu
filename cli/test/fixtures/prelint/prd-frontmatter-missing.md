@@ -1,63 +1,31 @@
-
 # PRD: fixture
 
-## 1. Summary
+## Goal
 
 A widget that renders and persists.
 
-## 2. Problem, Goal, And Users
+## Non-goals
 
-Users need a widget.
+- No theming.
 
-## 3. Scope And Non-Goals
+## Decisions
 
-In scope: the widget.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | the widget persists to local storage | Q3: the user wants state to survive reload |
 
-## 4. Pre-Work And Required Decisions
+## Behaviors
 
-None required.
-
-## 5. Major Technical Structure Changes
-
-No major technical structure change expected.
-
-## 6. Requirements
-
-- R1. the widget renders and persists its state
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
 | --- | --- | --- | --- |
-| AC1 | the widget renders | machine | - |
-| AC2 | the widget persists its state | machine | - |
+| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |
+| B2 | the widget persists its state across reload | judge: a before/after screenshot pair registered for B2 | D-01 |
+| B3 | the persisted state feels right to the user | human: the user reloads and says the widget kept their state | D-01 |
 
-## 8. PRD-Level Tasks
+## Technical structure
 
-- T1. build the widget. Covers R1, AC1, AC2.
+One widget module plus a storage adapter.
 
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | core behavior | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, AC1, AC2 | behavior covered by automated test | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand scope.
-
-## 12. Implementation Result Report Contract
-
-Report status and evidence.

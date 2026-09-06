@@ -22,7 +22,7 @@ const sealing = require_(
 );
 
 function git(root, args) {
-  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  const result = spawnSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`);
   return result.stdout.trim();
 }

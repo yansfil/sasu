@@ -1,72 +1,65 @@
-import { criterionCheckIsGreen } from "./checks";
 import { activeSuiteCommands, suiteScore } from "./suite";
 import type { ImplementState } from "./types";
 
 /**
- * What the receipt says a run actually proved (R4, AC10, AC11).
+ * What the receipt says a run actually proved (R7).
  *
- * Two axes, deliberately not one number. The AC axis says how many questions
- * the PRD asked were answered; the suite axis says whether the standing
- * regression guards are green. They are independent because their failures
- * are independent: every criterion can pass while a command no criterion
- * binds goes red, and that run is not done (R2).
+ * Three counts, deliberately not one number. Machine and judge rows are the
+ * questions the harness can answer itself; human rows are the questions
+ * only the person can, and are reported as OPEN until confirmed instead of
+ * being folded into the same fraction. The suite axis is the standing
+ * regression guard and is independent of both: every row can pass while a
+ * command no row names goes red, and that run is not done.
  *
- * The score EXPLAINS the outcome and never decides it. A parked criterion
- * still refuses `finalize --status complete`, exactly as before; counting it
- * does not soften it (D-23).
+ * The score EXPLAINS the outcome and never decides it. A parked row still
+ * refuses `finalize --status complete`; counting it does not soften it.
  */
 
-export interface AcceptanceScore {
+export interface RowScore {
+  /** check: and judge: rows proved (green or PASS). */
   passed: number;
+  /** check: and judge: rows in total. */
   total: number;
+  /** human: rows still OPEN, with the latest rejection when there is one. */
+  open: Array<{ id: string; rejected: string | null }>;
+  /** human: rows confirmed. */
+  confirmed: number;
   /** Ids and reasons, so a reader learns what was set aside without opening state. */
-  parked: Array<{ id: string; reason: string; parkedBy: string }>;
-  /** Criteria that are neither proven nor parked. */
+  parked: Array<{ id: string; reason: string }>;
+  /** check: and judge: rows that are neither proved nor parked. */
   unproven: string[];
 }
 
 export interface SuiteAxis {
   green: number;
   total: number;
-  red: Array<{ commandId: string; command: string; exitCode: number; boundCriteria: string[] }>;
+  red: Array<{ commandId: string; command: string; exitCode: number }>;
   excluded: Array<{ commandId: string; reason: string }>;
 }
 
-export interface AssetLaborMeasurement {
-  asset: number;
-  labor: number;
-  /** Every bound command with its classification, so the count is auditable. */
-  bindings: Array<{ criterionId: string; command: string; cwd: string; classification: "asset" | "labor" }>;
-}
-
-/**
- * A criterion counts as passed when the authority that owns it says so: the
- * check ledger for a machine criterion, the recorded judged status for the
- * rest. Parked criteria are counted separately rather than as failures -
- * "set aside with a reason" and "tried and failed" are different facts and a
- * receipt that merged them would be lying by rounding.
- */
-export function acceptanceScore(state: ImplementState): AcceptanceScore {
-  const parked: AcceptanceScore["parked"] = [];
+export function rowScore(state: ImplementState): RowScore {
+  const parked: RowScore["parked"] = [];
   const unproven: string[] = [];
+  const open: RowScore["open"] = [];
   let passed = 0;
-  for (const criterion of state.acceptanceCriteria) {
-    if (criterion.check.status === "parked") {
-      const park = criterion.check.parks.at(-1);
-      parked.push({
-        id: criterion.id,
-        reason: park?.reason ?? "parked without a recorded reason",
-        parkedBy: park?.parkedBy ?? "human",
-      });
+  let total = 0;
+  let confirmed = 0;
+  for (const row of state.rows) {
+    if (row.check.kind === "human") {
+      if (row.status === "PASS") confirmed += 1;
+      else open.push({ id: row.id, rejected: row.rejections.at(-1)?.evidence ?? null });
       continue;
     }
-    const proven = criterion.judgment === "judged"
-      ? criterion.status === "complete"
-      : criterionCheckIsGreen(criterion);
-    if (proven) passed += 1;
-    else unproven.push(criterion.id);
+    total += 1;
+    if (row.status === "parked") {
+      parked.push({ id: row.id, reason: row.parks.at(-1)?.reason ?? "parked without a recorded reason" });
+    } else if (row.status === "green" || row.status === "PASS") {
+      passed += 1;
+    } else {
+      unproven.push(row.id);
+    }
   }
-  return { passed, total: state.acceptanceCriteria.length, parked, unproven };
+  return { passed, total, open, confirmed, parked, unproven };
 }
 
 export function suiteAxis(state: ImplementState): SuiteAxis {
@@ -74,12 +67,7 @@ export function suiteAxis(state: ImplementState): SuiteAxis {
   const active = new Map(activeSuiteCommands(state).map((entry) => [entry.id, entry]));
   const red = state.suite.results
     .filter((entry) => entry.status === "RED" && active.has(entry.commandId))
-    .map((entry) => ({
-      commandId: entry.commandId,
-      command: active.get(entry.commandId)!.command,
-      exitCode: entry.exitCode,
-      boundCriteria: entry.attributedCriteria,
-    }));
+    .map((entry) => ({ commandId: entry.commandId, command: active.get(entry.commandId)!.command, exitCode: entry.exitCode }));
   return {
     green: score.green,
     total: score.total,
@@ -88,41 +76,22 @@ export function suiteAxis(state: ImplementState): SuiteAxis {
   };
 }
 
-export function assetLabor(state: ImplementState): AssetLaborMeasurement {
-  // The LATEST binding per criterion is the one the run ends with. Counting
-  // every superseded binding too would score a rebind as extra assets, which
-  // is the opposite of what a rebind means.
-  const bindings = state.acceptanceCriteria.flatMap((criterion) => {
-    const binding = criterion.check.bindings.at(-1);
-    return binding === undefined ? [] : [{
-      criterionId: criterion.id,
-      command: binding.command,
-      cwd: binding.cwd,
-      classification: binding.classification,
-    }];
-  });
-  return {
-    asset: bindings.filter((entry) => entry.classification === "asset").length,
-    labor: bindings.filter((entry) => entry.classification === "labor").length,
-    bindings,
-  };
-}
-
 export interface RunScore {
-  acceptance: AcceptanceScore;
+  rows: RowScore;
   suite: SuiteAxis;
-  assetLabor: AssetLaborMeasurement;
 }
 
 export function runScore(state: ImplementState): RunScore {
-  return { acceptance: acceptanceScore(state), suite: suiteAxis(state), assetLabor: assetLabor(state) };
+  return { rows: rowScore(state), suite: suiteAxis(state) };
 }
 
-/** The one line a person reads first (D-23). */
+/** The one line a person reads first: machine+judge N/M, human OPEN K, suite. */
 export function scoreLine(score: RunScore): string {
-  const { acceptance, suite } = score;
-  const parked = acceptance.parked.length === 0
+  const { rows, suite } = score;
+  const parked = rows.parked.length === 0
     ? ""
-    : ` (parked ${acceptance.parked.length}: ${acceptance.parked.map((entry) => `${entry.id} ${entry.reason}`).join("; ")})`;
-  return `AC: ${acceptance.passed}/${acceptance.total} PASS${parked} | suite: ${suite.green}/${suite.total} GREEN${suite.red.length === 0 ? "" : ` (RED: ${suite.red.map((entry) => entry.commandId).join(", ")})`}`;
+    : ` (parked ${rows.parked.length}: ${rows.parked.map((entry) => `${entry.id} ${entry.reason}`).join("; ")})`;
+  const human = rows.open.length + rows.confirmed === 0 ? "" : ` | human: ${rows.open.length} OPEN, ${rows.confirmed} confirmed`;
+  const red = suite.red.length === 0 ? "" : ` (RED: ${suite.red.map((entry) => entry.commandId).join(", ")})`;
+  return `기계·판사: ${rows.passed}/${rows.total} PASS${parked}${human} | suite: ${suite.green}/${suite.total} GREEN${red}`;
 }

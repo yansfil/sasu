@@ -8,6 +8,12 @@ import test from "node:test";
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
 const SESSION_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
 
+// B1 gets a check of its own rather than sharing the sealed suite's `npm
+// test`. The suite is an independent blocking axis and fails the run before
+// the lanes ever assemble, so a row sharing its command could never be
+// observed failing on the row axis alone.
+const B1_CHECK = "node b1-check.js";
+
 function prd() {
   return `---
 topic: "implement envelope fixture"
@@ -20,68 +26,34 @@ source_intake: "current conversation"
 
 # PRD: implement envelope fixture
 
-## 1. Summary
-
-Exercise the three-section judge envelope.
-
-## 2. Problem, Goal, And Users
+## Goal
 
 The judge must be able to tell an exit code from somebody's assertion.
 
-## 3. Scope And Non-Goals
+## Non-goals
 
-Only the envelope and lane scoping are in scope.
+Nothing beyond the envelope and lane scoping.
 
-## 4. Pre-Work And Required Decisions
+## Decisions
 
-None required.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | facts and claims travel in separate sections | a judge cannot otherwise tell an exit code from an assertion |
 
-## 5. Major Technical Structure Changes
+## Behaviors
+
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | The runner executes each command once. | check: \`${B1_CHECK}\` | D-01 |
+| B2 | The operator can read the summary. | judge: A capture of the summary output. | D-01 |
+
+## Technical structure
 
 No fixture structure change.
 
-## 6. Requirements
-
-- R1. The machine criterion works. Covers AC1.
-- R2. The driven criterion works. Covers AC2.
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | The runner executes each command once. Covers R1. | machine | - |
-| AC2 | The operator can read the summary. Covers R2. | judged | A capture of the summary output. |
-
-## 8. PRD-Level Tasks
-
-- T1. Implement AC1. Covers R1, AC1. Depends on: none.
-- T2. Implement AC2. Covers R2, AC2. Depends on: none.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | fixture lifecycle | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, R2, AC1, AC2 | fixture lifecycle passes | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand the fixture.
-
-## 12. Implementation Result Report Contract
-
-Report the envelope structure.
 `;
 }
 
@@ -129,9 +101,9 @@ function stubEnv(root) {
         checks: ["F1", "F2", "F3", "F4", "F5"].map((id) => ({ id, verdict: "PASS", reason: "preserved", evidence: "fixture PRD" })),
       },
       "implement:design": { comments: [] },
-      "implement:acceptance:AC2": {
+      "implement:acceptance:B2": {
         verdict: "PASS",
-        criteria: [{ id: "AC2", verdict: "PASS", reason: "the capture shows the summary", evidence: "registered artifact" }],
+        criteria: [{ id: "B2", verdict: "PASS", reason: "the capture shows the summary", evidence: "registered artifact" }],
       },
     },
   }));
@@ -141,46 +113,46 @@ function stubEnv(root) {
 const state = (root) => JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", "fixture", "state.json"), "utf8"));
 const captured = (env, name) => fs.readFileSync(path.join(env.capture, `${name}.prompt.txt`), "utf8");
 
-// AC1 gets a check of its own rather than sharing the sealed suite's `npm
-// test`. The suite is an independent blocking axis (R2) and fails the run
-// before the lanes ever assemble, so a criterion sharing its command could
-// never be observed failing on the AC axis alone.
-const AC1_CHECK = "node ac1-check.js";
-function writeAc1Check(root, exitCode) {
-  fs.writeFileSync(path.join(root, "ac1-check.js"), `process.exit(${exitCode});\n`);
+function writeB1Check(root, exitCode) {
+  fs.writeFileSync(path.join(root, "b1-check.js"), `process.exit(${exitCode});\n`);
 }
 
-function prove(root, env) {
-  writeAc1Check(root, 0);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", AC1_CHECK]).status, 0);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0);
+function registerB2Capture(root) {
   fs.mkdirSync(path.join(root, "shots"), { recursive: true });
-  fs.writeFileSync(path.join(root, "shots", "summary.txt"), "AC2 summary capture\n");
-  assert.equal(run(root, [
-    "implement", "artifact", "--ac", "AC2", "--kind", "log", "--path", "shots/summary.txt", "--description", "summary capture",
-  ]).status, 0);
-  for (const id of ["T1", "T2"]) {
-    const closed = run(root, ["implement", "task", "--id", id, "--status", "complete"]);
-    assert.equal(closed.status, 0, closed.stderr + closed.stdout);
-  }
+  fs.writeFileSync(path.join(root, "shots", "summary.txt"), "B2 summary capture\n");
+  const registered = run(root, [
+    "implement", "artifact", "--row", "B2", "--kind", "log", "--path", "shots/summary.txt", "--description", "summary capture",
+  ]);
+  assert.equal(registered.status, 0, registered.stderr + registered.stdout);
+}
+
+// The capture lands in the product tree, so it is written BEFORE the check:
+// a green names the tree it was earned on, and a file added afterwards would
+// move that tree and make verify refuse the green as stale.
+function prove(root, env) {
+  writeB1Check(root, 0);
+  registerB2Capture(root);
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
   return run(root, ["implement", "verify"], env);
 }
 
-test("AC7: only the judged criterion reaches the acceptance lane; the machine one is a fact, not an item", () => {
+test("only the judge: row reaches the acceptance lane; the check: row is a fact, not an item", () => {
   const root = makeProject();
   const env = stubEnv(root);
   const verified = prove(root, env);
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
 
-  // The stub captures one prompt per judge call. A capture for AC1 would mean
-  // a machine criterion was put to a judge.
+  // The stub captures one prompt per judge call. A capture for B1 would mean
+  // a check: row was put to a judge.
   const calls = fs.readdirSync(env.capture).filter((name) => name.endsWith(".prompt.txt")).sort();
-  assert.ok(calls.includes("implement_acceptance_AC2.prompt.txt"), "the judged criterion is judged");
-  assert.ok(!calls.includes("implement_acceptance_AC1.prompt.txt"), "the machine criterion is not");
+  assert.ok(calls.includes("implement_acceptance_B2.prompt.txt"), "the judge: row is judged");
+  assert.ok(!calls.includes("implement_acceptance_B1.prompt.txt"), "the check: row is not");
 
-  // It is demoted, not dropped: AC1's own ledger still travels as a fact.
-  const envelope = captured(env, "implement_acceptance_AC2");
-  assert.match(envelope, /HARNESS-OWNED ACCEPTANCE CHECK LEDGER/);
+  // It is demoted, not dropped: B1's own ledger still travels as a fact.
+  const envelope = captured(env, "implement_acceptance_B2");
+  assert.match(envelope, /HARNESS-OWNED ROW LEDGER/);
+  assert.match(envelope, /"rowId": "B1"/);
   assert.match(envelope, /S1 GREEN \(exit 0\): npm test/);
 
   // It stays in the lane's result, settled from its own exit code, and the
@@ -188,22 +160,21 @@ test("AC7: only the judged criterion reaches the acceptance lane; the machine on
   // a judge call whose record was lost.
   const after = state(root);
   const invocations = after.verificationAttempts.at(-1).lanes.acceptance.result.invocations;
-  const ac1Invocation = invocations.find((entry) => entry.criterionId === "AC1");
-  assert.equal(ac1Invocation.verdict, "PASS");
-  assert.equal(ac1Invocation.source, "harness");
-  assert.equal(ac1Invocation.judge, null);
-  assert.equal(invocations.find((entry) => entry.criterionId === "AC2").source, "judge");
+  const b1Invocation = invocations.find((entry) => entry.rowId === "B1");
+  assert.equal(b1Invocation.verdict, "PASS");
+  assert.equal(b1Invocation.source, "harness");
+  assert.equal(b1Invocation.judge, null);
+  assert.equal(invocations.find((entry) => entry.rowId === "B2").source, "judge");
 
-  const ac1 = after.acceptanceCriteria.find((entry) => entry.id === "AC1");
-  assert.equal(ac1.check.status, "green");
-  assert.equal(ac1.status, "complete");
+  assert.equal(after.rows.find((entry) => entry.id === "B1").status, "green");
+  assert.equal(after.rows.find((entry) => entry.id === "B2").status, "PASS");
 });
 
-test("AC8, AC9: the envelope that actually reached the judge has three sections and the claims warning", () => {
+test("the envelope that actually reached the judge has three sections and the claims warning", () => {
   const root = makeProject();
   const env = stubEnv(root);
   assert.equal(prove(root, env).status, 0);
-  const envelope = captured(env, "implement_acceptance_AC2");
+  const envelope = captured(env, "implement_acceptance_B2");
 
   const headers = [...envelope.matchAll(/=== SECTION (\d) OF 3: ([^=]+?) ===/g)];
   assert.deepEqual(headers.map((entry) => entry[1]), ["1", "2", "3"]);
@@ -212,40 +183,38 @@ test("AC8, AC9: the envelope that actually reached the judge has three sections 
   assert.match(envelope, /\[observer\] the supervising agent asserted something/);
   assert.match(envelope, /\[solver\]/);
   assert.match(envelope, /SUITE COMMAND RESULTS:/);
-  assert.match(envelope, /CHECK REBINDS:/);
   assert.match(envelope, /PRD AMENDMENTS:/);
-  assert.match(envelope, /PARKED CRITERIA:/);
+  assert.match(envelope, /PARKED ROWS:/);
+  // The row's cited decision travels with it, so the judge reads why the
+  // behavior exists rather than only what it says.
+  assert.match(envelope, /CITED DECISIONS:\n[\s\S]*- D-01: facts and claims travel in separate sections/);
 });
 
-test("AC8: a park's reason travels as a labelled claim, and the park itself as a fact", () => {
+test("a park's reason travels as a labelled claim, and the park itself as a fact", () => {
   const root = makeProject();
   const env = stubEnv(root);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1"]).status, 0);
+  writeB1Check(root, 1);
+  assert.notEqual(run(root, ["implement", "check", "--row", "B1"]).status, 0, "the fixture check is red on purpose");
   const parked = run(root, [
-    "implement", "park", "--ac", "AC1",
+    "implement", "park", "--row", "B1",
     "--approval", "TEST-FIXTURE-APPROVAL: not a real human quote",
     "--reason", "TEST-FIXTURE-REASON: the runner is not built yet",
   ]);
   assert.equal(parked.status, 0, parked.stderr + parked.stdout);
 
-  fs.mkdirSync(path.join(root, "shots"), { recursive: true });
-  fs.writeFileSync(path.join(root, "shots", "summary.txt"), "AC2 summary capture\n");
-  assert.equal(run(root, [
-    "implement", "artifact", "--ac", "AC2", "--kind", "log", "--path", "shots/summary.txt", "--description", "summary capture",
-  ]).status, 0);
-  for (const id of ["T1", "T2"]) assert.equal(run(root, ["implement", "task", "--id", id, "--status", "complete"]).status, 0);
-  assert.equal(run(root, ["implement", "verify"], env).status, 0);
+  registerB2Capture(root);
+  const verified = run(root, ["implement", "verify"], env);
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
 
-  const envelope = captured(env, "implement_acceptance_AC2");
-  // Fact: the park happened, and the judge is told AC1 was not judged.
-  assert.match(envelope, /AC1 parked by human at .*it was not judged in this attempt/);
+  const envelope = captured(env, "implement_acceptance_B2");
+  // Fact: the park happened, and the judge is told B1 was not judged.
+  assert.match(envelope, /B1 parked at .*it was not judged in this attempt/);
   // Claim: the reason and the quoted approval, under the human label, below
   // the line that says none of it may carry a verdict.
   const claimsAt = envelope.indexOf("=== SECTION 3 OF 3");
   const reasonAt = envelope.indexOf("TEST-FIXTURE-REASON: the runner is not built yet");
   assert.ok(reasonAt > claimsAt, "the reason sits in the claims section, not among the facts");
-  assert.match(envelope.slice(claimsAt), /\[human\] AC1 park: TEST-FIXTURE-REASON[\s\S]*approval quoted: TEST-FIXTURE-APPROVAL/);
+  assert.match(envelope.slice(claimsAt), /\[human\] B1 park: TEST-FIXTURE-REASON[\s\S]*approval quoted: TEST-FIXTURE-APPROVAL/);
 });
 
 test("the fidelity and design lanes got their own prompts, without the envelope structure", () => {
@@ -259,34 +228,33 @@ test("the fidelity and design lanes got their own prompts, without the envelope 
   }
 });
 
-// The first attempt at AC7 dropped machine criteria from the lane entirely,
-// and `every(PASS)` over the resulting empty list printed a green acceptance
-// lane on a run with a red criterion. This is that regression's test.
-//
-// The scenario has to be a criterion that goes red BETWEEN its check and
-// verify: an never-proven one cannot reach verify at all, because closing its
-// task is refused first. That makes this the sharper case anyway - the lane
-// verdict must follow what the frozen tree says now, not the green that was
-// recorded earlier.
-test("AC7: a machine criterion that turns red fails the acceptance lane rather than vanishing from it", () => {
+// A check: row that goes red BETWEEN its green and verify must not ride the
+// recorded green into the lanes. The green names the tree it was earned on;
+// once the tree moves, verify refuses before any judge is called, and once
+// the command is re-run and fails, the row's own status refuses it.
+test("a check: row that turns red after its green cannot reach the lanes on the old proof", () => {
   const root = makeProject();
   const env = stubEnv(root);
   const verified = prove(root, env);
   assert.equal(verified.status, 0, verified.stderr + verified.stdout);
-  assert.equal(state(root).acceptanceCriteria.find((entry) => entry.id === "AC1").check.status, "green");
+  assert.equal(state(root).rows.find((entry) => entry.id === "B1").status, "green");
 
-  // The bound command now fails. Nothing about the ledger's recorded green
-  // changes; what changes is what the command does when verify runs it.
-  writeAc1Check(root, 1);
-  const reverified = run(root, ["implement", "verify"], env);
-  assert.notEqual(reverified.status, 0, "a red machine criterion must not verify green");
+  // The sealed command now fails. Nothing about the ledger's recorded green
+  // changes; what changes is the tree that green was earned on.
+  writeB1Check(root, 1);
+  const stale = run(root, ["implement", "verify"], env);
+  assert.notEqual(stale.status, 0, "a green earned on another tree must not verify");
+  assert.match(stale.json.message, /B1 is green on tree [0-9a-f]{12}, but the judged tree is now [0-9a-f]{12}/);
 
-  const lane = reverified.json.detail.attempt.lanes.acceptance;
-  assert.equal(lane.verdict, "FAIL");
-  assert.deepEqual(lane.failing.map((entry) => entry.id), ["AC1"]);
-  assert.match(lane.failing[0].reason, /the bound Check is not green/);
+  const rerun = run(root, ["implement", "check", "--row", "B1"]);
+  assert.notEqual(rerun.status, 0);
+  assert.equal(state(root).rows.find((entry) => entry.id === "B1").status, "fail");
+  const red = run(root, ["implement", "verify"], env);
+  assert.notEqual(red.status, 0, "a red check: row must not verify green");
+  assert.match(red.json.message, /B1 is fail/);
 
-  // Still no envelope was built for it: AC7 forbids the judge item, not the
-  // bookkeeping that keeps the lane honest.
-  assert.equal(fs.existsSync(path.join(env.capture, "implement_acceptance_AC1.prompt.txt")), false);
+  // No envelope was ever built for it, and no attempt was charged: the
+  // refusal happened before the lanes assembled.
+  assert.equal(fs.existsSync(path.join(env.capture, "implement_acceptance_B1.prompt.txt")), false);
+  assert.equal(state(root).verificationAttempts.length, 1);
 });

@@ -3,8 +3,8 @@ name: implement
 description: |
   Project-local approved-PRD implementation executor and Observer entrypoint.
   Use when the user invokes "$implement", explicitly asks to execute an approved
-  PRD through the receipt-backed workflow, or wants PRD tasks implemented and
-  proven through one unified verification command.
+  PRD through the receipt-backed workflow, or wants the PRD's Behaviors rows
+  implemented and proven through one unified verification command.
   Do not use for ordinary implementation requests that have no approved PRD.
 ---
 
@@ -22,12 +22,12 @@ The `benchmark-implement` coordinator remains an explicit in-session Implementor
 The public closing flow is intentionally small:
 
 ```text
-bind Check to each machine AC
-  -> run Check to green (or record a human-approved park)
-  -> implementation complete and task close
-  -> final evidence registered
+implement a Behaviors row
+  -> check --row for a check: row (or record a human-approved park)
+  -> register evidence for a judge: row
   -> sasu implement verify
-  -> sasu implement finalize
+  -> sasu implement finalize   (human: rows may still be OPEN)
+  -> sasu implement confirm    (the user, later)
 ```
 
 `state.json` is the only machine record.
@@ -40,16 +40,16 @@ Read each directly linked reference completely when its condition applies.
 | Reference | Read when |
 | --- | --- |
 | [`references/observer-and-herdr.md`](references/observer-and-herdr.md) | Before a direct Herdr invocation, when dispatched after `$please` PRD readiness, or when an Implementor blocks or needs recovery. |
-| [`references/execution-planning.md`](references/execution-planning.md) | Before implementation, while closing tasks, or when execution order is unclear. |
+| [`references/execution-planning.md`](references/execution-planning.md) | Before implementation, while working rows, or when execution order is unclear. |
 | [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before capturing or registering final runtime evidence and before unified verify. |
-| [`references/verification-environments.md`](references/verification-environments.md) | When binding a browser/runtime, mobile, TUI, or desktop V row to a concrete driver. |
+| [`references/verification-environments.md`](references/verification-environments.md) | When a browser/runtime, mobile, TUI, or desktop row needs a concrete driver. |
 | [`references/reviews-and-finalization.md`](references/reviews-and-finalization.md) | Before unified verify, finalize, or a blocked handoff. |
 | [`references/worktrees-and-delivery.md`](references/worktrees-and-delivery.md) | When delivery is `pr`, a worktree is configured, or post-receipt delivery is requested. |
 
 ## Core Invariants
 
 - Never implement a pending PRD without explicit human approval or the user's verbatim conversational approval.
-- Treat Major Technical Structure Changes as the approved structure boundary.
+- Treat the PRD's Technical structure section as the approved structure boundary.
 - Do not add unmapped scope, services, schemas, external calls, destructive actions, or compatibility paths.
 - Verification proof is never reduced to save ceremony.
 - The CLI executes deterministic verification before any LLM judge.
@@ -58,9 +58,10 @@ Read each directly linked reference completely when its condition applies.
 - `sasu implement finalize` never runs tests, judges, capture tools, or external commands.
 - `state.json` is the completion authority; the receipt is its portable derived proof.
 - The marked Implementor is the only implementation and `state.json` writer; the Observer stays read-only after dispatch, and both sessions treat the qa-log and PRD body as sealed inputs.
-- Check results, fingerprints, counters, decision points, and approval windows are harness-owned facts.
+- Row statuses, attempts, fingerprints, and counters are harness-owned facts.
   Never supply or synthesize them as agent evidence.
-- A parked AC may unlock task work, but it is skipped explicitly by verify and always blocks a complete finalize until resumed and proved.
+- A parked row may let work continue, but it is skipped explicitly by verify and always blocks a complete finalize until resumed and proved.
+- A `human:` row is never closed by an agent. It stays OPEN through finalize and only `sasu implement confirm --issuer human` closes it.
 - Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.
   Local mode uses the post-receipt local delivery command for one semantic local commit;
   PR mode uses `$ship` for commit, push, PR creation, and CI.
@@ -72,10 +73,9 @@ Before editing:
 1. Read the complete PRD.
 2. Confirm `status: ready`.
 3. Confirm `human_approval: "approved"` or preserve the user's exact `$implement ...` instruction as conversational approval.
-4. Resolve all pre-work and human decisions in section 4.
-5. Read the structure lock, risks, and guardrails.
-6. Inspect `git status --short` and preserve unrelated changes.
-7. Read likely implementation files before editing.
+4. Read the Decisions table, the Technical structure, and Risks; anything the Risks section says only the user can provide is a hard stop until it is provided.
+5. Inspect `git status --short` and preserve unrelated changes.
+6. Read likely implementation files before editing.
 
 Stop for unresolved product decisions, credentials, production data, billing, destructive migrations, irreversible deployment, or a material structure deviation.
 
@@ -97,6 +97,12 @@ sasu implement start \
   --allow-unapproved-prd '<verbatim user approval>'
 ```
 
+Start seals the PRD snapshot, one row per Behaviors table row, and the suite
+list (`verify.commands` from `agents/config.json`, else the commands detected
+from the repository). A PRD in the retired five-axis shape is refused with the
+last commit that could read it; rewrite it in the six-section shape instead of
+adapting the harness.
+
 If the judged tree has uncommitted source changes, start refuses and lists every affected path instead of guessing who owns the bytes.
 Re-run with `--dirty-attribution pre-existing` when those paths must be part of the baseline and excluded from this run's diff, or with `--dirty-attribution run-owned` when this run owns them and they must be judged.
 When ownership is mixed, pass one JSON object on the same flag that maps every listed path exactly to `pre-existing` or `run-owned`; use the refusal message's path-complete example rather than adding or omitting paths.
@@ -106,7 +112,7 @@ For a `$please` handoff, the specification-owning session must already have run 
 Pass that supplied value to `sasu implement start` exactly and never ask the ownership question from the Implementor pane.
 
 Read `workingRoot` from the start response.
-When the harness isolated the run into a worktree, implement the tasks in that directory; the worktrees reference above covers the details.
+When the harness isolated the run into a worktree, implement in that directory; the worktrees reference above covers the details.
 
 Inspect current state with:
 
@@ -114,143 +120,137 @@ Inspect current state with:
 sasu implement status
 ```
 
+It lists every row with its status: `pending`, `green`, `fail`, or `parked`
+for a `check:` row, `pending`, `PASS`, or `FAIL` for a `judge:` row, `OPEN` or
+`PASS` for a `human:` row.
+
 Old implement state schemas are intentionally unsupported.
 Start a new run instead of migrating or adapting them.
 The run's exact approved PRD is pinned at the `prdSnapshotPath` reported by status.
 If the source PRD drifts, restore its exact pinned bytes or retire the run and start the newly approved contract under a new slug.
 
-## 3. Implement Tasks
+## 3. Implement Rows
 
-Execution order comes from the PRD's task dependencies.
-A task without a `Depends on:` clause depends on the previous task, so a plain task list runs sequentially; explicit `Depends on:` declarations (approved with the PRD) are the only thing that unlocks out-of-chain order.
-The CLI rejects closing a task before its dependencies are complete, and each close response lists the remaining tasks with which are `ready`.
-
-Tasks whose dependencies are all complete may be implemented in any order, including concurrently through worker subagents.
-When fanning out, the Implementor session remains the execution coordinator: brief each worker with the mapped requirement, acceptance criteria, and file scope directly; workers return changed files, focused check results, and evidence text.
+The Behaviors row is the unit of progress. How the rows are split into work is
+the implementor's own call and the harness does not read it; rows may be
+implemented in any order, including concurrently through worker subagents.
+When fanning out, the Implementor session remains the execution coordinator: brief each worker with the row's behavior, its cited decisions, and file scope directly; workers return changed files, focused check results, and evidence text.
 Workers never run `sasu` commands.
-The Implementor reviews each result and closes the task itself, staying the only writer of `state.json`.
+The Implementor reviews each result and runs the row's check itself, staying the only writer of `state.json`.
 
-For each task:
+For each row:
 
-1. Re-read the mapped requirement and acceptance criteria.
+1. Re-read the behavior and the Decisions rows it cites.
 2. Make the smallest complete change.
-3. For each mapped `machine` or `machine+gate:human` AC, bind its focused Check once, run it, and use the state-owned green result as close authority.
-4. Close the task.
-   Optional `--evidence` records useful implementation context; it never substitutes for a missing or failing Check.
+3. Settle the row by its method cell.
+
+A `check:` row runs the command sealed in its cell, from the judged tree's root, and records the exit code:
 
 ```sh
-sasu implement check --ac AC1 --bind 'npm test' --cwd .
-sasu implement check --ac AC1
+sasu implement check --row B1        # exit 0 -> green, anything else -> fail
 ```
 
-The binding must be one fail-closed, project-confined command form.
-Product suite addresses are recorded as `asset`; `agents/**` bookkeeping addresses are recorded as `labor`.
-Replacing a binding requires a reason, preserves the full history, invalidates an earlier green, and resets the consecutive-failure counter:
+The command is the PRD's, not yours. If it is wrong, the cell is amended
+(section 3a), never worked around. A `judge:` or `human:` row refuses `check`
+and names its own channel.
 
-```sh
-sasu implement check \
-  --ac AC1 \
-  --bind 'node scripts/check-draft.mjs' \
-  --reason 'the original checker exercised the wrong entrypoint'
-```
+A `judge:` row is settled by unified verify from the diff and the evidence you
+register against it (section 4).
 
-For `machine+gate:human`, every execution needs a fresh approval quote.
-The quote is consumed by that one attempt whether the command passes or fails:
-
-```sh
-sasu implement check --ac AC3 --human-window '<verbatim approval for this run>'
-```
+A `human:` row is settled by the user after the run closes (section 6). Do not
+try to close it; do not write its evidence.
 
 After repeated failures, inspect `sasu implement status`.
-It surfaces same-class, five-failure, and tools-only decision points without stopping independent ready tasks.
-Resolve the cause and rebind/check, or use the only Bundle-A deferral path, a human-approved park:
+Fix the cause and check again, or use the only deferral path, a human-approved park:
 
 ```sh
 sasu implement park \
-  --ac AC1 \
+  --row B1 \
   --approval '<verbatim human approval>' \
   --reason '<why proof is deferred>' \
   --evidence '<optional incident or trace link>'
 
-sasu implement resume --ac AC1
+sasu implement resume --row B1
 ```
 
-Resume returns the AC to pending with a zeroed consecutive-failure counter.
-It does not reopen an already closed task.
-A parked criterion cannot be checked until it is resumed.
+Resume returns the row to pending with a zeroed consecutive-failure counter.
+A parked row cannot be checked until it is resumed.
+
+### 3a. When The Row Is Wrong
+
+Correcting the question paper is `amend`, and who may issue it depends on
+which cell changed. The harness compares the cells; the issuer declares the
+role.
+
+- Only a `검사 방법` cell changed (the command, the evidence shape): the
+  observer may amend, and only that row loses its proof.
+- A behavior cell changed, a row was added or removed, or Non-goals or the
+  Decisions table moved: the human amends, with their words as the approval.
+- The implementor is refused either way; it does not rewrite the question it
+  is being marked on. Emit `OBSERVER_BLOCK` with the row and the proposed cell.
 
 ```sh
-sasu implement task \
-  --id T1 \
-  --status complete
+sasu implement amend --issuer observer --approval '<why the cell was wrong>' --reason '<what changed>'
+sasu implement amend --issuer human --approval '<verbatim user approval>' --reason '<what changed>'
 ```
 
-Closing a task means only that its implementation obligation is complete.
-It does not mark acceptance criteria or verification as passed.
+Amend re-seals the PRD snapshot, archives the superseded text, and invalidates
+only the rows whose cells changed; a parked row whose cell changed is unparked.
 
 ## 4. Register Final Runtime Evidence
 
 The agent or an appropriate tool creates screenshots, API traces, DB captures, or other runtime evidence.
 The CLI never creates those artifacts.
 
-Register final evidence after the implementation is coherent and before unified verify:
+Register final evidence for each `judge:` row after the implementation is coherent and before unified verify:
 
 ```sh
 sasu implement artifact \
-  --id V3 \
+  --row B2 \
   --kind screenshot \
   --path docs/screenshots/example.png \
   --description '<what this proves>'
 ```
 
-Evidence intended for a `judged` AC must also be bound to that semantic unit.
-`--ac` and the existing V-lane `--id` may be used separately or together:
-
-```sh
-sasu implement artifact \
-  --id V3 \
-  --ac AC2 \
-  --kind log \
-  --path docs/evidence/recovery-run.log \
-  --description 'expired-link failure and successful retry transcript'
-```
-
+A `judge:` row with no registered artifact fails the acceptance lane before a judge is called.
 Registration pins the file hash and records when the agent supplied it in `state.json`.
 The hash proves file identity; judges receive the registration time and decide whether an agent-supplied claim still reflects later source changes.
+
+When a `judge:` row is proved by driving a screen, the drive is scripted and registered rather than described: `sasu implement qa-brief --row B2` derives a numbered script from the sealed row, and `sasu implement trail --row B2 --brief <briefId> --steps S1,S2 --driver <human|observer|qa-agent>` registers the drive against it.
+The implementor may not drive the row it built.
 
 Development-time screenshots and logs may remain temporary when they are not final evidence.
 
 ## 5. Unified Verify
 
-After every task is closed and final evidence is registered, freeze implementation content and run:
+After every `check:` row is green (or parked) and every `judge:` row has its evidence, freeze implementation content and run:
 
 ```sh
 sasu implement verify
 ```
 
+Verify refuses at zero cost while a `check:` row is not green on the current tree or the run-owned change set is empty.
 The CLI owns this order:
 
-1. Validate PRD, state, tasks, and artifact identity.
-2. Run deterministic prelint and mechanical commands.
-3. Stop before LLM calls when mechanical proof fails.
-4. Run the acceptance judge and fidelity judge concurrently as separate calls.
-5. On `high-risk`, run one final risk review after both base lanes finish and fold its successful output into the risk ledger.
-6. Record the input fingerprint, lane-local verdicts, ledger findings, errors, and timing in `state.json`.
+1. Validate PRD, state, rows, and artifact identity.
+2. Run the sealed suite once on one frozen tree; a red suite command fails the attempt before any judge is called.
+3. Run the acceptance judge and fidelity judge concurrently as separate calls.
+4. On `high-risk`, run one final risk review after both base lanes finish and fold its successful output into the risk ledger.
+5. Record the input fingerprint, lane-local verdicts, ledger findings, errors, and timing in `state.json`.
 
 Acceptance judge responsibility:
 
-- Decide whether code and registered evidence satisfy every acceptance criterion.
-- Receive the relevant mechanical output and text artifact bytes directly from the harness.
+- Judge only `judge:` rows, one row per call, from the run-owned changed files and the evidence registered against that row.
+- Receive the harness-owned row ledger: every row's sealed cell and, for `check:` rows, the exit-code result the harness recorded itself. `check:` rows are facts in that ledger, never items to re-judge.
 - Inspect only the exact run-owned changed files and visual artifacts placed in the disposable evidence workspace; execution, writes, broad file discovery, history inspection, and web access remain disabled.
 - Cite concrete changed files, mechanical output, or registered artifacts actually used.
-- Receive the harness-owned Check ledger hash and complete binding history for its AC.
-  A parked AC is omitted and recorded in the attempt's `skippedAcceptanceCriteria`; a `judged` AC with no AC-bound artifact fails deterministically before a provider call.
+- A parked row is omitted and recorded in the attempt's `parkedRows`.
 
 Fidelity judge responsibility:
 
-- Decide whether the original goal, accepted decisions, constraints, rejected choices, non-goals, deviations, and completion claims preserve intent.
-- Use a fixed rubric with context selected from the current PRD source situation.
-- Do not repeat per-verification artifact sufficiency or code correctness judgment.
+- Decide whether the goal, the Decisions table, the non-goals, deviations, and completion claims preserve intent.
+- Use a fixed rubric; for a conversation-only PRD the Decisions table is the canonical intent source, for a qa-log PRD the full qa-log is unless a fresh spec gate already settled the qa-log to PRD leg.
+- Do not repeat per-row artifact sufficiency or code correctness judgment.
 
 Risk reviewer responsibility on `high-risk`:
 
@@ -259,9 +259,6 @@ Risk reviewer responsibility on `high-risk`:
 - Keep unresolved findings open, mark delta-proven resolutions fixed, and leave explicit user acceptance to `sasu implement risk --accept --id <RF#> --evidence "<verbatim user approval>"`.
 - Leave the ledger unchanged when the risk call errors.
 
-For a conversation-only PRD, Decision Traceability is the canonical intent source because the CLI cannot read chat history.
-For a qa-log PRD, full qa-log is used unless a fresh spec gate already settled the qa-log to PRD leg.
-
 Do not automatically retry a generative judge.
 A new explicit verify command creates a new attempt.
 The CLI bounds the autonomous loop with `judge.retryBudget`: non-PASS attempts spend the fix budget, acceptance/fidelity ERROR attempts use a separate consecutive-error gauge, prelint corrections are free, and PASS resets both gauges.
@@ -269,7 +266,7 @@ When verify reports `budgetExhausted` or `judgeErrorLoop`, stop rather than runn
 The only two exits are `sasu implement finalize --status blocked` and, when the user explicitly approves more verification, `sasu implement verify --grant-budget "<the user's words verbatim>"`.
 Never archive or replace `state.json` to mint a fresh run; the grant keeps the whole history in one record.
 
-## 6. Finalize
+## 6. Finalize And Confirm
 
 Finalize only after unified verify returns a fresh PASS:
 
@@ -278,23 +275,33 @@ sasu implement finalize
 ```
 
 Finalize reads state and hashes only.
-It rejects open tasks, unmet acceptance criteria, non-PASS verification, stale judged source, missing or changed artifact bytes, open blocking risk findings, unanswered design comments, and malformed state.
-It also rejects every parked AC even when verify honestly skipped it and the other lanes passed.
+It rejects a `check:` row that is not green, a `judge:` row that is not PASS, a parked row, non-PASS verification, stale judged source, missing or changed artifact bytes, open blocking risk findings, unanswered design comments, and malformed state.
+It does not reject an OPEN `human:` row: the run closes `complete-pending-human`, the receipt carries the Behaviors table with a result per row and a score that counts machine and judge rows apart from human rows (`기계·판사 N/M PASS | human K OPEN`), and delivery may proceed.
 It does not run tests, judges, browser tools, capture tools, or other subprocesses.
-
 Running finalize twice with the same input returns the same completed result without creating another verification attempt.
 
 Do not report Done until:
 
 - `receipt.json` exists.
 - `implementation-result.md` exists.
-- `sasu implement status` reports complete.
+- `sasu implement status` reports `complete` or `complete-pending-human`.
 - required verification is fresh PASS.
 
 Then complete the authorized delivery outcome:
 
 - local mode: run `node ~/.codex/skills/ship/scripts/prd_ship.js local --state <state.json>`.
-- PR mode: hand off to `$ship` for preflight, body, commit, push, PR, and CI.
+- PR mode: hand off to `$ship` for preflight, body, commit, push, PR, and CI. OPEN `human:` rows travel in the PR body and never block merge.
+
+The user closes each `human:` row when they have looked, in their own words:
+
+```sh
+sasu implement confirm --issuer human --row B3 --evidence '<the user's own words>'
+sasu implement confirm --issuer human --row B3 --reject --evidence '<what they found wrong>'
+```
+
+Confirm rewrites the receipt in place; when the last OPEN row closes the receipt becomes `complete`.
+A rejection keeps the row OPEN with the user's words beside it; the fix is a new run, because a closed run never reopens.
+`confirm` from an implementor or observer is refused on authority.
 
 ## 7. Blocked Handoff
 
@@ -304,7 +311,7 @@ Report:
 
 - the failed stage.
 - the observable error and recovery.
-- which tasks, ACs, or verification items remain open.
+- which rows remain open, and their statuses.
 - whether the verify attempt is stale or artifact identity failed.
 - whether the judge provider is unavailable.
 
@@ -319,26 +326,28 @@ does goes through the CLI, which is the only thing that writes `state.json`.
 ```text
   supervisor (observer)                 implementor
   ---------------------                 -----------
-  start ── seals PRD snapshot ──────────►
+  start ── seals PRD rows ──────────────►
         └─ seals the suite list         │
-                                        ├─ check --bind / check   ─┐
-  await ◄──── event ────────────────────┤                          │ per AC
-        │                               ├─ artifact                │
-        ├─ park / resume ──────────────►│  (or qa-brief ► trail    │
-        ├─ resequence ─────────────────►│   when a person drives)  │
-        ├─ design --raise ─────────────►│                         ─┘
+                                        ├─ check --row (check: rows)  ─┐
+  await ◄──── event ────────────────────┤                              │ per row
+        │                               ├─ artifact --row (judge: rows)│
+        ├─ park / resume ──────────────►│  (or qa-brief ► trail        │
+        ├─ amend (check cell only) ────►│   when a person drives)     ─┘
+        ├─ design --raise ─────────────►│
         ├─ escalate ► solver ──────────►│  (diagnosis only, ≤3)
-        │                               └─ task --status complete
-        │                                       │
-  human ├─ amend (question was wrong) ──────────┤
-        └─ risk --non-convergent ───────────────┤
-                                                ▼
+        │                               │
+  human ├─ amend (behavior changed) ────┤
+        └─ risk --non-convergent ───────┤
+                                        ▼
                                         verify ── one runner, frozen tree
-                                                ├─ AC ledger  ─┐ two
-                                                └─ suite axis ─┘ axes
+                                                ├─ judge: rows ─┐ + check:
+                                                └─ suite axis  ─┘   ledger
                                                        │
                                         finalize ── receipt + report
-                                                    (runs nothing)
+                                                    (runs nothing;
+                                                     human: rows stay OPEN)
+                                                       │
+  human ── confirm --row ──────────────────────────────┘
 ```
 
 Nothing above waits on a timer. `await` blocks on the event log and returns on
@@ -346,49 +355,47 @@ a new event, a stall, or the implementor's death.
 
 ## One Run, Start To Finish
 
-A four-criterion run where one criterion is parked and one is driven by a
-person. Every line is a real command; nothing is elided.
+A four-row run: two `check:` rows, one `judge:` row driven by a person, one
+`human:` row. Every line is a real command; nothing is elided.
 
 ```sh
-# The supervisor opens the run. The PRD snapshot and the suite list seal here.
+# The supervisor opens the run. The PRD rows and the suite list seal here.
 sasu implement start --prd agents/prd/checkout-retry/prd.md
 
-# AC1, AC2, AC4 are machine criteria: bind a command, then run it.
-sasu implement check --ac AC1 --bind 'npm test' --cwd .
-sasu implement check --ac AC1                      # -> green
+# B1 is `check: npm test`. Implement, then run the sealed command.
+sasu implement check --row B1                      # -> green
 
-# AC2 cannot be proved on this runner. Five failures open a decision point,
-# and the supervisor parks it on that - not on its own opinion.
-sasu implement check --ac AC2 --bind 'npm run e2e:ios' --cwd .
-sasu implement check --ac AC2                      # -> red, x5
-sasu implement park --issuer observer --ac AC2 --reason 'no iOS runner here'
+# B2 is `check: npm run e2e:ios` and cannot be proved on this runner.
+sasu implement check --row B2                      # -> fail, x5
+sasu implement park --row B2 --approval 'iOS는 나중에 봐도 돼' --reason 'no iOS runner here'
 
-# AC3 is judged and shown on a screen, so a person drives it. The implementor
+# B3 is a judge: row shown on a screen, so a person drives it. The implementor
 # may not register its own drive.
-sasu implement qa-brief --ac AC3                   # -> brief AC3-B1-9f2c...
-sasu implement artifact --ac AC3 --kind screenshot --path shots/retry.png   --description 'the retry banner after a failed charge'
-sasu implement trail --ac AC3 --brief AC3-B1-9f2c1e --steps S1,S2,S3   --driver human --artifacts shots/retry.png
+sasu implement qa-brief --row B3                   # -> brief B3-Q1-9f2c1e
+sasu implement artifact --row B3 --kind screenshot --path shots/retry.png   --description 'the retry banner after a failed charge'
+sasu implement trail --row B3 --brief B3-Q1-9f2c1e --steps S1,S2,S3   --driver human --artifacts shots/retry.png
 
-# AC4's PRD row turns out to be wrong. Only a human may correct the question,
-# and only AC4 loses its green.
-sasu implement amend --issuer human   --approval '맞다 AC4 문장이 틀렸다, 고치고 가자'   --reason 'the row asked for a retry count the product never had'
-sasu implement check --ac AC4 --bind 'npm test' --cwd . --reason 're-proved after amendment'
-sasu implement check --ac AC4                      # -> green
-
-sasu implement task --id T1 --status complete
-sasu implement task --id T2 --status complete
+# B1's command turns out to name the wrong script. The check cell is the only
+# thing that changes, so the observer amends it and only B1 loses its green.
+sasu implement amend --issuer observer   --approval 'the cell named the unit suite; the row needs the integration suite'   --reason 'check: cell of B1'
+sasu implement check --row B1                      # -> green again
 
 # One runner, frozen tree, each command once. Then the receipt.
-sasu implement verify
-sasu implement resume --ac AC2                     # AC2 must still be proved
-sasu implement check --ac AC2                      # -> green on a runner that has iOS
+sasu implement resume --row B2                     # B2 must still be proved
+sasu implement check --row B2                      # -> green on a runner that has iOS
 sasu implement verify
 sasu implement finalize
-# receipt: AC: 4/4 PASS | suite: 2/2 GREEN
+# receipt: complete-pending-human
+#          기계·판사: 3/3 PASS | human: 1 OPEN, 0 confirmed | suite: 2/2 GREEN
+
+# Later, the user looks at B4 and says so.
+sasu implement confirm --issuer human --row B4 --evidence '재시도 배너 문구 괜찮다'
+# receipt: complete
 ```
 
-The parked criterion is why the first `finalize` would have been refused:
-a park defers proof, it never replaces it.
+The parked row is why `finalize` before the resume would have been refused:
+a park defers proof, it never replaces it. The OPEN human row is not a
+refusal: only the person can close it, and the run does not pretend otherwise.
 
 ## Command Contract
 
@@ -400,17 +407,16 @@ Global flags omitted from the table because every command takes them: `--json`, 
 | --- | --- | --- | --- |
 | `intake` | - | - | anyone |
 | `start` | `--prd` | `--allow-unapproved-prd`, `--dirty-attribution` | anyone |
-| `check` | `--ac` | `--bind`, `--cwd`, `--reason`, `--human-window`, `--bookkeeping` | implementor, human |
-| `park` | `--ac`, `--approval`, `--reason` | `--evidence` | implementor, observer, human |
-| `resume` | `--ac` | - | implementor, observer, human |
-| `resequence` | `--order` | `--reason` | observer, human |
-| `amend` | `--approval`, `--reason` | `--exclude-suite` | human |
-| `qa-brief` | `--ac` | - | implementor, observer, human |
-| `trail` | `--ac`, `--brief`, `--steps`, `--driver` | `--artifacts` | implementor, observer, human |
+| `check` | `--row` | - | implementor, human |
+| `park` | `--row`, `--approval`, `--reason` | `--evidence` | implementor, observer, human |
+| `resume` | `--row` | - | implementor, observer, human |
+| `confirm` | `--row`, `--evidence` | `--reject` | human |
+| `amend` | `--approval`, `--reason` | `--exclude-suite` | observer, human |
+| `qa-brief` | `--row` | - | implementor, observer, human |
+| `trail` | `--row`, `--brief`, `--steps`, `--driver` | `--artifacts` | implementor, observer, human |
 | `escalate` | `--reason` | `--target`, `--agent` | observer, human |
 | `await` | - | `--since`, `--pid`, `--agent` | anyone |
-| `task` | `--id` | `--status`, `--evidence` | implementor, human |
-| `artifact` | `--kind`, `--path`, `--description` | `--id`, `--ac` | implementor, human |
+| `artifact` | `--kind`, `--path`, `--description` | `--row` | implementor, human |
 | `status` | - | - | anyone |
 | `design` | `--id`, `--accept` | - | implementor, human |
 | `design --raise` | `--area`, `--path`, `--text`, `--suggestion` | - | observer, human |
@@ -422,10 +428,7 @@ Global flags omitted from the table because every command takes them: `--json`, 
 
 Three of these carry a rule the flag name does not carry on its own:
 
-- `check --bookkeeping <agents/... path>` declares a file under `agents/**` that this criterion's work will change, and it must be issued **before** the work.
-  The baseline is taken when the target is declared, so a declaration made after the edit records the finished state and the close refuses with "unchanged since it was declared".
-  Closing the task then requires both that the content moved from that baseline and that a registered artifact vouches for the current bytes.
-  This exists because `agents/**` is excluded from every judged diff, so nothing there can be proved the way product changes are.
+- `amend` admits observer and human, and the diff decides which one may issue it: a change confined to `검사 방법` cells is the observer's; a changed behavior cell, an added or removed row, or a moved Non-goals or Decisions section is the human's. The implementor is refused before the diff is read.
 - `risk --non-convergent` declares one open finding structurally unfixable.
   The finding stays open and `finalize --status complete` stays refused; what it opens is `--status blocked` without first spending judge rounds whose outcome is already known.
 - `amend --exclude-suite <S#>` drops a command from the sealed suite list.
@@ -435,7 +438,7 @@ Three of these carry a rule the flag name does not carry on its own:
 
 Stop and ask when:
 
-- approval or required pre-work is unresolved.
+- approval is unresolved or the Risks section names something only the user can provide.
 - the requested fix changes the approved structure or product behavior.
 - credentials, billing, production data, destructive changes, or irreversible deployment are required.
 - a required verification failure needs a product decision.
@@ -443,17 +446,17 @@ Stop and ask when:
 
 ## Final Report
 
-Follow the PRD's Implementation Result Report Contract.
+The receipt's Behaviors table is the report of record; the final message
+summarizes it rather than restating the PRD.
 
 At minimum report:
 
-- Status: Done, Partially Done, or Blocked.
+- Status: Done, Partially Done, or Blocked, and the receipt status (`complete`, `complete-pending-human`, `blocked`).
 - Public command and user-visible behavior changes.
 - Actual module boundaries and removed legacy paths.
-- Task and acceptance-criterion status.
-- Verification evidence by mode.
-- Acceptance and fidelity voting results plus optional risk invocation, lane-local verdict, timing, and final ledger dispositions.
-- Evidence that mechanical failure made zero judge calls.
+- Every row with its result, and the OPEN `human:` rows the user still has to confirm.
+- Acceptance and fidelity results plus optional risk invocation, lane-local verdict, timing, and final ledger dispositions.
+- Evidence that a red suite made zero judge calls.
 - Evidence that finalize made zero execution calls.
 - Completion fingerprint and receipt path.
-- Deviations and remaining risks.
+- Deviations, autonomous assumptions, and remaining risks.

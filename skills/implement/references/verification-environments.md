@@ -58,7 +58,7 @@ Before binding a scenario or runtime V row, answer "how does the verifier reach 
 - an existing fast path through the product itself.
 
 If none exists and none can be built in scope, say so at binding time and route the row to human verification or blocked - do not burn the retry budget driving toward an unreachable state.
-PRD scenario cards (`SC#`) carry a `Reach:` line for exactly this; read it before binding the row that covers the card.
+The PRD's Risks section and the row's cited Decisions say how the product reaches that state; read them before driving the row.
 
 ## Multi-Actor Scenarios
 

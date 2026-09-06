@@ -1,5 +1,16 @@
 # Reviews And Finalization
 
+## Contents
+
+- [Review Profiles](#review-profiles)
+- [Design Lane](#design-lane)
+- [Risk Lane](#risk-lane)
+- [Fidelity Rubric](#fidelity-rubric)
+- [Unified Verdict](#unified-verdict)
+- [Finalize](#finalize)
+- [Confirm](#confirm)
+- [Blocked Handoff](#blocked-handoff)
+
 Read this reference before unified verify, finalize, or a blocked handoff.
 
 ## Review Profiles
@@ -15,7 +26,7 @@ The risk lane uses `high-risk`; the defaults are Codex Luna/Sol xhigh with Claud
 
 ## Design Lane
 
-The design lane reviews the shape of the code - one-cause-N-symptom patching, patch-on-patch accretion, structure drift against PRD §5, needless complexity, dead weight - the one failure class the other lanes explicitly do not read for.
+The design lane reviews the shape of the code - one-cause-N-symptom patching, patch-on-patch accretion, structure drift against the PRD's Technical structure, needless complexity, dead weight - the one failure class the other lanes explicitly do not read for.
 It reads this run's own diff against the pre-run commit, so it judges what the run did, not what the repository already looked like.
 
 It has no verdict: it never fails the run, never consumes fix budget, and a lane error leaves the attempt untouched.
@@ -56,10 +67,10 @@ The fidelity judge always answers the same five questions:
 5. Are completion and status claims honest?
 
 The context changes with the PRD source.
-Conversation-only PRDs use Decision Traceability as canonical intent.
-Qa-log PRDs use the full qa-log unless a fresh spec gate already proved the qa-log to PRD leg.
+Conversation-only PRDs use the Decisions table as canonical intent.
+Qa-log PRDs use the full qa-log unless a fresh spec gate already proved the qa-log to PRD leg; the Decisions table is always in the prompt as the PRD's own record.
 
-Fidelity does not rejudge per-verification artifact sufficiency or code correctness.
+Fidelity does not rejudge per-row artifact sufficiency or code correctness.
 The acceptance judge owns those questions.
 
 ## Unified Verdict
@@ -85,13 +96,20 @@ Do not archive, rename, or replace `state.json` to start over; a fresh run disca
 
 Run `sasu implement finalize`.
 
-Finalize validates only current state, source hashes, artifact hashes, the fresh unified PASS, design dispositions, and the absence of open blocking risk findings.
+Finalize validates only current state, source hashes, artifact hashes, the fresh unified PASS, every `check:` row green and every `judge:` row PASS, no parked row, design dispositions, and the absence of open blocking risk findings.
 It performs no tests, judge calls, capture calls, browser work, or subprocess execution.
 
-Successful finalize writes `agents/runs/<topic-slug>/receipt.json` and `agents/runs/<topic-slug>/implementation-result.md`.
+An OPEN `human:` row does not block it: the run closes `complete-pending-human`, and the receipt's score counts machine and judge rows apart from human rows.
+Successful finalize writes `agents/runs/<topic-slug>/receipt.json` and `agents/runs/<topic-slug>/implementation-result.md`, both carrying the Behaviors table with one result per row.
 Both outputs derive from `state.json`; they are not independent completion ledgers.
 
 Running finalize again with the same completion fingerprint returns the existing result.
+
+## Confirm
+
+`sasu implement confirm --issuer human --row B<n> --evidence "<the user's words>"` closes one OPEN `human:` row and rewrites the receipt in place; when the last OPEN row closes the receipt becomes `complete`.
+`--reject` records what the user found wrong and leaves the row OPEN, with the words shown beside it in the receipt; the fix is a new run.
+Only the human issuer is accepted, and a closed run never reopens.
 
 ## Blocked Handoff
 

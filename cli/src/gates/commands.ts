@@ -21,8 +21,8 @@ import { implementStatePathFor } from "../runs/paths";
 import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { prelintPrdCitedQuestions, prelintPrdDecisionIds, runPrelint, type PrelintResult } from "./prelint";
 
-const { parseAcceptanceCriteria } = require("../../lib/prd_parser.js") as {
-  parseAcceptanceCriteria: (section: string) => Array<{ id: string; text: string }>;
+const { parseBehaviorRows } = require("../../lib/prd_parser.js") as {
+  parseBehaviorRows: (markdown: string) => { rows: Array<{ id: string | null; behavior: string }> };
 };
 import {
   GAP_AUDIT_LANES,
@@ -870,7 +870,7 @@ export interface VerifyOptions {
    * outright: judging a diff against the COMPLETE acceptance criteria while
    * tasks are open fails legitimately and burns the retry budget.
    */
-  allowOpenTasks?: boolean;
+  allowOpenRows?: boolean;
 }
 
 /**
@@ -881,7 +881,7 @@ export interface VerifyOptions {
  * derived from the implement module's own schema so it can never drift from
  * what `sasu implement` actually writes.
  */
-type ImplementStateSlice = Partial<Pick<ImplementState, "tasks">>;
+type ImplementStateSlice = Partial<Pick<ImplementState, "rows">>;
 
 function readImplementState(projectRoot: string, topic: string): ImplementStateSlice | null {
   try {
@@ -1366,28 +1366,27 @@ function enforceRerunShortCircuit(
  * attempt is recorded and no budget is spent. complete/blocked tasks never
  * block - blocked and partial handoffs legitimately run without a gate PASS.
  */
-function enforceOpenTaskGuard(projectRoot: string, topic: string, allowOpenTasks: boolean): void {
+function enforceOpenRowGuard(projectRoot: string, topic: string, allowOpenRows: boolean): void {
   const implementState = readImplementState(projectRoot, topic);
   // Shape-tolerant like readImplementState itself: valid JSON with a non-array
-  // tasks field must degrade to "no guard", not crash the gate.
-  const implementTasks = Array.isArray(implementState?.tasks) ? implementState.tasks : [];
-  const openTasks = implementTasks.filter((task) => task?.status === "pending");
-  if (openTasks.length === 0) return;
-  const shown = openTasks
-    .slice(0, 8)
-    .map((task) => `${task.id ?? "?"}${task.title ? ` (${task.title})` : ""}`)
-    .join(", ");
-  const suffix = openTasks.length > 8 ? `, +${openTasks.length - 8} more` : "";
-  if (!allowOpenTasks) {
+  // rows field must degrade to "no guard", not crash the gate.
+  const rows = Array.isArray(implementState?.rows) ? implementState.rows : [];
+  // A check: row not yet green is work still in flight; judge: rows wait for
+  // implement verify and human: rows for confirm, so neither means mid-run.
+  const openRows = rows.filter((row) => row?.check?.kind === "check" && row.status !== "green" && row.status !== "parked");
+  if (openRows.length === 0) return;
+  const shown = openRows.slice(0, 8).map((row) => `${row.id ?? "?"} (${row.status ?? "?"})`).join(", ");
+  const suffix = openRows.length > 8 ? `, +${openRows.length - 8} more` : "";
+  if (!allowOpenRows) {
     throw new Error(
-      `implement run '${topic}' still has ${openTasks.length} open task(s): ${shown}${suffix}. ` +
-        `The verify gate judges the diff against the complete acceptance criteria, so a mid-run call fails legitimately and burns the retry budget. ` +
-        `Finish the tasks (or mark them blocked/deferred with evidence), then re-run. ` +
-        `Pass --allow-open-tasks only when judging an intentionally partial diff. No gate attempt was recorded.`,
+      `implement run '${topic}' still has ${openRows.length} check: row(s) not green: ${shown}${suffix}. ` +
+        `The verify gate judges the diff against the complete Behaviors table, so a mid-run call fails legitimately and burns the retry budget. ` +
+        `Land each row green (or park it with the human's approval), then re-run. ` +
+        `Pass --allow-open-rows only when judging an intentionally partial diff. No gate attempt was recorded.`,
     );
   }
   process.stderr.write(
-    `sasu: WARNING: proceeding despite ${openTasks.length} open implement task(s) (${shown}${suffix}) because --allow-open-tasks was passed. Missing acceptance criteria will fail and spend a retry-budget attempt.\n`,
+    `sasu: WARNING: proceeding despite ${openRows.length} open check: row(s) (${shown}${suffix}) because --allow-open-rows was passed. Unmet rows will fail and spend a retry-budget attempt.\n`,
   );
 }
 
@@ -1443,7 +1442,7 @@ export async function runVerifyGate(
     emitPrelintWarnings(prelint);
   }
 
-  if (docKind === "prd") enforceOpenTaskGuard(projectRoot, topic, options.allowOpenTasks === true);
+  if (docKind === "prd") enforceOpenRowGuard(projectRoot, topic, options.allowOpenRows === true);
 
   // Judged-diff identity of THIS call, stamped on every recorded round below
   // and required to match by the rerun short-circuit: --base changes which
@@ -2278,19 +2277,11 @@ export function runDelegateClear(projectRoot: string, topic: string): { cleared:
   return { cleared: had };
 }
 
+/** Every Behaviors row as a criterion for the diff judge: `B<n>: what the user observes`. */
 export function extractAcceptanceCriteria(prdContent: string): { id: string; text: string }[] {
-  const lines = prdContent.split("\n");
-  let inSection = false;
-  const section: string[] = [];
-  for (const line of lines) {
-    if (/^##\s+7\./.test(line) || /^##\s+Acceptance Criteria/i.test(line)) {
-      inSection = true;
-      continue;
-    }
-    if (inSection && /^##\s/.test(line)) break;
-    if (inSection) section.push(line);
-  }
-  return parseAcceptanceCriteria(section.join("\n")).map((criterion) => ({ id: criterion.id, text: criterion.text }));
+  return parseBehaviorRows(prdContent).rows
+    .filter((row): row is { id: string; behavior: string } => row.id !== null)
+    .map((row) => ({ id: row.id, text: row.behavior }));
 }
 
 /**

@@ -2,7 +2,7 @@
 topic: "fixture"
 status: "ready"
 human_approval: "approved"
-review_profile: "yolo"
+review_profile: "standard"
 ---
 
 # PRD: fixture
@@ -25,7 +25,7 @@ A widget that renders and persists.
 
 | # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
 | --- | --- | --- | --- |
-| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |
+| B1 | check: `node --test test/widget.test.mjs` renders the widget | judge: the diff | - |
 | B2 | the widget persists its state across reload | judge: a before/after screenshot pair registered for B2 | D-01 |
 | B3 | the persisted state feels right to the user | human: the user reloads and says the widget kept their state | D-01 |
 

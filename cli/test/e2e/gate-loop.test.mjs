@@ -480,7 +480,8 @@ function specGate(dir, prdContent, qaLogContent) {
 
 test("AC14: a PRD citing a Q turn with an empty answer is blocked by prd-cited-question-unanswered at $0", () => {
   const dir = makeProject();
-  const prd = PRD_FIXTURE.replace("- R1. the widget renders and persists its state", "- R1. the widget renders and persists its state (Q2)");
+  const prd = PRD_FIXTURE.replace("A widget that renders and persists.", "A widget that renders and persists (Q2).");
+  assert.notEqual(prd, PRD_FIXTURE, "the Goal line this test cites from moved");
   const emptied = QA_FIXTURE.replace("- answer: yes, ask first", "- answer:");
   const blocked = specGate(dir, prd, emptied);
   assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
@@ -488,7 +489,7 @@ test("AC14: a PRD citing a Q turn with an empty answer is blocked by prd-cited-q
   assert.equal(parsed.prelint.ok, false);
   assert.equal(parsed.prelint.findings[0].rule, "prd-cited-question-unanswered");
   assert.match(parsed.prelint.findings[0].missing, /PRD cites Q2, but that Raw Q&A turn has an empty answer/);
-  assert.equal(parsed.prelint.findings[0].line, PRD_FIXTURE.split("\n").findIndex((line) => line.startsWith("- R1.")) + 1);
+  assert.equal(parsed.prelint.findings[0].line, PRD_FIXTURE.split("\n").findIndex((line) => line.startsWith("A widget that renders")) + 1);
   assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false, "no judge, no state");
 
   const missing = specGate(dir, prd.replace("(Q2)", "(Q9)"), QA_FIXTURE);
@@ -499,8 +500,9 @@ test("AC14: a PRD citing a Q turn with an empty answer is blocked by prd-cited-q
 test("AC14: a PRD citing an answered Q turn passes the rule, and a quarter is not a citation", () => {
   const dir = makeProject();
   const prd = PRD_FIXTURE
-    .replace("- R1. the widget renders and persists its state", "- R1. the widget renders and persists its state (Q2)")
-    .replace("Users need a widget.", "Users need a widget by Q4 2026.");
+    .replace("A widget that renders and persists.", "A widget that renders and persists (Q2).")
+    .replace("One widget module plus a storage adapter.", "One widget module plus a storage adapter, shipped by Q4 2026.");
+  assert.match(prd, /Q4 2026/, "the Technical structure line this test edits moved");
   const passed = specGate(dir, prd, QA_FIXTURE);
   assert.equal(passed.status, 0, passed.stdout + passed.stderr);
   const parsed = JSON.parse(passed.stdout);

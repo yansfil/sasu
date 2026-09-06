@@ -39,7 +39,7 @@ test("prd ready: flips draft to ready when readiness passes, and is idempotent",
 });
 
 test("prd ready: refused while the readiness gate has blocking gaps", () => {
-  const broken = draftClean().replace("## 7. Acceptance Criteria", "## 7. Acceptance Things");
+  const broken = draftClean().replace("## Behaviors", "## Behaviours");
   const dir = makeProject(broken);
   const result = runPrdCommand(dir, "ready", flags({ prd: "prd.md" }));
   assert.equal(result.ok, false);
@@ -74,6 +74,18 @@ test("prd readiness: unchanged contract for the existing subcommand", () => {
   const result = runPrdCommand(dir, "readiness", flags({ prd: "prd.md" }));
   assert.equal(result.ok, true);
   assert.equal(result.detail.status, "ready");
+  assert.deepEqual(result.detail.parsed, { rowCount: 3, rowKinds: { check: 1, judge: 1, human: 1 }, decisionCount: 1 });
   const unknown = runPrdCommand(dir, "nope", flags({ prd: "prd.md" }));
   assert.equal(unknown.exitCode, 2);
+});
+
+// AC14: a five-axis PRD is refused as the old format before anything else,
+// with start's own words, and never with a pre-work complaint.
+test("prd readiness: a five-axis PRD reports the old-format refusal", () => {
+  const legacy = draftClean().replace("## Behaviors", "## 7. Acceptance Criteria") + "\n## 4. Pre-Work And Required Decisions\n\n### 4.1 Required Decisions\n\n- [ ] decide\n";
+  const dir = makeProject(legacy);
+  const result = runPrdCommand(dir, "readiness", flags({ prd: "prd.md" }));
+  assert.equal(result.ok, false);
+  assert.match(result.detail.contractError, /구 형식/);
+  assert.doesNotMatch(JSON.stringify(result.detail), /[Pp]re-?[Ww]ork/);
 });

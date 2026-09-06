@@ -12,12 +12,14 @@ const SESSION_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID"
 // lands verbatim in an audit ledger, and a fixture must never be mistakable
 // for something a real person said.
 const TEST_APPROVAL = "TEST-FIXTURE-APPROVAL: not a real human quote";
-const TEST_REASON = "TEST-FIXTURE-REASON: AC2 named the wrong artifact";
+const TEST_REASON = "TEST-FIXTURE-REASON: B2 named the wrong artifact";
 
-const AC2_ORIGINAL = "the receipt names every parked criterion";
-const AC2_AMENDED = "the receipt names every parked criterion and its reason";
+const B2_BEHAVIOR = "The receipt names every parked row.";
+const B2_BEHAVIOR_AMENDED = "The receipt names every parked row and its reason.";
+const B2_CHECK = "node scripts/b2.mjs";
+const B2_CHECK_AMENDED = "node scripts/b2-v2.mjs";
 
-function prd({ ac2 = AC2_ORIGINAL, extraRows = [] } = {}) {
+function prd({ b2Behavior = B2_BEHAVIOR, b2Check = B2_CHECK, extraRows = [] } = {}) {
   return `---
 topic: "implement amend fixture"
 status: "ready"
@@ -29,69 +31,35 @@ source_intake: "current conversation"
 
 # PRD: implement amend fixture
 
-## 1. Summary
+## Goal
 
-Exercise mid-run PRD amendment.
+The operator needs to correct a wrong row without discarding the run.
 
-## 2. Problem, Goal, And Users
-
-The operator needs to correct a wrong criterion without discarding the run.
-
-## 3. Scope And Non-Goals
+## Non-goals
 
 Only the amendment lifecycle is in scope.
 
-## 4. Pre-Work And Required Decisions
+## Decisions
 
-None required.
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | a correction costs only what it invalidates | evidence filed against an unchanged row still stands |
 
-## 5. Major Technical Structure Changes
+## Behaviors
+
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | The runner executes each command once. | check: \`npm test\` | D-01 |
+| B2 | ${b2Behavior} | check: \`${b2Check}\` | D-01 |
+${extraRows.join("\n")}
+
+## Technical structure
 
 No fixture structure change.
 
-## 6. Requirements
-
-- R1. AC1 behavior works. Covers AC1.
-- R2. AC2 behavior works. Covers AC2.
-
-## 7. Acceptance Criteria
-
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | The runner executes each command once. Covers R1. | machine | - |
-| AC2 | ${ac2}. Covers R2. | machine | - |
-${extraRows.join("\n")}
-
-## 8. PRD-Level Tasks
-
-- T1. Implement AC1. Covers R1, AC1. Depends on: none.
-- T2. Implement AC2. Covers R2, AC2. Depends on: none.
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| automated behavior | yes | fixture lifecycle | none |
-
-### 9.2 Required Agent Verification
-
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | automated behavior | R1, R2, AC1, AC2 | fixture lifecycle passes | yes | no |
-
-## 10. Risks And Open Decisions
+## Risks
 
 None.
-
-## 11. Implementation Guardrails
-
-Do not expand the fixture.
-
-## 12. Implementation Result Report Contract
-
-Report the receipt and amendment ledger.
 `;
 }
 
@@ -111,14 +79,16 @@ function run(root, args) {
 
 const PRD_REL = path.join("agents", "prd", "fixture", "prd.md");
 
-function makeProject() {
+function makeProject({ b2Exit = 0 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-implement-amend-e2e-"));
   fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
   fs.writeFileSync(path.join(root, PRD_REL), prd());
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('fixture suite green')\"" } }));
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "scripts", "b2.mjs"), `process.exit(${b2Exit});\n`);
   for (const args of [
     ["init", "-q"],
-    ["add", "package.json"],
+    ["add", "package.json", "scripts"],
     ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"],
   ]) {
     const executed = spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -131,40 +101,58 @@ function makeProject() {
 }
 
 const state = (root) => JSON.parse(fs.readFileSync(path.join(root, "agents", "runs", "fixture", "state.json"), "utf8"));
-const criterion = (root, id) => state(root).acceptanceCriteria.find((entry) => entry.id === id);
+const row = (root, id) => state(root).rows.find((entry) => entry.id === id);
 
-function proveAc1(root) {
-  assert.equal(run(root, ["implement", "check", "--ac", "AC1", "--bind", "npm test"]).status, 0);
-  const checked = run(root, ["implement", "check", "--ac", "AC1"]);
+function proveB1(root) {
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
   assert.equal(checked.status, 0, checked.stderr + checked.stdout);
-  assert.equal(criterion(root, "AC1").check.status, "green");
-  // Amendment requires an idle run (AC15): close the task that held AC1.
-  assert.equal(run(root, ["implement", "task", "--id", "T1", "--status", "complete"]).status, 0);
+  assert.equal(row(root, "B1").status, "green");
 }
 
 const editPrd = (root, options) => fs.writeFileSync(path.join(root, PRD_REL), prd(options));
 
-const amend = (root, extra = []) => run(root, [
-  "implement", "amend", "--issuer", "human", "--approval", TEST_APPROVAL, "--reason", TEST_REASON, ...extra,
+const amend = (root, issuer = "human", extra = []) => run(root, [
+  "implement", "amend", "--issuer", issuer, "--approval", TEST_APPROVAL, "--reason", TEST_REASON, ...extra,
 ]);
 
-test("AC12: the supervisor cannot correct the question paper", () => {
+test("the implementor cannot correct the question paper it is marked on", () => {
   const root = makeProject();
-  editPrd(root, { ac2: AC2_AMENDED });
-  const refused = run(root, [
-    "implement", "amend", "--issuer", "observer", "--approval", TEST_APPROVAL, "--reason", TEST_REASON,
-  ]);
+  editPrd(root, { b2Check: B2_CHECK_AMENDED });
+  const refused = amend(root, "implementor");
   assert.notEqual(refused.status, 0);
-  assert.match(refused.json.message, /observer may not issue .*amend/);
-  assert.match(refused.json.message, /limited to human/);
+  assert.match(refused.json.message, /implementor may not issue .*amend/);
+  assert.match(refused.json.message, /limited to observer, human/);
   assert.equal(state(root).amendments.length, 0);
 });
 
-test("AC12: amendment without an approval quote is refused and seals nothing", () => {
+test("the observer may repair a check cell but not what the user observes", () => {
+  const root = makeProject();
+  proveB1(root);
+  editPrd(root, { b2Behavior: B2_BEHAVIOR_AMENDED });
+  const refused = amend(root, "observer");
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.json.message, /changes what the user observes \(B2 behavior cell\)/);
+  assert.equal(refused.json.detail.rejectedCheck, "authority");
+  assert.equal(state(root).amendments.length, 0);
+  // The refusal is on the record, so the observer's attempt is auditable.
+  assert.equal(state(root).verbs.at(-1).verb, "amend");
+  assert.equal(state(root).verbs.at(-1).outcome, "rejected");
+
+  editPrd(root, { b2Check: B2_CHECK_AMENDED });
+  const accepted = amend(root, "observer");
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  assert.equal(accepted.json.detail.scope, "check-cells");
+  assert.equal(accepted.json.detail.amendment.issuer, "observer");
+  assert.deepEqual(accepted.json.detail.invalidatedRows, ["B2"]);
+  assert.deepEqual(row(root, "B2").check.argv, ["node", "scripts/b2-v2.mjs"], "the next check runs the repaired cell");
+  assert.equal(row(root, "B1").status, "green");
+});
+
+test("amendment without an approval quote is refused and seals nothing", () => {
   const root = makeProject();
   const pinned = path.join(root, "agents", "runs", "fixture", "prd.md");
   const before = fs.readFileSync(pinned, "utf8");
-  editPrd(root, { ac2: AC2_AMENDED });
+  editPrd(root, { b2Behavior: B2_BEHAVIOR_AMENDED });
   const refused = run(root, ["implement", "amend", "--issuer", "human", "--reason", TEST_REASON]);
   assert.notEqual(refused.status, 0);
   assert.match(refused.json.message, /requires --approval/);
@@ -173,49 +161,60 @@ test("AC12: amendment without an approval quote is refused and seals nothing", (
   assert.equal(state(root).amendments.length, 0);
 });
 
-test("AC15: amendment is refused while a task is in progress", () => {
-  const root = makeProject();
-  assert.equal(run(root, ["implement", "check", "--ac", "AC2", "--bind", "npm test"]).status, 0);
-  editPrd(root, { ac2: AC2_AMENDED });
-  const refused = amend(root);
+test("the observer waits while a check: row is mid-attempt; the human may still amend on the record", () => {
+  const root = makeProject({ b2Exit: 1 });
+  const failed = run(root, ["implement", "check", "--row", "B2"]);
+  assert.equal(failed.status, 1, "a failed check exits non-zero and records the attempt");
+  assert.equal(row(root, "B2").status, "fail");
+  editPrd(root, { b2Check: B2_CHECK_AMENDED });
+  const refused = amend(root, "observer");
   assert.notEqual(refused.status, 0);
-  assert.match(refused.json.message, /T2 is in progress/);
+  assert.match(refused.json.message, /B2 is mid-attempt/);
   assert.equal(refused.json.detail.rejectedCheck, "transition");
+
+  const accepted = amend(root, "human");
+  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  assert.equal(row(root, "B2").status, "pending");
+  assert.equal(row(root, "B2").attempts.length, 1, "the failed attempt stays readable");
 });
 
-test("AC13, AC16: an accepted amendment re-seals the PRD and costs only the row it changed", () => {
+test("an accepted amendment re-seals the PRD and costs only the row it changed", () => {
   const root = makeProject();
-  proveAc1(root);
+  proveB1(root);
   const pinned = path.join(root, "agents", "runs", "fixture", "prd.md");
   const superseded = fs.readFileSync(pinned, "utf8");
 
-  editPrd(root, { ac2: AC2_AMENDED });
+  editPrd(root, { b2Behavior: B2_BEHAVIOR_AMENDED });
   const accepted = amend(root);
   assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
 
   const record = accepted.json.detail.amendment;
   assert.equal(record.id, 1);
   assert.equal(record.issuer, "human");
+  assert.equal(record.scope, "behaviors");
   assert.equal(record.approval, TEST_APPROVAL);
-  assert.deepEqual(record.invalidatedCriteria, ["AC2"]);
-  assert.deepEqual(record.addedCriteria, []);
+  assert.deepEqual(record.invalidatedRows, ["B2"]);
+  assert.deepEqual(record.addedRows, []);
 
   // The pinned snapshot now IS the amended text, and the text it replaced is
-  // still readable at a path the record names (AC16).
+  // still readable at a path the record names.
   assert.equal(fs.readFileSync(pinned, "utf8"), fs.readFileSync(path.join(root, PRD_REL), "utf8"));
-  assert.match(fs.readFileSync(pinned, "utf8"), new RegExp(AC2_AMENDED));
+  assert.match(fs.readFileSync(pinned, "utf8"), new RegExp(B2_BEHAVIOR_AMENDED.replace(".", "\\.")));
   assert.equal(fs.readFileSync(path.join(root, record.previousSnapshotPath), "utf8"), superseded);
 
-  assert.equal(criterion(root, "AC1").check.status, "green", "AC1's question did not change, so its proof stands");
-  assert.equal(criterion(root, "AC2").check.status, "pending");
-  assert.equal(state(root).events.at(-1).kind, "amendment");
-  assert.equal(state(root).events.at(-1).actor, "human");
+  assert.equal(row(root, "B1").status, "green", "B1's question did not change, so its proof stands");
+  assert.equal(row(root, "B2").status, "pending");
+  assert.equal(row(root, "B2").behavior, B2_BEHAVIOR_AMENDED);
+  const events = state(root).events;
+  assert.equal(events.at(-1).kind, "row-status");
+  assert.equal(events.at(-2).kind, "amendment");
+  assert.equal(events.at(-2).actor, "human");
 });
 
 test("amend is the only sanctioned way past the PRD drift guard", () => {
   const root = makeProject();
-  proveAc1(root);
-  editPrd(root, { ac2: AC2_AMENDED });
+  proveB1(root);
+  editPrd(root, { b2Behavior: B2_BEHAVIOR_AMENDED });
 
   // Before amending, the edited source PRD is drift: the run reports that the
   // question paper it is measured against no longer matches the file.
@@ -232,51 +231,52 @@ test("amend is the only sanctioned way past the PRD drift guard", () => {
   assert.equal(resealed.json.detail.prdDrift, null);
 });
 
-test("AC16: an added criterion joins unproven and the history stays append-only", () => {
+test("an added row joins unproven and the history stays append-only", () => {
   const root = makeProject();
-  proveAc1(root);
-  editPrd(root, { extraRows: ["| AC3 | The waiter reports its exit reason. Covers R2. | machine | - |"] });
+  proveB1(root);
+  const extraRows = ["| B3 | The waiter reports its exit reason. | human: the operator says the reason reads well | D-01 |"];
+  editPrd(root, { extraRows });
+  assert.notEqual(amend(root, "observer").status, 0, "adding a row changes what the user observes");
   const first = amend(root);
   assert.equal(first.status, 0, first.stderr + first.stdout);
-  assert.deepEqual(first.json.detail.addedCriteria, ["AC3"]);
-  assert.deepEqual(first.json.detail.invalidatedCriteria, []);
-  assert.equal(criterion(root, "AC3").check.status, "pending");
-  assert.deepEqual(criterion(root, "AC3").check.bindings, []);
-  assert.equal(criterion(root, "AC1").check.status, "green");
+  assert.deepEqual(first.json.detail.addedRows, ["B3"]);
+  assert.deepEqual(first.json.detail.invalidatedRows, []);
+  assert.equal(row(root, "B3").status, "OPEN", "a human: row starts OPEN");
+  assert.equal(row(root, "B1").status, "green");
 
-  editPrd(root, { ac2: AC2_AMENDED, extraRows: ["| AC3 | The waiter reports its exit reason. Covers R2. | machine | - |"] });
+  editPrd(root, { b2Behavior: B2_BEHAVIOR_AMENDED, extraRows });
   const second = amend(root);
   assert.equal(second.status, 0, second.stderr + second.stdout);
 
   const ledger = state(root).amendments;
   assert.deepEqual(ledger.map((entry) => entry.id), [1, 2]);
-  assert.deepEqual(ledger[0].addedCriteria, ["AC3"], "the first record is not rewritten by the second");
+  assert.deepEqual(ledger[0].addedRows, ["B3"], "the first record is not rewritten by the second");
   assert.notEqual(ledger[0].previousSnapshotPath, ledger[1].previousSnapshotPath);
   for (const entry of ledger) {
     assert.ok(fs.existsSync(path.join(root, entry.previousSnapshotPath)), `${entry.previousSnapshotPath} stays readable`);
   }
 });
 
-test("AC16: a parked criterion whose row changed is unparked", () => {
+test("a parked row whose cell changed is unparked", () => {
   const root = makeProject();
-  proveAc1(root);
+  proveB1(root);
   const parked = run(root, [
-    "implement", "park", "--ac", "AC2", "--approval", TEST_APPROVAL, "--reason", TEST_REASON,
+    "implement", "park", "--row", "B2", "--approval", TEST_APPROVAL, "--reason", TEST_REASON,
   ]);
   assert.equal(parked.status, 0, parked.stderr + parked.stdout);
-  assert.equal(criterion(root, "AC2").check.status, "parked");
+  assert.equal(row(root, "B2").status, "parked");
 
-  editPrd(root, { ac2: AC2_AMENDED });
-  const accepted = amend(root);
+  editPrd(root, { b2Check: B2_CHECK_AMENDED });
+  const accepted = amend(root, "observer");
   assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
-  assert.deepEqual(accepted.json.detail.unparkedCriteria, ["AC2"]);
-  assert.equal(criterion(root, "AC2").check.status, "pending");
-  assert.equal(criterion(root, "AC2").check.parks.at(-1).resumedAt !== null, true);
+  assert.deepEqual(accepted.json.detail.unparkedRows, ["B2"]);
+  assert.equal(row(root, "B2").status, "pending");
+  assert.notEqual(row(root, "B2").parks.at(-1).resumedAt, null);
 });
 
 test("an unedited PRD has nothing to amend and says so", () => {
   const root = makeProject();
-  proveAc1(root);
+  proveB1(root);
   const refused = amend(root);
   assert.notEqual(refused.status, 0);
   assert.match(refused.json.message, /byte-identical to the pinned snapshot/);

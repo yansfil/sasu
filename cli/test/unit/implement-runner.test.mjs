@@ -1,142 +1,67 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { scratchDir } from "../scratch.mjs";
 
 import { planRunUnits, runBatch } from "../../dist/implement/runner.js";
 
-const criterion = (id, command, cwd, overrides = {}) => ({
-  id,
-  text: id,
-  title: id,
-  requirements: [],
-  acceptanceCriteria: [],
-  status: "pending",
-  evidence: [],
-  judgment: "machine",
-  evidenceDeclaration: null,
-  check: {
-    status: "pending",
-    bindings: command === null ? [] : [{
-      id: "B1",
-      command,
-      argv: command.split(" "),
-      cwd,
-      classification: "asset",
-      boundAt: "2026-08-29T00:00:00.000Z",
-      reason: null,
-    }],
-    attempts: [],
-    consecutiveFailures: 0,
-    decisionPoints: [],
-    parks: [],
-    ...overrides,
-  },
-});
+const suiteCommand = (id, command, cwd) => ({ id, command, argv: command.split(" "), cwd });
 
-const suiteCommand = (id, command, cwd, verificationIds = []) => ({
-  id,
-  command,
-  argv: command.split(" "),
-  cwd,
-  verificationIds,
-});
-
-const stateWith = (root, criteria, commands) => ({
-  schema: "sasu.implement.state.v7",
+const stateWith = (root, commands) => ({
+  schema: "sasu.implement.state.v8",
   status: "active",
   topicSlug: "fixture",
   projectRoot: root,
   runDir: "agents/runs/fixture",
-  acceptanceCriteria: criteria,
+  rows: [],
   suite: { sealedAt: "2026-08-29T00:00:00.000Z", commands, exclusions: [], results: [] },
   verificationAttempts: [],
 });
 
-test("AC1: a command named by both an AC binding and the suite is one unit scored for both", () => {
-  const state = stateWith("/tmp/fixture", [criterion("AC1", "node --version", ".")], [suiteCommand("S1", "node --version", ".", ["V1"])]);
+const unit = (key, argv, suiteCommandId = key) => ({ command: key, argv, cwd: ".", suiteCommandId });
+
+test("the verify batch is the sealed suite in sealed order, one unit per command", () => {
+  const state = stateWith("/tmp/fixture", [
+    suiteCommand("S1", "node --version", "."),
+    suiteCommand("S2", "node --version", "cli"),
+  ]);
   const units = planRunUnits(state);
-  assert.equal(units.length, 1, "the shared (cwd, command) must collapse to a single unit");
-  assert.deepEqual(units[0].criterionIds, ["AC1"]);
-  assert.deepEqual(units[0].suiteCommandIds, ["S1"]);
-  assert.deepEqual(units[0].verificationIds, ["V1"]);
-});
-
-test("AC1: the same command under a different cwd is a different unit", () => {
-  const state = stateWith("/tmp/fixture", [criterion("AC1", "node --version", ".")], [suiteCommand("S1", "node --version", "cli")]);
-  assert.equal(planRunUnits(state).length, 2);
-});
-
-test("planning skips parked criteria and criteria with no binding, but keeps their suite twin", () => {
-  const parked = criterion("AC2", "node --version", ".", { status: "parked" });
-  const state = stateWith("/tmp/fixture", [parked, criterion("AC3", null, ".")], [suiteCommand("S1", "node --version", ".")]);
-  const units = planRunUnits(state);
-  assert.equal(units.length, 1);
-  assert.deepEqual(units[0].criterionIds, [], "a parked criterion is not being proved right now");
-  assert.deepEqual(units[0].suiteCommandIds, ["S1"], "the suite entry still stands on its own account");
-});
-
-// A gate:human criterion must spend a fresh verbatim approval on every
-// execution. Verify has none to spend, so folding it into the batch would
-// either run it ungated or invent an approval.
-test("planning excludes machine+gate:human criteria from the verify batch", () => {
-  const gated = criterion("AC4", "node --version", ".");
-  gated.judgment = "machine+gate:human";
-  const state = stateWith("/tmp/fixture", [gated], []);
-  assert.deepEqual(planRunUnits(state), []);
+  assert.deepEqual(units.map((entry) => [entry.suiteCommandId, entry.cwd]), [["S1", "."], ["S2", "cli"]]);
 });
 
 test("an excluded suite command is not planned", () => {
-  const state = stateWith("/tmp/fixture", [], [suiteCommand("S1", "node --version", ".")]);
+  const state = stateWith("/tmp/fixture", [suiteCommand("S1", "node --version", ".")]);
   state.suite.exclusions = [{ at: "x", commandId: "S1", approval: "user said drop it", reason: "flaky" }];
   assert.deepEqual(planRunUnits(state), []);
 });
 
 const scratchState = () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-runner-"));
+  const root = scratchDir("sasu-runner-");
   fs.mkdirSync(path.join(root, "agents", "runs", "fixture"), { recursive: true });
-  return { root, state: stateWith(root, [], []) };
+  return { root, state: stateWith(root, []) };
 };
 
-test("AC1: one unit runs exactly once even though two destinations claim it", () => {
+test("one unit runs exactly once", () => {
   const { root, state } = scratchState();
   // Outside the judged tree on purpose: a counter written inside it would
   // trip the mutation guard and prove nothing about execution count.
-  const counter = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-runner-count-")), "runs.txt");
-  const unit = {
-    key: "./count",
-    command: "count",
-    argv: ["node", "-e", `require("fs").appendFileSync(${JSON.stringify(counter)}, "x")`],
-    cwd: ".",
-    criterionIds: ["AC1", "AC2"],
-    suiteCommandIds: ["S1"],
-    verificationIds: ["V1"],
-  };
-  const outcome = runBatch(state, root, [unit], 60_000);
+  const counter = path.join(scratchDir("sasu-runner-count-"), "runs.txt");
+  const outcome = runBatch(state, root, [unit("S1", ["node", "-e", `require("fs").appendFileSync(${JSON.stringify(counter)}, "x")`])], 60_000);
   assert.equal(outcome.results.length, 1);
   assert.equal(outcome.results[0].outcome, "green");
   assert.equal(fs.readFileSync(counter, "utf8"), "x", "the command executed exactly once");
 });
 
-test("AC2: every result names the tree it was earned on, and a batch whose tree moved is reported", () => {
+test("every result names the tree it was earned on, and a batch whose tree moved is reported", () => {
   const { root, state } = scratchState();
   fs.writeFileSync(path.join(root, "source.txt"), "before\n");
-  const quiet = { key: "a", command: "a", argv: ["node", "--version"], cwd: ".", criterionIds: [], suiteCommandIds: ["S1"], verificationIds: [] };
-  const clean = runBatch(state, root, [quiet], 60_000);
+  const clean = runBatch(state, root, [unit("S1", ["node", "--version"])], 60_000);
   assert.equal(clean.treeMoved, null);
   assert.ok(clean.results[0].tree.product, "a pass must name its tree");
 
-  const mutator = {
-    key: "b",
-    command: "b",
-    argv: ["node", "-e", `require("fs").writeFileSync(${JSON.stringify(path.join(root, "source.txt"))}, "after\\n")`],
-    cwd: ".",
-    criterionIds: [],
-    suiteCommandIds: ["S2"],
-    verificationIds: [],
-  };
+  const mutator = unit("S2", ["node", "-e", `require("fs").writeFileSync(${JSON.stringify(path.join(root, "source.txt"))}, "after\\n")`]);
   const moved = runBatch(state, root, [mutator], 60_000);
   assert.equal(moved.results[0].mutatedTree, true, "a command that rewrites judged source is rejected");
   assert.equal(moved.results[0].outcome, "tree-moved", "exit 0 does not save a command that moved the goalposts");
@@ -156,14 +81,12 @@ test("a build writing into a gitignored directory is not a moved tree, an untrac
     assert.equal(spawnSync("git", args, { cwd: root, encoding: "utf8" }).status, 0);
   }
   const write = (relative) => `require("fs").mkdirSync(require("path").dirname(${JSON.stringify(path.join(root, relative))}), {recursive:true}); require("fs").writeFileSync(${JSON.stringify(path.join(root, relative))}, "built\\n")`;
-  const build = { key: "b", command: "b", argv: ["node", "-e", write("target/release/lib.a")], cwd: ".", criterionIds: ["AC1"], suiteCommandIds: [], verificationIds: [] };
-  const built = runBatch(state, root, [build], 60_000);
+  const built = runBatch(state, root, [unit("S1", ["node", "-e", write("target/release/lib.a")])], 60_000);
   assert.equal(built.results[0].outcome, "green");
   assert.equal(built.results[0].mutatedTree, false);
   assert.equal(built.treeMoved, null);
 
-  const leak = { key: "l", command: "l", argv: ["node", "-e", write("generated.txt")], cwd: ".", criterionIds: ["AC1"], suiteCommandIds: [], verificationIds: [] };
-  const leaked = runBatch(state, root, [leak], 60_000);
+  const leaked = runBatch(state, root, [unit("S2", ["node", "-e", write("generated.txt")])], 60_000);
   assert.equal(leaked.results[0].outcome, "tree-moved");
   assert.equal(leaked.results[0].mutatedTree, true);
 });
@@ -172,9 +95,10 @@ test("a build writing into a gitignored directory is not a moved tree, an untrac
 // never honestly say "suites 3/3": it had not executed all three.
 test("a failing unit does not stop the batch", () => {
   const { root, state } = scratchState();
-  const fail = { key: "f", command: "f", argv: ["node", "-e", "process.exit(3)"], cwd: ".", criterionIds: [], suiteCommandIds: ["S1"], verificationIds: [] };
-  const pass = { key: "p", command: "p", argv: ["node", "--version"], cwd: ".", criterionIds: [], suiteCommandIds: ["S2"], verificationIds: [] };
-  const outcome = runBatch(state, root, [fail, pass], 60_000);
+  const outcome = runBatch(state, root, [
+    unit("S1", ["node", "-e", "process.exit(3)"]),
+    unit("S2", ["node", "--version"]),
+  ], 60_000);
   assert.equal(outcome.results.length, 2);
   assert.equal(outcome.results[0].outcome, "failed");
   assert.equal(outcome.results[0].exitCode, 3);

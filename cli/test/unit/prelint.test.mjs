@@ -72,12 +72,28 @@ const PRD_CASES = [
   ["prd-frontmatter-missing.md", "prd-frontmatter-missing"],
   ["prd-frontmatter-enum.md", "prd-frontmatter-enum"],
   ["prd-section-missing.md", "prd-section-missing"],
-  ["prd-dangling-ref.md", "prd-dangling-ref"],
-  ["prd-uncovered-ac.md", "prd-uncovered-ac"],
-  ["prd-uncovered-scenario.md", "prd-uncovered-scenario"],
-  ["prd-mode-mismatch.md", "prd-mode-mismatch"],
-  ["prd-method-runner-unknown.md", "prd-implementation-binding"],
+  ["prd-behavior-row.md", "prd-behavior-row"],
 ];
+
+// The eight rules the six-section template retired (prd-template R11, AC13).
+// A rule id that comes back here is a five-axis concept leaking in.
+const RETIRED_PRD_RULES = [
+  "prd-dangling-ref",
+  "prd-uncovered-ac",
+  "prd-uncovered-scenario",
+  "prd-mode-mismatch",
+  "prd-ac-table-required",
+  "prd-ac-judgment-missing",
+  "prd-ac-evidence-missing",
+  "prd-implementation-binding",
+];
+
+test("the retired five-axis rules are gone from prelint", () => {
+  const source = fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "src", "gates", "prelint.ts"), "utf8");
+  for (const rule of RETIRED_PRD_RULES) assert.ok(!source.includes(`"${rule}"`), `${rule} is still spelled in prelint.ts`);
+  const legacy = prelintPrd(fixture("prd-clean.md").replace("## Behaviors", "## 7. Acceptance Criteria"));
+  assert.ok(legacy.findings.every((finding) => !RETIRED_PRD_RULES.includes(finding.rule)));
+});
 
 for (const [file, rule] of PRD_CASES) {
   test(`prd rule ${rule} fires on its minimal defect and nothing else`, () => {
@@ -94,39 +110,62 @@ for (const [file, rule] of PRD_CASES) {
 test("row-level findings carry 1-indexed line numbers", () => {
   const open = prelintQaLog(fixture("qa-register-open.md"));
   assert.equal(typeof open.findings[0].line, "number");
-  const dangling = prelintPrd(fixture("prd-dangling-ref.md"));
-  assert.equal(typeof dangling.findings[0].line, "number");
+  const row = prelintPrd(fixture("prd-behavior-row.md"));
+  assert.equal(row.findings[0].line, 28);
 });
 
-test("covers ranges expand: R1-R3 with a deleted member is a dangling reference", () => {
-  const prd = fixture("prd-clean.md").replace("Covers R1, AC1, AC2.", "Covers R1-R3, AC1, AC2.");
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, false);
-  const danglingIds = result.findings.filter((f) => f.rule === "prd-dangling-ref").map((f) => f.missing);
-  assert.ok(danglingIds.some((m) => m.includes("R2")), "R2 from the range must be flagged");
-  assert.ok(danglingIds.some((m) => m.includes("R3")), "R3 from the range must be flagged");
+// prd-section-missing keys on the six template titles and nothing else
+// (R11): one absent section names exactly that title; the retired numbered
+// headings are not what it looks for.
+test("prd-section-missing names the one absent six-section title", () => {
+  const result = prelintPrd(fixture("prd-section-missing.md"));
+  assert.deepEqual(result.findings.map((f) => f.rule), ["prd-section-missing"]);
+  assert.match(result.findings[0].missing, /^missing section\(s\): ## Non-goals$/);
+  const renamed = prelintPrd(fixture("prd-clean.md").replace("## Technical structure", "## 5. Technical structure"));
+  assert.match(renamed.findings.find((f) => f.rule === "prd-section-missing").missing, /## Technical structure$/);
 });
 
-test("a PRD with a covered SC scenario card passes with zero findings", () => {
-  const result = prelintPrd(fixture("prd-scenario-clean.md"));
+// prd-behavior-row is the one row rule (R11): every cell-grammar defect
+// fires it at the row's line, and a command in the behavior cell is the
+// defect it was added for.
+test("prd-behavior-row fires on each cell-grammar defect at the row's line", () => {
+  const clean = fixture("prd-clean.md");
+  const b1 = "| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |";
+  const cases = [
+    ["command in the behavior cell", "| B1 | check: `node --test x.mjs` the widget renders | judge: the diff | - |", /behavior cell carries a check:\/judge:\/human: method/],
+    ["no prefix", "| B1 | the widget renders | verify by hand | - |", /must start with one of check:, judge:, human:/],
+    ["empty payload", "| B1 | the widget renders | human: | - |", /human: cell has no payload/],
+    ["shell composition", "| B1 | the widget renders | check: `npm test && npm run build` | - |", /one command without shell composition/],
+    ["bad id", "| AC1 | the widget renders | check: `npm test` | - |", /row id must be B<n>/],
+    ["cell count", "| B1 | the widget renders | check: `npm test` |", /has 3 cell\(s\)/],
+    // The duplicate is reported on the second occurrence: that is the row to fix.
+    ["duplicate id", "| B2 | the widget renders | check: `npm test` | - |", /duplicate row id B2/, 29],
+  ];
+  for (const [label, row, pattern, line = 28] of cases) {
+    const result = prelintPrd(clean.replace(b1, row));
+    assert.equal(result.ok, false, label);
+    assert.ok(result.findings.every((f) => f.rule === "prd-behavior-row"), `${label}: ${result.findings.map((f) => f.rule).join(",")}`);
+    assert.ok(result.findings.some((f) => pattern.test(f.missing) && f.line === line), `${label}: ${JSON.stringify(result.findings)}`);
+  }
+  const noRows = prelintPrd(clean.replace(/\| B[123] \|.*\n/g, ""));
+  assert.deepEqual(noRows.findings.map((f) => f.rule), ["prd-behavior-row"]);
+});
+
+test("a quoted argument is not shell composition in a check: cell", () => {
+  const result = prelintPrd(fixture("prd-clean.md").replace("check: `node --test test/widget.test.mjs`", "check: `node --test --test-name-pattern \"a && b\" test/widget.test.mjs`"));
   assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
-  assert.equal(result.findings.length, 0);
-});
-
-test("a Covers reference to an undefined SC card is a dangling reference", () => {
-  const prd = fixture("prd-scenario-clean.md").replace("R1, AC1, AC2, SC1", "R1, AC1, AC2, SC1, SC9");
-  const result = prelintPrd(prd);
-  assert.equal(result.ok, false);
-  assert.ok(result.findings.some((f) => f.rule === "prd-dangling-ref" && f.missing.includes("SC9")));
 });
 
 test("ID numbering gaps alone are NOT flagged (continuity is an explicit non-goal)", () => {
-  const prd = fixture("prd-clean.md")
-    .replace("| AC2 | the widget persists its state | machine | - |", "| AC7 | the widget persists its state | machine | - |")
-    .replace("Covers R1, AC1, AC2.", "Covers R1, AC1, AC7.")
-    .replace("| V1 | automated behavior | R1, AC1, AC2 |", "| V1 | automated behavior | R1, AC1, AC7 |");
+  const prd = fixture("prd-clean.md").replace("| B3 |", "| B7 |");
   const result = prelintPrd(prd);
   assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+});
+
+test("a backtick crossing a cell boundary is a span collision", () => {
+  const result = prelintPrd(fixture("prd-table-span-collision.md"));
+  assert.equal(result.ok, false);
+  assert.ok(result.findings.some((f) => f.rule === "prd-table-span-collision" && f.line === 28));
 });
 
 // --- quick-contract matrix: same single-rule guarantee as the PRD cases ---
@@ -181,31 +220,6 @@ test("runPrelint fails closed on an internal crash instead of throwing (D-11)", 
   assert.equal(result.ok, false);
   assert.equal(result.findings[0].rule, "prelint-internal-error");
   assert.match(result.findings[0].missing, /prelint crashed/);
-});
-
-test("PRD implementation bindings are rejected at every semantic surface", () => {
-  const cleanPrd = fixture("prd-clean.md");
-  const taskScope = prelintPrd(cleanPrd.replace("- T1.", "- T1. Scope: src/**."));
-  assert.equal(taskScope.ok, false);
-  assert.ok(taskScope.findings.some((entry) => entry.rule === "prd-implementation-binding" && /file Scope/.test(entry.missing)));
-
-  const acCheck = prelintPrd(cleanPrd.replace(
-    "| AC1 | the widget renders | machine | - |",
-    "| AC1 | Check: `npm test`. the widget renders | machine | - |",
-  ));
-  assert.equal(acCheck.ok, false);
-  assert.ok(acCheck.findings.some((entry) => entry.rule === "prd-implementation-binding" && /executable Check/.test(entry.missing)));
-
-  const methodMatrix = prelintPrd(fixture("prd-method-runner-unknown.md"));
-  assert.equal(methodMatrix.ok, false);
-  assert.ok(methodMatrix.findings.some((entry) => entry.rule === "prd-implementation-binding" && /column "Method"/.test(entry.missing)));
-});
-
-test("an AC with a Check tail still requires V coverage", () => {
-  const result = prelintPrd(fixture("prd-oracle-covered-ac.md"));
-  assert.equal(result.ok, false);
-  assert.ok(result.findings.some((entry) => entry.rule === "prd-uncovered-ac"));
-  assert.ok(result.findings.some((entry) => entry.rule === "prd-implementation-binding"));
 });
 
 // Citation ADVISORIES (red-team 2026-08-20): the blocking versions

@@ -37,8 +37,12 @@ export function normalizeProjectPath(projectRoot: string, input: string): { abso
   return { absolute, relative: relative || "." };
 }
 
+export function jsonText(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
 export function writeJsonAtomic(file: string, value: unknown): void {
-  writeTextAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
+  writeTextAtomic(file, jsonText(value));
 }
 
 export function writeTextAtomic(file: string, value: string): void {
@@ -166,28 +170,19 @@ function assertInputManifest(value: unknown, label: string): void {
   if (!Array.isArray(value["evidence"])) throw new Error(`malformed implement state: ${label}.evidence must be an array`);
   for (const [index, entry] of value["evidence"].entries()) {
     assertRecord(entry, `${label}.evidence[${index}]`);
-    if (entry["verificationId"] === undefined && entry["acceptanceCriterionId"] === undefined) {
-      throw new Error(`malformed implement state: ${label}.evidence[${index}] must name verificationId or acceptanceCriterionId`);
-    }
-    if (entry["verificationId"] !== undefined) assertString(entry["verificationId"], `${label}.evidence[${index}].verificationId`);
-    if (entry["acceptanceCriterionId"] !== undefined) assertString(entry["acceptanceCriterionId"], `${label}.evidence[${index}].acceptanceCriterionId`);
+    if (entry["rowId"] !== undefined) assertString(entry["rowId"], `${label}.evidence[${index}].rowId`);
     assertString(entry["path"], `${label}.evidence[${index}].path`);
     assertString(entry["sha256"], `${label}.evidence[${index}].sha256`);
   }
   assertRecord(value["checkLedger"], `${label}.checkLedger`);
   assertSha256(value["checkLedger"]["sha256"], `${label}.checkLedger.sha256`);
-  if (!Array.isArray(value["checkLedger"]["bindings"])) {
-    throw new Error(`malformed implement state: ${label}.checkLedger.bindings must be an array`);
+  if (!Array.isArray(value["checkLedger"]["rows"])) {
+    throw new Error(`malformed implement state: ${label}.checkLedger.rows must be an array`);
   }
-  for (const [index, binding] of value["checkLedger"]["bindings"].entries()) {
-    assertRecord(binding, `${label}.checkLedger.bindings[${index}]`);
-    for (const field of ["criterionId", "bindingId", "command", "cwd"] as const) {
-      assertString(binding[field], `${label}.checkLedger.bindings[${index}].${field}`);
-    }
-    assertStringArray(binding["argv"], `${label}.checkLedger.bindings[${index}].argv`, true);
-    if (binding["classification"] !== "asset" && binding["classification"] !== "labor") {
-      throw new Error(`malformed implement state: ${label}.checkLedger.bindings[${index}].classification is invalid`);
-    }
+  for (const [index, row] of value["checkLedger"]["rows"].entries()) {
+    assertRecord(row, `${label}.checkLedger.rows[${index}]`);
+    for (const field of ["rowId", "payload", "status"] as const) assertString(row[field], `${label}.checkLedger.rows[${index}].${field}`);
+    if (!CHECK_KINDS.has(String(row["kind"]))) throw new Error(`malformed implement state: ${label}.checkLedger.rows[${index}].kind is invalid`);
   }
 }
 
@@ -200,157 +195,127 @@ function assertRoundContext(value: unknown, label: string): void {
   if (!Array.isArray(value["newEvidence"])) throw new Error(`malformed implement state: ${label}.newEvidence must be an array`);
   for (const [index, entry] of value["newEvidence"].entries()) {
     assertRecord(entry, `${label}.newEvidence[${index}]`);
-    if (entry["verificationId"] === undefined && entry["acceptanceCriterionId"] === undefined) {
-      throw new Error(`malformed implement state: ${label}.newEvidence[${index}] must name verificationId or acceptanceCriterionId`);
-    }
-    if (entry["verificationId"] !== undefined) assertString(entry["verificationId"], `${label}.newEvidence[${index}].verificationId`);
-    if (entry["acceptanceCriterionId"] !== undefined) assertString(entry["acceptanceCriterionId"], `${label}.newEvidence[${index}].acceptanceCriterionId`);
+    if (entry["rowId"] !== undefined) assertString(entry["rowId"], `${label}.newEvidence[${index}].rowId`);
     assertString(entry["path"], `${label}.newEvidence[${index}].path`);
     assertString(entry["sha256"], `${label}.newEvidence[${index}].sha256`);
   }
 }
 
 /**
- * An amendment that rewrote a criterion's row voids the proof filed against
- * the old text (amend.ts mergeCriteria), so its attempts stop counting from
- * the amendment's timestamp - the same boundary a park's resume draws. The
- * reader used to know only the resume boundary, so `amend` on a green row
- * wrote status "pending" over a green attempt the reader still counted, and
- * the file it left was one no later command could open. Found by the
- * write-time parse the day it landed (2026-09-03).
+ * An amendment that rewrote a row voids the proof filed against the old
+ * text (amend.ts), so its attempts stop counting from the amendment's
+ * timestamp - the same boundary a park's resume draws. The reader used to
+ * know only the resume boundary, so `amend` on a green row wrote status
+ * "pending" over a green attempt the reader still counted, and the file it
+ * left was one no later command could open. Found by the write-time parse
+ * the day it landed (2026-09-03).
  */
-function latestInvalidationByCriterion(amendments: AmendmentRecord[]): Map<string, string> {
+function latestInvalidationByRow(amendments: AmendmentRecord[]): Map<string, string> {
   const boundary = new Map<string, string>();
   for (const amendment of amendments) {
-    for (const criterionId of amendment.invalidatedCriteria) {
-      const held = boundary.get(criterionId);
-      if (held === undefined || held < amendment.at) boundary.set(criterionId, amendment.at);
+    for (const rowId of amendment.invalidatedRows) {
+      const held = boundary.get(rowId);
+      if (held === undefined || held < amendment.at) boundary.set(rowId, amendment.at);
     }
   }
   return boundary;
 }
 
-function assertAcceptanceCriteria(value: unknown, label: string, invalidatedAt: Map<string, string>): void {
+const CHECK_KINDS = new Set(["check", "judge", "human"]);
+const ROW_STATUSES = new Set(["pending", "green", "fail", "parked", "OPEN", "PASS", "FAIL"]);
+
+function assertCheckAttempt(attempt: unknown, attemptLabel: string, attemptIndex: number): void {
+  assertRecord(attempt, attemptLabel);
+  if (attempt["id"] !== `A${attemptIndex + 1}`) throw new Error(`malformed implement state: ${attemptLabel}.id must be A${attemptIndex + 1}`);
+  assertIsoTimestamp(attempt["startedAt"], `${attemptLabel}.startedAt`);
+  assertIsoTimestamp(attempt["finishedAt"], `${attemptLabel}.finishedAt`);
+  if (!Number.isInteger(attempt["durationMs"]) || Number(attempt["durationMs"]) < 0) {
+    throw new Error(`malformed implement state: ${attemptLabel}.durationMs must be a non-negative integer`);
+  }
+  if (!Number.isInteger(attempt["exitCode"])) throw new Error(`malformed implement state: ${attemptLabel}.exitCode must be an integer`);
+  if (typeof attempt["timedOut"] !== "boolean") throw new Error(`malformed implement state: ${attemptLabel}.timedOut must be boolean`);
+  if (attempt["signal"] !== null && (typeof attempt["signal"] !== "string" || !/^SIG[A-Z0-9]+$/.test(attempt["signal"]))) {
+    throw new Error(`malformed implement state: ${attemptLabel}.signal is invalid`);
+  }
+  if (typeof attempt["mutatedTree"] !== "boolean") throw new Error(`malformed implement state: ${attemptLabel}.mutatedTree must be boolean`);
+  if (attempt["outcome"] !== "green" && attempt["outcome"] !== "failed" && attempt["outcome"] !== "tree-moved") {
+    throw new Error(`malformed implement state: ${attemptLabel}.outcome is invalid`);
+  }
+  const expectedOutcome = mechanicalOutcome({
+    exitCode: attempt["exitCode"] as number,
+    timedOut: attempt["timedOut"] as boolean,
+    signal: attempt["signal"] as string | null,
+    mutatedTree: attempt["mutatedTree"] as boolean,
+  });
+  if (attempt["outcome"] !== expectedOutcome) {
+    throw new Error(`malformed implement state: ${attemptLabel}.outcome ${String(attempt["outcome"])} contradicts the recorded process result (expected ${expectedOutcome})`);
+  }
+  assertSha256(attempt["outputFingerprint"], `${attemptLabel}.outputFingerprint`);
+  if (expectedOutcome === "failed") {
+    assertSha256(attempt["failureClass"], `${attemptLabel}.failureClass`);
+  } else if (attempt["failureClass"] !== null) {
+    throw new Error(`malformed implement state: ${attemptLabel}.failureClass must be null for ${expectedOutcome}`);
+  }
+  assertRecord(attempt["tree"], `${attemptLabel}.tree`);
+  for (const field of ["all", "product", "bookkeeping"] as const) assertSha256(attempt["tree"][field], `${attemptLabel}.tree.${field}`);
+}
+
+/**
+ * The Behaviors rows, with every status re-derived from the ledger it
+ * summarises: a `check:` row's status from its attempts and parks, a
+ * `human:` row's from its confirmation. A stored status the ledger
+ * contradicts is refused, so no writer can promote a row by editing one
+ * word (AGENTS.md 10).
+ */
+function assertRows(value: unknown, label: string, invalidatedAt: Map<string, string>): void {
   if (!Array.isArray(value)) throw new Error(`malformed implement state: ${label} must be an array`);
-  const criterionIds = new Set<string>();
+  if (value.length === 0) throw new Error(`malformed implement state: ${label} must hold at least one Behaviors row`);
+  const rowIds = new Set<string>();
   for (const [index, entry] of value.entries()) {
-    assertRecord(entry, `${label}[${index}]`);
-    assertString(entry["id"], `${label}[${index}].id`);
-    if (criterionIds.has(entry["id"])) throw new Error(`malformed implement state: duplicate acceptance criterion ${entry["id"]}`);
-    criterionIds.add(entry["id"]);
-    if (entry["judgment"] !== "machine" && entry["judgment"] !== "judged" && entry["judgment"] !== "machine+gate:human") {
-      throw new Error(`malformed implement state: ${label}[${index}].judgment is invalid`);
+    const rowLabel = `${label}[${index}]`;
+    assertRecord(entry, rowLabel);
+    assertString(entry["id"], `${rowLabel}.id`);
+    if (!/^B[1-9]\d*$/.test(entry["id"])) throw new Error(`malformed implement state: ${rowLabel}.id must match B<n>`);
+    if (rowIds.has(entry["id"])) throw new Error(`malformed implement state: duplicate row ${entry["id"]}`);
+    rowIds.add(entry["id"]);
+    assertString(entry["behavior"], `${rowLabel}.behavior`);
+    assertRecord(entry["check"], `${rowLabel}.check`);
+    const kind = String(entry["check"]["kind"]);
+    if (!CHECK_KINDS.has(kind)) throw new Error(`malformed implement state: ${rowLabel}.check.kind must be check, judge, or human`);
+    if (kind === "check") {
+      assertString(entry["check"]["command"], `${rowLabel}.check.command`);
+      assertStringArray(entry["check"]["argv"], `${rowLabel}.check.argv`, true);
+    } else if (kind === "judge") {
+      assertString(entry["check"]["evidence"], `${rowLabel}.check.evidence`);
+    } else {
+      assertString(entry["check"]["confirmation"], `${rowLabel}.check.confirmation`);
     }
-    if (entry["judgment"] === "judged") assertString(entry["evidenceDeclaration"], `${label}[${index}].evidenceDeclaration`);
-    assertRecord(entry["check"], `${label}[${index}].check`);
-    if (entry["check"]["status"] !== "pending" && entry["check"]["status"] !== "green" && entry["check"]["status"] !== "parked") {
-      throw new Error(`malformed implement state: ${label}[${index}].check.status is invalid`);
+    assertStringArray(entry["decisionIds"], `${rowLabel}.decisionIds`);
+    if (!ROW_STATUSES.has(String(entry["status"]))) throw new Error(`malformed implement state: ${rowLabel}.status is invalid`);
+    for (const field of ["attempts", "parks", "rejections"] as const) {
+      if (!Array.isArray(entry[field])) throw new Error(`malformed implement state: ${rowLabel}.${field} must be an array`);
     }
-    for (const field of ["bindings", "attempts", "decisionPoints", "parks"] as const) {
-      if (!Array.isArray(entry["check"][field])) throw new Error(`malformed implement state: ${label}[${index}].check.${field} must be an array`);
+    if (!Number.isInteger(entry["consecutiveFailures"]) || Number(entry["consecutiveFailures"]) < 0) {
+      throw new Error(`malformed implement state: ${rowLabel}.consecutiveFailures must be a non-negative integer`);
     }
-    if (!Number.isInteger(entry["check"]["consecutiveFailures"]) || Number(entry["check"]["consecutiveFailures"]) < 0) {
-      throw new Error(`malformed implement state: ${label}[${index}].check.consecutiveFailures must be a non-negative integer`);
+    const attempts = entry["attempts"] as unknown[];
+    const parks = entry["parks"] as unknown[];
+    if (kind !== "check" && (attempts.length > 0 || parks.length > 0)) {
+      throw new Error(`malformed implement state: ${rowLabel} is a ${kind}: row and cannot carry attempts or parks`);
     }
+    for (const [attemptIndex, attempt] of attempts.entries()) assertCheckAttempt(attempt, `${rowLabel}.attempts[${attemptIndex}]`, attemptIndex);
 
-    const check = entry["check"];
-    const bindings = check["bindings"] as unknown[];
-    const bindingIds = new Set<string>();
-    for (const [bindingIndex, binding] of bindings.entries()) {
-      const bindingLabel = `${label}[${index}].check.bindings[${bindingIndex}]`;
-      assertRecord(binding, bindingLabel);
-      if (binding["id"] !== `B${bindingIndex + 1}`) throw new Error(`malformed implement state: ${bindingLabel}.id must be B${bindingIndex + 1}`);
-      bindingIds.add(binding["id"] as string);
-      assertString(binding["command"], `${bindingLabel}.command`);
-      assertStringArray(binding["argv"], `${bindingLabel}.argv`, true);
-      assertString(binding["cwd"], `${bindingLabel}.cwd`);
-      if (binding["classification"] !== "asset" && binding["classification"] !== "labor") {
-        throw new Error(`malformed implement state: ${bindingLabel}.classification is invalid`);
-      }
-      assertIsoTimestamp(binding["boundAt"], `${bindingLabel}.boundAt`);
-      if (bindingIndex === 0) {
-        if (binding["reason"] !== null) throw new Error(`malformed implement state: ${bindingLabel}.reason must be null for the first binding`);
-      } else {
-        assertString(binding["reason"], `${bindingLabel}.reason`);
-      }
-    }
-
-    const attempts = check["attempts"] as unknown[];
-    const attemptIds = new Set<string>();
-    const consumedHumanWindows = new Set<string>();
-    let lastAttemptBindingIndex = -1;
-    for (const [attemptIndex, attempt] of attempts.entries()) {
-      const attemptLabel = `${label}[${index}].check.attempts[${attemptIndex}]`;
-      assertRecord(attempt, attemptLabel);
-      if (attempt["id"] !== `A${attemptIndex + 1}`) throw new Error(`malformed implement state: ${attemptLabel}.id must be A${attemptIndex + 1}`);
-      attemptIds.add(attempt["id"] as string);
-      assertString(attempt["bindingId"], `${attemptLabel}.bindingId`);
-      if (!bindingIds.has(attempt["bindingId"] as string)) throw new Error(`malformed implement state: ${attemptLabel}.bindingId names no binding`);
-      const attemptBindingIndex = bindings.findIndex((binding) => (binding as Record<string, unknown>)["id"] === attempt["bindingId"]);
-      if (attemptBindingIndex < lastAttemptBindingIndex) throw new Error(`malformed implement state: ${attemptLabel}.bindingId moves backward in append-only binding history`);
-      lastAttemptBindingIndex = attemptBindingIndex;
-      assertIsoTimestamp(attempt["startedAt"], `${attemptLabel}.startedAt`);
-      assertIsoTimestamp(attempt["finishedAt"], `${attemptLabel}.finishedAt`);
-      if (!Number.isInteger(attempt["durationMs"]) || Number(attempt["durationMs"]) < 0) {
-        throw new Error(`malformed implement state: ${attemptLabel}.durationMs must be a non-negative integer`);
-      }
-      if (!Number.isInteger(attempt["exitCode"])) throw new Error(`malformed implement state: ${attemptLabel}.exitCode must be an integer`);
-      if (typeof attempt["timedOut"] !== "boolean") throw new Error(`malformed implement state: ${attemptLabel}.timedOut must be boolean`);
-      if (attempt["signal"] !== null && (typeof attempt["signal"] !== "string" || !/^SIG[A-Z0-9]+$/.test(attempt["signal"]))) {
-        throw new Error(`malformed implement state: ${attemptLabel}.signal is invalid`);
-      }
-      if (attempt["mutatedTree"] === undefined) migrateDroppedMutatedTree(attempt);
-      if (typeof attempt["mutatedTree"] !== "boolean") throw new Error(`malformed implement state: ${attemptLabel}.mutatedTree must be boolean`);
-      if (attempt["outcome"] !== "green" && attempt["outcome"] !== "failed" && attempt["outcome"] !== "tree-moved") {
-        throw new Error(`malformed implement state: ${attemptLabel}.outcome is invalid`);
-      }
-      const expectedOutcome = mechanicalOutcome({
-        exitCode: attempt["exitCode"] as number,
-        timedOut: attempt["timedOut"] as boolean,
-        signal: attempt["signal"] as string | null,
-        mutatedTree: attempt["mutatedTree"] as boolean,
-      });
-      if (attempt["outcome"] !== expectedOutcome) {
-        throw new Error(`malformed implement state: ${attemptLabel}.outcome ${String(attempt["outcome"])} contradicts the recorded process result (expected ${expectedOutcome})`);
-      }
-      assertSha256(attempt["outputFingerprint"], `${attemptLabel}.outputFingerprint`);
-      if (expectedOutcome === "failed") {
-        assertSha256(attempt["failureClass"], `${attemptLabel}.failureClass`);
-      } else if (attempt["failureClass"] !== null) {
-        throw new Error(`malformed implement state: ${attemptLabel}.failureClass must be null for ${expectedOutcome}`);
-      }
-      assertRecord(attempt["tree"], `${attemptLabel}.tree`);
-      for (const field of ["all", "product", "bookkeeping"] as const) assertSha256(attempt["tree"][field], `${attemptLabel}.tree.${field}`);
-      if (entry["judgment"] === "machine+gate:human") {
-        assertRecord(attempt["humanWindow"], `${attemptLabel}.humanWindow`);
-        assertString(attempt["humanWindow"]["evidence"], `${attemptLabel}.humanWindow.evidence`);
-        assertIsoTimestamp(attempt["humanWindow"]["recordedAt"], `${attemptLabel}.humanWindow.recordedAt`);
-        if (attempt["humanWindow"]["criterionId"] !== entry["id"]) throw new Error(`malformed implement state: ${attemptLabel}.humanWindow.criterionId must match ${entry["id"]}`);
-        if (consumedHumanWindows.has(attempt["humanWindow"]["evidence"] as string)) throw new Error(`malformed implement state: ${attemptLabel}.humanWindow.evidence was consumed more than once`);
-        consumedHumanWindows.add(attempt["humanWindow"]["evidence"] as string);
-      } else if (attempt["humanWindow"] !== null) {
-        throw new Error(`malformed implement state: ${attemptLabel}.humanWindow is valid only for machine+gate:human`);
-      }
-    }
-
-    const parks = check["parks"] as unknown[];
     let activePark = false;
     let latestResume: string | null = null;
     for (const [parkIndex, park] of parks.entries()) {
-      const parkLabel = `${label}[${index}].check.parks[${parkIndex}]`;
+      const parkLabel = `${rowLabel}.parks[${parkIndex}]`;
       assertRecord(park, parkLabel);
       assertIsoTimestamp(park["parkedAt"], `${parkLabel}.parkedAt`);
-      if (park["parkedBy"] !== "human" && park["parkedBy"] !== "observer") throw new Error(`malformed implement state: ${parkLabel}.parkedBy must be human or observer`);
-      // A human park quotes the approval that authorised it; an observer park
-      // has no quote to give and stands on the harness's own open decision
-      // point instead (AC20). Demanding a non-empty string from both wrote a
-      // state the next read refused - the write path and the read path
-      // disagreeing about one field, the same species as the verb vocabulary.
-      if (park["parkedBy"] === "human") {
-        assertString(park["approval"], `${parkLabel}.approval`);
-      } else if (typeof park["approval"] !== "string" || park["approval"] !== "") {
-        throw new Error(`malformed implement state: ${parkLabel}.approval must be empty for an observer park`);
-      }
+      // Every park quotes the human approval that authorised it; a park
+      // without one is the refusal park.ts makes, and storing it would
+      // launder that refusal into the record.
+      assertString(park["approval"], `${parkLabel}.approval`);
+      if ((park["approval"] as string).trim() === "") throw new Error(`malformed implement state: ${parkLabel}.approval must quote the human approval`);
       assertString(park["reason"], `${parkLabel}.reason`);
       assertNullableString(park["evidence"], `${parkLabel}.evidence`);
       if (park["resumedAt"] === null) {
@@ -361,76 +326,50 @@ function assertAcceptanceCriteria(value: unknown, label: string, invalidatedAt: 
         latestResume = park["resumedAt"] as string;
       }
     }
-    if (check["bookkeeping"] !== undefined) {
-      if (!Array.isArray(check["bookkeeping"])) {
-        throw new Error(`malformed implement state: ${label}[${index}].check.bookkeeping must be an array`);
-      }
-      const seen = new Set<string>();
-      for (const [targetIndex, target] of check["bookkeeping"].entries()) {
-        const targetLabel = `${label}[${index}].check.bookkeeping[${targetIndex}]`;
-        assertRecord(target, targetLabel);
-        assertString(target["path"], `${targetLabel}.path`);
-        if (!String(target["path"]).startsWith("agents/")) {
-          throw new Error(`malformed implement state: ${targetLabel}.path must be under agents/`);
-        }
-        // A duplicate would carry a second baseline for one file, and the
-        // proof is "moved from THE baseline" - two baselines is no baseline.
-        if (seen.has(String(target["path"]))) {
-          throw new Error(`malformed implement state: duplicate bookkeeping target ${target["path"]}`);
-        }
-        seen.add(String(target["path"]));
-        if (target["baselineSha256"] !== null) assertSha256(target["baselineSha256"], `${targetLabel}.baselineSha256`);
-        assertIsoTimestamp(target["declaredAt"], `${targetLabel}.declaredAt`);
-      }
-    }
-    if ((check["status"] === "parked") !== activePark) throw new Error(`malformed implement state: ${label}[${index}].check.status contradicts park history`);
 
-    const decisions = check["decisionPoints"] as unknown[];
-    for (const [decisionIndex, decision] of decisions.entries()) {
-      const decisionLabel = `${label}[${index}].check.decisionPoints[${decisionIndex}]`;
-      assertRecord(decision, decisionLabel);
-      if (decision["id"] !== `DP${decisionIndex + 1}`) throw new Error(`malformed implement state: ${decisionLabel}.id must be DP${decisionIndex + 1}`);
-      if (decision["kind"] !== "same-class" && decision["kind"] !== "five-failures" && decision["kind"] !== "tools-only") {
-        throw new Error(`malformed implement state: ${decisionLabel}.kind is invalid`);
-      }
-      assertIsoTimestamp(decision["openedAt"], `${decisionLabel}.openedAt`);
-      assertString(decision["attemptId"], `${decisionLabel}.attemptId`);
-      if (!attemptIds.has(decision["attemptId"] as string)) throw new Error(`malformed implement state: ${decisionLabel}.attemptId names no attempt`);
-      assertString(decision["message"], `${decisionLabel}.message`);
-      const resolution = decision["resolution"];
-      if (decision["resolvedAt"] === null || resolution === null) {
-        if (decision["resolvedAt"] !== null || resolution !== null) throw new Error(`malformed implement state: ${decisionLabel} must resolve time and outcome together`);
-      } else {
-        assertIsoTimestamp(decision["resolvedAt"], `${decisionLabel}.resolvedAt`);
-        // "amended" is what amend.ts writes when it lifts a stuck row's open
-        // decision point; the reader knew only the other three, which the
-        // write-time parse would have surfaced on the first amend of a stuck
-        // criterion.
-        if (resolution !== "green" && resolution !== "parked" && resolution !== "rebound" && resolution !== "amended") {
-          throw new Error(`malformed implement state: ${decisionLabel}.resolution is invalid`);
-        }
-      }
+    if (entry["verdict"] !== null) {
+      if (kind !== "judge") throw new Error(`malformed implement state: ${rowLabel}.verdict is valid only for a judge: row`);
+      assertRecord(entry["verdict"], `${rowLabel}.verdict`);
+      assertString(entry["verdict"]["attemptId"], `${rowLabel}.verdict.attemptId`);
+      if (entry["verdict"]["verdict"] !== "PASS" && entry["verdict"]["verdict"] !== "FAIL") throw new Error(`malformed implement state: ${rowLabel}.verdict.verdict must be PASS or FAIL`);
+      assertString(entry["verdict"]["reason"], `${rowLabel}.verdict.reason`);
+    }
+    if (entry["human"] !== null) {
+      if (kind !== "human") throw new Error(`malformed implement state: ${rowLabel}.human is valid only for a human: row`);
+      assertRecord(entry["human"], `${rowLabel}.human`);
+      assertIsoTimestamp(entry["human"]["confirmedAt"], `${rowLabel}.human.confirmedAt`);
+      assertString(entry["human"]["evidence"], `${rowLabel}.human.evidence`);
+    }
+    for (const [rejectionIndex, rejection] of (entry["rejections"] as unknown[]).entries()) {
+      const rejectionLabel = `${rowLabel}.rejections[${rejectionIndex}]`;
+      if (kind !== "human") throw new Error(`malformed implement state: ${rejectionLabel} is valid only for a human: row`);
+      assertRecord(rejection, rejectionLabel);
+      assertIsoTimestamp(rejection["at"], `${rejectionLabel}.at`);
+      assertString(rejection["evidence"], `${rejectionLabel}.evidence`);
     }
 
-    const currentBinding = bindings.at(-1) as Record<string, unknown> | undefined;
-    const currentAttempts = currentBinding === undefined
-      ? []
-      : attempts.filter((attempt) => (attempt as Record<string, unknown>)["bindingId"] === currentBinding["id"]) as Array<Record<string, unknown>>;
-    const latestAttempt = currentAttempts.at(-1);
-    const invalidation = invalidatedAt.get(entry["id"] as string) ?? null;
-    const boundary = [latestResume, invalidation].filter((at): at is string => at !== null).sort().at(-1) ?? null;
-    const attemptCounts = (attempt: Record<string, unknown>): boolean => boundary === null || (attempt["finishedAt"] as string) >= boundary;
-    const attemptAfterResume = latestAttempt !== undefined && attemptCounts(latestAttempt);
-    const derivedStatus = activePark ? "parked" : attemptAfterResume && latestAttempt?.["outcome"] === "green" ? "green" : "pending";
-    if (check["status"] !== derivedStatus) throw new Error(`malformed implement state: ${label}[${index}].check.status ${String(check["status"])} contradicts the harness-owned attempt ledger (expected ${derivedStatus})`);
-    const attemptsAfterResume = currentAttempts.filter(attemptCounts);
+    let derivedStatus: string;
     let derivedFailures = 0;
-    for (const attempt of attemptsAfterResume.slice().reverse()) {
-      if (attempt["outcome"] === "green") break;
-      derivedFailures += 1;
+    if (kind === "check") {
+      const invalidation = invalidatedAt.get(entry["id"] as string) ?? null;
+      const boundary = [latestResume, invalidation].filter((at): at is string => at !== null).sort().at(-1) ?? null;
+      const counted = (attempts as Array<Record<string, unknown>>).filter((attempt) => boundary === null || (attempt["finishedAt"] as string) >= boundary);
+      const latest = counted.at(-1);
+      derivedStatus = activePark ? "parked" : latest === undefined ? "pending" : latest["outcome"] === "green" ? "green" : "fail";
+      for (const attempt of counted.slice().reverse()) {
+        if (attempt["outcome"] === "green") break;
+        derivedFailures += 1;
+      }
+    } else if (kind === "judge") {
+      derivedStatus = entry["verdict"] === null ? "pending" : ((entry["verdict"] as Record<string, unknown>)["verdict"] as string);
+    } else {
+      derivedStatus = entry["human"] === null ? "OPEN" : "PASS";
     }
-    if (check["consecutiveFailures"] !== derivedFailures) {
-      throw new Error(`malformed implement state: ${label}[${index}].check.consecutiveFailures contradicts the harness-owned attempt ledger (expected ${derivedFailures})`);
+    if (entry["status"] !== derivedStatus) {
+      throw new Error(`malformed implement state: ${rowLabel}.status ${String(entry["status"])} contradicts the harness-owned ledger (expected ${derivedStatus})`);
+    }
+    if (entry["consecutiveFailures"] !== derivedFailures) {
+      throw new Error(`malformed implement state: ${rowLabel}.consecutiveFailures contradicts the harness-owned attempt ledger (expected ${derivedFailures})`);
     }
   }
 }
@@ -488,7 +427,7 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     }
     lastReplacementId = entry["id"] as number;
     assertIsoTimestamp(entry["at"], `${label}.at`);
-    assertString(entry["criterionId"], `${label}.criterionId`);
+    assertString(entry["rowId"], `${label}.rowId`);
     if (entry["kind"] !== "artifact" && entry["kind"] !== "trail") {
       throw new Error(`malformed implement state: ${label}.kind must be artifact or trail`);
     }
@@ -528,11 +467,14 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
   if (!Array.isArray(candidate.amendments)) throw new Error("malformed implement state: amendments must be an array");
   for (const [index, entry] of candidate.amendments.entries()) {
     assertRecord(entry, `amendments[${index}]`);
-    // Human-only issuance is the whole point of R5. A supervisor-issued
-    // amendment is refused before it reaches the ledger, so any other value
-    // here means the record itself is corrupt.
-    if (entry["issuer"] !== "human") {
-      throw new Error(`malformed implement state: amendments[${index}].issuer must be human`);
+    // The authority split is the whole point of R6 (prd-template): an
+    // observer may repair a check cell, never a behavior. A record claiming
+    // an observer behaviors amendment is one the gate could not have written.
+    if (entry["scope"] !== "check-cells" && entry["scope"] !== "behaviors") {
+      throw new Error(`malformed implement state: amendments[${index}].scope must be check-cells or behaviors`);
+    }
+    if (entry["issuer"] !== "human" && !(entry["issuer"] === "observer" && entry["scope"] === "check-cells")) {
+      throw new Error(`malformed implement state: amendments[${index}].issuer must be human, or observer for a check-cells amendment`);
     }
     assertString(entry["approval"], `amendments[${index}].approval`);
     assertString(entry["reason"], `amendments[${index}].reason`);
@@ -541,7 +483,7 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     // The archive path is what makes "this amendment replaced that text"
     // checkable rather than asserted; a record without it cannot be audited.
     assertString(entry["previousSnapshotPath"], `amendments[${index}].previousSnapshotPath`);
-    for (const field of ["invalidatedCriteria", "addedCriteria", "unparkedCriteria"]) {
+    for (const field of ["invalidatedRows", "addedRows", "unparkedRows"]) {
       if (!Array.isArray(entry[field])) {
         throw new Error(`malformed implement state: amendments[${index}].${field} must be an array`);
       }
@@ -582,11 +524,6 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     assertString(entry["commandId"], `suite.results[${index}].commandId`);
     assertString(entry["attemptId"], `suite.results[${index}].attemptId`);
     if (!Number.isInteger(entry["exitCode"])) throw new Error(`malformed implement state: suite.results[${index}].exitCode must be an integer`);
-    // Written before mutatedTree existed: that writer rewrote a moved tree's
-    // exit code to 1, so its RED rows are exit-consistent as they stand and
-    // nothing distinguishes one from a genuine failure. `false` is the value
-    // consistent with the recorded status, not a measurement.
-    if (entry["mutatedTree"] === undefined) entry["mutatedTree"] = false;
     if (typeof entry["mutatedTree"] !== "boolean") throw new Error(`malformed implement state: suite.results[${index}].mutatedTree must be boolean`);
     if (entry["status"] !== "GREEN" && entry["status"] !== "RED") {
       throw new Error(`malformed implement state: suite.results[${index}].status must be GREEN or RED`);
@@ -598,9 +535,6 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     const expectedStatus = mechanicalOutcome({ exitCode: entry["exitCode"] as number, timedOut: false, signal: null, mutatedTree: entry["mutatedTree"] as boolean }) === "green" ? "GREEN" : "RED";
     if (entry["status"] !== expectedStatus) {
       throw new Error(`malformed implement state: suite.results[${index}].status ${String(entry["status"])} contradicts the recorded process result (expected ${expectedStatus})`);
-    }
-    if (!Array.isArray(entry["attributedCriteria"])) {
-      throw new Error(`malformed implement state: suite.results[${index}].attributedCriteria must be an array`);
     }
   }
 
@@ -615,7 +549,7 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
       throw new Error(`malformed implement state: duplicate qa brief id ${String(entry["briefId"])}`);
     }
     briefIds.add(entry["briefId"] as string);
-    assertString(entry["criterionId"], `qaBriefs[${index}].criterionId`);
+    assertString(entry["rowId"], `qaBriefs[${index}].rowId`);
     assertString(entry["prdSha256"], `qaBriefs[${index}].prdSha256`);
     const steps = entry["steps"];
     if (!Array.isArray(steps)) throw new Error(`malformed implement state: qaBriefs[${index}].steps must be an array`);
@@ -629,10 +563,10 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
   if (!Array.isArray(candidate.trails)) throw new Error("malformed implement state: trails must be an array");
   for (const [index, entry] of candidate.trails.entries()) {
     assertRecord(entry, `trails[${index}]`);
-    assertString(entry["criterionId"], `trails[${index}].criterionId`);
+    assertString(entry["rowId"], `trails[${index}].rowId`);
     assertString(entry["briefId"], `trails[${index}].briefId`);
     // The implementor and the solver are absent from this set on purpose:
-    // a criterion proven by driving must not be driven by the agent whose
+    // a row proven by driving must not be driven by the agent whose
     // work it judges (AC32). The check is of the declaration, not identity.
     if (!["human", "observer", "qa-agent"].includes(String(entry["driverRole"]))) {
       throw new Error(`malformed implement state: trails[${index}].driverRole must be human, observer, or qa-agent`);
@@ -668,37 +602,6 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
   }
 }
 
-/**
- * Restore the one input the pre-verdict writer measured and dropped.
- *
- * Before `mutatedTree` was persisted, the verify batch folded it into its
- * verdict and wrote `outcome: "failed"` beside a true exit code of 0. The
- * reader derived green from the exit code alone and refused the file, so a
- * finished run bricked every later command (2026-09-02 herdr-ide
- * hide-ux-round4: six such attempts, all from a `cargo build` writing
- * target/ under the old readdir exclusion rule). Exit 0, no timeout, no
- * signal, outcome "failed", mutatedTree absent has exactly one origin - that
- * writer on a moved tree - so stamping the bit records what the harness knew,
- * not what anyone claims. Any other absent-mutatedTree record is stamped
- * `false`: consistent with its recorded verdict, and not a measurement, since
- * the single-check writer never recorded the bit at all. Keyed on shape, not
- * on a schema bump, so nothing else about the run is touched and no repair
- * verb exists for an agent to rewrite the ledger with.
- */
-function migrateDroppedMutatedTree(attempt: Record<string, unknown>): void {
-  const droppedByOldBatchWriter = attempt["exitCode"] === 0
-    && attempt["timedOut"] === false
-    && attempt["signal"] === null
-    && attempt["outcome"] === "failed";
-  if (droppedByOldBatchWriter) {
-    attempt["mutatedTree"] = true;
-    attempt["outcome"] = "tree-moved";
-    attempt["failureClass"] = null;
-  } else {
-    attempt["mutatedTree"] = false;
-  }
-}
-
 export function parseImplementState(text: string): ImplementState {
   let parsed: unknown;
   try {
@@ -713,8 +616,8 @@ export function parseImplementState(text: string): ImplementState {
       `unsupported implement state schema ${String(candidate.schema ?? "missing")}; this version accepts only ${IMPLEMENT_SCHEMA}. Start a new run with \`sasu implement start --prd <path>\``,
     );
   }
-  if (candidate.status !== "active" && candidate.status !== "complete" && candidate.status !== "blocked" && candidate.status !== "retired") {
-    throw new Error(`malformed implement state: status must be active, complete, blocked, or retired, got ${String(candidate.status ?? "missing")}`);
+  if (candidate.status !== "active" && candidate.status !== "complete-pending-human" && candidate.status !== "complete" && candidate.status !== "blocked" && candidate.status !== "retired") {
+    throw new Error(`malformed implement state: status must be active, complete-pending-human, complete, blocked, or retired, got ${String(candidate.status ?? "missing")}`);
   }
   assertString(candidate.topicSlug, "topicSlug");
   assertString(candidate.projectRoot, "projectRoot");
@@ -759,21 +662,25 @@ export function parseImplementState(text: string): ImplementState {
     }
   }
 
-  if (!Array.isArray(candidate.tasks) || !Array.isArray(candidate.requirements)
-    || !Array.isArray(candidate.acceptanceCriteria) || !Array.isArray(candidate.verification)
-    || !Array.isArray(candidate.deviations)) {
-    throw new Error("malformed implement state: tasks, requirements, acceptanceCriteria, verification, and deviations must be arrays");
-  }
-  // The supervision ledgers are validated first because the acceptance
-  // ledger's derivation reads the amendment history.
+  if (!Array.isArray(candidate.deviations)) throw new Error("malformed implement state: deviations must be an array");
+  // The supervision ledgers are validated first because the row ledger's
+  // derivation reads the amendment history.
   assertSupervisionLedgers(candidate);
-  assertAcceptanceCriteria(candidate.acceptanceCriteria, "acceptanceCriteria", latestInvalidationByCriterion(candidate.amendments as AmendmentRecord[]));
+  assertRows(candidate.rows, "rows", latestInvalidationByRow(candidate.amendments as AmendmentRecord[]));
+  // A closed run's status is a function of its rows: `complete` means every
+  // row is proved, `complete-pending-human` means only human: rows are left
+  // OPEN (R8). The reader re-derives it so `confirm` cannot be skipped.
+  if (candidate.status === "complete" || candidate.status === "complete-pending-human") {
+    const rows = candidate.rows as Array<{ status: string; check: { kind: string } }>;
+    const open = rows.filter((row) => row.status === "OPEN").length;
+    const unproved = rows.filter((row) => row.status !== "OPEN" && row.status !== "green" && row.status !== "PASS").length;
+    if (unproved > 0) throw new Error(`malformed implement state: status ${candidate.status} with ${unproved} unproved check:/judge: row(s)`);
+    const expected = open > 0 ? "complete-pending-human" : "complete";
+    if (candidate.status !== expected) throw new Error(`malformed implement state: status ${candidate.status} contradicts ${open} OPEN human: row(s) (expected ${expected})`);
+  }
   if (!Array.isArray(candidate.artifacts) || !Array.isArray(candidate.verificationAttempts)) {
     throw new Error("malformed implement state: artifacts and verificationAttempts must be arrays");
   }
-  // riskFindings was added without a schema bump. Early v5 runs therefore
-  // load as an empty ledger; every subsequent persist writes the field.
-  if (candidate.riskFindings === undefined) candidate.riskFindings = [];
   if (!Array.isArray(candidate.riskFindings)) {
     throw new Error("malformed implement state: riskFindings must be an array");
   }
@@ -822,13 +729,13 @@ export function parseImplementState(text: string): ImplementState {
     assertString(attempt["id"], `verificationAttempts[${index}].id`);
     assertInputManifest(attempt["inputManifest"], `verificationAttempts[${index}].inputManifest`);
     assertRoundContexts(attempt["roundContexts"], `verificationAttempts[${index}].roundContexts`);
-    if (!Array.isArray(attempt["skippedAcceptanceCriteria"])) {
-      throw new Error(`malformed implement state: verificationAttempts[${index}].skippedAcceptanceCriteria must be an array`);
+    if (!Array.isArray(attempt["parkedRows"])) {
+      throw new Error(`malformed implement state: verificationAttempts[${index}].parkedRows must be an array`);
     }
-    for (const [skipIndex, skipped] of attempt["skippedAcceptanceCriteria"].entries()) {
-      assertRecord(skipped, `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}]`);
-      assertString(skipped["id"], `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}].id`);
-      assertString(skipped["reason"], `verificationAttempts[${index}].skippedAcceptanceCriteria[${skipIndex}].reason`);
+    for (const [skipIndex, skipped] of attempt["parkedRows"].entries()) {
+      assertRecord(skipped, `verificationAttempts[${index}].parkedRows[${skipIndex}]`);
+      assertString(skipped["id"], `verificationAttempts[${index}].parkedRows[${skipIndex}].id`);
+      assertString(skipped["reason"], `verificationAttempts[${index}].parkedRows[${skipIndex}].reason`);
     }
   }
 
@@ -867,6 +774,14 @@ export function parseImplementState(text: string): ImplementState {
  * approving this check ("사수 권고대로 가자", 2026-08-30): the device count
  * stays at zero and only the quiet overwrite is removed. A refused writer
  * reloads and re-applies; a lost write cannot be reloaded.
+ *
+ * 2026-09-06 (prd-template run, risk findings RF1-RF3): what this check does
+ * not cover is the window between a state that landed and the receipt derived
+ * from it - a closer resuming after a later closer, or a derived write that
+ * fails after the commit. `persistClose` narrows it by ordering alone (derived
+ * files staged before the commit, renamed after it); closing it fully needs a
+ * write lock, which D-45 forbids without the user's say. The residual race is
+ * on the risk ledger for that decision.
  *
  * Keyed by the state object so the baseline cannot be serialized into the
  * record - the check is about the file, and state.json stays the only record.
@@ -927,6 +842,34 @@ export function persistState(statePath: string, state: ImplementState): void {
   // write is not a conflict with the first.
   stateBaseline.set(state, { statePath, digest: sha256(text) });
   writeActivePointer(state.projectRoot, state);
+}
+
+/**
+ * Close a run record: persist the state, then put the files derived from it
+ * in place.
+ *
+ * State first, because `persistState` is the compare-and-swap: a receipt
+ * written before it could survive a rejected state write and contradict the
+ * record (risk finding RF1, prd-template run, 2026-09-06). The derived files
+ * are staged as temporaries before the commit, so a write that fails leaves
+ * nothing committed, and only renames follow the commit. What ordering alone
+ * cannot remove - two closers interleaving after both committed - is recorded
+ * on the risk ledger under D-45 (no lock file without the user's say).
+ */
+export function persistClose(statePath: string, state: ImplementState, derived: Array<{ file: string; text: string }>): void {
+  const staged = derived.map((entry) => {
+    fs.mkdirSync(path.dirname(entry.file), { recursive: true });
+    const temporary = `${entry.file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temporary, entry.text);
+    return { file: entry.file, temporary };
+  });
+  try {
+    persistState(statePath, state);
+  } catch (error) {
+    for (const entry of staged) fs.rmSync(entry.temporary, { force: true });
+    throw error;
+  }
+  for (const entry of staged) fs.renameSync(entry.temporary, entry.file);
 }
 
 /**
@@ -1139,7 +1082,7 @@ export function changedPathsSince(initial: SourceSnapshot, current: SourceSnapsh
 export function artifactIntegrityProblems(projectRoot: string, state: ImplementState): string[] {
   const problems: string[] = [];
   for (const artifact of state.artifacts) {
-    const target = [artifact.verificationId, artifact.acceptanceCriterionId].filter(Boolean).join("+");
+    const target = artifact.rowId ?? "run";
     let absolute: string;
     try {
       absolute = normalizeProjectPath(projectRoot, artifact.path).absolute;

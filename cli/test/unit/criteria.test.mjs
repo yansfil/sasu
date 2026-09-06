@@ -4,25 +4,26 @@ import { extractAcceptanceCriteria } from "../../dist/gates/commands.js";
 
 const PRD = `# PRD: x
 
-## 6. Requirements
+## Goal
 
-- R1. something
+g
 
-## 7. Acceptance Criteria
+## Behaviors
 
-- AC1. builds cleanly
-- AC2. judge retries once
-  and then errors with a typed code
-- AC10. doctor prints three sections
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
+| B1 | builds cleanly | check: \`npm run build\` | - |
+| B2 | judge retries once and then errors with a typed code | judge: the retry log | - |
+| B10 | doctor prints three sections | human: the user sees three sections | - |
 
-## 8. PRD-Level Tasks
+## Risks
 
-- T1. scaffold
+none
 `;
 
-test("extractAcceptanceCriteria reads AC ids and joins continuation lines", () => {
+test("extractAcceptanceCriteria reads every Behaviors row as a criterion", () => {
   const criteria = extractAcceptanceCriteria(PRD);
-  assert.deepEqual(criteria.map((c) => c.id), ["AC1", "AC2", "AC10"]);
+  assert.deepEqual(criteria.map((c) => c.id), ["B1", "B2", "B10"]);
   assert.match(criteria[1].text, /typed code/);
 });
 

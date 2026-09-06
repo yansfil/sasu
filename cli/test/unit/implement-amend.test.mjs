@@ -4,24 +4,23 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import {
-  AmendmentRejected,
-  applyAmendment,
-  criterionRowHash,
-  planAmendment,
-  tasksInProgress,
-} from "../../dist/implement/amend.js";
+import { AmendmentRejected, applyAmendment, planAmendment, sealRow } from "../../dist/implement/amend.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
-import { assertCommandAuthority } from "../../dist/implement/verbs.js";
 import { sha256 } from "../../dist/implement/store.js";
 
 // Test-only approval strings. They are deliberately self-identifying rather
 // than plausible user speech: a fixture must never be mistakable for a
 // verbatim quote from a real person in an audit ledger.
 const TEST_APPROVAL = "TEST-FIXTURE-APPROVAL: not a real human quote";
-const TEST_REASON = "TEST-FIXTURE-REASON: the criterion named the wrong module";
+const TEST_REASON = "TEST-FIXTURE-REASON: the row named the wrong module";
+const AT = "2026-08-29T12:00:00.000Z";
 
-function prd(rows, { tasks = ["T1. Do the thing. Covers R1, AC1, AC2, AC3."] } = {}) {
+const B1 = "| B1 | The runner executes each command once. | check: `node --test test/runner.test.mjs` | D-01 |";
+const B2 = "| B2 | The receipt names every parked row. | check: `node --test test/receipt.test.mjs` | D-01 |";
+const B3 = "| B3 | The operator can read the summary. | judge: a capture of the summary output | D-01 |";
+const BASE_ROWS = [B1, B2, B3];
+
+function prd(rows = BASE_ROWS, { nonGoals = "Task parallelism.", decisions = ["| D-01 | one runner for every command | two executors disagreed |"] } = {}) {
   return [
     "---",
     'topic: "fixture"',
@@ -31,37 +30,38 @@ function prd(rows, { tasks = ["T1. Do the thing. Covers R1, AC1, AC2, AC3."] } =
     "",
     "# PRD: fixture",
     "",
-    "## 6. Requirements",
+    "## Goal",
     "",
-    "- R1. The thing works.",
+    "The thing works.",
     "",
-    "## 7. Acceptance Criteria",
+    "## Non-goals",
     "",
-    "| ID | Criterion | Judgment | Evidence Declaration |",
+    nonGoals,
+    "",
+    "## Decisions",
+    "",
+    "| D-n | 결정 | 근거 |",
+    "| --- | --- | --- |",
+    ...decisions,
+    "",
+    "## Behaviors",
+    "",
+    "| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |",
     "| --- | --- | --- | --- |",
     ...rows,
     "",
-    "## 8. PRD-Level Tasks",
+    "## Technical structure",
     "",
-    ...tasks.map((line) => `- ${line}`),
+    "One runner.",
     "",
-    "## 9. Verification Contract",
+    "## Risks",
     "",
-    "| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |",
-    "| --- | --- | --- | --- | --- | --- |",
-    "| V1 | build/static | R1 | the build is green | yes | no |",
+    "None.",
     "",
   ].join("\n");
 }
 
-const BASE_ROWS = [
-  "| AC1 | The runner executes each command once. Covers R1. | machine | - |",
-  "| AC2 | The receipt names every parked criterion. Covers R1. | machine | - |",
-  "| AC3 | The operator can read the summary. Covers R1. | judged | Screen capture and the observer's note |",
-];
-
-function fixture(rows = BASE_ROWS, options) {
-  const text = prd(rows, options);
+function fixture(text = prd()) {
   const contract = parseImplementContract(text);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-amend-"));
   const runDir = "agents/runs/fixture";
@@ -70,12 +70,10 @@ function fixture(rows = BASE_ROWS, options) {
   const state = {
     runDir,
     prdPath: "agents/prd/fixture/prd.md",
-    prd: { sha256: sha256(text), snapshotPath: `${runDir}/prd.md` },
-    tasks: contract.tasks,
-    requirements: contract.requirements,
-    acceptanceCriteria: contract.acceptanceCriteria,
-    verification: contract.verification,
+    prd: { sha256: sha256(text), snapshotPath: `${runDir}/prd.md`, reviewProfile: "standard" },
+    rows: contract.rows.map(sealRow),
     amendments: [],
+    suite: { sealedAt: AT, commands: [], exclusions: [], results: [] },
   };
   return { root, state, text };
 }
@@ -83,246 +81,210 @@ function fixture(rows = BASE_ROWS, options) {
 const amend = (root, state, text, extra = {}) => applyAmendment(
   root,
   state,
-  { approval: TEST_APPROVAL, reason: TEST_REASON, text, ...extra },
-  "2026-08-29T12:00:00.000Z",
+  { issuer: "human", approval: TEST_APPROVAL, reason: TEST_REASON, text, ...extra },
+  AT,
 );
 
-const criterion = (state, id) => state.acceptanceCriteria.find((entry) => entry.id === id);
+const row = (state, id) => state.rows.find((entry) => entry.id === id);
 
 function makeGreen(state, id) {
-  const entry = criterion(state, id);
-  entry.check.status = "green";
-  entry.check.bindings.push({ id: "B1", command: "node --test", argv: ["node", "--test"], cwd: "cli", classification: "asset", boundAt: "t", reason: null });
-  entry.check.attempts.push({ id: "A1", at: "t", exitCode: 0 });
+  const entry = row(state, id);
+  entry.status = "green";
+  entry.attempts.push({ id: "A1", startedAt: AT, finishedAt: AT, exitCode: 0, outcome: "green" });
   return entry;
 }
 
-// --- AC14: row identity -----------------------------------------------------
+// --- identity is per cell ---------------------------------------------------
 
-test("AC14: identity is the three fields, normalized - format-only edits do not invalidate", () => {
-  const same = criterionRowHash({ text: "The runner runs once.", judgment: "machine", evidenceDeclaration: null });
-  assert.equal(
-    criterionRowHash({ text: "  The   runner\truns once.  ", judgment: " machine ", evidenceDeclaration: "" }),
-    same,
-    "leading/trailing space and collapsed runs are formatting, not meaning",
-  );
-});
-
-test("AC14: changing the judgment tag alone invalidates the row", () => {
-  const machine = criterionRowHash({ text: "The runner runs once.", judgment: "machine", evidenceDeclaration: null });
-  const judged = criterionRowHash({ text: "The runner runs once.", judgment: "judged", evidenceDeclaration: null });
-  assert.notEqual(machine, judged, "who proves a criterion is part of the question it asks (D-40)");
-});
-
-test("AC14: changing the evidence declaration alone invalidates the row", () => {
-  const before = criterionRowHash({ text: "T", judgment: "judged", evidenceDeclaration: "a capture" });
-  const after = criterionRowHash({ text: "T", judgment: "judged", evidenceDeclaration: "a capture and a note" });
-  assert.notEqual(before, after);
-});
-
-// The three fields must not be able to smear into one another: without a
-// separator no field can contain, moving text across a field boundary would
-// hash the same and a real change would pass as untouched.
-test("AC14: field boundaries are not hashable across", () => {
-  assert.notEqual(
-    criterionRowHash({ text: "ab", judgment: "machine", evidenceDeclaration: null }),
-    criterionRowHash({ text: "a", judgment: "bmachine", evidenceDeclaration: null }),
-  );
-});
-
-test("AC14: a table re-alignment amends nothing away", () => {
+test("a table re-alignment amends nothing away", () => {
   const { root, state, text } = fixture();
-  makeGreen(state, "AC1");
-  makeGreen(state, "AC2");
-  // Amendment requires an idle run (AC15), so the holding task is closed
-  // first; this test is about identity, not about the idle guard.
-  state.tasks[0].status = "complete";
-  const realigned = text
-    .replace("| AC1 | The runner executes each command once. Covers R1. | machine | - |",
-      "|  AC1  |  The runner executes each command once.  Covers R1.  |  machine  |  -  |");
-  const { plan } = amend(root, state, realigned);
-  assert.deepEqual(plan.invalidatedCriteria, [], "a formatter run must not cost a green");
-  assert.equal(criterion(state, "AC1").check.status, "green");
+  makeGreen(state, "B1");
+  makeGreen(state, "B2");
+  const realigned = text.replace(B1, "|  B1  |  The runner executes each command once.  |  check: `node --test test/runner.test.mjs`  |  D-01  |");
+  assert.throws(() => amend(root, state, realigned), (error) => {
+    assert.ok(error instanceof AmendmentRejected);
+    assert.equal(error.check, "arguments");
+    return /nothing to amend/.test(error.message);
+  });
+  assert.equal(row(state, "B1").status, "green", "a formatter run must not cost a green");
+  assert.equal(state.amendments.length, 0);
 });
 
-// --- AC13: selective invalidation -------------------------------------------
-
-test("AC13: only the changed row loses green; untouched evidence survives", () => {
+test("a check-cell edit invalidates only that row; untouched evidence survives", () => {
   const { root, state, text } = fixture();
-  makeGreen(state, "AC1");
-  makeGreen(state, "AC2");
-  state.tasks[0].status = "complete";
-  const next = text.replace("The receipt names every parked criterion.", "The receipt names every parked criterion and its reason.");
-  const { plan } = amend(root, state, next);
+  makeGreen(state, "B1");
+  makeGreen(state, "B2");
+  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs");
+  const { plan, record } = amend(root, state, next, { issuer: "observer" });
 
-  assert.deepEqual(plan.invalidatedCriteria, ["AC2"]);
-  assert.deepEqual(plan.unchangedCriteria, ["AC1", "AC3"]);
-  assert.equal(criterion(state, "AC1").check.status, "green", "AC1's question did not change, so its proof stands");
-  assert.equal(criterion(state, "AC1").check.attempts.length, 1);
-  assert.equal(criterion(state, "AC2").check.status, "pending");
-  assert.equal(criterion(state, "AC2").check.attempts.length, 1, "the attempt history stays readable; only the verdict is taken back");
-  assert.equal(criterion(state, "AC2").text.includes("and its reason"), true);
+  assert.equal(plan.scope, "check-cells");
+  assert.deepEqual(plan.checkCellChanged, ["B2"]);
+  assert.deepEqual(plan.invalidatedRows, ["B2"]);
+  assert.deepEqual(plan.unchangedRows, ["B1", "B3"]);
+  assert.equal(record.issuer, "observer");
+  assert.equal(record.scope, "check-cells");
+  assert.equal(row(state, "B1").status, "green", "B1's question did not change, so its proof stands");
+  assert.equal(row(state, "B2").status, "pending");
+  assert.equal(row(state, "B2").attempts.length, 1, "the attempt history stays readable; only the verdict is taken back");
+  assert.deepEqual(row(state, "B2").check.argv, ["node", "--test", "test/receipt-v2.test.mjs"], "the new cell is what the next check runs");
 });
 
-// --- AC12: human-only issuance ----------------------------------------------
-
-test("AC12: an observer-issued amendment is refused on authority", () => {
-  assert.throws(() => assertCommandAuthority("amend", "observer"), /observer may not issue .*amend.*limited to human/s);
-  assert.doesNotThrow(() => assertCommandAuthority("amend", "human"));
-  assert.throws(() => assertCommandAuthority("amend", "implementor"), /limited to human/);
-});
-
-test("AC12: an amendment without an approval quote or without a reason is refused", () => {
+test("a behavior-cell edit is a scope change: the observer is refused and the human is accepted", () => {
   const { root, state, text } = fixture();
-  const next = text.replace("The runner executes each command once.", "The runner executes each command exactly once.");
+  makeGreen(state, "B2");
+  const next = text.replace("The receipt names every parked row.", "The receipt names every parked row and its reason.");
+  assert.throws(() => amend(root, state, next, { issuer: "observer" }), (error) => {
+    assert.ok(error instanceof AmendmentRejected);
+    assert.equal(error.check, "authority");
+    return /changes what the user observes \(B2 behavior cell\)/.test(error.message);
+  });
+  assert.equal(state.amendments.length, 0, "a refused amendment reaches no ledger");
+  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text, "and seals no snapshot");
+
+  const { plan, record } = amend(root, state, next, { issuer: "human" });
+  assert.equal(plan.scope, "behaviors");
+  assert.deepEqual(plan.behaviorChanged, ["B2"]);
+  assert.equal(record.issuer, "human");
+  assert.equal(row(state, "B2").status, "pending");
+  assert.match(row(state, "B2").behavior, /and its reason/);
+});
+
+test("moving Non-goals or a Decisions row is a scope change even when no Behaviors row moved", () => {
+  const { root, state, text } = fixture();
+  const nonGoals = text.replace("Task parallelism.", "Task parallelism and retries.");
+  assert.throws(() => amend(root, state, nonGoals, { issuer: "observer" }), /\(Non-goals\)/);
+  const decisions = text.replace("two executors disagreed", "two executors disagreed on cwd");
+  assert.throws(() => amend(root, state, decisions, { issuer: "observer" }), /\(Decisions\)/);
+  const { plan } = amend(root, state, decisions, { issuer: "human" });
+  assert.equal(plan.scope, "behaviors");
+  assert.deepEqual(plan.scopeSectionsChanged, ["Decisions"]);
+  assert.deepEqual(plan.invalidatedRows, [], "a Decisions edit changes the reason, not the proof already filed against each row");
+});
+
+// --- who may issue ----------------------------------------------------------
+
+test("the implementor may not amend the PRD it is being marked on", () => {
+  const { root, state, text } = fixture();
+  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
+  assert.throws(() => amend(root, state, next, { issuer: "implementor" }), (error) => {
+    assert.equal(error.check, "authority");
+    return /implementor may not amend/.test(error.message);
+  });
+  assert.equal(state.amendments.length, 0);
+});
+
+test("an amendment without an approval quote or without a reason is refused", () => {
+  const { root, state, text } = fixture();
+  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
   assert.throws(() => amend(root, state, next, { approval: "  " }), (error) => {
     assert.ok(error instanceof AmendmentRejected);
     assert.equal(error.check, "arguments");
     return /requires --approval/.test(error.message);
   });
   assert.throws(() => amend(root, state, next, { reason: "" }), /requires --reason/);
-  assert.equal(state.amendments.length, 0, "a refused amendment reaches no ledger");
-  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text, "and seals no snapshot");
+  assert.equal(state.amendments.length, 0);
+  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text);
 });
 
-// --- AC15: idle-only ---------------------------------------------------------
-
-test("AC15: a bound or attempted criterion makes its task in progress, and amendment is refused", () => {
+test("an observer waits while a check: row is mid-attempt; the human may still amend on the record", () => {
   const { root, state, text } = fixture();
-  assert.deepEqual(tasksInProgress(state), [], "a pending task nobody has touched is next, not in progress");
-  makeGreen(state, "AC1");
-  assert.deepEqual(tasksInProgress(state), ["T1"]);
-  const next = text.replace("The receipt names every parked criterion.", "The receipt names each parked criterion.");
-  assert.throws(() => amend(root, state, next), (error) => {
+  const failing = row(state, "B1");
+  failing.status = "fail";
+  failing.consecutiveFailures = 1;
+  failing.attempts.push({ id: "A1", startedAt: AT, finishedAt: AT, exitCode: 1, outcome: "failed" });
+  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
+  assert.throws(() => amend(root, state, next, { issuer: "observer" }), (error) => {
     assert.equal(error.check, "transition");
-    return /T1 is in progress/.test(error.message);
+    return /B1 is mid-attempt/.test(error.message);
   });
+  assert.doesNotThrow(() => amend(root, state, next, { issuer: "human" }));
 });
 
-test("AC15: a completed task is not in progress, and a park does not make one", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "AC1");
-  state.tasks[0].status = "complete";
-  assert.deepEqual(tasksInProgress(state), []);
-  const next = text.replace("The receipt names every parked criterion.", "The receipt names each parked criterion.");
-  assert.doesNotThrow(() => amend(root, state, next));
-});
+// --- sealing, history, added and removed rows, unparking --------------------
 
-// --- AC16: sealing, history, added criteria, unparking -----------------------
-
-test("AC16: the new snapshot is sealed and the one it replaced is archived distinguishably", () => {
+test("the new snapshot is sealed and the one it replaced is archived distinguishably", () => {
   const { root, state, text } = fixture();
-  const next = text.replace("The runner executes each command once.", "The runner executes each bound command once.");
+  const next = text.replace("node --test test/runner.test.mjs", "node --test test/runner-v2.test.mjs");
   const { record } = amend(root, state, next);
 
   const pinned = fs.readFileSync(path.join(root, record.snapshotPath), "utf8");
   const superseded = fs.readFileSync(path.join(root, record.previousSnapshotPath), "utf8");
   assert.equal(pinned, next, "the pinned snapshot is now the amended text");
   assert.equal(superseded, text, "and the text it replaced is recoverable");
-  assert.notEqual(pinned, superseded);
   assert.equal(record.snapshotPath, `${state.runDir}/prd.md`, "the pinned path is stable so every reader keeps resolving it");
   assert.equal(state.prd.sha256, sha256(next));
   assert.equal(record.prdSha256, sha256(next));
-  assert.equal(record.issuer, "human");
   assert.equal(record.approval, TEST_APPROVAL);
   assert.equal(record.suiteSnapshotUpdated, false);
 });
 
-test("AC16: the history is append-only with monotonic ids and never rewritten", () => {
+test("the history is append-only with monotonic ids and never rewritten", () => {
   const { root, state, text } = fixture();
-  const first = text.replace("The runner executes each command once.", "The runner executes each bound command once.");
+  const first = text.replace("node --test test/runner.test.mjs", "node --test test/runner-v2.test.mjs");
   amend(root, state, first);
   const frozen = JSON.parse(JSON.stringify(state.amendments[0]));
-  const second = first.replace("The receipt names every parked criterion.", "The receipt names each parked criterion.");
+  const second = first.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs");
   amend(root, state, second);
 
   assert.deepEqual(state.amendments.map((entry) => entry.id), [1, 2]);
   assert.deepEqual(state.amendments[0], frozen, "an earlier amendment is not touched by a later one");
   assert.notEqual(state.amendments[0].previousSnapshotPath, state.amendments[1].previousSnapshotPath);
-  assert.equal(
-    fs.readFileSync(path.join(root, state.amendments[0].previousSnapshotPath), "utf8"),
-    text,
-    "every superseded version stays readable, not just the last",
-  );
+  assert.equal(fs.readFileSync(path.join(root, state.amendments[0].previousSnapshotPath), "utf8"), text);
 });
 
-test("AC16: an added criterion joins unproven", () => {
+test("an added row joins unproven, a removed row leaves the ledger, and both are human-only", () => {
   const { root, state, text } = fixture();
-  makeGreen(state, "AC1");
-  state.tasks[0].status = "complete";
-  const next = text.replace(
-    "| AC3 | The operator can read the summary. Covers R1. | judged | Screen capture and the observer's note |",
-    "| AC3 | The operator can read the summary. Covers R1. | judged | Screen capture and the observer's note |\n| AC4 | The waiter reports its exit reason. Covers R1. | machine | - |",
-  );
-  const { plan } = amend(root, state, next);
-  assert.deepEqual(plan.addedCriteria, ["AC4"]);
-  assert.deepEqual(plan.invalidatedCriteria, []);
-  const added = criterion(state, "AC4");
-  assert.equal(added.check.status, "pending");
-  assert.deepEqual(added.check.bindings, []);
-  assert.deepEqual(added.check.attempts, []);
-  assert.equal(criterion(state, "AC1").check.status, "green", "adding a question does not un-answer the others");
+  makeGreen(state, "B1");
+  const added = text.replace(B3, `${B3}\n| B4 | The waiter reports its exit reason. | human: the operator says the reason reads well | D-01 |`);
+  assert.throws(() => amend(root, state, added, { issuer: "observer" }), /\(\+B4\)/);
+  const { plan } = amend(root, state, added);
+  assert.deepEqual(plan.addedRows, ["B4"]);
+  assert.deepEqual(plan.invalidatedRows, []);
+  assert.equal(row(state, "B4").status, "OPEN", "a human: row starts OPEN");
+  assert.equal(row(state, "B1").status, "green", "adding a question does not un-answer the others");
+
+  const removed = added.replace(`${B2}\n`, "");
+  assert.throws(() => amend(root, state, removed, { issuer: "observer" }), /\(-B2\)/);
+  const outcome = amend(root, state, removed);
+  assert.deepEqual(outcome.plan.removedRows, ["B2"]);
+  assert.deepEqual(state.rows.map((entry) => entry.id), ["B1", "B3", "B4"]);
 });
 
-test("AC16: a parked criterion whose row changed is unparked; one left alone stays parked", () => {
+test("a parked row whose cell changed is unparked; one left alone stays parked", () => {
   const { root, state, text } = fixture();
-  for (const id of ["AC2", "AC3"]) {
-    const entry = criterion(state, id);
-    entry.check.status = "parked";
-    entry.check.parks.push({ parkedAt: "t", parkedBy: "human", approval: TEST_APPROVAL, reason: TEST_REASON, evidence: null, resumedAt: null });
+  for (const id of ["B1", "B2"]) {
+    const entry = row(state, id);
+    entry.status = "parked";
+    entry.parks.push({ parkedAt: AT, approval: TEST_APPROVAL, reason: TEST_REASON, evidence: null, resumedAt: null });
   }
-  const next = text.replace("The receipt names every parked criterion.", "The receipt names each parked criterion.");
+  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs");
+  const { plan } = amend(root, state, next, { issuer: "observer" });
+
+  assert.deepEqual(plan.unparkedRows, ["B2"]);
+  assert.equal(row(state, "B2").status, "pending");
+  assert.equal(row(state, "B2").parks.at(-1).resumedAt, AT);
+  assert.equal(row(state, "B1").status, "parked", "a park survives an amendment that did not touch its row");
+  assert.equal(row(state, "B1").parks.at(-1).resumedAt, null);
+});
+
+test("a row that changes kind starts its ledger over", () => {
+  const { root, state, text } = fixture();
+  makeGreen(state, "B2");
+  const next = text.replace("check: `node --test test/receipt.test.mjs`", "judge: the receipt is read by the judge");
   const { plan } = amend(root, state, next);
-
-  assert.deepEqual(plan.unparkedCriteria, ["AC2"]);
-  assert.equal(criterion(state, "AC2").check.status, "pending");
-  assert.equal(criterion(state, "AC2").check.parks.at(-1).resumedAt, "2026-08-29T12:00:00.000Z");
-  assert.equal(criterion(state, "AC3").check.status, "parked", "a park survives an amendment that did not touch its row");
-  assert.equal(criterion(state, "AC3").check.parks.at(-1).resumedAt, null);
-});
-
-test("an open decision point on an invalidated criterion is closed as amended", () => {
-  const { root, state, text } = fixture();
-  criterion(state, "AC2").check.decisionPoints.push({
-    id: "D1", kind: "same-class", openedAt: "t", attemptId: "A1", message: "stuck", resolvedAt: null, resolution: null,
-  });
-  const next = text.replace("The receipt names every parked criterion.", "The receipt names each parked criterion.");
-  amend(root, state, next);
-  const point = criterion(state, "AC2").check.decisionPoints[0];
-  assert.equal(point.resolution, "amended");
-  assert.equal(point.resolvedAt, "2026-08-29T12:00:00.000Z");
-});
-
-// --- refusals with no defined disposition -----------------------------------
-
-test("dropping a criterion is refused, because filed evidence has no defined disposition", () => {
-  const { root, state, text } = fixture();
-  const next = text.replace("| AC2 | The receipt names every parked criterion. Covers R1. | machine | - |\n", "");
-  assert.throws(() => amend(root, state, next), (error) => {
-    assert.equal(error.check, "arguments");
-    // A refusal that does not say what to do instead is a wall, not a guard.
-    assert.match(error.message, /rewrite the criterion so the row changes/);
-    assert.match(error.message, /park it with verbatim human approval/);
-    return /drops AC2.*not remove them/s.test(error.message);
-  });
-  assert.equal(state.amendments.length, 0);
-});
-
-test("changing the task set is refused and points at resequence", () => {
-  const { root, state, text } = fixture();
-  const next = prd(BASE_ROWS.map((row) => row.replace("executes each command once", "executes each bound command once")), {
-    tasks: ["T1. Do the thing. Covers R1, AC1, AC2, AC3.", "T2. Do another thing. Covers R1."],
-  });
-  assert.notEqual(next, text);
-  assert.throws(() => amend(root, state, next), /changes the task set \(\+T2\).*resequence/s);
+  assert.deepEqual(plan.invalidatedRows, ["B2"]);
+  assert.equal(row(state, "B2").check.kind, "judge");
+  assert.deepEqual(row(state, "B2").attempts, [], "an exit code proves nothing about a judge: question");
+  assert.equal(row(state, "B2").status, "pending");
 });
 
 test("planAmendment reports without writing anything", () => {
   const { state, text } = fixture();
-  makeGreen(state, "AC1");
-  const contract = parseImplementContract(text.replace("The receipt names every parked criterion.", "The receipt names each parked criterion."));
-  const plan = planAmendment(state, contract.acceptanceCriteria);
-  assert.deepEqual(plan.invalidatedCriteria, ["AC2"]);
-  assert.equal(criterion(state, "AC1").check.status, "green");
+  makeGreen(state, "B1");
+  const current = parseImplementContract(text);
+  const next = parseImplementContract(text.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs"));
+  const plan = planAmendment(state, current, next);
+  assert.deepEqual(plan.invalidatedRows, ["B2"]);
+  assert.equal(row(state, "B1").status, "green");
   assert.equal(state.amendments.length, 0);
 });

@@ -20,11 +20,12 @@ import { parseContract } from "./contract";
 const { parseQaAnswers } = require("../../lib/qa_register.js") as {
   parseQaAnswers: (content: string) => Array<{ question: string; answer: string }> | null;
 };
-const { splitTableRow, findPrdImplementationBindings, parseFrontmatterBlock, expandCoverageIds } = require("../../lib/prd_parser.js") as {
+const { splitTableRow, parseFrontmatterBlock, PRD_SECTIONS, parseBehaviorRows, missingPrdSections } = require("../../lib/prd_parser.js") as {
   parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
-  expandCoverageIds(text: string, prefix: string): string[];
   splitTableRow: (text: string) => string[];
-  findPrdImplementationBindings: (content: string) => { code: string; line: number; message: string }[];
+  PRD_SECTIONS: readonly string[];
+  parseBehaviorRows(markdown: string): { section: { line: number; headerLine?: number; header?: string[] } | null; rows: Array<{ id: string | null; line: number; defects: string[] }> };
+  missingPrdSections(markdown: string): string[];
 };
 
 export interface PrelintFinding extends Finding {
@@ -459,24 +460,12 @@ export function prelintPrdCitedQuestions(prdContent: string, qaLogContent: strin
 
 // --- PRD rules (spec and verify gate entrances) ---
 
-// SC = user scenario card (gen-prd §2.1).
-const ID_DEFINITION = /^\s*-\s*(R|AC|T|V|SC)(\d+)[.:]\s/;
-const COVERS_PREFIXES = ["R", "AC", "T", "V", "SC"];
-
 /**
- * Expand a Covers cell through the shared engine in prd_parser.js, one prefix
- * at a time, so the lint gate and the implement contract read one grammar
- * (ranges like R1-R4 / R1-4, case-insensitive ids, 100-step range cap). The
- * local expander this replaced had drifted: a 500-step cap and case-sensitive
- * matching, so the same cell could count as covered at one gate and not the
- * other (2026-08-30 unification). Consumers do set-membership only, so the
- * shared engine's sorted-unique output is a safe replacement for the old
- * appearance-ordered list.
+ * The six-section PRD (prd-template R1, R11). Structure only: the section
+ * titles are the parser's constants, and every Behaviors row rule comes
+ * from the one reader `implement start` uses, so a document that lints
+ * clean starts and one that fails here fails there on the same line.
  */
-function coversTokens(text: string): string[] {
-  return COVERS_PREFIXES.flatMap((prefix) => expandCoverageIds(text, prefix));
-}
-
 export function prelintPrd(content: string): PrelintResult {
   const findings: PrelintFinding[] = [];
   const lines = content.split("\n");
@@ -492,158 +481,26 @@ export function prelintPrd(content: string): PrelintResult {
     checkEnum(fm, "review_profile", ["trivial", "standard", "high-risk"], "prd", findings, { allowMissing: true });
   }
 
-  const sectionNumbers = new Set<number>();
-  for (const line of lines) {
-    const match = line.match(/^##\s+(\d+)\./);
-    if (match) sectionNumbers.add(Number(match[1]!));
-  }
-  const missingSections = [];
-  for (let n = 1; n <= 12; n += 1) if (!sectionNumbers.has(n)) missingSections.push(n);
-  if (missingSections.length > 0) {
-    findings.push(finding("prd-section-missing", null, `missing numbered section(s): ${missingSections.join(", ")}`, "Add every '## <n>.' section from the gen-prd template (1-12)."));
+  const missing = missingPrdSections(content);
+  if (missing.length > 0) {
+    findings.push(finding("prd-section-missing", null, `missing section(s): ${missing.map((title) => `## ${title}`).join(", ")}`, `Add every section of the gen-prd template: ${PRD_SECTIONS.map((title) => `## ${title}`).join(", ")}.`));
   }
 
-  // Defined IDs: list items plus the AC and 9.2 tables.
-  const defined = new Set<string>();
-  const acDefinitionLines = new Map<string, number>();
-  const acRequirementRefs = new Map<string, Set<string>>();
-  const scenarioDefinitionLines = new Map<string, number>();
-  for (let i = 0; i < lines.length; i += 1) {
-    const match = lines[i]!.match(ID_DEFINITION);
-    if (!match) continue;
-    const id = `${match[1]}${match[2]}`;
-    defined.add(id);
-    if (match[1] === "AC" && !acDefinitionLines.has(id)) {
-      acDefinitionLines.set(id, i + 1);
-      // The readiness planner counts an AC covered when a check covers any R#
-      // the AC references; record those refs so both engines agree.
-      acRequirementRefs.set(id, new Set(lines[i]!.match(/\bR\d+\b/g) ?? []));
-    }
-    if (match[1] === "SC" && !scenarioDefinitionLines.has(id)) {
-      scenarioDefinitionLines.set(id, i + 1);
-    }
+  const behaviors = parseBehaviorRows(content);
+  if (behaviors.section !== null && behaviors.rows.length === 0) {
+    findings.push(finding("prd-behavior-row", behaviors.section.line, "## Behaviors has no table rows", "Add at least one `| B<n> | 행동 | check:|judge:|human: ... | D-n |` row."));
   }
-
-  const acSection = sectionRange(lines, "## 7. Acceptance Criteria")
-    ?? sectionRange(lines, "## Acceptance Criteria");
-  const acTable = acSection ? parseTable(lines, acSection.start + 1, acSection.end) : null;
-  const requiredAcHeaders = ["ID", "Criterion", "Judgment", "Evidence Declaration"];
-  const acHeaderIndexes = new Map(requiredAcHeaders.map((header) => [header, acTable?.header.indexOf(header) ?? -1]));
-  if (acTable === null || requiredAcHeaders.some((header) => acHeaderIndexes.get(header) === -1)) {
-    const listedAcs = [...acDefinitionLines.entries()];
-    if (listedAcs.length === 0) {
-      findings.push(finding("prd-ac-table-required", acSection === null ? null : acSection.start + 1, "acceptance criteria must use the ID | Criterion | Judgment | Evidence Declaration table", "Use the canonical four-column AC table."));
-    } else {
-      for (const [id, line] of listedAcs) {
-        findings.push(finding("prd-ac-judgment-missing", line, `${id} has no Judgment tag because it is not in the canonical AC table`, `Move ${id} into the AC table and set Judgment to machine, judged, or machine+gate:human.`));
-      }
-    }
-  } else {
-    // Once the table exists it is the single AC definition surface. A list AC
-    // is not a fallback definition because that would restore the untagged
-    // completion path the table removes.
-    for (const id of acDefinitionLines.keys()) defined.delete(id);
-    acDefinitionLines.clear();
-    acRequirementRefs.clear();
-    const idIndex = acHeaderIndexes.get("ID")!;
-    const criterionIndex = acHeaderIndexes.get("Criterion")!;
-    const judgmentIndex = acHeaderIndexes.get("Judgment")!;
-    const evidenceIndex = acHeaderIndexes.get("Evidence Declaration")!;
-    for (const row of acTable.rows) {
-      const id = (row.cells[idIndex] ?? "").replace(/\s+/g, "").toUpperCase();
-      if (!/^AC\d+$/.test(id)) continue;
-      defined.add(id);
-      acDefinitionLines.set(id, row.line);
-      const criterion = row.cells[criterionIndex] ?? "";
-      acRequirementRefs.set(id, new Set(criterion.match(/\bR\d+\b/g) ?? []));
-      const judgment = (row.cells[judgmentIndex] ?? "").toLowerCase();
-      if (!new Set(["machine", "judged", "machine+gate:human"]).has(judgment)) {
-        findings.push(finding("prd-ac-judgment-missing", row.line, `${id} has invalid or missing Judgment "${row.cells[judgmentIndex] ?? ""}"`, "Use machine, judged, or machine+gate:human."));
-      }
-      const evidence = (row.cells[evidenceIndex] ?? "").trim();
-      if (judgment === "judged" && (evidence === "" || /^[-–—]$/.test(evidence))) {
-        findings.push(finding("prd-ac-evidence-missing", row.line, `${id} is judged but has no Evidence Declaration`, "Declare the artifact or scripted run evidence the acceptance judge will receive."));
-      }
-    }
-  }
-
-  const verification = findSubsection(lines, "9.2");
-  const verificationTable = verification ? parseTable(lines, verification.start + 1, verification.end) : null;
-  const coversColumn = verificationTable ? verificationTable.header.indexOf("Covers") : -1;
-  const modeColumn = verificationTable ? verificationTable.header.indexOf("Mode") : -1;
-  const vRows = (verificationTable?.rows ?? []).filter((row) => /^V\d+$/.test(row.cells[0] ?? ""));
-  for (const row of vRows) defined.add(row.cells[0]!);
-
-  // Dangling Covers references: list lines with "Covers" plus 9.2 Covers cells.
-  const references: { id: string; line: number }[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
-    if (!/^\s*-\s/.test(line)) continue;
-    const covers = line.match(/Covers\s+([^.]*)/);
-    if (covers) for (const id of coversTokens(covers[1]!)) references.push({ id, line: i + 1 });
-  }
-  const coveredAcs = new Set<string>();
-  const coveredRs = new Set<string>();
-  const coveredScs = new Set<string>();
-  for (const row of vRows) {
-    if (coversColumn === -1 || row.cells[coversColumn] === undefined) continue;
-    for (const id of coversTokens(row.cells[coversColumn]!)) {
-      references.push({ id, line: row.line });
-      if (id.startsWith("AC")) coveredAcs.add(id);
-      else if (id.startsWith("SC")) coveredScs.add(id);
-      else if (id.startsWith("R")) coveredRs.add(id);
-    }
-  }
-  for (const ref of references) {
-    if (!defined.has(ref.id)) {
-      findings.push(finding("prd-dangling-ref", ref.line, `Covers references ${ref.id} which is not defined anywhere in the PRD`, `Define ${ref.id} or fix the reference.`));
-    }
-  }
-
-  for (const [ac, line] of acDefinitionLines) {
-    const viaRequirement = [...(acRequirementRefs.get(ac) ?? [])].some((r) => coveredRs.has(r));
-    if (!coveredAcs.has(ac) && !viaRequirement) {
-      findings.push(finding("prd-uncovered-ac", line, `${ac} is not covered by any V row in 9.2 Required Agent Verification (directly or via a covered R# it references)`, `Add ${ac} (or an R# it references) to a V row's Covers.`));
-    }
-  }
-
-  // A scenario card that no V row covers is a silent drop of an approved user
-  // flow: the interview produced it, the human approved it, and nothing would
-  // verify it. Only fires when the PRD defines SC cards, so scenario-less
-  // documents (CLI tools, libraries) are unaffected.
-  for (const [sc, line] of scenarioDefinitionLines) {
-    if (!coveredScs.has(sc)) {
-      findings.push(finding("prd-uncovered-scenario", line, `${sc} is not covered by any V row in 9.2 Required Agent Verification`, `Add ${sc} to a V row's Covers so the scenario is verified, or delete the card.`));
-    }
-  }
-
-  // Mode conformance: every 9.2 Mode must be a 9.1 Test Mode Contract row.
-  const modeContract = findSubsection(lines, "9.1");
-  const modeTable = modeContract ? parseTable(lines, modeContract.start + 1, modeContract.end) : null;
-  const modeCells = new Set((modeTable?.rows ?? []).map((row) => row.cells[0] ?? "").filter((mode) => mode !== ""));
-  if (vRows.length > 0 && modeColumn !== -1) {
-    for (const row of vRows) {
-      const mode = row.cells[modeColumn] ?? "";
-      if (!modeCells.has(mode)) {
-        findings.push(
-          finding("prd-mode-mismatch", row.line, `${row.cells[0]}: Mode "${mode}" does not match any 9.1 Test Mode Contract row`, "Use a Mode that exists in the Test Mode Contract table."),
-        );
-      }
+  for (const row of behaviors.rows) {
+    for (const defect of row.defects) {
+      findings.push(finding("prd-behavior-row", row.line, `${row.id ?? "row"}: ${defect}`, "Each Behaviors row is `| B<n> | what the user observes | check: <one argv command> | judge: <evidence> | human: <what to confirm> | D-n |`; the method lives in the 검사 방법 cell only."));
     }
   }
 
   const warnings: PrelintFinding[] = [];
-  checkTableRowShape(lines, verificationTable, "9.2", findings, warnings);
-  checkTableRowShape(lines, modeTable, "9.1", findings, warnings);
-  checkTableRowShape(lines, acTable, "7", findings, warnings);
-  for (const defect of findPrdImplementationBindings(content)) {
-    findings.push(finding(
-      defect.code,
-      defect.line,
-      defect.message,
-      "Keep product semantics in the PRD and bind commands, cwd, writeScope, and evidence paths during implementation.",
-    ));
-  }
+  const behaviorSection = sectionRange(lines, "## Behaviors");
+  checkTableRowShape(lines, behaviorSection ? parseTable(lines, behaviorSection.start + 1, behaviorSection.end) : null, "Behaviors", findings, warnings);
+  const decisionSection = sectionRange(lines, "## Decisions");
+  checkTableRowShape(lines, decisionSection ? parseTable(lines, decisionSection.start + 1, decisionSection.end) : null, "Decisions", findings, warnings);
 
   return { ok: findings.length === 0, doc: "prd", findings, ...(warnings.length > 0 ? { warnings } : {}) };
 }
@@ -745,19 +602,6 @@ export function prelintContract(content: string): PrelintResult {
   }
 
   return { ok: findings.length === 0, doc: "contract", findings };
-}
-
-function findSubsection(lines: string[], number: string): { start: number; end: number } | null {
-  const start = lines.findIndex((line) => new RegExp(`^###\\s+${number.replace(".", "\\.")}\\b`).test(line));
-  if (start === -1) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^###?\s/.test(lines[i]!)) {
-      end = i;
-      break;
-    }
-  }
-  return { start, end };
 }
 
 /**

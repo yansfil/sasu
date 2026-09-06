@@ -292,9 +292,15 @@ function resolveState(options) {
   };
 }
 
+// A receipt closed `complete-pending-human` ships: every check:/judge: row
+// is proved and only the user's own confirmation is outstanding. The OPEN
+// rows travel in the PR body as a table so the reviewer sees exactly what
+// the person still owes, and a confirm after ship rewrites the receipt only.
+const SHIPPABLE_RECEIPT_STATUSES = new Set(["complete", "complete-pending-human"]);
+
 function assertCompleteReceipt(context) {
-  if (context.receipt.status !== "complete") {
-    throw new Error(`Cannot ship receipt status '${context.receipt.status}'. Run prd-implement to completion first.`);
+  if (!SHIPPABLE_RECEIPT_STATUSES.has(context.receipt.status)) {
+    throw new Error(`Cannot ship receipt status '${context.receipt.status}'. Run implement to completion first.`);
   }
 }
 
@@ -380,7 +386,7 @@ function verifyDelivery(context) {
   const detail = parsed.detail || {};
   const violations = [];
   if (result.status !== 0 || parsed.ok !== true) violations.push(parsed.message || `status exited ${result.status}`);
-  if (detail.status !== "complete") violations.push(`implement state is ${detail.status || "unknown"}, not complete`);
+  if (!SHIPPABLE_RECEIPT_STATUSES.has(detail.status)) violations.push(`implement state is ${detail.status || "unknown"}, not complete or complete-pending-human`);
   if (!detail.verification || detail.verification.verdict !== "PASS") {
     violations.push(`unified verification is ${detail.verification ? detail.verification.verdict : "missing"}, not PASS`);
   }
@@ -403,34 +409,51 @@ function firstLine(text) {
   return String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean)[0] || "";
 }
 
-function summarizeVerification(state) {
-  return (state.verification || []).map(item => {
-    const mode = item.mode || item.testMode || (item.matrix && item.matrix.mode) || "";
-    const modeSuffix = mode ? ` (${mode})` : "";
-    const artifactPaths = (item.artifacts || []).map(artifact => artifact.path).filter(Boolean);
-    const evidence = artifactPaths.length ? artifactPaths.join(", ") : firstLine((item.evidence || []).map(entry => entry.text).join(" "));
-    return `| ${item.id}${modeSuffix} | ${item.status || "unknown"} | ${firstLine(item.title || item.passIntent || item.text || "")} | ${evidence || "No artifact"} |`;
-  }).join("\n") || "| N/A | N/A | No verification items found | N/A |";
+function cell(text) {
+  return String(text || "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
 }
 
-function summarizeAcceptance(state) {
-  return (state.acceptanceCriteria || []).map(item => {
-    const evidence = firstLine((item.evidence || []).map(entry => entry.text).join(" "));
-    return `| ${item.id} | ${item.status || "unknown"} | ${firstLine(item.text || item.title || "")}${evidence ? ` Evidence: ${evidence}` : ""} |`;
-  }).join("\n") || "| N/A | N/A | No acceptance criteria found |";
+function rowResultLine(row) {
+  const result = row.result || {};
+  if (result.kind === "check") return result.exitCode === null || result.exitCode === undefined ? "not run" : `exit ${result.exitCode} at ${result.finishedAt || "?"}`;
+  if (result.kind === "judge") return `${result.verdict || "not judged"}${result.reason ? `: ${firstLine(result.reason)}` : ""}`;
+  if (result.kind === "human") return result.evidence ? `confirmed: ${result.evidence}` : String(result.status || "OPEN");
+  return String(result.status || "unknown");
 }
 
-function summarizeReviews(state) {
-  const requirements = state.requirementsFidelityReview || {};
-  const final = state.finalReview || {};
-  const profile = state.reviewProfile && state.reviewProfile.profile ? state.reviewProfile.profile : "standard";
-  const finalRequired = profile === "high-risk";
-  const finalLine = !final.status && !finalRequired
-    ? `- Final adversarial review: not required by ${profile} review policy`
-    : `- Final adversarial review: ${final.status || "unknown"}${final.reportPath ? ` - ${final.reportPath}` : ""}`;
+/** The receipt's Behaviors table, one line per row, statuses in the PRD's words. */
+function summarizeBehaviors(receipt) {
+  const rows = Array.isArray(receipt.behaviors) ? receipt.behaviors : [];
+  return rows
+    .map(row => `| ${cell(row.id)} | ${cell(row.behavior)} | ${cell(row.check)} | ${cell(row.result && row.result.status)} | ${cell(rowResultLine(row))} |`)
+    .join("\n") || "| N/A | No Behaviors rows in the receipt | N/A | N/A | N/A |";
+}
+
+/** human: rows still OPEN: what the person must confirm, and the last rejection when there is one. */
+function openHumanRows(receipt) {
+  const rows = Array.isArray(receipt.behaviors) ? receipt.behaviors : [];
+  return rows.filter(row => row.result && row.result.kind === "human" && String(row.result.status || "").startsWith("OPEN"));
+}
+
+function summarizeOpenHumanRows(receipt) {
+  const open = openHumanRows(receipt);
+  if (open.length === 0) return "- None: every human: row is confirmed.";
   return [
-    `- Requirements fidelity review: ${requirements.status || "unknown"}${requirements.reportPath ? ` - ${requirements.reportPath}` : ""}`,
-    finalLine,
+    "| # | 사용자가 관찰하는 행동 | 확인할 것 | 상태 |",
+    "| --- | --- | --- | --- |",
+    ...open.map(row => `| ${cell(row.id)} | ${cell(row.behavior)} | ${cell(row.result.confirmation)} | ${cell(row.result.status)} |`),
+    "",
+    "These rows do not block merge. The user closes each with `sasu implement confirm --issuer human --row B<n> --evidence \"<user words>\"`, which rewrites the receipt only.",
+  ].join("\n");
+}
+
+function summarizeLanes(receipt) {
+  const lanes = receipt.lanes || {};
+  return [
+    `- Acceptance lane: ${lanes.acceptance || "unknown"}`,
+    `- Fidelity lane: ${lanes.fidelity || "unknown"}`,
+    `- Risk lane: ${lanes.risk || "NOT_REQUIRED"}`,
+    `- Score: ${receipt.scoreLine || "unknown"}`,
   ].join("\n");
 }
 
@@ -492,21 +515,19 @@ function buildBodyDraft(context) {
     `- Receipt: ${receiptPath} (status: ${receipt.status})`,
     resultRel ? `- Result report: ${resultRel}` : "- Result report: not found",
     "",
-    "## Acceptance Result",
+    "## Behaviors",
     "",
-    "| ID | Status | Criterion And Evidence |",
-    "| --- | --- | --- |",
-    summarizeAcceptance(state),
+    "| # | 사용자가 관찰하는 행동 | 검사 방법 | 상태 | 결과 |",
+    "| --- | --- | --- | --- | --- |",
+    summarizeBehaviors(receipt),
     "",
-    "## Verification Evidence",
+    "## Open Human Confirmations",
     "",
-    "| ID | Status | Check | Evidence |",
-    "| --- | --- | --- | --- |",
-    summarizeVerification(state),
+    summarizeOpenHumanRows(receipt),
     "",
-    "## Review Verdicts",
+    "## Verification Lanes",
     "",
-    summarizeReviews(state),
+    summarizeLanes(receipt),
     "",
     "## Delivery Staging",
     "",
@@ -600,13 +621,23 @@ function pathMatches(candidate, patterns) {
   });
 }
 
-function taskWriteScopes(context) {
-  const tasks = Array.isArray(context.state.tasks) ? context.state.tasks : [];
-  return tasks
-    .flatMap(task => Array.isArray(task.writeScope) ? task.writeScope : [])
+/**
+ * The paths this run changed: everything that differs from the baseline
+ * commit `implement start` recorded, plus untracked files. This replaces the
+ * task write scopes the five-axis PRD declared: the run's own record of
+ * where it started is a fact, a declared scope was a promise.
+ */
+function runOwnedPaths(context) {
+  const head = context.state.initialSource && context.state.initialSource.head;
+  if (!head) return [];
+  const diffed = run("git", ["diff", "--name-only", "-z", head], { cwd: context.repoRoot, allowFailure: true });
+  const untracked = run("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: context.repoRoot, allowFailure: true });
+  const paths = [...(diffed.stdout || "").split("\0"), ...(untracked.stdout || "").split("\0")]
     .map(normalizeRepoPath)
-    .filter(item => item && !item.startsWith("TBD:") && !path.isAbsolute(item))
-    .filter(item => !isUnsafeBroadWriteScope(item));
+    .filter(item => item && !path.isAbsolute(item))
+    .filter(item => !isUnsafeBroadWriteScope(item))
+    .filter(item => item !== NAMESPACE_ROOT && !item.startsWith(`${NAMESPACE_ROOT}/`));
+  return Array.from(new Set(paths));
 }
 
 function isUnsafeBroadWriteScope(item) {
@@ -620,7 +651,7 @@ function defaultAllowedPaths(context, config, options = {}) {
     context.state.prdPath ? path.dirname(context.state.prdPath) : null,
     runDir,
     context.state.delivery && context.state.delivery.configPath,
-    ...taskWriteScopes(context),
+    ...runOwnedPaths(context),
     ...optionList(config.staging && config.staging.include),
     ...optionList(options.include),
   ];

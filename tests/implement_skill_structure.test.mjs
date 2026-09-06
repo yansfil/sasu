@@ -69,10 +69,11 @@ test("implement entrypoint retains lifecycle, safety, and completion authority",
     /`sasu implement finalize` never runs tests, judges, capture tools, or external commands/,
     /`state\.json` is the completion authority/,
     /Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes/,
-    /sasu implement check --ac AC1 --bind/,
+    /sasu implement check --row B1/,
     /sasu implement park/,
-    /sasu implement resume --ac AC1/,
-    /skippedAcceptanceCriteria/,
+    /sasu implement resume --row B1/,
+    /sasu implement confirm --issuer human --row/,
+    /parkedRows/,
     /^## Hard Stops$/m,
     /^## Final Report$/m,
   ];
@@ -82,15 +83,27 @@ test("implement entrypoint retains lifecycle, safety, and completion authority",
   }
 });
 
-test("gen-prd and implement retain the acceptance tagging and check lifecycle contract", () => {
+// R1/R13 (prd-template): the PRD is six sections and one Behaviors table, and
+// the two skills agree on the three method prefixes and the row lifecycle.
+test("gen-prd and implement retain the six-section template and the row lifecycle contract", () => {
   const genPrd = fs.readFileSync(genPrdSkillPath, "utf8");
   const implement = fs.readFileSync(skillPath, "utf8");
-  assert.match(genPrd, /\| ID \| Criterion \| Judgment \| Evidence Declaration \|/);
-  assert.match(genPrd, /Ask a contract-breaking tagging question only when/);
-  assert.match(genPrd, /`machine\+gate:human`/);
-  assert.match(implement, /sasu implement check --ac AC1 --bind/);
+  for (const section of ["## Goal", "## Non-goals", "## Decisions", "## Behaviors", "## Technical structure", "## Risks"]) {
+    assert.match(genPrd, new RegExp(`^${section}$`, "m"), `${section} must be in the template`);
+  }
+  assert.match(genPrd, /\| D-n \| 결정 \| 근거 \|/);
+  assert.match(genPrd, /\| # \| 사용자가 관찰하는 행동 \| 검사 방법 \| 결정 \|/);
+  for (const prefix of ["check:", "judge:", "human:"]) assert.match(genPrd, new RegExp(`\`${prefix}`), `${prefix} must be documented`);
+  for (const retired of ["Acceptance Criteria", "Evidence Declaration", "machine+gate:human", "Pre-Work", "PRD-Level Tasks", "Verification Contract", "Implementation Guardrails", "Report Contract", "SC#"]) {
+    assert.ok(!genPrd.includes(retired), `gen-prd must not carry the retired concept ${retired}`);
+  }
+  assert.match(implement, /sasu implement check --row B1/);
   assert.match(implement, /sasu implement park/);
-  assert.match(implement, /sasu implement resume --ac AC1/);
+  assert.match(implement, /sasu implement resume --row B1/);
+  assert.match(implement, /complete-pending-human/);
+  for (const retired of ["--ac ", "--bind", "--cwd", "--human-window", "--bookkeeping", "sasu implement task", "resequence", "Depends on"]) {
+    assert.ok(!implement.includes(retired), `implement must not carry the retired surface ${retired}`);
+  }
 });
 
 test("removed dispatcher rejects direct legacy invocations with new-command guidance", () => {
@@ -99,6 +112,6 @@ test("removed dispatcher rejects direct legacy invocations with new-command guid
     const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /prd_state_harness\.js was removed/);
-    assert.match(result.stderr, /sasu implement start\|check\|park\|resume\|task\|artifact\|status\|verify\|finalize/);
+    assert.match(result.stderr, /sasu implement start\|check\|park\|resume\|confirm\|artifact\|status\|verify\|finalize/);
   }
 });

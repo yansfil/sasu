@@ -6,27 +6,19 @@ import type { CheckTreeFingerprint, ImplementState } from "./types";
 import { mechanicalOutcome, type MechanicalOutcome } from "./verdict";
 
 /**
- * One command, executed once, scored for everything that asked for it.
- *
- * Before this existed the harness had two executors for the same strings: AC
- * Check bindings went through `executeMechanicalArgv` with no shell and a
- * scrubbed environment, while the V-derived suite went through `spawnSync(...,
- * { shell: true, env: process.env })`. The same `(cwd, command)` could
- * therefore run twice, under different semantics, and disagree - which is the
- * defect R1 closes. There is now one executor and one execution per unit.
+ * One command, executed once. The suite batch and the single-row check go
+ * through this executor alone: two executors for one command string ran the
+ * same `(cwd, command)` under different semantics and disagreed, which is
+ * the defect the gate-loop PRD's R1 closed. The verify batch now carries
+ * only the sealed suite; `check:` rows run one at a time through
+ * `sasu implement check --row` and are settled from their own ledger.
  */
 export interface RunUnit {
-  /** `${cwd}\0${command}` - the identity the union is deduplicated on. */
-  key: string;
   command: string;
   argv: string[];
   cwd: string;
-  /** Criteria whose current Check binding is this command. */
-  criterionIds: string[];
-  /** Sealed suite command ids that are this command. */
-  suiteCommandIds: string[];
-  /** Verification rows this command proves, from the sealed suite entry. */
-  verificationIds: string[];
+  /** Sealed suite command id this unit is. */
+  suiteCommandId: string;
 }
 
 export interface RunUnitResult {
@@ -45,53 +37,12 @@ export interface RunUnitResult {
   tree: CheckTreeFingerprint;
 }
 
-function unitKey(cwd: string, command: string): string {
-  return `${cwd}\0${command}`;
-}
-
-/**
- * The union of AC Check bindings and the sealed suite list, deduplicated by
- * `(cwd, command)` so a command named by both sides runs once and is scored
- * for both (AC1).
- *
- * Two exclusions, both deliberate:
- *   - parked criteria, which are by definition not being proved right now;
- *   - `machine+gate:human` criteria, whose every execution must consume a
- *     fresh verbatim human approval. Verify has no approval to spend, so
- *     folding them in would either run them without their gate or invent an
- *     approval. They stay on `sasu implement check --human-window`.
- * A suite entry sharing a command with an excluded criterion still runs - it
- * is in the union on its own account.
- */
+/** The active sealed suite as run units, in sealed order. */
 export function planRunUnits(state: ImplementState): RunUnit[] {
-  const byKey = new Map<string, RunUnit>();
-  const take = (cwd: string, command: string, argv: string[]): RunUnit => {
-    const key = unitKey(cwd, command);
-    let unit = byKey.get(key);
-    if (unit === undefined) {
-      unit = { key, command, argv, cwd, criterionIds: [], suiteCommandIds: [], verificationIds: [] };
-      byKey.set(key, unit);
-    }
-    return unit;
-  };
-  for (const criterion of state.acceptanceCriteria) {
-    if (criterion.judgment !== "machine") continue;
-    if (criterion.check.status === "parked") continue;
-    const binding = criterion.check.bindings.at(-1);
-    if (binding === undefined) continue;
-    const unit = take(binding.cwd, binding.command, binding.argv);
-    if (!unit.criterionIds.includes(criterion.id)) unit.criterionIds.push(criterion.id);
-  }
   const excluded = new Set(state.suite.exclusions.map((entry) => entry.commandId));
-  for (const command of state.suite.commands) {
-    if (excluded.has(command.id)) continue;
-    const unit = take(command.cwd, command.command, command.argv);
-    if (!unit.suiteCommandIds.includes(command.id)) unit.suiteCommandIds.push(command.id);
-    for (const verificationId of command.verificationIds) {
-      if (!unit.verificationIds.includes(verificationId)) unit.verificationIds.push(verificationId);
-    }
-  }
-  return [...byKey.values()];
+  return state.suite.commands
+    .filter((command) => !excluded.has(command.id))
+    .map((command) => ({ command: command.command, argv: command.argv, cwd: command.cwd, suiteCommandId: command.id }));
 }
 
 function directoryDigest(root: string, skipRelative: string): string {
@@ -120,11 +71,9 @@ export function treeFingerprint(state: ImplementState, workRoot: string): CheckT
 }
 
 /**
- * The scrubbed environment every mechanical command runs under.
- *
- * Check bindings are agent-authored, so they get neither a shell nor the
- * agent process's credential-bearing environment. The suite used to get both;
- * unifying on the stricter side is the whole point of one runner.
+ * The scrubbed environment every mechanical command runs under: no shell
+ * and none of the agent process's credential-bearing environment. The suite
+ * used to get both; unifying on the stricter side is the point of one runner.
  */
 export function runtimeEnv(state: ImplementState): NodeJS.ProcessEnv {
   const runtimeRoot = path.join(state.projectRoot, state.runDir, "check-runtime");
@@ -176,7 +125,7 @@ export interface BatchOutcome {
 }
 
 /**
- * Run every unit once, on one frozen tree (AC2).
+ * Run every unit once, on one frozen tree.
  *
  * "Frozen" is enforced by measurement, not by locking the filesystem: the
  * product digest is taken before the batch and again after, and a batch whose
@@ -185,9 +134,8 @@ export interface BatchOutcome {
  * (AGENTS.md Review Guide 10).
  *
  * Unlike the old suite loop this does NOT stop at the first failure. Stopping
- * early is what made the score unreadable: with one runner the run must be
- * able to say "AC 24/26, suites 3/3", and it cannot count what it declined to
- * execute (R4).
+ * early is what made the score unreadable: the run must be able to say
+ * "suite 3/3", and it cannot count what it declined to execute.
  */
 export function runBatch(
   state: ImplementState,
