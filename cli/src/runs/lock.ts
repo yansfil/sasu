@@ -63,20 +63,3 @@ export function removeDeadOwnerLock(lockPath: string): boolean {
     return false;
   }
 }
-
-/**
- * `tryAcquireLock` with a bounded wait: polls until the lock is taken or
- * `waitMs` elapses, then returns null so the caller can name what it was
- * waiting for. Contention on a run record is rare and short (one state write),
- * so a waiting writer normally gets its turn and is then judged by the
- * compare-and-swap on what it loaded.
- */
-export function acquireLock(lockPath: string, options: { recoverDeadOwner: boolean; topic: string; waitMs: number }): (() => void) | null {
-  const deadline = Date.now() + options.waitMs;
-  while (true) {
-    const release = tryAcquireLock(lockPath, options);
-    if (release !== null) return release;
-    if (Date.now() >= deadline) return null;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-  }
-}

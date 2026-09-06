@@ -310,7 +310,7 @@ test("a verdict that contradicts its recorded inputs is refused on read and on w
   }
 });
 
-// A close is state first, derived files after, under the run's write lock:
+// A close is state first, derived files after, under the run's close lock:
 // the receipt on disk must always be a projection of the state on disk (risk
 // finding RF1, prd-template run, 2026-09-06).
 test("a close whose state write is rejected, or whose lock is held, writes no derived file", () => {
@@ -330,13 +330,13 @@ test("a close whose state write is rejected, or whose lock is held, writes no de
     assert.throws(() => persistClose(statePath, stale, [{ file: receipt, text: "stale\n" }]), /implement state changed on disk/);
     assert.equal(fs.existsSync(receipt), false, "a rejected state write leaves no derived file behind");
 
-    // Another writer holds the lock past the wait bound: refused with nothing
-    // written, and the refusal names the lock.
+    // Another closer is mid-close: refused with nothing written, and the
+    // refusal names the lock.
     const { state: fresh } = loadState(root, { slug: "fixture" });
-    const lock = path.join(runDir, ".state.lock");
+    const lock = path.join(runDir, ".close.lock");
     fs.writeFileSync(lock, JSON.stringify({ token: "other", pid: process.pid, hostname: os.hostname() }));
     const before = fs.readFileSync(statePath, "utf8");
-    assert.throws(() => persistClose(statePath, fresh, [{ file: receipt, text: "held\n" }]), /another command is writing this run's record/);
+    assert.throws(() => persistClose(statePath, fresh, [{ file: receipt, text: "held\n" }]), /another finalize or confirm is writing this run's record/);
     assert.equal(fs.readFileSync(statePath, "utf8"), before);
     assert.equal(fs.existsSync(receipt), false);
     fs.unlinkSync(lock);
@@ -344,7 +344,7 @@ test("a close whose state write is rejected, or whose lock is held, writes no de
     // The ordinary close lands both and releases the lock.
     persistClose(statePath, fresh, [{ file: receipt, text: "landed\n" }]);
     assert.equal(fs.readFileSync(receipt, "utf8"), "landed\n");
-    assert.equal(fs.existsSync(lock), false, "the write lock is released");
+    assert.equal(fs.existsSync(lock), false, "the close lock is released");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

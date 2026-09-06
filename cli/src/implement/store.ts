@@ -16,7 +16,7 @@ import {
 import { ISSUED_COMMANDS } from "./verbs";
 import { mechanicalOutcome } from "./verdict";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
-import { acquireLock } from "../runs/lock";
+import { tryAcquireLock } from "../runs/lock";
 import { currentSessionId } from "../runs/session";
 
 export const ACTIVE_POINTER = ACTIVE_POINTER_REL;
@@ -795,36 +795,7 @@ export function loadState(projectRoot: string, options: { slug?: string; state?:
   return { statePath, state };
 }
 
-/**
- * Every state write holds the run's one write lock across the whole
- * compare-and-swap - digest check, serialization, validation, rename. Without
- * it a writer could pass the digest check, pause, and rename a stale state
- * over one that landed meanwhile (risk finding RF2, prd-template run,
- * 2026-09-06: the window is small, but a receipt written inside it would
- * contradict the state next to it). A writer that waits its turn is then
- * judged by the digest of what it loaded, so nothing is ever silently
- * overwritten.
- */
 export function persistState(statePath: string, state: ImplementState): void {
-  withStateLock(state, () => persistStateUnlocked(statePath, state));
-}
-
-const STATE_LOCK_WAIT_MS = 5_000;
-
-function withStateLock<T>(state: ImplementState, body: () => T): T {
-  const lockPath = path.join(state.projectRoot, state.runDir, ".state.lock");
-  const release = acquireLock(lockPath, { recoverDeadOwner: true, topic: state.topicSlug, waitMs: STATE_LOCK_WAIT_MS });
-  if (release === null) {
-    throw new Error(`another command is writing this run's record (${path.relative(state.projectRoot, lockPath)} held for ${STATE_LOCK_WAIT_MS}ms); nothing was written. Re-run the command.`);
-  }
-  try {
-    return body();
-  } finally {
-    release();
-  }
-}
-
-function persistStateUnlocked(statePath: string, state: ImplementState): void {
   const baseline = stateBaseline.get(state);
   const onDisk = stateFileDigest(statePath);
   if (baseline !== undefined && baseline.statePath === statePath) {
@@ -868,21 +839,31 @@ function persistStateUnlocked(statePath: string, state: ImplementState): void {
 
 /**
  * Close a run record: persist the state, then write the files derived from
- * it, under the same write lock as every other state write.
+ * it, as one exclusive step.
  *
- * State first, because `persistStateUnlocked` is the compare-and-swap: a
- * receipt written before it could survive a rejected state write and
- * contradict the record. Under the lock, because two closers that both
- * persist in sequence could otherwise interleave their derived writes - the
+ * Order and exclusion both matter. State first, because `persistState` is the
+ * compare-and-swap: a receipt written before it could survive a rejected state
+ * write and contradict the record. Exclusive, because two closers that both
+ * persist in sequence could still interleave their derived writes - the
  * earlier closer resuming after the later one and stamping an older receipt
- * over the newer state (risk finding RF1, prd-template run, 2026-09-06).
- * Either way the receipt on disk is a projection of the state on disk.
+ * over the newer state (risk finding RF1 on the prd-template run,
+ * 2026-09-06). A closer that finds the lock held is refused with nothing
+ * written; a closer that loaded a state the lock holder has since replaced is
+ * refused by the compare-and-swap. Either way the receipt on disk is a
+ * projection of the state on disk.
  */
 export function persistClose(statePath: string, state: ImplementState, derived: Array<{ file: string; text: string }>): void {
-  withStateLock(state, () => {
-    persistStateUnlocked(statePath, state);
+  const lockPath = path.join(state.projectRoot, state.runDir, ".close.lock");
+  const release = tryAcquireLock(lockPath, { recoverDeadOwner: true, topic: state.topicSlug });
+  if (release === null) {
+    throw new Error(`another finalize or confirm is writing this run's record (${path.relative(state.projectRoot, lockPath)}); nothing was written. Re-run the command.`);
+  }
+  try {
+    persistState(statePath, state);
     for (const entry of derived) writeTextAtomic(entry.file, entry.text);
-  });
+  } finally {
+    release();
+  }
 }
 
 /**
