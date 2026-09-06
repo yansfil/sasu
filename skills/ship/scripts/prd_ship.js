@@ -358,8 +358,11 @@ function deliveryConfig(context, options = {}) {
 }
 
 function verifyDelivery(context) {
+  // sasu confines --state to the tree it runs in, and the state lives in the
+  // record tree, so status runs there even when the judged tree is a linked
+  // worktree; sasu finds that worktree from the state itself.
   const result = run("sasu", ["implement", "status", "--state", context.statePath, "--json"], {
-    cwd: context.repoRoot,
+    cwd: context.state.projectRoot || context.repoRoot,
     allowFailure: true,
   });
   let parsed = null;

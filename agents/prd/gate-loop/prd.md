@@ -64,7 +64,7 @@ updated_at: "2026-09-03"
 - D-02. gap-audit의 goal-scope와 data-tech 레인 finding은 BLOCK이 아니라 경고로 낮춘다. 사용자 질문 "gap-audit 저 4개도 필요할까 꼭?"에 대한 답으로, 두 레인이 잡은 것 중 사람 결정이 필요했던 건은 있었으나(D-13 브라우저 임베딩 오기록, 기기 전환/탭 소유권) 대부분은 에이전트가 코드를 다시 읽어 닫았다. 경고는 보이되 막지 않는다. 단 requiresHuman인 finding은 레인과 무관하게 D-04를 따른다.
 - D-03. 재실행은 열린 finding만 재판정한다. 사용자 verbatim: "불필요하게 뭔가 동작하는건 없는걸까?". hide-rebrand에서 cycle 2 → 3 → 4가 각각 새 지적(버전 하한, upgrade 명령, curl 불일치)을 냈고 이것이 비수렴의 실체였다.
 - D-04. 라운드 예산(semantic rounds 2/2)과 CLOSURE EXHAUSTED를 없앤다. requiresHuman이 아닌 finding은 에이전트가 고치고 다시 돌리며, requiresHuman finding만 한 묶음으로 사용자에게 간다. 근거는 reopen evidence 원문 4건이 모두 결정이 아니라 버튼이었다는 관측.
-- D-05. drift 해시는 Decision Register의 결정 내용만 센다. Q 앵커, Audit History, frontmatter, status는 제외한다. 근거는 implement-bc에서 prelint가 요구한 앵커 보정 한 줄이 봉인 PASS를 BLOCKED로 되돌리고 새 finding 10건을 내서 override로 끝난 것.
+- D-05. drift 해시는 Decision Register의 결정 내용과 Raw Q&A 각 턴의 답변 원문을 센다. Q 앵커, 턴 라벨, Audit History, frontmatter, status는 제외한다. 근거는 implement-bc에서 prelint가 요구한 앵커 보정 한 줄이 봉인 PASS를 BLOCKED로 되돌리고 새 finding 10건을 내서 override로 끝난 것. 답변 원문을 포함하는 이유는 D-08이 그 원문을 spec 판사의 대조 증거로 삼기 때문이다: 봉인 뒤 답변을 고치거나 지워도 STALE이 안 되면 기록된 동의가 봉인된 판정과 어긋날 수 있다(2026-09-06 verify 위험 판사 RF2, amendment 1로 반영).
 - D-06. Audit History와 status는 하네스가 쓴다. 근거는 hide-rebrand에서 에이전트가 python으로 세 번 그 블록을 쓰고 "placeholder written - will update result after gate run"이라 적은 것.
 - D-07. 봉인된 qa-log에 대한 `gate reopen`은 정상 명령으로 성공한다. 근거는 pet-integration 15:42와 hide-rebrand 15:11의 exit 1 "qa-log is complete and sealed".
 - D-08. spec fidelity 프롬프트에 한 문장을 더한다: 결정의 근거는 Raw Q&A의 사용자 답변 원문이며, Decision Register의 resolved 표시는 에이전트가 쓴 것이므로 증거가 아니다. 사용자 verbatim: "spec은 괜찮은것같은데". 근거는 7084c601에서 에이전트가 자기 제안을 resolved로 표시한 것을 gap-audit이 3회 잡았고, 이 PRD가 gap-audit 사이클 수를 줄이므로 그 catch가 spec에도 있어야 한다.
@@ -74,7 +74,7 @@ updated_at: "2026-09-03"
 ## 5. Major Technical Structure Changes
 
 - `gates/commands.ts`의 사이클 상태기계에서 `closure-blocked` 단계와 라운드 카운터를 제거하고, 판정 결과를 `open findings` 집합으로 축소한다. 재실행 입력은 `priorFindingsFor`가 이미 만드는 목록이며, 레인 프롬프트는 그 목록 밖의 새 finding을 내지 못하게 `rerun` 모드에서 명시된다.
-- `gates/store.ts`의 입력 해시가 qa-log 전체가 아니라 Decision Register의 결정 셀만 정규화해 계산한다.
+- `gates/store.ts`의 입력 해시가 qa-log 전체가 아니라 Decision Register의 결정 셀과 Raw Q&A 답변 원문만 정규화해 계산한다.
 - `interview/qalog.ts`가 Audit History 블록 쓰기와 status 전이를 소유한다. 스킬 문서에서 에이전트가 그 블록을 쓰라는 지시를 삭제한다.
 - `gates/prompts.ts`의 spec fidelity scope에 D-08 문장을 더하고, gap-audit 레인에 `blocking: boolean`을 둬 goal-scope와 data-tech를 false로 둔다.
 
@@ -83,7 +83,7 @@ updated_at: "2026-09-03"
 - R1. gap-audit 재실행은 직전 판정의 열린 finding만 입력으로 받고, 출력의 finding id 집합은 입력 집합의 부분집합이다. 결정 내용이 바뀐 레인은 예외로 새 finding을 낼 수 있다.
 - R2. 라운드 예산과 CLOSURE EXHAUSTED 상태가 존재하지 않는다. 판정 뒤 열린 finding이 requiresHuman뿐이면 `gate status`가 그 묶음을 사용자 질문으로 출력하고, 하나도 없으면 봉인 PASS다.
 - R3. goal-scope와 data-tech 레인의 finding은 경고로 기록되고 PASS를 막지 않는다. requiresHuman이 붙은 finding은 레인과 무관하게 R2의 묶음에 들어간다.
-- R4. 봉인 PASS 뒤 Q 앵커, Audit History, frontmatter, status의 변경은 STALE을 만들지 않는다. Decision Register의 결정 셀 변경만 STALE을 만든다.
+- R4. 봉인 PASS 뒤 Q 앵커, Audit History, frontmatter, status의 변경은 STALE을 만들지 않는다. Decision Register의 결정 셀 변경과 Raw Q&A 답변 원문 변경만 STALE을 만든다.
 - R5. `sasu gate gap-audit`과 `sasu gate spec`이 실행될 때 하네스가 qa-log의 Audit History에 그 실행을 기록하고 status를 전이한다. 스킬 문서는 에이전트에게 그 블록을 쓰라고 지시하지 않는다.
 - R6. `sasu gate reopen`은 qa-log의 봉인 여부와 무관하게 성공하고, evidence 원문을 새 Q 턴으로 Raw Q&A에 붙인다.
 - R7. spec fidelity 레인 프롬프트가 D-08 문장을 포함한다.
