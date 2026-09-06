@@ -11,7 +11,7 @@ import {
   type JudgeFailureCause,
 } from "../judge/types";
 import { gatesDirFor } from "../runs/paths";
-import { removeDeadOwnerLock, tryAcquireLock } from "../runs/lock";
+import { acquireLock, removeDeadOwnerLock, tryAcquireLock } from "../runs/lock";
 
 export type GateId = "gap-audit" | "spec" | "verify";
 export type PrdGateId = Extract<GateId, "gap-audit" | "spec">;
@@ -487,15 +487,9 @@ export class GateStore {
 
   private acquireStateLock(): () => void {
     const lockPath = path.join(this.locksDir, "state.lock");
-    const deadline = Date.now() + 5_000;
-    while (true) {
-      const release = this.tryAcquireLock(lockPath, true);
-      if (release !== null) return release;
-      if (Date.now() >= deadline) {
-        throw new Error(`gate state is busy: timed out waiting for ${path.relative(this.projectRoot, lockPath)}`);
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
+    const release = acquireLock(lockPath, { recoverDeadOwner: true, topic: this.topic, waitMs: 5_000 });
+    if (release === null) throw new Error(`gate state is busy: timed out waiting for ${path.relative(this.projectRoot, lockPath)}`);
+    return release;
   }
 
   private tryAcquireLock(lockPath: string, recoverDeadOwner: boolean): (() => void) | null {
