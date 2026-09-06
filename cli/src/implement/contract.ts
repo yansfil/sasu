@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
+import { parseCommandArgv } from "./checks";
 import type { ReviewProfile, RowCheck } from "./types";
 
 interface ParsedBehaviorRow {
@@ -66,22 +67,11 @@ function profile(value: string | undefined): ReviewProfile {
   return "standard";
 }
 
-/** Split a command the way the runner will execute it: argv, no shell. */
-export function commandArgv(command: string): string[] {
-  const argv: string[] = [];
-  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(command)) !== null) {
-    argv.push(match[1] !== undefined ? match[1].replace(/\\(.)/g, "$1") : match[2] !== undefined ? match[2] : match[3]!);
-  }
-  return argv;
-}
-
 function rowCheck(row: ParsedBehaviorRow): RowCheck {
   const payload = row.check.payload!;
   switch (row.check.kind) {
     case "check":
-      return { kind: "check", command: payload, argv: commandArgv(payload) };
+      return { kind: "check", command: payload, argv: parseCommandArgv(payload) };
     case "judge":
       return { kind: "judge", evidence: payload };
     case "human":

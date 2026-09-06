@@ -78,12 +78,22 @@ function fixture(text = prd()) {
   return { root, state, text };
 }
 
-const amend = (root, state, text, extra = {}) => applyAmendment(
-  root,
-  state,
-  { issuer: "human", approval: TEST_APPROVAL, reason: TEST_REASON, text, ...extra },
-  AT,
-);
+// applyAmendment returns its snapshot writes instead of performing them, so
+// the caller can land them only after the state write commits (persistClose).
+// The helper stands in for that caller.
+const amend = (root, state, text, extra = {}) => {
+  const outcome = applyAmendment(
+    root,
+    state,
+    { issuer: "human", approval: TEST_APPROVAL, reason: TEST_REASON, text, ...extra },
+    AT,
+  );
+  for (const entry of outcome.derived) {
+    fs.mkdirSync(path.dirname(entry.file), { recursive: true });
+    fs.writeFileSync(entry.file, entry.text);
+  }
+  return outcome;
+};
 
 const row = (state, id) => state.rows.find((entry) => entry.id === id);
 

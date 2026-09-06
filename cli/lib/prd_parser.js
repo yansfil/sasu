@@ -76,14 +76,6 @@ function extractSection(markdown, heading) {
   return lines.slice(start, end).join("\n").trim();
 }
 
-function extractFirstSection(markdown, headings) {
-  for (const heading of headings) {
-    const section = extractSection(markdown, heading);
-    if (section.trim()) return section;
-  }
-  return "";
-}
-
 function extractNestedSection(markdown, heading) {
   const lines = markdown.split(/\r?\n/);
   const headingRe = new RegExp(`^(#{2,6})\\s+${escapeRegExp(heading)}\\s*$`, "i");
@@ -108,14 +100,6 @@ function extractNestedSection(markdown, heading) {
     }
   }
   return lines.slice(start, end).join("\n").trim();
-}
-
-function extractFirstNestedSection(markdown, headings) {
-  for (const heading of headings) {
-    const section = extractNestedSection(markdown, heading);
-    if (section.trim()) return section;
-  }
-  return "";
 }
 
 function looksLikeMarkdownTable(line, tableHeaders) {
@@ -482,9 +466,7 @@ module.exports = {
   stripFrontmatter,
   parseFrontmatterBlock,
   extractSection,
-  extractFirstSection,
   extractNestedSection,
-  extractFirstNestedSection,
   looksLikeMarkdownTable,
   extractCodeSpans,
   splitTableRow,

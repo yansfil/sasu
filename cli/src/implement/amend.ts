@@ -1,8 +1,7 @@
 import fs from "node:fs";
-import path from "node:path";
 import { parseImplementContract, type BehaviorRowContract, type ImplementContract } from "./contract";
 import { rowCheckPayload } from "./checks";
-import { normalizeProjectPath, sha256, writeTextAtomic } from "./store";
+import { normalizeProjectPath, sha256 } from "./store";
 import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
 import type { AmendmentRecord, BehaviorRow, ImplementState, IssuerLabel } from "./types";
 
@@ -177,6 +176,13 @@ export interface AmendmentInput {
 export interface AmendmentOutcome {
   record: AmendmentRecord;
   plan: AmendmentPlan;
+  /**
+   * The snapshot writes this amendment implies, for the caller to stage
+   * through `persistClose`. Returned rather than written here so a rejected
+   * state write (a concurrent writer wins the CAS) cannot leave the pinned
+   * snapshot holding text `state.prd.sha256` does not name.
+   */
+  derived: Array<{ file: string; text: string }>;
 }
 
 /**
@@ -247,15 +253,17 @@ export function applyAmendment(
     excluded.push({ commandId, command: command.command, priorResult });
   }
 
-  // Archive first, then overwrite: if the archive write fails, the pinned
-  // snapshot is still the one state.prd.sha256 names and the run is intact.
+  // Archive before overwrite, and both only after the state write commits:
+  // the record names the snapshot, so the snapshot may not change ahead of
+  // the record.
   const snapshotPath = state.prd.snapshotPath;
   const previousSnapshotPath = amendmentArchivePath(state.runDir, id);
   const pinned = normalizeProjectPath(recordRoot, snapshotPath);
   const archive = normalizeProjectPath(recordRoot, previousSnapshotPath);
-  fs.mkdirSync(path.dirname(archive.absolute), { recursive: true });
-  writeTextAtomic(archive.absolute, fs.readFileSync(pinned.absolute, "utf8"));
-  writeTextAtomic(pinned.absolute, input.text);
+  const derived = [
+    { file: archive.absolute, text: fs.readFileSync(pinned.absolute, "utf8") },
+    { file: pinned.absolute, text: input.text },
+  ];
 
   mergeRows(state, next, plan, at);
   state.prd = { ...state.prd, sha256: sha256(input.text) };
@@ -277,5 +285,5 @@ export function applyAmendment(
     ...(excluded.length > 0 ? { excludedSuiteCommands: excluded } : {}),
   };
   state.amendments.push(record);
-  return { record, plan };
+  return { record, plan, derived };
 }

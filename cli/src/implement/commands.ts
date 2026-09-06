@@ -1032,7 +1032,7 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     }
     throw error;
   }
-  const { record, plan } = outcome;
+  const { record, plan, derived } = outcome;
   const summary = [
     `${plan.scope}`,
     `${plan.invalidatedRows.length} invalidated`,
@@ -1047,7 +1047,7 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     const row = state.rows.find((candidate) => candidate.id === rowId);
     if (row !== undefined) recordEvent(state, { kind: "row-status", actor: issuer, subject: row.id, summary: `${row.id} is ${row.status}`, at });
   }
-  persistState(statePath, state);
+  persistClose(statePath, state, derived);
   return result("amend", true, `amendment ${record.id} sealed by ${issuer}; rows ${summary}. Previous snapshot archived at ${record.previousSnapshotPath}`, {
     amendment: record,
     scope: plan.scope,

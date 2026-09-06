@@ -295,12 +295,10 @@ export function checkLedgerPayload(state: ImplementState): {
     payload: rowCheckPayload(row),
     status: row.status,
   }));
-  const ledger = state.rows.map((row) => ({
-    rowId: row.id,
-    kind: row.check.kind,
-    payload: rowCheckPayload(row),
-    status: row.check.kind === "check" ? row.status : null,
-    parks: row.parks,
+  const ledger = rows.map((row, index) => ({
+    ...row,
+    status: row.kind === "check" ? row.status : null,
+    parks: state.rows[index]!.parks,
   }));
   return { sha256: sha256(JSON.stringify(ledger)), rows };
 }
