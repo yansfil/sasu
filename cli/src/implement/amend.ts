@@ -1,58 +1,36 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parseImplementContract } from "./contract";
+import { parseImplementContract, type BehaviorRowContract, type ImplementContract } from "./contract";
+import { rowCheckPayload } from "./checks";
 import { normalizeProjectPath, sha256, writeTextAtomic } from "./store";
 import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
-import type { AcceptanceCriterionItem, AmendmentRecord, ImplementState } from "./types";
+import type { AmendmentRecord, BehaviorRow, ImplementState, IssuerLabel } from "./types";
 
 /**
- * Amendment: correcting the question paper mid-run (R5).
+ * Amendment: correcting the question paper mid-run (R6).
  *
- * The rule that shapes this whole module is that a correction must cost only
- * what it actually invalidates. Re-sealing the PRD and starting the ledger
- * over was the obvious implementation and the wrong one (Q8-B, rejected): a
- * typo fix in AC30 would throw away twenty proven criteria. So identity is
- * decided per row, and everything whose row survives keeps its evidence.
+ * The rule that shapes this module is that a correction must cost only what
+ * it actually invalidates: identity is decided per row and per cell, and
+ * everything whose cells survive keeps its evidence. The second rule is the
+ * authority split. A diff that touches only 검사 방법 cells changes HOW rows
+ * are proved and the observer may issue it; a diff that touches a behavior
+ * cell, adds or removes a row, or moves Non-goals or the Decisions table
+ * changes WHAT the user observes, and only the human may issue it. The
+ * implementor is refused either way: it does not get to rewrite the question
+ * it is being marked on.
  */
 
-/** The three fields that make an acceptance criterion the same question (AC14). */
-export interface CriterionRow {
-  text: string;
-  judgment: string | null;
-  evidenceDeclaration: string | null;
+/** Normalize away formatting, keep meaning: a table re-alignment is a non-event. */
+function normalizeField(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
-/**
- * Normalize away formatting, keep meaning.
- *
- * Collapsing runs of whitespace is what makes a Markdown table re-alignment a
- * non-event: `| AC1 | foo |` and `| AC1  |  foo |` parse to cell text that
- * differs only in spacing, and a run must not lose a green because someone
- * ran a table formatter. Everything else is significant - notably the
- * judgment tag, because moving a criterion from `machine` to `judged` changes
- * who proves it and therefore invalidates the proof it already has (D-40).
- */
-function normalizeField(value: string | null): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
+function behaviorHash(row: { behavior: string; decisionIds: string[] }): string {
+  return sha256([normalizeField(row.behavior), row.decisionIds.join(",")].join(" "));
 }
 
-export function criterionRowHash(row: CriterionRow): string {
-  // NUL-joined rather than newline-joined: whitespace collapse has already
-  // removed every newline from the fields, so NUL is a separator no field can
-  // contain, and two fields cannot smear into one another's hash.
-  return sha256([
-    normalizeField(row.text),
-    normalizeField(row.judgment),
-    normalizeField(row.evidenceDeclaration),
-  ].join("\u0000"));
-}
-
-export function criterionRowOf(criterion: AcceptanceCriterionItem): CriterionRow {
-  return {
-    text: criterion.text,
-    judgment: criterion.judgment,
-    evidenceDeclaration: criterion.evidenceDeclaration,
-  };
+function checkHash(row: { check: BehaviorRow["check"] }): string {
+  return sha256([row.check.kind, normalizeField(rowCheckPayload(row as BehaviorRow))].join(" "));
 }
 
 export class AmendmentRejected extends Error {
@@ -62,120 +40,141 @@ export class AmendmentRejected extends Error {
   }
 }
 
-/**
- * Tasks a replacement implementor would find half-built.
- *
- * The schema has no `in_progress` status - a task is pending, complete, or
- * blocked - so "in progress" has to be read off the work itself (AC15). A
- * pending task whose criteria have been bound or attempted is one somebody is
- * holding; a pending task nobody has touched is merely next. Amending under
- * the first would move the goalposts out from under a live attempt, which is
- * the failure AC15 names.
- *
- * A park does not count: parking is the act of putting a criterion DOWN, and
- * a parked criterion whose row changes is exactly what R5 says to unpark.
- */
-export function tasksInProgress(state: ImplementState): string[] {
-  const byId = new Map(state.acceptanceCriteria.map((criterion) => [criterion.id, criterion]));
-  return state.tasks
-    .filter((task) => task.status === "pending")
-    .filter((task) => task.evidence.length > 0 || task.acceptanceCriteria.some((id) => {
-      const criterion = byId.get(id);
-      if (criterion === undefined) return false;
-      return criterion.check.bindings.length > 0 || criterion.check.attempts.length > 0;
-    }))
-    .map((task) => task.id);
-}
-
 export interface AmendmentPlan {
-  invalidatedCriteria: string[];
-  addedCriteria: string[];
-  unparkedCriteria: string[];
-  unchangedCriteria: string[];
+  scope: "check-cells" | "behaviors";
+  /** Rows whose check cell changed and nothing else. */
+  checkCellChanged: string[];
+  /** Rows whose behavior cell (or cited decisions) changed. */
+  behaviorChanged: string[];
+  addedRows: string[];
+  removedRows: string[];
+  /** Whether Non-goals or the Decisions table moved (a scope change). */
+  scopeSectionsChanged: string[];
+  invalidatedRows: string[];
+  unparkedRows: string[];
+  unchangedRows: string[];
+}
+
+function decisionsDigest(contract: { decisions: ImplementContract["decisions"] }): string {
+  return sha256(JSON.stringify(contract.decisions.map((entry) => [entry.id, normalizeField(entry.decision), normalizeField(entry.rationale)])));
 }
 
 /**
- * Decide what an amended PRD costs, without applying anything.
- *
- * Split from the application so the refusal paths and the receipt can both
+ * Decide what an amended PRD costs and who may issue it, without applying.
+ * Split from the application so the refusal path and the receipt can both
  * ask "what would this do?" without a write happening as a side effect.
  */
 export function planAmendment(
   state: ImplementState,
-  next: AcceptanceCriterionItem[],
+  current: ImplementContract,
+  next: ImplementContract,
 ): AmendmentPlan {
-  const current = new Map(state.acceptanceCriteria.map((criterion) => [criterion.id, criterion]));
+  const held = new Map(state.rows.map((row) => [row.id, row]));
   const plan: AmendmentPlan = {
-    invalidatedCriteria: [],
-    addedCriteria: [],
-    unparkedCriteria: [],
-    unchangedCriteria: [],
+    scope: "check-cells",
+    checkCellChanged: [],
+    behaviorChanged: [],
+    addedRows: [],
+    removedRows: [],
+    scopeSectionsChanged: [],
+    invalidatedRows: [],
+    unparkedRows: [],
+    unchangedRows: [],
   };
-  for (const criterion of next) {
-    const held = current.get(criterion.id);
-    if (held === undefined) {
-      plan.addedCriteria.push(criterion.id);
+  const nextIds = new Set(next.rows.map((row) => row.id));
+  plan.removedRows = state.rows.filter((row) => !nextIds.has(row.id)).map((row) => row.id);
+  for (const row of next.rows) {
+    const existing = held.get(row.id);
+    if (existing === undefined) {
+      plan.addedRows.push(row.id);
       continue;
     }
-    if (criterionRowHash(criterionRowOf(held)) === criterionRowHash(criterionRowOf(criterion))) {
-      plan.unchangedCriteria.push(criterion.id);
+    const behaviorMoved = behaviorHash(existing) !== behaviorHash(row);
+    const checkMoved = checkHash(existing) !== checkHash(row);
+    if (behaviorMoved) plan.behaviorChanged.push(row.id);
+    else if (checkMoved) plan.checkCellChanged.push(row.id);
+    else {
+      plan.unchangedRows.push(row.id);
       continue;
     }
-    plan.invalidatedCriteria.push(criterion.id);
-    if (held.check.status === "parked") plan.unparkedCriteria.push(criterion.id);
+    plan.invalidatedRows.push(row.id);
+    if (existing.status === "parked") plan.unparkedRows.push(row.id);
+  }
+  if (normalizeField(current.nonGoals) !== normalizeField(next.nonGoals)) plan.scopeSectionsChanged.push("Non-goals");
+  if (decisionsDigest(current) !== decisionsDigest(next)) plan.scopeSectionsChanged.push("Decisions");
+  if (plan.behaviorChanged.length > 0 || plan.addedRows.length > 0 || plan.removedRows.length > 0 || plan.scopeSectionsChanged.length > 0) {
+    plan.scope = "behaviors";
   }
   return plan;
 }
 
+/** A fresh, unproven row as `start` would seal it. */
+export function sealRow(row: BehaviorRowContract): BehaviorRow {
+  return {
+    id: row.id,
+    behavior: row.behavior,
+    check: row.check,
+    decisionIds: [...row.decisionIds],
+    status: row.check.kind === "human" ? "OPEN" : "pending",
+    attempts: [],
+    consecutiveFailures: 0,
+    parks: [],
+    verdict: null,
+    human: null,
+    rejections: [],
+  };
+}
+
 /**
- * Merge the amended criteria into the ledger.
+ * Merge the amended rows into the ledger.
  *
- * An unchanged row keeps its criterion object whole - bindings, attempts,
- * parks, decision points, green. A changed row keeps its history and loses
- * its verdict: the attempts stay readable so the next attempt is not blind,
- * but the status returns to pending because it was earned against a question
- * that no longer exists. A changed park is lifted for the same reason - the
- * criterion it was set aside for is gone (R5).
+ * An unchanged row keeps its object whole. A changed row keeps its history
+ * and loses its verdict: attempts stay readable so the next attempt is not
+ * blind, the status returns to unproven because it was earned against a
+ * question that no longer exists, and an active park is lifted for the same
+ * reason. Row order follows the amended PRD.
  */
-function mergeCriteria(
-  state: ImplementState,
-  next: AcceptanceCriterionItem[],
-  plan: AmendmentPlan,
-  at: string,
-): void {
-  const current = new Map(state.acceptanceCriteria.map((criterion) => [criterion.id, criterion]));
-  const invalidated = new Set(plan.invalidatedCriteria);
-  state.acceptanceCriteria = next.map((criterion) => {
-    const held = current.get(criterion.id);
-    if (held === undefined) return criterion;
-    if (!invalidated.has(criterion.id)) return held;
-    const park = held.check.parks.at(-1);
-    if (held.check.status === "parked" && park !== undefined && park.resumedAt === null) park.resumedAt = at;
+function mergeRows(state: ImplementState, next: ImplementContract, plan: AmendmentPlan, at: string): void {
+  const held = new Map(state.rows.map((row) => [row.id, row]));
+  const invalidated = new Set(plan.invalidatedRows);
+  state.rows = next.rows.map((row) => {
+    const existing = held.get(row.id);
+    if (existing === undefined) return sealRow(row);
+    if (!invalidated.has(row.id)) return existing;
+    const park = existing.parks.at(-1);
+    if (existing.status === "parked" && park !== undefined && park.resumedAt === null) park.resumedAt = at;
+    const kindChanged = existing.check.kind !== row.check.kind;
     return {
-      ...criterion,
-      check: {
-        ...held.check,
-        status: "pending",
-        consecutiveFailures: 0,
-        decisionPoints: held.check.decisionPoints.map((point) => (
-          point.resolvedAt === null ? { ...point, resolvedAt: at, resolution: "amended" as const } : point
-        )),
-      },
+      ...existing,
+      behavior: row.behavior,
+      check: row.check,
+      decisionIds: [...row.decisionIds],
+      status: row.check.kind === "human" ? "OPEN" : "pending",
+      // Attempts and parks belong to a check: row; a row that changed kind
+      // starts its ledger over, because an exit code proves nothing about a
+      // judge: question.
+      attempts: kindChanged ? [] : existing.attempts,
+      parks: kindChanged ? [] : existing.parks,
+      consecutiveFailures: 0,
+      verdict: null,
+      human: null,
+      rejections: kindChanged ? [] : existing.rejections,
     };
   });
 }
 
 export interface AmendmentInput {
+  issuer: IssuerLabel;
   approval: string;
   reason: string;
   /** The amended PRD text, already read from the source path. */
   text: string;
   /**
-   * Sealed suite command ids to drop from the scored list (R15 ③, AC42).
+   * Sealed suite command ids to drop from the scored list.
    *
-   * Exclusion rides the amendment because it is the same act: correcting what
-   * this run is measured against. It is not a separate command, so there is
-   * one door out of the sealed list and one place the approval is recorded.
+   * Exclusion rides the amendment because it is the same act: correcting
+   * what this run is measured against. One door out of the sealed list, one
+   * place the approval is recorded. Human-only, like a behaviors amendment.
    */
   excludeSuite?: string[];
 }
@@ -186,13 +185,10 @@ export interface AmendmentOutcome {
 }
 
 /**
- * Where a superseded snapshot goes.
- *
- * The pinned snapshot keeps its path (`<runDir>/prd.md`) across amendments so
- * every reader - judge envelope, drift check, qa-brief - keeps resolving the
- * live question paper the same way. The version it replaced is archived under
- * its amendment id, which is what makes "the new snapshot is distinguishable
- * from the previous one" checkable rather than asserted (V3).
+ * Where a superseded snapshot goes. The pinned snapshot keeps its path
+ * (`<runDir>/prd.md`) across amendments so every reader keeps resolving the
+ * live question paper the same way; the version it replaced is archived
+ * under its amendment id.
  */
 export function amendmentArchivePath(runDir: string, id: number): string {
   return `${runDir}/amendments/prd-${id}-superseded.md`;
@@ -204,73 +200,53 @@ export function applyAmendment(
   input: AmendmentInput,
   at: string,
 ): AmendmentOutcome {
+  if (input.issuer === "implementor") {
+    throw new AmendmentRejected("authority", "amend refused: the implementor may not amend the PRD it is being marked on. An observer may correct a 검사 방법 cell with --issuer observer; anything that changes what the user observes needs --issuer human.");
+  }
   if (input.approval.trim() === "") {
-    throw new AmendmentRejected("arguments", "amend requires --approval <verbatim human approval>; correcting the question paper is a human act and the record has to carry the words that authorised it");
+    throw new AmendmentRejected("arguments", "amend requires --approval <verbatim approval>; correcting the question paper is recorded with the words that authorised it");
   }
   if (input.reason.trim() === "") {
-    throw new AmendmentRejected("arguments", "amend requires --reason <why the criterion was wrong>");
+    throw new AmendmentRejected("arguments", "amend requires --reason <why the row was wrong>");
   }
-  const held = tasksInProgress(state);
-  if (held.length > 0) {
-    throw new AmendmentRejected(
-      "transition",
-      `amend refused: ${held.join(", ")} ${held.length === 1 ? "is" : "are"} in progress (criteria bound or attempted). Stop the task first - park what is stuck or close it - then amend. Changing the question under a live attempt is what this refusal exists to prevent.`,
-    );
-  }
-
-  const contract = parseImplementContract(input.text);
-  const untagged = contract.acceptanceCriteria.filter((criterion) => criterion.judgment === null);
-  if (untagged.length > 0) {
-    throw new AmendmentRejected("arguments", `amended PRD has untagged acceptance criteria: ${untagged.map((entry) => entry.id).join(", ")}; every row needs a machine, judged, or machine+gate:human tag`);
-  }
-  const nextIds = new Set(contract.acceptanceCriteria.map((entry) => entry.id));
-  const removed = state.acceptanceCriteria.filter((criterion) => !nextIds.has(criterion.id)).map((entry) => entry.id);
-  if (removed.length > 0) {
-    // Deliberately refused rather than guessed at. R5 defines three outcomes
-    // - invalidated, added, unparked - and AmendmentRecord has a field for
-    // each. Dropping a criterion has no defined disposition for the evidence
-    // already filed against it, and silently discarding it would make the
-    // receipt's "N/M PASS" denominator move with no record of why.
-    throw new AmendmentRejected("arguments", `amended PRD drops ${removed.join(", ")}; amendment may correct or add criteria but not remove them, because the evidence already filed against a dropped row has no defined disposition. Next: rewrite the criterion so the row changes (its green is then invalidated and it returns to pending), or park it with verbatim human approval. Actually removing a criterion is a decision this PRD does not define and belongs to a new one.`);
-  }
-  const heldTasks = new Set(state.tasks.map((entry) => entry.id));
-  const nextTasks = new Set(contract.tasks.map((entry) => entry.id));
-  const taskDelta = [
-    ...[...nextTasks].filter((id) => !heldTasks.has(id)).map((id) => `+${id}`),
-    ...[...heldTasks].filter((id) => !nextTasks.has(id)).map((id) => `-${id}`),
-  ];
-  if (taskDelta.length > 0) {
-    // Tasks carry completion state and a dependency graph; adding or removing
-    // one mid-run has invalidation semantics R5 never defined. Reordering
-    // them is resequence's job and needs no amendment at all (R6).
-    throw new AmendmentRejected("arguments", `amended PRD changes the task set (${taskDelta.join(", ")}); amendment corrects acceptance criteria only. Reorder pending tasks with \`sasu implement resequence\`, and take a task-set change back to a new PRD.`);
-  }
-  const heldVerification = new Set(state.verification.map((entry) => entry.id));
-  const nextVerification = new Set(contract.verification.map((entry) => entry.id));
-  const verificationDelta = [
-    ...[...nextVerification].filter((id) => !heldVerification.has(id)).map((id) => `+${id}`),
-    ...[...heldVerification].filter((id) => !nextVerification.has(id)).map((id) => `-${id}`),
-  ];
-  if (verificationDelta.length > 0) {
-    throw new AmendmentRejected("arguments", `amended PRD changes the verification set (${verificationDelta.join(", ")}); the suite list was sealed at start and a V row cannot appear or vanish under it. Exclude a sealed suite command instead, or take this to a new PRD.`);
+  const running = state.rows.filter((row) => row.check.kind === "check" && row.status === "fail").map((row) => row.id);
+  if (running.length > 0 && input.issuer !== "human") {
+    // A failing check: row is one somebody is holding. Rewriting its cell
+    // under a live attempt would move the goalposts mid-measurement; the
+    // human may still do it, on the record, and the observer waits.
+    throw new AmendmentRejected("transition", `amend refused: ${running.join(", ")} ${running.length === 1 ? "is" : "are"} mid-attempt (latest check failed and no green since). Let the implementor land a green or park the row, or amend as the human.`);
   }
 
-  const plan = planAmendment(state, contract.acceptanceCriteria);
+  const current = parseImplementContract(fs.readFileSync(normalizeProjectPath(recordRoot, state.prd.snapshotPath).absolute, "utf8"));
+  const next = parseImplementContract(input.text);
+  const plan = planAmendment(state, current, next);
+  const excludeSuite = (input.excludeSuite ?? []).map((entry) => entry.trim().toUpperCase()).filter((entry) => entry !== "");
+  if (input.issuer === "observer" && (plan.scope === "behaviors" || excludeSuite.length > 0)) {
+    const what = [
+      ...plan.behaviorChanged.map((id) => `${id} behavior cell`),
+      ...plan.addedRows.map((id) => `+${id}`),
+      ...plan.removedRows.map((id) => `-${id}`),
+      ...plan.scopeSectionsChanged,
+      ...(excludeSuite.length > 0 ? [`suite exclusion ${excludeSuite.join(", ")}`] : []),
+    ];
+    throw new AmendmentRejected("authority", `amend refused for observer: this diff changes what the user observes (${what.join("; ")}). The observer may change 검사 방법 cells only; take this to the human (--issuer human with the user's verbatim approval).`);
+  }
+  if (plan.scope === "check-cells" && plan.checkCellChanged.length === 0 && excludeSuite.length === 0) {
+    throw new AmendmentRejected("arguments", "amended PRD changes no Behaviors row, Non-goals, or Decisions row; nothing to amend");
+  }
   const id = Math.max(0, ...state.amendments.map((entry) => entry.id)) + 1;
 
   // Excluded first, so a refused exclusion leaves the snapshot untouched: an
   // amendment that half-applied would be worse than one that did not run.
   const excluded: NonNullable<AmendmentRecord["excludedSuiteCommands"]> = [];
-  for (const requested of input.excludeSuite ?? []) {
-    const commandId = requested.trim().toUpperCase();
+  for (const commandId of excludeSuite) {
     const command = suiteCommandNamed(state, commandId);
     if (command === null) {
       throw new AmendmentRejected("arguments", `unknown suite command: ${commandId}; the sealed list holds ${state.suite.commands.map((entry) => entry.id).join(", ") || "no commands"}`);
     }
-    // The last result STAYS in the ledger. It stops being counted because the
-    // command left the scored list, but deleting it would erase a red this
-    // run really saw (AC42: which record is authoritative, and what became of
-    // the earlier result).
+    // The last result STAYS in the ledger: it stops being counted because
+    // the command left the scored list, but deleting it would erase a red
+    // this run really saw.
     const priorResult = state.suite.results.find((entry) => entry.commandId === commandId)?.status ?? "none";
     excludeSuiteCommand(state, { commandId, approval: input.approval.trim(), reason: input.reason.trim() }, at);
     excluded.push({ commandId, command: command.command, priorResult });
@@ -286,50 +262,22 @@ export function applyAmendment(
   writeTextAtomic(archive.absolute, fs.readFileSync(pinned.absolute, "utf8"));
   writeTextAtomic(pinned.absolute, input.text);
 
-  mergeCriteria(state, contract.acceptanceCriteria, plan, at);
-  // Requirements are coverage labels: they hold no independent proof, so the
-  // amended text simply replaces them. Task and verification TEXT is refreshed
-  // for the same reason, their id sets having already been proven identical.
-  state.requirements = contract.requirements;
-  const taskById = new Map(contract.tasks.map((entry) => [entry.id, entry]));
-  state.tasks = state.tasks.map((task) => {
-    const next = taskById.get(task.id)!;
-    return {
-      ...task,
-      text: next.text,
-      title: next.title,
-      requirements: next.requirements,
-      acceptanceCriteria: next.acceptanceCriteria,
-      dependsOn: next.dependsOn,
-    };
-  });
-  const verificationById = new Map(contract.verification.map((entry) => [entry.id, entry]));
-  state.verification = state.verification.map((item) => {
-    const next = verificationById.get(item.id)!;
-    return {
-      ...item,
-      text: next.text,
-      title: next.title,
-      covers: next.covers,
-      mode: next.mode,
-      requiredForDone: next.requiredForDone,
-      canBeBlocked: next.canBeBlocked,
-    };
-  });
+  mergeRows(state, next, plan, at);
   state.prd = { ...state.prd, sha256: sha256(input.text) };
 
   const record: AmendmentRecord = {
     id,
     at,
-    issuer: "human",
+    issuer: input.issuer,
+    scope: plan.scope,
     approval: input.approval.trim(),
     reason: input.reason.trim(),
     prdSha256: state.prd.sha256,
     snapshotPath,
     previousSnapshotPath,
-    invalidatedCriteria: plan.invalidatedCriteria,
-    addedCriteria: plan.addedCriteria,
-    unparkedCriteria: plan.unparkedCriteria,
+    invalidatedRows: plan.invalidatedRows,
+    addedRows: plan.addedRows,
+    unparkedRows: plan.unparkedRows,
     suiteSnapshotUpdated: excluded.length > 0,
     ...(excluded.length > 0 ? { excludedSuiteCommands: excluded } : {}),
   };

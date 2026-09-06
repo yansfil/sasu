@@ -57,7 +57,7 @@ export interface SolverEnvelope {
   reason: string;
   /** The sealed question paper. */
   prd: string;
-  /** The AC ledger as the replacement will read it. */
+  /** The row ledger as the replacement will read it. */
   checkLedger: string;
   /** Recent implementor output, when the environment can supply it. */
   paneExcerpt: string | null;
@@ -77,7 +77,7 @@ export function solverPrompt(envelope: SolverEnvelope): string {
     "",
     `## Sealed PRD\n\n${envelope.prd}`,
     "",
-    `## Acceptance-criterion ledger\n\n${envelope.checkLedger}`,
+    `## Behaviors row ledger\n\n${envelope.checkLedger}`,
     "",
     envelope.paneExcerpt === null
       ? `## Implementor output\n\nUnavailable: ${envelope.paneProblem ?? "no diagnosis channel in this environment"}. Diagnose from the ledger and the PRD alone, and say so if that is not enough.`
@@ -132,7 +132,7 @@ export function buildHandoffBriefing(handoff: SolverHandoff): string {
     "",
     `1. The sealed PRD - the question paper this run is measured against: ${handoff.prdSnapshotPath}`,
     `2. The solver's diagnosis - what the previous implementor was stuck on: ${handoff.diagnosisPath}`,
-    `3. The acceptance-criterion ledger - what is already proven and what is not: ${handoff.checkLedgerPath}`,
+    `3. The row ledger - what is already proven and what is not: ${handoff.checkLedgerPath}`,
     "",
     "Then report what you understand and what you intend to do next, and wait for the supervisor before writing code.",
   ].join("\n");
@@ -152,7 +152,7 @@ export function assertEscalateBudget(state: ImplementState): void {
   if (spent < ESCALATE_LIMIT_PER_RUN) return;
   throw new EscalateRejected(
     "transition",
-    `escalate refused: this run has used all ${ESCALATE_LIMIT_PER_RUN} escalations (${state.escalations.map((entry) => `#${entry.id} ${entry.outcome}`).join(", ")}). A fourth solver on the same problem is not a plan. Take it to the operator: park the criterion, amend the PRD, or finalize blocked.`,
+    `escalate refused: this run has used all ${ESCALATE_LIMIT_PER_RUN} escalations (${state.escalations.map((entry) => `#${entry.id} ${entry.outcome}`).join(", ")}). A fourth solver on the same problem is not a plan. Take it to the operator: park the row, amend the PRD, or finalize blocked.`,
   );
 }
 

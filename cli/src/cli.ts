@@ -44,26 +44,25 @@ Usage:
   sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
   sasu gate answer    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user answer to the NEEDS_HUMAN bundle>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
-  sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
+  sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-rows] [--json]
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
-  sasu implement check    --ac <ACn> [--bind "<command>" --cwd <path> [--reason "<why>"]] [--human-window "<verbatim human approval>"] [--json]
-  sasu implement check    --ac <ACn> --bookkeeping "<agents/... path,...>"   (declare an agents/** deliverable before doing the work) [--json]
-  sasu implement park     --ac <ACn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
-  sasu implement resume   --ac <ACn> [--json]
-  sasu implement resequence --order "<Tn,Tm,...>" [--reason "<why>"] [--json]
-  sasu implement amend    --issuer human --approval "<verbatim human approval>" --reason "<why>" [--exclude-suite "<S1,...>"] [--json]
-    (edit the source PRD first; amend re-seals it. Human-only: the supervisor may not correct the question paper.)
-  sasu implement qa-brief --ac <ACn> [--json]
-  sasu implement trail    --ac <ACn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]
+  sasu implement check    --row <Bn> [--json]   (runs the row's sealed check: command on the judged tree; judge:/human: rows are refused)
+  sasu implement park     --row <Bn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
+  sasu implement resume   --row <Bn> [--json]
+  sasu implement confirm  --issuer human --row <Bn> --evidence "<the user's own words>" [--reject] [--json]
+    (closes a human: row after finalize; --reject keeps it OPEN with the words on record. Human-only.)
+  sasu implement amend    --issuer <observer|human> --approval "<verbatim approval>" --reason "<why>" [--exclude-suite "<S1,...>"] [--json]
+    (edit the source PRD first; amend re-seals it. An observer may change 검사 방법 cells only; anything else is human-only.)
+  sasu implement qa-brief --row <Bn> [--json]
+  sasu implement trail    --row <Bn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]
     (the driver role is self-declared and recorded for audit; implementor and solver are refused by name.)
-  sasu implement escalate --reason "<what the implementor is stuck on>" [--target <Tn|ACn>] [--agent <herdr-agent>] [--json]
+  sasu implement escalate --reason "<what the implementor is stuck on>" [--target <Bn>] [--agent <herdr-agent>] [--json]
     (summons a read-only solver for a diagnosis, then resets the implementor's context; ${"`"}ESCALATE_LIMIT_PER_RUN${"`"} per run.)
   sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--json]
     (state-changing implement commands accept --issuer <implementor|observer|human>, default implementor.
      The label is self-declared and recorded for audit; the CLI does not authenticate it.)
-  sasu implement task     --id <Tn> [--status <complete|pending|blocked>] [--evidence "<context>"] [--json]
-  sasu implement artifact [--id <Vn>] [--ac <ACn>] --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
+  sasu implement artifact [--row <Bn>] --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
   sasu implement design   --id <D#> --accept "<why the comment is being left alone>" [--slug <topic> | --state <path>] [--json]
   sasu implement design   --raise --issuer <observer|human> --area <area> --path <path> --text "<what looks wrong>" --suggestion "<what to do>" [--json]
@@ -549,7 +548,7 @@ async function main(): Promise<void> {
         contractPath: typeof args.flags.get("contract") === "string" ? (args.flags.get("contract") as string) : undefined,
         baseRef: typeof args.flags.get("base") === "string" ? (args.flags.get("base") as string) : undefined,
         skipMechanical: args.flags.get("skip-mechanical") === true,
-        allowOpenTasks: args.flags.get("allow-open-tasks") === true,
+        allowOpenRows: args.flags.get("allow-open-rows") === true,
       });
       emitGateResult(result, asJson);
     }

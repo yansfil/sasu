@@ -1,83 +1,64 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
-import type { AcceptanceCriterionItem, AcceptanceJudgment, ContractItem, MechanicalBinding, ReviewProfile, TaskItem, VerificationItem } from "./types";
+import type { ReviewProfile, RowCheck } from "./types";
 
-interface ParsedItem {
-  id: string;
-  text: string;
-  title: string;
-  requirements?: string[];
-  acceptanceCriteria?: string[];
-  judgment?: AcceptanceJudgment | null;
-  evidenceDeclaration?: string | null;
-  matrix?: {
-    mode?: string;
-    covers?: string;
-    passCriteria?: string;
-    requiredForDone?: boolean;
-    canBeBlocked?: boolean;
-  };
+interface ParsedBehaviorRow {
+  id: string | null;
+  behavior: string;
+  check: { kind: "check" | "judge" | "human" | null; payload: string | null };
+  decisionCell: string;
+  decisionIds: string[];
+  line: number;
+  defects: string[];
 }
 
 interface ParserLibrary {
+  PRD_SECTIONS: readonly string[];
   stripFrontmatter(markdown: string): { frontmatter: Record<string, string>; body: string };
-  extractFirstSection(markdown: string, headings: string[]): string;
-  extractFirstNestedSection(markdown: string, headings: string[]): string;
-  parseMarkdownItems(markdown: string, prefix: string, label: string): ParsedItem[];
-  parseAcceptanceCriteria(markdown: string): ParsedItem[];
-  parseVerification(markdown: string): ParsedItem[];
-  parseTestModeContract(markdown: string): unknown[];
-  applyTestModeDefaults(items: ParsedItem[], modes: unknown[]): void;
-  coverageFromText(text: string): { requirements: string[]; acceptanceCriteria: string[]; scenarios: string[] };
   extractSection(markdown: string, heading: string): string;
-  extractNestedSection(markdown: string, heading: string): string;
+  parseBehaviorRows(markdown: string): { section: { line: number } | null; rows: ParsedBehaviorRow[] };
+  parseDecisionRows(markdown: string): Array<{ id: string; decision: string; rationale: string; line: number }>;
+  missingPrdSections(markdown: string): string[];
+  isLegacyFiveAxisPrd(markdown: string): boolean;
 }
 
-// The Markdown grammar remains shared with the document gates. This is parsing
-// reuse, not persistence compatibility: implement state has its own v3 schema.
+// The Markdown grammar is shared with prelint (one reader for both gates, R11);
+// this is parsing reuse, not persistence compatibility.
 const parser = require("../../lib/prd_parser.js") as ParserLibrary;
+
+/**
+ * The last commit whose `implement start` read the five-axis template
+ * (R/AC/T/V/SC). Named in the refusal so a holder of an old PRD knows which
+ * checkout can still run it, instead of being told only that it cannot (R2,
+ * AC2). Old documents under agents/prd stay as files; nothing converts them.
+ */
+export const LEGACY_PRD_LAST_COMMIT = "e71731a93f17d335beb0557a83e726654993732c";
+
+export interface DecisionRow {
+  id: string;
+  decision: string;
+  rationale: string;
+}
+
+export interface BehaviorRowContract {
+  id: string;
+  behavior: string;
+  check: RowCheck;
+  decisionIds: string[];
+  /** 1-based line of the row in the PRD; amend reports it. */
+  line: number;
+}
 
 export interface ImplementContract {
   frontmatter: Record<string, string>;
   body: string;
-  tasks: TaskItem[];
-  requirements: ContractItem[];
-  acceptanceCriteria: AcceptanceCriterionItem[];
-  /** §2.1 user scenario cards (SC#). Optional: scenario-less PRDs parse to []. */
-  scenarios: ContractItem[];
-  verification: VerificationItem[];
-  decisionTraceability: string;
-  scope: string;
+  goal: string;
+  nonGoals: string;
+  decisions: DecisionRow[];
+  rows: BehaviorRowContract[];
+  technicalStructure: string;
   risks: string;
-}
-
-function item(input: ParsedItem): ContractItem {
-  return {
-    id: input.id,
-    text: input.text,
-    title: input.title,
-    requirements: [...(input.requirements ?? [])],
-    acceptanceCriteria: [...(input.acceptanceCriteria ?? [])],
-    status: "pending",
-    evidence: [],
-  };
-}
-
-function acceptanceCriterion(input: ParsedItem): AcceptanceCriterionItem {
-  return {
-    ...item(input),
-    judgment: input.judgment ?? null,
-    evidenceDeclaration: input.evidenceDeclaration ?? null,
-    check: {
-      status: "pending",
-      bindings: [],
-      attempts: [],
-      consecutiveFailures: 0,
-      decisionPoints: [],
-      parks: [],
-    },
-  };
 }
 
 function profile(value: string | undefined): ReviewProfile {
@@ -85,134 +66,66 @@ function profile(value: string | undefined): ReviewProfile {
   return "standard";
 }
 
-// Task lines may carry `Depends on: T1, T3` or `Depends on: none`. Absence
-// means "the previous task", so a PRD written without the clause keeps the
-// sequential behavior it always had; only explicit declarations unlock
-// out-of-chain (including parallel) execution.
-const DEPENDS_ON = /\bdepends\s+on:\s*(none\b|T\d+(?:\s*,\s*T\d+)*)/i;
-
-function taskItems(parsed: ParsedItem[]): TaskItem[] {
-  return parsed.map((entry, index): TaskItem => {
-    const clause = entry.text.match(DEPENDS_ON);
-    const dependsOn = clause === null
-      ? (index === 0 ? [] : [parsed[index - 1]!.id])
-      : clause[1]!.toLowerCase() === "none"
-        ? []
-        : [...new Set(clause[1]!.split(",").map((id) => id.trim().toUpperCase()))];
-    return { ...item(entry), dependsOn };
-  });
+/** Split a command the way the runner will execute it: argv, no shell. */
+export function commandArgv(command: string): string[] {
+  const argv: string[] = [];
+  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(command)) !== null) {
+    argv.push(match[1] !== undefined ? match[1].replace(/\\(.)/g, "$1") : match[2] !== undefined ? match[2] : match[3]!);
+  }
+  return argv;
 }
 
-function validateTaskDependencies(tasks: TaskItem[]): void {
-  const ids = new Set<string>();
-  for (const task of tasks) {
-    if (ids.has(task.id)) throw new Error(`duplicate task id: ${task.id}`);
-    ids.add(task.id);
+function rowCheck(row: ParsedBehaviorRow): RowCheck {
+  const payload = row.check.payload!;
+  switch (row.check.kind) {
+    case "check":
+      return { kind: "check", command: payload, argv: commandArgv(payload) };
+    case "judge":
+      return { kind: "judge", evidence: payload };
+    case "human":
+      return { kind: "human", confirmation: payload };
+    default:
+      throw new Error(`row ${row.id ?? "?"} has no check kind`);
   }
-  for (const task of tasks) {
-    for (const dep of task.dependsOn) {
-      if (dep === task.id) throw new Error(`task ${task.id} cannot depend on itself`);
-      if (!ids.has(dep)) throw new Error(`task ${task.id} depends on unknown task ${dep}`);
-    }
-  }
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  const visiting = new Set<string>();
-  const settled = new Set<string>();
-  const visit = (id: string, trail: string[]): void => {
-    if (settled.has(id)) return;
-    if (visiting.has(id)) throw new Error(`task dependency cycle: ${[...trail, id].join(" -> ")}`);
-    visiting.add(id);
-    for (const dep of byId.get(id)!.dependsOn) visit(dep, [...trail, id]);
-    visiting.delete(id);
-    settled.add(id);
-  };
-  for (const task of tasks) visit(task.id, []);
 }
 
+/**
+ * Read a six-section PRD into the run's contract.
+ *
+ * Refuses, in this order: a five-axis document (naming the last commit that
+ * reads it), a missing section, an unreadable Behaviors row. The row rules
+ * are the parser's, so a document that lints clean starts, and one that does
+ * not start also fails prelint on the same line (R2, R11).
+ */
 export function parseImplementContract(markdown: string): ImplementContract {
+  if (parser.isLegacyFiveAxisPrd(markdown)) {
+    throw new Error(`이 PRD는 구 형식(R/AC/T/V 다섯 축)이며 이 형식을 읽는 마지막 커밋은 \`${LEGACY_PRD_LAST_COMMIT}\` 입니다. 여섯 섹션 형식(${parser.PRD_SECTIONS.join(", ")})으로 다시 작성하세요.`);
+  }
+  const missing = parser.missingPrdSections(markdown);
+  if (missing.length > 0) throw new Error(`PRD is missing section(s): ${missing.map((title) => `## ${title}`).join(", ")}`);
   const parsed = parser.stripFrontmatter(markdown);
-  const requirements = parser
-    .parseMarkdownItems(parser.extractFirstSection(parsed.body, ["6. Requirements", "Requirements"]), "R", "R")
-    .map(item);
-  const acceptanceCriteria = parser
-    .parseAcceptanceCriteria(parser.extractFirstSection(parsed.body, ["7. Acceptance Criteria", "Acceptance Criteria"]))
-    .map(acceptanceCriterion);
-  const scenarios = parser
-    .parseMarkdownItems(parser.extractFirstNestedSection(parsed.body, ["2.1 User Scenarios", "User Scenarios"]), "SC", "SC")
-    .map(item);
-  const tasks = taskItems(
-    parser.parseMarkdownItems(parser.extractFirstSection(parsed.body, ["8. PRD-Level Tasks", "PRD-Level Tasks"]), "T", "Task"),
-  );
-  validateTaskDependencies(tasks);
-  const verificationSection = parser.extractFirstSection(parsed.body, ["9. Verification Contract", "Verification Contract"]);
-  const rawVerification = parser.parseVerification(verificationSection);
-  const testModes = parser.parseTestModeContract(
-    parser.extractFirstNestedSection(verificationSection, ["9.1 Test Mode Contract", "Test Mode Contract"]) || verificationSection,
-  );
-  parser.applyTestModeDefaults(rawVerification, testModes);
-
-  // Reject duplicate AC ids at the door. parseImplementState asserts this
-  // invariant on every LOAD (store.ts), but persistState writes without
-  // validating - so a duplicate id that got past parsing let `implement
-  // start` record a state no later command could read, bricking the run with
-  // no CLI recovery (2026-08-30 code review, reproduced; task ids already had
-  // this guard in validateTaskDependencies). Refusing here covers every
-  // writer - start and amend both parse the contract first.
-  const acIds = new Set<string>();
-  for (const criterion of acceptanceCriteria) {
-    if (acIds.has(criterion.id)) throw new Error(`duplicate acceptance criterion id: ${criterion.id}`);
-    acIds.add(criterion.id);
-  }
-  const acById = new Map(acceptanceCriteria.map((entry) => [entry.id, entry]));
-  for (const requirement of requirements) {
-    for (const acId of requirement.acceptanceCriteria) {
-      const ac = acById.get(acId);
-      if (ac !== undefined && !ac.requirements.includes(requirement.id)) ac.requirements.push(requirement.id);
+  const behaviors = parser.parseBehaviorRows(markdown);
+  if (behaviors.rows.length === 0) throw new Error("## Behaviors has no table rows; a run needs at least one B<n> row");
+  const defects = behaviors.rows.flatMap((row) => row.defects.map((defect) => `line ${row.line} (${row.id ?? "row"}): ${defect}`));
+  if (defects.length > 0) throw new Error(`Behaviors rows are unreadable:\n${defects.join("\n")}`);
+  const decisions = parser.parseDecisionRows(markdown).map(({ id, decision, rationale }) => ({ id, decision, rationale }));
+  const decisionIds = new Set(decisions.map((row) => row.id));
+  for (const row of behaviors.rows) {
+    for (const id of row.decisionIds) {
+      if (!decisionIds.has(id)) throw new Error(`line ${row.line} (${row.id}): cites ${id}, which is not in the Decisions table`);
     }
   }
-  for (const task of tasks) {
-    const mapped = new Set(task.acceptanceCriteria);
-    for (const requirementId of task.requirements) {
-      const requirement = requirements.find((entry) => entry.id === requirementId);
-      for (const acId of requirement?.acceptanceCriteria ?? []) mapped.add(acId);
-    }
-    task.acceptanceCriteria = [...mapped];
-  }
-
-  const verification = rawVerification.map((entry): VerificationItem => {
-    const covers = parser.coverageFromText(entry.matrix?.covers ?? entry.text);
-    const mappedAcs = new Set(covers.acceptanceCriteria);
-    for (const requirementId of covers.requirements) {
-      const requirement = requirements.find((candidate) => candidate.id === requirementId);
-      for (const acId of requirement?.acceptanceCriteria ?? []) mappedAcs.add(acId);
-    }
-    return {
-      id: entry.id,
-      text: entry.text,
-      title: entry.title,
-      mode: entry.matrix?.mode ?? "automated behavior",
-      // SC ids ride in covers so the acceptance lane can hand each judge the
-      // scenario cards its V rows are responsible for.
-      covers: [...new Set([...covers.requirements, ...mappedAcs, ...covers.scenarios])],
-      requiredForDone: entry.matrix?.requiredForDone ?? true,
-      canBeBlocked: entry.matrix?.canBeBlocked ?? false,
-      passIntent: entry.matrix?.passCriteria ?? entry.title,
-      status: "NOT_RUN",
-      evidence: [],
-    };
-  });
-
   return {
     frontmatter: parsed.frontmatter,
     body: parsed.body,
-    tasks,
-    requirements,
-    acceptanceCriteria,
-    scenarios,
-    verification,
-    decisionTraceability: parser.extractNestedSection(parsed.body, "4.3 Decision Traceability For Fidelity Review"),
-    scope: parser.extractFirstSection(parsed.body, ["3. Scope And Non-Goals", "Scope And Non-Goals"]),
-    risks: parser.extractFirstSection(parsed.body, ["10. Risks And Open Decisions", "Risks And Open Decisions"]),
+    goal: parser.extractSection(parsed.body, "Goal"),
+    nonGoals: parser.extractSection(parsed.body, "Non-goals"),
+    decisions,
+    rows: behaviors.rows.map((row) => ({ id: row.id!, behavior: row.behavior, check: rowCheck(row), decisionIds: [...row.decisionIds], line: row.line })),
+    technicalStructure: parser.extractSection(parsed.body, "Technical structure"),
+    risks: parser.extractSection(parsed.body, "Risks"),
   };
 }
 
@@ -220,7 +133,7 @@ export function reviewProfile(contract: ImplementContract): ReviewProfile {
   return profile(contract.frontmatter["review_profile"]);
 }
 
-interface DetectedCommand {
+export interface DetectedCommand {
   kind: "test" | "e2e" | "build" | "typecheck";
   command: string;
   cwd: string;
@@ -262,40 +175,14 @@ function configuredCommands(projectRoot: string): DetectedCommand[] {
     .map((kind) => ({ kind, command: commands[kind]!, cwd: "." }));
 }
 
-function commandsForVerification(entry: VerificationItem, commands: DetectedCommand[]): DetectedCommand[] {
-  const mode = entry.mode.toLowerCase();
-  const intent = entry.passIntent.toLowerCase();
-  if (mode.includes("live judge")) return [];
-  if (mode.includes("local runtime") || mode.includes("e2e")) return commands.filter((command) => command.kind === "e2e");
-  if (mode.includes("build") || mode.includes("static")) {
-    const staticCommands = commands.filter((command) => command.kind === "build" || command.kind === "typecheck");
-    if (intent.includes("skill") || intent.includes("harness")) {
-      staticCommands.unshift(...commands.filter((command) => command.kind === "test" && command.cwd === "."));
-    }
-    return staticCommands;
-  }
-  if (mode.includes("automated") || mode.includes("test")) return commands.filter((command) => command.kind === "test");
-  return [];
-}
-
-export function mechanicalBindings(configRoot: string, treeRoot: string, verification: VerificationItem[]): MechanicalBinding[] {
-  const byKey = new Map<string, MechanicalBinding>();
-  // An explicit project config is the only reliable way to bind a nested
-  // product's checks when the repository also contains harness checks.
-  // Config lives in the record tree; command detection inspects the tree the
-  // commands will actually run in (the run's worktree when isolated).
+/**
+ * The regression suite a run is measured against, sealed at start (AC5 of
+ * the gate-loop PRD). An explicit project config is the only reliable way
+ * to bind a nested product's checks when the repository also contains
+ * harness checks; config lives in the record tree, detection inspects the
+ * tree the commands will actually run in (the run's worktree when isolated).
+ */
+export function suiteCommands(configRoot: string, treeRoot: string): DetectedCommand[] {
   const commands = configuredCommands(configRoot);
-  const resolvedCommands = commands.length > 0 ? commands : detectedCommands(treeRoot);
-  for (const item of verification) {
-    for (const command of commandsForVerification(item, resolvedCommands)) {
-      const key = `${command.cwd}\0${command.command}`;
-      const existing = byKey.get(key);
-      if (existing === undefined) {
-        byKey.set(key, { command: command.command, cwd: command.cwd, verificationIds: [item.id] });
-      } else if (!existing.verificationIds.includes(item.id)) {
-        existing.verificationIds.push(item.id);
-      }
-    }
-  }
-  return [...byKey.values()];
+  return commands.length > 0 ? commands : detectedCommands(treeRoot);
 }

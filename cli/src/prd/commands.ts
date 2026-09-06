@@ -39,22 +39,28 @@ function frontmatterValue(text: string, key: string): string | null {
 
 function readinessOf(prd: ResolvedPrd): { ok: boolean; detail: Record<string, unknown> } {
   const prelint = prelintPrd(prd.text);
-  const contract = parseImplementContract(prd.text);
-  const tagCounts = contract.acceptanceCriteria.reduce<Record<string, number>>((counts, criterion) => {
-    const tag = criterion.judgment ?? "missing";
-    counts[tag] = (counts[tag] ?? 0) + 1;
-    return counts;
-  }, { machine: 0, judged: 0, "machine+gate:human": 0, missing: 0 });
+  // The contract parser is the reader `implement start` uses; a document
+  // prelint passes but start would refuse (a five-axis PRD, a dangling D-id)
+  // is reported here with start's own words rather than discovered at start.
+  let parsed: Record<string, unknown>;
+  let contractError: string | null = null;
+  try {
+    const contract = parseImplementContract(prd.text);
+    const kinds = contract.rows.reduce<Record<string, number>>((counts, row) => {
+      counts[row.check.kind] = (counts[row.check.kind] ?? 0) + 1;
+      return counts;
+    }, { check: 0, judge: 0, human: 0 });
+    parsed = { rowCount: contract.rows.length, rowKinds: kinds, decisionCount: contract.decisions.length };
+  } catch (error) {
+    contractError = error instanceof Error ? error.message : String(error);
+    parsed = { rowCount: 0, rowKinds: { check: 0, judge: 0, human: 0 }, decisionCount: 0 };
+  }
   return {
-    ok: prelint.ok,
+    ok: prelint.ok && contractError === null,
     detail: {
       prdPath: prd.relative,
-      parsed: {
-        taskCount: contract.tasks.length,
-        acceptanceCriteriaCount: contract.acceptanceCriteria.length,
-        acceptanceJudgments: tagCounts,
-        verificationCount: contract.verification.length,
-      },
+      parsed,
+      contractError,
       blockingGaps: prelint.findings,
       warnings: prelint.warnings ?? [],
       status: prelint.ok ? "ready" : "needs_review",

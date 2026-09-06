@@ -1,17 +1,16 @@
 import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 import type { MechanicalOutcome } from "./verdict";
 
-// v7: adds the supervision ledgers - event log, observer verb history,
-// amendment history, sealed suite list with its results, QA trails, and solver
-// escalations. Older shapes are not migrated because completion authority must
-// never guess missing bindings, attempts, human approvals, or - now - which
-// suite commands a run was sealed against. A v6 run has no sealed suite list,
-// so a v7 CLI cannot tell "no orphan suite failures" from "never sealed", and
-// the honest answer is to refuse rather than assume (PRINCIPLES 10).
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v7" as const;
+// v8: the run is a list of Behaviors rows, each settled by exactly one of
+// `check:` (exit code), `judge:` (acceptance lane), or `human:` (confirm).
+// The task ledger, requirement list, AC check bindings and V rows are gone
+// with the five-axis template (PRD prd-template R5, R10). Older shapes are
+// not migrated: a v7 run's AC bindings and task statuses have no row to map
+// onto, and completion authority must never guess (PRINCIPLES 10), so every
+// command refuses v5-v7 with one explicit error.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v8" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 
-export type ItemStatus = "pending" | "complete" | "blocked";
 export type VerificationStatus = "NOT_RUN" | "PASS" | "FAIL" | "BLOCKED" | "ERROR" | "STALE";
 export type ReviewProfile = "trivial" | "standard" | "high-risk";
 
@@ -27,27 +26,42 @@ export interface EvidenceNote {
   text: string;
 }
 
-export interface ContractItem {
-  id: string;
-  text: string;
-  title: string;
-  requirements: string[];
-  acceptanceCriteria: string[];
-  status: ItemStatus;
-  evidence: EvidenceNote[];
-}
+/**
+ * How one Behaviors row is settled, read from its 검사 방법 cell at start
+ * and sealed with the PRD snapshot (D-06). The cell is the whole contract:
+ * a `check:` row is proved by its command's exit code and nothing else, a
+ * `judge:` row only by the acceptance lane, a `human:` row only by the
+ * person's own words through `confirm`.
+ */
+export type RowCheck =
+  | { kind: "check"; command: string; argv: string[] }
+  | { kind: "judge"; evidence: string }
+  | { kind: "human"; confirmation: string };
 
-export type AcceptanceJudgment = "machine" | "judged" | "machine+gate:human";
-export type AcceptanceCheckStatus = "pending" | "green" | "parked";
+/**
+ * One row's state as `status` shows it. `check:` rows move
+ * pending -> green | fail (| parked); `judge:` rows pending -> PASS | FAIL;
+ * `human:` rows OPEN -> PASS. The words are the PRD's (R5, R7).
+ */
+export type RowStatus = "pending" | "green" | "fail" | "parked" | "OPEN" | "PASS" | "FAIL";
 
-export interface CheckBinding {
+export interface BehaviorRow {
+  /** `B<n>` as written in the PRD. */
   id: string;
-  command: string;
-  argv: string[];
-  cwd: string;
-  classification: "asset" | "labor";
-  boundAt: string;
-  reason: string | null;
+  behavior: string;
+  check: RowCheck;
+  decisionIds: string[];
+  status: RowStatus;
+  /** `check:` rows only; every run of the row's command, oldest first. */
+  attempts: CheckAttempt[];
+  consecutiveFailures: number;
+  parks: CheckParkRecord[];
+  /** Latest judge reason for a `judge:` row; null until verify rules. */
+  verdict: { attemptId: string; verdict: "PASS" | "FAIL"; reason: string } | null;
+  /** Set by `confirm` on a `human:` row; null while OPEN. */
+  human: { confirmedAt: string; evidence: string } | null;
+  /** Every `confirm --reject`, oldest first; the receipt shows the latest. */
+  rejections: Array<{ at: string; evidence: string }>;
 }
 
 export interface CheckTreeFingerprint {
@@ -58,7 +72,6 @@ export interface CheckTreeFingerprint {
 
 export interface CheckAttempt {
   id: string;
-  bindingId: string;
   startedAt: string;
   finishedAt: string;
   durationMs: number;
@@ -73,95 +86,21 @@ export interface CheckAttempt {
   /** Non-null exactly when outcome is "failed"; a moved tree is not an output class. */
   failureClass: string | null;
   tree: CheckTreeFingerprint;
-  humanWindow: { evidence: string; recordedAt: string; criterionId: string } | null;
 }
 
-export interface CheckDecisionPoint {
-  id: string;
-  kind: "same-class" | "five-failures" | "tools-only";
-  openedAt: string;
-  attemptId: string;
-  message: string;
-  resolvedAt: string | null;
-  // "amended" closes a decision point the amendment made moot: the criterion
-  // it was posted against is no longer the same question (R5).
-  resolution: "green" | "parked" | "rebound" | "amended" | null;
-}
-
+/**
+ * A `check:` row set aside with the human's approval on record. Nobody but
+ * the person may decide a row is proved later: the observer's park used to
+ * rest on a harness-posted decision point, and decision points left with the
+ * check ledger (R5), so a park now always carries the approval quote.
+ */
 export interface CheckParkRecord {
   parkedAt: string;
-  /**
-   * "human" parks carry a verbatim approval; "observer" parks carry a posted
-   * decision point instead. The supervisor may set aside a criterion the
-   * harness has already flagged as stuck, but it may not invent the judgment
-   * that it is stuck (AC20).
-   */
-  parkedBy: "human" | "observer";
-  /** Verbatim human approval; empty for an observer park. */
+  /** Verbatim human approval. */
   approval: string;
   reason: string;
   evidence: string | null;
   resumedAt: string | null;
-}
-
-/**
- * A file under `agents/**` this criterion's work is meant to change, declared
- * before the work (R16 ①, AC44).
- *
- * The bookkeeping namespace is excluded from every judged diff and from the
- * vouched fingerprint on purpose, which means a criterion whose deliverable
- * lives there cannot prove "this run did that" the way every other criterion
- * does. 2026-08-29, interview-anchor: the only proof available was a unit
- * test that read the repository's live `agents/**`, which is a test coupled
- * to bookkeeping rather than a proof of it.
- *
- * `baselineSha256` is the file's content when the target was declared - null
- * when it did not exist yet. Closing requires the content to have MOVED from
- * that baseline and a registered artifact to vouch for where it moved to:
- * two structural facts, neither of them a diff.
- */
-export interface BookkeepingTarget {
-  /** Project-relative, under `agents/`, never a harness-rewritten path. */
-  path: string;
-  /** Content at declaration time; null if the file did not exist. */
-  baselineSha256: string | null;
-  declaredAt: string;
-}
-
-export interface AcceptanceCheckLedger {
-  status: AcceptanceCheckStatus;
-  bindings: CheckBinding[];
-  attempts: CheckAttempt[];
-  consecutiveFailures: number;
-  decisionPoints: CheckDecisionPoint[];
-  parks: CheckParkRecord[];
-  /** Declared `agents/**` deliverables; absent when the criterion has none. */
-  bookkeeping?: BookkeepingTarget[];
-}
-
-export interface AcceptanceCriterionItem extends ContractItem {
-  judgment: AcceptanceJudgment | null;
-  evidenceDeclaration: string | null;
-  check: AcceptanceCheckLedger;
-}
-
-export interface TaskItem extends ContractItem {
-  // Task ids this task's close is gated on. Absent clause in the PRD means
-  // "the previous task"; `Depends on: none` or an explicit list overrides it.
-  dependsOn: string[];
-}
-
-export interface VerificationItem {
-  id: string;
-  text: string;
-  title: string;
-  mode: string;
-  covers: string[];
-  requiredForDone: boolean;
-  canBeBlocked: boolean;
-  passIntent: string;
-  status: VerificationStatus;
-  evidence: EvidenceNote[];
 }
 
 export interface SourceEntry {
@@ -186,29 +125,22 @@ export interface BaselineAttribution {
 }
 
 export interface RegisteredArtifact {
-  verificationId?: string;
-  acceptanceCriterionId?: string;
+  /** Behaviors row this evidence is registered for; absent for a run-wide capture. */
+  rowId?: string;
   kind: string;
   path: string;
   description: string;
   sha256: string;
   bytes: number;
-  // Legacy v5 records may carry this removed per-artifact freshness pin.
-  // It is accepted for additive-tolerant reads but ignored; new records omit it.
-  sourceFingerprint?: string;
   registeredAt: string;
   command?: string;
   cwd?: string;
   exitCode?: number;
 }
 
-export interface MechanicalBinding {
+export interface MechanicalRunRecord {
   command: string;
   cwd: string;
-  verificationIds: string[];
-}
-
-export interface MechanicalRunRecord extends MechanicalBinding {
   startedAt: string;
   finishedAt: string;
   durationMs: number;
@@ -242,7 +174,7 @@ export interface DeltaBasis {
 }
 
 export interface AcceptanceCriterionInvocation {
-  criterionId: string;
+  rowId: string;
   invocationId: string;
   startedAt: string;
   finishedAt: string;
@@ -393,17 +325,18 @@ export interface FidelityCheckResult {
 
 export interface VerificationInputManifest {
   source: SourceEntry[];
-  evidence: Array<{ verificationId?: string; acceptanceCriterionId?: string; path: string; sha256: string }>;
+  evidence: Array<{ rowId?: string; path: string; sha256: string }>;
+  /** Every row's sealed check cell plus the `check:` rows' ledger state. */
   checkLedger: {
     sha256: string;
-    bindings: Array<{ criterionId: string; bindingId: string; command: string; argv: string[]; cwd: string; classification: "asset" | "labor" }>;
+    rows: Array<{ rowId: string; kind: RowCheck["kind"]; payload: string; status: RowStatus }>;
   };
 }
 
 export interface VerificationRoundContext {
   priorAttemptId: string | null;
   changedPaths: string[];
-  newEvidence: Array<{ verificationId?: string; acceptanceCriterionId?: string; path: string; sha256: string }>;
+  newEvidence: Array<{ rowId?: string; path: string; sha256: string }>;
 }
 
 export interface VerificationRoundContexts {
@@ -439,7 +372,7 @@ export interface UnifiedVerificationAttempt {
   /** Exact prior-result/delta context used by each semantic judge unit. */
   roundContexts: VerificationRoundContexts;
   fidelityInput: {
-    routing: "decision-traceability" | "full-qa-log";
+    routing: "decisions" | "full-qa-log";
     contentSha256: string;
   };
   startedAt: string;
@@ -448,8 +381,8 @@ export interface UnifiedVerificationAttempt {
   verdict: VerificationStatus;
   prelint: { ok: boolean; findings: unknown[] };
   mechanical: MechanicalRunRecord[];
-  /** Criteria deliberately excluded from this attempt by a recorded park. */
-  skippedAcceptanceCriteria: Array<{ id: string; reason: string }>;
+  /** Rows deliberately excluded from this attempt by a recorded park. */
+  parkedRows: Array<{ id: string; reason: string }>;
   lanes: {
     acceptance: LaneRecord<{
       verdict: "PASS" | "FAIL";
@@ -479,15 +412,17 @@ export interface UnifiedVerificationAttempt {
 //
 //   suite command   sealed -> excluded          human approval quote required
 //                   sealed -> (never parked)    park of a suite command is refused
-//   acceptance AC   pending -> green            all bound checks green
-//                   green   -> pending          amendment changed that AC's row hash
-//                   pending -> parked           decision point posted + reason
+//   check: row      pending -> green | fail     `check --row` exit code
+//                   green   -> pending          amendment changed that row's cells
+//                   pending -> parked           human approval quote + reason
 //                   parked  -> pending          resume, or amendment changed the row
-//   task            pending -> complete/blocked unchanged from v6
-//                   pending -> pending          resequence permutes order only
-//   amendment       accepted only while no task is in progress; never reverted
+//   judge: row      pending -> PASS | FAIL      acceptance lane verdict
+//   human: row      OPEN    -> PASS             `confirm --row` (human); never reopened
+//   run             active  -> complete-pending-human | complete   finalize
+//                   complete-pending-human -> complete              last confirm
+//   amendment       check-cells: observer or human; behaviors: human; never reverted
 //   escalation      accepted while count < ESCALATE_LIMIT_PER_RUN; then refused
-//   trail           accepted -> superseded      a later accepted trail for the same AC
+//   trail           accepted -> superseded      a later accepted trail for the same row
 //
 // The one rule with no transition: events. Once appended, an event is never
 // edited or removed for the life of the run (AC24).
@@ -511,19 +446,17 @@ export type IssuerLabel = "implementor" | "observer" | "human";
 export type ClaimOrigin = "human" | "observer" | "solver";
 
 export type ImplementEventKind =
-  | "task-status"
-  | "check-bound"
+  | "row-status"
   | "check-attempt"
-  | "criterion-status"
   | "park"
   | "resume"
   | "amendment"
-  | "resequence"
   | "escalate"
   | "trail"
   | "comment"
   | "verify"
-  | "finalize";
+  | "finalize"
+  | "confirm";
 
 /**
  * One thing that happened, in the order it happened. This is what the
@@ -536,7 +469,7 @@ export interface ImplementEvent {
   at: string;
   kind: ImplementEventKind;
   actor: IssuerLabel;
-  /** Task or criterion id this event is about; null for run-wide events. */
+  /** Row id this event is about; null for run-wide events. */
   subject: string | null;
   summary: string;
 }
@@ -554,7 +487,6 @@ export interface ImplementEvent {
  */
 export type IssuedCommand =
   | "check"
-  | "task"
   | "artifact"
   | "verify"
   | "finalize"
@@ -563,7 +495,7 @@ export type IssuedCommand =
   | "risk"
   | "park"
   | "resume"
-  | "resequence"
+  | "confirm"
   | "qa-brief"
   | "trail"
   | "escalate"
@@ -578,7 +510,7 @@ export interface VerbRecord {
   at: string;
   verb: IssuedCommand;
   issuer: IssuerLabel;
-  /** Task or criterion the verb was aimed at; null for run-wide verbs. */
+  /** Row the verb was aimed at; null for run-wide verbs. */
   target: string | null;
   reason: string;
   outcome: "accepted" | "rejected";
@@ -606,7 +538,7 @@ export interface EvidenceReplacement {
   /** Monotonic from 1, never reused. */
   id: number;
   at: string;
-  criterionId: string;
+  rowId: string;
   kind: "artifact" | "trail";
   /** The evidence that was superseded, named the way its record names it. */
   previous: string;
@@ -619,23 +551,30 @@ export interface AmendmentRecord {
   id: number;
   at: string;
   /**
-   * Always "human". Kept as a field rather than assumed so the record states
-   * the authority it was accepted under; a supervisor-issued amendment is
-   * refused before it ever reaches this ledger (AC12).
+   * The authority the amendment was accepted under (R6). "observer" only
+   * ever appears on a `check-cells` amendment: a supervisor may repair how a
+   * row is checked, never what the user observes. The implementor is refused
+   * before it reaches this ledger.
    */
-  issuer: "human";
-  /** Verbatim user approval quote. */
+  issuer: "observer" | "human";
+  /**
+   * What the diff touched. `check-cells` means only 검사 방법 cells changed;
+   * `behaviors` means a behavior cell, the row set, Non-goals or the
+   * Decisions table moved, which is a scope change and human-only.
+   */
+  scope: "check-cells" | "behaviors";
+  /** Verbatim approval quote. */
   approval: string;
   reason: string;
   prdSha256: string;
   snapshotPath: string;
   previousSnapshotPath: string;
-  /** Criteria whose normalized row hash changed and therefore lost green. */
-  invalidatedCriteria: string[];
-  /** Criteria that did not exist before and join unproven. */
-  addedCriteria: string[];
-  /** Parked criteria whose row changed, so their park lifted. */
-  unparkedCriteria: string[];
+  /** Rows whose check cell or behavior changed and therefore lost their proof. */
+  invalidatedRows: string[];
+  /** Rows that did not exist before and join unproven. */
+  addedRows: string[];
+  /** Parked rows whose row changed, so their park lifted. */
+  unparkedRows: string[];
   /** True when this amendment also excluded a sealed suite command (AC42). */
   suiteSnapshotUpdated: boolean;
   /**
@@ -655,13 +594,6 @@ export interface SuiteCommand {
   command: string;
   argv: string[];
   cwd: string;
-  /**
-   * Verification rows this command proves, frozen with the list. Sealed
-   * rather than re-derived per attempt for the same reason the command list
-   * is: a mid-run PRD edit must not silently remap which V row a green
-   * belongs to (AC5).
-   */
-  verificationIds: string[];
 }
 
 export interface SuiteExclusion {
@@ -683,12 +615,6 @@ export interface SuiteResult {
   mutatedTree: boolean;
   status: "GREEN" | "RED";
   logPath: string;
-  /**
-   * Criteria that share this exact `(cwd, command)` and were scored from the
-   * same single execution. Empty means the command is an orphan suite entry -
-   * the case whose failure blocks the run on its own axis (R2).
-   */
-  attributedCriteria: string[];
 }
 
 /**
@@ -717,7 +643,7 @@ export interface QaBriefStep {
  */
 export interface QaBrief {
   briefId: string;
-  criterionId: string;
+  rowId: string;
   issuedAt: string;
   /** PRD snapshot the script was derived from. */
   prdSha256: string;
@@ -734,7 +660,7 @@ export type DriverRole = "human" | "observer" | "qa-agent";
 export interface TrailRecord {
   id: number;
   at: string;
-  criterionId: string;
+  rowId: string;
   briefId: string;
   driverRole: DriverRole;
   /** Step ids the driver covered; compared as a set against the brief. */
@@ -759,7 +685,7 @@ export interface SolverHandoff {
 export interface EscalationRecord {
   id: number;
   at: string;
-  /** Task or criterion the implementor was stuck on. */
+  /** Row the implementor was stuck on. */
   target: string | null;
   reason: string;
   /** Judge routing profile reused for the solver (R12); no new knob. */
@@ -780,7 +706,12 @@ export type PrdJudgeRecord =
 
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
-  status: "active" | "complete" | "blocked" | "retired";
+  /**
+   * `complete-pending-human`: every check:/judge: row proved and at least
+   * one human: row still OPEN (R8). Closed for implementation like
+   * `complete`; only `confirm` still writes.
+   */
+  status: "active" | "complete-pending-human" | "complete" | "blocked" | "retired";
   topicSlug: string;
   /**
    * The RECORD tree: where agents/ bookkeeping (this state, receipt, PRD,
@@ -830,10 +761,8 @@ export interface ImplementState {
   // verbatim like budgetGrants. Not a deviation: ownership is process
   // metadata, not judged material, and must not stale a settled verdict.
   adoptions?: { at: string; fromSessionId: string; evidence: string }[];
-  tasks: TaskItem[];
-  requirements: ContractItem[];
-  acceptanceCriteria: AcceptanceCriterionItem[];
-  verification: VerificationItem[];
+  /** The Behaviors table, sealed at start, in PRD order. */
+  rows: BehaviorRow[];
   artifacts: RegisteredArtifact[];
   verificationAttempts: UnifiedVerificationAttempt[];
   // Explicit user go-aheads that opened a fresh fix budget after exhaustion.
@@ -860,7 +789,7 @@ export interface ImplementState {
   verbs: VerbRecord[];
   amendments: AmendmentRecord[];
   suite: SuiteLedger;
-  /** Issued briefs, newest last; a criterion may have several over a run. */
+  /** Issued briefs, newest last; a row may have several over a run. */
   qaBriefs: QaBrief[];
   trails: TrailRecord[];
   /** Escalation count is `escalations.length`, never a separate counter. */

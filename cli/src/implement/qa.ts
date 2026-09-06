@@ -1,6 +1,6 @@
 import { sha256 } from "./store";
 import type {
-  AcceptanceCriterionItem,
+  BehaviorRow,
   DriverRole,
   ImplementState,
   QaBrief,
@@ -9,7 +9,7 @@ import type {
 } from "./types";
 
 /**
- * The briefing channel for judged, driven criteria (R11).
+ * The briefing channel for judge: rows proved by driving a screen.
  *
  * Two things live here and they are deliberately different in kind. Deriving
  * the script is STRUCTURAL: it reads the sealed PRD's own sentence and
@@ -91,20 +91,20 @@ function enumeratedParts(sentence: string): string[] {
 }
 
 /**
- * Derive the numbered script from the sealed criterion row (AC30).
+ * Derive the numbered script from the sealed Behaviors row.
  *
- * The whole row is the source: the criterion says what must be true and the
- * evidence declaration says what must be captured, and a driver who does the
+ * The whole row is the source: the behavior says what must be true and the
+ * judge: cell says what must be captured, and a driver who does the
  * first without the second has not finished. Steps are numbered in reading
  * order so `S3` means the same thing to everyone holding the same brief.
  */
-export function deriveBriefSteps(criterion: AcceptanceCriterionItem): QaBriefStep[] {
+export function deriveBriefSteps(row: BehaviorRow): QaBriefStep[] {
   const parts = [
-    ...sentences(criterion.text).flatMap(enumeratedParts),
-    ...sentences(criterion.evidenceDeclaration ?? "").flatMap(enumeratedParts),
+    ...sentences(row.behavior).flatMap(enumeratedParts),
+    ...sentences(row.check.kind === "judge" ? row.check.evidence : "").flatMap(enumeratedParts),
   ];
   if (parts.length === 0) {
-    throw new TrailRejected("arguments", `${criterion.id} has no criterion text to derive a script from; the sealed PRD row is empty`);
+    throw new TrailRejected("arguments", `${row.id} has no behavior text to derive a script from; the sealed PRD row is empty`);
   }
   return parts.map((text, index) => ({ id: `S${index + 1}`, text }));
 }
@@ -119,30 +119,30 @@ export function deriveBriefSteps(criterion: AcceptanceCriterionItem): QaBriefSte
  */
 export function issueQaBrief(
   state: ImplementState,
-  criterion: AcceptanceCriterionItem,
+  row: BehaviorRow,
   at: string,
 ): QaBrief {
-  if (criterion.judgment !== "judged") {
-    throw new TrailRejected("arguments", `${criterion.id} is ${criterion.judgment ?? "untagged"}; qa-brief issues scripts for judged criteria only. A machine criterion is proven by its Check, not by a driver.`);
+  if (row.check.kind !== "judge") {
+    throw new TrailRejected("arguments", `${row.id} is a ${row.check.kind}: row; qa-brief issues scripts for judge: rows only. A check: row is proven by its command and a human: row by confirm, not by a driver.`);
   }
-  const sequence = state.qaBriefs.filter((entry) => entry.criterionId === criterion.id).length + 1;
+  const sequence = state.qaBriefs.filter((entry) => entry.rowId === row.id).length + 1;
   const brief: QaBrief = {
-    briefId: `${criterion.id}-B${sequence}-${sha256([criterion.id, state.prd.sha256, at, String(sequence)].join("\x00")).slice(0, 12)}`,
-    criterionId: criterion.id,
+    briefId: `${row.id}-Q${sequence}-${sha256([row.id, state.prd.sha256, at, String(sequence)].join("\x00")).slice(0, 12)}`,
+    rowId: row.id,
     issuedAt: at,
     prdSha256: state.prd.sha256,
-    steps: deriveBriefSteps(criterion),
+    steps: deriveBriefSteps(row),
   };
   state.qaBriefs.push(brief);
   return brief;
 }
 
-export function latestBriefFor(state: ImplementState, criterionId: string): QaBrief | null {
-  return [...state.qaBriefs].reverse().find((entry) => entry.criterionId === criterionId) ?? null;
+export function latestBriefFor(state: ImplementState, rowId: string): QaBrief | null {
+  return [...state.qaBriefs].reverse().find((entry) => entry.rowId === rowId) ?? null;
 }
 
 export interface TrailInput {
-  criterionId: string;
+  rowId: string;
   briefId: string;
   driverRole: DriverRole;
   coveredStepIds: string[];
@@ -164,15 +164,15 @@ export function registerTrail(
 ): TrailRecord {
   const brief = state.qaBriefs.find((entry) => entry.briefId === input.briefId);
   if (brief === undefined) {
-    const latest = latestBriefFor(state, input.criterionId);
-    throw new TrailRejected("arguments", `no brief ${input.briefId} was issued for this run; ${latest === null ? `issue one with \`sasu implement qa-brief --ac ${input.criterionId}\`` : `the current brief for ${input.criterionId} is ${latest.briefId}`}. qa-brief is the only briefing channel, so a drive with no brief behind it cannot be registered.`);
+    const latest = latestBriefFor(state, input.rowId);
+    throw new TrailRejected("arguments", `no brief ${input.briefId} was issued for this run; ${latest === null ? `issue one with \`sasu implement qa-brief --ac ${input.rowId}\`` : `the current brief for ${input.rowId} is ${latest.briefId}`}. qa-brief is the only briefing channel, so a drive with no brief behind it cannot be registered.`);
   }
-  if (brief.criterionId !== input.criterionId) {
-    throw new TrailRejected("arguments", `brief ${brief.briefId} was issued for ${brief.criterionId}, not ${input.criterionId}`);
+  if (brief.rowId !== input.rowId) {
+    throw new TrailRejected("arguments", `brief ${brief.briefId} was issued for ${brief.rowId}, not ${input.rowId}`);
   }
-  const current = latestBriefFor(state, input.criterionId)!;
+  const current = latestBriefFor(state, input.rowId)!;
   if (current.briefId !== brief.briefId) {
-    throw new TrailRejected("transition", `brief ${brief.briefId} is superseded; ${input.criterionId} was rebriefed as ${current.briefId}. Drive the current script - a trail against an old one proves the old question.`);
+    throw new TrailRejected("transition", `brief ${brief.briefId} is superseded; ${input.rowId} was rebriefed as ${current.briefId}. Drive the current script - a trail against an old one proves the old question.`);
   }
 
   const covered = new Set(input.coveredStepIds.map((id) => id.trim().toUpperCase()).filter((id) => id !== ""));
@@ -196,7 +196,7 @@ export function registerTrail(
   // the record of what was driven, and against which brief, stays readable.
   const superseded: TrailRecord[] = [];
   for (const entry of state.trails) {
-    if (entry.criterionId === input.criterionId && entry.status === "accepted") {
+    if (entry.rowId === input.rowId && entry.status === "accepted") {
       entry.status = "superseded";
       superseded.push(entry);
     }
@@ -204,7 +204,7 @@ export function registerTrail(
   const record: TrailRecord = {
     id: Math.max(0, ...state.trails.map((entry) => entry.id)) + 1,
     at,
-    criterionId: input.criterionId,
+    rowId: input.rowId,
     briefId: brief.briefId,
     driverRole: input.driverRole,
     coveredStepIds: brief.steps.map((step) => step.id),
@@ -219,7 +219,7 @@ export function registerTrail(
     state.evidenceReplacements.push({
       id: Math.max(0, ...state.evidenceReplacements.map((existing) => existing.id)) + 1,
       at,
-      criterionId: input.criterionId,
+      rowId: input.rowId,
       kind: "trail",
       previous: `trail ${earlier.id} against brief ${earlier.briefId}, driven by ${earlier.driverRole}`,
       next: `trail ${record.id} against brief ${record.briefId}, driven by ${record.driverRole}`,

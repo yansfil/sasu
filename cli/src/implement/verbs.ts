@@ -60,7 +60,6 @@ export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
   // Implementation work. The supervisor plans and judges; it does not build,
   // and it does not get to say the building is done.
   check: ["implementor", "human"],
-  task: ["implementor", "human"],
   artifact: ["implementor", "human"],
   verify: ["implementor", "human"],
   finalize: ["implementor", "human"],
@@ -69,7 +68,9 @@ export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
   // The supervisor's own channel (R7).
   park: ["implementor", "observer", "human"],
   resume: ["implementor", "observer", "human"],
-  resequence: ["observer", "human"],
+  // Human-only. A `human:` row is closed by the person's own words and by
+  // nobody else's; the harness records the words, it does not decide (R8).
+  confirm: ["human"],
   // Briefing and trail registration stay open to every issuer on purpose.
   // The gate R11 actually names is the DRIVER role recorded on the trail
   // (AC31/AC32), and PRD 10장 already accepts that a self-declared role
@@ -88,8 +89,10 @@ export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
   // structurally unfixable is a judgment about the question, and the run it
   // closes is the one making the claim (R16 ③).
   "risk-non-convergent": ["human"],
-  // Human-only. Correcting the question paper is not an agent's call (R5).
-  amend: ["human"],
+  // The observer may repair a check cell (how a row is proved); only the
+  // human may change what the user observes. The split is enforced on the
+  // diff inside amend.ts, so the table admits both and the diff decides (R6).
+  amend: ["observer", "human"],
 };
 
 /**
@@ -155,48 +158,4 @@ export function rejectVerb(
   recordVerb(state, { ...entry, outcome: "rejected", rejection: { check, message } });
   persist();
   throw new VerbRejected(check, message);
-}
-
-/**
- * Reorder the pending tasks.
- *
- * Deliberately the smallest thing that could work: one validation (is this a
- * permutation of exactly the pending set?) and one write (fill the pending
- * slots in the given order). No dependency inference, no relative-position
- * syntax, no priority field.
- *
- * It invalidates nothing. `dependsOn` is materialized when the PRD is parsed
- * and stored per task, so array order carries no dependency meaning and
- * moving a task cannot change what gates it (R6, AC18). Reordering a COMPLETE
- * task is not resequencing but undoing, and belongs to park or amendment - so
- * completed and blocked tasks keep their slots and may not be named.
- */
-export function resequencePendingTasks(state: ImplementState, order: string[]): string[] {
-  const pending = state.tasks.filter((task) => task.status === "pending").map((task) => task.id);
-  const requested = order.map((id) => id.trim().toUpperCase()).filter((id) => id !== "");
-
-  const seen = new Set<string>();
-  for (const id of requested) {
-    if (seen.has(id)) throw new Error(`resequence lists ${id} more than once; give each pending task exactly once`);
-    seen.add(id);
-  }
-  const pendingSet = new Set(pending);
-  const notPending = requested.filter((id) => !pendingSet.has(id));
-  if (notPending.length > 0) {
-    const known = new Set(state.tasks.map((task) => task.id));
-    throw new Error(notPending.every((id) => known.has(id))
-      ? `resequence may only reorder pending tasks; ${notPending.join(", ")} is not pending. Moving a finished task is undoing it, which is park or amendment, not resequence.`
-      : `unknown task(s) in resequence: ${notPending.filter((id) => !known.has(id)).join(", ")}`);
-  }
-  const missing = pending.filter((id) => !seen.has(id));
-  if (missing.length > 0) {
-    throw new Error(`resequence must name every pending task exactly once; missing ${missing.join(", ")}. A partial order would leave the rest in an order nobody chose.`);
-  }
-
-  // Fill the pending slots in the requested order, leaving every non-pending
-  // task exactly where it was.
-  const queue = requested.map((id) => state.tasks.find((task) => task.id === id)!);
-  let next = 0;
-  state.tasks = state.tasks.map((task) => (task.status === "pending" ? queue[next++]! : task));
-  return requested;
 }

@@ -4,7 +4,7 @@ import { checkSection, evidenceSection, type CheckResult, type EvidenceMaterial 
 import type { ImplementContract } from "./contract";
 import type {
   AcLaneResult,
-  ContractItem,
+  BehaviorRow,
   FidelityCheckResult,
   ImplementState,
   RegisteredArtifact,
@@ -32,7 +32,7 @@ function artifactSummary(artifacts: RegisteredArtifact[]): string {
       const provenance = artifact.command === undefined
         ? agentRegisteredArtifactProvenance(artifact.registeredAt)
         : `the harness ran \`${artifact.command}\` at ${artifact.registeredAt}${artifact.cwd === undefined ? "" : ` from cwd=${artifact.cwd}`}`;
-      return `- ${artifact.acceptanceCriterionId ?? artifact.verificationId ?? "unbound"} ${artifact.kind} ${artifact.path} sha256=${artifact.sha256}; ${provenance} - ${artifact.description}`;
+      return `- ${artifact.rowId ?? "unbound"} ${artifact.kind} ${artifact.path} sha256=${artifact.sha256}; ${provenance} - ${artifact.description}`;
     })
     .join("\n");
 }
@@ -149,7 +149,7 @@ function roundDeltaSection(
   const changedPaths = pathList(context.changedPaths);
   const newEvidence = context.newEvidence.length === 0
     ? "- none"
-    : context.newEvidence.map((entry) => `- ${entry.acceptanceCriterionId ?? entry.verificationId}:${entry.path} sha256=${entry.sha256}`).join("\n");
+    : context.newEvidence.map((entry) => `- ${entry.rowId ?? "unbound"}:${entry.path} sha256=${entry.sha256}`).join("\n");
   return `
 ROUND-2+ DELTA CONTRACT:
 - Disposition every prior finding by its supplied id as resolved or unresolved.
@@ -190,18 +190,14 @@ export interface AcceptancePromptMaterial {
   facts: EnvelopeFacts;
   /** Section 3: what people asserted, each with its origin label (AC8, AC9). */
   claims: EnvelopeClaim[];
-  /**
-   * §2.1 scenario cards covered by the same V rows that cover this criterion.
-   * The card body (primary path, failure state, recovery) travels to the judge
-   * so "half the scenario verified" is judgeable, not invisible.
-   */
-  scenarios: ContractItem[];
+  /** The Decisions rows this row cites, so the judge reads the reason the behavior exists. */
+  decisions: Array<{ id: string; decision: string; rationale: string }>;
 }
 
 function checkLedgerSection(ledger: string): string {
   return `
-HARNESS-OWNED ACCEPTANCE CHECK LEDGER:
-The harness executed these bindings and recorded attempts itself. Binding replacements stay visible.
+HARNESS-OWNED ROW LEDGER:
+Every Behaviors row's sealed check cell and, for check: rows, the exit-code result the harness recorded itself.
 ---
 ${ledger}
 ---
@@ -233,31 +229,27 @@ export interface EnvelopeClaim {
 }
 
 export interface EnvelopeFacts {
-  /** Per-criterion check ledger the harness executed. */
+  /** Every row's sealed check cell plus the check: rows' recorded results. */
   checkLedger: string;
-  suiteResults: Array<{ commandId: string; command: string; status: string; exitCode: number; attributedCriteria: string[] }>;
+  suiteResults: Array<{ commandId: string; command: string; status: string; exitCode: number }>;
   suiteExclusions: Array<{ commandId: string; at: string }>;
-  rebinds: Array<{ criterionId: string; from: string; to: string; at: string }>;
-  amendments: Array<{ id: number; at: string; invalidatedCriteria: string[]; addedCriteria: string[]; unparkedCriteria: string[] }>;
-  parked: Array<{ id: string; parkedBy: string; at: string }>;
+  amendments: Array<{ id: number; at: string; scope: string; issuer: string; invalidatedRows: string[]; addedRows: string[]; unparkedRows: string[] }>;
+  parked: Array<{ id: string; at: string }>;
 }
 
 function factsSection(facts: EnvelopeFacts): string {
   const suite = facts.suiteResults.length === 0
     ? "- none recorded"
-    : facts.suiteResults.map((entry) => `- ${entry.commandId} ${entry.status} (exit ${entry.exitCode}): ${entry.command}${entry.attributedCriteria.length === 0 ? " [no criterion binds this command]" : ` [also scored for ${entry.attributedCriteria.join(", ")}]`}`).join("\n");
+    : facts.suiteResults.map((entry) => `- ${entry.commandId} ${entry.status} (exit ${entry.exitCode}): ${entry.command}`).join("\n");
   const exclusions = facts.suiteExclusions.length === 0
     ? "- none"
     : facts.suiteExclusions.map((entry) => `- ${entry.commandId} excluded from the sealed list at ${entry.at}`).join("\n");
-  const rebinds = facts.rebinds.length === 0
-    ? "- none"
-    : facts.rebinds.map((entry) => `- ${entry.criterionId} at ${entry.at}: ${entry.from} -> ${entry.to}`).join("\n");
   const amendments = facts.amendments.length === 0
     ? "- none"
-    : facts.amendments.map((entry) => `- amendment ${entry.id} at ${entry.at}: invalidated ${entry.invalidatedCriteria.join(", ") || "none"}; added ${entry.addedCriteria.join(", ") || "none"}; unparked ${entry.unparkedCriteria.join(", ") || "none"}`).join("\n");
+    : facts.amendments.map((entry) => `- amendment ${entry.id} at ${entry.at} (${entry.scope}, by ${entry.issuer}): invalidated ${entry.invalidatedRows.join(", ") || "none"}; added ${entry.addedRows.join(", ") || "none"}; unparked ${entry.unparkedRows.join(", ") || "none"}`).join("\n");
   const parked = facts.parked.length === 0
     ? "- none"
-    : facts.parked.map((entry) => `- ${entry.id} parked by ${entry.parkedBy} at ${entry.at}; it was not judged in this attempt`).join("\n");
+    : facts.parked.map((entry) => `- ${entry.id} parked at ${entry.at}; it was not judged in this attempt`).join("\n");
   return `
 === SECTION 2 OF 3: FACTS THE HARNESS RECORDED ===
 Everything in this section the harness executed or wrote itself. It is the only section a verdict may rest on,
@@ -269,13 +261,10 @@ ${suite}
 SUITE EXCLUSIONS:
 ${exclusions}
 
-CHECK REBINDS:
-${rebinds}
-
 PRD AMENDMENTS:
 ${amendments}
 
-PARKED CRITERIA:
+PARKED ROWS:
 ${parked}
 `;
 }
@@ -287,7 +276,7 @@ function claimsSection(claims: EnvelopeClaim[]): string {
   return `
 === SECTION 3 OF 3: CLAIMS, WHICH ARE NOT EVIDENCE ===
 NOTHING IN THIS SECTION MAY BE THE BASIS FOR YOUR VERDICT. These are sentences people wrote, carried here
-so you understand what happened and why, not so you can rely on them. A claim that the criterion is met is
+so you understand what happened and why, not so you can rely on them. A claim that the row is met is
 not a proof that it is met; if the facts in Section 2 do not settle it, the answer is FAIL, not a PASS on
 somebody's word.
 Origin labels:
@@ -298,15 +287,13 @@ ${body}
 `;
 }
 
-function scenarioSection(scenarios: ContractItem[]): string {
-  if (scenarios.length === 0) return "";
+function decisionSection(decisions: AcceptancePromptMaterial["decisions"]): string {
+  if (decisions.length === 0) return "";
   return `
-MAPPED USER SCENARIOS:
-The verification rows for this criterion also cover these approved user scenario cards. Where this
-criterion's obligations intersect a card, the evidence must exercise the card's stated paths
-(primary, failure, recovery) - a happy-path-only proof does not satisfy a card that declares a
-failure or recovery path.
-${scenarios.map((entry) => `- ${entry.id}: ${entry.text}`).join("\n")}
+CITED DECISIONS:
+The row cites these Decisions rows. They say why the behavior exists and what was ruled out; a proof
+that satisfies the sentence but contradicts a cited decision does not satisfy the row.
+${decisions.map((entry) => `- ${entry.id}: ${entry.decision} (근거: ${entry.rationale})`).join("\n")}
 `;
 }
 
@@ -322,16 +309,15 @@ ${artifacts.map((artifact) => `- ${artifact.path} (${artifact.kind}, ${artifact.
 }
 
 export function acceptancePrompt(
-  state: ImplementState,
-  criterion: ContractItem,
+  row: BehaviorRow,
   material: AcceptancePromptMaterial,
   prior: AcLaneResult | null = null,
   roundContext: VerificationRoundContext = { priorAttemptId: null, changedPaths: [], newEvidence: [] },
 ): string {
-  const verification = state.verification.filter((entry) => entry.covers.includes(criterion.id));
-  const requirements = state.requirements.filter((entry) => criterion.requirements.includes(entry.id));
-  return `You are the acceptance-criterion judge for one semantic criterion in a completed implementation, with read-only file access.
-Judge only whether the implementation and registered evidence satisfy the criterion below.
+  const criterion = { id: row.id, text: row.behavior };
+  const evidenceShape = row.check.kind === "judge" ? row.check.evidence : "";
+  return `You are the acceptance judge for one Behaviors row in a completed implementation, with read-only file access.
+Judge only whether the implementation and registered evidence satisfy the row below.
 Do not judge whether the original conversation's intent was preserved. A separate fidelity judge owns that question.
 For PASS, cite a concrete changed file, mechanical result, or registered artifact.
 
@@ -354,15 +340,12 @@ ${JSON_RULE}
 
 === SECTION 1 OF 3: WHAT YOU ARE JUDGING ===
 
-ACCEPTANCE CRITERION:
+BEHAVIOR (what the user observes):
 - ${criterion.id}: ${criterion.text}
 
-MAPPED REQUIREMENTS:
-${requirements.length === 0 ? "- none" : requirements.map((entry) => `- ${entry.id}: ${entry.text}`).join("\n")}
-
-MAPPED VERIFICATION PASS INTENTS:
-${verification.length === 0 ? "- none" : verification.map((entry) => `- ${entry.id}: ${entry.passIntent}`).join("\n")}
-${scenarioSection(material.scenarios)}${factsSection(material.facts)}${roundDeltaSection(roundContext, `PRIOR RESULT FOR ${criterion.id}`, prior)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
+EVIDENCE THE PRD DECLARED FOR THIS ROW (judge: cell):
+- ${evidenceShape || "none declared"}
+${decisionSection(material.decisions)}${factsSection(material.facts)}${roundDeltaSection(roundContext, `PRIOR RESULT FOR ${criterion.id}`, prior)}${checkSection(material.checks)}${evidenceSection(material.evidence)}${readableArtifactSection(material.readableArtifacts)}
 RUN-OWNED CHANGED FILES:
 This is an allowlist, not an instruction to read every file. Prefer the smallest sufficient set.
 ---
@@ -372,7 +355,7 @@ ${claimsSection(material.claims)}`;
 }
 
 export interface FidelitySource {
-  routing: "decision-traceability" | "full-qa-log";
+  routing: "decisions" | "full-qa-log";
   content: string;
   explanation: string;
 }
@@ -396,13 +379,19 @@ export function fidelitySource(
     }
   }
   return {
-    routing: "decision-traceability",
-    content: contract.decisionTraceability,
+    routing: "decisions",
+    content: renderDecisions(contract),
     explanation:
       source === "current conversation"
-        ? "The CLI cannot read chat history, so the PRD Decision Traceability section is the canonical source."
-        : "A fresh spec gate settled qa-log to PRD fidelity, so this review starts from Decision Traceability.",
+        ? "The CLI cannot read chat history, so the PRD Decisions table is the canonical source."
+        : "A fresh spec gate settled qa-log to PRD fidelity, so this review starts from the Decisions table.",
   };
+}
+
+/** The Decisions table as one block: `D-n | 결정 | 근거`, one line per row. */
+export function renderDecisions(contract: ImplementContract): string {
+  if (contract.decisions.length === 0) return "- none";
+  return contract.decisions.map((entry) => `- ${entry.id}: ${entry.decision} (근거: ${entry.rationale})`).join("\n");
 }
 
 export function fidelityPrompt(
@@ -416,10 +405,10 @@ export function fidelityPrompt(
 ): string {
   const claims = [
     `run=${state.status}`,
-    ...state.tasks.map((entry) => `${entry.id}=${entry.status}`),
+    ...state.rows.filter((row) => row.check.kind !== "judge").map((row) => `${row.id}=${row.status}`),
   ].join(", ");
   return `You are the independent requirements-fidelity judge for a completed implementation.
-Judge intent lineage only. Do not repeat code-correctness, per-verification artifact sufficiency, or acceptance-criterion testing. The acceptance judge owns those questions.
+Judge intent lineage only. Do not repeat code-correctness, artifact sufficiency, or per-row acceptance testing. The acceptance judge owns those questions.
 
 Use this fixed rubric:
 - F1 Original goal preserved.
@@ -443,16 +432,19 @@ ${source.explanation}
 CANONICAL INTENT SOURCE:
 ${clamp(source.content)}
 
-DECISION TRACEABILITY:
-${clamp(contract.decisionTraceability)}
+PRD GOAL:
+${clamp(contract.goal)}
+
+PRD DECISIONS (D-n | 결정 | 근거):
+${clamp(renderDecisions(contract))}
 
 FULL APPROVED PRD:
 ${clamp(prdText)}
 
-PRD SCOPE AND NON-GOALS:
-${clamp(contract.scope)}
+PRD NON-GOALS:
+${clamp(contract.nonGoals)}
 
-PRD RISKS AND OPEN DECISIONS:
+PRD RISKS:
 ${clamp(contract.risks)}
 
 RECORDED DEVIATIONS:
@@ -460,7 +452,7 @@ ${state.deviations.length === 0 ? "- none" : state.deviations.map((entry) => `- 
 
 IMPLEMENTATION CLAIMS:
 ${claims}
-Acceptance-criterion statuses are intentionally omitted because the independent acceptance lane is judging them concurrently. Do not treat their pre-verify state as a completion claim.
+judge: row statuses are intentionally omitted because the independent acceptance lane is judging them concurrently. Do not treat their pre-verify state as a completion claim.
 
 REGISTERED ARTIFACT ROSTER:
 ${artifactSummary(state.artifacts)}
@@ -536,7 +528,7 @@ export function designPrompt(
 
 Every comment you leave must be answered before the run can be finalized - either by the defect being fixed (you will simply stop seeing it) or by a human recording why it is being left alone. So a comment is a bill someone has to pay. Leave the ones worth paying.
 
-CHARTER - report only what none of the other lanes see. The acceptance judge owns criterion correctness, the fidelity judge owns intent lineage, the risk judge owns ship-safety. You own the shape of the code:
+CHARTER - report only what none of the other lanes see. The acceptance judge owns row correctness, the fidelity judge owns intent lineage, the risk judge owns ship-safety. You own the shape of the code:
 - One cause patched as N symptoms: the same fix repeated across sites where one concept is missing.
 - Patch-on-patch accretion: layered special cases where the surrounding design wanted a rewrite of one unit.
 - Structure drift: the diff quietly exceeds or contradicts the PRD's "Major Technical Structure Changes" section.
