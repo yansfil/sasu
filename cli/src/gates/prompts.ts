@@ -50,7 +50,9 @@ Rules:
   P2 engineering detail; otherwise recommend explicit confirmation or deferral.
 - Never output a numeric score of any kind.`;
 
+/** An open finding carried into a rerun, by its harness id. */
 export interface PriorFinding {
+  id: string;
   severity: string;
   area: string;
   missing: string;
@@ -60,13 +62,21 @@ export interface PriorFinding {
  * A fan-out lane: one narrow parallel judge (PRD judge-fanout R1/R2, D-06).
  * Lanes are fixed in code - gap-audit splits by document area, spec by its
  * review axes (see the SPEC_LANES comment for why there are two). areaHints
- * route prior findings on re-runs.
+ * route prior findings and Decision Register rows to lanes on re-runs.
+ *
+ * `blocking: false` lanes still judge and still record every finding, but a
+ * finding of theirs that needs no human decision is a warning, not a block
+ * (PRD gate-loop D-02: across three real interviews the goal-scope and
+ * data-tech findings were mostly closed by the agent re-reading the code;
+ * the few that needed a person were requiresHuman, which is routed by that
+ * flag regardless of lane).
  */
 export interface JudgeLane {
   id: string;
   title: string;
   scope: string;
   areaHints: string[];
+  blocking: boolean;
 }
 
 export const GAP_AUDIT_LANES: JudgeLane[] = [
@@ -76,6 +86,7 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
     scope:
       "Missing or ambiguous decisions about the product goal, target users, in-scope behavior, explicit non-goals, deferred items without revisit triggers, and scope boundaries the implementing team would otherwise invent.",
     areaHints: ["goal", "scope", "non-goal", "nongoal", "intent", "product", "user"],
+    blocking: false,
   },
   {
     id: "ux-behavior",
@@ -83,6 +94,7 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
     scope:
       "Missing or ambiguous decisions about user-facing flows, golden paths, empty/loading/error/permission states, validation, retry/cancel/undo, destructive-action recovery, and copy or taste boundaries needing human judgment.",
     areaHints: ["ux", "behavior", "state", "recovery", "flow", "copy", "design", "accessibility"],
+    blocking: true,
   },
   {
     id: "data-tech",
@@ -90,6 +102,7 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
     scope:
       "Missing or ambiguous decisions about data shape, source of truth, lifecycle/retention, schema or storage, API/service boundaries, external provider contracts, credentials ownership, compatibility, and migration.",
     areaHints: ["data", "tech", "architecture", "provider", "api", "schema", "storage", "compatibility", "migration", "integration"],
+    blocking: false,
   },
   {
     id: "risk-ops-verification",
@@ -97,6 +110,7 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
     scope:
       "Missing or ambiguous decisions about risks and side effects, security/access boundaries, cost or rate limits, rollout/launch/operational needs, and whether every primary behavior has an observable verification proof.",
     areaHints: ["risk", "operation", "ops", "verification", "security", "launch", "cost", "proof", "observability"],
+    blocking: true,
   },
 ];
 
@@ -113,13 +127,24 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
  * lives on in the testability lane below. Old "verification"/"coverage" areas
  * from prior-round findings route there via its merged areaHints.
  */
+/**
+ * PRD gate-loop D-08: gap-audit caught an agent marking its own proposal
+ * `resolved` three times on one run (7084c601); with fewer gap-audit cycles
+ * the spec fidelity lane has to carry that catch too, so its judgment names
+ * where decision evidence lives and what is not evidence.
+ */
+export const FIDELITY_EVIDENCE_SENTENCE =
+  "The basis of a decision is the user's own answer text in the Raw Q&A turn it cites; a `resolved` mark in the Decision Register is written by the agent and is not evidence.";
+
 export const SPEC_LANES: JudgeLane[] = [
   {
     id: "fidelity",
     title: "fidelity to the interview log",
     scope:
-      "Every material decision in the interview log's Decision Register must be represented in the PRD without distortion: rejected options stayed rejected, deferred items kept their revisit conditions, and agent assumptions were not upgraded into user decisions.",
+      "Every material decision in the interview log's Decision Register must be represented in the PRD without distortion: rejected options stayed rejected, deferred items kept their revisit conditions, and agent assumptions were not upgraded into user decisions. "
+      + FIDELITY_EVIDENCE_SENTENCE,
     areaHints: ["fidelity", "intent", "decision", "traceability"],
+    blocking: true,
   },
   {
     id: "testability",
@@ -127,6 +152,7 @@ export const SPEC_LANES: JudgeLane[] = [
     scope:
       "Every acceptance criterion must be an observable, testable statement - flag vague qualifiers (\"적절히\", \"빠르게\", \"appropriately\", \"robust\") used as acceptance language. Required verification must state an observable pass intent, and every human-verification or non-goal disposition must be a genuine, justified disposition rather than a dumping ground for hard-to-test requirements. Judge whether each requirement (R#) has a real verification or an explicit disposition; do NOT re-walk the AC#-by-AC# Covers cross-reference - a deterministic prelint already reports uncovered ACs and dangling Covers references before any judge runs.",
     areaHints: ["testability", "acceptance", "criteria", "verification", "coverage", "proof"],
+    blocking: true,
   },
 ];
 
@@ -151,43 +177,40 @@ enumerate micro-variants of one gap (report the one underlying decision), and ke
 }
 
 /**
- * Delta re-judgment context (anti progressive-discovery): re-runs carry the
- * previous round's findings so the judge converges instead of opening ever
- * deeper lines of questioning on an honestly revised document.
+ * Delta re-judgment context (PRD gate-loop R1): a rerun judges the open
+ * findings of the previous round and nothing else. The judge echoes the
+ * harness id of every finding that is still open; the harness discards any
+ * finding it did not hand in, unless this lane's decisions changed since the
+ * last round (`decisionsChanged`), which is the one case where a genuinely
+ * new gap can exist. The judge converges by construction instead of opening
+ * ever deeper lines of questioning (hide-rebrand 2026-08-29: cycles 2, 3 and
+ * 4 each raised one new finding on a document that had not changed there).
  */
-function rerunContext(priorFindings: PriorFinding[], rerun = priorFindings.length > 0): string {
+function rerunContext(priorFindings: PriorFinding[], rerun: boolean, decisionsChanged: boolean): string {
   if (!rerun) return "";
-  if (priorFindings.length === 0) {
-    // A delta lane with no finding routed to it: a closure lane whose areas
-    // are clean, or any round of a reopened cycle whose prior verdict was a
-    // sealed PASS (the user changed something after approval).
-    return `
-DELTA REVIEW CONTEXT: this document already received its one exhaustive review.
-No unresolved prior finding carries over, so every finding you report MUST carry an extra field
-"origin": "new". Do NOT open new, deeper lines of questioning about aspects that were previously
-acceptable. Report a new finding only when the revision introduced it, it is a missed P0, or closing
-it requires explicit human agreement. The harness keeps human-required findings blocking on re-runs;
-other new findings below P0 cannot block. Do not reserve concerns for another round.
-`;
-  }
-  const lines = priorFindings.map((f) => `- [${f.severity}/${f.area}] ${f.missing}`).join("\n");
+  const lines = priorFindings.map((f) => `- ${f.id} [${f.severity}/${f.area}] ${f.missing}`).join("\n");
+  const prior = priorFindings.length === 0
+    ? "No open finding is assigned to your lane from the previous round."
+    : `OPEN FINDINGS FROM THE PREVIOUS ROUND (your lane):\n${lines}`;
+  const newRule = decisionsChanged
+    ? `The Decision Register rows in your lane CHANGED since the previous round, so you may report a genuinely
+   NEW gap that the changed decisions introduced. A new finding carries NO "id" field. Do not report a new
+   finding about text that did not change.`
+    : `The Decision Register rows in your lane did NOT change since the previous round, so no new finding is
+   admissible: the harness discards any finding whose "id" is not in the list above. Do not open new lines
+   of questioning about aspects that were previously acceptable.`;
   return `
-DELTA REVIEW CONTEXT: this document already received its one exhaustive review, which BLOCKed, and
-the author revised it. Your job is to close that review out, not to restart it:
-1. For each prior finding, check whether the revision resolves it. Resolved findings must NOT be
+DELTA REVIEW CONTEXT: this document already received its exhaustive review, and the author revised it.
+Your job is to close that review out, not to restart it:
+1. For each open finding below, check whether the revision resolves it. A resolved finding must NOT be
    reported again.
-2. Report a prior finding again ONLY if it remains genuinely unaddressed.
-3. Do NOT open new, deeper lines of questioning about aspects that were previously acceptable.
-   A NEW finding is allowed only when it was introduced by the revision itself, or it is a
-   missed P0 without which the document is unimplementable, or closing it requires explicit human
-   agreement - treat all three as exceptional.
-4. On this re-run every finding MUST carry an extra field "origin": "prior-unresolved" (a prior
-   finding that is still unaddressed) or "new". The harness enforces convergence mechanically:
-   human-required findings remain blocking; other new findings below P0 cannot block, so label honestly.
-5. Do not reserve concerns for another round.
+2. Report an open finding again ONLY if it remains genuinely unaddressed, and when you do, echo its id
+   verbatim as an extra field "id" (e.g. "id": "F3") so the harness can match it. You may update its
+   severity, wording, and requiresHuman to what the revision now warrants.
+3. ${newRule}
+4. Do not reserve concerns for another round.
 
-PRIOR FINDINGS:
-${lines}
+${prior}
 `;
 }
 
@@ -195,6 +218,8 @@ export interface LanePromptOptions {
   lane?: JudgeLane;
   laneCount?: number;
   rerun?: boolean;
+  /** Rerun only: this lane's Decision Register rows changed since the last round, so new findings are admissible. */
+  decisionsChanged?: boolean;
   /** Verbatim user invocation recorded by `sasu gate delegate` for a delegated run. */
   delegationEvidence?: string;
 }
@@ -253,7 +278,7 @@ ${clampDocument(qaLogContent)}
 ---
 ${delegationContext(options.delegationEvidence)}
 ${laneContext(options.lane, options.laneCount ?? 1)}
-${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0)}`;
+${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0, options.decisionsChanged ?? false)}`;
 }
 
 export function specGatePrompt(
@@ -269,6 +294,7 @@ ${options.lane.scope}`
 (a) FIDELITY: every material decision in the interview log's Decision Register is represented in the
     PRD without distortion. Rejected options stayed rejected. Deferred items stayed deferred with a
     revisit condition. Agent assumptions were not upgraded into user decisions.
+    ${FIDELITY_EVIDENCE_SENTENCE}
 (b) TESTABILITY AND VERIFICATION INTENT: every acceptance criterion is an observable, testable
     statement - flag vague qualifiers ("적절히", "빠르게", "appropriately", "robust") used as
     acceptance language. Required verification states an observable pass intent, every
@@ -290,7 +316,7 @@ Report only material violations as findings; area should be one of: fidelity, te
 An empty findings list with verdict PASS is the correct answer for a faithful, self-contained PRD.
 ${laneContext(options.lane, options.laneCount ?? 1)}
 ${GAP_JSON_CONTRACT}
-${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0)}
+${rerunContext(priorFindings, options.rerun ?? priorFindings.length > 0, options.decisionsChanged ?? false)}
 PRD (prd.md):
 ---
 ${clampDocument(prdContent)}

@@ -16,7 +16,12 @@ function readSkill(name) {
 test("interview-me routes closure through the gap-audit gate", () => {
   const skill = readSkill("interview-me");
   assert.match(skill, /sasu gate gap-audit --slug <topic-slug> --qa-log/);
-  assert.match(skill, /closure BLOCK is terminal/i);
+  // PRD gate-loop R2: the loop is bounded by the open findings set, and a
+  // NEEDS_HUMAN bundle is sealed by the user's recorded answer, never by
+  // another judge round.
+  assert.match(skill, /open findings set, not a round budget/);
+  assert.match(skill, /sasu gate answer --slug <topic-slug> --gate gap-audit --evidence/);
+  assert.doesNotMatch(skill, /closure BLOCK is terminal|closure review|third time/i);
   assert.match(skill, /sasu gate reopen --slug <topic-slug> --gate gap-audit/);
   assert.match(skill, /Never run `sasu gate override` yourself/);
   assert.match(skill, /never a numeric score/i, "the numeric-gate ban must survive the gate integration");
@@ -29,6 +34,9 @@ test("gen-prd routes readiness through the spec gate", () => {
   assert.match(skill, /sasu prd readiness --prd/);
   assert.doesNotMatch(skill, /plan-verification/);
   assert.match(skill, /sasu gate spec --slug <topic-slug> --prd/);
+  assert.match(skill, /open findings set, not a round budget/);
+  assert.match(skill, /sasu gate answer --slug <topic-slug> --gate spec --evidence/);
+  assert.doesNotMatch(skill, /closure BLOCK is terminal|closure review|third time/i);
   assert.match(skill, /fidelity/i);
   assert.match(skill, /Never run `sasu gate override` yourself/);
   assert.match(skill, /\| ID \| Criterion \| Judgment \| Evidence Declaration \|/);
@@ -48,11 +56,12 @@ test("implement routes changed-code tasks through unified implement verify", () 
   assert.match(skill, /parked AC.*blocks a complete finalize/is);
 });
 
-test("please bounds each PRD gate to a full review and one closure review", () => {
+test("please runs each PRD gate on its open findings set and hands a NEEDS_HUMAN bundle to the user", () => {
   const skill = readSkill("please");
-  assert.match(skill, /Run the full review once/);
-  assert.match(skill, /one allowed closure review/);
-  assert.match(skill, /A third autonomous judgment is forbidden/);
+  assert.match(skill, /open findings set, not a retry loop/);
+  assert.match(skill, /judges only the open findings by id/);
+  assert.match(skill, /sasu gate answer --slug <topic-slug> --gate <gap-audit\|spec> --evidence/);
+  assert.doesNotMatch(skill, /closure review|third autonomous judgment|closure is exhausted/i);
   assert.match(skill, /sasu gate reopen --slug <topic-slug> --gate <gap-audit\|spec>/);
   assert.match(skill, /sasu prd readiness --prd/);
   assert.doesNotMatch(skill, /plan-verification/);
@@ -75,7 +84,7 @@ test("please bounds each PRD gate to a full review and one closure review", () =
   assert.match(skill, /only the user's own delegating message is valid evidence/);
   assert.match(skill, /P0 finding blocks under the delegated disposition/);
   assert.match(skill, /`--grant-budget` only with the user's verbatim approval to retry that broken backend/);
-  assert.match(skill, /when closure is exhausted/);
+  assert.match(skill, /when a NEEDS_HUMAN bundle is raised/);
   assert.match(skill, /Never run `sasu gate override` yourself/);
   assert.match(skill, /authorizes making reversible choices; it does not turn those choices into user-approved scope/);
   assert.doesNotMatch(skill, /already carries the user's approval of scope, structure, verification modes/);

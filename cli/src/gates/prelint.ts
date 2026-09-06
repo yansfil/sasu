@@ -17,6 +17,9 @@ import { parseContract } from "./contract";
 
 // Table-cell splitting comes from the shared parser so prelint sees exactly
 // the same cell boundaries the state parser persists.
+const { parseQaAnswers } = require("../../lib/qa_register.js") as {
+  parseQaAnswers: (content: string) => Array<{ question: string; answer: string }> | null;
+};
 const { splitTableRow, findPrdImplementationBindings, parseFrontmatterBlock, expandCoverageIds } = require("../../lib/prd_parser.js") as {
   parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
   expandCoverageIds(text: string, prefix: string): string[];
@@ -408,6 +411,45 @@ export function prelintPrdDecisionIds(prdContent: string, qaLogContent: string):
           index + 1,
           `PRD cites ${token}, which does not exist in the interview log's Decision Register`,
           `Register the real decision first (sasu interview decision --id ${token} ... plus the citing interview log turn) or remove the fabricated reference.`,
+        ),
+      );
+    }
+  });
+  return { ok: findings.length === 0, doc: "prd", findings };
+}
+
+/**
+ * Cross-document rule for the spec gate (PRD gate-loop D-09/R8): every Raw
+ * Q&A turn the PRD cites (`Q<n>`) must exist and carry a non-empty user
+ * answer. A PRD that cites a question nobody answered is quoting consent
+ * that does not exist, which is the P0 class the judges keep catching one
+ * paid round at a time. Calibration (2026-09-03, every PRD+qa-log pair on
+ * this machine): zero hits on healthy pairs; interview-anchor's PRD cites
+ * Q15 and Q21 that its log never held, and its spec review had stalled.
+ * Quarter-style tokens (`Q4 2026`) are excluded by the year lookahead.
+ */
+export function prelintPrdCitedQuestions(prdContent: string, qaLogContent: string): PrelintResult {
+  const findings: PrelintFinding[] = [];
+  /**
+   * Q number -> whether its answer bullet carries text, read through the one
+   * Raw Q&A parser the freshness pin also uses, so "answered" here and
+   * "pinned" there can never disagree about the same turn.
+   */
+  const answered = new Map<string, boolean>();
+  for (const entry of parseQaAnswers(qaLogContent) ?? []) answered.set(`Q${entry.question}`, entry.answer !== "");
+  const seen = new Set<string>();
+  prdContent.split("\n").forEach((line, index) => {
+    for (const match of line.matchAll(/\bQ(\d+)\b(?!\s*\d{4})/g)) {
+      const token = `Q${match[1]}`;
+      if (seen.has(token) || answered.get(token) === true) continue;
+      seen.add(token);
+      const state = answered.has(token) ? "has an empty answer" : "does not exist";
+      findings.push(
+        finding(
+          "prd-cited-question-unanswered",
+          index + 1,
+          `PRD cites ${token}, but that Raw Q&A turn ${state} in the interview log`,
+          `Only a turn with the user's own answer text can back a decision: run sasu interview sync so the real exchange lands under ${token}, or cite the turn that actually holds the answer, or drop the citation.`,
         ),
       );
     }

@@ -1,0 +1,71 @@
+---
+topic: "gate-loop-ac13"
+status: "ready"
+human_approval: "approved"
+review_profile: "standard"
+---
+
+# PRD: gate-loop-ac13
+
+## 1. Summary
+
+A task list that renders, persists, and purges deleted tasks after a retention period.
+
+## 2. Problem, Goal, And Users
+
+Users need a widget.
+
+## 3. Scope And Non-Goals
+
+In scope: the widget.
+
+## 4. Pre-Work And Required Decisions
+
+None required.
+
+## 5. Major Technical Structure Changes
+
+No major technical structure change expected.
+
+## 6. Requirements
+
+- R1. the widget renders and persists its state
+- R2. deleted tasks are kept for 30 days and then purged (D-02)
+
+## 7. Acceptance Criteria
+
+| ID | Criterion | Judgment | Evidence Declaration |
+| --- | --- | --- | --- |
+| AC1 | the widget renders | machine | - |
+| AC2 | the widget persists its state | machine | - |
+| AC3 | a task deleted 30 days ago is purged and a task deleted 29 days ago is not | machine | - |
+
+## 8. PRD-Level Tasks
+
+- T1. build the widget and its retention purge. Covers R1, R2, AC1, AC2, AC3.
+
+## 9. Verification Contract
+
+### 9.1 Test Mode Contract
+
+| Mode | Required For Done | Covers | Human Decision |
+| --- | --- | --- | --- |
+| automated behavior | yes | core behavior | none |
+
+### 9.2 Required Agent Verification
+
+| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
+| --- | --- | --- | --- | --- | --- |
+| V1 | automated behavior | R1, R2, AC1, AC2, AC3 | behavior covered by automated test | yes | no |
+
+## 10. Risks And Open Decisions
+
+None.
+
+## 11. Implementation Guardrails
+
+Do not expand scope.
+
+## 12. Implementation Result Report Contract
+
+Report status and evidence.

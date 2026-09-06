@@ -1,30 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gapAuditPrompt, specGatePrompt, clampDocument } from "../../dist/gates/prompts.js";
+import { FIDELITY_EVIDENCE_SENTENCE, SPEC_LANES, gapAuditPrompt, specGatePrompt, clampDocument } from "../../dist/gates/prompts.js";
 
-const PRIOR = [{ severity: "P1", area: "error-handling", missing: "setPriority unknown id behavior unspecified" }];
+const PRIOR = [{ id: "F1", severity: "P1", area: "error-handling", missing: "setPriority unknown id behavior unspecified" }];
 
 test("fresh gap-audit prompt carries no delta context", () => {
   const prompt = gapAuditPrompt("log");
   assert.doesNotMatch(prompt, /DELTA REVIEW CONTEXT/);
 });
 
-test("delta gap-audit prompt carries prior findings and the convergence contract", () => {
+// PRD gate-loop R1: a rerun judges the open findings by id; new findings
+// exist only where the lane's decisions changed.
+test("delta gap-audit prompt lists the open findings by id and asks for the id to be echoed", () => {
   const prompt = gapAuditPrompt("log", PRIOR);
   assert.match(prompt, /DELTA REVIEW CONTEXT/);
-  assert.match(prompt, /setPriority unknown id/);
-  assert.match(prompt, /Do NOT open new, deeper lines of questioning/);
-  assert.match(prompt, /human-required findings remain blocking/i);
-  assert.match(prompt, /other new findings below P0 cannot block/i);
-  // The wording must hold for every delta round - the closure pass AND any
-  // round of a reopened cycle - so it must not claim to be the terminal round.
-  assert.doesNotMatch(prompt, /terminal for the current review cycle/i);
+  assert.match(prompt, /- F1 \[P1\/error-handling\] setPriority unknown id/);
+  assert.match(prompt, /echo its id\s+verbatim as an extra field "id"/);
+  assert.match(prompt, /did NOT change since the previous round, so no new finding is\s+admissible/);
+  assert.doesNotMatch(prompt, /origin/);
+  // The wording must hold for every delta round, so it must not claim to be
+  // a terminal or closure round.
+  assert.doesNotMatch(prompt, /terminal for the current review cycle|closure review|closure verdict|one exhaustive review/i);
 });
 
-test("a delta round without routed priors still permits findings requiring explicit human agreement", () => {
-  const prompt = gapAuditPrompt("log", [], { rerun: true });
-  assert.match(prompt, /closing\s+it requires explicit human agreement/i);
-  assert.match(prompt, /keeps human-required findings blocking/i);
+test("a delta round on a lane whose decisions changed admits new findings without an id", () => {
+  const prompt = gapAuditPrompt("log", PRIOR, { rerun: true, decisionsChanged: true });
+  assert.match(prompt, /CHANGED since the previous round, so you may report a genuinely\s+NEW gap/);
+  assert.match(prompt, /A new finding carries NO "id" field/);
+});
+
+// PRD gate-loop D-08 / AC12: the fidelity judgment names its evidence.
+test("AC12: the spec fidelity prompt states that Raw Q&A answer text is the decision basis and a resolved mark is not evidence", () => {
+  assert.match(FIDELITY_EVIDENCE_SENTENCE, /user's own answer text in the Raw Q&A/);
+  assert.match(FIDELITY_EVIDENCE_SENTENCE, /`resolved` mark in the Decision Register is written by the agent and is not evidence/);
+  const fidelity = SPEC_LANES.find((lane) => lane.id === "fidelity");
+  assert.ok(fidelity.scope.includes(FIDELITY_EVIDENCE_SENTENCE), "the lane scope carries the sentence");
+  const lanePrompt = specGatePrompt("prd", "log", [], { lane: fidelity, laneCount: SPEC_LANES.length });
+  assert.ok(lanePrompt.includes(FIDELITY_EVIDENCE_SENTENCE), "the fan-out fidelity lane prompt carries it");
+  const singlePrompt = specGatePrompt("prd", "log");
+  assert.ok(singlePrompt.includes(FIDELITY_EVIDENCE_SENTENCE), "the single-judge prompt's fidelity axis carries it");
+  const testability = specGatePrompt("prd", "log", [], { lane: SPEC_LANES[1], laneCount: SPEC_LANES.length });
+  assert.ok(!testability.includes(FIDELITY_EVIDENCE_SENTENCE), "the testability lane is unchanged");
 });
 
 test("delta spec prompt carries prior findings", () => {

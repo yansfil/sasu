@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isUserSourcedResolvedDecision, runPrelint, type PrelintFinding } from "../gates/prelint";
 import { cadenceDrift, clearCadence, recordDecisionTurn } from "./cadence";
-import { GateStore, prdReviewStateFor } from "../gates/store";
+import { GateStore, isSealed } from "../gates/store";
 import {
   anchorDecisionToQuestion,
   appendAddendumEntry,
@@ -17,6 +17,7 @@ import {
   readQaLogState,
   refreshBookkeeping,
   renderInitialQaLog,
+  replaceQaLog,
   setCursorValue,
   upsertRegisterRow,
   type QaEntryInput,
@@ -114,21 +115,6 @@ function writeNewQaLog(file: string, content: string): void {
       if (errorCode(error) === "EEXIST") throw new Error(`qa-log already exists: ${file}`);
       throw error;
     }
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
-}
-
-function replaceQaLog(file: string, expected: string, content: string): void {
-  if (content === expected) return;
-  const temporary = temporarySibling(file);
-  try {
-    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-    const current = fs.readFileSync(file, "utf8");
-    if (current !== expected) {
-      throw new Error(`qa-log changed outside this command while it was running: ${file} (retry from fresh state)`);
-    }
-    fs.renameSync(temporary, file);
   } finally {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
@@ -442,7 +428,7 @@ export async function runInterviewDecision(
   // 2026-08-29 anchor backfill did exactly that and cascaded an approved,
   // in-flight run into two overrides).
   const gapAuditRecord = new GateStore(projectRoot, options.slug).load().gates["gap-audit"];
-  if (gapAuditRecord !== undefined && prdReviewStateFor(gapAuditRecord).phase === "sealed") {
+  if (gapAuditRecord !== undefined && isSealed(gapAuditRecord)) {
     if (anchor !== undefined && anchor !== "none") {
       throw new Error(
         "gap-audit is sealed: a Raw Q&A anchor cannot be added without staling the sealed PASS. The Addendum entry is its own anchor; drop --anchor, or reopen the gate to edit sealed sections.",

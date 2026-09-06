@@ -587,25 +587,36 @@ represented without distortion) and testability plus verification intent
 intents, genuine human-verification/non-goal dispositions); the deterministic
 prelint already reports uncovered ACs and dangling Covers references at $0.
 
-- The first run is the one exhaustive spec review.
-  If it BLOCKs, fix all agent-fixable findings together and run exactly one closure review.
-  A closure BLOCK is terminal for that cycle; do not call the judge a third time.
+- The gate keeps an open findings set, not a round budget. Every judged run
+  ends in one of three states:
+  - `BLOCK`: at least one open finding is agent-fixable.
+    Fix every such finding in the PRD, then re-run; the rerun judges only the
+    findings still open (by their `F<n>` id) and may add a finding only when
+    the qa-log's Decision Register rows changed, so the set can only shrink.
+  - `NEEDS_HUMAN`: every open finding needs a human decision.
+    Ask the user the whole bundle in one message, apply their decisions to the
+    PRD (and the qa-log Decision Register when a decision is new), then record
+    their words with
+    `sasu gate answer --slug <topic-slug> --gate spec --evidence "<the user's words>"`.
+    That seals PASS without another judge call.
+  - `PASS`: the cycle is sealed.
 - A finding marked `needs human decision` goes to the user; do not resolve it
   by editing the PRD toward your own guess.
-- Only a new explicit user change request may open another bounded cycle:
+- Only a new explicit user change request may open another cycle:
   `sasu gate reopen --slug <topic-slug> --gate spec --evidence "<the user's words>"`.
-  `--grant-budget` does not widen semantic review; it is only for a bounded
+  `--grant-budget` does not change the open set; it is only for a bounded
   judge backend error streak after the backend is repaired.
 - If the judge backend is unavailable, the gate fails closed; report the cause
   and recovery, and treat the PRD as not `ready` until the user decides.
 - Never run `sasu gate override` yourself; it is user-only, and the
   recorded deviation must carry the user's own reason.
-- The PASS is pinned to the content hash of the PRD and qa-log bodies and seals
-  the review cycle.
+- The PASS is pinned to the PRD body and the qa-log's Decision Register
+  decision cells and seals the review cycle
   (frontmatter is exempt, so flipping `status`/`human_approval` after the gate
-  is fine): any body edit afterwards makes `sasu gate status` report
-  `STALE`; the CLI refuses automatic re-judgment until the input is restored or
-  the user explicitly authorizes `gate reopen`.
+  is fine): any PRD body edit or qa-log decision change afterwards makes
+  `sasu gate status` report `STALE`; the CLI refuses automatic re-judgment
+  until the input is restored or the user explicitly authorizes `gate reopen`.
+  The gate records each run in the qa-log's `## Audit History` itself.
 - PASS may retain P2 advisory notes.
   Do not edit the PRD and invalidate the seal merely to remove those notes.
 - When no intake qa-log exists (conversation-only PRD), record that the spec

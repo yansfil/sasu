@@ -99,13 +99,16 @@ test("an Implementor role refuses specification gates before setup writes, and a
   assert.equal(JSON.parse(recovered.stdout).status.effective, "PASS");
 });
 
-test("gate gap-audit BLOCKs on gaps then PASSes when the log is complete", (t) => {
+// BLOCK_RESPONSE's only finding needs a human decision, so under the open-set
+// contract (PRD gate-loop R2) the gate hands it to the user as NEEDS_HUMAN
+// rather than reporting a generic BLOCKED.
+test("gate gap-audit stops on a human gap then PASSes when the log is complete", (t) => {
   const dir = makeProject();
   const blocked = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, BLOCK_RESPONSE),
   });
   assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
-  assert.match(blocked.stdout, /BLOCKED/);
+  assert.match(blocked.stdout, /NEEDS_HUMAN/);
   assert.match(blocked.stdout, /retention period/);
   assert.match(blocked.stdout, /needs human decision/);
 
@@ -315,12 +318,12 @@ test("retry budget: a judge-error loop spends no budget and terminates on its ow
 
   const first = broken();
   assert.equal(first.status, 1, "fail-closed: a judge error is never a pass");
-  assert.match(first.stdout, /semantic rounds 0\/2/, "the semantic cycle is untouched by a judge malfunction");
+  assert.match(first.stdout, /review cycle 1 \| open findings 0/, "the semantic cycle is untouched by a judge malfunction");
   assert.doesNotMatch(first.stdout, /failed 1 times in a row/, "one broken call is still just 're-run'");
 
   const second = broken();
   assert.equal(second.status, 1);
-  assert.match(second.stdout, /semantic rounds 0\/2/, "still 0/2: there was never a semantic verdict");
+  assert.match(second.stdout, /review cycle 1 \| open findings 0/, "still nothing open: there was never a semantic verdict");
   assert.doesNotMatch(second.stdout, /RETRY BUDGET EXHAUSTED/, "the receipt must not claim a budget it did not spend");
   assert.doesNotMatch(second.stdout, /close the run out honestly as blocked/, "two identical failures remain below the backend threshold");
 
@@ -334,67 +337,6 @@ test("retry budget: a judge-error loop spends no budget and terminates on its ow
   assert.equal(state.gates["gap-audit"].consecutiveErrors, 3);
   assert.equal(state.gates["gap-audit"].totalAttempts, 3, "all runs are still in the honest ledger");
   assert.equal(state.gates["gap-audit"].history.length, 3);
-});
-
-test("PRD review cycle: full BLOCK plus closure BLOCK stops at two and only explicit reopen starts another cycle", () => {
-  const dir = makeProject({ config: { judge: { retryBudget: 2 } } });
-  // `origin` is mandatory on a re-run judgment (applyRerunConvergence), so the
-  // bare BLOCK_RESPONSE makes every call after the first a judge ERROR rather
-  // than a BLOCK. This test used to pass on exactly that: the ERROR charged the
-  // retry budget, so "repeated BLOCKs" exhausted it after ONE real BLOCK. Now
-  // that a judge malfunction no longer spends the fix budget, the fixture has
-  // to produce the repeated BLOCKs the test claims to be about.
-  const block = () =>
-    runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
-      stub: stubFile(dir, {
-        ...BLOCK_RESPONSE,
-        findings: BLOCK_RESPONSE.findings.map((finding) => ({ ...finding, origin: "prior-unresolved" })),
-      }),
-    });
-  block();
-  const second = block();
-  assert.equal(second.status, 1);
-  assert.match(second.stdout, /CLOSURE EXHAUSTED/);
-  assert.match(second.stdout, /gate reopen/, "terminal output names the only path to a new cycle");
-  const stateAtExhaustion = gatesState(dir, "fixture");
-  for (let attempt = 3; attempt <= 15; attempt += 1) {
-    const refused = block();
-    assert.equal(refused.status, 1);
-    assert.match(refused.stdout, /closure-exhausted/, `attempt ${attempt} is refused with the terminal cause`);
-    assert.match(refused.stdout, /no judge was called/);
-  }
-  assert.deepEqual(gatesState(dir, "fixture"), stateAtExhaustion, "a refused run leaves no trace in the ledger");
-  const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "user changed the requirement; review it again"]);
-  assert.equal(reopened.status, 0, reopened.stdout + reopened.stderr);
-  assert.match(reopened.stdout, /review cycle 2/);
-  // The reopened cycle is a delta round, not a fresh exhaustive review: the
-  // blocked cycle's findings ledger survived the reopen, origin is mandatory,
-  // and a new non-P0 non-human finding cannot block - it demotes to advisory.
-  const newCycle = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
-    stub: stubFile(dir, {
-      verdict: "BLOCK",
-      findings: [
-        BLOCK_RESPONSE.findings.map((finding) => ({ ...finding, origin: "prior-unresolved" }))[0],
-        {
-          area: "scope",
-          severity: "P1",
-          missing: "a brand-new concern the judge just thought of",
-          recommendation: "expand the review",
-          requiresHuman: false,
-          origin: "new",
-        },
-      ],
-    }),
-  });
-  assert.equal(newCycle.status, 1, "the unresolved prior finding still blocks the reopened cycle");
-  const after = gatesState(dir, "fixture");
-  assert.equal(after.gates["gap-audit"].review.cycle, 2);
-  assert.equal(after.gates["gap-audit"].review.phase, "closure", "a semantic verdict was recorded, not a judge ERROR");
-  assert.equal(after.gates["gap-audit"].consecutiveErrors, 0, "the origin-tagged stub must not fall into the invalid-output path");
-  const demoted = after.gates["gap-audit"].findings.find((finding) => finding.area === "scope");
-  assert.equal(demoted.severity, "P2", "a new non-P0 non-human finding cannot block a reopened cycle");
-  assert.match(demoted.recommendation, /auto-demoted/);
-  assert.equal(after.gates["gap-audit"].reviewReopens[0].evidence, "user changed the requirement; review it again");
 });
 
 test("verify PASS prints a per-criterion semantic summary", () => {
@@ -440,7 +382,7 @@ test("fan-out: one blocking lane blocks the merged gate and per-lane records lan
   assert.equal(result.status, 1);
   assert.match(result.stdout, /deletion error state undecided/);
   const state = gatesState(dir, "fixture");
-  assert.equal(state.gates["gap-audit"].verdict, "BLOCK");
+  assert.equal(state.gates["gap-audit"].verdict, "NEEDS_HUMAN", "the one open finding needs a human decision");
   assert.equal(state.judgeCalls.length, 4, "one judge call per gap-audit lane");
   const lanePurposes = state.judgeCalls.map((c) => c.purpose).sort();
   assert.ok(lanePurposes.every((p) => p.startsWith("gate:gap-audit:lane:")));
@@ -475,15 +417,15 @@ test("fan-out: spec gate runs its two review-axis lanes", () => {
   ]);
 });
 
-test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of blocking", () => {
+test("fan-out rerun: a new lane finding on an unchanged document is discarded, and the resolved set seals", () => {
   const dir = makeProject();
   const round1 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, {
       byPurpose: {
-        "lane:data-tech": {
+        "lane:ux-behavior": {
           verdict: "BLOCK",
           findings: [
-            { area: "data", severity: "P1", missing: "retention undecided", recommendation: "decide", requiresHuman: false },
+            { area: "ux", severity: "P1", missing: "error state undecided", recommendation: "decide", requiresHuman: false },
           ],
         },
         default: { verdict: "PASS", findings: [] },
@@ -492,7 +434,9 @@ test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of bl
   });
   assert.equal(round1.status, 1);
 
-  // Re-run: the prior data finding is resolved, but a lane invents a NEW P1.
+  // Re-run: the prior ux finding is resolved (not echoed), but the lane
+  // invents a NEW P1 on a document whose decisions did not change (PRD
+  // gate-loop R1: the open set can only shrink there).
   const round2 = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, {
       byPurpose: {
@@ -505,7 +449,6 @@ test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of bl
               missing: "a newly invented depth-3 trim concern",
               recommendation: "trim it",
               requiresHuman: false,
-              origin: "new",
             },
           ],
         },
@@ -513,12 +456,12 @@ test("fan-out rerun: convergence demotes a new non-P0 lane finding instead of bl
       },
     }),
   });
-  assert.equal(round2.status, 0, "new non-P0 findings on a re-run cannot hold the gate");
-  assert.match(round2.stdout, /auto-demoted/);
+  assert.equal(round2.status, 0, round2.stdout + round2.stderr);
+  assert.match(round2.stderr, /new finding\(s\) from lanes whose decisions did not change were discarded/);
   const state = gatesState(dir, "fixture");
   assert.equal(state.gates["gap-audit"].verdict, "PASS");
-  assert.equal(state.gates["gap-audit"].findings[0].severity, "P2");
-  assert.equal(state.gates["gap-audit"].review.phase, "sealed", "P2 notes do not trigger another edit/review loop");
+  assert.deepEqual(state.gates["gap-audit"].findings, []);
+  assert.deepEqual(state.gates["gap-audit"].warnings, [], "a discarded finding is not smuggled in as a warning");
   const calls = state.judgeCalls.length;
   const cached = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, "poison: an unchanged sealed PASS must be cached"),
@@ -534,7 +477,9 @@ test("sealed PASS: input drift refuses automatic re-judgment and explicit reopen
   });
   assert.equal(passed.status, 0, passed.stdout + passed.stderr);
 
-  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q9: harmless extra answer\n- answer: yes\n");
+  // A decision cell changed after the seal (PRD gate-loop R4: that, and
+  // only that, is drift on a qa-log).
+  fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE.replace("widget renders a list", "widget renders a grid"));
   const callsBefore = gatesState(dir, "fixture").judgeCalls.length;
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     const rerun = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
@@ -550,7 +495,8 @@ test("sealed PASS: input drift refuses automatic re-judgment and explicit reopen
     stub: stubFile(dir, { byPurpose: { default: { verdict: "PASS", findings: [] } } }),
   });
   assert.equal(reviewed.status, 0, reviewed.stdout + reviewed.stderr);
-  assert.equal(gatesState(dir, "fixture").gates["gap-audit"].review.cycle, 2);
+  assert.equal(gatesState(dir, "fixture").gates["gap-audit"].reviewReopens.length, 1);
+  assert.match(runCli(dir, ["gate", "status", "--slug", "fixture"]).stdout, /gate:gap-audit\] PASS \| review cycle 2/);
 });
 
 test("freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gate status", () => {
@@ -563,7 +509,7 @@ test("freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gat
   const fresh = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
   assert.match(fresh.stdout, /gate:gap-audit\] PASS/);
 
-  fs.appendFileSync(path.join(dir, "qa-log.md"), "\n### Q9: new answer added after the gate passed\n");
+  fs.writeFileSync(path.join(dir, "qa-log.md"), QA_FIXTURE.replace("| P1 | user | resolved |", "| P0 | user | resolved |"));
   const stale = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
   assert.match(stale.stdout, /gate:gap-audit\] STALE/);
   assert.match(stale.stdout, /stale: qa-log\.md changed after this gate passed/);
@@ -716,7 +662,7 @@ test("json contract: doctor, status, and override all emit contractVersion-tagge
   const status = runCli(dir, ["gate", "status", "--slug", "fixture", "--json"], {});
   const statusParsed = JSON.parse(status.stdout);
   assert.match(statusParsed.contractVersion, /^\d+\.\d+\.\d+$/);
-  assert.equal(statusParsed["gap-audit"].effective, "BLOCKED");
+  assert.equal(statusParsed["gap-audit"].effective, "NEEDS_HUMAN");
 
   const override = runCli(
     dir,
@@ -896,7 +842,8 @@ test("delegated run: --assume-human-findings converts non-P0 human findings to a
   assert.equal(record.humanAssumptions[0].evidence, invocation, "the ledger quotes the delegating message verbatim");
   assert.equal(record.humanAssumptions[0].findings[0].missing, "delivery scope (receipt-only vs PR) unconfirmed");
   assert.equal(record.humanAssumptions[0].findings[0].severity, "P1", "the ledger keeps the judged severity");
-  assert.equal(record.findings[0].severity, "P2", "the recorded finding is the demoted advisory");
+  assert.deepEqual(record.findings, [], "nothing stays open");
+  assert.equal(record.warnings[0].severity, "P2", "the recorded finding is the demoted advisory");
 
   // The substitution stays loud on every status read.
   const status = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
@@ -966,9 +913,9 @@ test("delegated run: a P0 human finding still blocks under --assume-human-findin
     { stub: stubFile(dir, BLOCK_RESPONSE) }, // BLOCK_RESPONSE carries a P0 requiresHuman finding
   );
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.match(result.stdout, /BLOCKED/);
+  assert.match(result.stdout, /NEEDS_HUMAN/, "a P0 human finding is never assumed; it goes to the user");
   const record = gatesState(dir, "fixture").gates["gap-audit"];
-  assert.equal(record.verdict, "BLOCK");
+  assert.equal(record.verdict, "NEEDS_HUMAN");
   assert.equal(record.humanAssumptions, undefined, "nothing was assumed");
 });
 

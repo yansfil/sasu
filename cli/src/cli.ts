@@ -5,6 +5,7 @@ import { loadConfig } from "./config";
 import { runDoctor } from "./doctor";
 import {
   readGateStatus,
+  runAnswer,
   runDelegate,
   runDelegateClear,
   runGapAudit,
@@ -41,6 +42,7 @@ Usage:
   sasu gate status    --slug <topic> [--json]
   sasu gate delegate  --slug <topic> --evidence "<verbatim delegating user message>" [--json]
   sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
+  sasu gate answer    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user answer to the NEEDS_HUMAN bundle>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
   sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-tasks] [--json]
   sasu implement intake   [--json]
@@ -118,12 +120,16 @@ identical in both modes (0 pass, 1 block/fail, 2 usage error).
 Gates run a deterministic document prelint before the judge: a structural defect
 blocks at $0 with [prelint] findings - no judge call, no retry-budget attempt.
 
-Gap-audit and spec each get one exhaustive verdict. A BLOCK permits exactly one
-closure verdict after the document is fixed. PASS seals that cycle; a sealed
-input change or a second BLOCK stops at $0 until the user explicitly opens a
-new cycle with 'gate reopen'. --grant-budget only retries a judge backend that
-failed three times in a row with the same structured cause and no verdict.
-Verify keeps its separately configured fix retry budget.
+Gap-audit and spec keep an open findings set, not a round budget. A rerun
+judges only the findings still open (plus new ones in a lane whose Decision
+Register rows changed), so the set can only shrink: BLOCK means an
+agent-fixable finding is open (fix it, re-run), NEEDS_HUMAN means every open
+finding needs a human decision (hand the bundle to the user, record their
+words with 'gate answer', which seals PASS without another judge call), and
+PASS seals the cycle. A sealed input change stops at $0 until the user
+explicitly opens a new cycle with 'gate reopen'. --grant-budget only retries a
+judge backend that failed three times in a row with the same structured cause
+and no verdict. Verify keeps its separately configured fix retry budget.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
 --assume-human-findings exists for delegated runs only (the user invoked $please
@@ -200,8 +206,8 @@ function printStatusView(view: GateStatusView): void {
   // attempts left" while every one of them is a broken backend call. The flag has
   // to say so here, or `sasu gate status` is the one surface that hides the
   // terminal cause the receipt and the Stop hook both report.
-  const terminal = view.closureExhausted
-    ? ` - CLOSURE EXHAUSTED: cycle ${view.reviewCycle} remains blocked after its one closure verdict; report the findings and require an explicit gate reopen`
+  const terminal = view.effective === "NEEDS_HUMAN"
+    ? ` - NEEDS HUMAN: every open finding needs a human decision; ask the user the ${view.findings.length} question(s) below as one bundle, then record their words with: sasu gate answer --slug ${view.topic} --gate ${view.gate} --evidence "<the user's words>"`
     : view.reopenRequired
       ? ` - REOPEN REQUIRED: this sealed review's input changed; restore it or record the user's change request with gate reopen`
     : view.budgetExhausted
@@ -217,9 +223,9 @@ function printStatusView(view: GateStatusView): void {
   const assumed = view.assumedHumanFindings > 0
     ? ` | ASSUMED HUMAN DECISIONS: ${view.assumedHumanFindings} finding(s) converted to recorded assumptions under the delegated invocation - the user may veto (see the gate record's humanAssumptions)`
     : "";
-  const review = view.reviewPhase === null
+  const review = view.reviewCycle === null
     ? `attempts ${view.attempts}/${view.budget}`
-    : `review cycle ${view.reviewCycle} | ${view.reviewPhase} | semantic rounds ${view.reviewRound}/2`;
+    : `review cycle ${view.reviewCycle} | open findings ${view.findings.length}${view.sealed ? " | sealed" : ""}`;
   const active = view.inFlight ? " | IN FLIGHT" : "";
   const meta = `${review}${grants}${assumed}${active}${terminal}`;
   process.stdout.write(`${head} | ${meta}\n`);
@@ -228,8 +234,13 @@ function printStatusView(view: GateStatusView): void {
   }
   for (const finding of view.findings) {
     const human = finding.requiresHuman ? " [needs human decision]" : "";
-    process.stdout.write(`  - ${finding.severity} ${finding.area}: ${finding.missing}${human}\n`);
+    const id = finding.id !== undefined ? `${finding.id} ` : "";
+    process.stdout.write(`  - ${id}${finding.severity} ${finding.area}: ${finding.missing}${human}\n`);
     if (finding.recommendation) process.stdout.write(`    fix: ${finding.recommendation}\n`);
+  }
+  for (const finding of view.warnings) {
+    const id = finding.id !== undefined ? `${finding.id} ` : "";
+    process.stdout.write(`  warning: ${id}${finding.severity} ${finding.area}: ${finding.missing}\n`);
   }
 }
 
@@ -277,7 +288,7 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
       }
     }
     if (result.error) {
-      const structuralRefusal = new Set(["gate-in-flight", "reopen-required", "closure-exhausted"]);
+      const structuralRefusal = new Set(["gate-in-flight", "reopen-required"]);
       const label = structuralRefusal.has(result.error.code) ? "gate refusal" : "judge error";
       process.stdout.write(`[${label}: ${result.error.code}] ${result.error.message}\n`);
       process.stdout.write(`recovery: ${result.error.recovery}\n`);
@@ -397,7 +408,7 @@ async function main(): Promise<void> {
     process.exit(principlesResult.exitCode);
   }
 
-  const implementorBlockedGates = new Set(["gap-audit", "spec", "delegate", "reopen", "override"]);
+  const implementorBlockedGates = new Set(["gap-audit", "spec", "delegate", "reopen", "answer", "override"]);
   if (command === "gate" && subcommand !== undefined && implementorBlockedGates.has(subcommand) && currentHerdrRole() === "implementor") {
     const message = `Implementor role cannot run specification-stage gate '${subcommand}'. This command belongs to the Spec Owner or Observer. Run it from an unmarked main session; no state was written.`;
     if (asJson) {
@@ -614,6 +625,24 @@ async function main(): Promise<void> {
         process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), status: view }, null, 2)}\n`);
       } else {
         process.stdout.write(`${gate} review reopened with recorded user evidence.\n`);
+        printStatusView(view);
+      }
+      process.exit(0);
+    }
+    if (subcommand === "answer") {
+      const gate = requireFlag(args, "gate");
+      if (gate !== "gap-audit" && gate !== "spec") fail("--gate must be one of: gap-audit, spec");
+      const view = runAnswer(
+        projectRoot,
+        config,
+        requireFlag(args, "slug"),
+        gate as "gap-audit" | "spec",
+        requireFlag(args, "evidence"),
+      );
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), status: view }, null, 2)}\n`);
+      } else {
+        process.stdout.write(`${gate} human bundle answered with recorded user evidence; the gate is sealed PASS without another judge call.\n`);
         printStatusView(view);
       }
       process.exit(0);

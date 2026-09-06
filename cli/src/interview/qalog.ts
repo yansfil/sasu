@@ -12,6 +12,10 @@
  * value accepted here must never be rejected there.
  */
 
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
 export const QA_WHERE = ["greenfield", "brownfield", "docs-only", "unknown"] as const;
 export const QA_KINDS = ["fact", "decision", "assumption"] as const;
 export const QA_PRIORITIES = ["P0", "P1", "P2"] as const;
@@ -72,6 +76,31 @@ const RAW_QA_HEADING = "## Raw Q&A";
 const CURSOR_HEADING = "## Intake Cursor";
 const TRANSCRIPT_SOURCES_HEADING = "## Transcript Sources";
 const CHECKPOINT_HEADING = "## Checkpoint And Sweep History";
+
+function temporarySibling(file: string): string {
+  return path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+}
+
+/**
+ * Atomic compare-and-replace of a qa-log: the write lands only if the file
+ * still holds the content the mutation was computed from, so two writers
+ * (an interview command and a gate recording its Audit entry) can never
+ * silently drop each other's edit.
+ */
+export function replaceQaLog(file: string, expected: string, content: string): void {
+  if (content === expected) return;
+  const temporary = temporarySibling(file);
+  try {
+    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
+    const current = fs.readFileSync(file, "utf8");
+    if (current !== expected) {
+      throw new Error(`qa-log changed outside this command while it was running: ${file} (retry from fresh state)`);
+    }
+    fs.renameSync(temporary, file);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
 
 export function todayStamp(): string {
   const now = new Date();
@@ -181,28 +210,18 @@ function parseFrontmatterNumber(content: string, key: string, fallback: number):
   return match ? Number(match[1]) : fallback;
 }
 
+const registerLib = require("../../lib/qa_register.js") as {
+  parseRegisterRows: (content: string) => RegisterRow[] | null;
+};
+
+/**
+ * Register rows via the shared plain-JS reader (cli/lib/qa_register.js), the
+ * same parser the gate freshness pin and the rerun lane digests use, so one
+ * document can never mean two different sets of decisions.
+ */
 export function parseRegisterRows(content: string): RegisterRow[] {
-  const lines = content.split("\n");
-  const { start, end } = sectionRange(lines, REGISTER_HEADING);
-  const rows: RegisterRow[] = [];
-  for (let i = start + 1; i < end; i += 1) {
-    const line = lines[i]!;
-    if (!line.trim().startsWith("|")) continue;
-    const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
-    if (cells.every((c) => /^:?-+:?$/.test(c) || c === "")) continue;
-    if (cells[0] === "ID") continue;
-    if (cells.length < 8) continue;
-    rows.push({
-      id: cells[0]!,
-      kind: cells[1]!,
-      area: cells[2]!,
-      text: cells[3]!,
-      priority: cells[4]!,
-      source: cells[5]!,
-      status: cells[6]!,
-      mapping: cells[7]!,
-    });
-  }
+  const rows = registerLib.parseRegisterRows(content);
+  if (rows === null) throw new Error(`qa-log is missing the "${REGISTER_HEADING}" section`);
   return rows;
 }
 
@@ -442,6 +461,63 @@ export function anchorDecisionToQuestion(content: string, qNumber: number, decis
   throw new Error(`Q${qNumber} entry has no decision_ids line`);
 }
 
+const AUDIT_HEADING = "## Audit History";
+
+export interface AuditEntryInput {
+  type: "gap-audit-gate" | "spec-gate";
+  result: "pass" | "block" | "needs-human" | "error" | "answered" | "reopened";
+  at: string;
+  cycle: number;
+  /** Open findings after the round, rendered one per line. */
+  open: { id?: string; severity: string; area: string; missing: string }[];
+  warnings: { id?: string; severity: string; area: string; missing: string }[];
+  artifact: string | null;
+  note?: string;
+}
+
+function renderFindingLines(findings: AuditEntryInput["open"]): string[] {
+  if (findings.length === 0) return ["none"];
+  return findings.map((f) => `${f.id !== undefined ? `${f.id} ` : ""}[${f.severity}/${f.area}] ${sanitizeCell(f.missing)}`);
+}
+
+/**
+ * The gate's own record of a round in the log it judged (PRD gate-loop
+ * D-06/R5): written by the harness at every judged, errored, answered, or
+ * reopened round, never by the agent (hide-rebrand 2026-08-29: the agent
+ * hand-wrote the block three times with python and left "placeholder
+ * written - will update result after gate run"). The section is outside the
+ * freshness pin, so recording never stales the seal. A log without the
+ * section gets one appended at the end; the gap-audit prelint requires it,
+ * so this only happens on a log the gate never saw.
+ */
+export function appendAuditEntry(content: string, entry: AuditEntryInput): { content: string; number: number } {
+  const numbers = [0];
+  for (const match of content.matchAll(/^###\s+Audit\s+(\d+)$/gm)) numbers.push(Number(match[1]));
+  const number = Math.max(...numbers) + 1;
+  const block = [
+    `### Audit ${number}`,
+    `- type: ${entry.type}`,
+    `- at: ${entry.at}`,
+    `- cycle: ${entry.cycle}`,
+    `- result: ${entry.result}`,
+    `- open findings: ${renderFindingLines(entry.open).join("\n  ")}`,
+    `- warnings: ${renderFindingLines(entry.warnings).join("\n  ")}`,
+    `- artifact: ${entry.artifact ?? "none"}`,
+    ...(entry.note !== undefined && entry.note.trim() !== "" ? [`- note: ${bulletValue(entry.note)}`] : []),
+  ];
+  const lines = content.split("\n");
+  if (!lines.some((line) => line.trim() === AUDIT_HEADING)) {
+    const trimmed = content.replace(/\n+$/, "");
+    return { content: `${trimmed}\n\n${AUDIT_HEADING}\n\n${block.join("\n")}\n`, number };
+  }
+  return { content: appendToSection(lines, AUDIT_HEADING, block).join("\n"), number };
+}
+
+/** Lifecycle status is harness-owned (PRD gate-loop D-06): gap-audit PASS completes a log, reopen reactivates it. */
+export function setQaLogStatus(content: string, status: "active" | "paused" | "complete"): string {
+  return setFrontmatterValue(content, "status", status, true);
+}
+
 export function appendCheckpoint(content: string, input: CheckpointInput, afterQuestion: number): { content: string; number: number } {
   const numbers = [0];
   for (const match of content.matchAll(/^###\s+Checkpoint\s+(\d+)$/gm)) numbers.push(Number(match[1]));
@@ -516,6 +592,12 @@ export function refreshBookkeeping(content: string, options: { nextQuestion?: st
   let updated = content;
   updated = setFrontmatterValue(updated, "question_count", String(state.questionCount), false);
   updated = setFrontmatterValue(updated, "updated_at", todayStamp(), true);
+  // The Intake Cursor is the live interview's convenience block, not a gate
+  // requirement (the gap-audit prelint lists the required sections and it is
+  // not one). A gate command that appends a turn to a log written without it
+  // - the older template, a hand-assembled fixture - keeps the frontmatter
+  // counts honest and leaves the absent cursor absent.
+  if (!content.split("\n").some((line) => line.trim() === CURSOR_HEADING)) return updated;
   updated = setCursorValue(updated, "next_decision_id", state.nextDecisionId);
   updated = setCursorValue(updated, "outstanding_raw_entries", state.outstanding.length > 0 ? state.outstanding.join(", ") : "none");
   updated = setCursorValue(updated, "next_checkpoint_at", state.nextCheckpointAt);

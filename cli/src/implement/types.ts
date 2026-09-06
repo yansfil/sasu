@@ -774,6 +774,10 @@ export interface EscalationRecord {
   handoff: SolverHandoff | null;
 }
 
+export type PrdJudgeRecord =
+  | { required: true; skippedReason: null; gapAudit: string; spec: string }
+  | { required: false; skippedReason: string; gapAudit: null; spec: null };
+
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   status: "active" | "complete" | "blocked" | "retired";
@@ -801,6 +805,16 @@ export interface ImplementState {
     reviewProfile: ReviewProfile;
     reviewRationale: string;
     sourceIntake: string;
+    /**
+     * Whether the PRD's specification gates (gap-audit, spec) judged it
+     * before this run started, recorded at start and copied into the
+     * receipt (PRD gate-loop R9). A PRD with no interview qa-log has no
+     * user utterances for a fidelity judge to compare against, so the gates
+     * are not required for it and the receipt says so instead of implying
+     * a judgment that never happened. Absent on runs recorded before the
+     * field existed; the receipt omits it rather than guessing.
+     */
+    judge?: PrdJudgeRecord;
   };
   initialSource: SourceSnapshot;
   baselineAttribution: BaselineAttribution;

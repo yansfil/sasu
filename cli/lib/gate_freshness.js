@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { parseRegisterRows, decisionDigest, parseQaAnswers, answerDigest } = require("./qa_register.js");
 
 // Bump this whenever gate-input validity changes so a PASS earned under an
 // older prelint or semantic-source contract becomes STALE instead of being
@@ -59,19 +60,49 @@ function freshnessHash(content) {
 const ABSENT_INPUT = `sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}:absent`;
 
 /**
+ * A qa-log is pinned by its decisions and the words they rest on (PRD
+ * gate-loop D-05/R4 plus verify risk finding RF2): the Decision Register's
+ * decision cells - id, kind, area, decision text, priority, status of every
+ * row, order-independent - and the `- answer:` text of every Raw Q&A turn,
+ * keyed by question number. Everything else in the log - Raw Q&A anchors,
+ * labels and notes, Source/owner and PRD-mapping cells, Audit History,
+ * frontmatter status - is bookkeeping the agent legitimately touches after
+ * the seal, and pinning it is what turned a one-line anchor fix into a
+ * BLOCKED sealed PASS with ten new findings (implement-bc, 2026-08-30).
+ *
+ * Answers are pinned because D-08 makes them the evidence a spec judge
+ * compares decisions against: leaving them out let an answer be edited or
+ * removed after the seal while a rerun returned the cached PASS, so the
+ * recorded consent could contradict the sealed verdict (RF2, 2026-09-06).
+ * `sasu gate answer` and `gate reopen` append a turn before they re-pin, so
+ * the harness's own writes still never stale a seal. The contract version
+ * is not bumped: a pin recorded under the previous rule simply reads as
+ * changed once, which is the honest reading of "the rule for this input
+ * moved".
+ */
+function qaLogDecisionHash(content) {
+  const rows = parseRegisterRows(content);
+  const answers = parseQaAnswers(content);
+  const digest = rows === null ? "no-decision-register" : decisionDigest(rows);
+  const answered = answers === null ? "no-raw-qa" : answerDigest(answers);
+  return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}:qa-log-decisions\n${digest}\n${answered}`);
+}
+
+/**
  * Hash a recorded gate input as it sits on disk now, by its declared kind.
  * Evidence artifacts hash raw bytes (a screenshot has no markdown body to
- * strip, and every byte of a log is substance); documents - qa-log included -
- * hash their markdown body under the one structural rule above; config hashes
- * raw bytes (JSON has no markdown body) and has a sentinel for absence.
- * Returns null when a file that must exist is gone, which the caller reports
- * as stale.
+ * strip, and every byte of a log is substance); documents hash their
+ * markdown body under the one structural rule above; a qa-log hashes its
+ * decision cells (qaLogDecisionHash); config hashes raw bytes (JSON has no
+ * markdown body) and has a sentinel for absence. Returns null when a file
+ * that must exist is gone, which the caller reports as stale.
  */
 function hashGateInput(absPath, kind) {
   const fs = require("fs");
   if (!fs.existsSync(absPath)) return kind === "config" ? ABSENT_INPUT : null;
   if (kind === "evidence" || kind === "config") return sha256Of(fs.readFileSync(absPath));
+  if (kind === "qa-log") return qaLogDecisionHash(fs.readFileSync(absPath, "utf8"));
   return freshnessHash(fs.readFileSync(absPath, "utf8"));
 }
 
-module.exports = { ABSENT_INPUT, FRESHNESS_CONTRACT_VERSION, freshnessHash, hashGateInput, sha256Of };
+module.exports = { ABSENT_INPUT, FRESHNESS_CONTRACT_VERSION, freshnessHash, hashGateInput, qaLogDecisionHash, sha256Of };

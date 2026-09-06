@@ -1,6 +1,6 @@
-// Judge-error budget for PRD gates. Semantic review is bounded separately by
-// full + closure; --grant-budget may only retry a backend that returned no
-// verdict and never widens the semantic cycle.
+// Judge-error budget for PRD gates. Semantic review is bounded by the open
+// findings set (PRD gate-loop R1/R2), not by a round count; --grant-budget
+// may only retry a backend that returned no verdict.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -37,12 +37,12 @@ function makeProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "sasu-gate-budget-"));
 }
 
-test("grant: never widens a PRD semantic review", () => {
+test("grant: never touches a PRD semantic review that is merely blocked", () => {
   const store = new GateStore(makeProject(), "topic-a");
   let state = store.load();
   state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
   state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
-  assert.equal(gateStatus(state, "gap-audit", 2).closureExhausted, true);
+  assert.equal(gateStatus(state, "gap-audit", 2).effective, "BLOCKED");
   assert.throws(() => grantGateBudget(store, state, "gap-audit", "keep going", 2), /semantic review is not reopened/);
 });
 
@@ -65,8 +65,8 @@ test("grant: after a judge-error loop it records evidence and preserves the sema
   state = grantGateBudget(store, state, "gap-audit", "백엔드 고쳤으니 다시 실행해", 2);
   const view = gateStatus(state, "gap-audit", 2);
   assert.equal(view.judgeErrorLoop, false);
-  assert.equal(view.reviewPhase, "full");
-  assert.equal(view.reviewRound, 0);
+  assert.equal(view.sealed, false, "a grant retries the backend; it does not seal or reopen anything");
+  assert.equal(view.reviewCycle, 1);
   assert.equal(view.grants, 1);
   const reloaded = new GateStore(store.projectRoot, "topic-a").load();
   const grants = reloaded.gates["gap-audit"].budgetGrants;

@@ -99,6 +99,7 @@ import {
   type ContractItem,
   type DesignComment,
   type DirtyAttribution,
+  type PrdJudgeRecord,
   type TrackedDesignComment,
   type FidelityCheckResult,
   type ImplementCommandResult,
@@ -610,7 +611,8 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       `implement start refused: PRD review still in flight (${activePrdGates.join(", ")}); wait for the gate to finish and inspect its final status`,
     );
   }
-  if (sourceIntake !== "" && path.basename(sourceIntake) === "qa-log.md") {
+  const qaLogBacked = sourceIntake !== "" && path.basename(sourceIntake) === "qa-log.md";
+  if (qaLogBacked) {
     const incomplete = (["gap-audit", "spec"] as const).filter((gate) => gateViews[gate].effective !== "PASS");
     if (incomplete.length > 0) {
       const statuses = incomplete.map((gate) => `${gate}=${gateViews[gate].effective}`).join(", ");
@@ -619,6 +621,14 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       );
     }
   }
+  const prdJudge: PrdJudgeRecord = qaLogBacked
+    ? { required: true, skippedReason: null, gapAudit: gateViews["gap-audit"].effective, spec: gateViews.spec.effective }
+    : {
+        required: false,
+        skippedReason: `judge not run: no user utterances to judge against (source_intake is ${sourceIntake === "" ? "empty" : JSON.stringify(sourceIntake)}, not an interview qa-log)`,
+        gapAudit: null,
+        spec: null,
+      };
   const statePath = statePathFor(projectRoot, slug);
   if (fs.existsSync(statePath)) {
     let existingSchema = "unknown";
@@ -675,6 +685,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
         reviewProfile: reviewProfile(contract),
         reviewRationale: contract.frontmatter["review_rationale"] ?? "",
         sourceIntake,
+        judge: prdJudge,
       },
       initialSource: baseline,
       baselineAttribution: {
@@ -3616,6 +3627,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       topicSlug: state.topicSlug,
       prdPath: state.prdPath,
       prdSnapshotPath: state.prd.snapshotPath,
+      ...(state.prd.judge !== undefined ? { prdJudge: state.prd.judge } : {}),
       baselineAttribution: state.baselineAttribution,
       blockedAt,
       completionFingerprint: fingerprint,
@@ -3681,6 +3693,7 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     topicSlug: state.topicSlug,
     prdPath: state.prdPath,
     prdSnapshotPath: state.prd.snapshotPath,
+    ...(state.prd.judge !== undefined ? { prdJudge: state.prd.judge } : {}),
     baselineAttribution: state.baselineAttribution,
     completedAt,
     completionFingerprint: fingerprint,

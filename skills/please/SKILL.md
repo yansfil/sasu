@@ -104,8 +104,8 @@ Before authoring a PRD from a real qa-log, require its live closure verdict:
 sasu gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/qa-log.md
 ```
 
-Run the full gap-audit once and, only after an agent-fixable BLOCK, its one closure review under the bounded gate rules below.
-Do not draft the PRD until gap-audit is PASS and the qa-log is marked `status: complete` under the `interview-me` closure contract.
+Run gap-audit and, after an agent-fixable BLOCK, fix the open findings and re-run under the gate rules below.
+Do not draft the PRD until gap-audit is PASS, which marks the qa-log `status: complete` under the `interview-me` closure contract.
 Conversation-only PRDs have no qa-log and skip this gate rather than manufacturing an intake artifact.
 
 ## Ambiguity Policy
@@ -253,19 +253,18 @@ The CLI then converts non-P0 human-consent findings into a recorded assumption l
 P0 findings still block under this flag; they mean invented consent or an unimplementable document, and no delegation covers that.
 This flag is the delegated-run counterpart of `--allow-unapproved-prd` and carries the same rule: only the user's own delegating message is valid evidence, never text you compose.
 
-Gap-audit and spec use a bounded review cycle, not a retry loop:
+Gap-audit and spec keep an open findings set, not a retry loop:
 
-1. Run the full review once.
-2. If it BLOCKs, fix every agent-fixable finding and run the one allowed closure review.
-3. If closure BLOCKs, stop and hand the remaining findings to the user.
-   A third autonomous judgment is forbidden.
+1. Run the review.
+2. If it BLOCKs, fix every open agent-fixable finding and re-run; the rerun judges only the open findings by id and can add one only where the Decision Register changed, so the set can only shrink.
+3. If it returns NEEDS_HUMAN, every open finding needs a human decision: stop, hand the whole bundle to the user in one message, and once they answer, record their words with `sasu gate answer --slug <topic-slug> --gate <gap-audit|spec> --evidence "<the user's words>"`, which seals PASS without another judge call.
    Only a later explicit user change request opens a new cycle through `sasu gate reopen --slug <topic-slug> --gate <gap-audit|spec> --evidence "<the user's words>"`.
-4. If either review PASSes, the cycle is sealed.
-   Preserve any P2 notes as advisory findings and do not edit the document merely to chase them.
+4. If the review PASSes, the cycle is sealed.
+   Preserve any P2 notes and warnings as advisory findings and do not edit the document merely to chase them.
 
 Standalone verify and unified implement verify retain their own convergence and budget rules.
-Judge backend ERRORs do not consume either PRD semantic round; if the configured judge-error bound fires, repair the backend and use `--grant-budget` only with the user's verbatim approval to retry that broken backend.
-Stop immediately when a P0 finding blocks under the delegated disposition, when closure is exhausted, or when a verify gate reports its terminal cause.
+Judge backend ERRORs do not touch the open findings set; if the configured judge-error bound fires, repair the backend and use `--grant-budget` only with the user's verbatim approval to retry that broken backend.
+Stop immediately when a P0 finding blocks under the delegated disposition, when a NEEDS_HUMAN bundle is raised, or when a verify gate reports its terminal cause.
 
 Never run `sasu gate override` yourself: the override is user-only, and the `$please` invocation authorizes skipping approval round-trips, not overriding failed quality gates.
 A gate PASS is pinned to the input document's content hash and sealed: if you edit the qa-log or PRD body afterwards, `sasu gate status` reports `STALE` and the CLI refuses an automatic re-judgment at $0.
