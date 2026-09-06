@@ -54,7 +54,7 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   const stateDir = path.join(root, "agents", "runs", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
   const state = {
-    schema: "sasu.implement.state.v3",
+    schema: "sasu.implement.state.v8",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
@@ -64,9 +64,12 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };
   write(statePath, JSON.stringify(state, null, 2));
   write(path.join(stateDir, "receipt.json"), JSON.stringify({
-    schema: "sasu.implement.receipt.v3",
+    schema: "sasu.implement.receipt.v4",
     status: "complete",
     completionFingerprint: "fixture-completion",
+    behaviors: [
+      { id: "B1", behavior: "feature is ready", check: "check: node src/check.js", decisions: [], parked: null, result: { kind: "check", status: "green", exitCode: 0, finishedAt: "2026-07-14T11:00:00Z" } },
+    ],
   }, null, 2));
 
   const bin = path.join(root, "fake-bin");
@@ -127,7 +130,6 @@ function initLocalFixture({ checkpoint = false } = {}) {
   state.delivery = { mode: "local" };
   state.initialSource = { head: fixture.head };
   state.baselineAttribution = { head: fixture.head };
-  state.tasks = [{ writeScope: ["src"] }];
   write(fixture.statePath, JSON.stringify(state, null, 2));
   write(path.join(fixture.root, "src", "feature.js"), "export const ready = 'local';\n");
   if (checkpoint) {
@@ -263,4 +265,50 @@ test("merge records a later explicit PR-delivery approval for v3 state without d
   const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
   assert.match(shipLog, /"kind":"mode"/);
   assert.match(shipLog, /User approved immediate merge/);
+});
+
+test("a complete-pending-human receipt ships locally and the PR body lists OPEN human rows as a table", () => {
+  const fixture = initLocalFixture();
+  const receiptPath = path.join(fixture.stateDir, "receipt.json");
+  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  receipt.status = "complete-pending-human";
+  receipt.behaviors.push({
+    id: "B2",
+    behavior: "the user likes the wording",
+    check: "human: the user says the wording is fine",
+    decisions: [],
+    parked: null,
+    result: { kind: "human", confirmation: "the user says the wording is fine", status: "OPEN (rejected: too stiff)", confirmedAt: null, evidence: null, rejections: [] },
+  });
+  write(receiptPath, JSON.stringify(receipt, null, 2));
+  const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
+  state.status = "complete-pending-human";
+  write(fixture.statePath, JSON.stringify(state, null, 2));
+  // The stub `sasu implement status` reports the same closing status.
+  const sasuStub = path.join(fixture.root, "fake-bin", "sasu");
+  write(sasuStub, fs.readFileSync(sasuStub, "utf8").replace('status: "complete",', 'status: "complete-pending-human",'), 0o755);
+
+  const body = JSON.parse(run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
+  const draft = fs.readFileSync(path.join(fixture.root, body.bodyPath), "utf8");
+  assert.match(draft, /## Open Human Confirmations/);
+  assert.match(draft, /\| B2 \| the user likes the wording \| the user says the wording is fine \| OPEN \(rejected: too stiff\) \|/);
+  assert.match(draft, /\| B1 \| feature is ready \| check: node src\/check\.js \| green \| exit 0/);
+  assert.doesNotMatch(draft, /Acceptance Result|Verification Evidence/);
+
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env });
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.ok, true);
+  assert.equal(output.status, "committed");
+  assert.deepEqual(output.commit.staged, ["src/feature.js"]);
+});
+
+test("a blocked receipt does not ship", () => {
+  const fixture = initLocalFixture();
+  const receiptPath = path.join(fixture.stateDir, "receipt.json");
+  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  receipt.status = "blocked";
+  write(receiptPath, JSON.stringify(receipt, null, 2));
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /Cannot ship receipt status 'blocked'/);
 });
