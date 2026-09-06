@@ -18,7 +18,7 @@ The Sasu harness remains the independent verification authority.
 
 The Spec Owner owns conversation continuity, qa-log closure when applicable, PRD authorship, PRD gates, and the pre-implementation summary.
 The Observer owns conversation continuity, delegation, liveness, exception triage, recovery, and the final user-facing report.
-The Implementor owns implementation repository writes, task closure, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
+The Implementor owns implementation repository writes, row checks, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
 It never authors or repairs the qa-log or PRD.
 While the implementation phase is active, only the Implementor may mutate implementation files or Sasu run state after dispatch; the qa-log and PRD body remain sealed and read-only for both sessions.
 The Observer may read repository state, `sasu gate status`, `sasu implement status`, receipts, and the Implementor transcript.

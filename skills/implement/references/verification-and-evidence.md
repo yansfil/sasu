@@ -18,11 +18,13 @@ Register final evidence immediately after capture:
 
 ```sh
 sasu implement artifact \
-  --id V3 \
+  --row B2 \
   --kind screenshot \
   --path docs/screenshots/example.png \
   --description '<what this proves>'
 ```
+
+`--row` binds the evidence to the `judge:` row it proves; a `judge:` row with no registered artifact fails the acceptance lane before any judge is called.
 
 The file must exist, be non-empty, stay inside the repository, and match its declared kind.
 Image evidence must contain valid PNG or JPEG bytes.
@@ -39,17 +41,17 @@ Do not edit `state.json` to refresh a hash or timestamp.
 
 ## Mechanical Verification
 
-Unified verify discovers repository build and test scripts, groups identical `(cwd, argv)` bindings, and executes each group once.
-One result may prove several verification IDs without running the command several times.
+Unified verify runs the suite sealed at start (`verify.commands` from `agents/config.json`, else the commands detected from the repository) once, on one frozen tree, through the same executor `check --row` uses.
+`check:` rows are not re-run: their exit-code results are read from the row ledger and carried into the receipt as recorded.
 
 The mechanical stage runs before any LLM call.
-A failure, timeout, malformed state, invalid artifact, or source mutation fails closed and makes zero judge calls.
+A red suite command, a `check:` row that is not green on the current tree, a timeout, malformed state, an invalid artifact, or a source mutation fails closed and makes zero judge calls.
 
 ## Judge Verification
 
 After mechanical PASS:
 
-- the acceptance judge checks code and evidence against acceptance criteria.
+- the acceptance judge checks code and evidence against each `judge:` row.
 - the fidelity judge checks intent preservation with a fixed rubric and dynamic source context.
 - a high-risk run adds one final risk review after the two base lanes finish; it updates the risk ledger and does not vote on their unified verdict.
 
@@ -62,14 +64,14 @@ The validator rejects invented or missing pointers through the normal invalid-ou
 A successful risk result appends new findings, keeps unresolved findings open, and marks resolved findings fixed.
 A risk ERROR is recorded on the attempt without changing the ledger or the unified verdict.
 
-For each acceptance criterion, the harness places the relevant mechanical output and text artifact content directly in the prompt.
+For each `judge:` row, the harness places the row ledger (every row's sealed cell, and for `check:` rows the recorded exit code), the failing suite output, the text artifact content registered against the row, and the Decisions rows it cites directly in the prompt.
 It lists run-owned changed files and visual artifacts as an exact read allowlist instead of copying every changed file into every prompt.
 The default Codex judge gets a disposable workspace containing only those copied allowlisted files.
 Its read-only sandbox blocks writes but is not an OS-hard host-read boundary, so the CLI audits its JSON command trace and invalidates any command beyond bounded `sed` or `rg` reads of an allowlisted path.
 Accepted commands are recorded on the judge call for later review.
 It may not list directories, search broadly, inspect history or environment variables, access the network, or execute project code.
 The Claude fallback can use only Read/Grep against the same prompt-level allowlist.
-The implementing agent does not maintain a second manual file-to-criterion ledger.
+The implementing agent does not maintain a second manual file-to-row ledger.
 
 The acceptance and fidelity calls are independent and concurrent.
 Neither can overwrite the other's failure.

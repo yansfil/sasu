@@ -111,9 +111,11 @@ the CLI, and every change is attributed to an issuer: `implementor`,
 the CLI cannot tell a supervisor typing `--issuer human` from the human, and
 the mitigation is the transcript, not the code. What the gate does buy is that
 the supervisor is read-only over implementation: one dispatch gate refuses
-`check`, `task`, `artifact`, `verify`, `finalize`, `design --accept`, and
+`check`, `artifact`, `verify`, `finalize`, `design --accept`, and
 `risk --accept` from an `observer` and records the refusal in the run's verb
-history. `amend` and `risk --non-convergent` are human-only. The gate is
+history. `confirm` and `risk --non-convergent` are human-only; `amend` admits
+observer and human and the PRD diff decides which (a changed 검사 방법 cell is
+the observer's, a changed behavior cell or row set is the human's). The gate is
 fail-open on a command it does not know, so a test reads the dispatcher and
 fails if a subcommand reaches it with no authority row. The full table lives
 in `skills/implement/SKILL.md`'s Command Contract, which a test compares
@@ -129,9 +131,11 @@ watched is not lost. A refused verb raises no event - nothing changed, so
 nobody needs waking. This registers no hook; see Lifecycle hooks.
 
 **Correcting a run in flight.** `amend` re-seals the PRD snapshot and
-invalidates only the acceptance rows whose text actually changed, archiving
-the superseded snapshot under its amendment id; it is refused while a task is
-in progress. `resequence` reorders pending tasks and moves no evidence.
+invalidates only the Behaviors rows whose cells actually changed, archiving
+the superseded snapshot under its amendment id; an observer's amendment is
+refused while a `check:` row is mid-attempt. The Behaviors row is the unit of
+progress: there is no task ledger, and how rows are split into work is the
+implementor's own plan, which the harness does not read.
 `amend --exclude-suite` is the only door out of the sealed suite list, and the
 excluded command's last result stays in the ledger as history rather than
 being deleted. A criterion proved by driving a screen is scripted by
@@ -139,6 +143,21 @@ being deleted. A criterion proved by driving a screen is scripted by
 covered step set, and the declared driver role - the implementor may not
 register its own drive. Replacing evidence after a rejection is recorded:
 a superseded trail is preserved, a replaced artifact is invalidated.
+
+**Human rows.** A `human:` row is closed by the person's own words and by
+nobody else's. `finalize` leaves it OPEN and closes the run
+`complete-pending-human`; `confirm --issuer human` closes it later and
+rewrites the receipt, `--reject` records what was wrong and keeps it OPEN, and
+the fix is a new run. OPEN rows travel in the PR body and never block merge.
+
+**Repository constants.** These hold for every PRD under this harness and are
+stated here once, never repeated in a PRD: no agent, model, vendor, or tool
+name in branch names, commits, PR text, or generated handoff text; no
+compatibility layer, migration shim, or read path for a retired state schema
+or document shape (a retired shape is an explicit error naming the last commit
+that read it); nothing under `agents/**` in a judged diff or a freshness
+fingerprint. A constraint that is specific to one PRD is a Non-goal or a
+Behaviors row in that PRD.
 
 **Judge policy.** Judge model routing is project-configurable only through the
 `routine` and `high-risk` profiles in `agents/config.json`.

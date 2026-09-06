@@ -3,10 +3,10 @@ name: gen-prd
 description: |
   Project-local PRD writer. Use when the user invokes "$gen-prd", asks for a PRD,
   product requirements document, implementation-ready requirements, or wants to
-  turn intake/clarify output into a human-reviewable requirements contract with
-  major technical structure changes, PRD-level tasks, a compact verification
-  contract, required test modes, human verification, risks, guardrails, and an
-  implementation result report contract.
+  turn intake/clarify output into a human-reviewable contract of about 100
+  lines: a goal, non-goals, a Decisions table, a Behaviors table whose rows the
+  harness executes, judges, or hands to the user, a short technical structure,
+  and risks.
 ---
 
 # gen-prd
@@ -49,7 +49,7 @@ agents/prd/<topic-slug>/prd.md
 ```
 
 Do not write side files (context notes, audit reports).
-Decisions and traceability live inside `prd.md` (Decision Traceability);
+Decisions and their provenance live in the Decisions table inside `prd.md`;
 quality checks are inline self-checks plus the mechanical Harness Readiness
 Gate, and the implementation-side fidelity review re-verifies intent at the
 end.
@@ -59,7 +59,8 @@ same slug.
 
 ## Required Structure
 
-`prd.md` must include these sections:
+`prd.md` is about 100 lines: frontmatter plus exactly these six sections, in
+this order, with these titles.
 
 ```markdown
 ---
@@ -75,48 +76,32 @@ updated_at: "YYYY-MM-DD"
 
 # PRD: <topic>
 
-## 1. Summary
+## Goal
 
-## 2. Problem, Goal, And Users
+## Non-goals
 
-### 2.1 User Scenarios
+## Decisions
 
-## 3. Scope And Non-Goals
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
 
-## 4. Pre-Work And Required Decisions
+## Behaviors
 
-### 4.1 Pre-Work Before Implementation
+| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
+| --- | --- | --- | --- |
 
-### 4.2 Human Decisions Before PRD Approval
+## Technical structure
 
-### 4.3 Decision Traceability For Fidelity Review
-
-## 5. Major Technical Structure Changes
-
-## 6. Requirements
-
-## 7. Acceptance Criteria
-
-## 8. PRD-Level Tasks
-
-## 9. Verification Contract
-
-### 9.1 Test Mode Contract
-
-### 9.2 Required Agent Verification
-
-### 9.3 Human Verification
-
-## 10. Risks And Open Decisions
-
-## 11. Implementation Guardrails
-
-## 12. Implementation Result Report Contract
+## Risks
 ```
 
-Do not include `Post-Work` as a default top-level section. Put launch notes,
-follow-ups, monitoring, or operational checks inside Risks, Guardrails, or the
-Result Report Contract when they matter.
+There is no requirements list, acceptance-criteria table, task list,
+verification matrix, scenario section, pre-work checklist, guardrails section,
+or report contract. One Behaviors row carries what those used to say three
+times over: the behavior the user observes, how it is proved, and the decision
+it rests on. `sasu prd readiness` refuses a PRD that is missing one of the six
+sections (`prd-section-missing`) and a PRD in the retired five-axis shape is
+refused by `implement start` outright.
 
 ## Section Intent
 
@@ -136,89 +121,47 @@ Result Report Contract when they matter.
 - `implement` refuses to initialize against a PRD whose `human_approval` is
   not `approved`, so a PRD that skips human review cannot be executed silently.
 
-To make the human review fast, end the `## 1. Summary` section with a short
-`Approval checklist` bullet list: the 3 to 7 concrete things the user is
-approving (scope boundary, structure changes, verification modes, any risky
-decision), each pointing to its section.
+To make the human review fast, end `## Goal` with a short `Approval checklist`
+bullet list: the 3 to 7 concrete things the user is approving (scope boundary,
+structure changes, which rows are `human:`, delivery mode, any risky decision),
+each pointing at its row or section.
 
 ### Delivery Contract
 
 If the user asks for PR automation, CI completion, worktree execution, or a ship-to-PR workflow, preserve that as a delivery decision in the PRD.
 Do not treat PR delivery as an implementation detail that can be decided later.
 
-Represent delivery mode in the existing sections instead of adding a new top-level section:
+Represent delivery mode in the existing sections instead of adding a new one:
 
-- Add a Summary approval checklist item for `delivery mode: local | pr`.
-- Add a Human Decision when the user must approve PR creation, CI watching, branch naming, or worktree setup.
-- Add Decision Traceability bullets for accepted delivery choices and rejected alternatives.
-- Add a PRD-level release-hygiene task only for implementation work that must be complete before the receipt, such as release notes or PR-ready evidence.
-- Keep branch creation, push, PR URL, CI verdict, and merge result out of PRD tasks, acceptance criteria, and required verification because `$ship` records them after the implementation receipt.
-- Add the delivery result to the Implementation Result Report Contract.
+- Add an Approval checklist item for `delivery mode: local | pr`.
+- Add a Decisions row for the accepted delivery choice and the rejected alternatives.
+- Add a Behaviors row only for implementation work that must be complete before the receipt, such as release notes or PR-ready evidence.
+- Keep branch creation, push, PR URL, CI verdict, and merge result out of the Behaviors table because `$ship` records them after the implementation receipt.
 
 When the repository has `agents/config.json`, read it before drafting and reflect relevant defaults in the PRD.
 The config is not a substitute for human approval when delivery can create branches, commits, pull requests, deployments, external calls, or CI spend.
 
-### 1. Summary
+### Goal
 
-Shortly state what will change and why. End with the `Approval checklist`
-described above.
+One paragraph: who the user is, what changes for them, and why now. The
+sentence that states the goal is one the user can confirm verbatim, so write it
+plainly. End with the Approval checklist.
 
-### 2. Problem, Goal, And Users
+### Non-goals
 
-Put product reason near the top. A reviewer should understand the user and goal
-before reading technical or verification details.
-
-#### 2.1 User Scenarios
-
-Scenario cards are first-class PRD nodes with `SC#` IDs, carried into the PRD
-so they survive the interview boundary: the human approves them with the PRD,
-`9.2` V rows cover them, and the harness hands the card body to the judge that
-verifies those rows. A card that stays only in the qa-log is invisible to
-approval and verification.
-
-Distill each UX Scenario Card from the qa-log into one `- SC#.` list item
-(assign numbers here; qa-log cards carry no IDs). Write cards for user-facing
-flows; when the product has none, write `No user scenarios: <reason>` instead
-of inventing cards.
-
-```markdown
-- SC1. Friend invite: A creates an invite link, B joins through it.
-  Actors: A (workspace owner), B (invitee).
-  Primary path: B opens the link, signs up, and appears in A's member list.
-  Failure state: an expired link shows an expiration notice, not an error page.
-  Recovery: A reissues the link from settings; the new link works.
-  Reach: verification needs a workspace with an expirable invite; seeding it is a task, not a manual step.
-```
-
-Rules:
-
-- `Actors:` names every distinct user the scenario needs; multi-user flows say
-  what each actor observes.
-- `Primary path`, `Failure state`, and `Recovery` are the card's verification
-  obligations: a V row covering the card is judged against all three, so a
-  happy-path-only proof fails.
-- `Reach:` states how a verifier gets the product into the card's state
-  (seed data, fixture, entry point) in product terms - no commands or paths.
-  If reaching the state needs tooling, that tooling is a `T#` task. This line
-  exists because a real run failed exactly here: the proof mode was right, but
-  nothing declared how to reach the game state the evidence required, and the
-  run ended partial after hours of blind driving.
-- Every `SC#` must appear in at least one `9.2` V row's Covers
-  (`prd-uncovered-scenario` blocks otherwise). Scenario-less PRDs skip all of
-  this.
-
-### 3. Scope And Non-Goals
-
-Define included and excluded behavior. This is a primary human review surface.
-
-#### Product Completeness Contract
+Bullets of behavior deliberately left out, each with its user consequence and
+the condition under which it would be revisited.
 
 Write the PRD for a coherent, production-quality product rather than an intentionally reduced MVP.
 Do not omit behavior merely because this is the first implementation or because a smaller scope is faster.
-Cover the complete primary user journey and every relevant loading, empty, error, permission, partial-success, recovery, responsive, accessibility, performance, security, operation, and support boundary.
-Apply only the quality boundaries relevant to the product instead of adding generic checklist requirements.
-Any deliberate omission must be a visible non-goal or deferred decision with its user consequence, rationale, and revisit condition.
+Cover the complete primary user journey and every relevant loading, empty, error, permission, partial-success, recovery, responsive, accessibility, performance, security, operation, and support boundary - each as a Behaviors row, not as a checklist.
+Any deliberate omission must be a visible non-goal with its consequence and revisit condition.
 If the source request truly asks for a prototype or experiment, preserve that explicit decision instead of silently upgrading it into a production launch.
+
+Project-specific constraints on the implementation (what must not change, what
+must not be introduced) are non-goals or Behaviors rows. Repository-wide
+constants (no agent names in commits, no compatibility paths, and the like)
+live once in the repository's `AGENTS.md`, never in a PRD.
 
 #### Semantic Review Profile
 
@@ -233,314 +176,122 @@ Write one concrete sentence in `review_rationale` explaining the dominant reason
 Never lower the profile to save time.
 When uncertain between adjacent profiles, choose the higher one and let a reviewer narrow the concern in its findings rather than weakening the gate.
 
-### 4. Pre-Work And Required Decisions
+### Decisions
 
-Separate actions from approvals.
+One row per decision the implementation rests on, `| D-n | 결정 | 근거 |`:
 
-`Pre-Work Before Implementation` lists only work the agent genuinely cannot do
-itself: account ownership, purchases, credential issuance, permission grants,
-physical actions, or provider-side steps that require the user's identity.
-If the agent can do it (creating files, seed data, config, research, scaffolding,
-free-tier signup the user already approved), it is a PRD task or just gets done;
-never pre-work. Every pre-work item must say why it is human-only.
+- `D-n` numbers the row; Behaviors rows cite these ids, and
+  `prd-dangling-decision-id` blocks a citation with no row.
+- `결정` is the decision as a sentence: what was chosen and, when an option
+  was rejected or deferred, that it was.
+- `근거` names the source: the qa-log turn (`Q3`) or the user's own words
+  quoted. `prd-cited-question-unanswered` blocks a `Qn` citation whose turn
+  has no answer from the user. An agent-owned assumption says so
+  (`가정: ...`) and never masquerades as a user decision.
 
-Write one bullet per actionable item, because `implement` turns each `4.1` and
-`4.2` bullet into exactly one checklist entry the implementing agent has to
-dispose of before it may advance the run. It reads the bullets, not a marker
-syntax, so state the human-only reason in plain prose - there is no keyword to
-hit, and a bullet bundling three separate setup steps becomes one entry that
-can be half-answered.
-
-Typical human-only items:
-
-- API keys, credentials, test accounts, billing, permissions.
-- source files, design assets, copy, or data only the user possesses.
-- migration windows, backups, account setup requiring owner identity.
-
-`Human Decisions Before PRD Approval` is decision-oriented:
-
-- approve scope and non-goals.
-- approve major technical structure changes.
-- approve storage/API/external-service choices.
-- approve required-for-done verification modes.
-- approve delivery mode and PR/CI automation when requested.
-- approve live/external proof and sensitive-data handling.
-
-If none are needed, write `None required` with a short reason.
-
-`Decision Traceability For Fidelity Review` is the review surface for the
-strict intent-review subagent that runs at the end of `implement`.
-
-Include compact bullets for:
-
-- every material Decision Register entry from qa-log.md, with its D# when available and a visible PRD disposition.
-- user decisions that materially shape scope, UX, data, architecture,
-  verification, delivery, live proof, or non-goals.
-- initial proposals or options the user accepted.
-- proposals, options, or behaviors the user rejected or explicitly deferred.
-- agent-owned assumptions, which must remain labeled as assumptions rather than being upgraded into user decisions.
-- where each decision is represented: `R#`, `AC#`, `T#`, `V#`, non-goal,
-  human verification, risk, guardrail, deferred decision, or context-only fact.
-
+Carry every material Decision Register entry from the qa-log, every user
+decision that shapes scope, UX, data, architecture, verification, delivery, or
+non-goals, every accepted proposal, and every rejected or deferred option.
 Treat a short affirmative response as acceptance of a recommendation only when its referent is unambiguous in the source conversation or qa-log.
 Silence, lack of objection, a topic change, or continued participation is not approval.
 If that distinction would materially change scope or behavior, ask one contract-breaking question instead of inventing consent.
 
-If the PRD is based only on the current conversation and no separate intake file
-exists, preserve the essential user decision text here rather than relying on
-chat history. If no decisions beyond approval are needed, write `None beyond
-scope approval` with a short reason.
+This table is what the fidelity judge compares the implementation against at
+the end of `implement`, and for a conversation-only PRD it is the only record
+of the conversation the harness can read. Preserve the essential user decision
+text here rather than relying on chat history.
 
-### 5. Major Technical Structure Changes
+### Behaviors
 
-This is high-level technical review, not implementation detail.
+One row per behavior the user observes, `| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |`:
 
-Include:
+- `#` is `B<n>`, numbered in reading order. Rows are the unit of progress:
+  `implement` reports, parks, amends, and closes rows, and the receipt is this
+  table with a result column.
+- `사용자가 관찰하는 행동` states one observable outcome in product terms -
+  a state, a message, a bound, a refusal. Failure and recovery paths are
+  their own rows, not clauses of the happy path. Never write the proof
+  procedure as the behavior (`tests pass`, `a screenshot is registered`) and
+  never put a command or path in this cell; `prd-behavior-row` blocks a
+  method that leaks into it.
+- `검사 방법` starts with exactly one of three prefixes and names how the
+  harness settles the row:
+  - `check: \`<command>\`` - a deterministic command the harness runs on the
+    judged tree from its root; exit 0 is green, anything else is fail. One
+    argv, no `&&`, `|`, `;`, redirection, or substitution - the same rule
+    `verify.commands` obeys. The command is visible here so the human and the
+    spec judge see it before it is trusted.
+  - `judge: <evidence shape>` - a read-only acceptance judge decides from the
+    diff and registered evidence; say what evidence must exist (a capture, a
+    transcript, a before/after pair), not a future file path.
+  - `human: <what the user confirms>` - only the person can settle it (taste,
+    copy, a live account, a physical device). The row stays OPEN through
+    `finalize`, the run closes `complete-pending-human`, and the user closes
+    it later with `sasu implement confirm`. A row the agent could have checked
+    or a judge could have judged is not a `human:` row.
+- `결정` cites the Decisions rows the behavior rests on (`D-01, D-03`) or
+  `-`.
 
-- new API/service boundaries.
-- DB/schema/migration/storage changes.
-- infra/deploy/job/queue changes.
-- auth/payment/email/external-service/production-data boundaries.
-- major architecture or data-flow changes.
+Keep every row small enough to be proved in one sitting: a row is one thing the
+user observes. Ask a contract-breaking question only when the choice between
+`check:`, `judge:`, and `human:` would materially change required human
+involvement or evidence.
 
-Exclude:
+Bias the `check:` rows toward regression protection that earns its keep:
+pure logic and data transformation, API and service boundaries, component
+behavior, then a browser or runtime smoke for a critical flow. Do not write
+`check:` rows that only lock implementation details, duplicate framework
+behavior, snapshot brittle output, depend on production data, or slow the suite
+without covering a realistic regression. When the repository has no test
+infrastructure, add it only when at least one row justifies it.
 
-- component names, hooks, helper functions, test file names.
-- write scopes, owners, low-level dependencies, ready-node scheduling.
+Live external, API, or DB proof needs an approved non-production and
+side-effect boundary stated in Risks, or it is a `human:` row.
 
-If no structural change is expected, say `No major technical structure change
-expected`.
+### Technical structure
 
-### 6-8. Requirements, Acceptance Criteria, PRD-Level Tasks
+High-level structure the reviewer approves, not implementation detail: new
+service or API boundaries, schema, migration, storage, infrastructure, job or
+queue changes, auth, payment, email, external-service, or production-data
+boundaries, major architecture or data-flow changes. Exclude component names,
+helpers, test file names, write scopes, and scheduling. If nothing structural
+changes, say so in one line. `implement` treats this section as the approved
+structure boundary.
 
-Requirements and ACs must be testable. Tasks are PRD-level obligations, not
-executor nodes.
+### Risks
 
-Every AC must use the canonical judgment table.
-Choose the tag from the proof boundary, not from convenience:
-
-- `machine`: a deterministic command can settle the criterion without a human execution window.
-- `judged`: sufficiency depends on semantic or runtime evidence a read-only acceptance judge must weigh.
-  `Evidence Declaration` is required and names the evidence shape or scripted run steps, not a command or future file path.
-- `machine+gate:human`: the final check is deterministic, but one execution requires a fresh human approval window.
-  The implementation records that approval for one check attempt.
-
-Ask a contract-breaking tagging question only when choosing between these forms would materially change required human involvement or evidence.
-Do not infer `machine+gate:human` merely because a V row names a human judgment; AC judgment tags and V modes are independent contracts in this version.
-
-```markdown
-| ID | Criterion | Judgment | Evidence Declaration |
-| --- | --- | --- | --- |
-| AC1 | a saved draft reopens with the same content | machine | - |
-| AC2 | the recovery message is understandable and actionable | judged | scripted recovery run: trigger expiry, capture message, retry successfully |
-| AC3 | the owner-approved destructive preview matches the final target set | machine+gate:human | - |
-```
-
-`sasu prd readiness` rejects list-form or untagged ACs, rejects a `judged` row without an evidence declaration, and reports counts for all three tags.
-
-One boundary the tag does not cover: an AC whose deliverable is a file under
-`agents/**`.
-That namespace is bookkeeping and is excluded from every judged diff, so
-"this run produced it" cannot be shown the way a product change is.
-Such an AC is still `machine`, and the implementation declares the target with
-`sasu implement check --ac <ACn> --bookkeeping <path>` before doing the work;
-closing then requires the file to have moved from the declared baseline and a
-registered artifact vouching for its current bytes.
-Write the criterion so that obligation is visible - name the file the AC is
-about rather than describing the change abstractly.
-
-Task rules:
-
-- Every task traces to at least one requirement unless it is pure verification
-  or release hygiene.
-- Tasks must not add hidden scope beyond approved requirements.
-- A task without a `Depends on:` clause depends on the previous task, so a
-  plain task list stays sequential.
-  Add `Depends on: T1` (or a list, or `none`) only to declare that a task is
-  independent of the chain; the CLI rejects closing a task before its declared
-  dependencies are complete, so an independence claim is part of the approved
-  contract, not a runtime improvisation.
-- Do not include write scopes, owners, or subagent scheduling. `implement`
-  derives those.
-- If implementation later needs an unmapped task or material structure change,
-  the agent must ask for approval before continuing.
-
-Use IDs in requirements and tasks; AC IDs live in the table:
-
-```markdown
-- R1. ...
-- T1. ... Covers R1, AC1.
-- T2. ... Covers R2. Depends on: T1.
-```
-
-#### Product Semantics Versus Implementation Bindings
-
-Keep every AC as an observable product outcome.
-Do not put `Check:` commands or `Artifact:` paths in the Criterion or Evidence Declaration cells.
-Do not phrase the evidence procedure as the result: `tests pass`, `a screenshot
-is registered`, `the reviewer confirms`, and `the check runs in a browser`
-belong in `V#` Pass Intent. State the resulting behavior, state, quality, or
-bound in the AC instead.
-Map every AC to a V row by AC or requirement coverage.
-The implementation plan binds exact commands and cwd, then records concrete runtime evidence paths after it inspects the repository.
-
-Keep every task as a capability or delivery obligation.
-Do not append file `Scope:` globs or name prospective source and test files.
-The implementation plan owns `writeScope`, dependencies, risk, and parallel safety.
-Judge lanes and freshness always use the full curated change, never implementation ownership as an evidence filter.
-
-#### Test Coverage Bias
-
-Require automated regression coverage when a realistic future regression risk exists and the test's protection exceeds its maintenance cost.
-State the risk protected, not a quota of tests per requirement or AC.
-If automation has poor return, name the stronger proof mode instead.
-
-Prefer high-signal tests in this order:
-
-- pure logic and data transformation tests.
-- API/service boundary tests.
-- component or hook behavior tests.
-- browser/runtime smoke tests for critical user flows.
-- external/live-provider safe probes only when approved and non-destructive.
-
-Do not require tests that only lock implementation details, duplicate framework behavior, create brittle snapshots, depend on production data, or make the suite meaningfully slower without covering a real regression risk.
-Low-risk copy-only, content-only, documentation-only, or one-off operational changes may use a non-automated verification mode only when the PRD explicitly states why automated regression coverage would not protect a meaningful future regression.
-
-When the existing repo has weak or missing test infrastructure, add a PRD-level harness task only when at least one high-value regression test justifies that infrastructure.
-
-### 9. Verification Contract
-
-The PRD defines verification intent and done requirements. `implement`
-turns this into concrete commands, browser flows, DB/API probes, artifact
-paths, reruns, deviations, and receipts.
-
-Keep the PRD compact. Do not force the PRD to list every exact file path or
-command when the executor can derive it safely from repo reality.
-
-#### 9.1 Test Mode Contract
-
-This table is required. Keep it short, usually 3 to 6 rows.
-
-```markdown
-| Mode | Required For Done | Covers | Human Decision |
-| --- | --- | --- | --- |
-| build/static | yes | repo health | none |
-| automated behavior | yes | core behavior and regressions | none |
-| browser/runtime | yes | main user flow | final UX judgment |
-| live external API | no/blockable | external integration | credentials/account required |
-```
-
-Modes should say which classes of proof count for done. They are not executor
-commands.
-
-`automated behavior` should be required-for-done by default for non-trivial code changes.
-If a PRD marks automated behavior as optional, blocked, or not applicable, it must state the product or infrastructure reason.
-
-#### 9.2 Required Agent Verification
-
-Always use the semantic verification matrix below.
-`Mode` is required and must match one row from the Test Mode Contract.
-Write this matrix under the `9.2 Required Agent Verification` subsection.
-Do not put Test Mode Contract rows in this subsection.
-
-```markdown
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked |
-| --- | --- | --- | --- | --- | --- |
-| V1 | build/static | R1-R4, AC1 | repo build/static checks do not regress | yes | no |
-| V2 | automated behavior | R2, AC2 | behavior is covered by automated test | yes | no |
-| V3 | browser/runtime | R1-R4, AC1-AC4 | main flow works in browser runtime | yes | no |
-```
-
-Rules:
-
-- Do not add Method, Check, Command, Artifact, Environment, Runtime, or Live Proof columns.
-- Exact executors and evidence locations are implementation bindings, even when the author expects them to be obvious.
-- Give each V row one independently observable failure responsibility.
-  Merge rows that would use the same command, evidence, and completion blocker;
-  express their combined obligations in one Pass Intent instead of running the
-  same proof twice.
-- `Required For Done` is `yes` by default.
-- The Test Mode Contract sets the mode-level default. Verification rows should
-  repeat `Required For Done`; if omitted, `implement` inherits the mode
-  default.
-- A blocked required check prevents a complete receipt.
-- Optional or human-blockable checks must explicitly say `Required For Done:
-  no` or inherit `no/blockable` from the matching Test Mode row.
-- Every `R#` and `AC#` should map to automated behavior verification or a clearly justified non-automated mode.
-- Covers may reference `SC#` scenario cards. Every defined `SC#` must be
-  covered by at least one V row; put each card on the row whose mode can
-  actually exercise the card's primary, failure, and recovery paths (usually
-  browser/runtime for UI flows).
-- Automated verification rows should state the regression risk they protect, not just the command they run.
-- Browser/UI work should include a browser/runtime mode unless impossible.
-- Server/API/DB/external work should include the relevant mode and side-effect
-  or sensitive-data policy when applicable.
-- Live external/API proof needs an approved non-production and side-effect
-  boundary or an explicit human/account blocker.
-
-For live/API/DB/external checks, keep approved safety boundaries in the PRD.
-The verification plan and recorded run evidence own the concrete probe and
-runtime lifecycle:
-
-```markdown
-| ID | Mode | Covers | Pass Intent | Required For Done | Can Be Blocked | Allowed Side Effect | Sensitive Data Policy |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| V4 | live external API | R4, AC4 | external behavior is proven inside the approved safety boundary | no | yes | sandbox record only when approved | redact tokens and personal data |
-```
-
-#### 9.3 Human Verification
-
-Only include checks requiring human judgment:
-
-- scope, structure, or live-proof approval.
-- final copy, tone, visual taste, policy/product interpretation.
-- account ownership, billing, production approval, stakeholder sign-off.
-
-If none are needed, write `None required` with a short reason.
+Bullets for what could go wrong and what bounds it, open decisions with who
+owns them, and the safety boundary for any live proof. Work only the user can
+do before implementation (credentials, accounts, purchases, owner-identity
+steps) is one line here; the harness does not read it, so state it plainly and
+ask for it once. If nothing is needed from the user, say so.
 
 ### Inline Self-Check Before Ready
 
-Quality checking splits by what can verify it:
-
-- Mechanical checks belong to the Harness Readiness Gate below. Do not spend
-  agent effort re-deriving what the script already checks (requirement and AC
-  coverage mapping, dangling references, mode conformance, and the absence of
-  implementation-owned bindings; browser-startup and external-proof concerns
-  surface as warnings).
-- Semantic checks are this single inline self-check. No separate audit file,
-  no auditor subagent, no separate quality checklist; the sasu Spec Gate
-  and the implementation-side requirements fidelity review independently
-  re-verify the same intent against evidence.
+Mechanical checks belong to the Harness Readiness Gate below; do not re-derive
+what it already checks. The semantic self-check is this single inline pass,
+with no audit file and no auditor subagent; the sasu Spec Gate and the
+implementation-side fidelity review independently re-verify the same intent.
 
 After drafting and before marking the PRD `ready`, verify inline:
 
 - Losslessness: every material answer, accepted recommendation, objection,
   constraint, rejected option, non-goal, and assumption from the complete
-  source is accounted for in a requirement, acceptance criterion, task,
-  verification item, human verification item, risk, guardrail, deferred
-  decision, or explicit context-only disposition, with meaning and provenance
-  preserved and without treating silence as consent.
-  Every qa-log UX Scenario Card is either carried into `2.1` as an `SC#` card
-  or explicitly disposed of (out of scope, merged, deferred) - never silently
-  dropped.
-- Intent: every user decision and accepted proposal is represented in scope,
-  non-goals, `R#`, `AC#`, `T#`, `V#`, or human verification; rejected and
-  deferred options stayed rejected; the PRD does not quietly expand beyond
+  source is a Decisions row, a Behaviors row, a non-goal, a risk, or an
+  explicit context-only disposition, with meaning and provenance preserved and
+  without treating silence as consent. Every qa-log UX Scenario Card became
+  Behaviors rows (primary, failure, recovery) or an explicit non-goal - never
+  silently dropped.
+- Intent: every user decision and accepted proposal is represented; rejected
+  and deferred options stayed rejected; the PRD does not quietly expand beyond
   its sources.
-- Pass intent: each required `V#` states a pass intent whose success is
-  observable by an artifact or tool, and it actually proves the covered
-  requirement rather than a proxy condition.
-- AC judgment: every AC has the correct `machine`, `judged`, or
-  `machine+gate:human` tag; every judged row declares the evidence shape or
-  scripted run steps; no row embeds an executor command or artifact path.
-- Regression value: each automated test names a realistic regression risk and
-  has enough protection value to justify its maintenance cost; other behavior
-  uses the strongest fitting proof mode.
-- Product completeness: the PRD covers the coherent intended journey and relevant quality boundaries, and every omission is an explicit product decision rather than an implicit MVP cut.
-- Verification semantics: the Test Mode Contract covers the proof classes the
-  product actually needs (build/static, automated behavior, browser/runtime
-  when user-facing, API/DB/external when relevant), and required-for-done and
-  blockable semantics are explicit.
+- Rows: each behavior is one observable outcome; each `check:` command is one
+  argv that proves the row rather than a proxy; each `judge:` cell names an
+  evidence shape; each `human:` row is something only the person can settle;
+  every cited `D-n` exists.
+- Product completeness: the rows cover the coherent intended journey and the
+  relevant quality boundaries, and every omission is a non-goal rather than an
+  implicit MVP cut.
 - Review profile: `review_profile` and `review_rationale` reflect a semantic reading of actual effects rather than keyword matching or PRD size.
 
 If a check fails, revise the PRD and re-check.
@@ -555,19 +306,14 @@ repository root before marking the PRD `ready`:
 sasu prd readiness --prd agents/prd/<topic-slug>/prd.md
 ```
 
-This is stateless: it parses the PRD exactly the way `implement` will,
-derives the verification plan against real repo signals, and writes nothing.
-Exit code 2 means the semantic verification contract is not harness-readable.
-Examples include uncovered ACs, dangling references, missing coverage, or invalid mode semantics.
-An untagged/list-form AC or a judged AC without its Evidence Declaration is a blocking readiness defect; the parsed output also reports the three tag counts so the approval review can see the planned proof mix.
-Missing implementation commands appear under `deferredBindings` and do not block PRD approval.
-For greenfield work, the precheck validates semantic coverage and the derived
-binding shape, including required evidence kinds, without requiring a runner,
-package script, or cwd that implementation has not created yet.
-Executable existence is checked when implementation binds and runs the verifier.
-Browser-startup and external-proof concerns are warnings, not blockers.
+This is stateless: it parses the PRD exactly the way `implement` will and
+writes nothing. It reports the row count, how many rows are `check:`,
+`judge:`, and `human:`, and the Decisions count, so the approval review can see
+the planned proof mix. Exit code 2 means the contract is not harness-readable:
+a missing section, a row whose method cell has no prefix or an empty payload, a
+`check:` command with shell composition, a method in the behavior cell, a
+duplicate or non-`B<n>` row id, or a `D-n` citation with no row.
 Fix the PRD and rerun until `blockingGaps` is empty.
-Resolve or consciously accept warnings.
 
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
@@ -582,10 +328,10 @@ sasu gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log
 ```
 
 An independent judge checks fidelity (every material Decision Register entry
-represented without distortion) and testability plus verification intent
-(acceptance criteria observable with no vague qualifiers, observable pass
-intents, genuine human-verification/non-goal dispositions); the deterministic
-prelint already reports uncovered ACs and dangling Covers references at $0.
+represented in the Decisions table without distortion) and testability (every
+Behaviors row observable with no vague qualifiers, every `check:` command a
+real proof of its row, every `human:` row genuinely human-only); the
+deterministic prelint already reports structural defects at $0.
 
 - The gate keeps an open findings set, not a round budget. Every judged run
   ends in one of three states:
@@ -622,35 +368,6 @@ prelint already reports uncovered ACs and dangling Covers references at $0.
 - When no intake qa-log exists (conversation-only PRD), record that the spec
   gate was skipped for lack of a source document.
 
-### 11. Implementation Guardrails
-
-State what `implement` must not do without asking:
-
-- do not expand scope.
-- do not change major architecture.
-- do not introduce unapproved services, schemas, jobs, or external calls.
-- do not touch production data or secrets without approval.
-- do not add hidden user flows.
-
-### 12. Implementation Result Report Contract
-
-Require the implementing agent to report:
-
-- status: `Done`, `Partially Done`, or `Blocked`.
-- user-visible changes.
-- major changed routes/modules/APIs/data shapes.
-- actual file/module structure selected during implementation and each responsibility boundary.
-- whether approved technical structure was followed.
-- task completion status.
-- R/AC/V coverage.
-- verification evidence by mode.
-- delivery evidence when PR delivery is required: branch, PR URL, CI status,
-  and any retry or blocked state.
-- automated tests added or updated, including the regression risk each protects.
-- deviations.
-- remaining human review.
-- not-done items and follow-up candidates.
-
 ### Principles Intake
 
 Declared principles are contract input, not ambient advice. Before drafting,
@@ -669,15 +386,13 @@ For each returned domain whose trigger matches the work this PRD covers, read
 the domain's document in full - a matching domain applies as a whole, never as
 a keyword-filtered subset. Then translate:
 
-- Every applicable rule becomes a `## 11` guardrail, stated as the prohibition
-  or obligation it already is, with its source named
-  (`design/principles.md rule 1`).
-- A rule whose compliance is observable in the product becomes (or sharpens) an
-  acceptance criterion: an observable proposition, never the rule's abstract
-  wording.
-- Record the intake in Decision Traceability: which documents were read, at
-  which source commit, and any applicable rule deliberately not translated,
-  with the reason.
+- A rule whose compliance is observable in the product becomes (or sharpens) a
+  Behaviors row: an observable proposition, never the rule's abstract wording.
+- A rule that constrains the implementation without an observable outcome is a
+  non-goal, with its source named (`design/principles.md rule 1`).
+- Record the intake as a Decisions row: which documents were read, at which
+  source commit, and any applicable rule deliberately not translated, with the
+  reason.
 
 Project-local instructions and rules override declared principles; when one
 wins, name the principle it overrides.
@@ -692,32 +407,29 @@ wins, name the principle it overrides.
    for every domain whose trigger matches this PRD's work.
 3. Fan out pre-writing research, then draft alone. Before drafting, list the
    independent factual questions the PRD depends on - current code structure,
-   existing schema or auth reality, whether a library supports what a
-   requirement assumes - and dispatch parallel read-only research subagents
-   for them; questions with real data dependencies stay sequential or are
-   answered inline. The main session reads the results and keeps sole
-   authorship of the PRD: research parallelizes, the pen does not, because
-   the document's value is one coherent R/AC/T/V/SC graph.
-4. Draft `prd.md` with every required section, `human_approval: "pending"`, and a semantic review profile with rationale.
-   Carry qa-log UX Scenario Cards into `2.1` as `SC#` cards and cover each in `9.2`.
+   existing schema or auth reality, whether a library supports what a row
+   assumes - and dispatch parallel read-only research subagents for them;
+   questions with real data dependencies stay sequential or are answered
+   inline. The main session reads the results and keeps sole authorship of the
+   PRD: research parallelizes, the pen does not, because the document's value
+   is one coherent Decisions-to-Behaviors graph.
+4. Draft `prd.md` with the six sections, `human_approval: "pending"`, and a
+   semantic review profile with rationale. Turn every qa-log UX Scenario Card
+   into Behaviors rows for its primary, failure, and recovery paths.
 5. Ask only contract-breaking questions; do not rerun intake inside PRD.
-6. Derive PRD-level tasks from requirements and acceptance criteria.
-7. Add the Test Mode Contract and Required Agent Verification matrix.
-8. Run the Inline Self-Check Before Ready (losslessness, intent, pass intent,
-   regression bias, product completeness, verification semantics, and review
-   profile) and fix failures.
-9. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
+6. Run the Inline Self-Check Before Ready and fix failures.
+7. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
    blocking gaps.
-10. Run the sasu Spec Gate and fix findings until it passes or a
+8. Run the sasu Spec Gate and fix findings until it passes or a
    human-decision finding stops the loop. When the `sasu` binary or its judge
    backend is unavailable, record that limitation in the final report and
    proceed on the Harness Readiness Gate plus the inline self-check alone;
    that recorded limitation (or the documented no-qa-log skip) is the
-   "skip/fallback" step 11 refers to.
-11. Mark `status: ready` only when blocking decisions are resolved, the inline
+   "skip/fallback" step 9 refers to.
+9. Mark `status: ready` only when blocking decisions are resolved, the inline
    self-check passes, the Harness Readiness Gate reports zero blocking
    gaps, and the Spec Gate passes (or its skip/fallback is recorded).
-12. Ask the user to review the PRD using the Approval checklist. Set
+10. Ask the user to review the PRD using the Approval checklist. Set
    `human_approval: "approved"` only after their explicit approval; otherwise
    leave it `pending` and say implementation is blocked on their review.
 
@@ -726,11 +438,11 @@ wins, name the principle it overrides.
 After writing the PRD, report concisely:
 
 - PRD path.
-- inline self-check, Harness Readiness Gate, and Spec Gate results.
+- inline self-check, Harness Readiness Gate, and Spec Gate results, with the
+  row counts by `check:` / `judge:` / `human:`.
 - source intake or clarify path.
 - status and `human_approval` state, with the Approval checklist items the
   user needs to review before `implement` can run.
 - remaining blocking questions, if any.
-- summary of scope, technical structure, required decisions, verification
-  modes, delivery mode when relevant, PRD-level tasks, human verification,
-  decision traceability, and result report contract.
+- summary of goal, non-goals, decisions, the Behaviors rows, technical
+  structure, delivery mode when relevant, and risks.

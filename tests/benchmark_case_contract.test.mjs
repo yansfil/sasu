@@ -147,8 +147,9 @@ test("every committed case keeps its public half free of sealed vocabulary", () 
 
 test("a case PRD may not bind an executable check inside a product criterion", () => {
   // Keyed on the harness's own readiness rule rather than a second regex: the
-  // prelint rule prd-implementation-binding already owns this judgment, and
-  // reimplementing it here would let the two answers drift apart.
+  // prelint rule prd-behavior-row already owns this judgment (a check:/judge:/
+  // human: method belongs in the 검사 방법 cell, never in the behavior cell),
+  // and reimplementing it here would let the two answers drift apart.
   const probeDir = path.join(repoRoot, "agents", `case-contract-probe-${process.pid}`);
   fs.mkdirSync(probeDir, { recursive: true });
   try {
@@ -160,16 +161,16 @@ test("a case PRD may not bind an executable check inside a product criterion", (
     const relative = path.relative(repoRoot, prdPath);
 
     fs.writeFileSync(prdPath, clean);
-    assert.equal(readinessRules(repoRoot, relative).includes("prd-implementation-binding"), false);
+    assert.equal(readinessRules(repoRoot, relative).includes("prd-behavior-row"), false);
 
     fs.writeFileSync(
       prdPath,
       clean.replace(
-        "| AC1 | the widget renders | machine | - |",
-        "| AC1 | the widget renders. Check: `npm test` | machine | - |",
+        "| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |",
+        "| B1 | the widget renders. check: `npm test` | check: `node --test test/widget.test.mjs` | - |",
       ),
     );
-    assert.equal(readinessRules(repoRoot, relative).includes("prd-implementation-binding"), true);
+    assert.equal(readinessRules(repoRoot, relative).includes("prd-behavior-row"), true);
   } finally {
     fs.rmSync(probeDir, { recursive: true, force: true });
   }

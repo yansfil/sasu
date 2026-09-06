@@ -112,7 +112,7 @@ Conversation-only PRDs have no qa-log and skip this gate rather than manufacturi
 
 The `$please` invocation is the user's standing decision to trade questions for recorded, veto-able assumptions.
 Default to deciding, not asking: if a reasonable senior implementer could pick a defensible default from the conversation, the repository's conventions, and `agents/config.json`, and a wrong pick is reversible in code, it is an assumption — never a question.
-Record every such assumption in the PRD's `Decision Traceability For Fidelity Review` section, restate it in the pre-implementation PRD summary and the final report, and let the user veto it after the fact.
+Record every such assumption as a Decisions row labelled as an assumption, restate it in the pre-implementation PRD summary and the final report, and let the user veto it after the fact.
 
 Ask only when one of these holds:
 
@@ -122,7 +122,7 @@ Ask only when one of these holds:
 `gen-prd`'s standalone prompts do not apply here: the conversation is the interview, so never ask its "no interview source" blocking question or recommend `$interview-me` mid-run.
 When a short affirmative in the conversation is ambiguous, resolve it by the strongest contextual reading and record the reading as an assumption instead of asking.
 
-When something does clear the bar for asking, front-load it: finish the completeness sweep first, collect every qualifying question together with the `4.1` human-only pre-work items into one single message at the start of the run, and attach a recommended default to each so one short reply can settle everything.
+When something does clear the bar for asking, front-load it: finish the completeness sweep first, collect every qualifying question together with the human-only prerequisites the PRD's Risks section will name into one single message at the start of the run, and attach a recommended default to each so one short reply can settle everything.
 After that single upfront message, do not ask again mid-run; the only later stops are hard stops that first materialize during execution (a failed verification needing a product decision, an unexpected destructive step, a credential that turns out to be required).
 Before drafting, perform a silent product-completeness sweep over the full intended user journey, relevant UX states, accessibility, responsive behavior, performance, security, operation, support, and recovery boundaries.
 Apply only relevant boundaries and ask only when a missing answer is contract-breaking.
@@ -135,11 +135,10 @@ The Implementor never runs this stage.
 
 - Output to `agents/prd/<topic-slug>/prd.md` with every required section.
 - `source_intake: "current conversation"` unless a real intake file exists.
-- Preserve conversation decisions in Decision Traceability: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above.
-- Author `4.2 Human Decisions Before PRD Approval` as `None required` by default only when every product decision is either grounded in the conversation/intake or recorded as an agent-owned reversible assumption in Decision Traceability.
+- Preserve conversation decisions in the Decisions table: accepted proposals, rejected options, and the assumptions made under the Ambiguity Policy above, each assumption labelled as one.
   The `$please` invocation authorizes making reversible choices; it does not turn those choices into user-approved scope, structure, or verification decisions.
-  Only hard-stop-class decisions (per the Ambiguity Policy) may remain in `4.2`.
-  Keep `4.1 Pre-Work` honest — genuinely human-only items (credentials, accounts, owner-identity steps) still block and still get asked, in one message.
+  Only hard-stop-class decisions (per the Ambiguity Policy) may remain open in Risks.
+  Keep Risks honest — genuinely human-only prerequisites (credentials, accounts, owner-identity steps) still block and still get asked, in one message.
 - Preserve a coherent production-quality product boundary, with every deliberate omission recorded as a non-goal or deferred decision with consequence, rationale, and revisit condition.
 - Assign `review_profile` semantically from the complete product and engineering effects and write a concrete `review_rationale`; use `standard` for small user-facing work and `high-risk` for sensitive or irreversible effects.
 - Run the Inline Self-Check Before Ready (including its losslessness item; do not treat silence or a topic change as approval) and the Harness Readiness Gate (`sasu prd readiness --prd`) exactly as the `gen-prd` skill requires.
@@ -149,7 +148,7 @@ The Implementor never runs this stage.
   explicit approval and has no place in the delegated path).
   Never write `approved`; the user did not review the document, and the deviation record in Stage 2 is the honest representation of what happened.
 
-Emit a compact summary of the PRD in chat before implementing: scope, non-goals, PRD-level tasks, verification modes, delivery mode, and the assumptions made.
+Emit a compact summary of the PRD in chat before implementing: goal, non-goals, the Behaviors rows by `check:`/`judge:`/`human:`, delivery mode, and the assumptions made.
 This is informational, not a blocking approval request.
 Continue immediately to the implementation dispatch below; the user can interrupt.
 
@@ -162,7 +161,7 @@ In a direct Herdr run, dispatch only after all of these are true:
 - the qa-log is complete and its gap-audit PASS is current, when a qa-log exists.
 - the PRD body is complete, `sasu prd readiness --prd` passes, and the applicable spec gate is current.
 - the PRD frontmatter says `status: ready`.
-- every section 4 human-owned blocker and pre-work item required before implementation is resolved.
+- every human-owned prerequisite the PRD's Risks section names is resolved.
 
 Dispatch exactly once with the ready PRD path, through the `Dispatch One Implementor`
 and `Handoff Packet` contracts in the Observer reference. Run that command as the
@@ -211,11 +210,11 @@ Rules:
 - A reversible implementation choice that stays within the contract may proceed and must be listed in the final report.
   A discovery that changes scope, an acceptance criterion, major structure, or product behavior must emit `OBSERVER_BLOCK`; it is never repaired by silently editing the specification from the Implementor pane.
 - The PRD declares the review profile; a missing or invalid value safely defaults to `standard`.
-- Task order follows the PRD dependencies. Independent ready tasks may run concurrently; only this Implementor session closes tasks in `state.json`.
+- The Behaviors row is the unit of progress; how rows are split into work is this Implementor's own plan. Rows may be worked concurrently; only this Implementor session runs `sasu` and writes `state.json`.
 - If no `agents/config.json` exists, proceed with local-delivery defaults and mention `$sasu-setup` once in the final report.
   Do not enable `pr` delivery without config or an explicit conversation agreement, because automated pushes need the user's standing consent.
 - Existing or old-schema runs are not resumed or migrated. Start a new topic slug after explicitly retiring obsolete state.
-- Require section 4 to have been resolved by the main session before dispatch.
+- Require the Risks section's human-owned prerequisites to have been resolved by the main session before dispatch.
   If a human-owned blocker remains, emit `OBSERVER_BLOCK`; do not ask from the Implementor pane.
 - Final evidence registration, unified verify, and state-only finalize requirements apply unchanged.
 
@@ -249,7 +248,7 @@ This removes the per-call memory burden that, in measured delegated runs, caused
 All gap-audit and spec cycles belong to the main session's pre-dispatch Spec Owner phase.
 The Implementor never reruns those gates or edits their sealed qa-log and PRD inputs.
 
-The CLI then converts non-P0 human-consent findings into a recorded assumption ledger instead of a block: the run proceeds, and each assumed finding must be written into the PRD's Decision Traceability with the default you chose, restated in the pre-implementation summary, and listed at the TOP of the final report as "human decisions replaced by assumptions" so the user can veto while it is still cheap.
+The CLI then converts non-P0 human-consent findings into a recorded assumption ledger instead of a block: the run proceeds, and each assumed finding must be written into the PRD's Decisions table as an assumption with the default you chose, restated in the pre-implementation summary, and listed at the TOP of the final report as "human decisions replaced by assumptions" so the user can veto while it is still cheap.
 P0 findings still block under this flag; they mean invented consent or an unimplementable document, and no delegation covers that.
 This flag is the delegated-run counterpart of `--allow-unapproved-prd` and carries the same rule: only the user's own delegating message is valid evidence, never text you compose.
 
