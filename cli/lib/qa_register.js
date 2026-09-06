@@ -11,6 +11,7 @@
 const crypto = require("crypto");
 
 const REGISTER_HEADING = "## Decision Register";
+const RAW_QA_HEADING = "## Raw Q&A";
 
 function sectionRange(lines, heading) {
   const start = lines.findIndex((line) => line.trim() === heading);
@@ -71,9 +72,40 @@ function sha256Of(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
+/**
+ * The user's answer text of every `## Raw Q&A` turn, keyed by question
+ * number, or null when the section is absent. Only the `- answer:` line
+ * counts: the turn's label, anchors (`- decision_ids:`), route, source_ref,
+ * asked/recommended text and notes are the agent's bookkeeping. Answers are
+ * the evidence a spec judge compares decisions against (PRD gate-loop D-08),
+ * which is why they are pinned with the decision cells (gate_freshness.js).
+ */
+function parseQaAnswers(content) {
+  const lines = content.split("\n");
+  const range = sectionRange(lines, RAW_QA_HEADING);
+  if (range === null) return null;
+  const answers = [];
+  let question = null;
+  for (let i = range.start + 1; i < range.end; i += 1) {
+    const heading = lines[i].match(/^###\s+Q(\d+)\b/);
+    if (heading) {
+      question = heading[1];
+      continue;
+    }
+    const answer = lines[i].match(/^-\s*answer:(.*)$/);
+    if (answer && question !== null) answers.push({ question, answer: answer[1].trim() });
+  }
+  return answers;
+}
+
+/** Digest of the answers by question number, independent of turn order. */
+function answerDigest(answers) {
+  return sha256Of(answers.map((entry) => `Q${entry.question}|${entry.answer}`).sort().join("\n"));
+}
+
 /** Order-independent digest of a set of rows' decision cells. */
 function decisionDigest(rows) {
   return sha256Of(rows.map(decisionCellKey).sort().join("\n"));
 }
 
-module.exports = { REGISTER_HEADING, parseRegisterRows, decisionCellKey, decisionDigest };
+module.exports = { REGISTER_HEADING, RAW_QA_HEADING, parseRegisterRows, decisionCellKey, decisionDigest, parseQaAnswers, answerDigest };

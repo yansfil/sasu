@@ -558,9 +558,10 @@ const QA_V1 = [
 ].join("\n");
 
 // PRD gate-loop R4: a qa-log pin covers the Decision Register's decision
-// cells and nothing else. Every bookkeeping edit below is one the harness or
-// the agent legitimately makes after the seal; the implement-bc run
-// (2026-08-30) lost a sealed PASS to exactly the first of them.
+// cells and the Raw Q&A answer text, nothing else. Every bookkeeping edit
+// below is one the harness or the agent legitimately makes after the seal;
+// the implement-bc run (2026-08-30) lost a sealed PASS to exactly the first
+// of them.
 test("freshness (qa-log R4): anchors, Audit History, status, and bookkeeping cells never stale the seal", () => {
   const store = makeStore();
   const state = passWithInput(store, "qa-log.md", QA_V1, "qa-log");
@@ -571,7 +572,7 @@ test("freshness (qa-log R4): anchors, Audit History, status, and bookkeeping cel
     ["the Source/owner cell", QA_V1.replace("| user, Q1 |", "| user, Q1, Q4 |")],
     ["the PRD mapping cell", QA_V1.replace("| resolved | R1 |", "| resolved | R1, R2 |")],
     ["an Addendum entry", `${QA_V1}\n## Addendum\n\n- D-51 (decision, scope, P1, resolved, 2026-08-30): late decision\n  - source: user\n`],
-    ["a Raw Q&A answer", QA_V1.replace("- answer: yes", "- answer: no")],
+    ["a Raw Q&A turn label", QA_V1.replace("### Q1: x", "### Q1: x (renamed)")],
   ];
   for (const [label, content] of edits) {
     fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), content);
@@ -591,6 +592,10 @@ test("freshness (qa-log R4): a changed decision cell stales the seal", () => {
     ["the kind", QA_V1.replace("| D-01 | decision |", "| D-01 | assumption |")],
     ["a new row", QA_V1.replace("| resolved | R1 |\n", "| resolved | R1 |\n| D-02 | decision | data | keep 30 days | P1 | user, Q1 | resolved | R2 |\n")],
     ["a deleted Register", QA_V1.replace("## Decision Register", "## Decisions")],
+    // The answer is the evidence a decision rests on (D-08); editing or
+    // emptying it after the seal must not leave a cached PASS standing (RF2).
+    ["a Raw Q&A answer", QA_V1.replace("- answer: yes", "- answer: no")],
+    ["an emptied Raw Q&A answer", QA_V1.replace("- answer: yes", "- answer:")],
   ];
   for (const [label, content] of edits) {
     fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), content);

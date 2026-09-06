@@ -75,7 +75,7 @@ function summarizeGate(gatesFile, record, deviations) {
     ? `overridden at ${hhmm(overridden.at)} (${JSON.stringify(overridden.reason ?? "")})`
     : record.verdict === "PASS"
       ? `sealed PASS at ${hhmm(record.lastRunAt)}`
-      : `${record.verdict} (review phase ${record.review?.phase ?? "n/a"})`;
+      : `${record.verdict} (${(record.findings ?? []).length} open)`;
   return {
     rounds,
     reopens,

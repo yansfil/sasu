@@ -172,6 +172,13 @@ test("merge: a non-blocking lane's finding is an advisory unless it needs a huma
   ]);
   assert.equal(blockingTwin.advisories.length, 0, "the same gap reported by a blocking lane blocks");
   assert.equal(blockingTwin.dedupedCount, 1);
+  // Severity floor: a warning lane demotes its P1 noise, never a P0 (RF3).
+  const p0 = mergeLaneFindings([
+    { laneId: "data-tech", blocking: false, findings: [{ ...scope, area: "data", severity: "P0", missing: "credentials logged in plain text" }] },
+  ]);
+  assert.deepEqual(p0.findings.map((f) => f.missing), ["credentials logged in plain text"]);
+  assert.equal(p0.advisories.length, 0);
+  assert.equal(p0.verdict, "BLOCK");
 });
 
 test("open set: on a rerun only echoed ids survive, and new findings need a changed lane", () => {
@@ -189,6 +196,14 @@ test("open set: on a rerun only echoed ids survive, and new findings need a chan
   assert.deepEqual(out.resolved.map((f) => f.id), ["F2"]);
   assert.deepEqual(out.dropped.map((f) => f.missing), ["new c"]);
   assert.equal(out.verdict, "BLOCK");
+  // Severity floor: an unchanged lane still cannot drop a new P0 (RF4).
+  const floor = applyOpenSetContract({
+    prior,
+    rerun: true,
+    lanes: [{ laneId: "ux-behavior", blocking: true, decisionsChanged: false, findings: [{ ...base, id: "F1", missing: "a still" }, { ...base, severity: "P0", missing: "new destructive default" }] }],
+  });
+  assert.deepEqual(floor.findings.map((f) => f.id ?? f.missing), ["F1", "new destructive default"]);
+  assert.deepEqual(floor.dropped, []);
   const allHuman = applyOpenSetContract({
     prior: [],
     rerun: false,

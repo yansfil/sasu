@@ -273,6 +273,13 @@ export function assumeHumanFindings(
  * `findings`, so it is recorded but cannot hold the gate. A requiresHuman
  * finding is never an advisory, whichever lane reported it. Lanes without a
  * `blocking` flag are blocking.
+ *
+ * Severity floor (PRINCIPLES item 13): a P0 is never an advisory either. The
+ * warning lanes were demoted because their P1 scope noise cost cycles, but
+ * data-tech covers credentials, storage, and migrations, so a demonstrated
+ * P0 there (a leaked secret, an irreversible migration) marked
+ * requiresHuman:false would otherwise ride a PASS (gate-loop verify risk
+ * lane RF3, 2026-09-06).
  */
 export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[]; blocking?: boolean }[]): {
   verdict: "PASS" | "BLOCK";
@@ -322,7 +329,7 @@ export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[]; 
   const findings: Finding[] = [];
   const advisories: Finding[] = [];
   for (const entry of seen.values()) {
-    if (entry.blocking || entry.finding.requiresHuman) findings.push(entry.finding);
+    if (entry.blocking || entry.finding.requiresHuman || entry.finding.severity === "P0") findings.push(entry.finding);
     else advisories.push(entry.finding);
   }
   const verdict = findings.some((f) => f.severity !== "P2") ? "BLOCK" : "PASS";
@@ -421,7 +428,13 @@ export interface OpenSetOutcome {
  *     open. A finding with no (or an unknown) id is new, and is kept only if
  *     its lane's decisions changed; otherwise it is dropped. So the open set
  *     is a subset of the prior set plus the changed lanes' additions, and an
- *     unchanged document converges by construction.
+ *     unchanged document converges by construction. The one exception is the
+ *     severity floor: a new P0 is admitted from any lane, because a PRD edit
+ *     made to close a spec finding can introduce a security or destructive
+ *     defect without touching the Decision Register, and a bound that drops
+ *     a reported P0 is not convergence but blindness (RF4, 2026-09-06). A
+ *     judge that invents a fresh P0 every round is the human's call to
+ *     override, and that costs the same one round it always did.
  *  2. Lanes merge with dedupe; non-blocking-lane findings become warnings
  *     unless they need a human decision.
  *  3. Under a delegated run, non-P0 human findings become assumptions.
@@ -452,7 +465,7 @@ export function applyOpenSetContract(input: {
         continue;
       }
       const { id: _unknown, ...fresh } = finding;
-      if (lane.decisionsChanged) findings.push(fresh);
+      if (lane.decisionsChanged || fresh.severity === "P0") findings.push(fresh);
       else dropped.push(fresh);
     }
     return { laneId: lane.laneId, blocking: lane.blocking, findings };
