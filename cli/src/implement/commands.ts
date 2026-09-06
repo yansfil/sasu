@@ -3367,12 +3367,17 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     ...(state.worktree ? { worktree: state.worktree } : {}),
     executionCallsDuringFinalize: 0,
   };
-  writeJsonAtomic(path.join(recordRoot, receiptPath), receipt);
-  writeTextAtomic(path.join(recordRoot, implementationResultPath), implementationReport(state, latest, fingerprint));
   state.status = closing;
   state.completion = { fingerprint, completedAt, receiptPath, implementationResultPath };
   recordEvent(state, { kind: "finalize", actor: resolveIssuer(flag(args, "issuer")), subject: null, summary: `run closed ${closing}`, at: completedAt });
+  // State first, derived files after. `persistState` is the one
+  // compare-and-swap in the run; a receipt written before it could survive a
+  // rejected state write and contradict the record (risk finding RF1 on the
+  // prd-template run, 2026-09-06). Written after, the receipt is always a
+  // projection of a state that landed.
   persistState(statePath, state);
+  writeJsonAtomic(path.join(recordRoot, receiptPath), receipt);
+  writeTextAtomic(path.join(recordRoot, implementationResultPath), implementationReport(state, latest, fingerprint));
   // A worktree run's code lives only on its branch until someone collects it;
   // the close must say so or the work silently strands in the worktree.
   const handoff = state.worktree
@@ -3423,10 +3428,15 @@ function confirm(projectRoot: string, args: ImplementArgs): ImplementCommandResu
     state.status = closing;
     recordEvent(state, { kind: "finalize", actor: issuer, subject: null, summary: `run closed ${closing}`, at });
   }
-  // The receipt is rewritten in place: same fingerprint, same attempt, the
-  // rows and status refreshed from the record (R8, R9).
   const completion = state.completion;
   if (completion === null) throw new Error("closed run has no completion record");
+  // State first, derived files after: two confirms racing on one record must
+  // not leave the losing call's receipt on disk next to the winning call's
+  // state (risk finding RF1, 2026-09-06). `persistState` rejects the loser
+  // before anything derived is touched.
+  persistState(statePath, state);
+  // The receipt is rewritten in place: same fingerprint, same attempt, the
+  // rows and status refreshed from the record (R8, R9).
   const receiptFile = path.join(state.projectRoot, completion.receiptPath);
   const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as Record<string, unknown>;
   receipt["status"] = closing;
@@ -3437,7 +3447,6 @@ function confirm(projectRoot: string, args: ImplementArgs): ImplementCommandResu
   writeJsonAtomic(receiptFile, receipt);
   const latest = state.verificationAttempts.at(-1)!;
   writeTextAtomic(path.join(state.projectRoot, completion.implementationResultPath), implementationReport(state, latest, completion.fingerprint));
-  persistState(statePath, state);
   const open = state.rows.filter((candidate) => candidate.status === "OPEN").map((candidate) => candidate.id);
   return result("confirm", true, reject
     ? `${row.id} stays OPEN (rejected: ${evidence}); ${open.length} human: row(s) still OPEN`
