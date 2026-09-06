@@ -116,16 +116,17 @@ export const GAP_AUDIT_LANES: JudgeLane[] = [
 
 /**
  * Two lanes, not three: the old "verification-completeness" lane's own scope
- * text admitted its R#/AC# coverage walk was "a mechanical cross-reference -
+ * text admitted its cross-reference walk was "a mechanical cross-reference -
  * do it exhaustively, it is cheap" - deterministic work bought at judge
- * prices. The deterministic PRD prelint already reports uncovered ACs
- * (prd-uncovered-ac, directly or via a covered R# the AC references) and
- * dangling Covers references (prd-dangling-ref) at $0 before any judge runs,
- * so the lane's mechanical half is deleted. Its semantic residue - pass-intent
- * observability, the quality of human-verification/non-goal dispositions, and
- * requirement-level (R#) coverage judgment, which no prelint rule checks -
- * lives on in the testability lane below. Old "verification"/"coverage" areas
- * from prior-round findings route there via its merged areaHints.
+ * prices. The deterministic PRD prelint already reports a missing section
+ * (prd-section-missing), a malformed Behaviors row (prd-behavior-row) and a
+ * row citing a decision the Decisions table lacks (prd-dangling-decision-id)
+ * at $0 before any judge runs, so the lane's mechanical half is deleted. Its
+ * semantic residue - whether each row's check method can actually observe the
+ * behavior, and the quality of human:/non-goal dispositions, which no prelint
+ * rule checks - lives on in the testability lane below. Old
+ * "verification"/"coverage" areas from prior-round findings route there via
+ * its merged areaHints.
  */
 /**
  * PRD gate-loop D-08: gap-audit caught an agent marking its own proposal
