@@ -599,6 +599,9 @@ test("freshness (qa-log R4): a changed decision cell stales the seal", () => {
     // appendQaEntry keeps a multi-line answer in one bullet by indenting the
     // continuation lines; a decision that lives on line two is still consent.
     ["a Raw Q&A answer continuation line", QA_V1.replace("- answer: yes", "- answer: yes\n  but never on shared accounts")],
+    // A paragraph break inside the answer is a whitespace-only line; the
+    // decision in the later paragraph is still part of the same bullet.
+    ["a Raw Q&A answer paragraph after a blank line", QA_V1.replace("- answer: yes", "- answer: yes\n  \n  never delete production data")],
   ];
   for (const [label, content] of edits) {
     fs.writeFileSync(path.join(store.projectRoot, "qa-log.md"), content);

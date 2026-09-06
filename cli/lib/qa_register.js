@@ -84,9 +84,12 @@ function sha256Of(content) {
  * cited-question rule reads them through this same function.
  *
  * `appendQaEntry` keeps a multi-line answer inside one bullet by indenting
- * its continuation lines, so the bullet ends at the next column-0 line;
- * reading only the first line left every continuation unpinned (gate-loop
- * verify RF2 second round, 2026-09-06).
+ * its continuation lines, so the bullet ends at the next line with text in
+ * column 0; a paragraph break inside the answer is a whitespace-only line
+ * and stays inside the bullet. Reading only the first line left every
+ * continuation unpinned, and stopping at the first blank line left every
+ * later paragraph unpinned (gate-loop verify RF2, rounds two and three,
+ * 2026-09-06).
  */
 function parseQaAnswers(content) {
   const lines = content.split("\n");
@@ -105,7 +108,7 @@ function parseQaAnswers(content) {
     const answer = lines[i].match(/^-\s*answer:(.*)$/);
     if (!answer) continue;
     const parts = [answer[1]];
-    while (i + 1 < range.end && /^\s+\S/.test(lines[i + 1])) {
+    while (i + 1 < range.end && /^(\s+\S|\s*$)/.test(lines[i + 1])) {
       i += 1;
       parts.push(lines[i]);
     }
