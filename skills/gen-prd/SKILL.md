@@ -350,6 +350,9 @@ deterministic prelint already reports structural defects at $0.
   by editing the PRD toward your own guess.
 - Only a new explicit user change request may open another cycle:
   `sasu gate reopen --slug <topic-slug> --gate spec --evidence "<the user's words>"`.
+  The gate ledger preserves those words and supplies them to the judge without appending an interview answer.
+  Operational reopening needs no interview sync and does not stale gap-audit by itself.
+  Normalize genuine requirement changes into the interview evidence, decisions, and PRD before re-running; those changes still invalidate the affected seals.
   `--grant-budget` does not change the open set; it is only for a bounded
   judge backend error streak after the backend is repaired.
 - If the judge backend is unavailable, the gate fails closed; report the cause

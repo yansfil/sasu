@@ -68,6 +68,7 @@ function fixture(text = prd()) {
   fs.mkdirSync(path.join(root, runDir), { recursive: true });
   fs.writeFileSync(path.join(root, runDir, "prd.md"), text);
   const state = {
+    projectRoot: root,
     runDir,
     prdPath: "agents/prd/fixture/prd.md",
     prd: { sha256: sha256(text), snapshotPath: `${runDir}/prd.md`, reviewProfile: "standard" },
@@ -196,18 +197,33 @@ test("an amendment without an approval quote or without a reason is refused", ()
   assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text);
 });
 
-test("an observer waits while a check: row is mid-attempt; the human may still amend on the record", () => {
+test("a finished failed check does not prevent correcting a different check cell", () => {
   const { root, state, text } = fixture();
   const failing = row(state, "B1");
   failing.status = "fail";
   failing.consecutiveFailures = 1;
   failing.attempts.push({ id: "A1", startedAt: AT, finishedAt: AT, exitCode: 1, outcome: "failed" });
   const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
-  assert.throws(() => amend(root, state, next, { issuer: "observer" }), (error) => {
-    assert.equal(error.check, "transition");
-    return /B1 is mid-attempt/.test(error.message);
-  });
-  assert.doesNotThrow(() => amend(root, state, next, { issuer: "human" }));
+  assert.doesNotThrow(() => amend(root, state, next, { issuer: "observer", approval: "" }));
+  assert.equal(row(state, "B1").status, "fail", "the unrelated failure remains unproved");
+  assert.equal(state.amendments[0].approval, null);
+});
+
+test("check-cell authority cannot carry changes to the goal, structure, risks or metadata", () => {
+  for (const [before, after, section] of [
+    ["The thing works.", "The scope expands.", "Goal"],
+    ["One runner.", "Two runners.", "Technical structure"],
+    ["None.", "Data may be lost.", "Risks"],
+    ['status: "ready"', 'status: "draft"', "frontmatter"],
+  ]) {
+    const { root, state, text } = fixture();
+    const changed = text.replace(before, after).replace("test/receipt.test.mjs", "test/new.test.mjs");
+    assert.throws(() => amend(root, state, changed, { issuer: "observer", approval: "" }), (error) => {
+      assert.equal(error.check, "authority");
+      return error.message.includes(section);
+    });
+    assert.equal(state.amendments.length, 0);
+  }
 });
 
 // --- sealing, history, added and removed rows, unparking --------------------

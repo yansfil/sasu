@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { SasuConfig } from "./config";
@@ -120,28 +120,98 @@ export function executeMechanicalCommand(
  * spawn machinery without a shell and without inheriting the agent process's
  * credential-bearing environment.
  */
-export function executeMechanicalArgv(
+export async function executeMechanicalArgv(
   projectRoot: string,
   argv: string[],
   cwd: string | undefined,
   timeoutMs: number,
   env: NodeJS.ProcessEnv,
-): MechanicalExecution {
+  onSpawn?: (pid: number) => void,
+): Promise<MechanicalExecution> {
   const commandCwd = confinedMechanicalCwd(projectRoot, cwd);
   if (typeof commandCwd !== "string") return commandCwd;
   const [executable, ...args] = argv;
   if (executable === undefined) {
     return { exitCode: 1, stdout: "", stderr: "[sasu] command argv is empty", timedOut: false, signal: null };
   }
-  const executed = spawnSync(executable, args, {
-    cwd: commandCwd,
-    shell: false,
-    encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
-    timeout: timeoutMs,
-    env,
+  // A dead CLI does not imply a dead test (2026-09-07: SIGKILL of a
+  // spawnSync wrapper left its test alive). Give each argv command its own
+  // POSIX group and expose its identity before awaiting completion.
+  // https://nodejs.org/api/child_process.html#optionsdetached
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      cwd: commandCwd, shell: false, env,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const chunks = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
+    let size = 0;
+    let failure: Error | undefined;
+    let registrationError: unknown;
+    let timedOut = false;
+    let escalation: NodeJS.Timeout | undefined;
+    const kill = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
+      try {
+        if (process.platform === "win32") child.kill(signal);
+        else process.kill(-child.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") failure ??= error as Error;
+      }
+    };
+    const stop = (): void => {
+      kill("SIGTERM");
+      escalation ??= setTimeout(() => kill("SIGKILL"), 250);
+    };
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    child.on("error", (error) => { failure = error; });
+    for (const stream of ["stdout", "stderr"] as const) {
+      child[stream].on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size <= 32 * 1024 * 1024) chunks[stream].push(chunk);
+        else if (failure === undefined) {
+          failure = new Error("[sasu] command output exceeded 32 MiB");
+          stop();
+        }
+      });
+    }
+    // Helpers can inherit the pipes and delay close indefinitely. Once the
+    // command leader exits, end its helpers before waiting for pipe closure.
+    child.on("exit", () => { if (process.platform !== "win32") kill("SIGKILL"); });
+    child.on("close", async (code, signal) => {
+      clearTimeout(timer);
+      if (escalation !== undefined) clearTimeout(escalation);
+      // A script may exit while leaving background helpers behind. They
+      // belong to this command's group, never to another session.
+      if (process.platform !== "win32" && child.pid !== undefined) {
+        kill("SIGKILL");
+        const deadline = Date.now() + 1000;
+        while (true) {
+          try { process.kill(-child.pid, 0); }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") failure ??= error as Error;
+            break;
+          }
+          if (Date.now() >= deadline) {
+            failure ??= new Error(`[sasu] command process group ${child.pid} has not exited`);
+            break;
+          }
+          await new Promise((done) => setTimeout(done, 10));
+        }
+      }
+      if (registrationError !== undefined) { reject(registrationError); return; }
+      resolve({
+        exitCode: timedOut ? 124 : failure !== undefined ? 1 : code ?? 1,
+        stdout: Buffer.concat(chunks.stdout).toString("utf8"),
+        stderr: [Buffer.concat(chunks.stderr).toString("utf8"), failure?.message].filter(Boolean).join("\n"),
+        timedOut, signal,
+      });
+    });
+    if (child.pid !== undefined) {
+      try { onSpawn?.(child.pid); }
+      catch (error) { registrationError = error; stop(); }
+    }
   });
-  return completedMechanicalExecution(executed);
 }
 
 /**

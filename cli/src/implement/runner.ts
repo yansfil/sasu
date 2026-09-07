@@ -98,14 +98,15 @@ export function runtimeEnv(state: ImplementState): NodeJS.ProcessEnv {
   };
 }
 
-export function executeUnit(
+export async function executeUnit(
   state: ImplementState,
   workRoot: string,
   unit: Pick<RunUnit, "argv" | "cwd">,
   timeoutMs: number,
-): { execution: MechanicalExecution; mutatedTree: boolean; tree: CheckTreeFingerprint } {
+  onSpawn?: (pid: number) => void,
+): Promise<{ execution: MechanicalExecution; mutatedTree: boolean; tree: CheckTreeFingerprint }> {
   const before = captureSourceSnapshot(workRoot).digest;
-  const execution = executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state));
+  const execution = await executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state), onSpawn);
   const tree = treeFingerprint(state, workRoot);
   // A command that rewrites the tree it is being judged on has moved the
   // goalposts mid-measurement: its own exit code no longer describes the tree
@@ -137,19 +138,19 @@ export interface BatchOutcome {
  * early is what made the score unreadable: the run must be able to say
  * "suite 3/3", and it cannot count what it declined to execute.
  */
-export function runBatch(
+export async function runBatch(
   state: ImplementState,
   workRoot: string,
   units: RunUnit[],
   timeoutMs: number,
   onResult?: (result: RunUnitResult) => void,
-): BatchOutcome {
+): Promise<BatchOutcome> {
   const before = captureSourceSnapshot(workRoot).digest;
   const results: RunUnitResult[] = [];
   for (const unit of units) {
     const started = Date.now();
     const startedAt = new Date().toISOString();
-    const { execution, mutatedTree, tree } = executeUnit(state, workRoot, unit, timeoutMs);
+    const { execution, mutatedTree, tree } = await executeUnit(state, workRoot, unit, timeoutMs);
     const result: RunUnitResult = {
       unit,
       startedAt,

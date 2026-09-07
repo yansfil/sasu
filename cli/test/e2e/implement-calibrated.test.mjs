@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 // --- one run whose every answer is known in advance --------------------------
@@ -323,7 +323,7 @@ function scoreLineOf(root) {
   return summary.find((line) => line.startsWith("기계·판사: "));
 }
 
-test("the supervisor's channel, the waiter's backlog, and the stall wake", () => {
+test("the supervisor's channel, the waiter's backlog, and the stall wake", async () => {
   const root = makeProject({ buildGreen: true });
   stubEnv(root);
 
@@ -368,6 +368,24 @@ test("the supervisor's channel, the waiter's backlog, and the stall wake", () =>
   assert.equal(stalled.status, 0, stalled.stderr + stalled.stdout);
   assert.equal(stalled.json.detail.reason, "stall");
   assert.match(stalled.json.message, /woke on stall/);
+  // Execute the emitted command unchanged. It must stay armed until a new
+  // event arrives, even though the run's silence clock is already expired.
+  const rearmed = spawn(process.execPath, [CLI, ...stalled.json.detail.rearm.split(" ").slice(1), "--json"], { cwd: root, env: process.env });
+  let output = "";
+  rearmed.stdout.on("data", (chunk) => { output += chunk; });
+  const closed = new Promise((resolve, reject) => { rearmed.once("error", reject); rearmed.once("close", resolve); });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(rearmed.exitCode, null, "stall re-arm must not immediately re-fire");
+    const changed = structuredClone(aged);
+    changed.events.push({ ...aged.events.at(-1), id: aged.events.at(-1).id + 1, at: new Date().toISOString() });
+    fs.writeFileSync(path.join(root, STATE_REL), JSON.stringify(changed));
+    assert.equal(await closed, 0);
+    assert.equal(JSON.parse(output).detail.reason, "event");
+  } finally {
+    if (rearmed.exitCode === null) rearmed.kill("SIGKILL");
+    fs.writeFileSync(path.join(root, STATE_REL), JSON.stringify(aged, null, 2));
+  }
 
   // The re-arm is the loop's one unguarded link, so the wake hands it back
   // assembled: cursor advanced past what this wake reported, probe flag

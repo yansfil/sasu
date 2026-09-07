@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { prelintPrd } from "../gates/prelint";
 import { normalizeProjectPath } from "../implement/store";
 import { parseImplementContract } from "../implement/contract";
+import { validateContractCheckCommands } from "../implement/checks";
 import { setFrontmatterValue } from "../interview/qalog";
 
 const { parseFrontmatterBlock } = require("../../lib/prd_parser.js") as {
@@ -37,12 +38,12 @@ function frontmatterValue(text: string, key: string): string | null {
   return null;
 }
 
-function readinessOf(prd: ResolvedPrd): { ok: boolean; detail: Record<string, unknown> } {
+function readinessOf(projectRoot: string, prd: ResolvedPrd): { ok: boolean; detail: Record<string, unknown> } {
   const prelint = prelintPrd(prd.text);
   // The contract parser is the reader `implement start` uses; a document
   // prelint passes but start would refuse (a five-axis PRD, a dangling D-id)
   // is reported here with start's own words rather than discovered at start.
-  let parsed: Record<string, unknown>;
+  let parsed: Record<string, unknown> = { rowCount: 0, rowKinds: { check: 0, judge: 0, human: 0 }, decisionCount: 0 };
   let contractError: string | null = null;
   try {
     const contract = parseImplementContract(prd.text);
@@ -51,9 +52,9 @@ function readinessOf(prd: ResolvedPrd): { ok: boolean; detail: Record<string, un
       return counts;
     }, { check: 0, judge: 0, human: 0 });
     parsed = { rowCount: contract.rows.length, rowKinds: kinds, decisionCount: contract.decisions.length };
+    validateContractCheckCommands(projectRoot, contract.rows);
   } catch (error) {
     contractError = error instanceof Error ? error.message : String(error);
-    parsed = { rowCount: 0, rowKinds: { check: 0, judge: 0, human: 0 }, decisionCount: 0 };
   }
   return {
     ok: prelint.ok && contractError === null,
@@ -63,7 +64,7 @@ function readinessOf(prd: ResolvedPrd): { ok: boolean; detail: Record<string, un
       contractError,
       blockingGaps: prelint.findings,
       warnings: prelint.warnings ?? [],
-      status: prelint.ok ? "ready" : "needs_review",
+      status: prelint.ok && contractError === null ? "ready" : "needs_review",
     },
   };
 }
@@ -88,7 +89,7 @@ export function runPrdCommand(
   try {
     if (subcommand === "readiness") {
       const prd = resolvePrd(projectRoot, flags);
-      const readiness = readinessOf(prd);
+      const readiness = readinessOf(projectRoot, prd);
       return {
         ok: readiness.ok,
         action: "readiness",
@@ -101,10 +102,7 @@ export function runPrdCommand(
     if (subcommand === "ready") {
       const prd = resolvePrd(projectRoot, flags);
       const current = frontmatterValue(prd.text, "status");
-      if (current === "ready") {
-        return { ok: true, action: "ready", exitCode: 0, message: "PRD status is already ready (no change)" };
-      }
-      const readiness = readinessOf(prd);
+      const readiness = readinessOf(projectRoot, prd);
       if (!readiness.ok) {
         return {
           ok: false,
@@ -113,6 +111,9 @@ export function runPrdCommand(
           message: "refused: the readiness gate has blocking gaps; fix them, then rerun",
           detail: readiness.detail,
         };
+      }
+      if (current === "ready") {
+        return { ok: true, action: "ready", exitCode: 0, message: "PRD status is already ready (no change)", detail: readiness.detail };
       }
       fs.writeFileSync(prd.absolute, setFrontmatterValue(prd.text, "status", "ready", true));
       return { ok: true, action: "ready", exitCode: 0, message: `PRD status set to ready (readiness gate passed)`, detail: readiness.detail };

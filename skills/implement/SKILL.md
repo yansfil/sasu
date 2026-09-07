@@ -57,7 +57,8 @@ Read each directly linked reference completely when its condition applies.
 - Required verification must be a current PASS whose attempt pins the current source and registered artifact hashes.
 - `sasu implement finalize` never runs tests, judges, capture tools, or external commands.
 - `state.json` is the completion authority; the receipt is its portable derived proof.
-- The marked Implementor is the only implementation and `state.json` writer; the Observer stays read-only after dispatch, and both sessions treat the qa-log and PRD body as sealed inputs.
+- The marked Implementor owns implementation; the CLI alone writes `state.json`.
+  The Observer may correct sealed check cells through `amend` without taking implementation ownership; other PRD changes need human approval.
 - Row statuses, attempts, fingerprints, and counters are harness-owned facts.
   Never supply or synthesize them as agent evidence.
 - A parked row may let work continue, but it is skipped explicitly by verify and always blocks a complete finalize until resumed and proved.
@@ -127,7 +128,7 @@ for a `check:` row, `pending`, `PASS`, or `FAIL` for a `judge:` row, `OPEN` or
 Old implement state schemas are intentionally unsupported.
 Start a new run instead of migrating or adapting them.
 The run's exact approved PRD is pinned at the `prdSnapshotPath` reported by status.
-If the source PRD drifts, restore its exact pinned bytes or retire the run and start the newly approved contract under a new slug.
+If the source PRD drifts, restore its exact pinned bytes or apply the correction through `amend` (section 3a), preserving the existing run.
 
 ## 3. Implement Rows
 
@@ -136,7 +137,7 @@ the implementor's own call and the harness does not read it; rows may be
 implemented in any order, including concurrently through worker subagents.
 When fanning out, the Implementor session remains the execution coordinator: brief each worker with the row's behavior, its cited decisions, and file scope directly; workers return changed files, focused check results, and evidence text.
 Workers never run `sasu` commands.
-The Implementor reviews each result and runs the row's check itself, staying the only writer of `state.json`.
+The Implementor reviews each result and runs the row's check itself; the CLI records the result in `state.json`.
 
 For each row:
 
@@ -153,6 +154,12 @@ sasu implement check --row B1        # exit 0 -> green, anything else -> fail
 The command is the PRD's, not yours. If it is wrong, the cell is amended
 (section 3a), never worked around. A `judge:` or `human:` row refuses `check`
 and names its own channel.
+
+Readiness, start, amendment and execution share the check-command policy.
+A check cell may name a test or output directory that implementation will create later; absence is not a readiness failure.
+Check-cell commands use project-relative paths and no inline code or shell composition.
+The separately sealed project suite is configured by the project and may use external paths and inline interpreter arguments; both paths share argument parsing and execute without shell composition.
+These command checks are not a filesystem sandbox for code that the command runs.
 
 A `judge:` row is settled by unified verify from the diff and the evidence you
 register against it (section 4).
@@ -183,19 +190,20 @@ which cell changed. The harness compares the cells; the issuer declares the
 role.
 
 - Only a `검사 방법` cell changed (the command, the evidence shape): the
-  observer may amend, and only that row loses its proof.
-- A behavior cell changed, a row was added or removed, or Non-goals or the
-  Decisions table moved: the human amends, with their words as the approval.
+  observer may amend without `--approval` or `--adopt`, and only that row loses its proof.
+- A behavior cell, the row set, another PRD section or frontmatter changed: the human amends, with their words as the approval.
 - The implementor is refused either way; it does not rewrite the question it
   is being marked on. Emit `OBSERVER_BLOCK` with the row and the proposed cell.
 
 ```sh
-sasu implement amend --issuer observer --approval '<why the cell was wrong>' --reason '<what changed>'
+sasu implement amend --slug <topic-slug> --issuer observer --reason '<why the cell was wrong and what changed>'
 sasu implement amend --issuer human --approval '<verbatim user approval>' --reason '<what changed>'
 ```
 
 Amend re-seals the PRD snapshot, archives the superseded text, and invalidates
 only the rows whose cells changed; a parked row whose cell changed is unparked.
+The original Implementor keeps run ownership and continues with the corrected cell; no gate reopening or run restart is required for this correction.
+An actually running check blocks amendment until it ends; a completed failed attempt remains in history and does not block correction.
 
 ## 4. Register Final Runtime Evidence
 
@@ -350,8 +358,9 @@ does goes through the CLI, which is the only thing that writes `state.json`.
   human ── confirm --row ──────────────────────────────┘
 ```
 
-Nothing above waits on a timer. `await` blocks on the event log and returns on
-a new event, a stall, or the implementor's death.
+`await` watches the event log and returns on a new event, a long silence, or loss of the watched target.
+Observation failure keeps event and time monitoring armed and is reported as degraded observation.
+After a stall, its emitted re-arm command carries `--notify-after` automatically to preserve the repeat interval without resetting the silence clock or writing notification state.
 
 ## One Run, Start To Finish
 
@@ -377,7 +386,7 @@ sasu implement trail --row B3 --brief B3-Q1-9f2c1e --steps S1,S2,S3   --driver h
 
 # B1's command turns out to name the wrong script. The check cell is the only
 # thing that changes, so the observer amends it and only B1 loses its green.
-sasu implement amend --issuer observer   --approval 'the cell named the unit suite; the row needs the integration suite'   --reason 'check: cell of B1'
+sasu implement amend --slug checkout-retry --issuer observer --reason 'B1 named the unit suite; the row needs the integration suite'
 sasu implement check --row B1                      # -> green again
 
 # One runner, frozen tree, each command once. Then the receipt.
@@ -411,12 +420,12 @@ Global flags omitted from the table because every command takes them: `--json`, 
 | `park` | `--row`, `--approval`, `--reason` | `--evidence` | implementor, observer, human |
 | `resume` | `--row` | - | implementor, observer, human |
 | `confirm` | `--row`, `--evidence` | `--reject` | human |
-| `amend` | `--approval`, `--reason` | `--exclude-suite` | observer, human |
+| `amend` | `--reason` | `--approval`, `--exclude-suite` | observer, human |
 | `qa-brief` | `--row` | - | implementor, observer, human |
 | `trail` | `--row`, `--brief`, `--steps`, `--driver` | `--artifacts` | implementor, observer, human |
 | `dispatch` | `--name`, `--prd` | `--kind`, `--model`, `--effort` | anyone |
 | `escalate` | `--reason` | `--target`, `--agent` | observer, human |
-| `await` | - | `--since`, `--pid`, `--agent` | anyone |
+| `await` | - | `--since`, `--pid`, `--agent`, `--notify-after` (automatic re-arm value) | anyone |
 | `artifact` | `--kind`, `--path`, `--description` | `--row` | implementor, human |
 | `status` | - | - | anyone |
 | `design` | `--id`, `--accept` | - | implementor, human |
@@ -431,7 +440,9 @@ Four of these carry a rule the flag name does not carry on its own:
 
 - `dispatch` reads the handoff packet on stdin and is documented as `anyone` because the gate restricts nothing, but it refuses to run from a pane already marked `SASU_HERDR_ROLE=implementor`. That marker is set on the pane at creation, so an implementor cannot dispatch another implementor by declaring a different `--issuer`.
 
-- `amend` admits observer and human, and the diff decides which one may issue it: a change confined to `검사 방법` cells is the observer's; a changed behavior cell, an added or removed row, or a moved Non-goals or Decisions section is the human's. The implementor is refused before the diff is read.
+- `amend` admits observer and human, and the diff decides which one may issue it: a change confined to `검사 방법` cells is the observer's; a changed behavior cell, row set, other PRD section or frontmatter is the human's.
+  `--approval` is required for human amendments, not observer corrections; observer amendments preserve the owner's session and do not use `--adopt`.
+  The implementor is refused before the diff is read.
 - `risk --non-convergent` declares one open finding structurally unfixable.
   The finding stays open and `finalize --status complete` stays refused; what it opens is `--status blocked` without first spending judge rounds whose outcome is already known.
 - `amend --exclude-suite <S#>` drops a command from the sealed suite list.

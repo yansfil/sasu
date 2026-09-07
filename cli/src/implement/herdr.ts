@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 /**
  * The entire surface the harness is allowed to touch herdr through.
@@ -39,8 +39,8 @@ const PANE_ID_ENV_KEY = "HERDR_PANE_ID";
 const ROLE_ENV_MARKER = "SASU_HERDR_ROLE=implementor";
 
 /**
- * One argv for listing agents, shared by the capability probe and the
- * liveness hole.
+ * One argv for listing agents, shared by diagnostics, kind detection and
+ * the liveness hole.
  *
  * Both used to spell it themselves and both spelled it `agent list --json`,
  * which herdr 0.8.2 rejects with exit 2: `agent list` already prints JSON and
@@ -105,9 +105,8 @@ function defaultRun(args: string[], cwd?: string): { status: number | null; stdo
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }
 
-export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapabilities {
+function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
   const env = environment.env ?? process.env;
-  const run = environment.run ?? defaultRun;
   if (env["HERDR_ENV"] !== "1") {
     return {
       available: false,
@@ -115,22 +114,34 @@ export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapa
       reason: "not running under herdr (HERDR_ENV is not 1); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis",
     };
   }
+  if (paneId(env) === "") {
+    return {
+      available: false,
+      holes: { spawn: false, read: true, alive: true },
+      reason: `herdr is configured but ${PANE_ID_ENV_KEY} is unset, so a dispatch has no pane to split; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
+    };
+  }
+  return { available: true, holes: { spawn: true, read: true, alive: true }, reason: null };
+}
+
+/** Diagnostic probe only; no operation depends on another operation succeeding. */
+export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapabilities {
+  const base = environmentCapabilities(environment);
+  if (!base.holes.read) return base;
+  const run = environment.run ?? defaultRun;
   const probe = run([...AGENT_LIST_ARGV]);
   if (probe.status !== 0) {
     const call = `herdr ${AGENT_LIST_ARGV.join(" ")}`;
     const reason = isArgvRejection(probe)
       ? `herdr rejected this adapter's own call (\`${call}\` exited 2 with a usage line), so the herdr contract moved and THIS ADAPTER is out of date, not herdr: cli/src/implement/herdr.ts was measured against herdr ${ADAPTER_TARGET.version} protocol ${ADAPTER_TARGET.protocol} and the installed herdr reports ${installedHerdr(run)}. Re-measure its argv against \`herdr <subcommand> --help\`; the unit suite's contract test makes the same comparison`
-      : `herdr is present but not answering (\`${call}\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis`;
-    return { available: false, holes: { spawn: false, read: false, alive: false }, reason };
+      : `herdr is present but not answering (\`${call}\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses agent-list liveness`;
+    return { available: false, holes: { ...base.holes, alive: false }, reason: `agent listing unavailable: ${reason}; read and startup keep their own preconditions` };
   }
-  if (paneId(env) === "") {
-    return {
-      available: false,
-      holes: { spawn: false, read: true, alive: true },
-      reason: `herdr is answering but ${PANE_ID_ENV_KEY} is unset, so a dispatch has no pane to split; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
-    };
+  const listed = parseJson(probe.stdout) as { result?: { agents?: unknown } } | null;
+  if (!Array.isArray(listed?.result?.agents)) {
+    return { available: false, holes: { ...base.holes, alive: false }, reason: "agent listing unavailable: invalid agent list; read and startup keep their own preconditions" };
   }
-  return { available: true, holes: { spawn: true, read: true, alive: true }, reason: null };
+  return base;
 }
 
 function paneId(env: NodeJS.ProcessEnv): string {
@@ -174,7 +185,14 @@ function listAgents(run: NonNullable<HerdrEnvironment["run"]>): { agents: AgentE
     return { agents: [], problem: `herdr ${AGENT_LIST_ARGV.join(" ")} failed (${executed.status ?? "no status"})` };
   }
   const parsed = parseJson(executed.stdout) as { result?: { agents?: AgentEntry[] } } | null;
-  return { agents: parsed?.result?.agents ?? [], problem: null };
+  const agents = parsed?.result?.agents;
+  if (!Array.isArray(agents) || agents.some((entry) => entry === null || typeof entry !== "object"
+    || (entry.name !== undefined && typeof entry.name !== "string")
+    || (entry.pane_id !== undefined && typeof entry.pane_id !== "string")
+    || (entry.agent !== undefined && typeof entry.agent !== "string"))) {
+    return { agents: [], problem: "herdr agent list returned an invalid agent list; liveness is unknown" };
+  }
+  return { agents, problem: null };
 }
 
 /**
@@ -224,15 +242,15 @@ export interface SpawnResult {
  * supervisor in herdr's agent tree.
  *
  * The pane is created first and the agent started second, so a failure after
- * the split would strand an empty pane. It is closed on that path rather than
- * left behind; a pane whose agent did start is never closed automatically,
+ * the split may leave either an empty shell or a blocked live agent. Only a
+ * positively observed empty shell is closed automatically,
  * because the supervisor needs to look at it.
  */
 export function spawnImplementor(
   input: SpawnRequest,
   environment: HerdrEnvironment = {},
 ): HoleResult<SpawnResult> {
-  const capabilities = herdrCapabilities(environment);
+  const capabilities = environmentCapabilities(environment);
   if (!capabilities.holes.spawn) return { ok: false, value: null, problem: `spawn unavailable: ${capabilities.reason}` };
   const run = environment.run ?? defaultRun;
   const dispatcher = paneId(environment.env ?? process.env);
@@ -261,8 +279,29 @@ export function spawnImplementor(
 
   const started = run(["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)], input.cwd);
   if (started.status !== 0) {
-    const closed = run(["pane", "close", created]);
-    const cleanup = closed.status === 0 ? "the empty pane was closed" : `the empty pane ${created} could not be closed (${closed.status ?? "no status"}) and is still open`;
+    // A nonzero startup may leave a live trust dialog (2026-09-07).
+    // Only a positively observed shell-only foreground can be cleaned up;
+    // an absent name alone does not prove the new pane is empty.
+    const error = parseJson(started.stderr) as { error?: { code?: string } } | null;
+    let cleanup = `pane ${created} was retained for inspection; startup state is uncertain, and no handoff was sent`;
+    if (error?.error?.code === "agent_not_ready") {
+      cleanup = `agent ${input.name} is not ready; pane ${created} was retained for inspection, and no handoff was sent`;
+    } else if (started.status !== null) {
+      const observed = run(["pane", "process-info", "--pane", created]);
+      const parsed = parseJson(observed.stdout) as { result?: { process_info?: {
+        pane_id?: string; shell_pid?: number; foreground_process_group_id?: number;
+        foreground_processes?: { pid?: number }[];
+      } } } | null;
+      const info = parsed?.result?.process_info;
+      if (observed.status === 0 && info?.pane_id === created
+        && Number.isInteger(info.shell_pid) && info.shell_pid! > 0
+        && info.foreground_process_group_id === info.shell_pid
+        && Array.isArray(info.foreground_processes) && info.foreground_processes.length === 1
+        && info.foreground_processes[0]?.pid === info.shell_pid) {
+        const closed = run(["pane", "close", created]);
+        cleanup = closed.status === 0 ? "the empty pane was closed" : `the empty pane ${created} could not be closed (${closed.status ?? "no status"}) and is still open`;
+      }
+    }
     return { ok: false, value: null, problem: `herdr agent start ${input.name} --kind ${kind} in ${created} failed (${started.status ?? "no status"}): ${(started.stderr || started.stdout).trim()}; ${cleanup}` };
   }
 
@@ -283,7 +322,7 @@ export function readPane(
   input: { name: string; lines?: number },
   environment: HerdrEnvironment = {},
 ): HoleResult<string> {
-  const capabilities = herdrCapabilities(environment);
+  const capabilities = environmentCapabilities(environment);
   if (!capabilities.holes.read) return { ok: false, value: null, problem: `read unavailable: ${capabilities.reason}` };
   const run = environment.run ?? defaultRun;
   const executed = run(["agent", "read", input.name, "--source", "recent-unwrapped", "--lines", String(input.lines ?? 120)]);
@@ -307,9 +346,93 @@ export function isAgentAlive(
   input: { name: string },
   environment: HerdrEnvironment = {},
 ): HoleResult<boolean> {
-  const capabilities = herdrCapabilities(environment);
+  const capabilities = environmentCapabilities(environment);
   if (!capabilities.holes.alive) return { ok: false, value: null, problem: `alive unavailable: ${capabilities.reason}` };
   const listed = listAgents(environment.run ?? defaultRun);
   if (listed.problem !== null) return { ok: false, value: null, problem: listed.problem };
   return { ok: true, value: listed.agents.some((entry) => entry.name === input.name), problem: null };
+}
+
+
+export interface AgentWaitObservation {
+  kind: "settled" | "gone" | "unavailable";
+  detail: string;
+}
+
+/** Only measured meanings cross this boundary; unknown contracts cannot prove loss. */
+export function classifyAgentWait(status: number | null, stdout: string, stderr: string): AgentWaitObservation {
+  if (status === 0) {
+    const parsed = parseJson(stdout) as { result?: unknown } | null;
+    if (parsed?.result !== undefined && parsed.result !== null) {
+      return { kind: "settled", detail: "settled was observed, possibly transiently; inspect the target before drawing any conclusion" };
+    }
+  } else if (status === 1) {
+    const parsed = parseJson(stderr) as { error?: { code?: string } } | null;
+    const code = parsed?.error?.code;
+    if (code === "agent_not_found" || code === "agent_not_running") {
+      return { kind: "gone", detail: `watched target can no longer be followed (${code}); it may have moved or changed identity, so inspect before recovery; this does not prove process death` };
+    }
+    if (code === "timeout") return { kind: "unavailable", detail: "settled was not confirmed before timeout; this does not establish working status" };
+    return { kind: "unavailable", detail: `observation unavailable (${code ?? "invalid error JSON"}); event and time monitoring continue` };
+  }
+  return { kind: "unavailable", detail: `observation unavailable (exit ${status ?? "unknown"}, invalid or unrecognized response); event and time monitoring continue` };
+}
+
+/**
+ * One long child, bounded by the parent even during protocol negotiation.
+ * The server's --timeout starts only after lookup (2026-09-07 investigation).
+ * No terminal state authorizes a restart, escalation, or recovery here.
+ */
+export function waitForAgent(input: { name: string; timeoutMs: number; signal: AbortSignal }): Promise<AgentWaitObservation> {
+  return new Promise((resolve) => {
+    if (input.signal.aborted) { resolve({ kind: "unavailable", detail: "observation cancelled" }); return; }
+    const child = spawn("herdr", ["agent", "wait", input.name, "--timeout", String(Math.max(1, Math.ceil(input.timeoutMs)))], { stdio: ["ignore", "pipe", "pipe"], shell: false });
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    let stopping: string | null = null;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    // Unmeasured initial safety bounds, not tuning knobs. Revisit from real
+    // runs' false wakes/misses and cancellation latency, not screen guesses.
+    const killGraceMs = 1_000;
+    const outputLimit = 64 * 1024;
+    const finish = (observation: AgentWaitObservation): void => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      clearTimeout(drainTimer);
+      input.signal.removeEventListener("abort", abort);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve(observation);
+    };
+    const stop = (detail: string): void => {
+      if (finished || stopping !== null) return;
+      stopping = detail;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+    };
+    const abort = (): void => stop("observation cancelled after another wake or waiter failure");
+    const timer = setTimeout(() => stop("observation unavailable: parent lifetime limit reached; settled was not confirmed"), Math.max(1, input.timeoutMs));
+    input.signal.addEventListener("abort", abort, { once: true });
+    if (input.signal.aborted) abort();
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+      if (stdout.length > outputLimit) { stdout = stdout.slice(0, outputLimit); stop("observation unavailable: output limit exceeded"); }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.length > outputLimit) { stderr = stderr.slice(0, outputLimit); stop("observation unavailable: output limit exceeded"); }
+    });
+    const outcome = (code: number | null): AgentWaitObservation => stopping === null
+      ? classifyAgentWait(code, stdout, stderr) : { kind: "unavailable", detail: stopping };
+    child.once("error", (error) => finish({ kind: "unavailable", detail: `observation unavailable: ${error.message}` }));
+    child.once("close", (code) => finish(outcome(code)));
+    // A descendant retaining a pipe cannot retain the watcher after exit.
+    child.once("exit", (code) => {
+      drainTimer = setTimeout(() => finish(outcome(code)), killGraceMs);
+    });
+  });
 }

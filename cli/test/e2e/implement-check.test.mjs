@@ -164,6 +164,68 @@ test("readiness reports the row kinds and refuses a row whose method is not in t
   assert.ok(methodInBehavior.json.detail.blockingGaps.some((gap) => gap.rule === "prd-behavior-row"));
 });
 
+test("readiness rejects forbidden check paths before any run exists, including every affected row", () => {
+  const root = makeProject([
+    { id: "B1", behavior: "core tests pass", method: check("cargo test --manifest-path herdr-core/Cargo.toml --target-dir /tmp/herdr-ide-verify/cargo") },
+    { id: "B2", behavior: "native tests pass", method: check("swift test --package-path macos --scratch-path /tmp/herdr-ide-verify/swift") },
+  ]);
+  const ready = run(root, ["prd", "readiness", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(ready.status, 1, ready.stdout);
+  assert.equal(ready.json.detail.status, "needs_review");
+  assert.match(ready.json.detail.contractError, /B1.*project-relative/);
+  assert.match(ready.json.detail.contractError, /B2.*project-relative/);
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(started.status, 2, started.stdout);
+  assert.match(started.json.message, /B1.*project-relative/);
+  assert.equal(fs.existsSync(path.join(root, "agents", "runs", "fixture", "state.json")), false);
+});
+
+test("a future test and output directory pass readiness, then the created test proves the same run", () => {
+  const root = makeProject([
+    { id: "B1", behavior: "the new feature passes its regression", method: check("node --test tests/new-feature.test.mjs") },
+  ]);
+  const prdPath = path.join(root, "agents", "prd", "fixture", "prd.md");
+  // PRD authors may name implementation artifacts before they exist. A
+  // confined output directory is equally valid without already existing.
+  const original = fs.readFileSync(prdPath, "utf8");
+  fs.writeFileSync(prdPath, original.replace("node --test tests/new-feature.test.mjs", "cargo test --manifest-path future/Cargo.toml --target-dir future/target"));
+  assert.equal(run(root, ["prd", "readiness", "--prd", "agents/prd/fixture/prd.md"]).status, 0);
+  assert.equal(fs.existsSync(path.join(root, "future")), false);
+  fs.writeFileSync(prdPath, original);
+  assert.equal(run(root, ["prd", "readiness", "--prd", "agents/prd/fixture/prd.md"]).status, 0);
+  assert.equal(fs.existsSync(path.join(root, "tests")), false);
+  start(root);
+  const runId = state(root).runId;
+  const missing = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(missing.status, 1, missing.stdout);
+  assert.equal(row(root, "B1").attempts.length, 1, "absence is an execution failure, not a PRD refusal");
+  fs.mkdirSync(path.join(root, "tests"));
+  fs.writeFileSync(path.join(root, "tests", "new-feature.test.mjs"), "import assert from 'node:assert/strict'; import test from 'node:test'; test('new feature', () => assert.equal(2 + 2, 4));\n");
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(checked.status, 0, checked.stdout);
+  assert.equal(row(root, "B1").status, "green");
+  assert.equal(row(root, "B1").attempts.length, 2);
+  assert.equal(state(root).runId, runId);
+});
+
+test("a path that becomes an outside symlink after readiness is refused again at execution", () => {
+  const root = makeProject([
+    { id: "B1", behavior: "the planned test proves the feature", method: check("node future/check.mjs") },
+  ]);
+  assert.equal(run(root, ["prd", "readiness", "--prd", "agents/prd/fixture/prd.md"]).status, 0);
+  start(root);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-check-escape-e2e-"));
+  fs.writeFileSync(path.join(outside, "check.mjs"), "process.exit(0);\n");
+  fs.symlinkSync(outside, path.join(root, "future"));
+  const checked = run(root, ["implement", "check", "--row", "B1"]);
+  assert.equal(checked.status, 2, checked.stdout);
+  assert.match(checked.json.message, /path resolves outside/);
+  assert.equal(row(root, "B1").attempts.length, 0, "no external script was executed");
+  const alreadyReady = run(root, ["prd", "ready", "--prd", "agents/prd/fixture/prd.md"]);
+  assert.equal(alreadyReady.status, 1, alreadyReady.stdout);
+  assert.match(alreadyReady.json.detail.contractError, /B1.*path resolves outside/);
+});
+
 test("a check: row is proved by the harness alone, and the other kinds are refused with their own channel", () => {
   const rows = [
     { id: "B1", behavior: "machine flow closes", method: check("npm test") },

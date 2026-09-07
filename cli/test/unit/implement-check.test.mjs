@@ -92,6 +92,10 @@ test("a check: command fails closed on composition, escape, inline code, and fet
   fs.symlinkSync(path.join(outside, "escape.mjs"), path.join(root, "scripts", "escape.mjs"));
   assert.throws(() => validateCheckCommand(root, "node scripts/escape.mjs"), /path resolves outside/);
   assert.throws(() => validateCheckCommand(root, "node scripts/escape.mjs/new-output"), /path resolves outside/);
+  fs.symlinkSync(path.join(outside, "escape.mjs"), path.join(root, "escape.mjs"));
+  assert.throws(() => validateCheckCommand(root, "node escape.mjs"), /path resolves outside/, "a basename still names a project path");
+  fs.symlinkSync(path.join(outside, "not-created"), path.join(root, "future-output"));
+  assert.throws(() => validateCheckCommand(root, "cargo test --target-dir future-output/build"), /cannot be resolved safely/, "a dangling link cannot be treated as a future project directory");
 });
 
 // R3: a row that is not settled by a command says which channel settles it.
@@ -103,7 +107,7 @@ test("judge: and human: rows are refused by check with their own channel named",
   assert.doesNotThrow(() => assertCheckRow({ id: "B1", check: { kind: "check", command: "npm test", argv: ["npm", "test"] } }));
 });
 
-test("check execution uses a bookkeeping HOME and does not inherit agent secrets", () => {
+test("check execution uses a bookkeeping HOME and does not inherit agent secrets", async () => {
   const root = scratchDir("sasu-check-env-");
   // Written into the bookkeeping HOME rather than the project root: a check
   // that rewrites judged source is scored "tree-moved", and this test is
@@ -113,7 +117,7 @@ test("check execution uses a bookkeeping HOME and does not inherit agent secrets
   const previous = process.env.SASU_TEST_SECRET;
   process.env.SASU_TEST_SECRET = "must-not-cross-check-boundary";
   try {
-    assert.equal(runRowCheck(runState, root, row).outcome, "green");
+    assert.equal((await runRowCheck(runState, root, row)).outcome, "green");
   } finally {
     if (previous === undefined) delete process.env.SASU_TEST_SECRET;
     else process.env.SASU_TEST_SECRET = previous;
@@ -123,13 +127,13 @@ test("check execution uses a bookkeeping HOME and does not inherit agent secrets
   assert.equal(observed.home, path.join(root, "agents", "runs", "fixture", "check-runtime", "home"));
 });
 
-test("exit 0 is green, anything else is fail, and attempts append with consecutive failures counted", () => {
+test("exit 0 is green, anything else is fail, and attempts append with consecutive failures counted", async () => {
   const root = scratchDir("sasu-check-ledger-");
   const row = checkRow(root, script(root, "variant.cjs", "const fs=require('fs'); const word=fs.readFileSync('variant.txt','utf8').trim(); if (word==='green') process.exit(0); console.error(`Error: ${word}`); process.exit(1);\n"));
   const runState = state(root, [row]);
   for (const word of ["alpha", "bravo"]) {
     fs.writeFileSync(path.join(root, "variant.txt"), word);
-    const attempt = runRowCheck(runState, root, row);
+    const attempt = await runRowCheck(runState, root, row);
     assert.equal(attempt.outcome, "failed");
     assert.equal(attempt.exitCode, 1);
     assert.equal(row.status, "fail");
@@ -141,7 +145,7 @@ test("exit 0 is green, anything else is fail, and attempts append with consecuti
   assert.equal(rowCheckIsGreen(row), false);
 
   fs.writeFileSync(path.join(root, "variant.txt"), "green");
-  const green = runRowCheck(runState, root, row);
+  const green = await runRowCheck(runState, root, row);
   assert.equal(green.outcome, "green");
   assert.equal(green.failureClass, null);
   assert.equal(row.status, "green");
@@ -150,32 +154,32 @@ test("exit 0 is green, anything else is fail, and attempts append with consecuti
   assert.equal(rowCheckIsGreen(row), true);
 });
 
-test("a check that rewrites judged source is tree-moved even on exit 0, and an interrupted run is a failed attempt", () => {
+test("a check that rewrites judged source is tree-moved even on exit 0, and an interrupted run is a failed attempt", async () => {
   const root = scratchDir("sasu-check-tree-");
   const mover = checkRow(root, script(root, "move.cjs", "require('fs').writeFileSync('generated.txt', 'moved');\n"));
-  const moved = runRowCheck(state(root, [mover]), root, mover);
+  const moved = await runRowCheck(state(root, [mover]), root, mover);
   assert.equal(moved.exitCode, 0);
   assert.equal(moved.mutatedTree, true);
   assert.equal(moved.outcome, "tree-moved");
   assert.equal(mover.status, "fail", "exit 0 does not save a command that moved the goalposts");
 
   const interrupted = checkRow(root, script(root, "interrupt.mjs", "process.kill(process.pid, 'SIGTERM');\n"), "B2");
-  const attempt = runRowCheck(state(root, [interrupted]), root, interrupted);
+  const attempt = await runRowCheck(state(root, [interrupted]), root, interrupted);
   assert.equal(attempt.outcome, "failed");
   assert.equal(attempt.signal, "SIGTERM");
   assert.equal(attempt.timedOut, false);
   assert.equal(interrupted.consecutiveFailures, 1);
 });
 
-test("a sealed command that no longer tokenizes the same way is refused instead of run", () => {
+test("a sealed command that no longer tokenizes the same way is refused instead of run", async () => {
   const root = scratchDir("sasu-check-sealed-");
   const row = checkRow(root, script(root, "pass.mjs", "console.log('green');\n"));
   row.check.argv = ["node", "scripts/other.mjs"];
-  assert.throws(() => runRowCheck(state(root, [row]), root, row), /no longer tokenizes to what was sealed at start; amend the row/);
+  await assert.rejects(() => runRowCheck(state(root, [row]), root, row), /no longer tokenizes to what was sealed at start; amend the row/);
   assert.equal(row.attempts.length, 0);
 });
 
-test("park and resume preserve audit history while resetting only live state", () => {
+test("park and resume preserve audit history while resetting only live state", async () => {
   const root = scratchDir("sasu-check-park-");
   const row = checkRow(root, script(root, "pass.mjs", "console.log('green');\n"));
   assert.throws(() => parkRow(row, { approval: "", reason: "later", evidence: null }), /requires --approval/);
@@ -183,7 +187,7 @@ test("park and resume preserve audit history while resetting only live state", (
   assert.equal(row.status, "parked");
   assert.equal(row.parks[0].evidence, "ticket-1");
   assert.throws(() => parkRow(row, { approval: "again", reason: "again", evidence: null }), /already parked/);
-  assert.throws(() => runRowCheck(state(root, [row]), root, row), /B1 is parked; run `sasu implement resume --row B1`/);
+  await assert.rejects(() => runRowCheck(state(root, [row]), root, row), /B1 is parked; run `sasu implement resume --row B1`/);
   resumeRow(row);
   assert.equal(row.status, "pending");
   assert.equal(row.consecutiveFailures, 0);

@@ -34,6 +34,7 @@ import { runScore, scoreLine } from "./score";
 import { assertCommandAuthority, isIssuedCommand, recordVerb, rejectVerb, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment, sealRow } from "./amend";
+import { assertNoActiveCheck, beginCheck, finishCheck, recordCheckExecution } from "./check-activity";
 import { issueQaBrief, latestBriefFor, registerTrail, resolveDriverRole, TrailRejected } from "./qa";
 import {
   assertEscalateBudget,
@@ -58,6 +59,7 @@ import {
   rowCheckPayload,
   runRowCheck,
   parseCommandArgv,
+  validateContractCheckCommands,
 } from "./checks";
 import {
   acceptancePrompt,
@@ -576,6 +578,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   if (!fs.existsSync(prd.absolute)) throw new Error(`PRD not found: ${prd.relative}`);
   const text = fs.readFileSync(prd.absolute, "utf8");
   const contract = parseImplementContract(text);
+  validateContractCheckCommands(projectRoot, contract.rows);
   if ((contract.frontmatter["status"] ?? "") !== "ready") throw new Error(`PRD status must be ready, got ${contract.frontmatter["status"] ?? "missing"}`);
   const frontmatterApproval = (contract.frontmatter["human_approval"] ?? "").toLowerCase();
   const approval = flag(args, "allow-unapproved-prd")?.trim() ?? "";
@@ -638,6 +641,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     pathAttributions: Array<{ path: string; disposition: DirtyAttribution }>,
   ): ImplementState => {
     const workRoot = worktree?.path ?? projectRoot;
+    validateContractCheckCommands(workRoot, contract.rows);
     const baseline = captureBaselineSnapshot(workRoot, pathAttributions);
     const dispositions = new Set(pathAttributions.map((entry) => entry.disposition));
     const aggregateAttribution = pathAttributions.length === 0
@@ -841,7 +845,7 @@ function rowNamed(state: ImplementState, args: ImplementArgs): BehaviorRow {
  * bound here: the command is the PRD's own cell, sealed at start, and the
  * only thing an agent supplies is which row to run.
  */
-function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+async function check(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
@@ -852,12 +856,22 @@ function check(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       throw new Error(`--${forbidden} is harness-owned and cannot be supplied; \`sasu implement check\` records the real execution result`);
     }
   }
-  const attempt = runRowCheck(state, workRoot, row);
+  assertCheckRow(row);
+  beginCheck(statePath, state, row.id);
+  let attempt;
+  try {
+    attempt = await runRowCheck(state, workRoot, row, (pid) => recordCheckExecution(statePath, state, pid));
+  } catch (error) {
+    finishCheck(statePath, state);
+    throw error;
+  }
   const at = nowIso();
   const actor = resolveIssuer(flag(args, "issuer"));
-  recordEvent(state, { kind: "check-attempt", actor, subject: row.id, summary: `${row.id} check ${attempt.outcome} (exit ${attempt.exitCode})`, at });
-  recordEvent(state, { kind: "row-status", actor, subject: row.id, summary: `${row.id} is ${row.status}`, at });
-  persistState(statePath, state);
+  finishCheck(statePath, state, (fresh) => {
+    fresh.rows = fresh.rows.map((entry) => entry.id === row.id ? row : entry);
+    recordEvent(fresh, { kind: "check-attempt", actor, subject: row.id, summary: `${row.id} check ${attempt.outcome} (exit ${attempt.exitCode})`, at });
+    recordEvent(fresh, { kind: "row-status", actor, subject: row.id, summary: `${row.id} is ${row.status}`, at });
+  });
   return result("check", attempt.outcome === "green", `${row.id} check ${attempt.outcome} (exit ${attempt.exitCode}) -> ${row.status}; consecutive failures ${row.consecutiveFailures}`, {
     rowId: row.id,
     command: (row.check as { command: string }).command,
@@ -922,32 +936,25 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
   if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new Error(`--pid must be a positive integer, got ${pidFlag}`);
   const agent = flag(args, "agent")?.trim() || null;
   if (agent !== null && pid !== null) throw new Error("--agent and --pid are two answers to the same question; give one");
+  const notifyFlag = flag(args, "notify-after");
+  const notifyAfter = notifyFlag === undefined ? undefined : Number(notifyFlag);
+  if (notifyAfter !== undefined && (!Number.isSafeInteger(notifyAfter) || notifyAfter < 0)) {
+    throw new Error("--notify-after must be a non-negative integer timestamp from the previous re-arm command");
+  }
 
-  // Two probes for one question, and the caller picks by what it actually
-  // knows. `--pid` is the universal one and works in a bare terminal;
-  // `--agent` routes through the herdr adapter's `alive` hole, which is what
-  // a supervisor running under herdr has a name for rather than a pid. An
-  // adapter hole that cannot answer degrades to no probe at all instead of
-  // reporting a live implementor it never checked (R9).
-  const probe = agent !== null
-    ? (() => {
-      const capabilities = herdrCapabilities();
-      if (!capabilities.holes.alive) return { probe: `unavailable: ${capabilities.reason}`, isAlive: null };
-      return {
-        probe: "herdr-adapter",
-        isAlive: () => isAgentAlive({ name: agent }).value === true,
-      };
-    })()
-    : pid !== null
-      // signal 0 tests for the process's existence without touching it.
-      ? { probe: "pid", isAlive: () => { try { process.kill(pid, 0); return true; } catch { return false; } } }
-      : { probe: "unavailable", isAlive: null };
+  // Named targets use one long wait, not synchronous per-second list calls.
+  // PID-only callers retain their direct process probe.
+  const probe = pid !== null
+    ? { probe: "pid", isAlive: () => { try { process.kill(pid, 0); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; } } }
+    : { probe: agent === null ? "unavailable" : "herdr-wait", isAlive: null };
 
   const outcome = await waitForEvent({
     loadState: () => parseImplementState(fs.readFileSync(statePath, "utf8")),
     since,
     stallMs: STALL_THRESHOLD_MS,
+    notifyAfter,
     isAlive: probe.isAlive,
+    agent: agent ?? undefined,
   });
 
   // The supervision loop's one unguarded link: the waiter is a one-shot, so a
@@ -958,8 +965,7 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
   // hand the next command back fully assembled, with the cursor already
   // advanced and the same probe flag carried over, instead of asking the
   // supervisor to remember and rebuild it. Omitted on `implementor-gone`:
-  // there is nothing left to watch, and the recovery there is a replacement
-  // pane, not another waiter.
+  // the target must be inspected before deciding how to recover.
   const rearm = outcome.reason === "implementor-gone"
     ? null
     : [
@@ -967,6 +973,7 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
       ...(flag(args, "slug") !== undefined ? [`--slug ${flag(args, "slug")}`] : []),
       ...(flag(args, "state") !== undefined ? [`--state ${flag(args, "state")}`] : []),
       `--since ${outcome.cursor}`,
+      ...(outcome.notifyAfter !== undefined ? [`--notify-after ${outcome.notifyAfter}`] : []),
       ...(agent !== null ? [`--agent ${agent}`] : pid !== null ? [`--pid ${pid}`] : []),
     ].join(" ");
 
@@ -1000,7 +1007,10 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
 function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
-  assertRunOwnership(statePath, state, args);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  // The observer edits the measurement contract, not the implementation.
+  // Taking ownership here forced two adoptions (or a retired run) for one
+  // corrected command. The diff authority below still refuses scope changes.
   const source = normalizeProjectPath(projectRoot, state.prdPath);
   if (!fs.existsSync(source.absolute) || !fs.statSync(source.absolute).isFile()) {
     throw new Error(`amended PRD not found at ${state.prdPath}; edit the source PRD first, then amend`);
@@ -1014,10 +1024,15 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     throw new AmendmentRejected("arguments", `${state.prdPath} is byte-identical to the pinned snapshot; there is nothing to amend. Edit the PRD first, or name a sealed suite command with --exclude-suite.`);
   }
   const at = nowIso();
-  const issuer = resolveIssuer(flag(args, "issuer"));
   const entry = { verb: "amend" as const, issuer, target: null, reason: flag(args, "reason")?.trim() ?? "", at };
   let outcome;
   try {
+    try {
+      assertNoActiveCheck(state);
+    } catch (error) {
+      throw new AmendmentRejected("transition", error instanceof Error ? error.message : String(error));
+    }
+    if (issuer !== "observer") assertRunOwnership(statePath, state, args);
     outcome = applyAmendment(projectRoot, state, {
       issuer,
       approval: flag(args, "approval")?.trim() ?? "",
@@ -1893,16 +1908,16 @@ function progress(line: string): void {
  * inherited environment, no stop-at-first-failure (a run that declined to
  * execute a command cannot honestly say "suite 3/3"), and one executor.
  */
-function runUnifiedBatch(
+async function runUnifiedBatch(
   recordRoot: string,
   workRoot: string,
   state: ImplementState,
   units: RunUnit[],
   attemptId: string,
-): { records: MechanicalRunRecord[]; results: RunUnitResult[]; treeMoved: { before: string; after: string } | null } {
+): Promise<{ records: MechanicalRunRecord[]; results: RunUnitResult[]; treeMoved: { before: string; after: string } | null }> {
   const timeoutMs = loadConfig(recordRoot).verify.commandTimeoutMs;
   const records: MechanicalRunRecord[] = [];
-  const outcome = runBatch(state, workRoot, units, timeoutMs, (result) => {
+  const outcome = await runBatch(state, workRoot, units, timeoutMs, (result) => {
     const base: Omit<MechanicalRunRecord, "logPath"> = {
       command: result.unit.command,
       cwd: result.unit.cwd,
@@ -2836,7 +2851,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     });
   }
   const units = planRunUnits(state);
-  const batch = runUnifiedBatch(recordRoot, workRoot, state, units, attemptId);
+  const batch = await runUnifiedBatch(recordRoot, workRoot, state, units, attemptId);
   const mechanical = batch.records;
   // The suite axis is independent of the row score: a red suite command is
   // a regression guard no row is watching, so it blocks the run on its own
@@ -3532,7 +3547,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     }
     if (subcommand === "intake") return intake(projectRoot);
     if (subcommand === "start") return start(projectRoot, args);
-    if (subcommand === "check") return check(projectRoot, args);
+    if (subcommand === "check") return await check(projectRoot, args);
     if (subcommand === "park") return park(projectRoot, args);
     if (subcommand === "resume") return resume(projectRoot, args);
     if (subcommand === "confirm") return confirm(projectRoot, args);

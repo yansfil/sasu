@@ -31,9 +31,11 @@ function stubFile(dir, responses) {
   return file;
 }
 
-function runCli(cwd, args, { stub } = {}) {
+function runCli(cwd, args, { stub, capture } = {}) {
   const env = { ...process.env };
   delete env.SASU_HERDR_ROLE;
+  if (capture) env.SASU_JUDGE_STUB_CAPTURE_DIR = capture;
+  else delete env.SASU_JUDGE_STUB_CAPTURE_DIR;
   if (stub) {
     env.SASU_JUDGE_BACKEND = "stub";
     env.SASU_JUDGE_STUB_FILE = stub;
@@ -379,36 +381,84 @@ test("AC8: after a sealed PASS, one changed Decision Register decision cell make
   assert.equal(JSON.parse(refused.stdout).error.code, "reopen-required");
 });
 
-test("AC11: gate reopen on a complete, sealed qa-log exits 0 and appends the evidence as a new Raw Q&A turn", () => {
+for (const gate of ["gap-audit", "spec"]) test(`${gate} reopen records operational evidence without manufacturing a Raw Q&A answer or staling the sibling gate`, () => {
   const dir = makeProject();
   sealPass(dir);
+  const spec = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { default: PASS } }),
+  });
+  assert.equal(spec.status, 0, spec.stdout + spec.stderr);
+  const sibling = gate === "spec" ? "gap-audit" : "spec";
   writeQaLog(dir, QA_FIXTURE.replace('status: "active"', 'status: "complete"'));
   assert.equal(statusJson(dir)["gap-audit"].sealed, true, "the seal is live on the completed log");
 
-  const evidence = "삭제 확인 대신 5초 undo로 가자";
-  const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", evidence]);
+  const evidence = "검사 경로만 고쳤으니 다시 검토해";
+  const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", gate, "--evidence", evidence]);
   assert.equal(reopened.status, 0, reopened.stdout + reopened.stderr);
-  assert.match(reopened.stdout, /gap-audit review reopened with recorded user evidence/);
-  assert.match(reopened.stdout, /\[gate:gap-audit\] NOT_RUN \| review cycle 2/);
+  assert.ok(reopened.stdout.includes(`${gate} review reopened with recorded user evidence`));
+  assert.ok(reopened.stdout.includes(`[gate:${gate}] NOT_RUN | review cycle 2`));
 
   const qaLog = fs.readFileSync(path.join(dir, "qa-log.md"), "utf8");
   const rawQa = qaLog.slice(qaLog.indexOf("## Raw Q&A"), qaLog.indexOf("## Checkpoint And Sweep History"));
-  const lastTurn = rawQa.slice(rawQa.lastIndexOf("### Q"));
-  assert.match(lastTurn, /^### Q4: gap-audit reopen/);
-  assert.match(lastTurn, new RegExp(`- answer: ${evidence}`));
-  assert.match(lastTurn, /- source_ref: gate:gap-audit:reopen:/);
-  assert.match(lastTurn, /- needs_normalization: true/);
+  assert.equal(rawQa, QA_FIXTURE.slice(QA_FIXTURE.indexOf("## Raw Q&A"), QA_FIXTURE.indexOf("## Checkpoint And Sweep History")));
   assert.match(qaLog, /^status: "active"$/m, "a reopened log is active again so sync and normalization can continue");
-  assert.match(qaLog, /^question_count: 4$/m);
-  const record = gatesState(dir).gates["gap-audit"];
+  assert.match(qaLog, /^question_count: 3$/m);
+  const record = gatesState(dir).gates[gate];
   assert.equal(record.reviewReopens.length, 1);
   assert.equal(record.reviewReopens[0].evidence, evidence);
   assert.equal(record.reviewReopens[0].verdictBefore, "PASS");
+  assert.equal(statusJson(dir)[sibling].effective, "PASS");
+  assert.equal(statusJson(dir)[sibling].stale, false);
 
   // The next round runs as a delta review and can seal again.
-  const resealed = gapAudit(dir, { byPurpose: { default: PASS } });
+  const capture = path.join(dir, "judge-inputs");
+  const resealed = runCli(dir, ["gate", gate, "--slug", "fixture", "--qa-log", "qa-log.md", ...(gate === "spec" ? ["--prd", "prd.md"] : []), "--json"], {
+    stub: stubFile(dir, { byPurpose: { default: PASS } }),
+    capture,
+  });
   assert.equal(resealed.status, 0, resealed.stdout + resealed.stderr);
-  assert.equal(statusJson(dir)["gap-audit"].reviewCycle, 2);
+  assert.equal(statusJson(dir)[gate].reviewCycle, 2);
+  assert.equal(statusJson(dir)[sibling].effective, "PASS");
+  for (const file of fs.readdirSync(capture).filter((name) => name.endsWith(".prompt.txt"))) {
+    assert.ok(fs.readFileSync(path.join(capture, file), "utf8").includes(evidence), "every actual judge call receives the ledger evidence");
+  }
+
+  // A real answer edit remains a semantic input, even after an operational reopen.
+  writeQaLog(dir, fs.readFileSync(path.join(dir, "qa-log.md"), "utf8").replace("- answer: yes, ask first", "- answer: no confirmation; allow undo instead"));
+  assert.equal(statusJson(dir).spec.effective, "STALE");
+  assert.equal(statusJson(dir)["gap-audit"].effective, "STALE");
+});
+
+test("a substantive reopen request reaches the judge and its missing normalization can block once without unbounded new findings", () => {
+  const dir = makeProject();
+  sealPass(dir);
+  const evidence = "삭제 확인 대신 5초 undo로 가자";
+  const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", evidence]);
+  assert.equal(reopened.status, 0, reopened.stdout + reopened.stderr);
+  const capture = path.join(dir, "judge-inputs");
+  const rerun = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
+    capture,
+    stub: stubFile(dir, { byPurpose: {
+      "lane:ux-behavior": { verdict: "BLOCK", findings: [finding("ux", "P1", "the reopened undo request is missing from the decisions", false)] },
+      default: PASS,
+    } }),
+  });
+  assert.equal(rerun.status, 1, rerun.stdout + rerun.stderr);
+  assert.equal(JSON.parse(rerun.stdout).status.effective, "BLOCKED");
+  const prompt = fs.readFileSync(path.join(capture, "gate_gap-audit_lane_ux-behavior.prompt.txt"), "utf8");
+  assert.ok(prompt.includes(evidence));
+  assert.match(prompt, /REVIEW REOPEN EVIDENCE/);
+  assert.match(prompt, /Raw Q&A/);
+  const next = gapAudit(dir, { byPurpose: {
+    "lane:ux-behavior": { verdict: "BLOCK", findings: [
+      finding("ux", "P1", "the reopened undo request is missing from the decisions", false, { id: "F1" }),
+      finding("ux", "P1", "unrelated new suggestion", false),
+    ] },
+    default: PASS,
+  } });
+  assert.equal(next.status, 1, next.stdout + next.stderr);
+  assert.deepEqual(JSON.parse(next.stdout).status.findings.map((item) => item.id), ["F1"]);
+  assert.equal(lastArtifact(dir).droppedFindings.length, 1);
 });
 
 test("AC11: gate reopen is refused before any verdict and records nothing", () => {

@@ -563,8 +563,8 @@ export interface AmendmentRecord {
    * Decisions table moved, which is a scope change and human-only.
    */
   scope: "check-cells" | "behaviors";
-  /** Verbatim approval quote. */
-  approval: string;
+  /** Verbatim approval when supplied; observer check corrections need none. */
+  approval: string | null;
   reason: string;
   prdSha256: string;
   snapshotPath: string;
@@ -704,6 +704,18 @@ export type PrdJudgeRecord =
   | { required: true; skippedReason: null; gapAudit: string; spec: string }
   | { required: false; skippedReason: string; gapAudit: null; spec: null };
 
+export interface ActiveCheck {
+  token: string;
+  rowId: string;
+  pid: number;
+  /** Detached POSIX process group leader, recorded once the command spawns. */
+  executionPid?: number;
+  hostname: string;
+  startedAt: string;
+  prdSha256: string;
+  rowSha256: string;
+}
+
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   /**
@@ -763,6 +775,8 @@ export interface ImplementState {
   adoptions?: { at: string; fromSessionId: string; evidence: string }[];
   /** The Behaviors table, sealed at start, in PRD order. */
   rows: BehaviorRow[];
+  /** Present only while a mechanical check command is executing. */
+  activeCheck?: ActiveCheck;
   artifacts: RegisteredArtifact[];
   verificationAttempts: UnifiedVerificationAttempt[];
   // Explicit user go-aheads that opened a fresh fix budget after exhaustion.

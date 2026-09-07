@@ -76,7 +76,7 @@ export function pinnedPrd(recordRoot: string, state: ImplementState): {
       snapshotSha256: state.prd.sha256,
       currentSha256: currentHash,
       firstChangedLine: current === null ? null : firstChangedLine(text, current),
-      recovery: "Restore the source PRD to the pinned snapshot bytes, or retire this run and start a newly approved PRD under a new slug.",
+      recovery: "Restore the source PRD to the pinned snapshot bytes, or apply the correction with implement amend. An observer may amend check cells without adoption or human approval; other changes require --issuer human with --approval. The existing run and unaffected proofs are preserved.",
     },
   };
 }

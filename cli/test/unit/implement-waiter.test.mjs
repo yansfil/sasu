@@ -13,7 +13,7 @@ function harness({ events = [], stallMs = 60_000, isAlive = undefined, script = 
   return {
     log,
     options: {
-      loadState: () => ({ events: [...log] }),
+      loadState: () => ({ events: [...log], createdAt: "2026-08-29T00:00:00.000Z" }),
       stallMs,
       pollMs: 1_000,
       isAlive,
@@ -72,7 +72,7 @@ test("AC22: a dead implementor ends the wait as implementor-gone", async () => {
   const h = harness({ events: [event(1, "2026-08-29T00:00:00.000Z")], stallMs: 600_000, isAlive: () => false });
   const outcome = await waitForEvent({ ...h.options, since: 1 });
   assert.equal(outcome.reason, "implementor-gone");
-  assert.match(outcome.detail, /no longer alive/);
+  assert.match(outcome.detail, /can no longer be followed/);
 });
 
 test("AC22: exactly one reason, and an unavailable liveness probe is admitted rather than assumed", async () => {
@@ -108,4 +108,33 @@ test("a null cursor delivers the whole log so a fresh supervisor is not born bli
   const h = harness({ events: [event(1, "2026-08-29T00:00:00.000Z"), event(2, "2026-08-29T00:00:01.000Z")] });
   const outcome = await waitForEvent({ ...h.options, since: null });
   assert.deepEqual(outcome.events.map((entry) => entry.id), [1, 2]);
+});
+
+test("observation errors and unknown answers never become a lost target", async () => {
+  for (const isAlive of [() => null, () => { throw new Error("socket unavailable"); }]) {
+    const h = harness({ events: [event(1, "2026-08-29T00:00:00.000Z")], stallMs: 2_000, isAlive });
+    const stalled = await waitForEvent({ ...h.options, since: 1 });
+    assert.equal(stalled.reason, "stall");
+    assert.match(stalled.detail, /observation.*(unavailable|failed)/);
+    h.options.sleep = async () => h.log.push(event(2, h.at()));
+    const changed = await waitForEvent({ ...h.options, since: 1, notifyAfter: stalled.notifyAfter });
+    assert.equal(changed.reason, "event");
+    assert.match(changed.detail, /observation/);
+  }
+});
+
+test("stall re-arms carry a next notification time without changing the silence clock", async () => {
+  const h = harness({ events: [event(1, "2026-08-29T00:00:00.000Z")], stallMs: 5_000 });
+  let outcome = await waitForEvent({ ...h.options, since: 1 });
+  for (let round = 0; round < 3; round += 1) {
+    outcome = await waitForEvent({ ...h.options, since: outcome.cursor, notifyAfter: outcome.notifyAfter });
+    assert.equal(outcome.reason, "stall");
+    assert.equal(outcome.waitedMs, 5_000);
+    assert.match(outcome.detail, new RegExp(`no event for ${(round + 2) * 5}s`));
+  }
+  h.log.push(event(2, h.at()));
+  const pending = await waitForEvent({ ...h.options, since: 1, notifyAfter: outcome.notifyAfter });
+  assert.equal(pending.reason, "event");
+  assert.equal(pending.waitedMs, 0);
+  assert.equal(pending.notifyAfter, undefined, "a new event resets notification scheduling");
 });

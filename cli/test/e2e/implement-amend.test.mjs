@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
@@ -63,10 +65,11 @@ None.
 `;
 }
 
-function run(root, args) {
+function run(root, args, sessionId) {
   const env = { ...process.env };
   for (const key of SESSION_KEYS) delete env[key];
   delete env.SASU_HERDR_ROLE;
+  if (sessionId !== undefined) env.CODEX_THREAD_ID = sessionId;
   const executed = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd: root, encoding: "utf8", env });
   let json;
   try {
@@ -79,13 +82,13 @@ function run(root, args) {
 
 const PRD_REL = path.join("agents", "prd", "fixture", "prd.md");
 
-function makeProject({ b2Exit = 0 } = {}) {
+function makeProject({ b2Exit = 0, b2Script, sessionId } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-implement-amend-e2e-"));
   fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
   fs.writeFileSync(path.join(root, PRD_REL), prd());
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('fixture suite green')\"" } }));
   fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
-  fs.writeFileSync(path.join(root, "scripts", "b2.mjs"), `process.exit(${b2Exit});\n`);
+  fs.writeFileSync(path.join(root, "scripts", "b2.mjs"), b2Script ?? `process.exit(${b2Exit});\n`);
   for (const args of [
     ["init", "-q"],
     ["add", "package.json", "scripts"],
@@ -94,7 +97,7 @@ function makeProject({ b2Exit = 0 } = {}) {
     const executed = spawnSync("git", args, { cwd: root, encoding: "utf8" });
     assert.equal(executed.status, 0, executed.stderr);
   }
-  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
+  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"], sessionId);
   assert.equal(started.status, 0, started.stderr + started.stdout);
   fs.writeFileSync(path.join(root, "implementation.txt"), "run-owned fixture implementation\n");
   return root;
@@ -114,6 +117,100 @@ const editPrd = (root, options) => fs.writeFileSync(path.join(root, PRD_REL), pr
 const amend = (root, issuer = "human", extra = []) => run(root, [
   "implement", "amend", "--issuer", issuer, "--approval", TEST_APPROVAL, "--reason", TEST_REASON, ...extra,
 ]);
+
+test("another session corrects only the check cell without adoption or human approval and the owner continues", () => {
+  const root = makeProject({ sessionId: "fixture-implementor" });
+  const checked = run(root, ["implement", "check", "--row", "B1"], "fixture-implementor");
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+  const before = state(root);
+  editPrd(root, { b2Check: B2_CHECK_AMENDED });
+  const corrected = run(root, ["implement", "amend", "--slug", "fixture", "--issuer", "observer", "--reason", TEST_REASON], "fixture-observer");
+  assert.equal(corrected.status, 0, corrected.stdout + corrected.stderr);
+  const after = state(root);
+  assert.equal(after.ownerSessionId, "fixture-implementor");
+  assert.deepEqual(after.adoptions, before.adoptions);
+  assert.deepEqual(after.rows[0], before.rows[0], "unaffected proof and attempt history survive");
+  assert.equal(after.amendments[0].approval, null, "no human approval is invented");
+  assert.equal(after.amendments[0].issuer, "observer");
+  assert.equal(fs.existsSync(path.join(root, "scripts", "b2-v2.mjs")), false, "a future test path may be sealed");
+  fs.writeFileSync(path.join(root, "scripts", "b2-v2.mjs"), "process.exit(0);\n");
+  const resumed = run(root, ["implement", "check", "--row", "B2"], "fixture-implementor");
+  assert.equal(resumed.status, 0, resumed.stdout + resumed.stderr);
+  assert.equal(row(root, "B2").status, "green");
+  assert.equal(state(root).retirement, null);
+  assert.equal(state(root).createdAt, before.createdAt);
+  assert.equal(fs.readFileSync(path.join(root, "implementation.txt"), "utf8"), "run-owned fixture implementation\n");
+});
+
+for (const orphaned of [false, true]) test(`a ${orphaned ? "surviving test after CLI death" : "live check"} blocks amendment until execution ends`, { skip: orphaned && process.platform === "win32" }, async () => {
+  const root = makeProject({ sessionId: "fixture-implementor", b2Script: `
+import fs from 'node:fs';
+fs.writeFileSync('agents/check-started', 'ready');
+const tick = setInterval(() => {
+  if (fs.existsSync('agents/check-release')) { clearInterval(tick); process.exit(0); }
+}, 20);
+setTimeout(() => process.exit(1), 15000).unref();
+` });
+  const env = { ...process.env };
+  for (const key of SESSION_KEYS) delete env[key];
+  delete env.SASU_HERDR_ROLE;
+  env.CODEX_THREAD_ID = "fixture-implementor";
+  const child = spawn(process.execPath, [CLI, "implement", "check", "--row", "B2", "--json"], { cwd: root, env });
+  let output = "";
+  child.stdout.on("data", (bytes) => { output += bytes; });
+  child.stderr.on("data", (bytes) => { output += bytes; });
+  const exited = once(child, "exit");
+  try {
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(path.join(root, "agents", "check-started"))) {
+      assert.equal(child.exitCode, null, output);
+      assert.ok(Date.now() < deadline, "fixture check must actually begin");
+      await delay(20);
+    }
+    assert.equal(state(root).activeCheck.pid, child.pid);
+    const executionPid = state(root).activeCheck.executionPid;
+    assert.ok(executionPid > 0, "the actual execution group is recorded");
+    if (orphaned) {
+      child.kill("SIGKILL");
+      assert.deepEqual(await exited, [null, "SIGKILL"]);
+      assert.doesNotThrow(() => process.kill(-executionPid, 0), "the test survives its CLI");
+    }
+    editPrd(root, { b2Check: B2_CHECK_AMENDED });
+    const args = ["implement", "amend", "--slug", "fixture", "--issuer", "observer", "--reason", TEST_REASON];
+    const refused = run(root, args, "fixture-observer");
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.json.message, /check still active/);
+    assert.equal(state(root).amendments.length, 0);
+    const refusal = state(root).verbs.at(-1);
+    assert.equal(refusal.outcome, "rejected");
+    fs.writeFileSync(path.join(root, "agents", "check-release"), "go");
+    if (orphaned) {
+      const stoppedBy = Date.now() + 10000;
+      while (true) {
+        try { process.kill(-executionPid, 0); }
+        catch (error) { assert.equal(error.code, "ESRCH"); break; }
+        assert.ok(Date.now() < stoppedBy, "the owned fixture command must exit");
+        await delay(20);
+      }
+    } else {
+      assert.deepEqual(await exited, [0, null], output);
+      const settled = state(root);
+      assert.equal(settled.activeCheck, undefined);
+      assert.equal(settled.rows[1].status, "green");
+      assert.deepEqual(settled.verbs.at(-1), refusal, "finishing the check preserves concurrent refusal history");
+    }
+    const corrected = run(root, args, "fixture-observer");
+    assert.equal(corrected.status, 0, corrected.stdout + corrected.stderr);
+    assert.equal(row(root, "B2").status, "pending");
+    assert.equal(row(root, "B2").attempts.length, orphaned ? 0 : 1);
+    assert.equal(state(root).activeCheck, undefined);
+    if (orphaned) assert.ok(state(root).deviations.some((entry) => entry.type === "interrupted-check"));
+    assert.equal(state(root).ownerSessionId, "fixture-implementor");
+  } finally {
+    fs.writeFileSync(path.join(root, "agents", "check-release"), "go");
+    await exited;
+  }
+});
 
 test("the implementor cannot correct the question paper it is marked on", () => {
   const root = makeProject();
@@ -161,18 +258,13 @@ test("amendment without an approval quote is refused and seals nothing", () => {
   assert.equal(state(root).amendments.length, 0);
 });
 
-test("the observer waits while a check: row is mid-attempt; the human may still amend on the record", () => {
+test("the observer can correct a finished failed check and preserve its attempt history", () => {
   const root = makeProject({ b2Exit: 1 });
   const failed = run(root, ["implement", "check", "--row", "B2"]);
   assert.equal(failed.status, 1, "a failed check exits non-zero and records the attempt");
   assert.equal(row(root, "B2").status, "fail");
   editPrd(root, { b2Check: B2_CHECK_AMENDED });
-  const refused = amend(root, "observer");
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.json.message, /B2 is mid-attempt/);
-  assert.equal(refused.json.detail.rejectedCheck, "transition");
-
-  const accepted = amend(root, "human");
+  const accepted = amend(root, "observer");
   assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
   assert.equal(row(root, "B2").status, "pending");
   assert.equal(row(root, "B2").attempts.length, 1, "the failed attempt stays readable");

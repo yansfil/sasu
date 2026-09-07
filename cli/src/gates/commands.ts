@@ -539,7 +539,7 @@ async function runGapListGate(
   gate: Extract<GateId, "gap-audit" | "spec">,
   buildPrompt: (
     priorFindings: PriorFinding[],
-    options: { lane?: JudgeLane; laneCount?: number; rerun?: boolean; decisionsChanged?: boolean; delegationEvidence?: string },
+    options: { lane?: JudgeLane; laneCount?: number; rerun?: boolean; decisionsChanged?: boolean; delegationEvidence?: string; reopenEvidence?: string },
   ) => string,
   purpose: string,
   inputs: GateInput[],
@@ -620,6 +620,7 @@ async function runGapListGate(
     const records: JudgeCallRecord[] = [];
     try {
       const record = state.gates[gate];
+      const reopenEvidence = record?.reviewReopens?.at(-1)?.evidence;
       const priorFindings = priorFindingsFor(state, gate);
       // A rerun is any round after a judged one on this gate, reopen or not:
       // the pinned lane digests exist exactly when a round was judged, and
@@ -633,6 +634,15 @@ async function runGapListGate(
       const laneDigests = lanes === null
         ? { [SINGLE_JUDGE_LANE_ID]: registerLib.decisionDigest(registerLib.parseRegisterRows(qaLogContent) ?? []) }
         : laneDecisionDigests(qaLogContent, lanes);
+      // Reopen approvals belong to the gate ledger, not synthesized interview
+      // answers: that write staled the sibling PASS (2026-09-07). Still judge
+      // the user's words. A substantive request can reveal an unrecorded
+      // decision, and its finding must survive delta admission exactly once.
+      if (reopenEvidence !== undefined) {
+        for (const laneId of Object.keys(laneDigests)) {
+          laneDigests[laneId] = sha256Of(JSON.stringify([laneDigests[laneId], reopenEvidence]));
+        }
+      }
       const decisionsChanged = (laneId: string): boolean =>
         isRerun && pinnedDigests[laneId] !== laneDigests[laneId];
       const effort = laneEffortFor(config, gate);
@@ -646,7 +656,7 @@ async function runGapListGate(
           config,
           purpose,
           "routine",
-          buildPrompt(priorFindings, { rerun: isRerun, decisionsChanged: decisionsChanged(SINGLE_JUDGE_LANE_ID), delegationEvidence }),
+          buildPrompt(priorFindings, { rerun: isRerun, decisionsChanged: decisionsChanged(SINGLE_JUDGE_LANE_ID), delegationEvidence, reopenEvidence }),
           validateGapVerdict,
           { effort },
         );
@@ -686,6 +696,7 @@ async function runGapListGate(
                   rerun: isRerun,
                   decisionsChanged: decisionsChanged(lane.id),
                   delegationEvidence,
+                  reopenEvidence,
                 }),
                 validateGapVerdict,
                 { effort },
@@ -2149,12 +2160,11 @@ export function runOverride(
 
 /**
  * CLI seam for the only operation that opens a new gap/spec review cycle.
- * The user's words are the new decision the next round judges, so they land
- * in the interview log as a Raw Q&A turn (PRD gate-loop R6) - the one place
- * the judges read user intent from - and a sealed log becomes active again
- * so `interview sync` and normalization can follow. The state is reopened
- * first: the evidence is already preserved in the reopen ledger, so a qa-log
- * write that fails afterwards loses nothing the record does not hold.
+ * The approval/change request already lives in the reopen ledger and is
+ * supplied directly to the next judge. Do not turn an operational approval
+ * into a synthetic interview answer: both gates pin those answers. Actual
+ * requirement changes still enter Raw Q&A and the Decision Register through
+ * the interview workflow, which remains available on the reactivated log.
  */
 export function runReopen(
   projectRoot: string,
@@ -2172,20 +2182,9 @@ export function runReopen(
   const state = reopenPrdGate(store, gate, evidence);
   const qaLogFile = path.join(projectRoot, qaLogInput!.path);
   const original = fs.readFileSync(qaLogFile, "utf8");
-  const at = new Date().toISOString();
-  const appended = appendQaEntry(original, {
-    label: `${gate} reopen`,
-    route: "user-decision",
-    decisionIds: [],
-    sourceRef: `gate:${gate}:reopen:${at}`,
-    asked: `The ${gate} review cycle was reopened on the user's request; what changed?`,
-    recommended: "none",
-    answer: evidence.trim(),
-    notes: "Recorded by sasu gate reopen from the user's own words; normalize the decisions it carries into the Decision Register before re-running the gate.",
-  });
-  const reactivated = setQaLogStatus(appended.content, "active");
+  const reactivated = setQaLogStatus(original, "active");
   const audited = appendAuditEntry(reactivated, {
-    ...auditEntryFor(state, gate, "reopened", `Q${appended.qNumber} records the user's change request`),
+    ...auditEntryFor(state, gate, "reopened", "The gate's reviewReopens ledger records the user's approval or change request; operational reopening requires no interview sync."),
     type: gate === "gap-audit" ? "gap-audit-gate" : "spec-gate",
   }).content;
   replaceQaLog(qaLogFile, original, refreshBookkeeping(audited));

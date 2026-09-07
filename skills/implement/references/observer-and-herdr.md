@@ -20,7 +20,9 @@ The Spec Owner owns conversation continuity, qa-log closure when applicable, PRD
 The Observer owns conversation continuity, delegation, liveness, exception triage, recovery, and the final user-facing report.
 The Implementor owns implementation repository writes, row checks, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
 It never authors or repairs the qa-log or PRD.
-While the implementation phase is active, only the Implementor may mutate implementation files or Sasu run state after dispatch; the qa-log and PRD body remain sealed and read-only for both sessions.
+While the implementation phase is active, only the Implementor may mutate implementation files after dispatch; the CLI alone writes Sasu run state.
+The Observer may edit only PRD check cells and seal that correction with `sasu implement amend --slug <topic> --issuer observer --reason '<why and what changed>'` without adoption or human approval.
+Other PRD changes remain human-authorized; the Implementor does not edit the PRD or qa-log.
 The Observer may read repository state, `sasu gate status`, `sasu implement status`, receipts, and the Implementor transcript.
 It must not become a second implementor or repeat verification.
 
@@ -159,6 +161,8 @@ external_effect: none | <exact effect>
 The Observer resolves a block without asking the user when the answer is already in the handoff, follows an established repository convention, or is an in-scope reversible default that does not weaken an acceptance criterion.
 For `$please`, this includes reversible product, copy, and implementation choices that can be listed for final review.
 Send an in-contract decision back to the same Implementor and require it to record the assumption in the final report, never by editing the sealed PRD.
+For a wrong check method, the Observer corrects and amends that cell, then sends the same Implementor the amendment result to continue the existing run.
+An actually executing check must finish before amendment; a recorded failure is finished history, not an active attempt.
 
 If the block changes scope, an acceptance criterion, major structure, or product behavior, the Observer must not authorize divergence or edit the sealed PRD while implementation continues.
 Ask the user for the explicit change required by the gate-reopen contract.

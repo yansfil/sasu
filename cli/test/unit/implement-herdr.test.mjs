@@ -45,6 +45,7 @@ test("AC27: outside herdr all three holes close and say so, without throwing", (
 test("AC27: herdr present but not answering is distinguished from herdr absent", () => {
   const capabilities = herdrCapabilities({ env: { HERDR_ENV: "1" }, run: fails(3) });
   assert.equal(capabilities.available, false);
+  assert.deepEqual(capabilities.holes, { spawn: false, read: true, alive: false });
   assert.match(capabilities.reason, /present but not answering/);
 });
 
@@ -64,6 +65,7 @@ test("an argv herdr rejects is reported as this adapter being stale, not as herd
     },
   });
   assert.equal(capabilities.available, false);
+  assert.deepEqual(capabilities.holes, { spawn: true, read: true, alive: false });
   assert.match(capabilities.reason, /THIS ADAPTER is out of date, not herdr/);
   assert.match(capabilities.reason, /cli\/src\/implement\/herdr\.ts/, "the message must name the file to re-measure");
   assert.match(capabilities.reason, /herdr 9\.9\.9, protocol 42/, "it must name what is installed");
@@ -167,13 +169,12 @@ test("the dispatched kind defaults to the dispatching pane's own agent and can b
   spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: detected.run });
   assert.equal(detected.of("agent start")[4], "codex");
 
-  // The capability probe always lists once; detection is the second list.
-  assert.equal(detected.count("agent list"), 2);
+  assert.equal(detected.count("agent list"), 1, "only kind detection needs a list");
 
   const overridden = recorder();
   spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "codex" }, { env: LIVE, run: overridden.run });
   assert.equal(overridden.of("agent start")[4], "codex");
-  assert.equal(overridden.count("agent list"), 1, "an explicit kind needs no detection call beyond the probe");
+  assert.equal(overridden.count("agent list"), 0, "an explicit kind has no list dependency");
 });
 
 test("an undetectable kind is refused before anything is created", () => {
@@ -204,7 +205,12 @@ test("model and effort are forwarded as the started agent's own native arguments
 // The pane is created before the agent starts, so a failure in between would
 // strand an empty pane.
 test("a failed agent start closes only the empty pane it created", () => {
-  const { run, of } = recorder({ "agent start": { status: 1, stdout: "", stderr: "no shell prompt" } });
+  const { run, of } = recorder({
+    "agent start": { status: 1, stdout: "", stderr: "no shell prompt" },
+    "pane process-info": { status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
+      pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
+    } } }) },
+  });
   const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
   assert.equal(outcome.ok, false);
   assert.match(outcome.problem, /no shell prompt/);
@@ -271,7 +277,10 @@ const herdrHelp = (args) => {
   return run.error === undefined && run.status === 0 ? `${run.stdout}${run.stderr}` : null;
 };
 
-test("the argv this adapter sends matches the installed herdr's own contract", { skip: herdrHelp(["agent"]) === null ? "herdr is not installed" : false }, () => {
+const binaryProbe = spawnSync("herdr", ["--version"], { encoding: "utf8", timeout: 15_000 });
+const noHerdr = binaryProbe.error?.code === "ENOENT";
+
+test("the argv this adapter sends matches the installed herdr's own contract", { skip: noHerdr ? "herdr is not installed" : false }, () => {
   const listing = spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
   assert.equal(listing.status, 0, "the capability probe's argv must succeed against the installed herdr");
   assert.doesNotThrow(() => JSON.parse(listing.stdout), "`agent list` is expected to print JSON with no --json flag");
@@ -279,6 +288,7 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
   for (const [args, flags] of [
     [["pane", "split"], ["--pane", "--direction", "--cwd", "--env", "--no-focus"]],
     [["agent", "start"], ["--kind", "--pane"]],
+    [["pane", "process-info"], ["--pane"]],
     [["agent", "read"], ["--source", "--lines"]],
   ]) {
     const help = herdrHelp(args);
@@ -287,4 +297,58 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
       assert.ok(help.includes(flag), `herdr ${args.join(" ")} no longer accepts ${flag}; this adapter still sends it`);
     }
   }
+});
+
+
+test("list failure does not disable read or explicit-kind startup", () => {
+  const recorded = recorder({ "agent list": { status: 2, stdout: "", stderr: "usage: herdr agent list" } });
+  assert.equal(readPane({ name: "impl" }, { env: LIVE, run: recorded.run }).ok, true);
+  assert.equal(spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "claude" }, { env: LIVE, run: recorded.run }).ok, true);
+  assert.equal(recorded.count("agent list"), 0);
+  assert.equal(isAgentAlive({ name: "impl" }, { env: LIVE, run: recorded.run }).value, null);
+});
+
+test("malformed successful lists are unknown rather than evidence of absence", () => {
+  for (const stdout of ["garbage", "{}", "null", '{"result":{"agents":{}}}', listing(null), listing({ name: 1 })]) {
+    const observed = isAgentAlive({ name: "impl" }, { env: LIVE, run: ok(stdout) });
+    assert.equal(observed.ok, false);
+    assert.equal(observed.value, null);
+    assert.match(observed.problem, /invalid agent list/);
+  }
+});
+
+test("failed startup retains unready, live, and unobservable panes without sending a handoff", () => {
+  for (const [stderr, processInfo] of [
+    [JSON.stringify({ error: { code: "agent_not_ready" } }), { status: 0, stdout: "{}", stderr: "" }],
+    ["startup failed", { status: 0, stdout: JSON.stringify({ result: { process_info: {
+      pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 99, foreground_processes: [{ pid: 99 }],
+    } } }), stderr: "" }],
+    ["startup failed", { status: 1, stdout: "", stderr: "connection refused" }],
+    ["startup failed", { status: 0, stdout: "malformed", stderr: "" }],
+  ]) {
+    const recorded = recorder({ "agent start": { status: 1, stdout: "", stderr }, "pane process-info": processInfo });
+    const result = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: recorded.run });
+    assert.equal(result.ok, false);
+    assert.match(result.problem, /pane w4G:p13 was retained/);
+    assert.equal(recorded.count("pane close"), 0);
+    assert.equal(recorded.count("agent prompt"), 0);
+    assert.equal(recorded.count("agent wait"), 0);
+  }
+});
+
+test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noHerdr ? "herdr is not installed" : false }, () => {
+  const missing = `missing-${process.pid}-${Date.now()}`;
+  const read = spawnSync("herdr", ["agent", "read", missing, "--source", "recent-unwrapped", "--lines", "1"], { encoding: "utf8", timeout: 15_000 });
+  assert.equal(read.status, 1);
+  assert.equal(read.stdout, "");
+  assert.equal(JSON.parse(read.stderr).error.code, "agent_not_found");
+  const run = (args) => spawnSync("herdr", args, { encoding: "utf8", timeout: 15_000,
+    env: { ...process.env, HERDR_SOCKET_PATH: `/tmp/${missing}.sock` } });
+  const failure = run(["agent", "list"]);
+  assert.equal(failure.status, 1);
+  assert.equal(failure.stdout, "");
+  assert.equal(JSON.parse(failure.stderr).error.code, "server_not_running");
+  const observed = isAgentAlive({ name: missing }, { env: LIVE, run });
+  assert.equal(observed.ok, false);
+  assert.equal(observed.value, null);
 });

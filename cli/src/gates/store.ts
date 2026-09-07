@@ -210,9 +210,10 @@ export interface GateRecord {
   findingSeq?: number;
   /**
    * PRD gates: per-lane digest of the Decision Register's decision cells as
-   * routed to that lane, pinned at the last judged round. A rerun lane may
+   * routed to that lane plus the gate's latest reopen evidence, pinned at
+   * the last judged round. A rerun lane may
    * report a NEW finding only when its digest changed since (PRD gate-loop
-   * R1): the interview log is the only thing a rerun may learn from, so an
+   * R1): only changed decisions or a new user request admit new gaps, so an
    * unchanged lane gets no new line of questioning.
    */
   laneDigests?: Record<string, string>;

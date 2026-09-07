@@ -52,8 +52,8 @@ Usage:
   sasu implement resume   --row <Bn> [--json]
   sasu implement confirm  --issuer human --row <Bn> --evidence "<the user's own words>" [--reject] [--json]
     (closes a human: row after finalize; --reject keeps it OPEN with the words on record. Human-only.)
-  sasu implement amend    --issuer <observer|human> --approval "<verbatim approval>" --reason "<why>" [--exclude-suite "<S1,...>"] [--json]
-    (edit the source PRD first; amend re-seals it. An observer may change 검사 방법 cells only; anything else is human-only.)
+  sasu implement amend    --issuer <observer|human> --reason "<why>" [--approval "<verbatim human approval>"] [--exclude-suite "<S1,...>"] [--json]
+    (edit the source PRD first; observer check-cell corrections keep run ownership and need no approval. Human amendments require --approval.)
   sasu implement qa-brief --row <Bn> [--json]
   sasu implement trail    --row <Bn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]
     (the driver role is self-declared and recorded for audit; implementor and solver are refused by name.)
@@ -61,7 +61,7 @@ Usage:
     (starts exactly one implementor beside this pane, handoff packet on stdin; refused from a pane already marked as the implementor.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <Bn>] [--agent <herdr-agent>] [--json]
     (summons a read-only solver for a diagnosis, then resets the implementor's context; ${"`"}ESCALATE_LIMIT_PER_RUN${"`"} per run.)
-  sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--json]
+  sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--notify-after <epoch-ms>] [--json]
     (state-changing implement commands accept --issuer <implementor|observer|human>, default implementor.
      The label is self-declared and recorded for audit; the CLI does not authenticate it.)
   sasu implement artifact [--row <Bn>] --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
@@ -73,7 +73,7 @@ Usage:
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
-    (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>")
+    (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>", except observer check-cell amendments)
   sasu prd readiness       --prd <path> [--json]
   sasu prd ready           --prd <path> [--json]   (flips status to ready; refused while readiness has blocking gaps)
   sasu prd approve         --prd <path> --evidence "<verbatim user approval>" [--json]   (records human approval; requires status ready)

@@ -26,6 +26,8 @@ export interface WaitOutcome {
   cursor: number;
   waitedMs: number;
   detail: string;
+  /** Automatically carried by the CLI, never written to the run record. */
+  notifyAfter?: number;
 }
 
 export interface WaitOptions {
@@ -33,6 +35,7 @@ export interface WaitOptions {
   loadState: () => ImplementState;
   since: number | null;
   stallMs: number;
+  notifyAfter?: number;
   pollMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -41,7 +44,7 @@ export interface WaitOptions {
    * answer. Null degrades honestly: the outcome says the probe was
    * unavailable instead of pretending the implementor is alive (R9).
    */
-  isAlive?: (() => boolean) | null;
+  isAlive?: (() => boolean | null) | null;
 }
 
 const newestId = (state: ImplementState): number => state.events.at(-1)?.id ?? 0;
@@ -81,32 +84,46 @@ export async function waitForEvent(options: WaitOptions): Promise<WaitOutcome> {
   // started. The question is how long the RUN has been silent, and re-arming
   // the waiter must not reset that clock - otherwise a supervisor that keeps
   // re-arming could never observe a stall.
-  const lastEventAt = first.events.at(-1)?.at;
-  const silentSince = lastEventAt === undefined ? startedAt : Date.parse(lastEventAt);
-  const deadline = (Number.isNaN(silentSince) ? startedAt : silentSince) + options.stallMs;
+  const silentSince = Date.parse(first.events.at(-1)?.at ?? first.createdAt);
+  if (!Number.isFinite(silentSince)) throw new Error("cannot measure silence: invalid event or run creation timestamp");
+  const deadline = Math.max(silentSince + options.stallMs, options.notifyAfter ?? 0);
+  let observationProblem = isAlive === null ? "liveness could not be probed in this environment" : "";
 
   let cursor = options.since ?? newestId(first);
   while (true) {
-    if (isAlive !== null && !isAlive()) {
+    let alive: boolean | null = null;
+    if (isAlive !== null) {
+      try {
+        alive = isAlive();
+        if (alive === null) observationProblem = "liveness observation unavailable; event and time monitoring continued";
+      } catch (error) {
+        observationProblem = `liveness observation failed: ${String(error)}; event and time monitoring continued`;
+      }
+    }
+    if (alive === false) {
       return {
         reason: "implementor-gone",
         events: [],
         cursor,
         waitedMs: now() - startedAt,
-        detail: "the implementor process is no longer alive; nothing further will be recorded by it",
+        detail: "the watched target can no longer be followed; inspect before deciding on recovery",
       };
     }
     if (now() >= deadline) {
-      const silence = Math.round((now() - (Number.isNaN(silentSince) ? startedAt : silentSince)) / 1000);
+      const silence = Math.round((now() - silentSince) / 1000);
       return {
         reason: "stall",
         events: [],
         cursor,
         waitedMs: now() - startedAt,
-        detail: `no event for ${silence}s, past the ${Math.round(options.stallMs / 1000)}s no-progress bound${isAlive === null ? "; liveness could not be probed in this environment" : ""}`,
+        // Reuse the long bound as the repeat interval, without another knob.
+        // Advancing only after notification avoids both a spin and postponing
+        // the first stall indefinitely whenever a caller re-arms.
+        notifyAfter: now() + options.stallMs,
+        detail: `no event for ${silence}s, past the ${Math.round(options.stallMs / 1000)}s no-progress bound${observationProblem === "" ? "" : `; ${observationProblem}`}`,
       };
     }
-    await sleep(pollMs);
+    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
     const state = options.loadState();
     const fresh = eventsSince(state, cursor);
     if (fresh.length > 0) {
@@ -115,7 +132,7 @@ export async function waitForEvent(options: WaitOptions): Promise<WaitOutcome> {
         events: fresh,
         cursor: fresh.at(-1)!.id,
         waitedMs: now() - startedAt,
-        detail: `${fresh.length} new event(s)`,
+        detail: `${fresh.length} new event(s)${observationProblem === "" ? "" : `; ${observationProblem}`}`,
       };
     }
   }

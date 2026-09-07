@@ -89,16 +89,30 @@ function assertProjectPath(projectRoot: string, cwd: string, value: string): voi
       throw new Error(`check: command option has an ambiguous attached path; pass the project-relative path separately or with '=': ${value}`);
     } else return;
   }
-  if (candidate === "" || (!candidate.includes("/") && !candidate.includes("\\") && !candidate.startsWith("."))) return;
+  if (candidate === "") return;
   const absolute = path.resolve(projectRoot, cwd, candidate);
   const realRoot = fs.realpathSync(projectRoot);
   let existingAncestor = absolute;
-  while (!fs.existsSync(existingAncestor)) {
+  // A missing future test/output is valid, but a dangling symlink is not a
+  // missing directory: existsSync would skip it and overlook its escape.
+  for (;;) {
+    try {
+      if (fs.lstatSync(existingAncestor, { throwIfNoEntry: false }) !== undefined) break;
+    } catch (error) {
+      // An existing file followed by a future child also needs its realpath
+      // checked; stat reports ENOTDIR before it exposes a symlinked file.
+      if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+    }
     const parent = path.dirname(existingAncestor);
     if (parent === existingAncestor) break;
     existingAncestor = parent;
   }
-  const realAncestor = fs.realpathSync(existingAncestor);
+  let realAncestor: string;
+  try {
+    realAncestor = fs.realpathSync(existingAncestor);
+  } catch (error) {
+    throw new Error(`check: command path cannot be resolved safely: ${value} (${error instanceof Error ? error.message : String(error)})`);
+  }
   const relative = path.relative(realRoot, realAncestor);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`check: command path resolves outside the working tree: ${value}`);
@@ -143,6 +157,28 @@ export function validateCheckCommand(projectRoot: string, command: string): { co
   return { command: trimmed, argv };
 }
 
+/**
+ * Readiness, start, and amendments share the executor's command policy.
+ * Files and output directories may be created by the implementation later;
+ * validating the nearest existing ancestor proves only confinement, never
+ * that a future test exists or passes. Runtime repeats the same validation.
+ */
+export function validateContractCheckCommands(
+  projectRoot: string,
+  rows: ReadonlyArray<Pick<BehaviorRow, "id" | "check">>,
+): void {
+  const errors: string[] = [];
+  for (const row of rows) {
+    if (row.check.kind !== "check") continue;
+    try {
+      validateCheckCommand(projectRoot, row.check.command);
+    } catch (error) {
+      errors.push(`${row.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (errors.length > 0) throw new Error(`Check commands violate execution policy:\n${errors.join("\n")}`);
+}
+
 function normalizeOutput(text: string): string {
   return text
     .replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "")
@@ -184,7 +220,7 @@ export function assertCheckRow(row: BehaviorRow): asserts row is BehaviorRow & {
  * that was fine at start cannot be turned into an escape by a file that
  * appeared since.
  */
-export function runRowCheck(state: ImplementState, workRoot: string, row: BehaviorRow): CheckAttempt {
+export async function runRowCheck(state: ImplementState, workRoot: string, row: BehaviorRow, onSpawn?: (pid: number) => void): Promise<CheckAttempt> {
   assertCheckRow(row);
   if (row.status === "parked") throw new Error(`${row.id} is parked; run \`sasu implement resume --row ${row.id}\` before checking it`);
   const validated = validateCheckCommand(workRoot, row.check.command);
@@ -196,11 +232,12 @@ export function runRowCheck(state: ImplementState, workRoot: string, row: Behavi
   // Single-row checks and the verify suite batch go through the SAME
   // executor (runner.executeUnit). Two executors for one command string is
   // exactly the split R1 of the gate-loop PRD closed.
-  const { execution: executed, mutatedTree, tree } = executeUnit(
+  const { execution: executed, mutatedTree, tree } = await executeUnit(
     state,
     workRoot,
     { argv: validated.argv, cwd: "." },
     IMPLEMENT_CHECK_TIMEOUT_MS,
+    onSpawn,
   );
   const finishedAt = nowIso();
   const fingerprints = fingerprintCheckOutput(

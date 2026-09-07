@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { parseImplementContract, type BehaviorRowContract, type ImplementContract } from "./contract";
-import { rowCheckPayload } from "./checks";
-import { normalizeProjectPath, sha256 } from "./store";
+import { rowCheckPayload, validateContractCheckCommands } from "./checks";
+import { normalizeProjectPath, requireWorkRoot, sha256 } from "./store";
 import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
 import type { AmendmentRecord, BehaviorRow, ImplementState, IssuerLabel } from "./types";
 
@@ -47,7 +47,7 @@ export interface AmendmentPlan {
   behaviorChanged: string[];
   addedRows: string[];
   removedRows: string[];
-  /** Whether Non-goals or the Decisions table moved (a scope change). */
+  /** Non-check contract sections or metadata that moved (human-only). */
   scopeSectionsChanged: string[];
   invalidatedRows: string[];
   unparkedRows: string[];
@@ -101,6 +101,11 @@ export function planAmendment(
   }
   if (normalizeField(current.nonGoals) !== normalizeField(next.nonGoals)) plan.scopeSectionsChanged.push("Non-goals");
   if (decisionsDigest(current) !== decisionsDigest(next)) plan.scopeSectionsChanged.push("Decisions");
+  for (const [key, heading] of [["goal", "Goal"], ["technicalStructure", "Technical structure"], ["risks", "Risks"]] as const) {
+    if (normalizeField(current[key]) !== normalizeField(next[key])) plan.scopeSectionsChanged.push(heading);
+  }
+  const metadata = (contract: ImplementContract) => Object.entries(contract.frontmatter).sort(([a], [b]) => a.localeCompare(b));
+  if (JSON.stringify(metadata(current)) !== JSON.stringify(metadata(next))) plan.scopeSectionsChanged.push("frontmatter");
   if (plan.behaviorChanged.length > 0 || plan.addedRows.length > 0 || plan.removedRows.length > 0 || plan.scopeSectionsChanged.length > 0) {
     plan.scope = "behaviors";
   }
@@ -204,20 +209,12 @@ export function applyAmendment(
   if (input.issuer === "implementor") {
     throw new AmendmentRejected("authority", "amend refused: the implementor may not amend the PRD it is being marked on. An observer may correct a 검사 방법 cell with --issuer observer; anything that changes what the user observes needs --issuer human.");
   }
-  if (input.approval.trim() === "") {
+  if (input.issuer === "human" && input.approval.trim() === "") {
     throw new AmendmentRejected("arguments", "amend requires --approval <verbatim approval>; correcting the question paper is recorded with the words that authorised it");
   }
   if (input.reason.trim() === "") {
     throw new AmendmentRejected("arguments", "amend requires --reason <why the row was wrong>");
   }
-  const running = state.rows.filter((row) => row.check.kind === "check" && row.status === "fail").map((row) => row.id);
-  if (running.length > 0 && input.issuer !== "human") {
-    // A failing check: row is one somebody is holding. Rewriting its cell
-    // under a live attempt would move the goalposts mid-measurement; the
-    // human may still do it, on the record, and the observer waits.
-    throw new AmendmentRejected("transition", `amend refused: ${running.join(", ")} ${running.length === 1 ? "is" : "are"} mid-attempt (latest check failed and no green since). Let the implementor land a green or park the row, or amend as the human.`);
-  }
-
   const current = parseImplementContract(fs.readFileSync(normalizeProjectPath(recordRoot, state.prd.snapshotPath).absolute, "utf8"));
   const next = parseImplementContract(input.text);
   const plan = planAmendment(state, current, next);
@@ -235,6 +232,9 @@ export function applyAmendment(
   if (plan.scope === "check-cells" && plan.checkCellChanged.length === 0 && excludeSuite.length === 0) {
     throw new AmendmentRejected("arguments", "amended PRD changes no Behaviors row, Non-goals, or Decisions row; nothing to amend");
   }
+  // A correction may name a test that implementation has yet to create, but
+  // it must obey the same command policy that will apply when it runs.
+  validateContractCheckCommands(requireWorkRoot(state), next.rows);
   const id = Math.max(0, ...state.amendments.map((entry) => entry.id)) + 1;
 
   // Excluded first, so a refused exclusion leaves the snapshot untouched: an
@@ -273,7 +273,7 @@ export function applyAmendment(
     at,
     issuer: input.issuer,
     scope: plan.scope,
-    approval: input.approval.trim(),
+    approval: input.approval.trim() || null,
     reason: input.reason.trim(),
     prdSha256: state.prd.sha256,
     snapshotPath,

@@ -476,7 +476,8 @@ function assertSupervisionLedgers(candidate: Partial<ImplementState>): void {
     if (entry["issuer"] !== "human" && !(entry["issuer"] === "observer" && entry["scope"] === "check-cells")) {
       throw new Error(`malformed implement state: amendments[${index}].issuer must be human, or observer for a check-cells amendment`);
     }
-    assertString(entry["approval"], `amendments[${index}].approval`);
+    if (entry["issuer"] === "human") assertString(entry["approval"], `amendments[${index}].approval`);
+    else assertNullableString(entry["approval"], `amendments[${index}].approval`);
     assertString(entry["reason"], `amendments[${index}].reason`);
     assertString(entry["prdSha256"], `amendments[${index}].prdSha256`);
     assertString(entry["snapshotPath"], `amendments[${index}].snapshotPath`);
@@ -623,6 +624,21 @@ export function parseImplementState(text: string): ImplementState {
   assertString(candidate.projectRoot, "projectRoot");
   assertString(candidate.runDir, "runDir");
   assertString(candidate.prdPath, "prdPath");
+  if (candidate.activeCheck !== undefined) {
+    assertRecord(candidate.activeCheck, "activeCheck");
+    for (const field of ["token", "rowId", "hostname", "prdSha256"] as const) {
+      assertString(candidate.activeCheck[field], `activeCheck.${field}`);
+    }
+    if (!Number.isInteger(candidate.activeCheck.pid) || candidate.activeCheck.pid <= 0) {
+      throw new Error("malformed implement state: activeCheck.pid must be a positive integer");
+    }
+    if (candidate.activeCheck.executionPid !== undefined
+      && (!Number.isInteger(candidate.activeCheck.executionPid) || candidate.activeCheck.executionPid <= 0)) {
+      throw new Error("malformed implement state: activeCheck.executionPid must be a positive integer");
+    }
+    assertIsoTimestamp(candidate.activeCheck.startedAt, "activeCheck.startedAt");
+    assertSha256(candidate.activeCheck.rowSha256, "activeCheck.rowSha256");
+  }
   if (candidate.worktree !== null) {
     if (candidate.worktree === undefined || typeof candidate.worktree !== "object") {
       throw new Error("malformed implement state: worktree must be null or an object");

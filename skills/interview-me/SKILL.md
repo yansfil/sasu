@@ -424,6 +424,9 @@ judge and never consume the retry budget.
 - A finding marked `needs human decision` must go to the user; never invent the answer.
 - Only a later explicit user change request may open another cycle with
   `sasu gate reopen --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`; it works on a sealed log too.
+  Reopen evidence stays in the gate ledger and is supplied directly to the judge; reopening does not create a Raw Q&A answer or invalidate the sibling gate by itself.
+  An operational approval requires no interview sync.
+  If the user's words change a requirement, record the actual answer and normalize its decisions before re-running; those substantive edits still invalidate affected gates.
   `--grant-budget` retries only a repaired judge backend after its error streak; it never changes the open set.
 - If the judge backend is unavailable, the gate fails closed; report the printed cause and recovery to the user, then use one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback as the closure audit.
 - Never run `sasu gate override` yourself: the override is a user-only command, and the recorded deviation must carry the user's own reason.

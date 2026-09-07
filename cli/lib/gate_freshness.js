@@ -74,8 +74,10 @@ const ABSENT_INPUT = `sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}:absent`;
  * compares decisions against: leaving them out let an answer be edited or
  * removed after the seal while a rerun returned the cached PASS, so the
  * recorded consent could contradict the sealed verdict (RF2, 2026-09-06).
- * `sasu gate answer` and `gate reopen` append a turn before they re-pin, so
- * the harness's own writes still never stale a seal. The contract version
+ * `sasu gate answer` records actual new decision evidence before re-pinning
+ * its gate; that evidence honestly stales sibling seals. `gate reopen`
+ * records only in the gate ledger and Audit History, so an operational
+ * approval does not manufacture a new answer and stale a sibling. The contract version
  * is not bumped: a pin recorded under the previous rule simply reads as
  * changed once, which is the honest reading of "the rule for this input
  * moved".
