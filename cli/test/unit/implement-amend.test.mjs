@@ -238,6 +238,21 @@ test("check-cell authority cannot carry changes to the goal, structure, risks or
   }
 });
 
+test("a human frontmatter amendment refreshes the execution metadata mirrored in state", () => {
+  const { root, state, text } = fixture();
+  const next = text.replace(
+    'status: "ready"',
+    'status: "draft"\nreview_profile: "high-risk"\nreview_rationale: "security-sensitive change"\nsource_intake: "agents/interview/fixture/qa-log.md"',
+  );
+
+  amend(root, state, next);
+
+  assert.equal(state.prd.status, "draft");
+  assert.equal(state.prd.reviewProfile, "high-risk");
+  assert.equal(state.prd.reviewRationale, "security-sensitive change");
+  assert.equal(state.prd.sourceIntake, "agents/interview/fixture/qa-log.md");
+});
+
 // --- sealing, history, added and removed rows, unparking --------------------
 
 test("the new snapshot is sealed and the one it replaced is archived distinguishably", () => {

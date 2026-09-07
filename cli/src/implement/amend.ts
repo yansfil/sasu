@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { parseImplementContract, type BehaviorRowContract, type ImplementContract } from "./contract";
+import { parseImplementContract, reviewProfile, type BehaviorRowContract, type ImplementContract } from "./contract";
 import { rowCheckPayload, validateContractCheckCommands } from "./checks";
 import { normalizeProjectPath, requireWorkRoot, sha256 } from "./store";
 import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
@@ -266,7 +266,17 @@ export function applyAmendment(
   ];
 
   mergeRows(state, next, plan, at);
-  state.prd = { ...state.prd, sha256: sha256(input.text) };
+  // These values are execution inputs mirrored from the sealed contract.
+  // Keeping only the new hash let an accepted high-risk amendment continue
+  // through the standard lane set even though the snapshot said otherwise.
+  state.prd = {
+    ...state.prd,
+    sha256: sha256(input.text),
+    status: next.frontmatter["status"] ?? null,
+    reviewProfile: reviewProfile(next),
+    reviewRationale: next.frontmatter["review_rationale"] ?? "",
+    sourceIntake: next.frontmatter["source_intake"] ?? "",
+  };
 
   const record: AmendmentRecord = {
     id,

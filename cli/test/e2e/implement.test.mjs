@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
@@ -1156,6 +1158,72 @@ test("a source change after unified PASS makes finalize refuse the stale attempt
   assert.match(finalized.json.message, /changed paths since judged attempt .+ \(first 20 of 22\): source\.txt/);
   assert.match(finalized.json.message, /z-post-pass-18\.txt/);
   assert.doesNotMatch(finalized.json.message, /z-post-pass-19\.txt|z-post-pass-20\.txt/);
+});
+
+test("verify and finalize refuse while a replacement check attempt is active", async () => {
+  const root = makeProject({ checkCommand: "node check.mjs" });
+  fs.writeFileSync(path.join(root, "check.mjs"), `
+import fs from "node:fs";
+if (!fs.existsSync("agents/recheck")) process.exit(0);
+fs.writeFileSync("agents/check-started", "ready");
+const timer = setInterval(() => {
+  if (fs.existsSync("agents/check-release")) { clearInterval(timer); process.exit(1); }
+}, 20);
+`);
+  for (const args of [
+    ["add", "check.mjs"],
+    ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "check fixture"],
+  ]) {
+    const committed = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(committed.status, 0, committed.stderr);
+  }
+  const { file, capture } = stub(root);
+  const judgeEnv = { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
+  startAndProve(root);
+  assert.equal(run(root, ["implement", "verify"], { env: judgeEnv }).status, 0);
+
+  fs.writeFileSync(path.join(root, "agents", "recheck"), "fail the replacement attempt");
+  const childEnv = { ...process.env };
+  for (const key of SESSION_ID_ENV_KEYS) delete childEnv[key];
+  delete childEnv.SASU_HERDR_ROLE;
+  const child = spawn(process.execPath, [CLI, "implement", "check", "--row", "B1", "--json"], {
+    cwd: root,
+    env: childEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+  const exited = once(child, "exit");
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(path.join(root, "agents", "check-started"))) {
+      assert.equal(child.exitCode, null, output);
+      assert.ok(Date.now() < deadline, "the replacement check must begin");
+      await delay(20);
+    }
+
+    const verifying = run(root, ["implement", "verify"], { env: judgeEnv });
+    assert.equal(verifying.status, 2);
+    assert.match(verifying.json.message, /check still active: B1/);
+    const finalizing = run(root, ["implement", "finalize", "--status", "complete"]);
+    assert.equal(finalizing.status, 2);
+    assert.match(finalizing.json.message, /check still active: B1/);
+    assert.equal(readState(root).status, "active");
+    assert.equal(readState(root).completion, null);
+
+    fs.writeFileSync(path.join(root, "agents", "check-release"), "finish");
+    const [code] = await exited;
+    assert.notEqual(code, 0, output);
+    const settled = readState(root);
+    assert.equal(settled.activeCheck, undefined);
+    assert.equal(settled.rows.find((row) => row.id === "B1").status, "fail");
+    assert.equal(settled.status, "active");
+    assert.equal(settled.completion, null);
+  } finally {
+    fs.writeFileSync(path.join(root, "agents", "check-release"), "finish");
+    if (child.exitCode === null) await exited;
+  }
 });
 
 test("a routed qa-log change after PASS stales status and blocks finalize", () => {

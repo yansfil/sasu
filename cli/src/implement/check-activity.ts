@@ -13,10 +13,10 @@ function processPresent(pid: number): boolean {
   }
 }
 
-/** A failed attempt is history; only a running command prevents amendment. */
-export function assertNoActiveCheck(state: ImplementState): void {
+/** A failed attempt is history; only a running command prevents a competing transition. */
+export function assertNoActiveCheck(state: ImplementState): boolean {
   const active = state.activeCheck;
-  if (active === undefined) return;
+  if (active === undefined) return false;
   const description = `${active.rowId} (pid ${active.pid} on ${active.hostname}, started ${active.startedAt})`;
   if (active.hostname !== os.hostname()) {
     throw new Error(`check still active or uninspectable: ${description}; resume on its host after that command exits`);
@@ -50,6 +50,7 @@ export function assertNoActiveCheck(state: ImplementState): void {
     type: "interrupted-check",
     summary: `${description} and command process group ${active.executionPid} exited without recording a result; its interrupted execution proves nothing`,
   });
+  return true;
 }
 
 export function beginCheck(statePath: string, state: ImplementState, rowId: string): void {

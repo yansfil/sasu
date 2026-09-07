@@ -2755,6 +2755,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
   assertRunOwnership(statePath, state, args);
+  // A rerun does not erase its previous green until its result lands. Refuse
+  // any competing proof transition while that attempt is active, or verify
+  // could certify the prior result while a replacement is already failing.
+  if (assertNoActiveCheck(state)) persistState(statePath, state);
   const recordRoot = state.projectRoot;
   const workRoot = requireWorkRoot(state);
   const source = captureSourceSnapshot(workRoot);
@@ -3270,6 +3274,9 @@ function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   // and nothing else may write a second receipt over the first.
   if (state.status === "complete-pending-human") throw new Error("implement run is already closed (complete-pending-human); the remaining human: rows close through `sasu implement confirm`, not a second finalize");
   assertRunOwnership(statePath, state, args);
+  // Completion is singular (AGENTS.md 10): it cannot be earned from a prior
+  // green while a replacement attempt is still capable of disproving it.
+  if (assertNoActiveCheck(state)) persistState(statePath, state);
   const recordRoot = state.projectRoot;
   const source = captureSourceSnapshot(requireWorkRoot(state));
   const latest = state.verificationAttempts.at(-1);

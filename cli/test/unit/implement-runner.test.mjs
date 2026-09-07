@@ -173,3 +173,34 @@ child.once('message', (pid) => { console.log('helper:' + pid); process.exit(0); 
   assert.throws(() => process.kill(helperPid, 0), { code: "ESRCH" });
   assert.throws(() => process.kill(-groupPid, 0), { code: "ESRCH" });
 });
+
+test("a detached pipe-inheriting helper is reported without holding command completion open", {
+  skip: process.platform === "win32" ? "POSIX process groups" : false,
+  timeout: 10000,
+}, async (t) => {
+  const { root } = scratchState();
+  const helperPidPath = path.join(root, "escaped-helper.pid");
+  let helperPid;
+  t.after(() => {
+    const cleanupPid = helperPid ?? (fs.existsSync(helperPidPath) ? Number(fs.readFileSync(helperPidPath, "utf8")) : undefined);
+    if (!Number.isInteger(cleanupPid)) return;
+    try { process.kill(cleanupPid, "SIGKILL"); }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
+  });
+  const helper = `require('node:fs').writeFileSync(${JSON.stringify(helperPidPath)}, String(process.pid)); process.send(process.pid); setInterval(() => {}, 1000);`;
+  const leader = `
+const { spawn } = require('node:child_process');
+const child = spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { detached: true, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+child.once('message', (pid) => { console.log('helper:' + pid); process.exit(0); });
+`;
+  const startedAt = Date.now();
+  const result = await executeMechanicalArgv(root, [process.execPath, "-e", leader], ".", 5000, {});
+  helperPid = Number(result.stdout.match(/helper:(\d+)/)?.[1]);
+
+  assert.ok(Number.isInteger(helperPid), result.stdout);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.timedOut, false);
+  assert.match(result.stderr, /inherited output pipes remained open past the drain bound/);
+  assert.ok(Date.now() - startedAt < 3000, "pipe drain stays bounded below the command timeout");
+  assert.doesNotThrow(() => process.kill(helperPid, 0), "the fixture really escaped the leader's process group");
+});

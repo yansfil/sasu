@@ -150,6 +150,8 @@ export async function executeMechanicalArgv(
     let registrationError: unknown;
     let timedOut = false;
     let escalation: NodeJS.Timeout | undefined;
+    let drainTimer: NodeJS.Timeout | undefined;
+    let finishing = false;
     const kill = (signal: NodeJS.Signals): void => {
       if (child.pid === undefined) return;
       try {
@@ -175,12 +177,14 @@ export async function executeMechanicalArgv(
         }
       });
     }
-    // Helpers can inherit the pipes and delay close indefinitely. Once the
-    // command leader exits, end its helpers before waiting for pipe closure.
-    child.on("exit", () => { if (process.platform !== "win32") kill("SIGKILL"); });
-    child.on("close", async (code, signal) => {
+    const finish = async (code: number | null, signal: NodeJS.Signals | null): Promise<void> => {
+      if (finishing) return;
+      finishing = true;
       clearTimeout(timer);
       if (escalation !== undefined) clearTimeout(escalation);
+      if (drainTimer !== undefined) clearTimeout(drainTimer);
+      child.stdout.destroy();
+      child.stderr.destroy();
       // A script may exit while leaving background helpers behind. They
       // belong to this command's group, never to another session.
       if (process.platform !== "win32" && child.pid !== undefined) {
@@ -189,8 +193,12 @@ export async function executeMechanicalArgv(
         while (true) {
           try { process.kill(-child.pid, 0); }
           catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ESRCH") failure ??= error as Error;
-            break;
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === "ESRCH") break;
+            // macOS can transiently report EPERM while a killed group is
+            // being reaped. It proves neither presence nor absence, so keep
+            // observing within the existing bound.
+            if (code !== "EPERM") { failure ??= error as Error; break; }
           }
           if (Date.now() >= deadline) {
             failure ??= new Error(`[sasu] command process group ${child.pid} has not exited`);
@@ -206,6 +214,21 @@ export async function executeMechanicalArgv(
         stderr: [Buffer.concat(chunks.stderr).toString("utf8"), failure?.message].filter(Boolean).join("\n"),
         timedOut, signal,
       });
+    };
+    child.on("close", (code, signal) => { void finish(code, signal); });
+    // `close` waits for every inherited pipe. A helper can detach into a new
+    // process group and retain those descriptors beyond our kill authority.
+    // Preserve a short drain window, then close our pipe ends and report the
+    // leader's observable result instead of turning a command timeout into an
+    // unbounded harness hang.
+    child.on("exit", (code, signal) => {
+      if (process.platform !== "win32") kill("SIGKILL");
+      drainTimer = setTimeout(() => {
+        if (!timedOut) {
+          failure ??= new Error("[sasu] command exited but inherited output pipes remained open past the drain bound");
+        }
+        void finish(code, signal);
+      }, timedOut ? 0 : 1000);
     });
     if (child.pid !== undefined) {
       try { onSpawn?.(child.pid); }
