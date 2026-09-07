@@ -942,11 +942,40 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
     throw new Error("--notify-after must be a non-negative integer timestamp from the previous re-arm command");
   }
 
-  // Named targets use one long wait, not synchronous per-second list calls.
-  // PID-only callers retain their direct process probe.
-  const probe = pid !== null
-    ? { probe: "pid", isAlive: () => { try { process.kill(pid, 0); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; } } }
-    : { probe: agent === null ? "unavailable" : "herdr-wait", isAlive: null };
+  // Two probes for one question, and the caller picks by what it actually
+  // knows. `--pid` is the universal one and works in a bare terminal;
+  // `--agent` routes through the herdr adapter, which is what a supervisor
+  // running under herdr has a name for rather than a pid.
+  //
+  // Each probe answers with three values, not two: true, false, or null for
+  // "could not observe". Collapsing null into false is what made a single
+  // herdr hiccup report a live implementor as gone and drop the re-arm line
+  // with it (2026-09-07). Only a positive observation of absence is absence.
+  const probe = agent !== null
+    ? (() => {
+      // The capability read names the probe; it does not gate the wait. When
+      // the hole is shut the probe says so and liveness degrades to no answer,
+      // which the outcome reports rather than hiding (R9).
+      const capabilities = herdrCapabilities();
+      if (!capabilities.holes.alive) return { probe: `unavailable: ${capabilities.reason}`, isAlive: null };
+      return { probe: "herdr-adapter", isAlive: () => isAgentAlive({ name: agent }).value };
+    })()
+    : pid !== null
+      // signal 0 tests for the process's existence without touching it. ESRCH
+      // is a real answer; any other errno is an observation failure, so it
+      // degrades to null rather than declaring the process dead.
+      ? {
+        probe: "pid",
+        isAlive: () => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (error) {
+            return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : null;
+          }
+        },
+      }
+      : { probe: "unavailable", isAlive: null };
 
   const outcome = await waitForEvent({
     loadState: () => parseImplementState(fs.readFileSync(statePath, "utf8")),
@@ -954,7 +983,6 @@ async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<Imp
     stallMs: STALL_THRESHOLD_MS,
     notifyAfter,
     isAlive: probe.isAlive,
-    agent: agent ?? undefined,
   });
 
   // The supervision loop's one unguarded link: the waiter is a one-shot, so a
