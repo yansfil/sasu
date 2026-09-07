@@ -138,3 +138,112 @@ test("stall re-arms carry a next notification time without changing the silence 
   assert.equal(pending.waitedMs, 0);
   assert.equal(pending.notifyAfter, undefined, "a new event resets notification scheduling");
 });
+
+// Tier 2: a named target is watched by one bounded child instead of a probe
+// per second. Every test below drives that child through the `observe` seam,
+// because the race between an event and a child exit has no other seam and a
+// test that had to spawn herdr to reach it would not have been written.
+
+const silentRun = (minutesAgo = 11) => {
+  const at = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+  return { createdAt: at, events: [{ id: 4, at, kind: "row-status" }] };
+};
+
+const observing = (observation, { onCall } = {}) => (input) => {
+  onCall?.(input);
+  return Promise.resolve(observation);
+};
+
+// herdr may report a settled state it only saw in passing, so this can never
+// mean "the target is stopped now" - only "look sooner".
+test("a settled observation brings the stall forward and says the conclusion is not settled", async () => {
+  const outcome = await waitForEvent({
+    loadState: () => silentRun(1), since: 4, stallMs: 10 * 60_000, agent: "impl",
+    observe: observing({ kind: "settled", detail: "settled was observed, possibly transiently" }),
+  });
+  assert.equal(outcome.reason, "stall");
+  assert.match(outcome.detail, /early inspection candidate/);
+  assert.match(outcome.detail, /no per-second target-loss detection remains/, "the wake must state the trade it just made");
+  assert.equal(typeof outcome.notifyAfter, "number");
+});
+
+// The early inspection is spent once per silence interval. Re-arming with the
+// value the CLI just handed back must not start another short observation,
+// because that either spins on settled or opens a blind window.
+test("a re-arm after an early inspection starts no second observation for the same silence", async () => {
+  let started = 0;
+  const outcome = await waitForEvent({
+    loadState: () => silentRun(11), since: 4, stallMs: 10 * 60_000, agent: "impl", notifyAfter: Date.now() - 1,
+    observe: observing({ kind: "settled", detail: "x" }, { onCall: () => { started += 1; } }),
+  });
+  assert.equal(started, 0, "the consumed interval must not observe again");
+  assert.match(outcome.detail, /early inspection is consumed for this silence interval/);
+});
+
+// A target that cannot be followed is not a dead process: a moved pane reports
+// the same way, so the wake must send the supervisor to look, not to replace.
+test("a lost target wakes as implementor-gone without claiming the process died", async () => {
+  const outcome = await waitForEvent({
+    loadState: () => silentRun(1), since: 4, stallMs: 10 * 60_000, agent: "impl",
+    observe: observing({ kind: "gone", detail: "watched target can no longer be followed (agent_not_running); this does not prove process death" }),
+  });
+  assert.equal(outcome.reason, "implementor-gone");
+  assert.match(outcome.detail, /does not prove process death/);
+});
+
+// An observation that failed is not an answer. Collapsing it into absence is
+// the defect that reported a live implementor as gone and dropped the re-arm.
+test("an unavailable observation never becomes absence and never ends the wait", async () => {
+  const outcome = await waitForEvent({
+    loadState: () => silentRun(0), since: 4, stallMs: 250, pollMs: 20, agent: "impl",
+    observe: observing({ kind: "unavailable", detail: "observation unavailable (server_not_running); event and time monitoring continue" }),
+  });
+  assert.equal(outcome.reason, "stall", "an unreadable screen must not end the wait as a loss");
+  assert.match(outcome.detail, /observation unavailable/);
+});
+
+// Events are the only evidence of progress, so a wake that could be either
+// must be the event.
+test("an event that lands with an observation is reported as the event", async () => {
+  const at = new Date().toISOString();
+  const state = { createdAt: at, events: [{ id: 4, at, kind: "row-status" }, { id: 5, at, kind: "check-attempt" }] };
+  const outcome = await waitForEvent({
+    loadState: () => state, since: 4, stallMs: 10 * 60_000, agent: "impl",
+    observe: observing({ kind: "settled", detail: "x" }),
+  });
+  assert.equal(outcome.reason, "event");
+  assert.equal(outcome.cursor, 5);
+});
+
+// One exit path owns cancellation. A one-shot that returned while its child
+// still ran would leak a herdr process per wake.
+test("every exit cancels the observation exactly once, including the event race", async () => {
+  const at = new Date().toISOString();
+  const state = { createdAt: at, events: [{ id: 4, at, kind: "row-status" }] };
+  let aborts = 0;
+  let reads = 0;
+  const outcome = await waitForEvent({
+    // The event lands only after the child is already waiting, which is the
+    // race the single cleanup path exists for.
+    loadState: () => {
+      reads += 1;
+      if (reads > 2) return { ...state, events: [...state.events, { id: 9, at, kind: "verify" }] };
+      return state;
+    },
+    since: 4, stallMs: 10 * 60_000, pollMs: 10, agent: "impl",
+    observe: ({ signal }) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => { aborts += 1; resolve({ kind: "unavailable", detail: "cancelled" }); }, { once: true });
+    }),
+  });
+  assert.equal(outcome.reason, "event");
+  assert.equal(aborts, 1, "the child must be cancelled exactly once when the event wins");
+});
+
+test("a failed spawn is reported as an unreadable observation, not raised at the supervisor", async () => {
+  const outcome = await waitForEvent({
+    loadState: () => silentRun(0), since: 4, stallMs: 250, pollMs: 20, agent: "impl",
+    observe: () => Promise.resolve({ kind: "unavailable", detail: "observation unavailable: spawn ENOENT" }),
+  });
+  assert.equal(outcome.reason, "stall");
+  assert.match(outcome.detail, /spawn ENOENT/);
+});
