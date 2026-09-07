@@ -48,6 +48,60 @@ test("AC27: herdr present but not answering is distinguished from herdr absent",
   assert.match(capabilities.reason, /present but not answering/);
 });
 
+// The misattribution that hid the original bug: herdr answered every call
+// correctly and the probe still reported "not answering", because the probe
+// called every non-zero exit a dead server. An adapter must be able to say it
+// is the one that is out of date.
+test("an argv herdr rejects is reported as this adapter being stale, not as herdr being down", () => {
+  const asked = [];
+  const capabilities = herdrCapabilities({
+    env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" },
+    run: (args) => {
+      asked.push(args.join(" "));
+      if (args[0] === "--version") return { status: 0, stdout: "herdr 9.9.9\n", stderr: "" };
+      if (args[0] === "api") return { status: 0, stdout: "Herdr API schema\nprotocol: 42\n", stderr: "" };
+      return { status: 2, stdout: "", stderr: "usage: herdr agent list\n" };
+    },
+  });
+  assert.equal(capabilities.available, false);
+  assert.match(capabilities.reason, /THIS ADAPTER is out of date, not herdr/);
+  assert.match(capabilities.reason, /cli\/src\/implement\/herdr\.ts/, "the message must name the file to re-measure");
+  assert.match(capabilities.reason, /herdr 9\.9\.9, protocol 42/, "it must name what is installed");
+  assert.match(capabilities.reason, /measured against herdr 0\.8\.2 protocol 21/, "and what it was written against");
+  assert.doesNotMatch(capabilities.reason, /not answering/);
+  assert.deepEqual(asked, ["agent list", "--version", "api schema"]);
+});
+
+test("a herdr that is genuinely not answering keeps its own diagnosis and costs no extra calls", () => {
+  const asked = [];
+  const capabilities = herdrCapabilities({
+    env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" },
+    run: (args) => { asked.push(args.join(" ")); return { status: 3, stdout: "", stderr: "connection refused" }; },
+  });
+  assert.match(capabilities.reason, /present but not answering/);
+  assert.doesNotMatch(capabilities.reason, /out of date/);
+  assert.deepEqual(asked, ["agent list"], "version probing belongs on the rejection path only");
+});
+
+// Exit 2 alone is not the signal: some other failure could reuse the code.
+test("only a usage line makes an exit 2 an argv rejection", () => {
+  const capabilities = herdrCapabilities({
+    env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" },
+    run: () => ({ status: 2, stdout: "", stderr: "socket closed" }),
+  });
+  assert.match(capabilities.reason, /present but not answering/);
+});
+
+test("a working probe never pays for the version calls", () => {
+  const asked = [];
+  const capabilities = herdrCapabilities({
+    env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" },
+    run: (args) => { asked.push(args.join(" ")); return { status: 0, stdout: listing(), stderr: "" }; },
+  });
+  assert.equal(capabilities.available, true);
+  assert.deepEqual(asked, ["agent list"]);
+});
+
 test("AC27: each hole degrades to a named problem rather than an exception", () => {
   const env = {};
   for (const [label, call] of [

@@ -52,6 +52,40 @@ const ROLE_ENV_MARKER = "SASU_HERDR_ROLE=implementor";
  */
 const AGENT_LIST_ARGV = ["agent", "list"];
 
+/**
+ * The herdr this adapter's argv was measured against. Reported only when herdr
+ * rejects a call, so the failure can name what moved instead of leaving a
+ * reader to diff two CLIs by hand.
+ */
+const ADAPTER_TARGET = { version: "0.8.2", protocol: "21" };
+
+/**
+ * herdr's own signal that it did not understand the call.
+ *
+ * This distinction is the guard. The probe used to call every non-zero exit
+ * "present but not answering", so when `agent list --json` was rejected -
+ * herdr answering perfectly, this adapter's flag wrong - the harness blamed
+ * herdr, `sasu implement status` repeated the blame, and nobody suspected the
+ * adapter. An adapter has to be able to say "I am the one who is out of date"
+ * (2026-09-07). Measured: argv rejection exits 2 with a `usage:` line, a
+ * working call exits 0, and neither is how an absent server fails.
+ */
+function isArgvRejection(probe: { status: number | null; stdout: string; stderr: string }): boolean {
+  if (probe.status !== 2) return false;
+  return /(^|\n)\s*usage:/i.test(`${probe.stderr}${probe.stdout}`);
+}
+
+/**
+ * Read the installed herdr's version and protocol. Called only on the
+ * rejection path: the happy path must not pay two extra subprocesses for a
+ * string nobody reads.
+ */
+function installedHerdr(run: NonNullable<HerdrEnvironment["run"]>): string {
+  const version = run(["--version"]).stdout.trim();
+  const protocol = /protocol:\s*(\S+)/.exec(run(["api", "schema"]).stdout)?.[1] ?? "an unreported protocol";
+  return `${version === "" ? "an unreported version" : version}, protocol ${protocol}`;
+}
+
 export interface HerdrCapabilities {
   available: boolean;
   /** Per-hole availability, so status can name what specifically is missing. */
@@ -83,11 +117,11 @@ export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapa
   }
   const probe = run([...AGENT_LIST_ARGV]);
   if (probe.status !== 0) {
-    return {
-      available: false,
-      holes: { spawn: false, read: false, alive: false },
-      reason: `herdr is present but not answering (\`herdr ${AGENT_LIST_ARGV.join(" ")}\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis`,
-    };
+    const call = `herdr ${AGENT_LIST_ARGV.join(" ")}`;
+    const reason = isArgvRejection(probe)
+      ? `herdr rejected this adapter's own call (\`${call}\` exited 2 with a usage line), so the herdr contract moved and THIS ADAPTER is out of date, not herdr: cli/src/implement/herdr.ts was measured against herdr ${ADAPTER_TARGET.version} protocol ${ADAPTER_TARGET.protocol} and the installed herdr reports ${installedHerdr(run)}. Re-measure its argv against \`herdr <subcommand> --help\`; the unit suite's contract test makes the same comparison`
+      : `herdr is present but not answering (\`${call}\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis`;
+    return { available: false, holes: { spawn: false, read: false, alive: false }, reason };
   }
   if (paneId(env) === "") {
     return {
