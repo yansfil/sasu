@@ -1,0 +1,831 @@
+{
+  "audit_window": {
+    "start": "2026-08-31T15:00:00Z",
+    "cutoff": "2026-09-07T23:26:25Z",
+    "display_timezone": "Asia/Seoul",
+    "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00"
+  },
+  "baseline_source_commit": "0453cc134cf23ff140972c6dfb8d7f978181cc77",
+  "scope": {
+    "roots": [
+      "/Users/hoyeonlee/projects",
+      "/Users/hoyeonlee/team-attention",
+      "/Users/hoyeonlee/ct",
+      "/private/tmp"
+    ],
+    "candidate_state_paths_found": 2234,
+    "path_exclusions": [
+      "node_modules",
+      ".git",
+      "target",
+      "vendor",
+      "fixtures",
+      "tests",
+      "check-runtime nested outputs",
+      "artifacts nested state files",
+      "scratchpads",
+      "obvious e2e/test/fixture temp roots"
+    ],
+    "exclusion_counts": {
+      "non_sasu_state_schema": 132,
+      "fixture_test_artifact_or_scratch_path": 2040,
+      "no_state_owned_activity_in_window": 21,
+      "unreadable_or_non_json": 23
+    },
+    "schema_counts_before_path_and_time_filter": {
+      "sasu.implement.state.v8": 1047,
+      "hoyeon.prd-implement.state.v2": 25,
+      "sasu.implement.state.v5": 19,
+      "sasu.implement.state.v4": 11,
+      "hoyeon.prd-implement.state.v1": 28,
+      "sasu.implement.state.v7": 946,
+      "sasu.implement.state.v6": 32,
+      "sasu.implement.state.v3": 14,
+      "sasu.implement.state.v99": 10
+    }
+  },
+  "definitions": {
+    "substantive_run": "created, ran a row check, ran unified verify, or completed inside the window; retirement-only updates are separate",
+    "behavior_or_ac_total": "v8 rows length; v6/v7 acceptanceCriteria length",
+    "row_check_attempts": "v8 row.attempts or v6/v7 acceptanceCriteria[].check.attempts whose startedAt is in window",
+    "unified_verify_attempts": "verificationAttempts whose startedAt is in window",
+    "resource_ms": "sum of component durations; it is compute/resource time and may overlap in parallel",
+    "interval_union_ms": "union of recorded start-finish intervals, clipped to audit window; this is observed wall time inside those intervals, not implementation time"
+  },
+  "aggregate_substantive": {
+    "states_in_window_total": 18,
+    "substantive_runs": 16,
+    "administrative_only_updates": 2,
+    "substantive_status_at_read": {
+      "active": 8,
+      "complete": 7,
+      "retired": 1
+    },
+    "behavior_or_ac_rows": 292,
+    "row_check_attempts": 1307,
+    "row_check_attempt_resource_ms": 6374548,
+    "row_check_interval_union_ms_sum_per_run": 6047442,
+    "unified_verify_attempts": 65,
+    "unified_verify_verdicts": {
+      "FAIL": 37,
+      "PASS": 17,
+      "ERROR": 11
+    },
+    "unified_verify_interval_union_ms_sum_per_run": 21078081,
+    "receipts_present": 7
+  },
+  "runs": [
+    {
+      "stable_identity": "ce3b5f0eab681283",
+      "normalized_repo": "/Users/hoyeonlee/projects/sasu",
+      "topic_slug": "interview-anchor",
+      "state_path": "/Users/hoyeonlee/projects/sasu/agents/runs/interview-anchor/state.json",
+      "state_sha256_at_read": "3da202cae876c732e75ce7bf65e79ec6f5a7f721c427e7feebbb2c42cfc565a0",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v6",
+      "state_status_at_read": "retired",
+      "created_at": "2026-08-29T05:13:36.092Z",
+      "updated_at_at_read": "2026-09-06T08:38:32.037Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "retired"
+      ],
+      "administrative_only_in_window": true,
+      "row_counts": {
+        "behavior_or_ac_total": 11,
+        "by_proof_kind": {
+          "machine": 10,
+          "judge": 1
+        }
+      },
+      "window": {
+        "row_check_attempts": 0,
+        "row_check_attempt_resource_ms": 0,
+        "row_check_interval_union_ms": 0,
+        "unified_verify_attempts": 0,
+        "unified_verify_verdicts": {},
+        "unified_verify_error_classes": {},
+        "unified_verify_attempt_duration_sum_ms": 0,
+        "unified_verify_interval_union_ms": 0
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "df04d1a15ffdd9b2",
+      "normalized_repo": "/Users/hoyeonlee/projects/sasu",
+      "topic_slug": "trapline",
+      "state_path": "/Users/hoyeonlee/projects/sasu/agents/runs/trapline/state.json",
+      "state_sha256_at_read": "7f99664b3ad37066e094d6d46febdb0edfc6cdc073e46374269d59d02b3e50c0",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "retired",
+      "created_at": "2026-08-30T11:45:12.051Z",
+      "updated_at_at_read": "2026-09-06T08:38:15.328Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "retired"
+      ],
+      "administrative_only_in_window": true,
+      "row_counts": {
+        "behavior_or_ac_total": 27,
+        "by_proof_kind": {
+          "machine": 25,
+          "judge": 2
+        }
+      },
+      "window": {
+        "row_check_attempts": 0,
+        "row_check_attempt_resource_ms": 0,
+        "row_check_interval_union_ms": 0,
+        "unified_verify_attempts": 0,
+        "unified_verify_verdicts": {},
+        "unified_verify_error_classes": {},
+        "unified_verify_attempt_duration_sum_ms": 0,
+        "unified_verify_interval_union_ms": 0
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "18d639fdd5abd304",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-workbench-ux-round3",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-workbench-ux-round3/state.json",
+      "state_sha256_at_read": "0e977430e599eb3125b5050b956060c104a9abab716c8d532ffa26f2e73fb6b1",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-01T06:34:15.530Z",
+      "updated_at_at_read": "2026-09-01T10:57:52.207Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 33,
+        "by_proof_kind": {
+          "machine": 21,
+          "judge": 12
+        }
+      },
+      "window": {
+        "row_check_attempts": 49,
+        "row_check_attempt_resource_ms": 361703,
+        "row_check_interval_union_ms": 329031,
+        "unified_verify_attempts": 1,
+        "unified_verify_verdicts": {
+          "FAIL": 1
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 110667,
+        "unified_verify_interval_union_ms": 110667
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "28b9e4b78e18378e",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-ux-round4",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-ux-round4/state.json",
+      "state_sha256_at_read": "409697785d40c41128a1837c7bc4ca05317c0444cb3b2958a34329ece3b75a1e",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-02T16:44:56.968Z",
+      "updated_at_at_read": "2026-09-02T19:36:55.382Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 22,
+        "by_proof_kind": {
+          "machine": 10,
+          "judge": 12
+        }
+      },
+      "window": {
+        "row_check_attempts": 28,
+        "row_check_attempt_resource_ms": 130112,
+        "row_check_interval_union_ms": 130106,
+        "unified_verify_attempts": 1,
+        "unified_verify_verdicts": {
+          "FAIL": 1
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 72819,
+        "unified_verify_interval_union_ms": 72819
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "74a18d18bbc1cacc",
+      "normalized_repo": "/Users/hoyeonlee/projects/sasu",
+      "topic_slug": "gate-loop",
+      "state_path": "/Users/hoyeonlee/projects/sasu/agents/runs/gate-loop/state.json",
+      "state_sha256_at_read": "10bae353ca7dea0aaee4e7d52dabdb49bca43bf3dcf735ecca5c67574659269d",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-03T11:54:08.985Z",
+      "updated_at_at_read": "2026-09-06T05:05:04.440Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 16,
+        "by_proof_kind": {
+          "machine": 14,
+          "judge": 2
+        }
+      },
+      "window": {
+        "row_check_attempts": 112,
+        "row_check_attempt_resource_ms": 138121,
+        "row_check_interval_union_ms": 138115,
+        "unified_verify_attempts": 7,
+        "unified_verify_verdicts": {
+          "FAIL": 4,
+          "PASS": 3
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 3
+        },
+        "unified_verify_attempt_duration_sum_ms": 994438,
+        "unified_verify_interval_union_ms": 994438
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "1aaa0638055f9ca0",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "project-panel",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/project-panel/state.json",
+      "state_sha256_at_read": "20fe36a2942d0fa35dd0bdc084b88bd74e1bc94e3382340ebd7f2a16adeb4554",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "retired",
+      "created_at": "2026-09-03T12:27:11.203Z",
+      "updated_at_at_read": "2026-09-06T00:21:18.449Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "retired"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 13,
+        "by_proof_kind": {
+          "judge": 11,
+          "machine": 2
+        }
+      },
+      "window": {
+        "row_check_attempts": 14,
+        "row_check_attempt_resource_ms": 64431,
+        "row_check_interval_union_ms": 64422,
+        "unified_verify_attempts": 1,
+        "unified_verify_verdicts": {
+          "FAIL": 1
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 1089,
+        "unified_verify_interval_union_ms": 1089
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "5d8fa16c16b936e6",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-chrome-and-tabs",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-chrome-and-tabs/state.json",
+      "state_sha256_at_read": "ec9a4b8cde944c478aafd846c3995fff71f76bca188bbf8c31b94382f2afa1fd",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-03T15:52:29.552Z",
+      "updated_at_at_read": "2026-09-03T19:46:59.531Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 11,
+        "by_proof_kind": {
+          "judge": 3,
+          "machine": 8
+        }
+      },
+      "window": {
+        "row_check_attempts": 84,
+        "row_check_attempt_resource_ms": 162568,
+        "row_check_interval_union_ms": 162554,
+        "unified_verify_attempts": 5,
+        "unified_verify_verdicts": {
+          "FAIL": 2,
+          "ERROR": 3
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 2,
+          "judge:judge-error": 3
+        },
+        "unified_verify_attempt_duration_sum_ms": 2055415,
+        "unified_verify_interval_union_ms": 2055415
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "449af37bb0a4763d",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-agent-attention",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-agent-attention/state.json",
+      "state_sha256_at_read": "6d0e01e81d2c6ccfb64f39bd91d4e4a981e3c346dba4224c067fc42d2991067c",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-03T19:51:34.533Z",
+      "updated_at_at_read": "2026-09-04T00:33:30.488Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 11,
+        "by_proof_kind": {
+          "machine": 8,
+          "judge": 3
+        }
+      },
+      "window": {
+        "row_check_attempts": 85,
+        "row_check_attempt_resource_ms": 202136,
+        "row_check_interval_union_ms": 191713,
+        "unified_verify_attempts": 4,
+        "unified_verify_verdicts": {
+          "FAIL": 2,
+          "ERROR": 2
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 2,
+          "judge:judge-error": 2
+        },
+        "unified_verify_attempt_duration_sum_ms": 1626645,
+        "unified_verify_interval_union_ms": 1626644
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "3f198b579cfa38c5",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-view-state",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-view-state/state.json",
+      "state_sha256_at_read": "f7d51a6bca49325b337c261f4650f24df311e2bdc4a56369aa38680bc38e0a73",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-04T00:32:58.547Z",
+      "updated_at_at_read": "2026-09-04T06:35:43.784Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 14,
+        "by_proof_kind": {
+          "machine": 9,
+          "judge": 5
+        }
+      },
+      "window": {
+        "row_check_attempts": 52,
+        "row_check_attempt_resource_ms": 163968,
+        "row_check_interval_union_ms": 163960,
+        "unified_verify_attempts": 3,
+        "unified_verify_verdicts": {
+          "ERROR": 3
+        },
+        "unified_verify_error_classes": {
+          "judge:judge-error": 3
+        },
+        "unified_verify_attempt_duration_sum_ms": 761152,
+        "unified_verify_interval_union_ms": 761152
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "f78fb98453b5674f",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-paths-and-tab-perf",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-paths-and-tab-perf/state.json",
+      "state_sha256_at_read": "ddb75a1f148301571fe50ab14b70d7b0e03953063ef31cb919f9721799b38409",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-04T17:30:03.322Z",
+      "updated_at_at_read": "2026-09-05T23:53:42.892Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 16,
+        "by_proof_kind": {
+          "machine": 8,
+          "judge": 8
+        }
+      },
+      "window": {
+        "row_check_attempts": 169,
+        "row_check_attempt_resource_ms": 415922,
+        "row_check_interval_union_ms": 415883,
+        "unified_verify_attempts": 15,
+        "unified_verify_verdicts": {
+          "FAIL": 14,
+          "PASS": 1
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 2
+        },
+        "unified_verify_attempt_duration_sum_ms": 2731344,
+        "unified_verify_interval_union_ms": 2731344
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "c5b63917a4deae0c",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-native-responsiveness",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-native-responsiveness/state.json",
+      "state_sha256_at_read": "74e99f97077ac8e6fe169f5281a99834c29ef902f66290195947e2eead0ab73e",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-06T00:26:57.131Z",
+      "updated_at_at_read": "2026-09-06T08:16:40.048Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 12,
+        "by_proof_kind": {
+          "judge": 8,
+          "machine": 4
+        }
+      },
+      "window": {
+        "row_check_attempts": 17,
+        "row_check_attempt_resource_ms": 177888,
+        "row_check_interval_union_ms": 177881,
+        "unified_verify_attempts": 2,
+        "unified_verify_verdicts": {
+          "PASS": 2
+        },
+        "unified_verify_error_classes": {},
+        "unified_verify_attempt_duration_sum_ms": 752898,
+        "unified_verify_interval_union_ms": 752898
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "0341053b151955fc",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "herdr-runtime-release",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/herdr-runtime-release/state.json",
+      "state_sha256_at_read": "f806f1c6d903036f036231b3388e2ff3d11db905ec05842667d4e08c3dd1fb3a",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-06T02:14:18.833Z",
+      "updated_at_at_read": "2026-09-06T04:15:47.024Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 12,
+        "by_proof_kind": {
+          "machine": 11,
+          "judge": 1
+        }
+      },
+      "window": {
+        "row_check_attempts": 51,
+        "row_check_attempt_resource_ms": 341811,
+        "row_check_interval_union_ms": 317794,
+        "unified_verify_attempts": 3,
+        "unified_verify_verdicts": {
+          "FAIL": 1,
+          "PASS": 2
+        },
+        "unified_verify_error_classes": {},
+        "unified_verify_attempt_duration_sum_ms": 1033734,
+        "unified_verify_interval_union_ms": 1033734
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "039ff077580ca20a",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-design-system",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-design-system/state.json",
+      "state_sha256_at_read": "78438ee7d0663721990bcb300bee321d37d9d7af34bde45f03d376a7cf33ed90",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-06T02:23:54.893Z",
+      "updated_at_at_read": "2026-09-06T10:58:48.976Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 20,
+        "by_proof_kind": {
+          "machine": 14,
+          "judge": 6
+        }
+      },
+      "window": {
+        "row_check_attempts": 142,
+        "row_check_attempt_resource_ms": 2014815,
+        "row_check_interval_union_ms": 1837294,
+        "unified_verify_attempts": 6,
+        "unified_verify_verdicts": {
+          "FAIL": 4,
+          "ERROR": 1,
+          "PASS": 1
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 1,
+          "judge:judge-error": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 2644621,
+        "unified_verify_interval_union_ms": 2644621
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "78d31ddcf0e411e2",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-agent-tree-and-worktree-panel",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-agent-tree-and-worktree-panel/state.json",
+      "state_sha256_at_read": "cf5d51e5ab73490d86a6b86df434dfc0be7f937f84831637abb1d04f678cea82",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-06T04:42:19.963Z",
+      "updated_at_at_read": "2026-09-06T07:52:13.549Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 26,
+        "by_proof_kind": {
+          "machine": 19,
+          "judge": 7
+        }
+      },
+      "window": {
+        "row_check_attempts": 116,
+        "row_check_attempt_resource_ms": 924829,
+        "row_check_interval_union_ms": 862949,
+        "unified_verify_attempts": 5,
+        "unified_verify_verdicts": {
+          "ERROR": 1,
+          "FAIL": 4
+        },
+        "unified_verify_error_classes": {
+          "judge:judge-error": 1,
+          "mechanical:mechanical-failed": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 2835426,
+        "unified_verify_interval_union_ms": 2835426
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "9b3ce2e838fef382",
+      "normalized_repo": "/Users/hoyeonlee/projects/sasu",
+      "topic_slug": "prd-template",
+      "state_path": "/Users/hoyeonlee/projects/sasu/agents/runs/prd-template/state.json",
+      "state_sha256_at_read": "39c556ef93e047f597b3867f36ab5f6372caaf069c31b4782e0c243aa7798c79",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-06T08:37:48.151Z",
+      "updated_at_at_read": "2026-09-06T12:48:29.636Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 17,
+        "by_proof_kind": {
+          "machine": 16,
+          "judge": 1
+        }
+      },
+      "window": {
+        "row_check_attempts": 193,
+        "row_check_attempt_resource_ms": 544207,
+        "row_check_interval_union_ms": 544174,
+        "unified_verify_attempts": 6,
+        "unified_verify_verdicts": {
+          "FAIL": 1,
+          "PASS": 5
+        },
+        "unified_verify_error_classes": {
+          "mechanical:mechanical-failed": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 3516089,
+        "unified_verify_interval_union_ms": 3516089
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "0662f8f8d5c54799",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-scratch-chat",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-scratch-chat/state.json",
+      "state_sha256_at_read": "6c00b85e139884cf0981f66707de860097f8382bdbf38901b79c430b10fd71f1",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v7",
+      "state_status_at_read": "complete",
+      "created_at": "2026-09-06T09:27:11.831Z",
+      "updated_at_at_read": "2026-09-06T11:47:56.410Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify",
+        "completed"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 10,
+        "by_proof_kind": {
+          "judge": 5,
+          "machine": 5
+        }
+      },
+      "window": {
+        "row_check_attempts": 33,
+        "row_check_attempt_resource_ms": 311905,
+        "row_check_interval_union_ms": 291512,
+        "unified_verify_attempts": 2,
+        "unified_verify_verdicts": {
+          "ERROR": 1,
+          "PASS": 1
+        },
+        "unified_verify_error_classes": {
+          "judge:judge-error": 1
+        },
+        "unified_verify_attempt_duration_sum_ms": 475325,
+        "unified_verify_interval_union_ms": 475325
+      },
+      "receipt_present": true
+    },
+    {
+      "stable_identity": "ff0d2b8309b059f8",
+      "normalized_repo": "/Users/hoyeonlee/projects/sticky-notes",
+      "topic_slug": "unlimited-sticky-notes",
+      "state_path": "/Users/hoyeonlee/projects/sticky-notes/agents/runs/unlimited-sticky-notes/state.json",
+      "state_sha256_at_read": "7f62ef3a450170fe9218ce6ba15336f1ec53910a5b914dd80161ebc49db2ff4c",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v8",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-07T12:15:09.387Z",
+      "updated_at_at_read": "2026-09-07T16:22:05.286Z",
+      "updated_after_cutoff": false,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 18,
+        "by_proof_kind": {
+          "check": 7,
+          "judge": 10,
+          "human": 1
+        }
+      },
+      "window": {
+        "row_check_attempts": 21,
+        "row_check_attempt_resource_ms": 21985,
+        "row_check_interval_union_ms": 21974,
+        "unified_verify_attempts": 1,
+        "unified_verify_verdicts": {
+          "FAIL": 1
+        },
+        "unified_verify_error_classes": {},
+        "unified_verify_attempt_duration_sum_ms": 221136,
+        "unified_verify_interval_union_ms": 221136
+      },
+      "receipt_present": false
+    },
+    {
+      "stable_identity": "d7f0f47b31b2647e",
+      "normalized_repo": "/Users/hoyeonlee/projects/herdr-ide",
+      "topic_slug": "hide-worktree-per-task",
+      "state_path": "/Users/hoyeonlee/projects/herdr-ide/agents/runs/hide-worktree-per-task/state.json",
+      "state_sha256_at_read": "b003e5c94f2d9234cda2613a60c6d1b929cfe034dc0712cb41c4eaf71893df3c",
+      "snapshot_read_at": "2026-09-07T23:41:36.330458+00:00",
+      "schema": "sasu.implement.state.v8",
+      "state_status_at_read": "active",
+      "created_at": "2026-09-07T13:09:37.660Z",
+      "updated_at_at_read": "2026-09-07T23:29:16.173Z",
+      "updated_after_cutoff": true,
+      "activity_in_window": [
+        "created",
+        "row-checks",
+        "unified-verify"
+      ],
+      "administrative_only_in_window": false,
+      "row_counts": {
+        "behavior_or_ac_total": 41,
+        "by_proof_kind": {
+          "check": 28,
+          "judge": 13
+        }
+      },
+      "window": {
+        "row_check_attempts": 141,
+        "row_check_attempt_resource_ms": 398147,
+        "row_check_interval_union_ms": 398080,
+        "unified_verify_attempts": 3,
+        "unified_verify_verdicts": {
+          "FAIL": 1,
+          "PASS": 2
+        },
+        "unified_verify_error_classes": {},
+        "unified_verify_attempt_duration_sum_ms": 1245284,
+        "unified_verify_interval_union_ms": 1245284
+      },
+      "receipt_present": false
+    }
+  ],
+  "limitations": [
+    "State files are authoritative bookkeeping, but do not measure unrecorded implementation, human waiting, or agent transcript time.",
+    "Active states were read after the fixed cutoff. Timestamped attempts/events after cutoff are excluded, while mutable summary fields such as current status are labeled at-read; updated_after_cutoff flags this case.",
+    "No global run UUID exists in these schemas. Stable identity uses normalized repository, topic slug, and createdAt; ownerSessionId is reported but not used for dedup because adoption can change it.",
+    "Resource-duration sums overlap for parallel judge calls. Interval unions are the wall-clock metric; neither is implementation time.",
+    "Temporary legacy v1 deployment/baseline copies are listed separately and not treated as recent runs.",
+    "Design lane wrapper verdict is unsuitable as a quality or review-negativity metric: the design result schema contains comments rather than a verdict, and observed lanes record FAIL even when result.comments is empty. Use comments, severity, and disposition fields as the authority.",
+    "This committed projection omits model-call totals: acceptance arrays contain both real judge invocations and synthetic mechanical settlements; lane attempts are not billable API requests.",
+    "Per-run interval unions can overlap with other runs and with row-check intervals; do not add them or infer an implementation ratio."
+  ]
+}
