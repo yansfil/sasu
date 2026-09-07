@@ -188,7 +188,14 @@ setTimeout(() => process.exit(1), 15000).unref();
       const stoppedBy = Date.now() + 10000;
       while (true) {
         try { process.kill(-executionPid, 0); }
-        catch (error) { assert.equal(error.code, "ESRCH"); break; }
+        catch (error) {
+          if (error.code === "ESRCH") break;
+          // On macOS a detached group can transiently report EPERM while it
+          // is being reaped. Under 48 parallel runs on 2026-09-08 this was
+          // observed 5 times with no matching PID or PGID in ps. Only ESRCH
+          // proves absence, so keep observing within the existing deadline.
+          assert.equal(error.code, "EPERM");
+        }
         assert.ok(Date.now() < stoppedBy, "the owned fixture command must exit");
         await delay(20);
       }
