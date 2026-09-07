@@ -57,6 +57,8 @@ Usage:
   sasu implement qa-brief --row <Bn> [--json]
   sasu implement trail    --row <Bn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]
     (the driver role is self-declared and recorded for audit; implementor and solver are refused by name.)
+  sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--json]
+    (starts exactly one implementor beside this pane, handoff packet on stdin; refused from a pane already marked as the implementor.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <Bn>] [--agent <herdr-agent>] [--json]
     (summons a read-only solver for a diagnosis, then resets the implementor's context; ${"`"}ESCALATE_LIMIT_PER_RUN${"`"} per run.)
   sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--json]

@@ -51,44 +51,46 @@ Apply this routing before any project write or mutating `sasu` command:
 ## Dispatch One Implementor
 
 Choose a unique agent name that describes the mode and topic and remains within Herdr's name limit.
-Build the complete Handoff Packet below, then submit it on stdin to the deterministic helper:
+Build the complete Handoff Packet below and send it on stdin to the harness's own dispatch verb:
 
 ```sh
-herdr agent new <unique-name> --from-pane "$HERDR_PANE_ID" --cwd "$PWD" --no-focus \
-  --env SASU_HERDR_ROLE=implementor \
-  --model <agent-model> --effort <reasoning-effort> \
-  --prompt "$(cat <<'SASU_HANDOFF'
+sasu implement dispatch --name <unique-agent-name> --prd <ready-prd-path> \
+  [--kind <agent>] [--model <agent-model>] [--effort <reasoning-effort>] --json <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
 GOAL AND CONTEXT: <implementation goal and operational facts not represented in the PRD>
 AUTHORITY: <autonomous defaults and hard stops>
 SOURCE: <cwd and ready PRD path>
+DIRTY ATTRIBUTION: <pre-existing|run-owned, when `sasu implement intake` asked>
 RETURN CONTRACT: <status, paths, assumptions, verdicts, timing, unresolved items>
 SASU_HANDOFF
-)"
 ```
 
-`--from-pane "$HERDR_PANE_ID"` is not optional: herdr derives the new agent's parent lineage from it, and a dispatch without it leaves an orphan pane that no longer traces back to the Observer that asked for it.
-When `HERDR_PANE_ID` is unset, do not dispatch; `sasu implement status` reports `spawn` closed for exactly this reason while pane diagnosis and liveness stay open.
+This is the only dispatch path.
+It exists because the previous one did not: this section used to print a raw `herdr agent new ... --env ... --prompt ...` command, and herdr has never had either flag, so every dispatch was hand-typed prose checked by nobody and it drifted until a live run could not dispatch at all (2026-09-07).
+Dispatch reaches herdr only through the harness's three-hole adapter (`spawn`, `read`, `alive`); nothing else in the harness may call herdr, and the Herdr skill does not authorize substituting raw `herdr pane split`, `herdr pane run`, or `herdr agent start` here.
 
-Dispatch reaches herdr only through the harness's three-hole adapter
-(`spawn`, `read`, `alive`); nothing else in the harness may call herdr.
-For `$please`, the Spec Owner runs `sasu implement intake` before the first gate.
-When it reports dirty judged paths, the Spec Owner asks its returned question once and either resolves `commit-first` by committing before dispatch or passes the selected `pre-existing|run-owned` value on `--dirty-attribution`.
-The helper injects that value into the Implementor handoff and start contract; the Implementor passes it to `sasu implement start` and never asks again.
-The helper rejects `commit-first` because dispatch cannot begin until that choice has produced a clean committed tree.
-The generic Herdr skill explains the CLI but does not authorize substituting raw `herdr pane split`, `herdr pane run`, or `herdr agent start` commands here.
-The helper structurally refuses dispatch from an already marked Implementor pane.
-It refuses an empty handoff before creating anything.
-It refuses any pipeline other than `implement` and any missing or non-ready PRD before creating anything.
-It creates a right-side sibling with the same cwd and `--no-focus`, injects `SASU_HERDR_ROLE=implementor` in the pane creation call, starts the same detected agent kind unless `--kind` overrides it, forwards optional `--model` and `--effort` values as native agent arguments, submits the handoff through `herdr agent prompt`, and returns the new pane ID, agent name, and requested launch settings as JSON.
-For Codex, `--effort xhigh` becomes the native `--config model_reasoning_effort="xhigh"` argument.
-For Claude, it becomes the native `--effort xhigh` argument.
-Call the helper once per dispatch.
-It owns the bounded same-pane retry while a newly created shell becomes ready; rerunning the whole dispatch command would allocate duplicate panes.
-If pane creation succeeds but agent startup fails, it reports the exact failure and closes only the empty pane it created.
-Do not close a successfully started Implementor pane automatically; leave it visible for inspection.
+The verb refuses before it creates anything, in this order: a pane already marked `SASU_HERDR_ROLE=implementor`, a missing `--name`, an empty handoff packet, and a PRD that is missing or not yet `status: ready`.
+The marker refusal is the recursion guard and it is structural - it reads the environment of the dispatching process, so an Implementor cannot dispatch by declaring a different `--issuer`.
+When `HERDR_PANE_ID` is unset there is no pane to split, so `spawn` reports itself closed and `sasu implement status` says so while pane diagnosis and liveness stay open.
+
+On success it prints the new pane id, agent name, kind, and PRD as JSON.
+The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
+`--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
+Waiting for the new shell to become interactive is herdr's own `agent start` timeout, not a loop of this skill's.
+
+Two costs are real and are not bugs to re-report:
+
+- The dispatched Implementor does not appear under its supervisor in Herdr's agent tree.
+  herdr 0.8.2 can inject the role marker (`pane split --env`) or record parent lineage (`agent new --from-pane`) but not both in one call, and the marker wins because it is a correctness guard while lineage is an audit convenience.
+- Dirty-tree attribution travels in the handoff packet, not in a flag.
+  For `$please`, the Spec Owner runs `sasu implement intake` before the first gate; when it reports dirty judged paths it asks its returned question once, resolves `commit-first` by committing before dispatch, and otherwise writes the selected `pre-existing|run-owned` value into the packet's DIRTY ATTRIBUTION line.
+  The Implementor passes that value to `sasu implement start` and never asks again.
+
+Call the verb once per dispatch; rerunning it would allocate a second pane.
+If the agent fails to start, the empty pane it created is closed and the exact failure is reported.
+A pane whose agent did start is never closed automatically - leave it visible for inspection - and a handoff that fails to submit leaves the Implementor running with no packet, which the failure line says in those words.
 If dispatch fails in a Herdr-managed session, keep the sealed PRD, remain the user-facing session, and surface the failure.
 Never fall back to mutating implementation state or implementing inline from an unmarked Herdr pane.
 

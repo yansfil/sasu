@@ -114,7 +114,12 @@ export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[]
  * stay in step. Fail-closed instead would mean listing every read-only
  * surface in an authority table, which is the same list one indirection away.
  */
-export const UNGATED_COMMANDS = ["intake", "start", "status", "retire", "await"] as const;
+// `dispatch` belongs here for the same reason as `start`: it runs before a
+// run exists, so there is no verb history to attribute an issuer label to.
+// Its guard is not a declaration anyway - dispatchImplementor refuses a pane
+// already marked SASU_HERDR_ROLE=implementor, which is structural and cannot
+// be typed around the way `--issuer` can.
+export const UNGATED_COMMANDS = ["intake", "start", "status", "retire", "await", "dispatch"] as const;
 
 export function isIssuedCommand(value: string): value is IssuedCommand {
   return (ISSUED_COMMANDS as string[]).includes(value);

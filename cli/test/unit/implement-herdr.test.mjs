@@ -1,10 +1,36 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "../../dist/implement/herdr.js";
 
 const ok = (stdout = "") => () => ({ status: 0, stdout, stderr: "" });
 const fails = (status = 1, stderr = "boom") => () => ({ status, stdout: "", stderr });
+
+const LIVE = { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" };
+
+/** herdr 0.8.2's `agent list` shape: `agent_status`, and `name` only when named. */
+const listing = (...agents) => JSON.stringify({ result: { agents, type: "agent_list" } });
+const dispatcher = { agent: "claude", agent_status: "working", pane_id: "w4G:p12" };
+const splitOk = JSON.stringify({ result: { pane: { pane_id: "w4G:p13" }, type: "pane_info" } });
+
+/**
+ * Record every argv and answer each herdr call, so a test can assert the shape
+ * of the whole dispatch rather than one command in isolation.
+ */
+function recorder(overrides = {}) {
+  const argv = [];
+  const run = (args) => {
+    argv.push(args);
+    const key = args.slice(0, 2).join(" ");
+    if (key in overrides) return overrides[key];
+    if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
+    if (key === "pane split") return { status: 0, stdout: splitOk, stderr: "" };
+    return { status: 0, stdout: "{}", stderr: "" };
+  };
+  const matching = (key) => argv.filter((args) => args.slice(0, 2).join(" ") === key);
+  return { argv, run, of: (key) => matching(key)[0], count: (key) => matching(key).length };
+}
 
 // R9: herdr is a convenience, never a contract. The harness must work in a
 // bare terminal, under launchd, and in CI.
@@ -37,68 +63,174 @@ test("AC27: each hole degrades to a named problem rather than an exception", () 
 });
 
 test("all three holes work when herdr answers", () => {
-  const env = { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" };
-  const agents = JSON.stringify({ result: { agents: [{ name: "impl", status: "running" }, { name: "old", status: "exited" }] } });
-  assert.equal(spawnImplementor({ name: "impl", cwd: ".", prompt: "p" }, { env, run: ok('{"result":{}}') }).ok, true);
-  assert.equal(readPane({ name: "impl" }, { env, run: ok("pane text") }).value, "pane text");
+  const { run } = recorder();
+  const spawned = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  assert.equal(spawned.ok, true);
+  assert.deepEqual(spawned.value, { paneId: "w4G:p13", name: "impl", kind: "claude" });
+  assert.equal(readPane({ name: "impl" }, { env: LIVE, run: ok("pane text") }).value, "pane text");
+});
+
+// The probe is what every hole consults first, so one unsupported flag on it
+// shut spawn, read AND alive against a herdr that was answering fine
+// (2026-09-07). Pin the argv, not just the behaviour.
+test("the capability probe lists agents with no flags herdr 0.8.2 rejects", () => {
+  const argv = [];
+  herdrCapabilities({ env: LIVE, run: (args) => { argv.push(args); return { status: 0, stdout: listing(), stderr: "" }; } });
+  assert.deepEqual(argv, [["agent", "list"]]);
+});
+
+test("liveness reads the same list argv as the probe", () => {
+  const { run, of } = recorder();
+  isAgentAlive({ name: "impl" }, { env: LIVE, run });
+  assert.deepEqual(of("agent list"), ["agent", "list"]);
+});
+
+// herdr 0.8.2's AgentStatus enum is idle|working|blocked|done|unknown: no
+// value means dead, and a dead agent leaves the list. Reading `status` (which
+// does not exist) against "exited" (which never occurs) answered "alive" for
+// everything, including names that were never dispatched.
+test("liveness is presence in the list, over the agent_status field herdr actually sends", () => {
+  const agents = listing(dispatcher, { name: "impl", agent_status: "working" }, { name: "quiet", agent_status: "done" });
+  const env = LIVE;
   assert.equal(isAgentAlive({ name: "impl" }, { env, run: ok(agents) }).value, true);
-  assert.equal(isAgentAlive({ name: "old" }, { env, run: ok(agents) }).value, false);
+  assert.equal(isAgentAlive({ name: "quiet" }, { env, run: ok(agents) }).value, true, "done is a turn ending, not a death");
   assert.equal(isAgentAlive({ name: "never-existed" }, { env, run: ok(agents) }).value, false);
 });
 
-// The prompt carries the whole handoff in one argv entry and a failing
-// wrapper may echo argv, so this call never retains output.
-test("a failed spawn redacts the prompt from its problem line", () => {
-  const outcome = spawnImplementor(
-    { name: "impl", cwd: ".", prompt: "SECRET-OPERATIONAL-CONTEXT" },
-    { env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" }, run: (args) => (args[1] === "list" ? { status: 0, stdout: "{}", stderr: "" } : { status: 1, stdout: "SECRET-OPERATIONAL-CONTEXT", stderr: "SECRET-OPERATIONAL-CONTEXT" }) },
-  );
+// The marker cannot move into the handoff text: an unmarked pane routes as a
+// supervisor and may dispatch recursively.
+test("a dispatch injects the implementor marker when the pane is created", () => {
+  const { run, of } = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  const split = of("pane split");
+  assert.deepEqual(split, ["pane", "split", "--pane", "w4G:p12", "--direction", "right", "--cwd", "/repo", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
+  assert.deepEqual(of("agent start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w4G:p13"]);
+  assert.deepEqual(of("agent prompt"), ["agent", "prompt", "impl", "p"]);
+});
+
+test("the dispatched kind defaults to the dispatching pane's own agent and can be overridden", () => {
+  const detected = recorder({ "agent list": { status: 0, stdout: listing({ agent: "codex", pane_id: "w4G:p12" }), stderr: "" } });
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: detected.run });
+  assert.equal(detected.of("agent start")[4], "codex");
+
+  // The capability probe always lists once; detection is the second list.
+  assert.equal(detected.count("agent list"), 2);
+
+  const overridden = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "codex" }, { env: LIVE, run: overridden.run });
+  assert.equal(overridden.of("agent start")[4], "codex");
+  assert.equal(overridden.count("agent list"), 1, "an explicit kind needs no detection call beyond the probe");
+});
+
+test("an undetectable kind is refused before anything is created", () => {
+  const { run, of } = recorder({ "agent list": { status: 0, stdout: listing({ agent: "claude", pane_id: "somewhere-else" }), stderr: "" } });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /cannot detect the agent kind/);
+  assert.equal(of("pane split"), undefined, "nothing may be created before the kind is known");
+});
+
+// herdr passes everything after `--` to the agent executable, so the
+// translation is per-CLI: claude has a native --effort, codex takes it as a
+// config override (measured against both CLIs 2026-09-07).
+test("model and effort are forwarded as the started agent's own native arguments", () => {
+  const claude = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", model: "opus", effort: "xhigh" }, { env: LIVE, run: claude.run });
+  assert.deepEqual(claude.of("agent start").slice(7), ["--", "--model", "opus", "--effort", "xhigh"]);
+
+  const codex = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: codex.run });
+  assert.deepEqual(codex.of("agent start").slice(7), ["--", "--config", 'model_reasoning_effort="xhigh"']);
+
+  const plain = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: plain.run });
+  assert.equal(plain.of("agent start").length, 7, "no launch settings means no trailing separator");
+});
+
+// The pane is created before the agent starts, so a failure in between would
+// strand an empty pane.
+test("a failed agent start closes only the empty pane it created", () => {
+  const { run, of } = recorder({ "agent start": { status: 1, stdout: "", stderr: "no shell prompt" } });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /no shell prompt/);
+  assert.deepEqual(of("pane close"), ["pane", "close", "w4G:p13"]);
+  assert.match(outcome.problem, /the empty pane was closed/);
+});
+
+test("a started implementor is never closed just because its handoff failed", () => {
+  const { run, of } = recorder({ "agent prompt": { status: 1, stdout: "", stderr: "busy" } });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  assert.equal(outcome.ok, false);
+  assert.equal(of("pane close"), undefined, "the agent is alive; the supervisor must be able to look at it");
+  assert.match(outcome.problem, /running in w4G:p13 with no handoff/);
+});
+
+// The prompt carries the whole handoff in one argv entry and a failing wrapper
+// may echo argv, so this call never retains output.
+test("a failed handoff redacts the prompt from its problem line", () => {
+  const { run } = recorder({ "agent prompt": { status: 1, stdout: "SECRET-OPERATIONAL-CONTEXT", stderr: "SECRET-OPERATIONAL-CONTEXT" } });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "SECRET-OPERATIONAL-CONTEXT" }, { env: LIVE, run });
   assert.equal(outcome.ok, false);
   assert.doesNotMatch(outcome.problem, /SECRET-OPERATIONAL-CONTEXT/);
   assert.match(outcome.problem, /<redacted prompt>/);
 });
 
-// herdr derives the new agent's parent lineage from the dispatching pane, so
-// a spawn without it leaves an orphan the supervisor cannot trace back.
-test("a dispatch carries the dispatching pane so the implementor keeps its lineage", () => {
-  const argv = [];
-  spawnImplementor(
-    { name: "impl", cwd: "/repo", prompt: "p" },
-    {
-      env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" },
-      run: (args) => {
-        argv.push(args);
-        return { status: 0, stdout: "{}", stderr: "" };
-      },
-    },
-  );
-  const dispatch = argv.find((args) => args[1] === "new");
-  assert.deepEqual(dispatch.slice(0, 5), ["agent", "new", "impl", "--from-pane", "w4G:p12"]);
+test("a split that reports no pane id never starts an agent into the unknown", () => {
+  const { run, of } = recorder({ "pane split": { status: 0, stdout: "{}", stderr: "" } });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /no pane id/);
+  assert.equal(of("agent start"), undefined);
 });
 
-test("an unset pane id closes spawn alone and never dispatches without lineage", () => {
+test("an unset pane id closes spawn alone and never dispatches without a pane to split", () => {
   const env = { HERDR_ENV: "1" };
-  const capabilities = herdrCapabilities({ env, run: ok("{}") });
+  const capabilities = herdrCapabilities({ env, run: ok(listing()) });
   assert.deepEqual(capabilities.holes, { spawn: false, read: true, alive: true });
   assert.match(capabilities.reason, /HERDR_PANE_ID is unset/);
 
-  let dispatched = false;
-  const outcome = spawnImplementor(
-    { name: "impl", cwd: "/repo", prompt: "p" },
-    {
-      env,
-      run: (args) => {
-        if (args[1] === "new") dispatched = true;
-        return { status: 0, stdout: "{}", stderr: "" };
-      },
-    },
-  );
+  const { run, of } = recorder();
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env, run });
   assert.equal(outcome.ok, false);
-  assert.equal(dispatched, false, "a lineage-less dispatch must be refused, not sent");
+  assert.equal(of("pane split"), undefined, "a dispatch with no supervising pane must be refused, not sent");
   assert.match(outcome.problem, /^spawn unavailable:/);
 });
 
 test("a blank pane id is treated as unset rather than dispatched verbatim", () => {
-  const capabilities = herdrCapabilities({ env: { HERDR_ENV: "1", HERDR_PANE_ID: "   " }, run: ok("{}") });
+  const capabilities = herdrCapabilities({ env: { HERDR_ENV: "1", HERDR_PANE_ID: "   " }, run: ok(listing()) });
   assert.equal(capabilities.holes.spawn, false);
+});
+
+/**
+ * The guard that was missing.
+ *
+ * Every test above answers a fake `run`, so all of them passed for weeks while
+ * the real herdr rejected `agent list --json` with exit 2 and knew nothing of
+ * `agent new --prompt`. Mocking the CLI you are adapting cannot detect that
+ * the CLI changed. This asks the installed herdr whether the flags this
+ * adapter spells actually exist, and skips where herdr is not installed -
+ * which is exactly the bare terminal, launchd and CI case R9 designs for.
+ */
+const herdrHelp = (args) => {
+  const run = spawnSync("herdr", [...args, "--help"], { encoding: "utf8", timeout: 15_000 });
+  return run.error === undefined && run.status === 0 ? `${run.stdout}${run.stderr}` : null;
+};
+
+test("the argv this adapter sends matches the installed herdr's own contract", { skip: herdrHelp(["agent"]) === null ? "herdr is not installed" : false }, () => {
+  const listing = spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
+  assert.equal(listing.status, 0, "the capability probe's argv must succeed against the installed herdr");
+  assert.doesNotThrow(() => JSON.parse(listing.stdout), "`agent list` is expected to print JSON with no --json flag");
+
+  for (const [args, flags] of [
+    [["pane", "split"], ["--pane", "--direction", "--cwd", "--env", "--no-focus"]],
+    [["agent", "start"], ["--kind", "--pane"]],
+    [["agent", "read"], ["--source", "--lines"]],
+  ]) {
+    const help = herdrHelp(args);
+    assert.notEqual(help, null, `herdr ${args.join(" ")} --help must answer`);
+    for (const flag of flags) {
+      assert.ok(help.includes(flag), `herdr ${args.join(" ")} no longer accepts ${flag}; this adapter still sends it`);
+    }
+  }
 });

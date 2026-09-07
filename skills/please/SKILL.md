@@ -37,7 +37,7 @@ Only an explicit user-evidenced specification change may pause implementation an
 It monitors lifecycle and receipts, resolves reversible in-scope blocks under the Ambiguity Policy, asks the user only for hard stops, and returns the final report.
 If Herdr dispatch fails, the unmarked session keeps the sealed PRD, remains the user-facing session, and reports the dispatch failure without implementing inline.
 It must never turn itself into an inline Implementor while `HERDR_ENV=1`.
-The dispatch helper is the only allowed pane-creation path for this workflow.
+`sasu implement dispatch --name <agent> --prd <ready-prd-path>` is the only allowed pane-creation path for this workflow.
 Pass the lossless handoff on its stdin and call it exactly once.
 Do not replace either dispatch or handoff with raw `herdr pane split`, `herdr pane run`, messaging tools, or repeated dispatch attempts.
 
@@ -79,7 +79,7 @@ When `required` is true, show the returned paths and ask the returned question e
 This ownership fact is the one required human intake exception to the normal `$please` assumption policy because neither the Spec Owner nor the harness can infer who owns uncommitted bytes.
 Do not defer this question to the Implementor.
 Do not dispatch while `commit-first` remains unresolved.
-For `pre-existing` or `run-owned`, pass the retained value to the dispatch helper and later to `sasu implement start`; never ask again.
+For `pre-existing` or `run-owned`, write the retained value into the handoff packet's `DIRTY ATTRIBUTION` line and pass it later to `sasu implement start`; never ask again.
 
 Immediately bind that invocation to the topic before the first gate run:
 
@@ -200,7 +200,7 @@ sasu implement start \
   [--dirty-attribution <pre-existing|run-owned>]
 ```
 
-The optional disposition must exactly match the value in the dispatch handoff or the inline Spec Owner's retained intake result.
+The optional disposition must exactly match the `DIRTY ATTRIBUTION` value in the dispatch handoff or the inline Spec Owner's retained intake result.
 Its presence means the user already answered; the Implementor must not ask again.
 
 Rules:

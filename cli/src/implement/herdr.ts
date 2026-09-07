@@ -13,17 +13,44 @@ import { spawnSync } from "node:child_process";
  * terminal, under launchd, and in CI. So every hole reports itself
  * unavailable rather than throwing, and the run degrades to "no pane
  * diagnosis" instead of stopping (R9).
+ *
+ * Every argv below was measured against herdr 0.8.2 on 2026-09-07, after all
+ * three holes were found dead against a herdr that was answering normally.
+ * See AGENT_LIST_ARGV for the single flag that caused it.
  */
 export type HerdrHole = "spawn" | "read" | "alive";
 
 /**
- * The pane this process occupies. herdr derives the new agent's parent
- * lineage from it, so a dispatch that omits it produces an orphan pane that
- * no longer traces back to the supervisor that asked for it. It is the spawn
- * hole's own precondition and nothing else's, which is why a missing value
- * closes `spawn` alone and leaves pane diagnosis and liveness open.
+ * The pane this process occupies. A dispatch splits it so the implementor
+ * lands beside the supervisor that asked for it, which makes it the spawn
+ * hole's own precondition and nothing else's: a missing value closes `spawn`
+ * alone and leaves pane diagnosis and liveness open.
  */
 const PANE_ID_ENV_KEY = "HERDR_PANE_ID";
+
+/**
+ * The structural Implementor marker, injected when the pane is created.
+ *
+ * It cannot move into the handoff text. An unmarked pane routes as a
+ * supervisor and may dispatch recursively, and a marker that lives only in a
+ * prompt is a request for discipline rather than a guard (AGENTS.md Review
+ * Guide 7). This is what forces the split-then-start dispatch below.
+ */
+const ROLE_ENV_MARKER = "SASU_HERDR_ROLE=implementor";
+
+/**
+ * One argv for listing agents, shared by the capability probe and the
+ * liveness hole.
+ *
+ * Both used to spell it themselves and both spelled it `agent list --json`,
+ * which herdr 0.8.2 rejects with exit 2: `agent list` already prints JSON and
+ * defines no `--json` flag (measured 2026-09-07). Because the probe is what
+ * every hole consults first, that one wrong flag reported spawn, read AND
+ * alive unavailable in a session where herdr was answering fine - the whole
+ * adapter was dead and its unit tests, which mock `run`, could not see it.
+ * One constant so the two callers cannot drift apart again.
+ */
+const AGENT_LIST_ARGV = ["agent", "list"];
 
 export interface HerdrCapabilities {
   available: boolean;
@@ -54,19 +81,19 @@ export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapa
       reason: "not running under herdr (HERDR_ENV is not 1); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis",
     };
   }
-  const probe = run(["agent", "list", "--json"]);
+  const probe = run([...AGENT_LIST_ARGV]);
   if (probe.status !== 0) {
     return {
       available: false,
       holes: { spawn: false, read: false, alive: false },
-      reason: `herdr is present but not answering (\`herdr agent list\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis`,
+      reason: `herdr is present but not answering (\`herdr ${AGENT_LIST_ARGV.join(" ")}\` exited ${probe.status ?? "without status"}); the supervisor keeps its event wake-up and verb channel, and loses pane diagnosis`,
     };
   }
   if (paneId(env) === "") {
     return {
       available: false,
       holes: { spawn: false, read: true, alive: true },
-      reason: `herdr is answering but ${PANE_ID_ENV_KEY} is unset, so a dispatched implementor would have no parent lineage; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
+      reason: `herdr is answering but ${PANE_ID_ENV_KEY} is unset, so a dispatch has no pane to split; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
     };
   }
   return { available: true, holes: { spawn: true, read: true, alive: true }, reason: null };
@@ -93,25 +120,128 @@ function parseJson(stdout: string): unknown {
   }
 }
 
-/** Hole 1: start an implementor agent. */
+/**
+ * One agent as herdr 0.8.2 reports it.
+ *
+ * `name` appears only on agents started under a name, and the status field is
+ * spelled `agent_status` - not `status`, which this adapter used to read and
+ * therefore always found undefined.
+ */
+interface AgentEntry {
+  name?: string;
+  agent?: string;
+  agent_status?: string;
+  pane_id?: string;
+}
+
+function listAgents(run: NonNullable<HerdrEnvironment["run"]>): { agents: AgentEntry[]; problem: string | null } {
+  const executed = run([...AGENT_LIST_ARGV]);
+  if (executed.status !== 0) {
+    return { agents: [], problem: `herdr ${AGENT_LIST_ARGV.join(" ")} failed (${executed.status ?? "no status"})` };
+  }
+  const parsed = parseJson(executed.stdout) as { result?: { agents?: AgentEntry[] } } | null;
+  return { agents: parsed?.result?.agents ?? [], problem: null };
+}
+
+/**
+ * Native launch arguments for the agent kind being started.
+ *
+ * herdr passes everything after `--` straight to the agent executable, so the
+ * translation is per-CLI and measured rather than guessed (2026-09-07):
+ * `claude --model <m> --effort <level>`, `codex --model <m> -c
+ * model_reasoning_effort="<level>"`.
+ */
+function nativeAgentArgs(kind: string, model?: string, effort?: string): string[] {
+  const args: string[] = [];
+  if (model !== undefined && model !== "") args.push("--model", model);
+  if (effort !== undefined && effort !== "") {
+    if (kind === "codex") args.push("--config", `model_reasoning_effort="${effort}"`);
+    else args.push("--effort", effort);
+  }
+  return args.length === 0 ? [] : ["--", ...args];
+}
+
+export interface SpawnRequest {
+  name: string;
+  cwd: string;
+  prompt: string;
+  /** Defaults to the kind of the agent occupying the dispatching pane. */
+  kind?: string;
+  model?: string;
+  effort?: string;
+}
+
+export interface SpawnResult {
+  paneId: string;
+  name: string;
+  kind: string;
+}
+
+/**
+ * Hole 1: start an implementor agent beside the supervisor.
+ *
+ * Three calls, because herdr 0.8.2 splits the two things a dispatch needs
+ * across two commands (measured 2026-09-07): `agent new` is atomic and can
+ * record parent lineage with `--from-pane`, but defines no `--env`; only
+ * `pane split` can set an environment variable on the launched shell. The
+ * role marker is a correctness guard and lineage is an audit convenience, so
+ * the marker wins and the implementor is created by split-then-start. The
+ * cost is real and known: the dispatched agent does not appear under its
+ * supervisor in herdr's agent tree.
+ *
+ * The pane is created first and the agent started second, so a failure after
+ * the split would strand an empty pane. It is closed on that path rather than
+ * left behind; a pane whose agent did start is never closed automatically,
+ * because the supervisor needs to look at it.
+ */
 export function spawnImplementor(
-  input: { name: string; cwd: string; prompt: string },
+  input: SpawnRequest,
   environment: HerdrEnvironment = {},
-): HoleResult<unknown> {
+): HoleResult<SpawnResult> {
   const capabilities = herdrCapabilities(environment);
   if (!capabilities.holes.spawn) return { ok: false, value: null, problem: `spawn unavailable: ${capabilities.reason}` };
   const run = environment.run ?? defaultRun;
-  // The hole being open is what guarantees the pane id is a real value, so
-  // this composes it with no fallback: an orphan implementor is worse than a
-  // refused dispatch.
-  const executed = run(["agent", "new", input.name, "--from-pane", paneId(environment.env ?? process.env), "--cwd", input.cwd, "--prompt", input.prompt], input.cwd);
-  if (executed.status !== 0) {
+  const dispatcher = paneId(environment.env ?? process.env);
+
+  // The kind is the dispatching pane's own agent unless overridden: a
+  // supervisor dispatches its own kind by default, and herdr requires --kind
+  // on both `agent new` and `agent start`, so there is no "detect it for me".
+  let kind = input.kind ?? "";
+  if (kind === "") {
+    const listed = listAgents(run);
+    if (listed.problem !== null) return { ok: false, value: null, problem: listed.problem };
+    kind = listed.agents.find((entry) => entry.pane_id === dispatcher)?.agent ?? "";
+    if (kind === "") {
+      return { ok: false, value: null, problem: `cannot detect the agent kind of the dispatching pane ${dispatcher}; pass an explicit kind` };
+    }
+  }
+
+  const split = run(["pane", "split", "--pane", dispatcher, "--direction", "right", "--cwd", input.cwd, "--env", ROLE_ENV_MARKER, "--no-focus"], input.cwd);
+  if (split.status !== 0) {
+    return { ok: false, value: null, problem: `herdr pane split from ${dispatcher} failed (${split.status ?? "no status"}): ${(split.stderr || split.stdout).trim()}` };
+  }
+  const created = (parseJson(split.stdout) as { result?: { pane?: { pane_id?: string } } } | null)?.result?.pane?.pane_id ?? "";
+  if (created === "") {
+    return { ok: false, value: null, problem: "herdr pane split reported no pane id; refusing to start an implementor into an unknown pane" };
+  }
+
+  const started = run(["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)], input.cwd);
+  if (started.status !== 0) {
+    const closed = run(["pane", "close", created]);
+    const cleanup = closed.status === 0 ? "the empty pane was closed" : `the empty pane ${created} could not be closed (${closed.status ?? "no status"}) and is still open`;
+    return { ok: false, value: null, problem: `herdr agent start ${input.name} --kind ${kind} in ${created} failed (${started.status ?? "no status"}): ${(started.stderr || started.stdout).trim()}; ${cleanup}` };
+  }
+
+  const prompted = run(["agent", "prompt", input.name, input.prompt], input.cwd);
+  if (prompted.status !== 0) {
     // The prompt carries the whole handoff in one argv entry, and a failing
     // wrapper may echo argv. Never retain output for this call: it would
-    // write the operator's verbatim context into the supervisor's log.
-    return { ok: false, value: null, problem: `herdr agent new ${input.name} <redacted prompt> failed (${executed.status ?? "no status"})` };
+    // write the operator's verbatim context into the supervisor's log. The
+    // started pane stays open - the agent is alive and the supervisor can
+    // hand it the packet itself.
+    return { ok: false, value: null, problem: `herdr agent prompt ${input.name} <redacted prompt> failed (${prompted.status ?? "no status"}); the implementor is running in ${created} with no handoff` };
   }
-  return { ok: true, value: parseJson(executed.stdout), problem: null };
+  return { ok: true, value: { paneId: created, name: input.name, kind }, problem: null };
 }
 
 /** Hole 2: read an agent's recent output, for diagnosis only. */
@@ -129,20 +259,23 @@ export function readPane(
   return { ok: true, value: executed.stdout, problem: null };
 }
 
-/** Hole 3: is this agent still running? */
+/**
+ * Hole 3: is this agent still running?
+ *
+ * Presence in the list is the whole answer. herdr 0.8.2's AgentStatus enum is
+ * idle | working | blocked | done | unknown - none of which means dead, and a
+ * dead agent simply leaves the list (measured 2026-09-07). This used to test
+ * `status !== "exited"` against a field that is spelled `agent_status` and a
+ * value that never occurs, so every listed agent and every typo answered
+ * "alive".
+ */
 export function isAgentAlive(
   input: { name: string },
   environment: HerdrEnvironment = {},
 ): HoleResult<boolean> {
   const capabilities = herdrCapabilities(environment);
   if (!capabilities.holes.alive) return { ok: false, value: null, problem: `alive unavailable: ${capabilities.reason}` };
-  const run = environment.run ?? defaultRun;
-  const executed = run(["agent", "list", "--json"]);
-  if (executed.status !== 0) {
-    return { ok: false, value: null, problem: `herdr agent list failed (${executed.status ?? "no status"})` };
-  }
-  const parsed = parseJson(executed.stdout) as { result?: { agents?: Array<{ name?: string; status?: string }> } } | null;
-  const agents = parsed?.result?.agents ?? [];
-  const found = agents.find((entry) => entry.name === input.name);
-  return { ok: true, value: found !== undefined && found.status !== "exited", problem: null };
+  const listed = listAgents(environment.run ?? defaultRun);
+  if (listed.problem !== null) return { ok: false, value: null, problem: listed.problem };
+  return { ok: true, value: listed.agents.some((entry) => entry.name === input.name), problem: null };
 }

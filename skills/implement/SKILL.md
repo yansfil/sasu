@@ -108,7 +108,7 @@ Re-run with `--dirty-attribution pre-existing` when those paths must be part of 
 When ownership is mixed, pass one JSON object on the same flag that maps every listed path exactly to `pre-existing` or `run-owned`; use the refusal message's path-complete example rather than adding or omitting paths.
 The choice and resulting baseline are recorded in `state.json`.
 Do not pick a disposition without grounding it in the handoff and repository state.
-For a `$please` handoff, the specification-owning session must already have run `sasu implement intake` and either made the tree clean after the user's `먼저 커밋하고 시작` choice or supplied `DIRTY ATTRIBUTION: pre-existing|run-owned` through the dispatch helper.
+For a `$please` handoff, the specification-owning session must already have run `sasu implement intake` and either made the tree clean after the user's `먼저 커밋하고 시작` choice or supplied `DIRTY ATTRIBUTION: pre-existing|run-owned` in the `sasu implement dispatch` handoff packet.
 Pass that supplied value to `sasu implement start` exactly and never ask the ownership question from the Implementor pane.
 
 Read `workingRoot` from the start response.
@@ -414,6 +414,7 @@ Global flags omitted from the table because every command takes them: `--json`, 
 | `amend` | `--approval`, `--reason` | `--exclude-suite` | observer, human |
 | `qa-brief` | `--row` | - | implementor, observer, human |
 | `trail` | `--row`, `--brief`, `--steps`, `--driver` | `--artifacts` | implementor, observer, human |
+| `dispatch` | `--name`, `--prd` | `--kind`, `--model`, `--effort` | anyone |
 | `escalate` | `--reason` | `--target`, `--agent` | observer, human |
 | `await` | - | `--since`, `--pid`, `--agent` | anyone |
 | `artifact` | `--kind`, `--path`, `--description` | `--row` | implementor, human |
@@ -426,7 +427,9 @@ Global flags omitted from the table because every command takes them: `--json`, 
 | `retire` | - | - | anyone |
 | `finalize` | - | `--status` | implementor, human |
 
-Three of these carry a rule the flag name does not carry on its own:
+Four of these carry a rule the flag name does not carry on its own:
+
+- `dispatch` reads the handoff packet on stdin and is documented as `anyone` because the gate restricts nothing, but it refuses to run from a pane already marked `SASU_HERDR_ROLE=implementor`. That marker is set on the pane at creation, so an implementor cannot dispatch another implementor by declaring a different `--issuer`.
 
 - `amend` admits observer and human, and the diff decides which one may issue it: a change confined to `검사 방법` cells is the observer's; a changed behavior cell, an added or removed row, or a moved Non-goals or Decisions section is the human's. The implementor is refused before the diff is read.
 - `risk --non-convergent` declares one open finding structurally unfixable.

@@ -46,6 +46,7 @@ import {
 } from "./solver";
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "./herdr";
+import { DispatchRejected, dispatchImplementor } from "./dispatch";
 import {
   assertCheckRow,
   checkLedgerForRow,
@@ -1135,6 +1136,53 @@ function trail(projectRoot: string, args: ImplementArgs): ImplementCommandResult
  * during solver execution" (AC33) is a property of the call graph, not a rule
  * somebody has to remember.
  */
+/**
+ * Read the handoff packet the supervisor is sending.
+ *
+ * stdin, because the packet is a multi-line document with the user's verbatim
+ * words in it and argv is the wrong place for that: a failing wrapper may echo
+ * argv, and the spawn hole already redacts the prompt for the same reason.
+ * A terminal with nothing piped into it would block forever, so it is read as
+ * empty and refused by name instead.
+ */
+function readHandoffPacket(): string {
+  if (process.stdin.isTTY === true) return "";
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  try {
+    const dispatched = dispatchImplementor(projectRoot, {
+      name: requiredFlag(args, "name"),
+      prdPath: requiredFlag(args, "prd"),
+      handoff: readHandoffPacket(),
+      cwd: projectRoot,
+      kind: flag(args, "kind")?.trim() || undefined,
+      model: flag(args, "model")?.trim() || undefined,
+      effort: flag(args, "effort")?.trim() || undefined,
+    });
+    return result(
+      "dispatch",
+      true,
+      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId} from ${dispatched.prd}`,
+      { ...dispatched },
+      [
+        `Wake on its events with \`sasu implement await --agent ${dispatched.agent}\`.`,
+        `Read its pane with \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
+      ],
+    );
+  } catch (error) {
+    // A refused dispatch created nothing, so it is a message and an exit code,
+    // not a recorded run event: there is no run yet to record it against.
+    if (error instanceof DispatchRejected) return { ok: false, action: "dispatch", exitCode: 1, message: `dispatch refused: ${error.message}` };
+    throw error;
+  }
+}
+
 async function escalate(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
@@ -3491,6 +3539,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "qa-brief") return qaBrief(projectRoot, args);
     if (subcommand === "trail") return trail(projectRoot, args);
+    if (subcommand === "dispatch") return dispatch(projectRoot, args);
     if (subcommand === "escalate") return await escalate(projectRoot, args);
     if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
@@ -3500,7 +3549,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "finalize") return finalize(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, confirm, amend, qa-brief, trail, escalate, await, artifact, status, design, risk, verify, retire, or finalize" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, check, park, resume, confirm, amend, qa-brief, trail, dispatch, escalate, await, artifact, status, design, risk, verify, retire, or finalize" };
   } catch (error) {
     return {
       ok: false,
