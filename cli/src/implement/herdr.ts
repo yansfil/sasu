@@ -105,7 +105,7 @@ function defaultRun(args: string[], cwd?: string): { status: number | null; stdo
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }
 
-function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
+export function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
   const env = environment.env ?? process.env;
   if (env["HERDR_ENV"] !== "1") {
     return {
@@ -362,8 +362,8 @@ export interface AgentWaitObservation {
 /** Only measured meanings cross this boundary; unknown contracts cannot prove loss. */
 export function classifyAgentWait(status: number | null, stdout: string, stderr: string): AgentWaitObservation {
   if (status === 0) {
-    const parsed = parseJson(stdout) as { result?: unknown } | null;
-    if (parsed?.result !== undefined && parsed.result !== null) {
+    const parsed = parseJson(stdout) as { result?: { type?: string; agent?: unknown } } | null;
+    if (parsed?.result?.type === "agent_info" && parsed.result.agent !== null && typeof parsed.result.agent === "object") {
       return { kind: "settled", detail: "settled was observed, possibly transiently; inspect the target before drawing any conclusion" };
     }
   } else if (status === 1) {

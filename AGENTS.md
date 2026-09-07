@@ -125,10 +125,20 @@ itself.
 **Event wake, not polling.** `sasu implement await` is a background one-shot
 that blocks on the append-only event log inside `state.json` and exits for
 exactly one of three reasons: a new event past its `--since` cursor, a
-no-progress stall past a code constant, or the implementor's death. Events
-already past the cursor return immediately, so an event raised while nobody
-watched is not lost. A refused verb raises no event - nothing changed, so
-nobody needs waking. This registers no hook; see Lifecycle hooks.
+no-progress stall past a code constant, or the watched target no longer being
+followable. That last one is not proof of process death - a moved pane or a
+changed identity reports the same way - so it means inspect, never replace.
+Events already past the cursor return immediately, so an event raised while
+nobody watched is not lost. A refused verb raises no event - nothing changed,
+so nobody needs waking. This registers no hook; see Lifecycle hooks.
+
+A named target adds one bounded child (`herdr agent wait`) instead of a probe
+per second. A settled screen only brings the stall forward once per silence
+interval, because a settled state herdr saw in passing is not proof the target
+is stopped now; the CLI carries that consumption in the re-arm command and the
+run record stays read-only. The trade is real and is stated in the wake's own
+detail: once that early inspection is spent, per-second target-loss detection
+is gone until a new event. Screen state moves a deadline and decides nothing.
 
 **Correcting a run in flight.** `amend` re-seals the PRD snapshot and
 invalidates only the Behaviors rows whose cells actually changed, archiving

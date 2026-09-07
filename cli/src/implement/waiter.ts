@@ -1,5 +1,7 @@
 import type { ImplementEvent, ImplementState } from "./types";
 import { eventsSince } from "./events";
+import { waitForAgent, type AgentWaitObservation } from "./herdr";
+import { setTimeout as delay } from "node:timers/promises";
 
 /**
  * How often the waiter re-reads the record.
@@ -28,6 +30,7 @@ export interface WaitOutcome {
   detail: string;
   /** Automatically carried by the CLI, never written to the run record. */
   notifyAfter?: number;
+  observationProblem?: string;
 }
 
 export interface WaitOptions {
@@ -36,6 +39,16 @@ export interface WaitOptions {
   since: number | null;
   stallMs: number;
   notifyAfter?: number;
+  observationProblem?: string;
+  /** Named targets use one bounded child instead of alive polling. */
+  agent?: string;
+  /**
+   * The bounded observation itself, injectable for the same reason the herdr
+   * adapter injects `run`: the race between an event and a child exit has no
+   * other seam, and a test that has to spawn herdr to reach it would not be
+   * written (engineering practice: price a test before writing it).
+   */
+  observe?: typeof waitForAgent;
   pollMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -50,16 +63,16 @@ export interface WaitOptions {
 const newestId = (state: ImplementState): number => state.events.at(-1)?.id ?? 0;
 
 /**
- * Wait once, and return for exactly one reason (AC22).
- *
- * The three reasons are the three ways a supervisor's wait can end: something
- * happened, nothing happened for too long, or the thing it was waiting on
- * stopped existing. There is deliberately no timeout as a fourth reason - the
- * stall bound IS the timeout, so this always returns within `stallMs`.
+ * Event evidence owns progress. Terminal observations only bring inspection
+ * forward once per silence interval; the CLI carries that consumption in
+ * notifyAfter, leaving the run record read-only.
  */
 export async function waitForEvent(options: WaitOptions): Promise<WaitOutcome> {
   const now = options.now ?? (() => Date.now());
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
+  const polling = new AbortController();
+  const sleep = options.sleep ?? ((ms: number) => delay(ms, undefined, { signal: polling.signal }).catch((error) => {
+    if (!polling.signal.aborted) throw error;
+  }));
   const pollMs = options.pollMs ?? WAITER_POLL_MS;
   const isAlive = options.isAlive ?? null;
   const startedAt = now();
@@ -86,54 +99,69 @@ export async function waitForEvent(options: WaitOptions): Promise<WaitOutcome> {
   // re-arming could never observe a stall.
   const silentSince = Date.parse(first.events.at(-1)?.at ?? first.createdAt);
   if (!Number.isFinite(silentSince)) throw new Error("cannot measure silence: invalid event or run creation timestamp");
-  const deadline = Math.max(silentSince + options.stallMs, options.notifyAfter ?? 0);
-  let observationProblem = isAlive === null ? "liveness could not be probed in this environment" : "";
-
-  let cursor = options.since ?? newestId(first);
-  while (true) {
-    let alive: boolean | null = null;
-    if (isAlive !== null) {
-      try {
-        alive = isAlive();
-        if (alive === null) observationProblem = "liveness observation unavailable; event and time monitoring continued";
-      } catch (error) {
-        observationProblem = `liveness observation failed: ${String(error)}; event and time monitoring continued`;
+  const longDeadline = silentSince + options.stallMs;
+  const deadline = Math.max(longDeadline, options.notifyAfter ?? 0);
+  const cursor = options.since ?? newestId(first);
+  const target = new AbortController();
+  const consumed = options.agent !== undefined && options.notifyAfter !== undefined;
+  const tradeoff = "early inspection is consumed for this silence interval; no per-second target-loss detection remains until a new event; inspect again at the long notification deadline";
+  let observationProblem = options.observationProblem ?? (options.agent === undefined && isAlive === null
+    ? "liveness could not be probed in this environment" : "");
+  const schedulingDetail = consumed ? tradeoff : "";
+  let observed: AgentWaitObservation | undefined;
+  // A re-arm carries a notification time only after a wake. Starting another
+  // short wait here would either spin on settled or create a blind window.
+  const child = options.agent !== undefined && !consumed && now() < deadline
+    ? (options.observe ?? waitForAgent)({ name: options.agent, timeoutMs: deadline - now(), signal: target.signal }).then((value) => { observed = value; })
+    : null;
+  let childPending = child;
+  const detail = (message: string): string => [message, observationProblem, schedulingDetail].filter(Boolean).join("; ");
+  const result = (reason: WaitReason, message: string, notifyAfter?: number): WaitOutcome => ({
+    reason, events: [], cursor, waitedMs: now() - startedAt, detail: detail(message),
+    ...(observationProblem === "" ? {} : { observationProblem }),
+    ...(notifyAfter === undefined ? {} : { notifyAfter }),
+  });
+  try {
+    while (true) {
+      // Read before interpreting the child, including when both became ready.
+      const fresh = eventsSince(options.loadState(), cursor);
+      if (fresh.length > 0) {
+        const degradation = observed?.kind === "unavailable" ? `; ${observed.detail}` : "";
+        return { reason: "event", events: fresh, cursor: fresh.at(-1)!.id, waitedMs: now() - startedAt,
+          detail: detail(`${fresh.length} new event(s)${degradation}`),
+          ...(observationProblem === "" && degradation === "" ? {} : { observationProblem: observationProblem || observed?.detail }) };
       }
+      if (observed !== undefined) {
+        const observation = observed;
+        observed = undefined;
+        childPending = null;
+        if (observation.kind === "gone") return result("implementor-gone", observation.detail);
+        if (observation.kind === "settled" && now() < deadline) {
+          return result("stall", `early inspection candidate: ${observation.detail}; ${tradeoff}`, longDeadline);
+        }
+        observationProblem = observation.detail;
+      }
+      if (options.agent === undefined && isAlive !== null) {
+        try {
+          const alive = isAlive();
+          if (alive === false) return result("implementor-gone", "the watched target can no longer be followed; inspect before deciding on recovery");
+          if (alive === null) observationProblem = "liveness observation unavailable; event and time monitoring continued";
+        } catch (error) {
+          observationProblem = `liveness observation failed: ${String(error)}; event and time monitoring continued`;
+        }
+      }
+      if (now() >= deadline) {
+        if (childPending !== null) observationProblem = "settled was not confirmed before the parent deadline; event and time monitoring continued";
+        return result("stall", `no event for ${Math.round((now() - silentSince) / 1000)}s, past the ${Math.round(options.stallMs / 1000)}s no-progress bound`, now() + options.stallMs);
+      }
+      const tick = sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+      await (childPending === null ? tick : Promise.race([tick, childPending]));
     }
-    if (alive === false) {
-      return {
-        reason: "implementor-gone",
-        events: [],
-        cursor,
-        waitedMs: now() - startedAt,
-        detail: "the watched target can no longer be followed; inspect before deciding on recovery",
-      };
-    }
-    if (now() >= deadline) {
-      const silence = Math.round((now() - silentSince) / 1000);
-      return {
-        reason: "stall",
-        events: [],
-        cursor,
-        waitedMs: now() - startedAt,
-        // Reuse the long bound as the repeat interval, without another knob.
-        // Advancing only after notification avoids both a spin and postponing
-        // the first stall indefinitely whenever a caller re-arms.
-        notifyAfter: now() + options.stallMs,
-        detail: `no event for ${silence}s, past the ${Math.round(options.stallMs / 1000)}s no-progress bound${observationProblem === "" ? "" : `; ${observationProblem}`}`,
-      };
-    }
-    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
-    const state = options.loadState();
-    const fresh = eventsSince(state, cursor);
-    if (fresh.length > 0) {
-      return {
-        reason: "event",
-        events: fresh,
-        cursor: fresh.at(-1)!.id,
-        waitedMs: now() - startedAt,
-        detail: `${fresh.length} new event(s)${observationProblem === "" ? "" : `; ${observationProblem}`}`,
-      };
-    }
+  } finally {
+    // Every exit, event race, and read exception owns the same cancellation.
+    // Awaiting disposal prevents a one-shot returning with a live wait child.
+    polling.abort();
+    target.abort();
+    await child;
   }
 }

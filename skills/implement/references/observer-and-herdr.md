@@ -129,15 +129,17 @@ A foreground wait holds the turn, so the user cannot reach the Observer for as l
 A background waiter outlives the turn and re-invokes the Observer when it exits.
 
 The waiter is a one-shot, so the loop is arm, wake, judge, arm again.
-Re-arm after every wake except `implementor-gone`, where the recovery is a replacement pane rather than another waiter.
+Re-arm after every wake except `implementor-gone`, which means the watched target can no longer be followed - it may have died, but a moved pane or a changed identity reports identically, so inspect it before deciding on any recovery and never start a replacement on that signal alone.
 `await` prints the next command with the cursor already advanced and the probe flag carried over; run that, rather than rebuilding it from memory.
 Failing to re-arm does not raise an error: the implementor keeps working and nobody is watching.
 
 It returns for exactly one reason - a new event, no progress past the
-no-progress bound, or the implementor no longer being alive - and prints which.
-The wait is on the harness's own event log, never on pane text: pane output is
+no-progress bound, or the watched target no longer being followable - and prints which.
+Progress is decided by the event log alone, never by pane text: pane output is
 not a semantic unit and cannot say what happened.
-This replaces raw `herdr agent get`, `herdr agent wait`, `herdr agent list --json`, transcript-keyword polling, and home-grown shell loops.
+A named target is additionally watched by one bounded `herdr agent wait` child, which can only bring the stall forward once per silence interval and can never close a row or declare progress.
+After that early inspection is spent, no per-second target-loss detection remains until a new event; the wake says so in its own detail rather than leaving the gap unstated.
+This replaces raw `herdr agent get`, hand-run `herdr agent wait`, `herdr agent list --json`, transcript-keyword polling, and home-grown shell loops.
 On a stall wake, `herdr agent read <implementor-name> --source recent-unwrapped --lines 120` is a diagnosis tool only; when herdr is absent, `sasu implement status` names which of `spawn`, `read`, `alive` is unavailable and the run continues without pane diagnosis.
 Use Sasu state, not transcript keywords, as the source of truth.
 
@@ -184,6 +186,6 @@ Inspect the lifecycle state, recent output, and Sasu status first.
 - Allow one autonomous resolution for the same blocker signature.
   If that blocker repeats, stop the automatic loop and surface the failed approach and recommended replan to the user.
 
-Completion requires both an agent `done` or settled state and the pipeline's own completion authority.
+Completion is the pipeline's own authority and nothing else's: a `done` or settled screen is a cue to look, never evidence that work finished.
 For implementation, require a complete `sasu implement status`, `receipt.json`, and `implementation-result.md`.
 The Observer reports the Implementor pane ID, final status, autonomous decisions, user-review items, verification result, and measured PRD and implementation timing.

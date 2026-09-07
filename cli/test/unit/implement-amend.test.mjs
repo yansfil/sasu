@@ -140,6 +140,18 @@ test("a check-cell edit invalidates only that row; untouched evidence survives",
   assert.deepEqual(row(state, "B2").check.argv, ["node", "--test", "test/receipt-v2.test.mjs"], "the new cell is what the next check runs");
 });
 
+test("a forbidden correction leaves the sealed contract and existing proof untouched", () => {
+  const { root, state, text } = fixture();
+  makeGreen(state, "B1");
+  makeGreen(state, "B2");
+  const before = structuredClone(state);
+  const next = text.replace("node --test test/receipt.test.mjs", "node --test /tmp/future-receipt.test.mjs");
+  assert.notEqual(next, text, "the fixture really changes a check cell");
+  assert.throws(() => amend(root, state, next, { issuer: "observer", approval: "" }), /Check commands violate execution policy/);
+  assert.deepEqual(state, before, "refusal cannot invalidate rows or re-seal state");
+  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text);
+});
+
 test("a behavior-cell edit is a scope change: the observer is refused and the human is accepted", () => {
   const { root, state, text } = fixture();
   makeGreen(state, "B2");
