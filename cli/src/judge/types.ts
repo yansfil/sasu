@@ -185,12 +185,28 @@ export interface ReviewValidationContext {
   humanSources?: Readonly<Record<string, string>>;
 }
 
+/** Keep the first faulty reference actionable within the existing 300-char retry record. */
+function reviewReferences(value: unknown, allowed: readonly string[], field: string): string[] | string {
+  if (!Array.isArray(value)) return `${field} must be an array of exact reference strings`;
+  const seen = new Set<string>();
+  for (const [index, ref] of value.entries()) {
+    const location = `${field}[${index}]`;
+    if (typeof ref !== "string" || ref.trim() === "") return `${location} must be a non-empty string; got ${ref === null ? "null" : typeof ref}`;
+    const encoded = JSON.stringify(ref);
+    const displayed = encoded.length > 70 ? `${encoded.slice(0, 67)}...` : encoded;
+    const choices = allowed.join(", ");
+    if (!allowed.includes(ref)) return `${location}: unknown reference ${displayed}; allowed: ${choices.slice(0, 100)}${choices.length > 100 ? "... (full list in prompt)" : ""}`;
+    if (seen.has(ref)) return `${location}: duplicate reference ${displayed}; each reference may appear once`;
+    seen.add(ref);
+  }
+  return value as string[];
+}
+
 /** The harness validates structure and references; semantic sufficiency belongs to the independent reviewer. */
 export function validateReviewResult(value: unknown, context: ReviewValidationContext): ReviewResult | string {
   if (!isRecord(value)) return "review output is not a JSON object";
   if ("criteria" in value || "verdict" in value) return "retired per-criterion/verdict output; return summary, findings and priorDispositions";
   const text = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
-  const refs = (v: unknown, allowed: readonly string[]): v is string[] => Array.isArray(v) && v.every((r) => text(r) && allowed.includes(r)) && new Set(v).size === v.length;
   if (!text(value.summary)) return "summary must be a non-empty string";
   if (!Array.isArray(value.findings)) return "findings must be an array";
   if (!Array.isArray(value.priorDispositions)) return "priorDispositions must be an array";
@@ -201,18 +217,23 @@ export function validateReviewResult(value: unknown, context: ReviewValidationCo
     const { kind, problem, nextAction, priorFindingId, human } = finding;
     if (kind !== "defect" && kind !== "advisory" && kind !== "human-confirmation") return `findings[${i}].kind must be defect|advisory|human-confirmation`;
     if (!text(problem) || !text(nextAction)) return `findings[${i}] requires concrete problem and nextAction`;
-    if (!refs(finding.requirementRefs, context.requirementRefs)) return `findings[${i}].requirementRefs contains invalid, duplicate or unknown references`;
-    if (!refs(finding.evidenceRefs, context.evidenceRefs)) return `findings[${i}].evidenceRefs contains invalid, duplicate or unknown references`;
-    if (kind === "defect" && finding.evidenceRefs.length === 0) return `findings[${i}] defect requires concrete evidence or a contract reference describing absent evidence`;
+    const requirementRefs = reviewReferences(finding.requirementRefs, context.requirementRefs, `findings[${i}].requirementRefs`);
+    if (typeof requirementRefs === "string") return requirementRefs;
+    const evidenceRefs = reviewReferences(finding.evidenceRefs, context.evidenceRefs, `findings[${i}].evidenceRefs`);
+    if (typeof evidenceRefs === "string") return evidenceRefs;
+    if (kind === "defect" && evidenceRefs.length === 0) return `findings[${i}] defect requires concrete evidence or a contract reference describing absent evidence`;
     if (priorFindingId !== undefined) {
       if (!text(priorFindingId) || !context.priorFindingIds.includes(priorFindingId) || continued.has(priorFindingId)) return `findings[${i}].priorFindingId is unknown or repeated`;
       continued.add(priorFindingId);
     }
     if (kind === "human-confirmation") {
       if (!isRecord(human) || !text(human.sourceRef) || !text(human.quote) || (human.timing !== "post-completion" && human.timing !== "prerequisite")) return `findings[${i}].human requires sourceRef, original quote and timing`;
-      if (context.humanSources !== undefined && (!Object.prototype.hasOwnProperty.call(context.humanSources, human.sourceRef) || !context.humanSources[human.sourceRef]!.includes(human.quote))) return `findings[${i}].human must cite a known source and its exact original quote`;
+      if (context.humanSources !== undefined) {
+        if (!Object.prototype.hasOwnProperty.call(context.humanSources, human.sourceRef)) return `findings[${i}].human.sourceRef is unknown; use an exact key from the supplied human source texts`;
+        if (!context.humanSources[human.sourceRef]!.includes(human.quote)) return `findings[${i}].human.quote is not a verbatim substring of its sourceRef value; D-n permits only its decision cell. Copy from the matching human source text without paraphrase or rationale from another cell`;
+      }
     } else if (human !== undefined) return `findings[${i}].human is only valid for human-confirmation`;
-    findings.push({ kind, requirementRefs: finding.requirementRefs, problem, evidenceRefs: finding.evidenceRefs, nextAction,
+    findings.push({ kind, requirementRefs, problem, evidenceRefs, nextAction,
       ...(priorFindingId !== undefined ? { priorFindingId: priorFindingId as string } : {}),
       ...(human !== undefined ? { human: human as NonNullable<ReviewFinding["human"]> } : {}),
     });
@@ -221,10 +242,12 @@ export function validateReviewResult(value: unknown, context: ReviewValidationCo
   const seen = new Set<string>();
   for (const [i, disposition] of value.priorDispositions.entries()) {
     if (!isRecord(disposition)) return `priorDispositions[${i}] must be an object`;
-    const { findingId, status, reason, evidenceRefs } = disposition;
+    const { findingId, status, reason } = disposition;
     if (!text(findingId) || !context.priorFindingIds.includes(findingId) || seen.has(findingId)) return `priorDispositions[${i}].findingId is unknown or repeated`;
     if (status !== "resolved" && status !== "open") return `priorDispositions[${i}].status must be resolved|open`;
-    if (!text(reason) || !refs(evidenceRefs, context.evidenceRefs) || evidenceRefs.length === 0) return `priorDispositions[${i}] requires a reason and valid evidence references`;
+    const evidenceRefs = reviewReferences(disposition.evidenceRefs, context.evidenceRefs, `priorDispositions[${i}].evidenceRefs`);
+    if (typeof evidenceRefs === "string") return evidenceRefs;
+    if (!text(reason) || evidenceRefs.length === 0) return `priorDispositions[${i}] requires a reason and valid evidence references`;
     if (status === "resolved" && continued.has(findingId)) return `priorDispositions[${i}] resolves a finding still returned as open`;
     seen.add(findingId);
     dispositions.push({ findingId, status, reason, evidenceRefs });
@@ -239,7 +262,8 @@ export function reviewResultSchema(): string {
 {"summary":"whole-contract assessment","findings":[{"kind":"defect|advisory|human-confirmation","requirementRefs":[],"problem":"specific unmet contract or concrete concern","evidenceRefs":[],"nextAction":"required fix or optional improvement","priorFindingId":"only when continuing an existing finding","human":{"sourceRef":"source of human authority","quote":"verbatim source words","timing":"post-completion|prerequisite"}}],"priorDispositions":[{"findingId":"existing open ID","status":"resolved|open","reason":"what changed or remains wrong","evidenceRefs":[]}]}
 Omit priorFindingId for a new finding. Include human only for human-confirmation, where it is required.
 Every existing open finding needs an explicit disposition; disappearance is not resolution.
-A defect must cite concrete evidence or the contract reference whose required evidence is absent.
+A defect must cite concrete counterevidence or explain a specific required boundary that the supplied evidence cannot establish. Missing per-requirement execution records alone are not defects.
+Use exact entries from the declared reference lists, with no duplicates or ranges. For a whole-contract concern without an applicable listed requirement ID, use requirementRefs: [] and cite a valid contract/evidence reference; never invent a section-name requirement ID.
 Small missing requirements are defects. Optional improvements are advisory.
 A newly found omission in an unchanged file is still a defect when supported by contract and counterevidence.
 Do not convert an implementation defect or missing access into post-completion human confirmation.`;

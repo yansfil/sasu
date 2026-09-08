@@ -1218,7 +1218,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   return result("artifact", true, `${registered.length} run evidence file(s) registered; unchanged bytes retain their original observation time`, { artifacts: registered });
 }
 
-function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt, inputs: ReturnType<typeof currentInputs>): { material: ReviewPromptMaterial; cwd: string; evidencePaths: string[]; images: string[]; refs: string[] } {
+function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt, inputs: ReturnType<typeof currentInputs>): { material: ReviewPromptMaterial; cwd: string; evidencePaths: string[]; images: string[] } {
   const workRoot = requireWorkRoot(state);
   const changed = changedPathsSince(state.initialSource, inputs.source);
   const sourceCatalog = inputs.source.entries.map((entry) => entry.path);
@@ -1259,12 +1259,16 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
     tail: fs.readFileSync(path.join(state.projectRoot, run.logPath), "utf8"), provenance: `CLI execution ${run.startedAt}; cwd=${run.cwd}; log=${run.logPath}` }));
   const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...sourceCatalog, ...paths])];
   const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
-  const material: ReviewPromptMaterial = { prdText: inputs.held.text, contract: inputs.contract, intentSource: inputs.context,
+  const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
     changeMaterial: changeMaterial(workRoot, state, inputs.source), runOwnedDiff: runOwnedDiff(workRoot, state, changed), checks, evidence,
-    artifacts: state.artifacts, sourceCatalog, readablePaths: [...paths], evidenceRefs: refs, priorFindings: state.findings, priorRiskResult: priorRisk,
+    artifacts: state.artifacts, sourceCatalog, readablePaths: [...paths],
+    referenceContext: { requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
+      // Preserve the existing quote boundaries and expose those same bytes to the reviewer.
+      humanSources: { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) } },
+    priorFindings: state.findings, priorRiskResult: priorRisk,
     roundContext: attempt.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
     claims: state.escalations.filter((entry) => entry.diagnosis !== null).map((entry) => ({ origin: "solver", subject: `escalation ${entry.id}`, text: entry.diagnosis! })) };
-  return { material, cwd, evidencePaths: [...paths], images, refs };
+  return { material, cwd, evidencePaths: [...paths], images };
 }
 
 async function verify(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
@@ -1331,24 +1335,15 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       if (integrity.length) throw new Error(integrity.join("; "));
       const active = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
       const prepared = reviewInputs(state, active, inputs);
-      const requirementRefs = [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)];
-      active.roundContext.requirementRefs = requirementRefs; active.roundContext.evidenceRefs = prepared.refs;
+      const referenceContext = prepared.material.referenceContext;
+      active.roundContext.requirementRefs = [...referenceContext.requirementRefs]; active.roundContext.evidenceRefs = [...referenceContext.evidenceRefs];
       const reviewText = reviewPrompt(prepared.material);
       const riskText = state.prd.reviewProfile === "high-risk" ? riskPrompt(prepared.material) : null;
       phase = "review"; update((_fresh, held) => { held.phase = phase; held.roundContext = active.roundContext; });
       const options = { cwd: prepared.cwd, agentic: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
       const validate = (value: unknown): ReviewResult | string => {
-        const parsed = validateReviewResult(value, { requirementRefs, evidenceRefs: prepared.refs, priorFindingIds: openFindings(state).map((entry) => entry.id) });
+        const parsed = validateReviewResult(value, referenceContext);
         if (typeof parsed === "string") return parsed;
-        for (const finding of parsed.findings) {
-          if (finding.kind !== "human-confirmation") continue;
-          const held = finding.human!;
-          const basis = held.sourceRef === "Decisions" ? inputs!.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n")
-            : held.sourceRef === "Risks" ? inputs!.contract.risks
-            : held.sourceRef === "instruction" ? inputs!.context.content
-            : inputs!.contract.decisions.find((entry) => entry.id === held.sourceRef)?.decision;
-          if (!basis || !basis.includes(held.quote)) return `human-confirmation source ${held.sourceRef} does not contain its exact approval/confirmation quote`;
-        }
         try { reconcileReviewFindings(state.findings, parsed, attempt.id, nowIso()); }
         catch (error) { return error instanceof Error ? error.message : String(error); }
         return parsed;

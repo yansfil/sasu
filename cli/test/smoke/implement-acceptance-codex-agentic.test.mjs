@@ -1,7 +1,7 @@
 import test from "node:test";
 import { evaluateLiveReview } from "../helpers/implement-live-review.mjs";
 
-test("live comprehensive review preserves all thirty requirements and audited isolation while finding planted omissions", { timeout: 1_200_000 }, async (t) => {
+test("live comprehensive review preserves all thirty requirements and audited isolation while identifying exactly the planted failures", { timeout: 1_200_000 }, async (t) => {
   await evaluateLiveReview("codex", t);
 });
 

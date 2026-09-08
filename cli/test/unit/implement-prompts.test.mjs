@@ -6,12 +6,27 @@ import test from "node:test";
 import { reviewPrompt, riskPrompt, intentSource, renderDecisions, reviewDiffMaterial, IMPLEMENT_REVIEW_DIFF_MAX_CHARS } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { prd } from "../helpers/implement-fixture.mjs";
+import { validateReviewResult } from "../../dist/judge/types.js";
 
 export function material(overrides = {}) {
   const prdText = prd({ count: 30 });
   const contract = parseImplementContract(prdText);
-  return { prdText, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changeMaterial: [{ path: "implementation.txt", body: "complete source" }], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], evidence: [], artifacts: [], readablePaths: ["implementation.txt"], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changeMaterial: [{ path: "implementation.txt", body: "complete source" }], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], evidence: [], artifacts: [], readablePaths: ["implementation.txt"], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  return { ...value, referenceContext: overrides.referenceContext ?? { requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", ...value.readablePaths], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
 }
+
+test("review prompts advertise the exact validator vocabulary, including whole-contract findings without invented requirement IDs", () => {
+  const referenceContext = { requirementRefs: ["B1", "D-01"], evidenceRefs: ["PRD", "src/public.mjs"], priorFindingIds: [], humanSources: {} };
+  for (const prompt of [reviewPrompt(material({ referenceContext })), riskPrompt(material({ referenceContext }))]) {
+    const advertised = prompt.split("\nVALID CONTRACT REFERENCES")[1].split("\nVALID EVIDENCE REFERENCES")[0]
+      .split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
+    assert.deepEqual(advertised, referenceContext.requirementRefs);
+    for (const ref of advertised) assert.equal(typeof validateReviewResult({ summary: "known gap", findings: [{ kind: "defect", requirementRefs: [ref], problem: "entrypoint is absent", evidenceRefs: ["PRD"], nextAction: "implement it" }], priorDispositions: [] }, referenceContext), "object");
+  }
+  const wholeContract = { summary: "contract-level gap", findings: [{ kind: "defect", requirementRefs: [], problem: "the approved public entrypoint is absent", evidenceRefs: ["PRD"], nextAction: "provide the entrypoint" }], priorDispositions: [] };
+  assert.equal(typeof validateReviewResult(wholeContract, referenceContext), "object");
+  assert.equal(typeof validateReviewResult({ ...wholeContract, findings: [{ ...wholeContract.findings[0], requirementRefs: ["Goal"] }] }, referenceContext), "string");
+});
 
 test("the comprehensive and distinct risk reviewers receive all thirty requirements, full decisions, and fixed actual inputs", () => {
   const input = material();
@@ -24,6 +39,11 @@ test("the comprehensive and distinct risk reviewers receive all thirty requireme
     assert.match(prompt, /state.json.*not product proof/);
   }
   assert.match(reviewPrompt(input), /never produce a per-requirement PASS array/);
+  assert.match(reviewPrompt(input), /trace a concrete input from its public caller through dispatch to the failing expression/);
+  assert.match(reviewPrompt(input), /Complete readable source can establish deterministic behavior/);
+  assert.match(reviewPrompt(input), /execution count or absent per-requirement test is not itself a defect/);
+  assert.match(reviewPrompt(input), /specific boundary.*rendered UI.*external service.*real persistence/);
+  assert.match(reviewPrompt(input), /source reasoning never substitutes for a configured suite execution/);
   assert.match(riskPrompt(input), /data-loss, authorization/);
   assert.match(riskPrompt(input), /may run concurrently/);
 });

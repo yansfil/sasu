@@ -105,6 +105,27 @@ function humanProject() {
   return makeProject({ decisions: "| D-01 | Preserve every value in the approved request. | User requested all values. |\n| D-02 | The user will judge the final appearance after completion. | The user explicitly allows delivery before this judgment. |" });
 }
 
+test("review receives recorded conversational admission and exact human-source quotation boundaries", () => {
+  const decision = "Preserve every value in the approved request.";
+  const rationale = "Agent-owned fixture assumption; the user did not individually approve these product choices.";
+  const root = makeProject({ decisions: `| D-01 | ${decision} | ${rationale} |` });
+  const prdPath = path.join(root, PRD_PATH);
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8").replace('human_approval: "approved"', 'human_approval: "pending"'));
+  const evidence = "Proceed with this test fixture using the recorded assumptions; no additional product approval is required.";
+  ok(run(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned", "--allow-unapproved-prd", evidence]));
+  fs.writeFileSync(path.join(readState(root).worktree?.path ?? root, "implementation.txt"), "run-owned implementation\n");
+  const env = stub(root);
+  ok(run(root, ["implement", "verify"], { env }));
+  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_review.prompt.txt"), "utf8");
+  const admission = JSON.parse(prompt.split("RUN ADMISSION AUTHORITY (not product evidence):\n")[1]?.split("\n")[0] ?? "null");
+  assert.deepEqual(admission, { source: "conversation", evidence });
+  const sources = JSON.parse(prompt.split("HUMAN SOURCE TEXT (sourceRef -> exact quoteable text):\n")[1]?.split("\n")[0] ?? "null");
+  assert.deepEqual(sources, { Decisions: `${decision}\n${rationale}`, Risks: "None.", instruction: `- D-01: ${decision} (근거: ${rationale})`, "D-01": decision });
+  assert.match(prompt, /Pending frontmatter or agent-owned assumptions alone do not create a human-confirmation finding/);
+  ok(run(root, ["implement", "finalize"]));
+  assert.equal(readState(root).status, "complete");
+});
+
 test("post-completion human input remains open, rejection blocks delivery, explicit withdrawal restores it with history", () => {
   const root = humanProject();
   start(root);
@@ -133,6 +154,11 @@ test("post-completion human input remains open, rejection blocks delivery, expli
 test("a prerequisite human judgment cannot be downgraded into deliverable pending-human", () => {
   const root = humanProject();
   start(root);
+  const invalid = humanFinding("prerequisite");
+  invalid.human.quote = "The user explicitly allows delivery before this judgment.";
+  assert.notEqual(run(root, ["implement", "verify"], { env: stub(root, { ...REVIEW_PASS, findings: [invalid] }) }).status, 0);
+  assert.equal(readState(root).verificationAttempts[0].verdict, "ERROR", "a D-id cannot quote its rationale cell");
+  assert.equal(readState(root).findings.length, 0);
   const env = stub(root, { ...REVIEW_PASS, findings: [humanFinding("prerequisite")] });
   const result = run(root, ["implement", "verify"], { env });
   assert.notEqual(result.status, 0);

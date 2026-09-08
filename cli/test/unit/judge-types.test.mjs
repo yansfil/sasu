@@ -54,6 +54,16 @@ const context = { requirementRefs: ["B1", "D-01"], evidenceRefs: ["B1", "src/app
 const result = (findings = [], priorDispositions = []) => ({ summary: "Assessed full contract", findings, priorDispositions });
 const defect = { kind: "defect", requirementRefs: ["B1"], problem: "Save button has no event handler", evidenceRefs: ["src/app.ts"], nextAction: "Connect save button" };
 
+test("reference rejection identifies the bad token and category without weakening exact membership", () => {
+  const unknown = validateReviewResult(result([{ ...defect, requirementRefs: ["Goal"] }]), context);
+  assert.match(unknown, /findings\[0\]\.requirementRefs\[0\].*unknown reference.*"Goal"/);
+  assert.match(unknown, /B1/);
+  assert.match(validateReviewResult(result([{ ...defect, requirementRefs: ["B1", "B1"] }]), context), /requirementRefs\[1\].*duplicate.*"B1"/);
+  assert.match(validateReviewResult(result([{ ...defect, evidenceRefs: [7] }]), context), /evidenceRefs\[0\].*non-empty string.*number/);
+  const oversized = validateReviewResult(result([{ ...defect, requirementRefs: ["X".repeat(10_000)] }]), context);
+  assert.ok(oversized.length < 300, "a reference diagnostic must fit the existing bounded retry record");
+});
+
 test("full-contract review uses exception findings without per-requirement PASS records", () => {
   assert.deepEqual(validateReviewResult(result(), context), result());
   assert.deepEqual(validateReviewResult(result([defect]), context), result([defect]));
@@ -77,7 +87,7 @@ test("human confirmation needs source authority and exact quotation", () => {
   const human = { ...defect, kind: "human-confirmation", human: { sourceRef: "Risks", quote: "Owner checks visual fit later", timing: "post-completion" } };
   const inputs = { ...context, humanSources: { Risks: "Owner checks visual fit later." } };
   assert.equal(typeof validateReviewResult(result([human]), inputs), "object");
-  assert.equal(typeof validateReviewResult(result([{ ...human, human: { ...human.human, quote: "approved" } }]), inputs), "string");
-  assert.equal(typeof validateReviewResult(result([{ ...human, human: { ...human.human, sourceRef: "toString" } }]), inputs), "string");
+  assert.match(validateReviewResult(result([{ ...human, human: { ...human.human, quote: "approved" } }]), inputs), /human.quote is not a verbatim substring/);
+  assert.match(validateReviewResult(result([{ ...human, human: { ...human.human, sourceRef: "toString" } }]), inputs), /human.sourceRef is unknown/);
   assert.equal(typeof validateReviewResult(result([{ ...defect, human: human.human }]), inputs), "string");
 });
