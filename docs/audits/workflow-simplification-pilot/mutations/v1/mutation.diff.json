@@ -1,0 +1,5 @@
+{
+  "originalFilename": "mutation.diff",
+  "sha256": "ade76624b2500a9a7a5e1d545e8ff328bfd3cd2f8cbc8605c2eece2fa075a698",
+  "text": "diff --git a/src/app.ts b/src/app.ts\nindex 24d3246..83f18cf 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -483,7 +483,7 @@ export function createApp(mount: HTMLElement): void {\n       state.phase = { kind: \"ready\", document: emptyDocument() };\n       announce(\"No saved links found. Starting with an empty collection.\");\n     } else if (result.status === \"loaded\") {\n-      state.phase = { kind: \"ready\", document: result.document };\n+      state.phase = { kind: \"ready\", document: emptyDocument() };\n       announce(`Loaded ${result.document.items.length} saved links.`);\n     } else {\n       state.phase = { kind: \"load-failed\", message: result.message };\n"
+}

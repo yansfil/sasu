@@ -1,0 +1,12 @@
+mutation=V3
+trial_root=/tmp/sasu-workflow-mutation-v3
+working_root=/private/tmp/sasu-workflow-mutation-v3
+representative_commit=6a258f845c58c1a7ba93ac7bb27a09eb16667cfc
+cli_commit=f6963672454207cbce08908cc33eaf6e74d866c7
+prd_sha256=916b23f4663f087c42685bc4715301dad4fa97b2049d64ac4e0f2180a7eb3cf4
+original_config_sha256=96b46c89acf2ae29c74fcb5b060be036d05ee6c2591d1ee4dadab4892f5a8f7a
+trial_config_sha256=b7fe7bb2d757f4f46deab9eb5983833295cc1bb07d17b44025a4c7a3b10143a8
+original_port=42732
+trial_port=42743
+verify_status=1
+elapsed_seconds=52

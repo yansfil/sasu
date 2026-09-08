@@ -1,0 +1,5 @@
+field=verify.commands.test
+original_port=42732
+trial_port=42741
+original_sha256=96b46c89acf2ae29c74fcb5b060be036d05ee6c2591d1ee4dadab4892f5a8f7a
+trial_sha256=99e590a9aff644fa0342a50e5d4906e7140041dd3e21fcdd781a125877e5f654

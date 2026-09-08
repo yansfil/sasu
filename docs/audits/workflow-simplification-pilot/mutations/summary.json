@@ -1,0 +1,42 @@
+{
+  "capturedAt": "2026-09-08T09:04:16.699Z",
+  "representativeCommit": "6a258f845c58c1a7ba93ac7bb27a09eb16667cfc",
+  "cases": [
+    {
+      "variant": "v1",
+      "verdict": "FAIL",
+      "attemptId": "cbddcf11-9f88-4e9b-9c97-caf9bdfdb331",
+      "firstDetectionStage": "required-suite",
+      "suiteMs": 300491,
+      "suiteExitCode": 124,
+      "judgeCalls": 0,
+      "finalizeAttempted": false,
+      "completeReceipt": false,
+      "note": "Persisted rows absent after load caused repeated real browser locator failures; overall sealed suite reached its300s timeout."
+    },
+    {
+      "variant": "v2",
+      "verdict": "FAIL",
+      "attemptId": "0328b89b-7380-4c6b-bbb1-1799347abdda",
+      "firstDetectionStage": "required-suite",
+      "suiteMs": 44165,
+      "suiteExitCode": 1,
+      "judgeCalls": 0,
+      "finalizeAttempted": false,
+      "completeReceipt": false,
+      "note": "Existing actual browser assertions rejected the planted production behavior."
+    },
+    {
+      "variant": "v3",
+      "verdict": "FAIL",
+      "attemptId": "43f6c0ae-e9d7-45b7-8b5c-78b834f6b6cd",
+      "firstDetectionStage": "required-suite",
+      "suiteMs": 48447,
+      "suiteExitCode": 1,
+      "judgeCalls": 0,
+      "finalizeAttempted": false,
+      "completeReceipt": false,
+      "note": "Existing actual browser assertions rejected the planted production behavior."
+    }
+  ]
+}

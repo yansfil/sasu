@@ -1,0 +1,5 @@
+{
+  "originalFilename": "mutation.diff",
+  "sha256": "4784933a3a2099908f3ed2173f1eae869a200ac82d85e0fa9f66391a36e899b3",
+  "text": "diff --git a/src/app.ts b/src/app.ts\nindex 24d3246..265d8b9 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -464,7 +464,7 @@ export function createApp(mount: HTMLElement): void {\n       visibleCount.hidden = stored.length === 0;\n       visibleCount.textContent = `${filtered.length} ${filtered.length === 1 ? \"link\" : \"links\"} shown`;\n \n-      list.replaceChildren(...filtered.map(renderRow));\n+      list.replaceChildren(...visibleItems(phase.document, \"\", null).map(renderRow));\n       renderRowFeedback();\n     }\n \n"
+}

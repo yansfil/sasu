@@ -1,0 +1,145 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": true,
+  "action": "status",
+  "exitCode": 0,
+  "message": "link-pocket: active",
+  "detail": {
+    "schema": "sasu.implement.state.v9",
+    "status": "active",
+    "topicSlug": "link-pocket",
+    "prdPath": "agents/prd/link-pocket/prd.md",
+    "prdSnapshotPath": "agents/runs/link-pocket/prd.md",
+    "baselineAttribution": {
+      "disposition": "clean",
+      "paths": [],
+      "baselineDigest": "db0a058cbbda6261d21c75ae64dd135296f64ba173406e1d61882c23eed023b6",
+      "head": "6a258f845c58c1a7ba93ac7bb27a09eb16667cfc"
+    },
+    "workingRoot": "/private/tmp/sasu-workflow-mutation-v1",
+    "worktree": null,
+    "reviewProfile": "standard",
+    "escalations": {
+      "used": 0,
+      "limit": 3,
+      "remaining": 3
+    },
+    "requirementCount": 34,
+    "suite": {
+      "green": 0,
+      "total": 1,
+      "red": [
+        {
+          "commandId": "S1",
+          "command": "/usr/bin/env LINK_POCKET_TEST_PORT=42741 npm run check"
+        }
+      ]
+    },
+    "findings": [],
+    "humanConfirmations": [],
+    "riskFindings": {
+      "open": [],
+      "openCount": 0
+    },
+    "verification": {
+      "verdict": "FAIL",
+      "attempts": 1,
+      "budget": {
+        "fixAttempts": 0,
+        "totalAttempts": 1,
+        "budget": 5,
+        "budgetExhausted": false,
+        "consecutiveErrors": 0,
+        "judgeErrorThreshold": 3,
+        "judgeErrorCause": null,
+        "judgeErrorLoop": false,
+        "prejudgeFailures": 1,
+        "prejudgeFailureLimit": 3,
+        "prejudgeFailureLoop": false,
+        "grants": 0
+      },
+      "latest": {
+        "id": "cbddcf11-9f88-4e9b-9c97-caf9bdfdb331",
+        "verdict": "FAIL",
+        "phase": "complete",
+        "inputFingerprint": "e55d75347e1914fd13e3ac3669544e887ff53f01c9883ea36779c1f2add2cdb7",
+        "sourceFingerprint": "db775bdd917969de379932fb3fc22ee71271128a6daec4045dba5d6fab80457b",
+        "startedAt": "2026-09-08T08:57:50.190Z",
+        "finishedAt": "2026-09-08T09:02:51.207Z",
+        "durationMs": 301016,
+        "prelint": {
+          "ok": true,
+          "findings": []
+        },
+        "mechanical": [
+          {
+            "command": "/usr/bin/env LINK_POCKET_TEST_PORT=42741 npm run check",
+            "cwd": ".",
+            "startedAt": "2026-09-08T08:57:50.504Z",
+            "finishedAt": "2026-09-08T09:02:50.995Z",
+            "durationMs": 300491,
+            "exitCode": 124,
+            "mutatedTree": false,
+            "status": "FAIL",
+            "logPath": "agents/runs/link-pocket/artifacts/logs/mechanical-531741ad98600e47.log"
+          }
+        ],
+        "review": null,
+        "risk": null,
+        "error": {
+          "stage": "mechanical",
+          "code": "suite-failed",
+          "message": "required suite failed or changed the source under verification"
+        }
+      }
+    },
+    "activeVerification": null,
+    "artifacts": [
+      {
+        "kind": "file",
+        "path": "src/storage.ts",
+        "description": "Current unchanged source needed to inspect the derivative call path",
+        "sha256": "17a68e3745bebc174c706a71b1faf349c68c2bcd768892619f23e186b162fc20",
+        "bytes": 1704,
+        "registeredAt": "2026-09-08T08:57:49.628Z",
+        "observedAt": "2026-09-08T08:57:49.628Z",
+        "provenance": "Current product source in the derivative run"
+      },
+      {
+        "kind": "command-log",
+        "path": "agents/runs/link-pocket/artifacts/logs/mechanical-531741ad98600e47.log",
+        "description": "mechanical FAIL: /usr/bin/env LINK_POCKET_TEST_PORT=42741 npm run check",
+        "sha256": "1ed411c41088dd75c412a1e00237a5452db3626c278afaed21d0a2c1548bf92e",
+        "bytes": 34127,
+        "registeredAt": "2026-09-08T09:02:50.995Z",
+        "observedAt": "2026-09-08T09:02:50.995Z",
+        "provenance": "CLI executed /usr/bin/env LINK_POCKET_TEST_PORT=42741 npm run check in .",
+        "command": "/usr/bin/env LINK_POCKET_TEST_PORT=42741 npm run check",
+        "cwd": ".",
+        "exitCode": 124
+      }
+    ],
+    "retirement": null,
+    "completion": null,
+    "delivery": {
+      "eligible": false,
+      "reasons": [
+        "run is active"
+      ]
+    },
+    "artifactProblems": [],
+    "herdr": {
+      "available": true,
+      "unavailableHoles": [],
+      "reason": null
+    }
+  },
+  "summary": [
+    "link-pocket: active; FAIL",
+    "Source: db775bdd917969de379932fb3fc22ee71271128a6daec4045dba5d6fab80457b; 34 requirements retained in the contract",
+    "Required suite: {\"green\":0,\"total\":1,\"red\":[{\"commandId\":\"S1\",\"command\":\"/usr/bin/env LINK_POCKET_TEST_PORT=42741 npm run check\"}]}",
+    "escalations: 0 of 3 used",
+    "Delivery: run is active",
+    "Next: implement or fix findings, then verify and finalize"
+  ]
+}

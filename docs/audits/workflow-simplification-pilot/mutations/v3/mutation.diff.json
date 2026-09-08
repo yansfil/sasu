@@ -1,0 +1,5 @@
+{
+  "originalFilename": "mutation.diff",
+  "sha256": "afbf4a3574ec0981e8fcc912ed2dc117ae5688c566aa05faf4acbffa8c218496",
+  "text": "diff --git a/src/app.ts b/src/app.ts\nindex 24d3246..e4c34df 100644\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -299,7 +299,7 @@ export function createApp(mount: HTMLElement): void {\n   function persist(next: LinkDocument): { ok: true } | { ok: false; message: string } {\n     const result = saveDocument(next);\n     if (result.status === \"failed\") {\n-      return { ok: false, message: result.message };\n+      return { ok: true };\n     }\n \n     state.phase = { kind: \"ready\", document: next };\n"
+}

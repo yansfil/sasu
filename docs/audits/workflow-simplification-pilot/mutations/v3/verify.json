@@ -1,0 +1,59 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": false,
+  "action": "verify",
+  "exitCode": 1,
+  "message": "verification FAIL; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "43f6c0ae-e9d7-45b7-8b5c-78b834f6b6cd",
+      "verdict": "FAIL",
+      "phase": "complete",
+      "inputFingerprint": "790576ede86d9f230750779cd9296db84038c1b853361c042e49880d34f315ed",
+      "sourceFingerprint": "0971dce73a4e82b262a4369d9e1710dca037e2e34d7b7e44a81dfeb31aea7703",
+      "startedAt": "2026-09-08T08:57:50.190Z",
+      "finishedAt": "2026-09-08T08:58:39.221Z",
+      "durationMs": 49030,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "/usr/bin/env LINK_POCKET_TEST_PORT=42743 npm run check",
+          "cwd": ".",
+          "startedAt": "2026-09-08T08:57:50.505Z",
+          "finishedAt": "2026-09-08T08:58:38.952Z",
+          "durationMs": 48447,
+          "exitCode": 1,
+          "mutatedTree": false,
+          "status": "FAIL",
+          "logPath": "agents/runs/link-pocket/artifacts/logs/mechanical-e8a9f4fb049cd752.log"
+        }
+      ],
+      "review": null,
+      "risk": null,
+      "error": {
+        "stage": "mechanical",
+        "code": "suite-failed",
+        "message": "required suite failed or changed the source under verification"
+      }
+    },
+    "findings": [],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 0,
+      "totalAttempts": 1,
+      "budget": 5,
+      "budgetExhausted": false,
+      "consecutiveErrors": 0,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": null,
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 1,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    }
+  }
+}
