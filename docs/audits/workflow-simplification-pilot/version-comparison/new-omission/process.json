@@ -1,0 +1,285 @@
+{
+  "schema": "sasu.version-comparison-process.v1",
+  "version": "new",
+  "variant": "omission",
+  "ownerSessionId": "01a07f90-d3b1-7060-b2e2-15c217d81990",
+  "actualCliVersion": "0.9.0",
+  "trial": {
+    "version": "new",
+    "variant": "omission",
+    "root": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-omission",
+    "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-review-correction/cli/dist/cli.js",
+    "cliCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+    "sourcePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/sources/omission.mjs",
+    "prdSha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5",
+    "implementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+    "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+    "configSha256": "1614162bc094890704282c4d3ccd8166f70b090baf8dba35116cf072e0cf71f2",
+    "baselineHead": "a9ab66dd3be8dbfee3f06fef398205ae5091bd5d"
+  },
+  "events": [
+    {
+      "label": "start",
+      "argv": [
+        "implement",
+        "start",
+        "--prd",
+        "agents/prd/matched-task-list-library/prd.md",
+        "--dirty-attribution",
+        "run-owned"
+      ],
+      "startedAt": "2026-09-08T09:02:13.233Z",
+      "finishedAt": "2026-09-08T09:02:13.339Z",
+      "durationMs": 104.933083,
+      "exitCode": 0,
+      "stdoutSha256": "089ebe871384f07b4564fe2d53e0cc693982ffc1a76c6f2e54c267640d712af1",
+      "stderr": "",
+      "output": {
+        "contractVersion": "0.9.0",
+        "ok": true,
+        "action": "start",
+        "exitCode": 0,
+        "message": "implement run started: matched-task-list-library",
+        "detail": {
+          "schema": "sasu.implement.state.v9",
+          "status": "active",
+          "topicSlug": "matched-task-list-library",
+          "prdPath": "agents/prd/matched-task-list-library/prd.md",
+          "prdSnapshotPath": "agents/runs/matched-task-list-library/prd.md",
+          "baselineAttribution": {
+            "disposition": "clean",
+            "paths": [],
+            "baselineDigest": "4db21163a3c2f4182e0998d93db37c1cdf3c1b2d327e6a61523a54aaa7219353",
+            "head": "a9ab66dd3be8dbfee3f06fef398205ae5091bd5d"
+          },
+          "workingRoot": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-omission",
+          "worktree": null,
+          "reviewProfile": "standard",
+          "escalations": {
+            "used": 0,
+            "limit": 3,
+            "remaining": 3
+          },
+          "requirementCount": 6,
+          "suite": {
+            "green": 0,
+            "total": 1,
+            "red": []
+          },
+          "findings": [],
+          "humanConfirmations": [],
+          "riskFindings": {
+            "open": [],
+            "openCount": 0
+          },
+          "verification": {
+            "verdict": "NOT_RUN",
+            "attempts": 0,
+            "budget": {
+              "fixAttempts": 0,
+              "totalAttempts": 0,
+              "budget": 1,
+              "budgetExhausted": false,
+              "consecutiveErrors": 0,
+              "judgeErrorThreshold": 3,
+              "judgeErrorCause": null,
+              "judgeErrorLoop": false,
+              "prejudgeFailures": 0,
+              "prejudgeFailureLimit": 3,
+              "prejudgeFailureLoop": false,
+              "grants": 0
+            },
+            "latest": null
+          },
+          "activeVerification": null,
+          "artifacts": [],
+          "retirement": null,
+          "completion": null,
+          "delivery": {
+            "eligible": false,
+            "reasons": [
+              "run is active"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "artifact-run",
+      "argv": [
+        "implement",
+        "artifact",
+        "--kind",
+        "file",
+        "--path",
+        "src/task-list.mjs",
+        "--description",
+        "The fixed public library source for the complete six-behavior review.",
+        "--source",
+        "matched deterministic fixture",
+        "--collected-at",
+        "2026-09-08T09:02:13.340Z",
+        "--target",
+        "source sha256 0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+        "--environment",
+        "dependency-free Node library"
+      ],
+      "startedAt": "2026-09-08T09:02:13.340Z",
+      "finishedAt": "2026-09-08T09:02:13.391Z",
+      "durationMs": 51.563125,
+      "exitCode": 0,
+      "stdoutSha256": "058efb4da02344cbff3240af07cb22a107ec7d8f81fd4ea52ecc796ee44742f4",
+      "stderr": "",
+      "output": {
+        "contractVersion": "0.9.0",
+        "ok": true,
+        "action": "artifact",
+        "exitCode": 0,
+        "message": "1 run evidence file(s) registered; unchanged bytes retain their original observation time",
+        "detail": {
+          "artifacts": [
+            {
+              "kind": "file",
+              "path": "src/task-list.mjs",
+              "description": "The fixed public library source for the complete six-behavior review.",
+              "sha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+              "bytes": 724,
+              "registeredAt": "2026-09-08T09:02:13.387Z",
+              "observedAt": "2026-09-08T09:02:13.340Z",
+              "provenance": "matched deterministic fixture",
+              "target": "source sha256 0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+              "environment": "dependency-free Node library"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "verify",
+      "argv": [
+        "implement",
+        "verify"
+      ],
+      "startedAt": "2026-09-08T09:02:13.392Z",
+      "finishedAt": "2026-09-08T09:02:46.872Z",
+      "durationMs": 33479.945666,
+      "exitCode": 1,
+      "stdoutSha256": "5b6a27f10860cd87cbda4f0cd36f634830954e7f0423accb47f4fe7f01c98502",
+      "stderr": "[implement:verify] running 1 required command(s)\n[implement:verify] PASS: npm test (0.2s)\n[implement:verify] verification FAIL; 33.4s\n",
+      "output": {
+        "contractVersion": "0.9.0",
+        "ok": false,
+        "action": "verify",
+        "exitCode": 1,
+        "message": "verification FAIL; active run retained; verification fix budget exhausted (1/1); close honestly with `sasu implement finalize --status blocked`, or record explicit user approval with `verify --grant-budget \"<user words>\"`",
+        "detail": {
+          "attempt": {
+            "id": "e635ecc9-39c8-431f-a0d7-8f774b68bef1",
+            "verdict": "FAIL",
+            "phase": "complete",
+            "inputFingerprint": "60c5e6267b422bff0d4f3980e9f6932735cfc7e7bf0a1767facdae4c2fc5b440",
+            "sourceFingerprint": "b3d79dc32afdffed9fb16683602b1a467e045d452a259c1c367142e7490a9dab",
+            "startedAt": "2026-09-08T09:02:13.459Z",
+            "finishedAt": "2026-09-08T09:02:46.867Z",
+            "durationMs": 33408,
+            "prelint": {
+              "ok": true,
+              "findings": []
+            },
+            "mechanical": [
+              {
+                "command": "npm test",
+                "cwd": ".",
+                "startedAt": "2026-09-08T09:02:13.479Z",
+                "finishedAt": "2026-09-08T09:02:13.688Z",
+                "durationMs": 209,
+                "exitCode": 0,
+                "mutatedTree": false,
+                "status": "PASS",
+                "logPath": "agents/runs/matched-task-list-library/artifacts/logs/mechanical-d4b8922f5a1ca78b.log"
+              }
+            ],
+            "review": {
+              "invocationId": "c48936c9-9cce-4ae3-a124-d7ad6cd65cf3",
+              "verdict": "FAIL",
+              "result": {
+                "summary": "The dependency-free library and required test entrypoint are present, and B1-B5 are supported by the complete source. B6 is not satisfied.",
+                "findings": [
+                  {
+                    "kind": "defect",
+                    "requirementRefs": [
+                      "B6"
+                    ],
+                    "problem": "summary() always returns the plural form. For a one-task list, summary([{id:1,title:\"x\",done:false}]) returns \"1 items\" instead of the required \"1 item\".",
+                    "evidenceRefs": [
+                      "src/task-list.mjs",
+                      "B6"
+                    ],
+                    "nextAction": "Return \"1 item\" when items.length is 1 and \"<n> items\" otherwise."
+                  }
+                ],
+                "priorDispositions": []
+              },
+              "startedAt": "2026-09-08T09:02:13.716Z",
+              "finishedAt": "2026-09-08T09:02:46.845Z",
+              "durationMs": 33129,
+              "error": null
+            },
+            "risk": null,
+            "error": null
+          },
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B6"
+              ],
+              "problem": "summary() always returns the plural form. For a one-task list, summary([{id:1,title:\"x\",done:false}]) returns \"1 items\" instead of the required \"1 item\".",
+              "evidenceRefs": [
+                "src/task-list.mjs",
+                "B6"
+              ],
+              "nextAction": "Return \"1 item\" when items.length is 1 and \"<n> items\" otherwise.",
+              "id": "F1",
+              "originAttemptId": "e635ecc9-39c8-431f-a0d7-8f774b68bef1",
+              "status": "open",
+              "history": [
+                {
+                  "at": "2026-09-08T09:02:46.845Z",
+                  "attemptId": "e635ecc9-39c8-431f-a0d7-8f774b68bef1",
+                  "status": "open",
+                  "reason": "summary() always returns the plural form. For a one-task list, summary([{id:1,title:\"x\",done:false}]) returns \"1 items\" instead of the required \"1 item\".",
+                  "evidenceRefs": [
+                    "src/task-list.mjs",
+                    "B6"
+                  ]
+                }
+              ],
+              "responses": []
+            }
+          ],
+          "riskFindings": [],
+          "verificationBudget": {
+            "fixAttempts": 1,
+            "totalAttempts": 1,
+            "budget": 1,
+            "budgetExhausted": true,
+            "consecutiveErrors": 0,
+            "judgeErrorThreshold": 3,
+            "judgeErrorCause": null,
+            "judgeErrorLoop": false,
+            "prejudgeFailures": 0,
+            "prejudgeFailureLimit": 3,
+            "prejudgeFailureLoop": false,
+            "grants": 0
+          }
+        }
+      }
+    }
+  ],
+  "finishedAt": "2026-09-08T09:02:46.872Z",
+  "statePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-omission/agents/runs/matched-task-list-library/state.json",
+  "stateSha256": "795cafd4ba0e807abd09cb9a56ca43ac91b21f2b3db3af2eab41a8500288b270",
+  "stateStatus": "active",
+  "verificationAttemptCount": 1
+}

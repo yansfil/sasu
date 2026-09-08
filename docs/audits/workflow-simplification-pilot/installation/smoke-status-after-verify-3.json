@@ -1,0 +1,261 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": true,
+  "action": "status",
+  "exitCode": 0,
+  "message": "installed-smoke: active",
+  "detail": {
+    "schema": "sasu.implement.state.v9",
+    "status": "active",
+    "topicSlug": "installed-smoke",
+    "prdPath": "agents/prd/installed-smoke/prd.md",
+    "prdSnapshotPath": "agents/runs/installed-smoke/prd.md",
+    "baselineAttribution": {
+      "disposition": "clean",
+      "paths": [],
+      "baselineDigest": "6b0736d04b2593d5534c1c133b4c59bc001c2e522f735a88818fd90762c8a800",
+      "head": "0317644647d283c4e434384fde2bc9cd4ef2f426"
+    },
+    "workingRoot": "/private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+    "worktree": null,
+    "reviewProfile": "standard",
+    "escalations": {
+      "used": 0,
+      "limit": 3,
+      "remaining": 3
+    },
+    "requirementCount": 2,
+    "suite": {
+      "green": 1,
+      "total": 1,
+      "red": []
+    },
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [],
+        "problem": "Execution through the installed workflow and receipt-consumer observation path is still not established. The harness log proves only npm test, while the observation output is explicitly an implementer's claim rather than harness-owned execution evidence.",
+        "evidenceRefs": [
+          "PRD",
+          "package.json",
+          "scripts/observe.mjs",
+          "agents/runs/installed-smoke/artifacts/observed.json",
+          "agents/runs/installed-smoke/artifacts/logs/mechanical-8f8dc2e5c444d5b9.log"
+        ],
+        "nextAction": "Run the actual installed workflow and receipt-consumer observation path, then provide harness-owned output tied to the current package and callers.",
+        "id": "F2",
+        "originAttemptId": "5d1d3764-9f52-4d28-b88a-182f6ee11a30",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-08T09:19:16.573Z",
+            "attemptId": "5d1d3764-9f52-4d28-b88a-182f6ee11a30",
+            "status": "open",
+            "reason": "The goal requires consumption through the globally installed workflow, but the harness log proves only npm test. The observation output is explicitly an implementer claim, so execution through the installed workflow and receipt consumer is not established.",
+            "evidenceRefs": [
+              "PRD",
+              "package.json",
+              "scripts/observe.mjs",
+              "agents/runs/installed-smoke/artifacts/observed.json",
+              "agents/runs/installed-smoke/artifacts/logs/mechanical-beb10ac76af2cba0.log"
+            ]
+          },
+          {
+            "at": "2026-09-08T09:26:14.207Z",
+            "attemptId": "77bccdc8-83cf-4036-bc91-f0d99583b216",
+            "status": "open",
+            "reason": "No new evidence or changed paths establish installed-workflow execution; the only harness-owned run remains npm test.",
+            "evidenceRefs": [
+              "package.json",
+              "scripts/observe.mjs",
+              "agents/runs/installed-smoke/artifacts/observed.json",
+              "agents/runs/installed-smoke/artifacts/logs/mechanical-8f8dc2e5c444d5b9.log"
+            ]
+          }
+        ],
+        "responses": []
+      }
+    ],
+    "humanConfirmations": [],
+    "riskFindings": {
+      "open": [],
+      "openCount": 0
+    },
+    "verification": {
+      "verdict": "FAIL",
+      "attempts": 3,
+      "budget": {
+        "fixAttempts": 3,
+        "totalAttempts": 3,
+        "budget": 5,
+        "budgetExhausted": false,
+        "consecutiveErrors": 0,
+        "judgeErrorThreshold": 3,
+        "judgeErrorCause": null,
+        "judgeErrorLoop": false,
+        "prejudgeFailures": 0,
+        "prejudgeFailureLimit": 3,
+        "prejudgeFailureLoop": false,
+        "grants": 0
+      },
+      "latest": {
+        "id": "77bccdc8-83cf-4036-bc91-f0d99583b216",
+        "verdict": "FAIL",
+        "phase": "complete",
+        "inputFingerprint": "6955e7543e40338fb90cbb437be1d225d95dc3144ecb063d8f676c77ec559ec0",
+        "sourceFingerprint": "a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543",
+        "startedAt": "2026-09-08T09:25:48.597Z",
+        "finishedAt": "2026-09-08T09:26:14.353Z",
+        "durationMs": 25755,
+        "prelint": {
+          "ok": true,
+          "findings": []
+        },
+        "mechanical": [
+          {
+            "command": "npm test",
+            "cwd": ".",
+            "startedAt": "2026-09-08T09:25:48.725Z",
+            "finishedAt": "2026-09-08T09:25:49.221Z",
+            "durationMs": 496,
+            "exitCode": 0,
+            "mutatedTree": false,
+            "status": "PASS",
+            "logPath": "agents/runs/installed-smoke/artifacts/logs/mechanical-8f8dc2e5c444d5b9.log"
+          }
+        ],
+        "review": {
+          "invocationId": "9ff6213c-647a-43c3-b9fe-aa4f844f02bf",
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The source and committed suite establish the specified normalization and validation behavior, but the required installed-workflow boundary remains unverified because the harness only ran npm test and the observation output is implementer-owned evidence.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [],
+                "problem": "Execution through the installed workflow and receipt-consumer observation path is still not established. The harness log proves only npm test, while the observation output is explicitly an implementer's claim rather than harness-owned execution evidence.",
+                "evidenceRefs": [
+                  "PRD",
+                  "package.json",
+                  "scripts/observe.mjs",
+                  "agents/runs/installed-smoke/artifacts/observed.json",
+                  "agents/runs/installed-smoke/artifacts/logs/mechanical-8f8dc2e5c444d5b9.log"
+                ],
+                "nextAction": "Run the actual installed workflow and receipt-consumer observation path, then provide harness-owned output tied to the current package and callers.",
+                "priorFindingId": "F2"
+              }
+            ],
+            "priorDispositions": [
+              {
+                "findingId": "F2",
+                "status": "open",
+                "reason": "No new evidence or changed paths establish installed-workflow execution; the only harness-owned run remains npm test.",
+                "evidenceRefs": [
+                  "package.json",
+                  "scripts/observe.mjs",
+                  "agents/runs/installed-smoke/artifacts/observed.json",
+                  "agents/runs/installed-smoke/artifacts/logs/mechanical-8f8dc2e5c444d5b9.log"
+                ]
+              }
+            ]
+          },
+          "startedAt": "2026-09-08T09:25:49.409Z",
+          "finishedAt": "2026-09-08T09:26:14.207Z",
+          "durationMs": 24798,
+          "error": null
+        },
+        "risk": null,
+        "error": null
+      }
+    },
+    "activeVerification": null,
+    "artifacts": [
+      {
+        "kind": "log",
+        "path": "agents/runs/installed-smoke/artifacts/observed.json",
+        "description": "Actual successful normalization and both caller-visible validation failures.",
+        "sha256": "76dc85df62a0edf4b5d8b45c0d4981ba560c114059f1956ad855ef01222cb968",
+        "bytes": 242,
+        "registeredAt": "2026-09-08T09:14:58.947Z",
+        "observedAt": "2026-09-08T09:14:58.000Z",
+        "provenance": "Marked native Implementor running the committed npm observe caller.",
+        "target": "Installed smoke fixture working tree, src/link-pocket.mjs",
+        "environment": "Local Node v24.12.0"
+      },
+      {
+        "kind": "file",
+        "path": "test/link-pocket.test.mjs",
+        "description": "Current unchanged committed Node suite: the caller that imports normalizeLink from ../src/link-pocket.mjs and asserts the canonical URL result, the unsupported-scheme failure, and the blank-title failure.",
+        "sha256": "c1059157110121b055792db41be8c26175382c847cf788e22fd361bcd19bbf77",
+        "bytes": 923,
+        "registeredAt": "2026-09-08T09:18:14.316Z",
+        "observedAt": "2026-09-08T09:18:08.000Z",
+        "provenance": "Marked native Implementor reading the committed fixture files unchanged from baseline 0317644647d283c4e434384fde2bc9cd4ef2f426; no product, test, or config bytes were modified.",
+        "target": "Installed smoke fixture working tree at /private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+        "environment": "Local Node v24.12.0"
+      },
+      {
+        "kind": "file",
+        "path": "scripts/observe.mjs",
+        "description": "Current unchanged committed observation script: the caller that imports normalizeLink from ../src/link-pocket.mjs and prints the successful result plus both caller-visible errors.",
+        "sha256": "cc36aee43f6fbfaf158e5202d911fe1512900cbe5f95a506a1b5ef6d4c3ba010",
+        "bytes": 620,
+        "registeredAt": "2026-09-08T09:18:14.317Z",
+        "observedAt": "2026-09-08T09:18:08.000Z",
+        "provenance": "Marked native Implementor reading the committed fixture files unchanged from baseline 0317644647d283c4e434384fde2bc9cd4ef2f426; no product, test, or config bytes were modified.",
+        "target": "Installed smoke fixture working tree at /private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+        "environment": "Local Node v24.12.0"
+      },
+      {
+        "kind": "file",
+        "path": "package.json",
+        "description": "Current unchanged npm entry wiring showing test -> node --test test/*.test.mjs and observe -> node scripts/observe.mjs, which is how both callers are executed.",
+        "sha256": "85704e53cbd134a75a3e616b2a2d79889438bcaede80086b6d352ad7df4b9f2b",
+        "bytes": 181,
+        "registeredAt": "2026-09-08T09:18:14.318Z",
+        "observedAt": "2026-09-08T09:18:08.000Z",
+        "provenance": "Marked native Implementor reading the committed fixture files unchanged from baseline 0317644647d283c4e434384fde2bc9cd4ef2f426; no product, test, or config bytes were modified.",
+        "target": "Installed smoke fixture working tree at /private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+        "environment": "Local Node v24.12.0"
+      },
+      {
+        "kind": "command-log",
+        "path": "agents/runs/installed-smoke/artifacts/logs/mechanical-8f8dc2e5c444d5b9.log",
+        "description": "mechanical PASS: npm test",
+        "sha256": "73f2632d75d837bef746e955f4c132ed80a0ea40521ff051885afdcd6b38eba0",
+        "bytes": 447,
+        "registeredAt": "2026-09-08T09:25:49.221Z",
+        "observedAt": "2026-09-08T09:25:49.221Z",
+        "provenance": "CLI executed npm test in .",
+        "command": "npm test",
+        "cwd": ".",
+        "exitCode": 0
+      }
+    ],
+    "retirement": null,
+    "completion": null,
+    "delivery": {
+      "eligible": false,
+      "reasons": [
+        "run is active",
+        "F2: Execution through the installed workflow and receipt-consumer observation path is still not established. The harness log proves only npm test, while the observation output is explicitly an implementer's claim rather than harness-owned execution evidence."
+      ]
+    },
+    "artifactProblems": [],
+    "herdr": {
+      "available": true,
+      "unavailableHoles": [],
+      "reason": null
+    }
+  },
+  "summary": [
+    "installed-smoke: active; FAIL",
+    "Source: a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543; 2 requirements retained in the contract",
+    "Required suite: {\"green\":1,\"total\":1,\"red\":[]}",
+    "escalations: 0 of 3 used",
+    "F2 [defect] Execution through the installed workflow and receipt-consumer observation path is still not established. The harness log proves only npm test, while the observation output is explicitly an implementer's claim rather than harness-owned execution evidence. - Run the actual installed workflow and receipt-consumer observation path, then provide harness-owned output tied to the current package and callers.",
+    "Delivery: run is active",
+    "Delivery: F2: Execution through the installed workflow and receipt-consumer observation path is still not established. The harness log proves only npm test, while the observation output is explicitly an implementer's claim rather than harness-owned execution evidence.",
+    "Next: implement or fix findings, then verify and finalize"
+  ]
+}

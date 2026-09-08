@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-09-08T09:08:50.440Z",
+  "results": [
+    {
+      "variant": "healthy",
+      "suiteExitCode": 0,
+      "suiteStdout": "✔ task-list public behavior (1.136834ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 49.71\n",
+      "suiteStderr": "",
+      "singularOutput": "1 item",
+      "singularExitCode": 0
+    },
+    {
+      "variant": "omission",
+      "suiteExitCode": 0,
+      "suiteStdout": "✔ task-list public behavior (0.762208ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 40.653625\n",
+      "suiteStderr": "",
+      "singularOutput": "1 items",
+      "singularExitCode": 0
+    }
+  ]
+}

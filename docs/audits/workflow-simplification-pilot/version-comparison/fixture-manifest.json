@@ -1,0 +1,59 @@
+{
+  "schema": "sasu.version-comparison-fixtures.v1",
+  "generatedAt": "2026-09-08T08:48:27.393Z",
+  "semanticIntentSha256": "eca466b70ae722bd7c2f4c81c98dcb4266b254777954d99355b1c3ed6d74f7ba",
+  "trials": [
+    {
+      "version": "old",
+      "variant": "healthy",
+      "root": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/old-healthy",
+      "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/cli/dist/cli.js",
+      "cliCommit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20",
+      "sourcePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/sources/healthy.mjs",
+      "prdSha256": "959467d9c309bc5081e210745b0328aeda3830240b24d4f42b650c396045a566",
+      "implementationSha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "configSha256": "1614162bc094890704282c4d3ccd8166f70b090baf8dba35116cf072e0cf71f2",
+      "baselineHead": "a9ab66dd3be8dbfee3f06fef398205ae5091bd5d"
+    },
+    {
+      "version": "old",
+      "variant": "omission",
+      "root": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/old-omission",
+      "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/cli/dist/cli.js",
+      "cliCommit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20",
+      "sourcePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/sources/omission.mjs",
+      "prdSha256": "959467d9c309bc5081e210745b0328aeda3830240b24d4f42b650c396045a566",
+      "implementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "configSha256": "1614162bc094890704282c4d3ccd8166f70b090baf8dba35116cf072e0cf71f2",
+      "baselineHead": "a9ab66dd3be8dbfee3f06fef398205ae5091bd5d"
+    },
+    {
+      "version": "new",
+      "variant": "healthy",
+      "root": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-healthy",
+      "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-review-correction/cli/dist/cli.js",
+      "cliCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+      "sourcePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/sources/healthy.mjs",
+      "prdSha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5",
+      "implementationSha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "configSha256": "1614162bc094890704282c4d3ccd8166f70b090baf8dba35116cf072e0cf71f2",
+      "baselineHead": "a9ab66dd3be8dbfee3f06fef398205ae5091bd5d"
+    },
+    {
+      "version": "new",
+      "variant": "omission",
+      "root": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-omission",
+      "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-review-correction/cli/dist/cli.js",
+      "cliCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+      "sourcePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/sources/omission.mjs",
+      "prdSha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5",
+      "implementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "configSha256": "1614162bc094890704282c4d3ccd8166f70b090baf8dba35116cf072e0cf71f2",
+      "baselineHead": "a9ab66dd3be8dbfee3f06fef398205ae5091bd5d"
+    }
+  ]
+}

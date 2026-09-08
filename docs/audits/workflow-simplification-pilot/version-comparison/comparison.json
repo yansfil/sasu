@@ -1,0 +1,643 @@
+{
+  "schema": "sasu.version-comparison-report.v1",
+  "generatedAt": "2026-09-08T09:06:56.846Z",
+  "interpretation": "Deterministic process replay with identical product bytes per variant. This measures harness workflow cost, not independent implementation speed.",
+  "semanticParity": {
+    "healthyImplementationEqual": true,
+    "omissionImplementationEqual": true,
+    "suiteEqualAcrossAllTrials": true,
+    "prdBytesExpectedToDiffer": "Old uses the required four-column method table; new uses the required three-column table. Goal, decisions, and six behavior sentences are generated from one canonical contract."
+  },
+  "reports": [
+    {
+      "version": "old",
+      "variant": "healthy",
+      "status": "complete",
+      "contractVersion": "0.8.0",
+      "cliCommit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20",
+      "ownerSessionId": "01a07f90-d3b1-7060-b2e2-15c217d81990",
+      "implementationSha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d",
+      "actualImplementationSha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "prdSha256": "959467d9c309bc5081e210745b0328aeda3830240b24d4f42b650c396045a566",
+      "stateSchema": "sasu.implement.state.v8",
+      "stateBytes": 29101,
+      "publicCommandCount": 9,
+      "publicCommands": [
+        {
+          "label": "start",
+          "durationMs": 132.845541,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B1",
+          "durationMs": 102.393542,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B2",
+          "durationMs": 75.856208,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B3",
+          "durationMs": 68.314583,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B4",
+          "durationMs": 70.514291,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B5",
+          "durationMs": 90.451875,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B6",
+          "durationMs": 76.969958,
+          "exitCode": 0
+        },
+        {
+          "label": "verify",
+          "durationMs": 20607.824958,
+          "exitCode": 0
+        },
+        {
+          "label": "finalize",
+          "durationMs": 121.591042,
+          "exitCode": 0
+        }
+      ],
+      "processWallMs": 21353,
+      "startedAt": "2026-09-08T08:58:16.871Z",
+      "finishedAt": "2026-09-08T08:58:38.224Z",
+      "unifiedVerdict": "PASS",
+      "verifyAttempts": 1,
+      "suiteExecutions": 1,
+      "suiteDurationMs": 434,
+      "judgeLanes": 8,
+      "actualJudgeInvocations": 8,
+      "judgeResourceMs": 131165,
+      "judgeWallUnionMs": 19953,
+      "judgeUsage": {
+        "inputTokens": 180946,
+        "outputTokens": 1680,
+        "cachedInputTokens": 122880,
+        "reasoningOutputTokens": 977
+      },
+      "oldDesignLaneEmptyComments": true,
+      "concurrentMutationVerification": [
+        {
+          "name": "sasu-workflow-mutation-v1",
+          "startedAt": "2026-09-08T08:57:50.190Z",
+          "finishedAt": "2026-09-08T09:02:51.207Z",
+          "overlapMs": 21353
+        },
+        {
+          "name": "sasu-workflow-mutation-v2",
+          "startedAt": "2026-09-08T08:57:50.190Z",
+          "finishedAt": "2026-09-08T08:58:34.917Z",
+          "overlapMs": 18046
+        },
+        {
+          "name": "sasu-workflow-mutation-v3",
+          "startedAt": "2026-09-08T08:57:50.190Z",
+          "finishedAt": "2026-09-08T08:58:39.221Z",
+          "overlapMs": 21353
+        }
+      ],
+      "lanes": [
+        {
+          "pointer": "/lanes/acceptance/result/invocations/0",
+          "startedAt": "2026-09-08T08:58:18.156Z",
+          "finishedAt": "2026-09-08T08:58:33.764Z",
+          "durationMs": 15608,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22641,
+            "outputTokens": 206,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 133
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/1",
+          "startedAt": "2026-09-08T08:58:18.157Z",
+          "finishedAt": "2026-09-08T08:58:35.117Z",
+          "durationMs": 16960,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22639,
+            "outputTokens": 209,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 124
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/2",
+          "startedAt": "2026-09-08T08:58:18.158Z",
+          "finishedAt": "2026-09-08T08:58:33.494Z",
+          "durationMs": 15336,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22637,
+            "outputTokens": 174,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 94
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/3",
+          "startedAt": "2026-09-08T08:58:18.158Z",
+          "finishedAt": "2026-09-08T08:58:32.983Z",
+          "durationMs": 14825,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22638,
+            "outputTokens": 152,
+            "cachedInputTokens": 15104,
+            "reasoningOutputTokens": 79
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/4",
+          "startedAt": "2026-09-08T08:58:18.158Z",
+          "finishedAt": "2026-09-08T08:58:33.447Z",
+          "durationMs": 15289,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22644,
+            "outputTokens": 201,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 123
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/5",
+          "startedAt": "2026-09-08T08:58:18.158Z",
+          "finishedAt": "2026-09-08T08:58:34.346Z",
+          "durationMs": 16188,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22650,
+            "outputTokens": 138,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 60
+          }
+        },
+        {
+          "pointer": "/lanes/fidelity",
+          "startedAt": "2026-09-08T08:58:18.158Z",
+          "finishedAt": "2026-09-08T08:58:38.095Z",
+          "durationMs": 19937,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22685,
+            "outputTokens": 435,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 209
+          }
+        },
+        {
+          "pointer": "/lanes/design",
+          "startedAt": "2026-09-08T08:58:18.142Z",
+          "finishedAt": "2026-09-08T08:58:35.164Z",
+          "durationMs": 17022,
+          "verdict": "FAIL",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22412,
+            "outputTokens": 165,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 155
+          }
+        }
+      ],
+      "receiptExists": true,
+      "resultFile": "/private/tmp/sasu-workflow-coordinator/version-comparison/results/old-healthy/process.json",
+      "statePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/old-healthy/agents/runs/matched-task-list-library/state.json"
+    },
+    {
+      "version": "old",
+      "variant": "omission",
+      "status": "active",
+      "contractVersion": "0.8.0",
+      "cliCommit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20",
+      "ownerSessionId": "01a07f90-d3b1-7060-b2e2-15c217d81990",
+      "implementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+      "actualImplementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "prdSha256": "959467d9c309bc5081e210745b0328aeda3830240b24d4f42b650c396045a566",
+      "stateSchema": "sasu.implement.state.v8",
+      "stateBytes": 28419,
+      "publicCommandCount": 8,
+      "publicCommands": [
+        {
+          "label": "start",
+          "durationMs": 102.764333,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B1",
+          "durationMs": 53.2825,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B2",
+          "durationMs": 53.468458,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B3",
+          "durationMs": 54.503125,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B4",
+          "durationMs": 52.859916,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B5",
+          "durationMs": 54.743959,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-B6",
+          "durationMs": 53.179041,
+          "exitCode": 0
+        },
+        {
+          "label": "verify",
+          "durationMs": 20102.425042,
+          "exitCode": 1
+        }
+      ],
+      "processWallMs": 20531,
+      "startedAt": "2026-09-08T09:01:43.673Z",
+      "finishedAt": "2026-09-08T09:02:04.204Z",
+      "unifiedVerdict": "FAIL",
+      "verifyAttempts": 1,
+      "suiteExecutions": 1,
+      "suiteDurationMs": 234,
+      "judgeLanes": 8,
+      "actualJudgeInvocations": 8,
+      "judgeResourceMs": 123888,
+      "judgeWallUnionMs": 19749,
+      "judgeUsage": {
+        "inputTokens": 180884,
+        "outputTokens": 1944,
+        "cachedInputTokens": 100352,
+        "reasoningOutputTokens": 1242
+      },
+      "oldDesignLaneEmptyComments": true,
+      "concurrentMutationVerification": [
+        {
+          "name": "sasu-workflow-mutation-v1",
+          "startedAt": "2026-09-08T08:57:50.190Z",
+          "finishedAt": "2026-09-08T09:02:51.207Z",
+          "overlapMs": 20531
+        }
+      ],
+      "lanes": [
+        {
+          "pointer": "/lanes/acceptance/result/invocations/0",
+          "startedAt": "2026-09-08T09:01:44.453Z",
+          "finishedAt": "2026-09-08T09:01:58.969Z",
+          "durationMs": 14516,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22629,
+            "outputTokens": 176,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 106
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/1",
+          "startedAt": "2026-09-08T09:01:44.454Z",
+          "finishedAt": "2026-09-08T09:01:57.306Z",
+          "durationMs": 12852,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22627,
+            "outputTokens": 163,
+            "cachedInputTokens": 15104,
+            "reasoningOutputTokens": 71
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/2",
+          "startedAt": "2026-09-08T09:01:44.454Z",
+          "finishedAt": "2026-09-08T09:02:03.673Z",
+          "durationMs": 19219,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22627,
+            "outputTokens": 275,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 193
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/3",
+          "startedAt": "2026-09-08T09:01:44.454Z",
+          "finishedAt": "2026-09-08T09:01:57.827Z",
+          "durationMs": 13373,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22628,
+            "outputTokens": 168,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 100
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/4",
+          "startedAt": "2026-09-08T09:01:44.454Z",
+          "finishedAt": "2026-09-08T09:01:59.819Z",
+          "durationMs": 15365,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22630,
+            "outputTokens": 251,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 169
+          }
+        },
+        {
+          "pointer": "/lanes/acceptance/result/invocations/5",
+          "startedAt": "2026-09-08T09:01:44.454Z",
+          "finishedAt": "2026-09-08T09:01:58.810Z",
+          "durationMs": 14356,
+          "verdict": "FAIL",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22638,
+            "outputTokens": 189,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 126
+          }
+        },
+        {
+          "pointer": "/lanes/fidelity",
+          "startedAt": "2026-09-08T09:01:44.454Z",
+          "finishedAt": "2026-09-08T09:02:04.197Z",
+          "durationMs": 19743,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22717,
+            "outputTokens": 521,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 286
+          }
+        },
+        {
+          "pointer": "/lanes/design",
+          "startedAt": "2026-09-08T09:01:44.448Z",
+          "finishedAt": "2026-09-08T09:01:58.912Z",
+          "durationMs": 14464,
+          "verdict": "FAIL",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 22388,
+            "outputTokens": 201,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 191
+          }
+        }
+      ],
+      "receiptExists": false,
+      "resultFile": "/private/tmp/sasu-workflow-coordinator/version-comparison/results/old-omission/process.json",
+      "statePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/old-omission/agents/runs/matched-task-list-library/state.json"
+    },
+    {
+      "version": "new",
+      "variant": "healthy",
+      "status": "complete",
+      "contractVersion": "0.9.0",
+      "cliCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+      "ownerSessionId": "01a07f90-d3b1-7060-b2e2-15c217d81990",
+      "implementationSha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d",
+      "actualImplementationSha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "prdSha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5",
+      "stateSchema": "sasu.implement.state.v9",
+      "stateBytes": 9955,
+      "publicCommandCount": 4,
+      "publicCommands": [
+        {
+          "label": "start",
+          "durationMs": 108.717,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-run",
+          "durationMs": 53.482709,
+          "exitCode": 0
+        },
+        {
+          "label": "verify",
+          "durationMs": 26395.031,
+          "exitCode": 0
+        },
+        {
+          "label": "finalize",
+          "durationMs": 103.977458,
+          "exitCode": 0
+        }
+      ],
+      "processWallMs": 26665,
+      "startedAt": "2026-09-08T09:00:53.371Z",
+      "finishedAt": "2026-09-08T09:01:20.036Z",
+      "unifiedVerdict": "PASS",
+      "verifyAttempts": 1,
+      "suiteExecutions": 1,
+      "suiteDurationMs": 274,
+      "judgeLanes": 1,
+      "actualJudgeInvocations": 1,
+      "judgeResourceMs": 25977,
+      "judgeWallUnionMs": 25977,
+      "judgeUsage": {
+        "inputTokens": 24975,
+        "outputTokens": 936,
+        "cachedInputTokens": 20224,
+        "reasoningOutputTokens": 887
+      },
+      "oldDesignLaneEmptyComments": false,
+      "concurrentMutationVerification": [
+        {
+          "name": "sasu-workflow-mutation-v1",
+          "startedAt": "2026-09-08T08:57:50.190Z",
+          "finishedAt": "2026-09-08T09:02:51.207Z",
+          "overlapMs": 26665
+        }
+      ],
+      "lanes": [
+        {
+          "pointer": "/review",
+          "startedAt": "2026-09-08T09:00:53.930Z",
+          "finishedAt": "2026-09-08T09:01:19.907Z",
+          "durationMs": 25977,
+          "verdict": "PASS",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 24975,
+            "outputTokens": 936,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 887
+          }
+        }
+      ],
+      "receiptExists": true,
+      "resultFile": "/private/tmp/sasu-workflow-coordinator/version-comparison/results/new-healthy/process.json",
+      "statePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-healthy/agents/runs/matched-task-list-library/state.json"
+    },
+    {
+      "version": "new",
+      "variant": "omission",
+      "status": "active",
+      "contractVersion": "0.9.0",
+      "cliCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+      "ownerSessionId": "01a07f90-d3b1-7060-b2e2-15c217d81990",
+      "implementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+      "actualImplementationSha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82",
+      "suiteSha256": "00fa85e9bbc61dd31bd5aeef4401eaf5b3f91340e01e9ce9068e239297fb732c",
+      "prdSha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5",
+      "stateSchema": "sasu.implement.state.v9",
+      "stateBytes": 10739,
+      "publicCommandCount": 3,
+      "publicCommands": [
+        {
+          "label": "start",
+          "durationMs": 104.933083,
+          "exitCode": 0
+        },
+        {
+          "label": "artifact-run",
+          "durationMs": 51.563125,
+          "exitCode": 0
+        },
+        {
+          "label": "verify",
+          "durationMs": 33479.945666,
+          "exitCode": 1
+        }
+      ],
+      "processWallMs": 33639,
+      "startedAt": "2026-09-08T09:02:13.233Z",
+      "finishedAt": "2026-09-08T09:02:46.872Z",
+      "unifiedVerdict": "FAIL",
+      "verifyAttempts": 1,
+      "suiteExecutions": 1,
+      "suiteDurationMs": 209,
+      "judgeLanes": 1,
+      "actualJudgeInvocations": 1,
+      "judgeResourceMs": 33129,
+      "judgeWallUnionMs": 33129,
+      "judgeUsage": {
+        "inputTokens": 24991,
+        "outputTokens": 1177,
+        "cachedInputTokens": 8960,
+        "reasoningOutputTokens": 1034
+      },
+      "oldDesignLaneEmptyComments": false,
+      "concurrentMutationVerification": [
+        {
+          "name": "sasu-workflow-mutation-v1",
+          "startedAt": "2026-09-08T08:57:50.190Z",
+          "finishedAt": "2026-09-08T09:02:51.207Z",
+          "overlapMs": 33639
+        }
+      ],
+      "lanes": [
+        {
+          "pointer": "/review",
+          "startedAt": "2026-09-08T09:02:13.716Z",
+          "finishedAt": "2026-09-08T09:02:46.845Z",
+          "durationMs": 33129,
+          "verdict": "FAIL",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "actualInvocations": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 24991,
+            "outputTokens": 1177,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 1034
+          }
+        }
+      ],
+      "receiptExists": false,
+      "resultFile": "/private/tmp/sasu-workflow-coordinator/version-comparison/results/new-omission/process.json",
+      "statePath": "/private/tmp/sasu-workflow-coordinator/version-comparison/trials/new-omission/agents/runs/matched-task-list-library/state.json"
+    }
+  ]
+}

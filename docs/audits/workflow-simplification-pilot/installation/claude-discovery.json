@@ -1,0 +1,66 @@
+{
+  "capturedAt": "2026-09-08T09:12:47.369Z",
+  "sessionId": "79bdac14-9acf-4ad9-a209-bf1f2b101539",
+  "pane": "w72:pH",
+  "method": "Fresh native /skills filtered list before any model task or product write",
+  "skills": [
+    {
+      "name": "interview-me",
+      "discovered": true
+    },
+    {
+      "name": "gen-prd",
+      "discovered": true
+    },
+    {
+      "name": "implement",
+      "discovered": true
+    },
+    {
+      "name": "benchmark-implement",
+      "discovered": true
+    },
+    {
+      "name": "ship",
+      "discovered": true
+    },
+    {
+      "name": "sasu-setup",
+      "discovered": true
+    },
+    {
+      "name": "please",
+      "discovered": true
+    },
+    {
+      "name": "remember",
+      "discovered": true
+    },
+    {
+      "name": "quick",
+      "discovered": true
+    },
+    {
+      "name": "challenge",
+      "discovered": true
+    }
+  ],
+  "records": [
+    {
+      "query": "implement",
+      "text": "\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n   Skills\n   12/128 skills · type to filter · ↓/enter to select · esc to clear\n\n   ╭───────────────────────────────────────────────────────────────────────────────────────────────────╮\n   │ ⌕ implement                                                                                       │\n   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯\n   ❯ ✔ on         benchmark-implement · user · ~160 tok\n     ✔ on         brainstorming · user · ~70 tok\n     ✔ on         gen-prd · user · ~130 tok\n     ✔ on         implement · user · ~130 tok\n     ✔ on         lean · user · ~90 tok\n     ✔ on         please · user · ~120 tok\n     ✔ on         quick · user · ~120 tok\n     ✔ on         sasu-setup · user · ~110 tok\n     ✘ off        seo-hreflang · user · ~100 tok\n     ✘ off        seo-plan · user · ~110 tok\n     ✔ on         ship · user · ~120 tok\n     ✔ on         verify · user · ~100 tok\n\n   Plugin skills are managed via /plugin"
+    },
+    {
+      "query": "interview-me",
+      "text": "\n\n\n\n\n\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n   Skills\n   1/128 skills · type to filter · ↓/enter to select · esc to clear\n\n   ╭───────────────────────────────────────────────────────────────────────────────────────────────────╮\n   │ ⌕ interview-me                                                                                    │\n   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯\n   ❯ ✔ on         interview-me · user · ~170 tok\n\n   Plugin skills are managed via /plugin"
+    },
+    {
+      "query": "remember",
+      "text": "\n\n\n\n\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n   Skills\n   2/128 skills · type to filter · ↓/enter to select · esc to clear\n\n   ╭───────────────────────────────────────────────────────────────────────────────────────────────────╮\n   │ ⌕ remember                                                                                        │\n   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯\n   ❯ ✔ on         principle · user · ~170 tok\n     ✔ on         remember · user · ~120 tok\n\n   Plugin skills are managed via /plugin"
+    },
+    {
+      "query": "challenge",
+      "text": "\n\n\n\n\n\n\n\n▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n   Skills\n   1/128 skills · type to filter · ↓/enter to select · esc to clear\n\n   ╭───────────────────────────────────────────────────────────────────────────────────────────────────╮\n   │ ⌕ challenge                                                                                       │\n   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯\n   ❯ ✔ on         challenge · user · ~160 tok\n\n   Plugin skills are managed via /plugin"
+    }
+  ]
+}

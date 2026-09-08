@@ -1,0 +1,18 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": true,
+  "action": "dispatch",
+  "exitCode": 0,
+  "message": "implementor workflow-installed (claude) started in w72:pH from agents/prd/installed-smoke/prd.md",
+  "detail": {
+    "paneId": "w72:pH",
+    "agent": "workflow-installed",
+    "kind": "claude",
+    "prd": "agents/prd/installed-smoke/prd.md",
+    "parentLineage": "unavailable"
+  },
+  "summary": [
+    "Wake on its events with `sasu implement await --agent workflow-installed`.",
+    "Read its pane with `herdr agent read workflow-installed --source recent-unwrapped --lines 120` for diagnosis only."
+  ]
+}

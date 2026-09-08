@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-08T09:25:19.206Z",
+  "kind": "coordinator-authored fixture scope correction under original authorized local E2E rollout",
+  "beforeSha256": "366e071b436ec5cef2f2e4b0b6ce32dc9a087ff7c485737032e2cc2898ee8b5a",
+  "afterSha256": "ccff9aec5e3555c4938a676dd7c2661e70bba092786f2ebd4273c6ef9f3a2592",
+  "changed": [
+    "review_rationale",
+    "Goal"
+  ],
+  "productBehaviorsChanged": false,
+  "decisionChanges": false,
+  "sourceChanged": false,
+  "testsChanged": false,
+  "configChanged": false,
+  "retainedExternalValidation": "After actual verify PASS and finalize, doctor and both installed receipt consumer preflights must run against this fixture. Their failure is rollout failure, not retroactive product receipt mutation.",
+  "authorityFile": "/tmp/sasu-workflow-coordinator/user-delegation.txt"
+}

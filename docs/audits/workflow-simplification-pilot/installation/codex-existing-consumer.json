@@ -1,0 +1,378 @@
+{
+  "ok": true,
+  "repoRoot": "/private/tmp/sasu-workflow-pilots/claude",
+  "statePath": "agents/runs/link-pocket/state.json",
+  "receiptPath": "agents/runs/link-pocket/receipt.json",
+  "delivery": {
+    "mode": "local",
+    "branch": "prd/link-pocket",
+    "baseBranch": "main",
+    "ci": {
+      "watch": true,
+      "maxFixAttempts": 2,
+      "timeoutSeconds": 240,
+      "intervalSeconds": 15
+    },
+    "staging": {}
+  },
+  "modeOk": false,
+  "deliveryFreshness": {
+    "ok": true,
+    "violations": [],
+    "status": {
+      "schema": "sasu.implement.state.v9",
+      "status": "complete",
+      "topicSlug": "link-pocket",
+      "prdPath": "agents/prd/link-pocket/prd.md",
+      "prdSnapshotPath": "agents/runs/link-pocket/prd.md",
+      "baselineAttribution": {
+        "disposition": "clean",
+        "paths": [],
+        "baselineDigest": "50bab25798d711ce4125acf5308f56d3fad11a84b5823eb479b76155a325f21a",
+        "head": "0f2e1b20d644be9c897904c6900c6b9da16f7808"
+      },
+      "workingRoot": "/private/tmp/sasu-workflow-pilots/claude",
+      "worktree": null,
+      "reviewProfile": "standard",
+      "escalations": {
+        "used": 0,
+        "limit": 3,
+        "remaining": 3
+      },
+      "requirementCount": 34,
+      "suite": {
+        "green": 1,
+        "total": 1,
+        "red": []
+      },
+      "findings": [],
+      "humanConfirmations": [],
+      "riskFindings": {
+        "open": [],
+        "openCount": 0
+      },
+      "verification": {
+        "verdict": "PASS",
+        "attempts": 5,
+        "budget": {
+          "fixAttempts": 0,
+          "totalAttempts": 5,
+          "budget": 5,
+          "budgetExhausted": false,
+          "consecutiveErrors": 0,
+          "judgeErrorThreshold": 3,
+          "judgeErrorCause": null,
+          "judgeErrorLoop": false,
+          "prejudgeFailures": 0,
+          "prejudgeFailureLimit": 3,
+          "prejudgeFailureLoop": false,
+          "grants": 0
+        },
+        "latest": {
+          "id": "f20385c1-a8a1-4c23-ac45-5b1a2386359f",
+          "verdict": "PASS",
+          "phase": "complete",
+          "inputFingerprint": "ea7bf8c383d4d2cee05d2a633a90450b4bb7983d2f78ddcc22d44632b4bf27a9",
+          "sourceFingerprint": "c92d9cdf5489a8c6ed7ac0a09b31e203550c452c7d62365ab4cd362668d8f564",
+          "startedAt": "2026-09-08T07:56:54.003Z",
+          "finishedAt": "2026-09-08T07:58:41.025Z",
+          "durationMs": 107021,
+          "prelint": {
+            "ok": true,
+            "findings": []
+          },
+          "mechanical": [
+            {
+              "command": "/usr/bin/env LINK_POCKET_TEST_PORT=42732 npm run check",
+              "cwd": ".",
+              "startedAt": "2026-09-08T07:56:54.130Z",
+              "finishedAt": "2026-09-08T07:57:17.147Z",
+              "durationMs": 23017,
+              "exitCode": 0,
+              "mutatedTree": false,
+              "status": "PASS",
+              "logPath": "agents/runs/link-pocket/artifacts/logs/mechanical-fec445a5fea37dfe.log"
+            }
+          ],
+          "review": {
+            "invocationId": "60e6fbc9-67fb-4906-b0dc-2689a2916232",
+            "verdict": "PASS",
+            "result": {
+              "summary": "The complete approved contract is satisfied by the supplied source and evidence. The required npm run check passed all 42 tests, and the previous duplicate-order and focus-management findings are resolved.",
+              "findings": [],
+              "priorDispositions": [
+                {
+                  "findingId": "F1",
+                  "status": "resolved",
+                  "reason": "parseDocument now tracks item order values in a Set and rejects duplicates; the committed storage-recovery test covers duplicate sort orders as a load failure.",
+                  "evidenceRefs": [
+                    "src/model.ts",
+                    "src/storage.ts",
+                    "tests/storage-recovery.spec.ts"
+                  ]
+                },
+                {
+                  "findingId": "F2",
+                  "status": "resolved",
+                  "reason": "The current delete flow no longer programmatically focuses the undo control; undo remains exposed through a polite live region without focus transfer.",
+                  "evidenceRefs": [
+                    "src/app.ts",
+                    "tests/actions.spec.ts"
+                  ]
+                }
+              ]
+            },
+            "startedAt": "2026-09-08T07:57:17.756Z",
+            "finishedAt": "2026-09-08T07:58:40.865Z",
+            "durationMs": 83109,
+            "error": null
+          },
+          "risk": null,
+          "error": null
+        }
+      },
+      "activeVerification": null,
+      "artifacts": [
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/01-first-time-empty.png",
+          "description": "First-time empty workspace on a profile with no link-pocket:data:v1 entry: title, header Add link, purpose text, no sample rows and no visible count. Not checked here: assistive-technology output, only the accessibility tree text reported by chromux snapshot.",
+          "sha256": "37dd252671db911f15819ce0095e4fd2cd7ebe503c1dcd29d04676f93c67dcc3",
+          "bytes": 60867,
+          "registeredAt": "2026-09-08T07:10:05.903Z",
+          "observedAt": "2026-09-08T07:10:05.902Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/02-populated.png",
+          "description": "Populated collection after creating three links through the real Add link modal: rows ordered newest first, '3 links shown' count, tags normalized from '  reference ,, Reference , web  ' to reference/web. Not checked here: undo timing.",
+          "sha256": "810ddde3bc6be29063596ea35ac258c4238ff3f44d9f2bf6e728f298ef67fec7",
+          "bytes": 136851,
+          "registeredAt": "2026-09-08T07:10:05.903Z",
+          "observedAt": "2026-09-08T07:10:05.903Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/03-search-and-tag-filter.png",
+          "description": "Search query '  WEB  ' combined with the row tag filter 'reference': the intersection shows one row and the count reads '1 link shown', with Clear search and Remove tag filter both reachable. Not checked here: locale-specific case folding beyond ASCII.",
+          "sha256": "1ec781e9eff18889d4192557a47b894dcdf5b56d6c0086db05c58c90584b3904",
+          "bytes": 90965,
+          "registeredAt": "2026-09-08T07:10:05.904Z",
+          "observedAt": "2026-09-08T07:10:05.904Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/04-delete-undo.png",
+          "description": "State right after deleting 'Grocery list': the row is gone, the count dropped to 2, and the undo banner offers a ten second restore. The subsequent undo restored the item at its original order 3 with unchanged id, tags and timestamps, verified by reading link-pocket:data:v1 through CDP.",
+          "sha256": "50d42e56719a52140fc14c87e659e36775a249466228a665e9f9a9f86d17ec0b",
+          "bytes": 125863,
+          "registeredAt": "2026-09-08T07:10:05.904Z",
+          "observedAt": "2026-09-08T07:10:05.904Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/05-load-failure-reset-confirm.png",
+          "description": "Load failure for the malformed raw value '{ not json': a distinct error panel, Retry, Reset local data and the confirmation that names link-pocket:data:v1 and the permanent deletion. The raw stored value was re-read as '{ not json' after the confirmation appeared, and Retry recovered to a normal list once valid data was written back.",
+          "sha256": "a17b2b4c728a8991362d1b742feacf358bd299bb2af8429bd9990b4fa597cd28",
+          "bytes": 85544,
+          "registeredAt": "2026-09-08T07:10:05.905Z",
+          "observedAt": "2026-09-08T07:10:05.905Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/06-narrow-360.png",
+          "description": "Workspace at a 360 CSS px viewport with a long title, long URL, long unspaced note and long tag: everything wraps inside the row and Copy URL, Edit and Delete stay visible without hover. Measured in the same session: documentElement scrollWidth minus clientWidth is 0 and both row overflows are 0.",
+          "sha256": "04ed3232864dc03677fb244b11dfec1e60a1e79ec8aec4938364712b1a0685d3",
+          "bytes": 142650,
+          "registeredAt": "2026-09-08T07:10:05.905Z",
+          "observedAt": "2026-09-08T07:10:05.905Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/qa/07-modal-360.png",
+          "description": "Add link modal at 360 CSS px: it opens above the still-visible collection, focus is on the Title field with a visible focus ring, and all four fields plus Cancel/Save are reachable. Escape then closed it with the collection unchanged at two rows.",
+          "sha256": "7d8bdc258d9be670841df8dfb7572dfbc19bdd142a6ab4b55e7602f714467a5c",
+          "bytes": 73335,
+          "registeredAt": "2026-09-08T07:10:05.905Z",
+          "observedAt": "2026-09-08T07:10:05.905Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "browser",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/report.md",
+          "description": "Independent coordinator-run Herdr Browser + Chromux QA report for this exact source (verdict PASS). Covers creation, validation, tag normalization, editing, Escape dismissal, Enter submission, reload persistence, search, tag filtering, no-results recovery, delete, the timed undo window and its expiry, delete persistence, malformed-storage retry, confirmed reset, a browser-injected QuotaExceededError save failure, and 360 CSS px operation. Collected by the coordinator, not by this implementor; no project suite or judge was invoked in it. I verified all 20 inventoried source files are byte-identical to my current working tree, aggregate SHA-256 0b2aa9ddf2609a6e5f751ba4f80f7f68d6d9c05962d0b19684a820cfe2ec234d.",
+          "sha256": "af1022ffe5a9bf410cfb7adce9950a1f0b4da02fad2b558e0d22789ce6d130b2",
+          "bytes": 2940,
+          "registeredAt": "2026-09-08T07:49:23.590Z",
+          "observedAt": "2026-09-08T07:49:23.590Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/desktop-empty.png",
+          "description": "Independent QA capture: desktop first-time empty state on a profile with no stored entry. Collected by the coordinator's browser session, not by this implementor.",
+          "sha256": "6ac23b9c49692e563a2887b7853db76caa077ed1d27a1b674c26a7cd5c43cfdc",
+          "bytes": 33460,
+          "registeredAt": "2026-09-08T07:49:23.591Z",
+          "observedAt": "2026-09-08T07:49:23.591Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/save-failure.png",
+          "description": "Independent QA capture: Save link after Storage.prototype.setItem was replaced to throw QuotaExceededError. The modal stayed open with title, URL and note preserved, the two existing rows were unchanged, and both status and inline error feedback were shown. Collected by the coordinator.",
+          "sha256": "3358114dc19a3ee6eb73014434f2b349fe25a9b28b9d9f66a5e76f717de72b91",
+          "bytes": 69447,
+          "registeredAt": "2026-09-08T07:49:23.592Z",
+          "observedAt": "2026-09-08T07:49:23.592Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/malformed.png",
+          "description": "Independent QA capture: malformed-storage load failure. The payload stayed byte-identical after Retry and was removed only after the explicit Delete saved data confirmation. Collected by the coordinator.",
+          "sha256": "18313873fb40f640c2f8d49472dd0b1d241b3dee94d08dc58752ef1da8ad9e6a",
+          "bytes": 33673,
+          "registeredAt": "2026-09-08T07:49:23.592Z",
+          "observedAt": "2026-09-08T07:49:23.592Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/mobile-360-empty.png",
+          "description": "Independent QA capture: empty state at 360 CSS px with measured innerWidth 360 and documentElement/body scrollWidth 360. Collected by the coordinator.",
+          "sha256": "fde1ba3c27b1ffc16767f0b92777ee45947996a821f087b37c257e3817c59a97",
+          "bytes": 27200,
+          "registeredAt": "2026-09-08T07:49:23.592Z",
+          "observedAt": "2026-09-08T07:49:23.592Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/mobile-360-modal.png",
+          "description": "Independent QA capture: the create modal at 360 CSS px opened by a real pointer click and closed by a real Escape keypress. Collected by the coordinator.",
+          "sha256": "8e7fd9280b2175d71c09690281f386bbb263f0e3af54d71c331a92f6a49ce973",
+          "bytes": 26160,
+          "registeredAt": "2026-09-08T07:49:23.592Z",
+          "observedAt": "2026-09-08T07:49:23.592Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "screenshot",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/mobile-360-long-content.png",
+          "description": "Independent QA capture: a link with a long unbroken URL and tag created through the form at 360 CSS px; primary actions stayed visible and content wrapped inside the card with no horizontal page overflow. Collected by the coordinator.",
+          "sha256": "c4aa22d4b0f60cffeab94c1fe9df27281b1dcda69dcd571de12a70e8d4aa18b5",
+          "bytes": 41082,
+          "registeredAt": "2026-09-08T07:49:23.593Z",
+          "observedAt": "2026-09-08T07:49:23.593Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "file",
+          "path": "agents/runs/link-pocket/artifacts/independent-qa/source-after.json",
+          "description": "Source inventory the independent QA recorded after its drive: 20 files with per-file SHA-256, aggregate 0b2aa9ddf2609a6e5f751ba4f80f7f68d6d9c05962d0b19684a820cfe2ec234d, matchesBefore true. I re-checked every listed hash against my current working tree before registering, and all 20 match, so the external observations apply to the source under review.",
+          "sha256": "6734fb4b3e41744f4620885a7678ef59ee643eeafa406d52c112937d61fe81b0",
+          "bytes": 3194,
+          "registeredAt": "2026-09-08T07:49:23.593Z",
+          "observedAt": "2026-09-08T07:49:23.593Z",
+          "provenance": "registered by implementor; collection is self-reported"
+        },
+        {
+          "kind": "file",
+          "path": "playwright.config.ts",
+          "description": "Current unchanged committed browser-verification configuration, registered as shared source evidence for the fresh owned browser/server lifecycle the PRD requires: Playwright starts its own Vite webServer with reuseExistingServer false and a 30s timeout, launches the stable Chrome channel itself, and tears both down; the test port comes from the optional LINK_POCKET_TEST_PORT with a 4173 fallback. It contains no chromux or shared-daemon reference, so committed runs never depend on a browser that is already running.",
+          "sha256": "fb632c044112d861a5d7f24bbc7355608a53eb0f8d332e42e04b6dd36ea2493d",
+          "bytes": 1181,
+          "registeredAt": "2026-09-08T07:49:32.870Z",
+          "observedAt": "2026-09-08T16:49:00+09:00",
+          "provenance": "Implementor; unmodified starter file read from the working tree at registration time",
+          "target": "Working tree /private/tmp/sasu-workflow-pilots/claude at source fingerprint 05d13de9a1566f34ec7fef04423ff3c1c1ae46fa2299cb31459a87b4704bf105",
+          "environment": "repository source file, not a runtime observation",
+          "requirementRefs": [
+            "B34"
+          ]
+        },
+        {
+          "kind": "command-log",
+          "path": "agents/runs/link-pocket/artifacts/logs/mechanical-fec445a5fea37dfe.log",
+          "description": "mechanical PASS: /usr/bin/env LINK_POCKET_TEST_PORT=42732 npm run check",
+          "sha256": "5c7edbf8c6ff77b6f69db99c39bc255ced6f6cc66b427d65685b185f73250ae4",
+          "bytes": 5703,
+          "registeredAt": "2026-09-08T07:57:17.147Z",
+          "observedAt": "2026-09-08T07:57:17.147Z",
+          "provenance": "CLI executed /usr/bin/env LINK_POCKET_TEST_PORT=42732 npm run check in .",
+          "command": "/usr/bin/env LINK_POCKET_TEST_PORT=42732 npm run check",
+          "cwd": ".",
+          "exitCode": 0
+        }
+      ],
+      "retirement": null,
+      "completion": {
+        "fingerprint": "0b10c02c117ce3fe17d0fd2ebcfced3848cef50e3d2201ee15d6adbe28e91c2b",
+        "completedAt": "2026-09-08T07:58:45.477Z",
+        "receiptPath": "agents/runs/link-pocket/receipt.json",
+        "implementationResultPath": "agents/runs/link-pocket/implementation-result.md"
+      },
+      "delivery": {
+        "eligible": true,
+        "reasons": []
+      },
+      "artifactProblems": [],
+      "herdr": {
+        "available": true,
+        "unavailableHoles": [],
+        "reason": null
+      }
+    }
+  },
+  "baseFreshness": {
+    "base": "main",
+    "fetched": true,
+    "behindBy": 0,
+    "aheadBy": 1,
+    "fresh": true,
+    "note": "Branch is up to date with origin base."
+  },
+  "body": {
+    "path": "agents/runs/link-pocket/delivery/pr-body.md",
+    "status": "missing"
+  },
+  "currentBranch": "main",
+  "gitStatus": "",
+  "stagePlan": {
+    "changed": [],
+    "allowed": [
+      "agents/prd/link-pocket",
+      "agents/runs/link-pocket",
+      "README.md",
+      "index.html",
+      "src/app.ts",
+      "src/dom.ts",
+      "src/main.ts",
+      "src/model.ts",
+      "src/storage.ts",
+      "src/style.css",
+      "tests/actions.spec.ts",
+      "tests/docs.spec.ts",
+      "tests/helpers.ts",
+      "tests/link-form.spec.ts",
+      "tests/startup.spec.ts",
+      "tests/storage-recovery.spec.ts",
+      "tests/workspace.spec.ts"
+    ],
+    "excluded": [
+      "agents/runs/.prd-implement-active.json",
+      "agents/runs/link-pocket/artifacts",
+      "agents/runs/link-pocket/gates"
+    ],
+    "ignored": [],
+    "stage": []
+  },
+  "ghAuthOk": true
+}

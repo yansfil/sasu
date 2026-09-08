@@ -1,0 +1,33 @@
+{
+  "schema": "sasu.version-comparison.v1",
+  "caseId": "task-list-library",
+  "authorizationFile": "/tmp/sasu-workflow-coordinator/user-final-validation-approval.txt",
+  "trialLimit": 4,
+  "versions": {
+    "old": {
+      "contractVersion": "0.8.0",
+      "commit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20",
+      "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/cli/dist/cli.js"
+    },
+    "new": {
+      "contractVersion": "0.9.0",
+      "commit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+      "cli": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-review-correction/cli/dist/cli.js"
+    }
+  },
+  "variants": ["healthy", "omission"],
+  "routineJudge": {
+    "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
+    "fallback": null
+  },
+  "suite": "node --test test/task-list.test.mjs",
+  "behaviors": [
+    { "id": "B1", "text": "Adding a task trims its title and assigns the next stable numeric id." },
+    { "id": "B2", "text": "Adding a blank title throws and leaves the supplied list unchanged." },
+    { "id": "B3", "text": "Toggling a known id changes only that task's completed state." },
+    { "id": "B4", "text": "Removing a known id returns a list without that task and preserves the others." },
+    { "id": "B5", "text": "Taking a snapshot returns defensive task copies that callers cannot use to mutate the source list." },
+    { "id": "B6", "text": "The summary uses singular '1 item' for one task and plural '<n> items' for every other count." }
+  ],
+  "plantedOmission": "The omission implementation always returns '<n> items', so the untested one-item branch violates B6 while the fixed suite remains green."
+}

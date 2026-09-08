@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T08:08:42.542Z",
+  "generatedAt": "2026-09-08T09:11:36.684Z",
   "scope": "observable assistant and tool events only; reasoning payloads excluded",
   "cliPin": {
     "wrapper": "/tmp/sasu-workflow-coordinator/bin/sasu",
@@ -299,11 +299,13 @@
       "sessionCreatedAt": "2026-09-08T06:46:51.115Z",
       "taskStartedAt": "2026-09-08T06:55:24.883Z",
       "firstObservableAt": "2026-09-08T06:55:24.883Z",
-      "lastObservableAt": "2026-09-08T08:05:00.185Z",
-      "taskObservedWallMs": 4175302,
+      "lastObservableAt": "2026-09-08T08:45:02.959Z",
+      "taskObservedWallMs": 6578076,
       "completedTurns": [
         "2026-09-08T08:03:17.407Z",
-        "2026-09-08T08:05:00.185Z"
+        "2026-09-08T08:05:00.185Z",
+        "2026-09-08T08:41:26.472Z",
+        "2026-09-08T08:45:02.959Z"
       ],
       "injectedLocalSkillRoot": {
         "alias": "r9",
@@ -317,10 +319,10 @@
       "expectedSkill": "/private/tmp/sasu-workflow-pilots/codex/.agents/skills/implement/SKILL.md",
       "byClass": {
         "other": {
-          "calls": 101,
-          "observedToolMs": 1055656,
+          "calls": 116,
+          "observedToolMs": 1358077,
           "firstAt": "2026-09-08T06:55:41.047Z",
-          "lastAt": "2026-09-08T08:04:48.386Z"
+          "lastAt": "2026-09-08T08:44:52.731Z"
         },
         "sasu-start": {
           "calls": 1,
@@ -341,10 +343,10 @@
           "lastAt": "2026-09-08T08:01:50.768Z"
         },
         "sasu-verify": {
-          "calls": 6,
-          "observedToolMs": 151023,
+          "calls": 7,
+          "observedToolMs": 181214,
           "firstAt": "2026-09-08T07:22:59.654Z",
-          "lastAt": "2026-09-08T07:59:10.187Z"
+          "lastAt": "2026-09-08T08:33:00.195Z"
         }
       }
     },
@@ -380,7 +382,7 @@
       "schema": "sasu.implement.state.v9",
       "status": "active",
       "createdAt": "2026-09-08T06:57:00.795Z",
-      "updatedAt": "2026-09-08T07:58:25.837Z",
+      "updatedAt": "2026-09-08T08:41:00.709Z",
       "ownerSessionId": "01a07fc4-fbd3-7102-ae9b-5982ced4a94b",
       "ownerMatchesNativeSession": true,
       "suite": {
@@ -403,14 +405,14 @@
         "results": [
           {
             "commandId": "S1",
-            "attemptId": "007f434d-0af3-4455-99e6-8d5aaca1bd05",
-            "startedAt": "2026-09-08T07:54:02.360Z",
-            "finishedAt": "2026-09-08T07:54:10.955Z",
-            "durationMs": 8595,
+            "attemptId": "1aceb650-f007-47c2-bb58-6213ef8da4f4",
+            "startedAt": "2026-09-08T08:32:30.590Z",
+            "finishedAt": "2026-09-08T08:32:39.805Z",
+            "durationMs": 9215,
             "exitCode": 0,
             "mutatedTree": false,
             "status": "GREEN",
-            "logPath": "agents/runs/link-pocket/artifacts/logs/mechanical-3e9bbafc7f578d77.log"
+            "logPath": "agents/runs/link-pocket/artifacts/logs/mechanical-df23a349d20eeb43.log"
           }
         ]
       },
@@ -604,10 +606,49 @@
             },
             "error": null
           }
+        },
+        {
+          "id": "1aceb650-f007-47c2-bb58-6213ef8da4f4",
+          "startedAt": "2026-09-08T08:32:30.428Z",
+          "finishedAt": "2026-09-08T08:41:00.709Z",
+          "durationMs": 510281,
+          "phase": "complete",
+          "verdict": "FAIL",
+          "error": null,
+          "mechanical": [
+            {
+              "startedAt": "2026-09-08T08:32:30.590Z",
+              "finishedAt": "2026-09-08T08:32:39.805Z",
+              "durationMs": 9215,
+              "exitCode": 0,
+              "status": "PASS"
+            }
+          ],
+          "review": {
+            "startedAt": "2026-09-08T08:32:40.257Z",
+            "finishedAt": "2026-09-08T08:41:00.521Z",
+            "durationMs": 500264,
+            "verdict": "FAIL",
+            "judge": {
+              "backend": "codex",
+              "model": "gpt-5.6-luna",
+              "attempts": 1,
+              "durationMs": 500264,
+              "outcome": "ok",
+              "usage": {
+                "inputTokens": 69077,
+                "outputTokens": 3541,
+                "cachedInputTokens": 61568,
+                "reasoningOutputTokens": 3106
+              }
+            },
+            "error": null
+          }
         }
       ],
       "activeVerification": null,
       "completion": null,
+      "receiptExists": false,
       "findings": [
         {
           "id": "F1",
@@ -733,34 +774,69 @@
         {
           "id": "F9",
           "kind": "defect",
-          "status": "open",
+          "status": "resolved",
           "requirementRefs": [
             "B30",
             "D-11"
           ],
           "originAttemptId": "007f434d-0af3-4455-99e6-8d5aaca1bd05",
           "lastHistory": {
-            "attemptId": "007f434d-0af3-4455-99e6-8d5aaca1bd05",
-            "status": "open",
-            "reason": "초기 load 경로에서는 tryLoad가 loading 상태와 ready 상태를 전환하지만 announce를 호출하지 않는다. 초기 loading 영역은 aria-busy와 aria-label만 있고 live status 역할이 없으므로, 보조기술 사용자는 초기 저장 데이터 로딩 완료 또는 실패 외의 정상 완료 상태를 명시적으로 안내받지 못한다."
+            "attemptId": "1aceb650-f007-47c2-bb58-6213ef8da4f4",
+            "status": "resolved",
+            "reason": "tryLoad가 초기 로딩 시작 시 announce(\"Loading saved links.\")를 호출하고, 성공·실패 완료 상태도 각각 live region으로 발표한다."
           }
         },
         {
           "id": "F10",
           "kind": "defect",
-          "status": "open",
+          "status": "resolved",
           "requirementRefs": [
             "B30",
             "D-11"
           ],
           "originAttemptId": "007f434d-0af3-4455-99e6-8d5aaca1bd05",
           "lastHistory": {
-            "attemptId": "007f434d-0af3-4455-99e6-8d5aaca1bd05",
+            "attemptId": "1aceb650-f007-47c2-bb58-6213ef8da4f4",
+            "status": "resolved",
+            "reason": "Retry 실행 시 restoreTransitionFocus를 기록하고 로딩 완료 후 실패면 Retry, 성공이면 Add link로 포커스를 복원한다. 해당 전환과 포커스는 브라우저 테스트에도 포함되어 있다."
+          }
+        },
+        {
+          "id": "F11",
+          "kind": "defect",
+          "status": "open",
+          "requirementRefs": [
+            "B17",
+            "B26",
+            "B27",
+            "B30",
+            "D-11"
+          ],
+          "originAttemptId": "1aceb650-f007-47c2-bb58-6213ef8da4f4",
+          "lastHistory": {
+            "attemptId": "1aceb650-f007-47c2-bb58-6213ef8da4f4",
             "status": "open",
-            "reason": "사용자가 load-error 화면의 Retry를 클릭하면 tryLoad가 즉시 renderLoading을 호출하고 mount.innerHTML로 포커스된 Retry 버튼을 제거한다. 이후 로딩 완료 또는 실패 화면에서도 포커스를 복원하지 않으므로 포커스가 문서 본문으로 소실된다. 이는 load feedback이 현재 포커스를 뺏지 않아야 한다는 계약을 위반한다."
+            "reason": "키보드로 Delete를 실행하면 bindEvents에서 deleteItem으로 전달되고, 저장 성공 후 render()가 mount.innerHTML로 기존 DOM을 교체해 포커스된 Delete 버튼을 제거하지만 포커스를 복원하지 않는다. Undo 성공도 undoDelete의 render()가 포커스된 Undo 버튼을 제거하고 포커스를 복원하지 않는다. 확인된 Reset local data 역시 성공·실패 양쪽에서 render()로 포커스된 Reset 버튼을 제거한다. 결과적으로 persistence feedback 이후 activeElement가 body로 소실된다."
           }
         }
       ]
+    },
+    "sourceIdentity": {
+      "commit": "c3dd486948fc4a2655eacfcc212c43ec57c90683",
+      "tree": "7ba8fcf3c153155584da19fefd9db6db649b0f92",
+      "committedAt": "2026-09-08T17:44:52+09:00"
+    },
+    "preservationAfterSixthReview": {
+      "sixthReviewFinishedAt": "2026-09-08T08:41:00.709Z",
+      "preservedCommit": "c3dd486948fc4a2655eacfcc212c43ec57c90683",
+      "preservedCommitAt": "2026-09-08T17:44:52+09:00",
+      "currentMainSha256": "4a76dc9217af0de65cad4d3853b0a8033166b0b41c9587ec5159fcf1287b07e1",
+      "openFindingIds": [
+        "F11"
+      ],
+      "repairAfterSixthReview": false,
+      "subsequentVerification": false,
+      "note": "The commit was created after the sixth review to preserve the bytes that review inspected. F11 remains open; no post-review repair or completion receipt exists."
     }
   },
   "claude": {
@@ -802,14 +878,14 @@
         "transcript": "/Users/hoyeonlee/.claude/projects/-private-tmp-sasu-workflow-pilots-claude/bfd43801-cdd0-4d88-b3c8-c773c2d93a89.jsonl",
         "resumedAt": "2026-09-08T07:29:55.000Z",
         "firstObservableAt": "2026-09-08T07:31:37.276Z",
-        "lastObservableAt": "2026-09-08T08:04:54.916Z",
-        "toolCalls": 29,
+        "lastObservableAt": "2026-09-08T09:03:27.401Z",
+        "toolCalls": 40,
         "byClass": {
           "other": {
-            "calls": 22,
-            "observedToolMs": 31078,
+            "calls": 33,
+            "observedToolMs": 339479,
             "firstAt": "2026-09-08T07:31:37.276Z",
-            "lastAt": "2026-09-08T08:04:54.916Z"
+            "lastAt": "2026-09-08T09:03:27.401Z"
           },
           "implementation": {
             "calls": 1,
@@ -842,10 +918,10 @@
       "expectedSkill": "/private/tmp/sasu-workflow-pilots/claude/.claude/skills/implement/SKILL.md",
       "byClass": {
         "other": {
-          "calls": 77,
-          "observedToolMs": 110207,
+          "calls": 88,
+          "observedToolMs": 418608,
           "firstAt": "2026-09-08T06:55:30.541Z",
-          "lastAt": "2026-09-08T08:04:54.916Z"
+          "lastAt": "2026-09-08T09:03:27.401Z"
         },
         "sasu-start": {
           "calls": 1,
@@ -1140,6 +1216,7 @@
         "receiptPath": "agents/runs/link-pocket/receipt.json",
         "implementationResultPath": "agents/runs/link-pocket/implementation-result.md"
       },
+      "receiptExists": true,
       "findings": [
         {
           "id": "F1",
@@ -1173,7 +1250,21 @@
           }
         }
       ]
+    },
+    "sourceIdentity": {
+      "commit": "6a258f845c58c1a7ba93ac7bb27a09eb16667cfc",
+      "tree": "b7d918f8e1ad01e253dfa38cb040dbb516d9b780",
+      "committedAt": "2026-09-08T16:59:29+09:00"
     }
+  },
+  "authorizationBoundary": {
+    "codexFifthFinishedAt": "2026-09-08T07:58:25.836Z",
+    "productRepairTurnSettledAt": "2026-09-08T08:03:17.407Z",
+    "humanAuthorizationArrivedAt": "2026-09-08T08:32:13.003Z",
+    "codexSixthStartedAt": "2026-09-08T08:32:30.428Z",
+    "totalBetweenVerifyAttemptsMs": 2044592,
+    "authorizationWaitFromSettledTurnMs": 1735596,
+    "note": "Wall-clock authorization interval, not judge or implementation compute. A short unrelated fixture-fix turn occurred inside this interval."
   },
   "parallelOverlap": {
     "implementation": {

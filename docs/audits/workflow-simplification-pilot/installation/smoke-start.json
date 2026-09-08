@@ -1,0 +1,69 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": true,
+  "action": "start",
+  "exitCode": 0,
+  "message": "implement run started: installed-smoke",
+  "detail": {
+    "schema": "sasu.implement.state.v9",
+    "status": "active",
+    "topicSlug": "installed-smoke",
+    "prdPath": "agents/prd/installed-smoke/prd.md",
+    "prdSnapshotPath": "agents/runs/installed-smoke/prd.md",
+    "baselineAttribution": {
+      "disposition": "clean",
+      "paths": [],
+      "baselineDigest": "6b0736d04b2593d5534c1c133b4c59bc001c2e522f735a88818fd90762c8a800",
+      "head": "0317644647d283c4e434384fde2bc9cd4ef2f426"
+    },
+    "workingRoot": "/private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+    "worktree": null,
+    "reviewProfile": "standard",
+    "escalations": {
+      "used": 0,
+      "limit": 3,
+      "remaining": 3
+    },
+    "requirementCount": 2,
+    "suite": {
+      "green": 0,
+      "total": 1,
+      "red": []
+    },
+    "findings": [],
+    "humanConfirmations": [],
+    "riskFindings": {
+      "open": [],
+      "openCount": 0
+    },
+    "verification": {
+      "verdict": "NOT_RUN",
+      "attempts": 0,
+      "budget": {
+        "fixAttempts": 0,
+        "totalAttempts": 0,
+        "budget": 5,
+        "budgetExhausted": false,
+        "consecutiveErrors": 0,
+        "judgeErrorThreshold": 3,
+        "judgeErrorCause": null,
+        "judgeErrorLoop": false,
+        "prejudgeFailures": 0,
+        "prejudgeFailureLimit": 3,
+        "prejudgeFailureLoop": false,
+        "grants": 0
+      },
+      "latest": null
+    },
+    "activeVerification": null,
+    "artifacts": [],
+    "retirement": null,
+    "completion": null,
+    "delivery": {
+      "eligible": false,
+      "reasons": [
+        "run is active"
+      ]
+    }
+  }
+}

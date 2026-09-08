@@ -1,0 +1,78 @@
+{
+  "capturedAt": "2026-09-08T09:11:24.261Z",
+  "skills": [
+    {
+      "name": "interview-me",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/interview-me/SKILL.md",
+      "sha256": "928dfcbc569d7267540cd258e9015bf28e923c72696661eea2237b439d927cc5"
+    },
+    {
+      "name": "gen-prd",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/gen-prd/SKILL.md",
+      "sha256": "4a58aeaa8393d315de9e20bceb2ea1efe4c2dcdfcfe1532b3386d36d3c8a8bfc"
+    },
+    {
+      "name": "implement",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/implement/SKILL.md",
+      "sha256": "e1051a1c2aa5c77cbbdc4a7883f9b3eae8d638e544038306d799161c1ee4cbf7"
+    },
+    {
+      "name": "benchmark-implement",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/benchmark-implement/SKILL.md",
+      "sha256": "36a190cbdc09b86d99770e26c601cc4c40a4b62b9f9925c0fde1de1f84825a5e"
+    },
+    {
+      "name": "ship",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/ship/SKILL.md",
+      "sha256": "d3f5dc5bab50601a5bba249fb74ab67ea4e0320ad0e27cf7df84edb18bafb4d5"
+    },
+    {
+      "name": "sasu-setup",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/sasu-setup/SKILL.md",
+      "sha256": "ebb295855b5645f12d201340c596486de2daca54aa49ac3154a28c292a46ad63"
+    },
+    {
+      "name": "please",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/please/SKILL.md",
+      "sha256": "01522a3cd843c624f2a3f72345312eee5416aa56166dcb249209279b974f4231"
+    },
+    {
+      "name": "remember",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/remember/SKILL.md",
+      "sha256": "6f25761d2cee7d208a1d5bbeec102df228026f7caa922161b39f3aff2414fc93"
+    },
+    {
+      "name": "quick",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/quick/SKILL.md",
+      "sha256": "36493ecff9d65551c4feec522382f4cd78fba539414ad771ecd7458ed11eeb7f"
+    },
+    {
+      "name": "challenge",
+      "discovered": true,
+      "regular": true,
+      "path": "/Users/hoyeonlee/.codex/skills/challenge/SKILL.md",
+      "sha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323"
+    }
+  ],
+  "contentBlockTypes": [
+    "input_text"
+  ]
+}

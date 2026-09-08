@@ -1,0 +1,114 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": false,
+  "action": "verify",
+  "exitCode": 1,
+  "message": "verification FAIL; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "944a62e2-89a5-47a0-839d-89d616050a28",
+      "verdict": "FAIL",
+      "phase": "complete",
+      "inputFingerprint": "e9ae81204416d78bf26d4191e8c6bc0192b3bff9eb7cf91eb83ad79f703b8d45",
+      "sourceFingerprint": "a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543",
+      "startedAt": "2026-09-08T09:15:14.628Z",
+      "finishedAt": "2026-09-08T09:15:55.630Z",
+      "durationMs": 41001,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-08T09:15:14.741Z",
+          "finishedAt": "2026-09-08T09:15:15.243Z",
+          "durationMs": 502,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/installed-smoke/artifacts/logs/mechanical-327dad12271f3419.log"
+        }
+      ],
+      "review": {
+        "invocationId": "333a6fb6-a2ad-4237-934f-02fc01c366bd",
+        "verdict": "FAIL",
+        "result": {
+          "summary": "The implementation source satisfies the specified normalization and validation behavior, but the supplied evidence cannot establish that the committed test and observation callers actually import and exercise the public module through the installed workflow.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [],
+              "problem": "The contract requires the committed Node suite and observation script to be callers of src/link-pocket.mjs, but test/link-pocket.test.mjs and scripts/observe.mjs are not readable. The test log proves only that three tests passed, and observed.json is explicitly an implementer claim, so caller wiring and installed-workflow consumption remain unverified.",
+              "evidenceRefs": [
+                "PRD",
+                "test/link-pocket.test.mjs",
+                "scripts/observe.mjs",
+                "agents/runs/installed-smoke/artifacts/observed.json",
+                "agents/runs/installed-smoke/artifacts/logs/mechanical-327dad12271f3419.log"
+              ],
+              "nextAction": "Provide the complete contents or bounded execution evidence for the test and observation callers, showing they import and invoke normalizeLink from src/link-pocket.mjs through the required workflow."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "startedAt": "2026-09-08T09:15:15.430Z",
+        "finishedAt": "2026-09-08T09:15:55.479Z",
+        "durationMs": 40049,
+        "error": null
+      },
+      "risk": null,
+      "error": null
+    },
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [],
+        "problem": "The contract requires the committed Node suite and observation script to be callers of src/link-pocket.mjs, but test/link-pocket.test.mjs and scripts/observe.mjs are not readable. The test log proves only that three tests passed, and observed.json is explicitly an implementer claim, so caller wiring and installed-workflow consumption remain unverified.",
+        "evidenceRefs": [
+          "PRD",
+          "test/link-pocket.test.mjs",
+          "scripts/observe.mjs",
+          "agents/runs/installed-smoke/artifacts/observed.json",
+          "agents/runs/installed-smoke/artifacts/logs/mechanical-327dad12271f3419.log"
+        ],
+        "nextAction": "Provide the complete contents or bounded execution evidence for the test and observation callers, showing they import and invoke normalizeLink from src/link-pocket.mjs through the required workflow.",
+        "id": "F1",
+        "originAttemptId": "944a62e2-89a5-47a0-839d-89d616050a28",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-08T09:15:55.479Z",
+            "attemptId": "944a62e2-89a5-47a0-839d-89d616050a28",
+            "status": "open",
+            "reason": "The contract requires the committed Node suite and observation script to be callers of src/link-pocket.mjs, but test/link-pocket.test.mjs and scripts/observe.mjs are not readable. The test log proves only that three tests passed, and observed.json is explicitly an implementer claim, so caller wiring and installed-workflow consumption remain unverified.",
+            "evidenceRefs": [
+              "PRD",
+              "test/link-pocket.test.mjs",
+              "scripts/observe.mjs",
+              "agents/runs/installed-smoke/artifacts/observed.json",
+              "agents/runs/installed-smoke/artifacts/logs/mechanical-327dad12271f3419.log"
+            ]
+          }
+        ],
+        "responses": []
+      }
+    ],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 1,
+      "totalAttempts": 1,
+      "budget": 5,
+      "budgetExhausted": false,
+      "consecutiveErrors": 0,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": null,
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 0,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    }
+  }
+}

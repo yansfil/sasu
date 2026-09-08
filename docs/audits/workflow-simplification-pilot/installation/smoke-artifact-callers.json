@@ -1,0 +1,47 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": true,
+  "action": "artifact",
+  "exitCode": 0,
+  "message": "3 run evidence file(s) registered; unchanged bytes retain their original observation time",
+  "detail": {
+    "artifacts": [
+      {
+        "kind": "file",
+        "path": "test/link-pocket.test.mjs",
+        "description": "Current unchanged committed Node suite: the caller that imports normalizeLink from ../src/link-pocket.mjs and asserts the canonical URL result, the unsupported-scheme failure, and the blank-title failure.",
+        "sha256": "c1059157110121b055792db41be8c26175382c847cf788e22fd361bcd19bbf77",
+        "bytes": 923,
+        "registeredAt": "2026-09-08T09:18:14.316Z",
+        "observedAt": "2026-09-08T09:18:08.000Z",
+        "provenance": "Marked native Implementor reading the committed fixture files unchanged from baseline 0317644647d283c4e434384fde2bc9cd4ef2f426; no product, test, or config bytes were modified.",
+        "target": "Installed smoke fixture working tree at /private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+        "environment": "Local Node v24.12.0"
+      },
+      {
+        "kind": "file",
+        "path": "scripts/observe.mjs",
+        "description": "Current unchanged committed observation script: the caller that imports normalizeLink from ../src/link-pocket.mjs and prints the successful result plus both caller-visible errors.",
+        "sha256": "cc36aee43f6fbfaf158e5202d911fe1512900cbe5f95a506a1b5ef6d4c3ba010",
+        "bytes": 620,
+        "registeredAt": "2026-09-08T09:18:14.317Z",
+        "observedAt": "2026-09-08T09:18:08.000Z",
+        "provenance": "Marked native Implementor reading the committed fixture files unchanged from baseline 0317644647d283c4e434384fde2bc9cd4ef2f426; no product, test, or config bytes were modified.",
+        "target": "Installed smoke fixture working tree at /private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+        "environment": "Local Node v24.12.0"
+      },
+      {
+        "kind": "file",
+        "path": "package.json",
+        "description": "Current unchanged npm entry wiring showing test -> node --test test/*.test.mjs and observe -> node scripts/observe.mjs, which is how both callers are executed.",
+        "sha256": "85704e53cbd134a75a3e616b2a2d79889438bcaede80086b6d352ad7df4b9f2b",
+        "bytes": 181,
+        "registeredAt": "2026-09-08T09:18:14.318Z",
+        "observedAt": "2026-09-08T09:18:08.000Z",
+        "provenance": "Marked native Implementor reading the committed fixture files unchanged from baseline 0317644647d283c4e434384fde2bc9cd4ef2f426; no product, test, or config bytes were modified.",
+        "target": "Installed smoke fixture working tree at /private/tmp/sasu-workflow-coordinator/integration-preflight/installed-smoke",
+        "environment": "Local Node v24.12.0"
+      }
+    ]
+  }
+}

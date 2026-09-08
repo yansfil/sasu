@@ -1,0 +1,126 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": false,
+  "action": "verify",
+  "exitCode": 1,
+  "message": "verification FAIL; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "5d1d3764-9f52-4d28-b88a-182f6ee11a30",
+      "verdict": "FAIL",
+      "phase": "complete",
+      "inputFingerprint": "c732c6c529200bc054164adb6466db956eaf2d0de7128b67b59d43f5c87b5b15",
+      "sourceFingerprint": "a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543",
+      "startedAt": "2026-09-08T09:18:19.862Z",
+      "finishedAt": "2026-09-08T09:19:16.714Z",
+      "durationMs": 56852,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-08T09:18:19.978Z",
+          "finishedAt": "2026-09-08T09:18:20.465Z",
+          "durationMs": 487,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/installed-smoke/artifacts/logs/mechanical-beb10ac76af2cba0.log"
+        }
+      ],
+      "review": {
+        "invocationId": "a69e88df-e634-4344-b584-87b44b0b8ada",
+        "verdict": "FAIL",
+        "result": {
+          "summary": "The implementation and readable callers satisfy D-01, D-02, B1, and B2, and the prior wiring evidence gap is resolved. The installed-workflow consumption boundary remains unverified.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [],
+              "problem": "The goal requires consumption through the globally installed workflow, but the harness log proves only npm test. The observation output is explicitly an implementer claim, so execution through the installed workflow and receipt consumer is not established.",
+              "evidenceRefs": [
+                "PRD",
+                "package.json",
+                "scripts/observe.mjs",
+                "agents/runs/installed-smoke/artifacts/observed.json",
+                "agents/runs/installed-smoke/artifacts/logs/mechanical-beb10ac76af2cba0.log"
+              ],
+              "nextAction": "Run the actual installed workflow and receipt-consumer observation path, then provide harness-owned output tied to the current package and callers."
+            }
+          ],
+          "priorDispositions": [
+            {
+              "findingId": "F1",
+              "status": "resolved",
+              "reason": "The complete test and observation callers are now supplied. Both import normalizeLink from src/link-pocket.mjs, invoke it, and package.json wires their execution scripts.",
+              "evidenceRefs": [
+                "PRD",
+                "package.json",
+                "test/link-pocket.test.mjs",
+                "scripts/observe.mjs"
+              ]
+            }
+          ]
+        },
+        "startedAt": "2026-09-08T09:18:20.646Z",
+        "finishedAt": "2026-09-08T09:19:16.572Z",
+        "durationMs": 55926,
+        "error": null
+      },
+      "risk": null,
+      "error": null
+    },
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [],
+        "problem": "The goal requires consumption through the globally installed workflow, but the harness log proves only npm test. The observation output is explicitly an implementer claim, so execution through the installed workflow and receipt consumer is not established.",
+        "evidenceRefs": [
+          "PRD",
+          "package.json",
+          "scripts/observe.mjs",
+          "agents/runs/installed-smoke/artifacts/observed.json",
+          "agents/runs/installed-smoke/artifacts/logs/mechanical-beb10ac76af2cba0.log"
+        ],
+        "nextAction": "Run the actual installed workflow and receipt-consumer observation path, then provide harness-owned output tied to the current package and callers.",
+        "id": "F2",
+        "originAttemptId": "5d1d3764-9f52-4d28-b88a-182f6ee11a30",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-08T09:19:16.573Z",
+            "attemptId": "5d1d3764-9f52-4d28-b88a-182f6ee11a30",
+            "status": "open",
+            "reason": "The goal requires consumption through the globally installed workflow, but the harness log proves only npm test. The observation output is explicitly an implementer claim, so execution through the installed workflow and receipt consumer is not established.",
+            "evidenceRefs": [
+              "PRD",
+              "package.json",
+              "scripts/observe.mjs",
+              "agents/runs/installed-smoke/artifacts/observed.json",
+              "agents/runs/installed-smoke/artifacts/logs/mechanical-beb10ac76af2cba0.log"
+            ]
+          }
+        ],
+        "responses": []
+      }
+    ],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 2,
+      "totalAttempts": 2,
+      "budget": 5,
+      "budgetExhausted": false,
+      "consecutiveErrors": 0,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": null,
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 0,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "sourceWorktree": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline",
+  "commit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20",
+  "standardBuild": {
+    "command": "npm run build",
+    "status": "FAIL",
+    "reason": "The committed tsconfig lib is ES2022-only while cli/src/judge/api-backend.ts uses Response.body, Response.status, Response.ok, and Response.text."
+  },
+  "comparisonBuild": {
+    "command": "npx tsc -p tsconfig.json --lib ES2022,DOM",
+    "status": "PASS",
+    "sourceEdited": false,
+    "distCliSha256": "0dad9d6384ffcac8cf26dc90b2d5b2aa7959b1bf22041d93ef73f88be768c948"
+  }
+}

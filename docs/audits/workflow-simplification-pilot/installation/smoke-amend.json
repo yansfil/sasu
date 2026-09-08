@@ -1,0 +1,24 @@
+{
+  "contractVersion": "0.9.0",
+  "ok": true,
+  "action": "amend",
+  "exitCode": 0,
+  "message": "amendment 1 sealed; full review freshness invalidated",
+  "detail": {
+    "amendment": {
+      "id": 1,
+      "at": "2026-09-08T09:25:42.352Z",
+      "issuer": "human",
+      "approval": "최종적으로 검증 방식으로 pane으로 PRD까지 만드는거 codex sol로 한번 동작하게 해보고 \n그다음에는 codex, claude code로 각각 해당 PRD implement skill 불러서하게? 해서 최종 검증까지 확실하게 시키면 되겠다 \n\n결국 e2e로 검증 다 되는것까지 \n\n자 이제 우측에 astra xhigh 띄워서 저거 전체 리팩토링 작업 시작하자(worktree 파기) 그리고 위 검증할 때 적절하게 agent 위임해서 하게 하면서 전체 작업 꼼꼼히 완료해",
+      "reason": "Correct coordinator-authored validation boundary: B1 and B2 are the product contract; installed receipt-consumer preflight follows finalize as rollout evidence. No product behavior, suite, source or delivery scope changed.",
+      "prdSha256": "ccff9aec5e3555c4938a676dd7c2661e70bba092786f2ebd4273c6ef9f3a2592",
+      "snapshotPath": "agents/runs/installed-smoke/prd.md",
+      "previousSnapshotPath": "agents/runs/installed-smoke/amendments/prd-1-superseded.md",
+      "changedRequirements": [],
+      "addedRequirements": [],
+      "removedRequirements": [],
+      "closedHumanFindings": [],
+      "suiteSnapshotUpdated": false
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "at": "2026-09-08T09:32:27.532848+00:00",
+  "main": "e453351f703c08e43a276e80fca8bcf61e40a04b",
+  "contract": "0.9.0",
+  "installedPerRuntime": 10,
+  "discoveredPerRuntime": 10,
+  "rootTests": "98/98",
+  "runtimeCodeMatchesFullTestCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+  "initialClaudeDispatch": "Native trust dialog exited before handoff. Recovered same CLI-created marked pane with a fresh native process and actual local-fixture trust confirmation.",
+  "nativeSession": "79bdac14-9acf-4ad9-a209-bf1f2b101539",
+  "smoke": {
+    "status": "active/FAIL; bounded experiment stopped",
+    "attempts": [
+      {
+        "id": "944a62e2-89a5-47a0-839d-89d616050a28",
+        "verdict": "FAIL",
+        "sourceFingerprint": "a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543",
+        "suiteMs": 502,
+        "reviewMs": 40049,
+        "judgeAttempts": 1,
+        "summary": "The implementation source satisfies the specified normalization and validation behavior, but the supplied evidence cannot establish that the committed test and observation callers actually import and exercise the public module through the installed workflow."
+      },
+      {
+        "id": "5d1d3764-9f52-4d28-b88a-182f6ee11a30",
+        "verdict": "FAIL",
+        "sourceFingerprint": "a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543",
+        "suiteMs": 487,
+        "reviewMs": 55926,
+        "judgeAttempts": 1,
+        "summary": "The implementation and readable callers satisfy D-01, D-02, B1, and B2, and the prior wiring evidence gap is resolved. The installed-workflow consumption boundary remains unverified."
+      },
+      {
+        "id": "77bccdc8-83cf-4036-bc91-f0d99583b216",
+        "verdict": "FAIL",
+        "sourceFingerprint": "a6307c94b2d4be6ee4f5b36b29f4df34eae2ad702cf0027b60acabfd1b125543",
+        "suiteMs": 496,
+        "reviewMs": 24798,
+        "judgeAttempts": 1,
+        "summary": "The source and committed suite establish the specified normalization and validation behavior, but the required installed-workflow boundary remains unverified because the harness only ran npm test and the observation output is implementer-owned evidence."
+      }
+    ],
+    "receipt": false,
+    "issue": "Coordinator-authored original Goal mixed product acceptance with post-finalize installed receipt consumption. After same-run amendment removed that Goal clause, attempt 3 retained F2. Current product requirements were affirmed by the judge; contract interpretation remains unresolved.",
+    "attemptsUsed": 3,
+    "attemptBudget": 5,
+    "grants": 0,
+    "amendments": 1,
+    "furtherReview": "NOT_RUN under bounded experiment stop rule",
+    "finalize": "NOT_RUN; requires PASS",
+    "postFinalizeDoctor": "NOT_RUN",
+    "freshReceiptConsumers": "NOT_RUN; no fresh receipt",
+    "diagnosis": {
+      "status": "Concrete incorrect requirement on current sealed input",
+      "evidence": "Current amended PRD has no receipt-consumer prerequisite; Non-goals excludes delivery. Attempt 3 reuses F2 with empty requirementRefs and demands receipt-consumer observation.",
+      "inference": "Prior-finding anchoring is the most plausible explanation, not a proven deterministic defect or measured general failure rate.",
+      "method": "One bounded independent read-only comparison; no fourth judge call."
+    }
+  },
+  "existingReceiptConsumers": {
+    "codex": {
+      "ok": true,
+      "deliveryFreshness": true,
+      "status": "complete",
+      "eligible": true,
+      "completionFingerprint": "0b10c02c117ce3fe17d0fd2ebcfced3848cef50e3d2201ee15d6adbe28e91c2b",
+      "modeOk": false,
+      "note": "Read-only receipt/currentness inspection of already locally delivered B; PR-mode preflight field is false, no delivery attempted."
+    },
+    "claude": {
+      "ok": true,
+      "deliveryFreshness": true,
+      "status": "complete",
+      "eligible": true,
+      "completionFingerprint": "0b10c02c117ce3fe17d0fd2ebcfced3848cef50e3d2201ee15d6adbe28e91c2b",
+      "modeOk": false,
+      "note": "Read-only receipt/currentness inspection of already locally delivered B; PR-mode preflight field is false, no delivery attempted."
+    }
+  },
+  "originalsPreserved": "originals-preserved.json",
+  "scope": "Installation, discovery, existing receipt consumption and real verify execution are observed. Fresh installed smoke completion is not proven."
+}

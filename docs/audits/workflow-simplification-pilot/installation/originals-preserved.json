@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-08T09:25:57.829Z",
+  "records": [
+    {
+      "name": "A",
+      "sha256": "8420a6ff6ef4971be94fed9e95b7fe14208317992359b985038814c11bd7744c",
+      "unchanged": true,
+      "head": "c3dd486948fc4a2655eacfcc212c43ec57c90683",
+      "clean": true
+    },
+    {
+      "name": "B",
+      "sha256": "177be90733e6cb4500f093ea7c16e6921de0ae3cda8e46f870f7b516a42b3ad9",
+      "unchanged": true,
+      "head": "6a258f845c58c1a7ba93ac7bb27a09eb16667cfc",
+      "clean": true
+    }
+  ]
+}
