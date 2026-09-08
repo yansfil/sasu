@@ -1,97 +1,38 @@
-// Quick-contract grammar: the evidence lane is executable declaration, so a
-// parse drift silently changes what the harness runs and hashes. Every field
-// shape and every rejection is pinned here.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseContract, EVIDENCE_MAX_BYTES } from "../../dist/gates/contract.js";
+import { parseContract } from "../../dist/gates/contract.js";
 
-const FULL = `---
-topic: demo
-status: active
----
+test("compact contract keeps all requirements and run-wide optional inputs", () => {
+  const contract = parseContract(`## Acceptance Criteria\n- AC1. save\n- AC2. reload\n## Checks\n- \`node test.mjs\`\n## Evidence\n- logs/run.txt\n- capture: \`node shot.mjs\` -> out/shot.png\n## Human Review\n- Owner will compare the approved design later.\n`);
+  assert.deepEqual(contract.defects, []);
+  assert.deepEqual(contract.criteria.map(c => Object.keys(c).sort()), [["id", "line", "text"], ["id", "line", "text"]]);
+  assert.deepEqual(contract.checks.map(c => c.command), ["node test.mjs"]);
+  assert.deepEqual(contract.evidence.map(c => c.path), ["logs/run.txt"]);
+  assert.deepEqual(contract.captures.map(c => [c.command, c.path]), [["node shot.mjs", "out/shot.png"]]);
+  assert.equal(contract.humanReview[0].text, "Owner will compare the approved design later.");
+});
 
-## Goal
-
-Ship it.
-
-## Checks
-
-- \`npm test\`
-- \`bash -c "curl -sf localhost:3000/health"\`
-
-## Acceptance Criteria
-
-- AC1. the widget renders
-- AC2. the API answers
-  - check: \`curl -sf localhost:3000/health\`
-  - evidence: agents/quick/demo/evidence/api.json
-- AC3. dark mode looks right
-  - capture: \`node scripts/shot.js out/dark.png\` -> out/dark.png
-- AC4. matches the printed mock
-  - human: compare against the mock the user attached
-`;
-
-test("parses checks, criteria, and every evidence field", () => {
-  const parsed = parseContract(FULL);
+test("a document-only contract needs no evidence table or per-requirement outcomes", () => {
+  const parsed = parseContract("## Acceptance Criteria\n- AC1. explain setup\n");
   assert.deepEqual(parsed.defects, []);
-  assert.deepEqual(parsed.checks.map((c) => c.command), ["npm test", 'bash -c "curl -sf localhost:3000/health"']);
-  assert.deepEqual(parsed.criteria.map((c) => c.id), ["AC1", "AC2", "AC3", "AC4"]);
-
-  const [ac1, ac2, ac3, ac4] = parsed.criteria;
-  assert.equal(ac1.text, "the widget renders");
-  assert.deepEqual(ac1.evidence, []);
-  assert.deepEqual(ac2.checks.map((c) => c.command), ["curl -sf localhost:3000/health"]);
-  assert.deepEqual(ac2.evidence.map((e) => e.path), ["agents/quick/demo/evidence/api.json"]);
-  assert.deepEqual(ac3.captures.map((c) => [c.command, c.path]), [["node scripts/shot.js out/dark.png", "out/dark.png"]]);
-  assert.equal(ac4.human, "compare against the mock the user attached");
+  assert.deepEqual(parsed.evidence, []);
+  assert.deepEqual(parsed.humanReview, []);
 });
 
-test("an arrow variant and multiple artifacts per criterion parse", () => {
-  const parsed = parseContract(`---
-topic: demo
-status: active
----
-
-## Acceptance Criteria
-
-- AC1. two proofs
-  - evidence: logs/a.txt
-  - evidence: logs/b.txt
-  - capture: \`shot\` → out/x.png
-`);
-  assert.deepEqual(parsed.defects, []);
-  assert.deepEqual(parsed.criteria[0].evidence.map((e) => e.path), ["logs/a.txt", "logs/b.txt"]);
-  assert.equal(parsed.criteria[0].captures[0].path, "out/x.png");
+test("retired per-AC method fields fail explicitly with last supported commit", () => {
+  for (const field of ["check: `true`", "evidence: file.txt", "capture: `shot` -> shot.png", "human: owner decides", "proof: x"]) {
+    const result = parseContract(`## Acceptance Criteria\n- AC1. behavior\n  - ${field}\n`);
+    assert.equal(result.defects[0].rule, "contract-retired-method");
+    assert.match(result.defects[0].missing, /488d3cc7d6e99742e7f68a1680fcb101710c8e20/);
+  }
 });
 
-const DEFECT_CASES = [
-  ["unbackticked check", "## Checks\n\n- npm test\n\n## Acceptance Criteria\n\n- AC1. x\n", "contract-check-format"],
-  ["capture without artifact path", "## Acceptance Criteria\n\n- AC1. x\n  - capture: `shot`\n", "contract-capture-format"],
-  ["unknown subfield", "## Acceptance Criteria\n\n- AC1. x\n  - proof: something\n", "contract-unknown-subfield"],
-  ["orphan subfield", "## Acceptance Criteria\n\n  - evidence: a.txt\n- AC1. x\n", "contract-orphan-subfield"],
-  ["empty evidence path", "## Acceptance Criteria\n\n- AC1. x\n  - evidence:\n", "contract-evidence-empty"],
-  ["empty human reason", "## Acceptance Criteria\n\n- AC1. x\n  - human:\n", "contract-human-empty"],
-  ["absolute evidence path", "## Acceptance Criteria\n\n- AC1. x\n  - evidence: /etc/passwd\n", "contract-evidence-path"],
-  ["escaping evidence path", "## Acceptance Criteria\n\n- AC1. x\n  - evidence: ../../secrets.txt\n", "contract-evidence-path"],
-  ["escaping capture artifact", "## Acceptance Criteria\n\n- AC1. x\n  - capture: `shot` -> ../out.png\n", "contract-capture-path"],
-  ["human mixed with machine evidence", "## Acceptance Criteria\n\n- AC1. x\n  - human: eyeball it\n  - evidence: a.txt\n", "contract-human-conflict"],
-  ["human mixed with a criterion check", "## Acceptance Criteria\n\n- AC1. x\n  - human: eyeball it\n  - check: `true`\n", "contract-human-conflict"],
-  ["unbackticked criterion check", "## Acceptance Criteria\n\n- AC1. x\n  - check: npm test\n", "contract-criterion-check-format"],
-];
-
-for (const [label, body, rule] of DEFECT_CASES) {
-  test(`rejects ${label}`, () => {
-    const parsed = parseContract(`---\ntopic: demo\nstatus: active\n---\n\n${body}`);
-    assert.deepEqual([...new Set(parsed.defects.map((d) => d.rule))], [rule], JSON.stringify(parsed.defects, null, 2));
-  });
-}
-
-test("a rejected path is never handed to the harness", () => {
-  const parsed = parseContract(`---\ntopic: demo\nstatus: active\n---\n\n## Acceptance Criteria\n\n- AC1. x\n  - evidence: ../../secrets.txt\n`);
-  assert.deepEqual(parsed.criteria[0].evidence, [], "an escaping path must not survive parsing as usable evidence");
-});
-
-test("the inline evidence budget is a real cap, not advisory", () => {
-  assert.equal(typeof EVIDENCE_MAX_BYTES, "number");
-  assert.ok(EVIDENCE_MAX_BYTES > 0 && EVIDENCE_MAX_BYTES <= 128 * 1024);
+test("invalid evidence paths and capture syntax never become usable inputs", () => {
+  for (const path of ["/etc/passwd", "../outside", "a/../../outside", "C:\\secret"]) {
+    const parsed = parseContract(`## Evidence\n- ${path}\n`);
+    assert.equal(parsed.defects.length, 1);
+    assert.deepEqual(parsed.evidence, []);
+  }
+  assert.equal(parseContract("## Evidence\n- capture: `shot`\n").defects[0].rule, "contract-capture-format");
+  assert.equal(parseContract("## Checks\n- node test.mjs\n").defects[0].rule, "contract-check-format");
 });

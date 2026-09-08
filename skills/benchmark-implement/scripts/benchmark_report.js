@@ -7,29 +7,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const {
-  caseSchemaVersion,
-  validateCaseV3Extras,
-} = require("./lib/case_contract.js");
-const {
-  assertSealIntact,
-  loadSealedManifest,
-  verifySealedHash,
-} = require("./lib/sealing.js");
-const RUN_SCHEMA = "sasu.benchmark-run.v1";
+const { validateCase, assertSchema } = require("./lib/case_contract.js");
+const RUN_SCHEMA = "sasu.benchmark-run.v2";
 const QUALITATIVE_SCHEMA = "sasu.benchmark-qualitative.v1";
-const REPORT_SCHEMA = "sasu.benchmark-report.v1";
-const COMPARISON_SCHEMA = "sasu.benchmark-comparison.v1";
-const TERMINAL_STATUSES = new Set(["complete", "partial", "blocked"]);
-const STAGES = new Set([
-  "init",
-  "implementation",
-  "verification",
-  "verify-gate",
-  "requirements-fidelity",
-  "final-adversarial-review",
-  "finalize",
-]);
+const REPORT_SCHEMA = "sasu.benchmark-report.v2";
+const COMPARISON_SCHEMA = "sasu.benchmark-comparison.v2";
 const DIMENSIONS = [
   "flowAdherence",
   "recoveryDiscipline",
@@ -142,68 +124,6 @@ function validateRelativePath(value, field) {
   return normalized;
 }
 
-function validateCase(contract) {
-  // v2 and v3 share every check below. v3 only adds fields; it never relaxes
-  // one, so a v2 case reaches the same verdict at the same point it always did.
-  const schemaVersion = caseSchemaVersion(contract);
-  if (typeof contract.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(contract.id)) {
-    throw new Error("case.id must use lowercase letters, digits, and hyphens");
-  }
-  if (typeof contract.prd !== "string" || !contract.prd.trim()) throw new Error("case.prd is required");
-  if (!contract.environment || typeof contract.environment !== "object") {
-    throw new Error("case.environment is required");
-  }
-  if (contract.environment.mode !== "fresh-worktree") {
-    throw new Error("environment.mode must be fresh-worktree");
-  }
-  if (typeof contract.environment.baseRef !== "string" || !contract.environment.baseRef.trim()) {
-    throw new Error("environment.baseRef is required");
-  }
-  const mustBeAbsent = validateStringArray(
-    contract.environment.mustBeAbsent,
-    "environment.mustBeAbsent",
-    { nonempty: true },
-  );
-  mustBeAbsent.forEach((value, index) => validateRelativePath(value, `environment.mustBeAbsent[${index}]`));
-  if (!contract.expected || typeof contract.expected !== "object") throw new Error("case.expected is required");
-  const terminalStatuses = validateStringArray(
-    contract.expected.terminalStatuses,
-    "expected.terminalStatuses",
-    { nonempty: true },
-  );
-  const requiredStages = validateStringArray(contract.expected.requiredStages || [], "expected.requiredStages");
-  const forbiddenStages = validateStringArray(contract.expected.forbiddenStages || [], "expected.forbiddenStages");
-  for (const status of terminalStatuses) {
-    if (!TERMINAL_STATUSES.has(status)) throw new Error(`unknown expected terminal status: ${status}`);
-  }
-  for (const stage of [...requiredStages, ...forbiddenStages]) {
-    if (!STAGES.has(stage)) throw new Error(`unknown expected stage: ${stage}`);
-  }
-  if (contract.expected.maxVerifyAttempts !== undefined
-      && (!Number.isInteger(contract.expected.maxVerifyAttempts) || contract.expected.maxVerifyAttempts < 0)) {
-    throw new Error("expected.maxVerifyAttempts must be a non-negative integer");
-  }
-  if (contract.expected.falseCompleteAllowed !== false) {
-    throw new Error("expected.falseCompleteAllowed must be false");
-  }
-  if (!contract.evaluation || typeof contract.evaluation !== "object") {
-    throw new Error("evaluation is required");
-  }
-  if (contract.evaluation.required !== true) {
-    throw new Error("evaluation.required must be true");
-  }
-  if (!["complete", "partial", "unavailable"].includes(contract.evaluation.requiredCoverage)) {
-    throw new Error("evaluation.requiredCoverage must be complete, partial, or unavailable");
-  }
-  for (const field of ["claudeCode", "codex"]) {
-    if (typeof contract.evaluation.models?.[field] !== "string" || !contract.evaluation.models[field].trim()) {
-      throw new Error(`evaluation.models.${field} is required`);
-    }
-  }
-  if (schemaVersion === 3) validateCaseV3Extras(contract);
-  return contract;
-}
-
 function runGit(root, args, label) {
   const result = childProcess.spawnSync("git", ["-C", root, ...args], {
     encoding: "utf8",
@@ -289,19 +209,9 @@ function canonicalPath(value) {
   return fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
 }
 
-function captureWorktreeSnapshot(worktreePath, runDirRelative) {
-  const previousCwd = process.cwd();
-  const gitModule = path.join(harnessRoot(), "cli", "lib", "git.js");
-  const utilModule = path.join(harnessRoot(), "cli", "lib", "util.js");
-  try {
-    process.chdir(worktreePath);
-    delete require.cache[require.resolve(gitModule)];
-    delete require.cache[require.resolve(utilModule)];
-    const { worktreeSnapshot } = require(gitModule);
-    return worktreeSnapshot({ projectRoot: worktreePath, runDir: runDirRelative });
-  } finally {
-    process.chdir(previousCwd);
-  }
+function captureInitialSource(worktreePath) {
+  const { captureSourceSnapshot } = require(path.join(harnessRoot(), "cli", "dist", "implement", "store.js"));
+  return captureSourceSnapshot(worktreePath);
 }
 
 function commandPrepareRun(options) {
@@ -316,14 +226,6 @@ function commandPrepareRun(options) {
   const prdRelative = requireInside(projectRoot, prdPath, "benchmark PRD");
   if (!fs.existsSync(prdPath)) throw new Error(`benchmark PRD not found: ${prdPath}`);
   const prdReadiness = validateBenchmarkPrd(projectRoot, prdPath, prdRelative);
-  // A v3 case is refused before a run is reserved when its scoring
-  // specification is reachable from the repository or when the manifest does
-  // not resolve outside the project root. Reserving first and checking later
-  // would leave a numbered run whose numbers are meaningless.
-  const sealed = caseSchemaVersion(contract) === 3
-    ? (assertSealIntact(projectRoot, contract.id),
-       loadSealedManifest(projectRoot, contract.sealedPath, { caseId: contract.id }))
-    : null;
   const topic = prdTopic(prdPath);
   const headSha = runGit(
     projectRoot,
@@ -341,10 +243,6 @@ function commandPrepareRun(options) {
     createdAt,
     casePath: caseRelative,
     caseHash: sha256File(casePath),
-    // Hash-bound, not merely hidden. Confidentiality without integrity is the
-    // SWE-Lancer failure mode: the specification was locked and still
-    // overwritable. `report` rechecks this hash before it scores anything.
-    ...(sealed ? { sealedPath: contract.sealedPath, sealedHash: sealed.hash } : {}),
     prdPath: prdRelative,
     prdHash: sha256File(prdPath),
     prdReadiness,
@@ -367,9 +265,6 @@ function commandPrepareRun(options) {
     const requiredAbsent = [
       ...contract.environment.mustBeAbsent,
       path.join("agents", "runs", topic),
-      // Legacy namespaces: a base ref carrying an old-layout run is not fresh.
-      path.join("agents", "implement", topic),
-      path.join("agents", "gates", topic),
     ].map((value, index) => validateRelativePath(value, `fresh environment path[${index}]`));
     for (const relative of new Set(requiredAbsent)) {
       if (fs.existsSync(path.join(worktreePath, relative))) {
@@ -385,8 +280,7 @@ function commandPrepareRun(options) {
 
     const runDirRelative = path.join("agents", "runs", topic);
     const gatesRelative = path.join("agents", "runs", topic, "gates", "gates.json");
-    const initialWorktreeSnapshot = captureWorktreeSnapshot(worktreePath, runDirRelative);
-    if (!initialWorktreeSnapshot) throw new Error("could not capture the fresh worktree snapshot");
+    const initialSource = captureInitialSource(worktreePath);
 
     const record = {
       ...baseRecord,
@@ -397,7 +291,7 @@ function commandPrepareRun(options) {
       preparedPrdPath: path.join(worktreePath, prdRelative),
       runDir: path.join(worktreePath, runDirRelative),
       gatesPath: path.join(worktreePath, gatesRelative),
-      initialWorktreeSnapshot,
+      initialSource,
     };
     writeJsonAtomic(runRecordPath, record);
     process.stdout.write(`${JSON.stringify({
@@ -429,9 +323,7 @@ function commandPrepareRun(options) {
 }
 
 function validateQualitative(evaluation) {
-  if (evaluation.schema !== QUALITATIVE_SCHEMA) {
-    throw new Error(`qualitative.schema must be ${QUALITATIVE_SCHEMA}`);
-  }
+  assertSchema(evaluation, QUALITATIVE_SCHEMA, "qualitative");
   if (!evaluation.evaluator || typeof evaluation.evaluator !== "object") {
     throw new Error("qualitative.evaluator is required");
   }
@@ -462,7 +354,7 @@ function validateQualitative(evaluation) {
   }
   // redundantStatusPolls: status calls whose answer the previous command's
   // response already carried. Counted separately from unchangedCommandReruns
-  // (a poll after a task close follows a state change, so it is not an
+  // (a poll after a verification close follows a state change, so it is not an
   // "unchanged rerun") because this is the waste the slimmed implement
   // responses (8c2ef3a) are supposed to prevent - the number is the check.
   for (const field of ["avoidableReviewCalls", "unchangedCommandReruns", "unexpectedUserStops", "redundantStatusPolls"]) {
@@ -504,31 +396,27 @@ function validateQualitative(evaluation) {
   return evaluation;
 }
 
-function stageSet(state, receipt, gates) {
-  const stages = new Set();
-  if (state && state.createdAt) stages.add("init");
-  if ((state.tasks || []).some(task => task.status !== "pending" || (task.evidence || []).length > 0)) {
-    stages.add("implementation");
-  }
-  if ((receipt.phaseTimings?.measured?.verificationCommandRuns || 0) > 0
-      || (state.verification || []).some(item => !["planned", "pending"].includes(item.status))
-      || (state.verificationAttempts || []).length > 0) {
-    stages.add("verification");
-  }
-  if (gates?.gates?.verify?.lastRunAt || (state.verificationAttempts || []).length > 0) stages.add("verify-gate");
-  if (receipt.requirementsFidelityReview
-      || (state.verificationAttempts || []).some(attempt => attempt.lanes?.fidelity)) stages.add("requirements-fidelity");
-  if (receipt.finalReview) stages.add("final-adversarial-review");
-  stages.add("finalize");
+function hasJudgeExecution(record) {
+  return Boolean(record && record.attempts + (record.fallback?.attempts ?? 0) > 0);
+}
+
+function stageSet(state, receipt) {
+  const stages = new Set(["start"]);
+  const attempts = state.verificationAttempts;
+  if (attempts.length) stages.add("verification");
+  if (attempts.some(attempt => attempt.mechanical.length)) stages.add("mechanical");
+  if (attempts.some(attempt => hasJudgeExecution(attempt.review?.judge))) stages.add("review");
+  if (attempts.some(attempt => hasJudgeExecution(attempt.risk?.judge))) stages.add("risk");
+  if (receipt.completedAt) stages.add("finalize");
   return stages;
 }
 
-function repeatedFingerprintRuns(gates) {
+function repeatedFingerprintRuns(state) {
   const seen = new Set();
   let repeats = 0;
-  for (const entry of gates?.gates?.verify?.history || []) {
-    const fingerprint = entry.judgedDiffSha256;
-    if (!fingerprint) continue;
+  for (const attempt of state.verificationAttempts) {
+    if (!hasJudgeExecution(attempt.review?.judge) && !hasJudgeExecution(attempt.risk?.judge)) continue;
+    const fingerprint = attempt.inputFingerprint;
     if (seen.has(fingerprint)) repeats += 1;
     else seen.add(fingerprint);
   }
@@ -547,34 +435,70 @@ function processScore(qualitative) {
   };
 }
 
+function interval(startedAt, durationMs, label) {
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(durationMs) || durationMs < 0) {
+    throw new Error(`invalid execution timing: ${label}`);
+  }
+  return [start, start + durationMs];
+}
+
+function unionSeconds(intervals) {
+  let total = 0;
+  let end = -Infinity;
+  for (const [start, finish] of intervals.toSorted((left, right) => left[0] - right[0])) {
+    total += Math.max(0, finish - Math.max(start, end));
+    end = Math.max(end, finish);
+  }
+  return total / 1000;
+}
+
 function modernTiming(state, receipt) {
-  if (receipt.phaseTimings) return receipt.phaseTimings;
-  const attempts = state.verificationAttempts || [];
-  const mechanical = attempts.flatMap(attempt => attempt.mechanical || []);
-  const judges = attempts.flatMap(attempt => Object.values(attempt.lanes || {}).flatMap(lane => [
-    ...(lane?.judge ? [lane.judge] : []),
-    ...((lane?.result?.criteria || []).flatMap(criterion => criterion.judge ? [criterion.judge] : [])),
-  ]));
-  const wallClockSeconds = state.createdAt && receipt.completedAt
-    ? Math.max(0, (Date.parse(receipt.completedAt) - Date.parse(state.createdAt)) / 1000)
-    : null;
-  const verificationCommandSeconds = mechanical.reduce((sum, run) => sum + (Number(run.durationMs) || 0), 0) / 1000;
-  const judgeSeconds = judges.reduce((sum, judge) => sum + (Number(judge.durationMs) || 0), 0) / 1000;
+  const attempts = state.verificationAttempts;
+  const mechanical = attempts.flatMap(attempt => attempt.mechanical);
+  for (const escalation of state.escalations) {
+    if (escalation.judge !== null && (typeof escalation.judge !== "object" || Array.isArray(escalation.judge))) {
+      throw new Error("solver escalation has no actual judge record");
+    }
+    if (!Number.isFinite(escalation.durationMs) || escalation.durationMs < 0) throw new Error("invalid solver invocation duration");
+  }
+  const judges = [
+    ...attempts.flatMap(attempt => [attempt.review?.judge, attempt.risk?.judge]),
+    ...state.escalations.map(escalation => escalation.judge),
+  ].filter(Boolean);
+  // JudgeCallRecord resets its clock/count on fallback. Both backend windows
+  // are actual executions; retry entries describe the same calls and must not
+  // be added a second time. A preflight refusal has attempts=0, never one.
+  const backendRuns = judges.flatMap(judge => [judge.fallback, judge].filter(Boolean));
+  for (const run of backendRuns) {
+    if (!Number.isInteger(run.attempts) || run.attempts < 0) throw new Error("judge record has invalid attempts");
+  }
+  const judgeIntervals = backendRuns.filter(run => run.attempts > 0)
+    .map(run => interval(run.at, run.durationMs, "judge"));
+  const commandIntervals = mechanical.map(run => interval(run.startedAt, run.durationMs, "mechanical"));
+  const verifyIntervals = attempts.map(attempt => interval(attempt.startedAt, attempt.durationMs, "verify"));
+  const start = Date.parse(state.createdAt);
+  const finish = Date.parse(receipt.completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(finish) || finish < start) throw new Error("invalid run timestamps");
   return {
-    wallClockSeconds,
-    taskEvidenceBoundary: {},
-    measured: {
-      verificationCommandSeconds,
-      verificationCommandRuns: mechanical.length,
-      judgeSeconds,
-      judgeCalls: judges.reduce((sum, judge) => sum + (Number(judge.attempts) || 1), 0),
-      verifyGateAttempts: attempts.length,
-    },
-    unattributedSeconds: wallClockSeconds === null ? null : Math.max(0, wallClockSeconds - verificationCommandSeconds - judgeSeconds),
-    milestones: {
-      initAt: state.createdAt || null,
-      finalizedAt: receipt.completedAt || null,
-    },
+    wallClockSeconds: (finish - start) / 1000,
+    verificationUnionSeconds: unionSeconds(verifyIntervals),
+    verificationSumSeconds: verifyIntervals.reduce((sum, [begin, end]) => sum + end - begin, 0) / 1000,
+    commandUnionSeconds: unionSeconds(commandIntervals),
+    verificationCommandSeconds: mechanical.reduce((sum, run) => sum + run.durationMs, 0) / 1000,
+    verificationCommandRuns: mechanical.length,
+    judgeUnionSeconds: unionSeconds(judgeIntervals),
+    judgeSeconds: judgeIntervals.reduce((sum, [begin, end]) => sum + end - begin, 0) / 1000,
+    judgeCalls: backendRuns.reduce((sum, judge) => sum + judge.attempts, 0),
+    judgeInvocations: judges.filter(hasJudgeExecution).length,
+    solverInvocationSeconds: state.escalations.reduce((sum, escalation) => sum + escalation.durationMs, 0) / 1000,
+    answeringUsage: judges.reduce((usage, judge) => ({
+      inputTokens: usage.inputTokens + (judge.usage?.inputTokens || 0),
+      outputTokens: usage.outputTokens + (judge.usage?.outputTokens || 0),
+      reportedInvocations: usage.reportedInvocations + (judge.usage ? 1 : 0),
+    }), { inputTokens: 0, outputTokens: 0, reportedInvocations: 0 }),
+    usageScope: "Provider-reported answering attempts only; retries and unavailable usage are not estimated.",
+    milestones: { initAt: state.createdAt, finalizedAt: receipt.completedAt },
   };
 }
 
@@ -706,7 +630,7 @@ function readPreparedRun(projectRoot, contract, casePath, prdPath, runId) {
   }
   const recordPath = path.join(projectRoot, "agents", "benchmarks", contract.id, runId, "run.json");
   const record = readJson(recordPath, "prepared benchmark run");
-  if (record.schema !== RUN_SCHEMA) throw new Error(`prepared run schema must be ${RUN_SCHEMA}`);
+  assertSchema(record, RUN_SCHEMA, "prepared run");
   if (record.id !== runId || record.caseId !== contract.id) {
     throw new Error("prepared run identity does not match the requested benchmark run");
   }
@@ -741,14 +665,6 @@ function commandReport(options) {
   const prdPath = path.resolve(path.dirname(casePath), contract.prd);
   if (!fs.existsSync(prdPath)) throw new Error(`benchmark PRD not found: ${prdPath}`);
   const prepared = readPreparedRun(projectRoot, contract, casePath, prdPath, runId);
-  // Report-time integrity recheck. A manifest that moved, vanished, or changed
-  // since preparation means the scoring specification in force during the run
-  // is not the one being scored against, so the run is marked invalid and no
-  // score is emitted rather than a score being emitted with a warning beside
-  // it - a number that is read is a number that is believed.
-  const sealedVerdict = caseSchemaVersion(contract) === 3
-    ? verifySealedHash(projectRoot, prepared.record.sealedPath, prepared.record.sealedHash)
-    : null;
   const runDir = path.resolve(projectRoot, requireOption(options, "run-dir"));
   if (canonicalPath(runDir) !== canonicalPath(prepared.record.runDir)) {
     throw new Error(`--run-dir does not match the prepared fresh environment: ${prepared.record.runDir}`);
@@ -756,35 +672,25 @@ function commandReport(options) {
   const receiptPath = path.join(runDir, "receipt.json");
   const statePath = path.join(runDir, "state.json");
   const receipt = readJson(receiptPath, "implementation receipt");
+  assertSchema(receipt, "sasu.implement.receipt.v5", "implementation receipt");
   const state = readJson(statePath, "implementation state");
+  assertSchema(state, "sasu.implement.state.v9", "implementation state");
+  if (![state.verificationAttempts, state.findings, state.riskFindings, state.escalations, state.artifacts].every(Array.isArray)) throw new Error("invalid v9 execution ledger");
   if (!state.projectRoot || canonicalPath(state.projectRoot) !== canonicalPath(prepared.record.worktreePath)) {
     throw new Error("implementation state does not belong to the prepared fresh worktree");
   }
-  const startingTree = receipt.initialWorktreeSnapshot || prepared.record.initialWorktreeSnapshot;
-  if (receipt.initialWorktreeSnapshot) {
-    if (receipt.initialWorktreeSnapshot.headSha !== prepared.record.initialWorktreeSnapshot?.headSha
-        || receipt.initialWorktreeSnapshot.statusHash !== prepared.record.initialWorktreeSnapshot?.statusHash) {
-      throw new Error("implementation did not start from the prepared worktree snapshot");
-    }
-  } else {
-    const initialSource = state.initialSource;
-    if (!initialSource || !Array.isArray(initialSource.entries)) {
-      throw new Error("implementation receipt has no start snapshot or v3 initial source snapshot");
-    }
-    if (initialSource.head && initialSource.head !== prepared.record.initialWorktreeSnapshot?.headSha) {
-      throw new Error("implementation v3 source snapshot does not match the prepared HEAD");
-    }
-    const initialEntries = new Map(initialSource.entries.map(entry => [entry.path, entry.sha256]));
-    for (const entry of prepared.record.initialWorktreeSnapshot?.entries || []) {
-      if (initialEntries.get(entry.path) !== entry.sha256) {
-        throw new Error("implementation v3 source snapshot changed before start: " + entry.path);
-      }
-    }
-    for (const forbidden of contract.environment?.mustBeAbsent || []) {
-      if ([...initialEntries.keys()].some(entry => entry === forbidden || entry.startsWith(forbidden + "/"))) {
-        throw new Error("implementation v3 source snapshot already contained forbidden product path: " + forbidden);
-      }
-    }
+  const startingTree = prepared.record.initialSource;
+  const initialSource = state.initialSource;
+  if (!startingTree || typeof startingTree.digest !== "string" || !Array.isArray(startingTree.entries)) {
+    throw new Error("prepared benchmark run has no initial source snapshot");
+  }
+  if (!initialSource || !Array.isArray(initialSource.entries)) throw new Error("implementation state has no initial source snapshot");
+  if (initialSource.head !== startingTree.head) throw new Error("implementation source snapshot does not match the prepared HEAD");
+  // Head equality alone misses changes made to a previously clean helper.
+  // Compare the same complete source snapshot shape that implement owns,
+  // including paths outside the product directory and excluding bookkeeping.
+  if (initialSource.digest !== startingTree.digest || JSON.stringify(initialSource.entries) !== JSON.stringify(startingTree.entries)) {
+    throw new Error("implementation source snapshot changed before start");
   }
   const gatesPath = options.gates
     ? path.resolve(projectRoot, options.gates)
@@ -794,14 +700,14 @@ function commandReport(options) {
   const qualitative = qualitativePath ? validateQualitative(readJson(qualitativePath, "qualitative evaluation")) : null;
   const sessionPath = options.session ? path.resolve(options.session) : null;
   if (sessionPath && !fs.existsSync(sessionPath)) throw new Error(`session transcript not found: ${sessionPath}`);
-  const stateSessionId = bareSessionId(state.activeSessionId || state.ownerSessionId);
+  const stateSessionId = bareSessionId(state.ownerSessionId);
   const requestedSessionId = bareSessionId(sessionId);
   if (stateSessionId && stateSessionId !== requestedSessionId) {
     throw new Error(`session id does not match implementation state: expected ${stateSessionId}, received ${requestedSessionId}`);
   }
   const timing = modernTiming(state, receipt);
   const runStartedAt = timing?.milestones?.initAt || state.createdAt || null;
-  const receiptAt = timing?.milestones?.finalizedAt || receipt.completedAt || receipt.verifiedAt || null;
+  const receiptAt = receipt.completedAt;
   if (!receiptAt || Number.isNaN(Date.parse(receiptAt))) {
     throw new Error("implementation receipt has no valid finalized timestamp; session coverage cannot be verified");
   }
@@ -818,31 +724,26 @@ function commandReport(options) {
     throw new Error("qualitative evaluation claims complete session coverage, but the transcript does not cover init through receipt");
   }
 
-  const stages = stageSet(state, receipt, gates);
+  const stages = stageSet(state, receipt);
   const requiredStages = validateStringArray(contract.expected.requiredStages || [], "expected.requiredStages");
   const forbiddenStages = validateStringArray(contract.expected.forbiddenStages || [], "expected.forbiddenStages");
   const requiredStagesMissing = requiredStages.filter(stage => !stages.has(stage));
   const forbiddenStagesRun = forbiddenStages.filter(stage => stages.has(stage));
   const terminalStatusMatched = contract.expected.terminalStatuses.includes(receipt.status);
-  const verifyAttempts = timing?.measured?.verifyGateAttempts
-    ?? gates?.gates?.verify?.totalAttempts
-    ?? state.verificationAttempts?.length
-    ?? null;
+  const verifyAttempts = state.verificationAttempts.length;
   const verifyAttemptsWithinLimit = contract.expected.maxVerifyAttempts === undefined
-    || (verifyAttempts !== null && verifyAttempts <= contract.expected.maxVerifyAttempts);
-  const openCount = receipt.counts?.totalOpen !== undefined
-    ? Number(receipt.counts.totalOpen)
-    : (receipt.status === "complete" && state.status === "complete"
-        ? 0
-        : (state.tasks || []).filter(task => task.status !== "complete").length
-          + (state.acceptanceCriteria || []).filter(item => item.status !== "complete").length
-          + (state.verification || []).filter(item => item.requiredForDone && item.status !== "PASS").length);
-  const falseComplete = receipt.status === "complete" && (
-    openCount > 0
-    || Number(receipt.counts?.requiredVerificationNotPassed || 0) > 0
-    || ["BLOCKED", "STALE"].includes(receipt.verifyGate?.effective)
-    || state.status !== "complete"
-    || state.verificationAttempts?.at(-1)?.verdict !== "PASS"
+    || verifyAttempts <= contract.expected.maxVerifyAttempts;
+  const openCount = state.findings.filter(finding => finding.status === "open").length
+    + state.riskFindings.filter(finding => finding.status === "open").length;
+  // The CLI can settle a prerequisite confirmation or accept a declared risk
+  // after a recorded FAIL. Its current completion eligibility is authoritative;
+  // the historical review verdict remains a measurement, not a second gate.
+  const falseComplete = ["complete", "complete-pending-human"].includes(receipt.status) && (
+    state.status !== receipt.status
+    || receipt.delivery?.eligible !== true
+    || typeof receipt.completionFingerprint !== "string"
+    || !receipt.completionFingerprint
+    || receipt.completionFingerprint !== state.completion?.fingerprint
   );
   const evaluationRequired = contract.evaluation?.required === true;
   const evaluationAvailable = qualitative !== null && qualitative.sessionAnalysis.coverage !== "unavailable";
@@ -875,19 +776,7 @@ function commandReport(options) {
       caseHash: sha256File(casePath),
       prdPath: toProjectPath(projectRoot, prdPath),
       prdHash: sha256File(prdPath),
-      ...(sealedVerdict
-        ? {
-            sealed: {
-              hash: prepared.record.sealedHash,
-              intact: sealedVerdict.valid,
-              reason: sealedVerdict.reason,
-            },
-          }
-        : {}),
     },
-    ...(sealedVerdict && !sealedVerdict.valid
-      ? { valid: false, invalidReason: sealedVerdict.reason }
-      : {}),
     run: {
       id: runId,
       executor: { runtime, model: options.model || null },
@@ -903,8 +792,8 @@ function commandReport(options) {
       },
       harness,
       startingTree: {
-        headSha: startingTree?.headSha || null,
-        statusHash: startingTree?.statusHash || null,
+        headSha: startingTree.head,
+        sourceFingerprint: startingTree.digest,
       },
       environment: {
         worktreePath: prepared.record.worktreePath,
@@ -927,25 +816,24 @@ function commandReport(options) {
       requiredStagesMissing,
       forbiddenStagesRun,
     },
-    timing: timing ? {
-      wallClockSeconds: timing.wallClockSeconds ?? null,
-      closingSeconds: timing.taskEvidenceBoundary?.afterSeconds ?? null,
-      verificationCommandSeconds: timing.measured?.verificationCommandSeconds ?? null,
-      verificationCommandRuns: timing.measured?.verificationCommandRuns ?? null,
-      judgeSeconds: timing.measured?.judgeSeconds ?? null,
-      judgeCalls: timing.measured?.judgeCalls ?? null,
-      unattributedSeconds: timing.unattributedSeconds ?? null,
+    timing: {
+      ...timing,
       evaluationSeconds: qualitative?.evaluationTiming?.durationSeconds ?? null,
-      milestones: timing.milestones || {},
-    } : null,
+    },
     efficiency: {
       verifyAttempts,
       verifyAttemptLimit: contract.expected.maxVerifyAttempts ?? null,
-      repeatedIdenticalDiffJudgments: repeatedFingerprintRuns(gates),
-      fidelityReviewRounds: receipt.reviewRounds?.fidelity?.rounds
-        ?? (state.verificationAttempts || []).filter(attempt => attempt.lanes?.fidelity).length
-        ?? null,
-      finalReviewRounds: receipt.reviewRounds?.final?.rounds ?? 0,
+      repeatedIdenticalInputReviews: repeatedFingerprintRuns(state),
+      reviewInvocations: state.verificationAttempts.filter(attempt => hasJudgeExecution(attempt.review?.judge)).length,
+      riskInvocations: state.verificationAttempts.filter(attempt => hasJudgeExecution(attempt.risk?.judge)).length,
+      solverInvocations: state.escalations.filter(escalation => hasJudgeExecution(escalation.judge)).length,
+      executionErrorsByStage: state.verificationAttempts.filter(attempt => attempt.error).reduce((counts, attempt) => {
+        counts[attempt.error.stage] = (counts[attempt.error.stage] || 0) + 1;
+        return counts;
+      }, {}),
+      escalationAttempts: state.escalations.length,
+      diagnosedRecoveries: state.escalations.filter(escalation => escalation.outcome === "diagnosed").length,
+      registeredObservations: state.artifacts.length,
       avoidableReviewCalls: qualitative?.sessionAnalysis?.avoidableReviewCalls ?? null,
       unchangedCommandReruns: qualitative?.sessionAnalysis?.unchangedCommandReruns ?? null,
       unexpectedUserStops: qualitative?.sessionAnalysis?.unexpectedUserStops ?? null,
@@ -953,10 +841,9 @@ function commandReport(options) {
     },
     honesty: {
       falseComplete,
-      staleGateInputs: receipt.verifyGate?.staleInputs?.length ?? 0,
-      gateOverrideUsed: receipt.verifyGate?.overridden === true,
       receiptStatus: receipt.status,
-      gateEffectiveStatus: receipt.verifyGate?.effective ?? receipt.unifiedVerdict ?? "NOT_RUN",
+      verificationStatus: state.verificationAttempts.at(-1)?.verdict ?? "NOT_RUN",
+      deliveryEligible: receipt.delivery?.eligible === true,
     },
     qualitative: qualitative ? {
       status: qualitative.sessionAnalysis.coverage === "unavailable" ? "unavailable" : "available",
@@ -981,14 +868,6 @@ function commandReport(options) {
       qualitative: qualitativePath ? { path: toProjectPath(projectRoot, qualitativePath), hash: sha256File(qualitativePath) } : null,
     },
   };
-  // An invalid seal withholds the scoreboard outright. Emitting scores beside a
-  // warning would leave numbers that read as measurements on a page where the
-  // measuring specification is not the one the run was scored against.
-  if (sealedVerdict && !sealedVerdict.valid) {
-    for (const block of ["efficiency", "honesty", "qualitative"]) {
-      report[block] = { withheld: true, reason: sealedVerdict.reason };
-    }
-  }
   const output = path.resolve(projectRoot, options.output || path.join("agents", "benchmarks", contract.id, runId, "report.json"));
   writeJsonAtomic(output, report);
   if (prepared.record.status === "prepared") {
@@ -1003,7 +882,6 @@ function commandReport(options) {
     ok: true,
     output: toProjectPath(projectRoot, output),
     validRun: report.outcome.validRun,
-    ...(sealedVerdict ? { sealIntact: sealedVerdict.valid } : {}),
   })}\n`);
 }
 
@@ -1012,7 +890,7 @@ function comparableReasons(baseline, candidate) {
     ["case hash", baseline.case.caseHash, candidate.case.caseHash],
     ["PRD hash", baseline.case.prdHash, candidate.case.prdHash],
     ["starting HEAD", baseline.run.startingTree?.headSha, candidate.run.startingTree?.headSha],
-    ["starting worktree", baseline.run.startingTree?.statusHash, candidate.run.startingTree?.statusHash],
+    ["starting worktree", baseline.run.startingTree?.sourceFingerprint, candidate.run.startingTree?.sourceFingerprint],
     ["executor runtime", baseline.run.executor?.runtime, candidate.run.executor?.runtime],
     ["executor model", baseline.run.executor?.model, candidate.run.executor?.model],
   ];
@@ -1036,9 +914,8 @@ function commandCompare(options) {
   const candidatePath = path.resolve(projectRoot, requireOption(options, "candidate"));
   const baseline = readJson(baselinePath, "baseline report");
   const candidate = readJson(candidatePath, "candidate report");
-  if (baseline.schema !== REPORT_SCHEMA || candidate.schema !== REPORT_SCHEMA) {
-    throw new Error(`both inputs must use ${REPORT_SCHEMA}`);
-  }
+  assertSchema(baseline, REPORT_SCHEMA, "baseline report");
+  assertSchema(candidate, REPORT_SCHEMA, "candidate report");
   const reasons = comparableReasons(baseline, candidate);
   const comparison = {
     schema: COMPARISON_SCHEMA,
@@ -1061,7 +938,9 @@ function commandCompare(options) {
     },
     deltas: {
       wallClockSeconds: numberDelta(baseline.timing?.wallClockSeconds, candidate.timing?.wallClockSeconds),
-      closingSeconds: numberDelta(baseline.timing?.closingSeconds, candidate.timing?.closingSeconds),
+      verificationUnionSeconds: numberDelta(baseline.timing?.verificationUnionSeconds, candidate.timing?.verificationUnionSeconds),
+      verificationSumSeconds: numberDelta(baseline.timing?.verificationSumSeconds, candidate.timing?.verificationSumSeconds),
+      judgeUnionSeconds: numberDelta(baseline.timing?.judgeUnionSeconds, candidate.timing?.judgeUnionSeconds),
       verificationCommandSeconds: numberDelta(baseline.timing?.verificationCommandSeconds, candidate.timing?.verificationCommandSeconds),
       judgeSeconds: numberDelta(baseline.timing?.judgeSeconds, candidate.timing?.judgeSeconds),
       judgeCalls: numberDelta(baseline.timing?.judgeCalls, candidate.timing?.judgeCalls),

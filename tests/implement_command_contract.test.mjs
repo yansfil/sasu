@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-// AC37/R14: the skill document's Command Contract, `sasu --help`, and the
+// Public contract: the skill document's Command Contract, `sasu --help`, and the
 // CLI's own command registry are three declarations of one surface. A doc
 // that promises a flag the CLI does not have, or hides one it does, is worse
 // than no doc: the agent reading it is the one that acts on it.
@@ -16,7 +16,7 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "
 const skillPath = path.join(repoRoot, "skills", "implement", "SKILL.md");
 const cliEntry = path.join(repoRoot, "cli", "dist", "cli.js");
 
-/** Flags every command takes; the table says so once instead of 21 times. */
+/** Flags every command takes; the table says so once instead of each time. */
 const GLOBAL_FLAGS = new Set(["json", "slug", "state", "adopt", "issuer"]);
 
 const flagsIn = (text) => new Set(
@@ -25,7 +25,7 @@ const flagsIn = (text) => new Set(
 
 /**
  * `sasu --help`, read as {command -> flags}. A command with two usage lines
- * (`design` and `design --raise`) is keyed by the mode-selecting flag, which
+ * (`risk` and `risk --non-convergent`) is keyed by the mode-selecting flag, which
  * is how the authority table keys it too.
  */
 function helpSurface() {
@@ -39,7 +39,7 @@ function helpSurface() {
     const [, command, rest] = match;
     const flags = flagsIn(rest);
     // The mode flag names the row rather than counting as one of its flags.
-    const mode = ["raise", "non-convergent"].find((candidate) => flags.has(candidate));
+    const mode = ["non-convergent"].find((candidate) => flags.has(candidate));
     const key = mode === undefined ? command : `${command} --${mode}`;
     if (mode !== undefined) flags.delete(mode);
     const existing = surface.get(key);
@@ -66,7 +66,7 @@ function documentedSurface() {
   return surface;
 }
 
-test("AC37: the documented command set and the --help command set match in both directions", () => {
+test("the documented command set and the --help command set match in both directions", () => {
   const help = helpSurface();
   const documented = documentedSurface();
   const undocumented = [...help.keys()].filter((command) => !documented.has(command));
@@ -75,7 +75,7 @@ test("AC37: the documented command set and the --help command set match in both 
   assert.deepEqual(invented, [], "these commands are in the table and not in --help");
 });
 
-test("AC37: each command's documented flags and its --help flags match in both directions", () => {
+test("each command's documented flags and its --help flags match in both directions", () => {
   const help = helpSurface();
   const documented = documentedSurface();
   const mismatches = [];
@@ -90,27 +90,26 @@ test("AC37: each command's documented flags and its --help flags match in both d
   assert.deepEqual(mismatches, []);
 });
 
-test("AC37: every documented command is one the CLI actually dispatches", async () => {
+test("every documented command is one the CLI actually dispatches", async () => {
   // The two set comparisons above are documents agreeing with each other.
   // This one ties the table to code, so a pair of documents cannot agree on a
-  // command that does not exist (AGENTS.md Review Guide 1: reach for the
-  // strongest instrument the criterion admits).
+  // command that does not exist (approved workflow plan section 16).
   const { COMMAND_AUTHORITY, UNGATED_COMMANDS } = await import(path.join(repoRoot, "cli", "dist", "implement", "verbs.js"));
   const dispatched = new Set([...Object.keys(COMMAND_AUTHORITY), ...UNGATED_COMMANDS]);
   const orphans = [...documentedSurface().keys()]
-    .map((command) => command.replace("design --raise", "design-raise").replace("risk --non-convergent", "risk-non-convergent"))
+    .map((command) => command.replace("risk --non-convergent", "risk-non-convergent"))
     .filter((command) => !dispatched.has(command));
   assert.deepEqual(orphans, [], "the table documents a command the CLI does not dispatch");
 });
 
-test("AC37: the documented issuer column is the authority table, not a retelling of it", async () => {
+test("the documented issuer column is the authority table, not a retelling of it", async () => {
   const { COMMAND_AUTHORITY } = await import(path.join(repoRoot, "cli", "dist", "implement", "verbs.js"));
   const lines = fs.readFileSync(skillPath, "utf8").split("\n");
   const mismatches = [];
   for (const line of lines) {
     const match = line.match(/^\| `([a-z-]+(?: --[a-z-]+)?)` \| .*? \| .*? \| (.*?) \|$/);
     if (!match) continue;
-    const key = match[1].replace("design --raise", "design-raise").replace("risk --non-convergent", "risk-non-convergent");
+    const key = match[1].replace("risk --non-convergent", "risk-non-convergent");
     const allowed = COMMAND_AUTHORITY[key];
     const documented = match[2].trim();
     if (allowed === undefined) {

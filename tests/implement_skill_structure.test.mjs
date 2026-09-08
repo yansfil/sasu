@@ -62,18 +62,19 @@ test("implement references stay direct, bounded, and navigable", () => {
 
 test("implement entrypoint retains lifecycle, safety, and completion authority", () => {
   const skill = fs.readFileSync(skillPath, "utf8");
+  // Approved workflow plan sections 7-12: complete review input, current
+  // receipt authority, real execution, human rejection, and run-level lease.
   const requiredContracts = [
     /Never implement a pending PRD without explicit human approval or the user's verbatim conversational approval/,
     /`state\.json` is the only machine record/,
-    /Acceptance and fidelity are separate LLM calls/,
+    /Every requirement remains in the sealed PRD and independent review input/,
     /`sasu implement finalize` never runs tests, judges, capture tools, or external commands/,
     /`state\.json` is the completion authority/,
     /Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes/,
-    /sasu implement check --row B1/,
-    /sasu implement park/,
-    /sasu implement resume --row B1/,
-    /sasu implement confirm --issuer human --row/,
-    /parkedRows/,
+    /whole verify execution holds one lease/,
+    /sasu implement confirm --issuer human --id/,
+    /explicit open rejection/,
+    /first failed verify leaves the run active/,
     /^## Hard Stops$/m,
     /^## Final Report$/m,
   ];
@@ -83,26 +84,29 @@ test("implement entrypoint retains lifecycle, safety, and completion authority",
   }
 });
 
-// R1/R13 (prd-template): the PRD is six sections and one Behaviors table, and
-// the two skills agree on the three method prefixes and the row lifecycle.
-test("gen-prd and implement retain the six-section template and the row lifecycle contract", () => {
+// The approved workflow plan changes the PRD's three-column contract and
+// explicitly removes per-requirement proof/lifecycle prose, including manuals.
+test("gen-prd and implement preserve all requirements without per-requirement ceremony", () => {
   const genPrd = fs.readFileSync(genPrdSkillPath, "utf8");
   const implement = fs.readFileSync(skillPath, "utf8");
   for (const section of ["## Goal", "## Non-goals", "## Decisions", "## Behaviors", "## Technical structure", "## Risks"]) {
-    assert.match(genPrd, new RegExp(`^${section}$`, "m"), `${section} must be in the template`);
+    assert.match(genPrd, new RegExp(`^${section}$`, "m"));
   }
   assert.match(genPrd, /\| D-n \| 결정 \| 근거 \|/);
-  assert.match(genPrd, /\| # \| 사용자가 관찰하는 행동 \| 검사 방법 \| 결정 \|/);
-  for (const prefix of ["check:", "judge:", "human:"]) assert.match(genPrd, new RegExp(`\`${prefix}`), `${prefix} must be documented`);
-  for (const retired of ["Acceptance Criteria", "Evidence Declaration", "machine+gate:human", "Pre-Work", "PRD-Level Tasks", "Verification Contract", "Implementation Guardrails", "Report Contract", "SC#"]) {
-    assert.ok(!genPrd.includes(retired), `gen-prd must not carry the retired concept ${retired}`);
-  }
-  assert.match(implement, /sasu implement check --row B1/);
-  assert.match(implement, /sasu implement park/);
-  assert.match(implement, /sasu implement resume --row B1/);
+  assert.match(genPrd, /\| # \| 사용자가 관찰하는 행동 \| 결정 \|/);
   assert.match(implement, /complete-pending-human/);
-  for (const retired of ["--ac ", "--bind", "--cwd", "--human-window", "--bookkeeping", "sasu implement task", "resequence", "Depends on"]) {
-    assert.ok(!implement.includes(retired), `implement must not carry the retired surface ${retired}`);
+  assert.match(implement, /Markdown checkboxes or a coverage ledger/);
+  const activeDocuments = [
+    genPrd, implement,
+    ...expectedReferences.map((name) => fs.readFileSync(path.join(referencesDir, name), "utf8")),
+  ];
+  for (const document of activeDocuments) {
+    for (const retired of [
+      /sasu implement (?:check|park|resume|qa-brief|trail|design)\b/,
+      /--row\b/, /\| 검사 방법 \|/, /\bparkedRows\b/,
+      /Acceptance and fidelity are separate LLM calls/,
+      /one result per row/, /each row's status and attempts/,
+    ]) assert.doesNotMatch(document, retired);
   }
 });
 
@@ -112,6 +116,6 @@ test("removed dispatcher rejects direct legacy invocations with new-command guid
     const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /prd_state_harness\.js was removed/);
-    assert.match(result.stderr, /sasu implement start\|check\|park\|resume\|confirm\|artifact\|status\|verify\|finalize/);
+    assert.match(result.stderr, /sasu implement start\|artifact\|status\|verify\|finalize/);
   }
 });

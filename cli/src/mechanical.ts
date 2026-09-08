@@ -5,8 +5,8 @@ import type { SasuConfig } from "./config";
 
 /**
  * `check` and `capture` are the quick path's contract-declared commands: a
- * check proves a criterion by running (evidence tier 1), a capture produces a
- * fresh artifact for the judge (tier 3). Both run on the harness clock in the
+ * check records an actual command result, a capture produces an artifact
+ * for independent review. Both run on the harness clock in the
  * mechanical stage, which is what makes their result unforgeable.
  */
 export type ProjectMechanicalKind = "test" | "lint" | "build" | "typecheck";
@@ -17,12 +17,6 @@ export interface ResolvedCommand {
   command: string;
   cwd?: string;
   source: "config" | "detected" | "contract";
-  /**
-   * Criteria this command proves, for contract-declared checks and captures.
-   * A list because two criteria may declare the same command: it runs once,
-   * but its result is evidence for both of them.
-   */
-  criterionIds?: string[];
 }
 
 export interface MechanicalRun {
@@ -30,7 +24,6 @@ export interface MechanicalRun {
   command: string;
   cwd?: string;
   source: "config" | "detected" | "contract";
-  criterionIds?: string[];
   exitCode: number;
   ok: boolean;
   tail: string;
@@ -116,7 +109,7 @@ export function executeMechanicalCommand(
 }
 
 /**
- * Implement Check bindings are agent-authored, so they use the same bounded
+ * Implement suite commands are agent-authored, so they use the same bounded
  * spawn machinery without a shell and without inheriting the agent process's
  * credential-bearing environment.
  */
@@ -301,37 +294,26 @@ export function runMechanical(
   projectRoot: string,
   config: SasuConfig,
   extra: ResolvedCommand[] = [],
-  options: {
-    skipProjectCommands?: boolean;
-  } = {},
 ): MechanicalResult {
-  const base = options.skipProjectCommands
-    ? { resolved: [] as ResolvedCommand[], configSuggestion: null }
-    : resolveMechanicalCommands(projectRoot, config);
+  const base = resolveMechanicalCommands(projectRoot, config);
   const configSuggestion = base.configSuggestion;
   // A contract that restates a configured command (the natural thing to write
   // when you want the check tier and `npm test` is the only command you have)
   // must not run the suite twice.
-  // A command declared more than once runs once. Deduping must never drop a
-  // criterion's proof, though: the surviving run inherits every criterion that
-  // declared the command, and a capture outranks an identical check because it
-  // also has to produce an artifact.
-  const commandKey = (cmd: ResolvedCommand): string => `${cmd.cwd ?? "."}\0${cmd.command.trim()}`;
+  // The same cwd and command run once per attempt. A capture keeps its kind
+  // when it duplicates a check because its artifact is collected afterward.
+  const commandKey = (cmd: ResolvedCommand): string => `${path.resolve(projectRoot, cmd.cwd ?? ".")}\0${cmd.command.trim()}`;
   const byCommand = new Map<string, ResolvedCommand>();
   const order: string[] = [];
   for (const cmd of [...base.resolved, ...extra]) {
     const key = commandKey(cmd);
     const existing = byCommand.get(key);
     if (!existing) {
-      byCommand.set(key, { ...cmd, ...(cmd.criterionIds ? { criterionIds: [...cmd.criterionIds] } : {}) });
+      byCommand.set(key, { ...cmd });
       order.push(key);
       continue;
     }
-    const merged = new Set([...(existing.criterionIds ?? []), ...(cmd.criterionIds ?? [])]);
-    byCommand.set(key, {
-      ...(cmd.kind === "capture" ? cmd : existing),
-      ...(merged.size > 0 ? { criterionIds: [...merged] } : {}),
-    });
+    byCommand.set(key, cmd.kind === "capture" ? { ...cmd } : existing);
   }
   const resolved = order.map((key) => byCommand.get(key)!);
   const runs: MechanicalRun[] = [];
@@ -341,14 +323,6 @@ export function runMechanical(
     runs.push(run);
     if (!run.ok) {
       ok = false;
-      // Fail fast on the project's own checks: later stages cost more and the
-      // judge must not run anyway. Criterion-scoped commands are the exception
-      // - they are a criterion's evidence, and skipping them would leave the
-      // receipt for a failed run silent about which criteria were already
-      // satisfied, which is exactly the report that most needs the detail.
-      for (const next of resolved.slice(resolved.indexOf(cmd) + 1)) {
-        if ((next.criterionIds ?? []).length > 0) runs.push(runOne(projectRoot, next, config));
-      }
       break;
     }
   }
@@ -365,7 +339,6 @@ function runOne(projectRoot: string, cmd: ResolvedCommand, config: SasuConfig): 
     command: cmd.command,
     ...(cmd.cwd !== undefined ? { cwd: cmd.cwd } : {}),
     source: cmd.source,
-    ...(cmd.criterionIds !== undefined && cmd.criterionIds.length > 0 ? { criterionIds: cmd.criterionIds } : {}),
     exitCode: executed.exitCode,
     ok: !executed.timedOut && executed.exitCode === 0,
     tail: tailLines.join("\n"),

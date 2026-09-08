@@ -11,12 +11,12 @@ import { executeMechanicalArgv } from "../../dist/mechanical.js";
 const suiteCommand = (id, command, cwd) => ({ id, command, argv: command.split(" "), cwd });
 
 const stateWith = (root, commands) => ({
-  schema: "sasu.implement.state.v8",
+  schema: "sasu.implement.state.v9",
   status: "active",
   topicSlug: "fixture",
   projectRoot: root,
   runDir: "agents/runs/fixture",
-  rows: [],
+  requirements: [],
   suite: { sealedAt: "2026-08-29T00:00:00.000Z", commands, exclusions: [], results: [] },
   verificationAttempts: [],
 });

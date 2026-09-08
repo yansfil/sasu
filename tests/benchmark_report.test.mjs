@@ -46,14 +46,14 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
 
   write(path.join(caseDir, "prd.md"), benchmarkPrd());
   write(path.join(caseDir, "benchmark.json"), {
-    schema: "sasu.benchmark-case.v2",
+    schema: "sasu.benchmark-case.v4",
     id: "demo",
     prd: "prd.md",
     environment: { mode: "fresh-worktree", baseRef: "HEAD", mustBeAbsent: ["demo-app"] },
     expected: {
       terminalStatuses: ["complete"],
-      requiredStages: ["init", "implementation", "verification", "verify-gate", "requirements-fidelity", "finalize"],
-      forbiddenStages: ["final-adversarial-review"],
+      requiredStages: ["start", "verification", "mechanical", "review", "finalize"],
+      forbiddenStages: [],
       maxVerifyAttempts: 2,
       falseCompleteAllowed: false,
     },
@@ -78,38 +78,47 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   const gatesDir = path.dirname(prepared.gates);
   const evaluationPath = path.join(root, prepared.resultDir, "qualitative.json");
   const preparedRecord = JSON.parse(fs.readFileSync(path.join(root, prepared.resultDir, "run.json"), "utf8"));
+  const at = seconds => new Date(Date.parse("2026-08-12T00:00:00Z") + seconds * 1000).toISOString();
+  const review = (seconds, duration, attempts = 1) => ({
+    invocationId: `review-${seconds}`, startedAt: at(seconds), finishedAt: at(seconds + duration), durationMs: duration * 1000,
+    verdict: "FAIL", result: { summary: "A required flow is not connected.", findings: [] },
+    judge: { at: at(seconds), durationMs: duration * 1000, attempts, outcome: "ok" },
+  });
+  const attempt = (id, seconds) => ({
+    id, phase: "complete", inputFingerprint: "same", verdict: "FAIL", startedAt: at(seconds), finishedAt: at(seconds + 30), durationMs: 30000,
+    mechanical: [{ command: "node --test", cwd: prepared.worktree, startedAt: at(seconds), finishedAt: at(seconds + 10), durationMs: 10000, exitCode: 0, status: "PASS" }],
+    review: review(seconds + 10, 20), risk: review(seconds + 10, 20),
+  });
+  const firstAttempt = attempt("verify-1", 300);
+  const secondAttempt = attempt("verify-2", 600);
+  // The answering backend reset its counters after a failed primary. Count
+  // each actual backend call once, without recounting rejected retry entries.
+  secondAttempt.review.judge = {
+    at: at(620), durationMs: 10000, attempts: 1, outcome: "ok",
+    fallback: { at: at(610), durationMs: 10000, attempts: 2, outcome: "judge-invalid-output" },
+    retries: [{ at: at(610), durationMs: 5000 }, { at: at(615), durationMs: 5000 }],
+    usage: { inputTokens: 10, outputTokens: 3 },
+  };
   write(path.join(runDir, "state.json"), {
-    createdAt: "2026-08-12T00:00:00.000Z",
-    activeSessionId: "session-1",
-    projectRoot: prepared.worktree,
-    tasks: [{ id: "T1", status: "complete", evidence: [{ ts: "2026-08-12T00:05:00.000Z" }] }],
-    verification: [{ id: "V1", status: "pass" }],
+    schema: "sasu.implement.state.v9", status: "blocked", createdAt: at(0),
+    ownerSessionId: "session-1", projectRoot: prepared.worktree,
+    initialSource: preparedRecord.initialSource,
+    requirements: Array.from({ length: 30 }, (_, index) => ({ id: `B${index + 1}`, behavior: `Requirement ${index + 1}`, decisionIds: [] })),
+    findings: [{ id: "F1", kind: "defect", status: "open", problem: "A required flow is not connected." }],
+    verificationAttempts: [firstAttempt, secondAttempt],
+    riskFindings: [], artifacts: [],
+    escalations: [
+      { id: 1, at: at(415), durationMs: 15000, outcome: "diagnosed", judge: { at: at(400), durationMs: 15000, attempts: 2, outcome: "ok" } },
+      { id: 2, at: at(421), durationMs: 1000, outcome: "summon-failed", judge: { at: at(420), durationMs: 1000, attempts: 0, outcome: "judge-auth" } },
+    ],
   });
   write(path.join(runDir, "receipt.json"), {
-    status: "partial",
-    counts: { totalOpen: 1, requiredVerificationNotPassed: 1 },
-    initialWorktreeSnapshot: preparedRecord.initialWorktreeSnapshot,
-    phaseTimings: {
-      wallClockSeconds: 1000,
-      taskEvidenceBoundary: { afterSeconds: 300 },
-      measured: {
-        verificationCommandSeconds: 20,
-        verificationCommandRuns: 1,
-        judgeSeconds: 40,
-        judgeCalls: 2,
-        verifyGateAttempts: 2,
-      },
-      unattributedSeconds: 940,
-      milestones: { initAt: "2026-08-12T00:00:00.000Z", finalizedAt: "2026-08-12T00:16:40.000Z" },
-    },
-    reviewRounds: { fidelity: { rounds: 1 }, final: { rounds: 0 } },
-    requirementsFidelityReview: { status: "pass" },
-    finalReview: null,
-    verifyGate: { effective: "BLOCKED", staleInputs: [], overridden: false },
+    schema: "sasu.implement.receipt.v5", status: "blocked", completedAt: at(1000),
+    delivery: { eligible: false, reasons: ["F1 remains open"] }, review: secondAttempt.review,
   });
   write(path.join(gatesDir, "gates.json"), {
     gates: {
-      verify: {
+      spec: {
         lastRunAt: "2026-08-12T00:15:00.000Z",
         totalAttempts: 2,
         history: [
@@ -137,9 +146,9 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
     },
     dimensions: {
       flowAdherence: { score: 4, reason: "Expected order.", evidence: ["session:event-1"] },
-      recoveryDiscipline: { score: 3, reason: "Scoped recovery.", evidence: ["gates:/gates/verify/history/0"] },
-      reviewEfficiency: { score: 4, reason: "One required review.", evidence: ["receipt:/reviewRounds"] },
-      evidenceHonesty: { score: 4, reason: "Partial stayed partial.", evidence: ["receipt:/status"] },
+      recoveryDiscipline: { score: 3, reason: "Scoped recovery.", evidence: ["gates:/gates/spec/history/0"] },
+      reviewEfficiency: { score: 4, reason: "One required review.", evidence: ["receipt:/review"] },
+      evidenceHonesty: { score: 4, reason: "Blocked stayed blocked.", evidence: ["receipt:/status"] },
       sessionEfficiency: { score: 2, reason: "One unchanged rerun.", evidence: ["session:event-1"] },
     },
     findings: [{ severity: "P2", message: "One unchanged rerun.", evidence: ["session:event-1"] }],
@@ -164,7 +173,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.match(unprepared.stderr, /prepared benchmark run not found/);
 
   const reportResult = run(root, reportArgs);
-  assert.equal(reportResult.validRun, false, "partial must not satisfy a complete-only case");
+  assert.equal(reportResult.validRun, false, "blocked must not satisfy a complete-only case");
 
   const reportPath = path.join(root, reportResult.output);
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
@@ -176,9 +185,22 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.deepEqual(report.flow.forbiddenStagesRun, []);
   assert.equal(report.timing.wallClockSeconds, 1000);
   assert.equal(report.timing.evaluationSeconds, 12.5);
-  assert.equal(report.efficiency.repeatedIdenticalDiffJudgments, 1);
+  assert.equal(report.timing.judgeCalls, 8, "actual backend attempts include fallback and solver calls, excluding synthetic results and zero-call refusals");
+  assert.equal(report.timing.judgeInvocations, 5);
+  assert.equal(report.timing.judgeSeconds, 95);
+  assert.equal(report.timing.judgeUnionSeconds, 55, "parallel review and risk durations overlap");
+  assert.equal(report.timing.solverInvocationSeconds, 16);
+  assert.equal(report.timing.verificationUnionSeconds, 60);
+  assert.equal(report.timing.verificationSumSeconds, 60);
+  assert.equal(report.timing.verificationCommandRuns, 2);
+  assert.equal(report.timing.verificationCommandSeconds, 20);
+  assert.equal(report.timing.answeringUsage.reportedInvocations, 1);
+  assert.equal(report.efficiency.repeatedIdenticalInputReviews, 1);
   assert.equal(report.efficiency.redundantStatusPolls, 0);
-  assert.equal(report.honesty.falseComplete, false, "an honest partial result is not a false complete");
+  assert.equal(report.efficiency.solverInvocations, 1);
+  assert.equal(report.efficiency.escalationAttempts, 2);
+  assert.equal(report.efficiency.diagnosedRecoveries, 1);
+  assert.equal(report.honesty.falseComplete, false, "an honest blocked result is not a false complete");
   assert.equal(report.qualitative.processScore.score, 85);
   assert.equal(report.qualitative.evaluatorRuntimeMatched, true);
   assert.equal(Object.prototype.hasOwnProperty.call(report.qualitative, "productQuality"), false);
@@ -207,12 +229,23 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.notEqual(mismatchedSession.status, 0);
   assert.match(mismatchedSession.stderr, /session id does not match implementation state/);
 
+  const statePath = path.join(runDir, "state.json");
+  const originalState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  write(statePath, {
+    ...originalState,
+    initialSource: { ...originalState.initialSource, digest: "changed-helper-before-start" },
+  });
+  const changedStartingSource = spawnSync(process.execPath, [reporter, ...reportArgs], { cwd: root, encoding: "utf8" });
+  assert.notEqual(changedStartingSource.status, 0);
+  assert.match(changedStartingSource.stderr, /implementation source snapshot changed before start/);
+  write(statePath, originalState);
+
   const candidatePath = path.join(root, "candidate.json");
   write(candidatePath, {
     ...report,
     run: { ...report.run, id: "run-2" },
     outcome: { ...report.outcome, validRun: true },
-    timing: { ...report.timing, wallClockSeconds: 800, judgeCalls: 1 },
+    timing: { ...report.timing, wallClockSeconds: 800, judgeCalls: 7 },
   });
   const comparisonResult = run(root, [
     "compare",
@@ -225,6 +258,55 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.equal(comparison.outcome.changed, true);
   assert.equal(comparison.deltas.wallClockSeconds, -200);
   assert.equal(comparison.deltas.judgeCalls, -1);
+
+  const legacyPath = path.join(root, "legacy-report.json");
+  write(legacyPath, { schema: "sasu.benchmark-report.v1" });
+  const legacy = spawnSync(process.execPath, [reporter, "compare", "--baseline", legacyPath, "--candidate", candidatePath], { cwd: root, encoding: "utf8" });
+  assert.notEqual(legacy.status, 0);
+  assert.match(legacy.stderr, /received schema sasu.benchmark-report.v1; expected sasu.benchmark-report.v2; last supported commit 488d3cc/);
+
+  const receiptPath = path.join(runDir, "receipt.json");
+  const originalReceipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  const settledState = {
+    ...originalState,
+    status: "complete",
+    findings: [],
+    riskFindings: [{ id: "RF1", severity: "blocking", status: "accepted", text: "Declared risk accepted after review." }],
+    completion: { fingerprint: "settled-completion" },
+  };
+  write(statePath, settledState);
+  const settledReceipt = {
+    ...originalReceipt, status: "complete", completionFingerprint: "settled-completion",
+    delivery: { eligible: true, reasons: [] },
+  };
+  write(receiptPath, settledReceipt);
+  const settledOutput = run(root, reportArgs);
+  const settledReport = JSON.parse(fs.readFileSync(path.join(root, settledOutput.output), "utf8"));
+  assert.equal(settledReport.outcome.validRun, true, "CLI completion eligibility can settle a recorded risk FAIL");
+  assert.equal(settledReport.honesty.falseComplete, false);
+  assert.equal(settledReport.honesty.verificationStatus, "FAIL", "the original actual verdict remains a historical observation");
+  write(receiptPath, { ...settledReceipt, delivery: { eligible: false, reasons: ["F2: human rejected"] } });
+  const rejectedOutput = run(root, reportArgs);
+  const rejectedReport = JSON.parse(fs.readFileSync(path.join(root, rejectedOutput.output), "utf8"));
+  assert.equal(rejectedReport.outcome.validRun, false, "human rejection does not satisfy a completed benchmark");
+  assert.equal(rejectedReport.honesty.deliveryEligible, false);
+  write(statePath, originalState);
+  write(receiptPath, originalReceipt);
+
+  const executionState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  executionState.verificationAttempts.push({
+    id: "verify-3", phase: "preflight", inputFingerprint: "same", verdict: "ERROR",
+    startedAt: at(700), finishedAt: at(701), durationMs: 1000, mechanical: [], review: null, risk: null,
+    error: { stage: "preflight", code: "input-invalid", message: "Required input unavailable." },
+  });
+  write(statePath, executionState);
+  const preflightOutput = run(root, reportArgs);
+  const preflightReport = JSON.parse(fs.readFileSync(path.join(root, preflightOutput.output), "utf8"));
+  assert.equal(preflightReport.timing.judgeCalls, 8, "a preflight failure did not execute a judge");
+  assert.equal(preflightReport.timing.verificationCommandRuns, 2);
+  assert.equal(preflightReport.efficiency.verifyAttempts, 3);
+  assert.deepEqual(preflightReport.efficiency.executionErrorsByStage, { preflight: 1 });
+  assert.equal(preflightReport.honesty.falseComplete, false);
 
   const badEvaluationPath = path.join(root, "bad-qualitative.json");
   const badEvaluation = JSON.parse(fs.readFileSync(evaluationPath, "utf8"));
@@ -246,14 +328,14 @@ test("prepare-run rejects unapproved and unreadable PRDs before reserving a run"
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   const contract = id => ({
-    schema: "sasu.benchmark-case.v2",
+    schema: "sasu.benchmark-case.v4",
     id,
     prd: "prd.md",
     environment: { mode: "fresh-worktree", baseRef: "HEAD", mustBeAbsent: ["demo-app"] },
     expected: {
       terminalStatuses: ["complete"],
-      requiredStages: ["init", "implementation", "verification", "verify-gate", "requirements-fidelity", "finalize"],
-      forbiddenStages: ["final-adversarial-review"],
+      requiredStages: ["start", "verification", "mechanical", "review", "finalize"],
+      forbiddenStages: [],
       maxVerifyAttempts: 2,
       falseCompleteAllowed: false,
     },

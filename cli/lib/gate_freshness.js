@@ -8,7 +8,7 @@ const { parseRegisterRows, decisionDigest, parseQaAnswers, answerDigest } = requ
 // trusted by a newer CLI without revalidation.
 // v4 (2026-08-30): the qa-log decision_ids line exclusion is retired in favor
 // of the structural Addendum section - see freshnessHash.
-const FRESHNESS_CONTRACT_VERSION = 4;
+const FRESHNESS_CONTRACT_VERSION = 5;
 
 function sha256Of(content) {
   return crypto.createHash("sha256").update(content).digest("hex");

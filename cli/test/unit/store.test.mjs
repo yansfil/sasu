@@ -402,7 +402,7 @@ test("receipt fields: gate artifacts are written under agents/runs/<topic>/gates
   assert.ok(fs.existsSync(path.join(store.projectRoot, artifact)));
 });
 
-test("a legacy agents/gates/<topic> record keeps loading and writing in place", () => {
+test("a retired agents/gates/<topic> record is refused without a compatibility reader", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-store-legacy-"));
   const legacyDir = path.join(dir, "agents", "gates", "topic-a");
   fs.mkdirSync(legacyDir, { recursive: true });
@@ -412,12 +412,8 @@ test("a legacy agents/gates/<topic> record keeps loading and writing in place", 
     path.join(legacyDir, "gates.json"),
     JSON.stringify({ schema: 1, topic: "topic-a", gates: {}, deviations: [], judgeCalls: [] }),
   );
-  const store = new GateStore(dir, "topic-a");
-  assert.equal(store.dir, legacyDir, "an existing legacy record must resolve to its own directory");
-  let state = store.load();
-  state = recordGateResult(store, state, "gap-audit", blockOutcome(), []);
-  const artifact = state.gates["gap-audit"].history.at(-1).artifact;
-  assert.ok(artifact && artifact.includes(path.join("agents", "gates", "topic-a", "artifacts")), "legacy runs keep writing in place");
+  assert.throws(() => new GateStore(dir, "topic-a"), /retired run namespace.*488d3cc7d6e99742e7f68a1680fcb101710c8e20/);
+  assert.equal(fs.existsSync(path.join(legacyDir, "artifacts")), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

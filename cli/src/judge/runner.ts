@@ -1,6 +1,6 @@
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
-import { AGENTIC_READ_MAX_ROUNDS, resolveBackend, type BackendRunResult, type JudgeBackend } from "./backends";
+import { AGENTIC_READ_MAX_ROUNDS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
 
 /**
@@ -77,6 +77,7 @@ async function preflightBackend(
   backend: JudgeBackend,
   target: JudgeTarget,
   configuredTimeoutMs: number,
+  execution?: ExecutionLifecycle,
 ): Promise<BackendRunResult | null> {
   if (backend.name !== "codex") return null;
   const key = codexPreflightKey(target);
@@ -87,6 +88,7 @@ async function preflightBackend(
     effort: target.effort,
     timeoutMs: Math.min(configuredTimeoutMs, CODEX_PREFLIGHT_TIMEOUT_MS),
     purpose: "judge:preflight",
+    ...(execution !== undefined ? { execution } : {}),
   }).then((result) => {
     if (result.text.trim() !== "OK") {
       throw new JudgeError(
@@ -201,7 +203,7 @@ export async function runJudge<T>(
   profile: JudgeProfile,
   prompt: string,
   validate: (value: unknown, activity: JudgeActivity) => T | string,
-  options: { images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[]; effort?: JudgeEffort } = {},
+  options: { execution?: ExecutionLifecycle; images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[]; effort?: JudgeEffort } = {},
 ): Promise<JudgeOutcome<T>> {
   // The caller's effort wins over the profile's for BOTH targets, applied once
   // here rather than at the backend.run call site: every downstream reader of
@@ -348,7 +350,7 @@ export async function runJudge<T>(
   };
   while (true) {
     try {
-      const preflight = await preflightBackend(backend, target, config.judge.timeoutMs);
+      const preflight = await preflightBackend(backend, target, config.judge.timeoutMs, options.execution);
       addAdvisories(preflight?.advisories);
     } catch (error) {
       if (!(error instanceof JudgeError)) throw error;
@@ -378,6 +380,7 @@ export async function runJudge<T>(
     try {
       const result = await backend.run(retryPreamble + prompt, {
         model: target.model,
+        ...(options.execution !== undefined ? { execution: options.execution } : {}),
         timeoutMs: config.judge.timeoutMs,
         purpose,
         effort: target.effort,

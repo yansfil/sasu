@@ -147,19 +147,11 @@ const DEFAULT_JUDGE: JudgeConfig = {
  * cheapest option, and for gap-audit and spec that option is wrong. These
  * numbers come from real documents.
  *
- * design (the implement run's shape review: "which comments would change what
- * a maintainer does next?") is an open search like gap-audit, and loose by
- * design - it has no verdict, and an empty comment list is a valid answer, so
- * budget past the knee buys latency, not proof. It ran at the profile's xhigh
- * until 2026-09-04, when a herdr-ide round measured 749s in this lane out of
- * a 10-14 minute verify. Set to the gap-audit knee; the acceptance, fidelity,
- * and risk lanes keep their profile budget, since those carry the verdict.
  */
-export const LANE_EFFORT: Record<"gap-audit" | "spec" | "verify" | "design", JudgeEffort> = {
+export const LANE_EFFORT: Record<"gap-audit" | "spec" | "verify", JudgeEffort> = {
   "gap-audit": "high",
   spec: "high",
   verify: "medium",
-  design: "high",
 };
 
 /** The budget a lane spends: the project's override, else the measured default. */

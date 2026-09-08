@@ -146,7 +146,7 @@ test("stall re-arms carry a next notification time without changing the silence 
 
 const silentRun = (minutesAgo = 11) => {
   const at = new Date(Date.now() - minutesAgo * 60_000).toISOString();
-  return { createdAt: at, events: [{ id: 4, at, kind: "row-status" }] };
+  return { createdAt: at, events: [{ id: 4, at, kind: "verify" }] };
 };
 
 const observing = (observation, { onCall } = {}) => (input) => {
@@ -206,7 +206,7 @@ test("an unavailable observation never becomes absence and never ends the wait",
 // must be the event.
 test("an event that lands with an observation is reported as the event", async () => {
   const at = new Date().toISOString();
-  const state = { createdAt: at, events: [{ id: 4, at, kind: "row-status" }, { id: 5, at, kind: "check-attempt" }] };
+  const state = { createdAt: at, events: [{ id: 4, at, kind: "verify" }, { id: 5, at, kind: "artifact" }] };
   const outcome = await waitForEvent({
     loadState: () => state, since: 4, stallMs: 10 * 60_000, agent: "impl",
     observe: observing({ kind: "settled", detail: "x" }),
@@ -219,7 +219,7 @@ test("an event that lands with an observation is reported as the event", async (
 // still ran would leak a herdr process per wake.
 test("every exit cancels the observation exactly once, including the event race", async () => {
   const at = new Date().toISOString();
-  const state = { createdAt: at, events: [{ id: 4, at, kind: "row-status" }] };
+  const state = { createdAt: at, events: [{ id: 4, at, kind: "verify" }] };
   let aborts = 0;
   let reads = 0;
   const outcome = await waitForEvent({

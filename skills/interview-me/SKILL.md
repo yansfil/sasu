@@ -169,7 +169,7 @@ Use these fields for every entry:
 
 | ID | Kind | Area | Decision / fact | Priority | Source / owner | Status | PRD mapping / revisit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D-01 | fact / decision / assumption | UX/design |  | P0 / P1 / P2 | user, repo path:line, provider URL, or agent default | open / resolved / deferred / blocking / rejected | R#/AC#/T#/V#/non-goal, plus revisit trigger when needed |
+| D-01 | fact / decision / assumption | UX/design |  | P0 / P1 / P2 | user, repo path:line, provider URL, or agent default | open / resolved / deferred / blocking / rejected | Decision/Bn/non-goal/risk, plus revisit trigger when needed |
 
 Use Kind values fact, decision, or assumption.
 Use Source / owner to distinguish user decisions, code or docs facts, provider evidence, and agent defaults.
@@ -443,7 +443,8 @@ Before marking qa-log.md complete, verify:
 - Every P0 and P1 Decision Register entry is resolved, explicitly deferred, blocking, or rejected.
 - Every fact, decision, and assumption has an owner and source or evidence.
 - Every selected UX flow has a Scenario Card with a primary path, meaningful state or failure, recovery, and proof.
-- Every material D# maps to a requirement, acceptance criterion, task, verification item, non-goal, human review, risk, or explicit deferred or blocking item.
+- Every material D# maps to a PRD decision, observable behavior, non-goal, risk, or explicit deferred or blocking item.
+  Preserve every requirement without assigning per-requirement proof methods or completion states.
 - The full intended product journey and relevant quality boundaries are covered, and every deliberate omission is an explicit decision rather than an implicit MVP cut.
 - Rejected options and non-goals remain visible.
 - Required verification is seeded with an observable result.

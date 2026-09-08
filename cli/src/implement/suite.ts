@@ -1,41 +1,10 @@
 import type { ImplementState, SuiteCommand, SuiteExclusion } from "./types";
 
-/** Shape the suite axis needs from a batch result; keeps this module runner-agnostic. */
-export interface SuiteAxisInput {
-  suiteCommandIds: string[];
-  criterionIds: string[];
-  green: boolean;
-  command: string;
-}
-
 export function activeSuiteCommands(state: ImplementState): SuiteCommand[] {
   const excluded = new Set(state.suite.exclusions.map((entry) => entry.commandId));
   return state.suite.commands.filter((command) => !excluded.has(command.id));
 }
 
-/**
- * Suite commands that no acceptance criterion bound.
- *
- * These are the whole reason the suite list survives alongside AC Check
- * bindings: they catch a regression no criterion is watching. Their failure
- * is therefore not an AC's failure and cannot be scored on the AC axis - it
- * blocks on its own (R2).
- */
-export function orphanSuiteFailures(results: SuiteAxisInput[]): SuiteAxisInput[] {
-  return results.filter((result) =>
-    result.suiteCommandIds.length > 0
-    && result.criterionIds.length === 0
-    && !result.green);
-}
-
-/**
- * A suite command is not a criterion and cannot be parked.
- *
- * Park is the "prove this later, with a human's approval on record" escape for
- * an acceptance criterion. A suite command has no criterion to prove later; it
- * is a standing regression guard, and the only way to stop running one is to
- * remove it from the sealed list through an amendment (AC4, AC6).
- */
 export function suiteCommandNamed(state: ImplementState, id: string): SuiteCommand | null {
   return state.suite.commands.find((command) => command.id === id.toUpperCase()) ?? null;
 }
@@ -81,7 +50,7 @@ export interface SuiteScore {
   red: Array<{ commandId: string; command: string }>;
 }
 
-/** The suite axis as it is reported: GREEN/RED over the active sealed list (R4). */
+/** The required suite as it is reported: GREEN/RED over the active sealed list (R4). */
 export function suiteScore(state: ImplementState): SuiteScore {
   const active = activeSuiteCommands(state);
   const red: Array<{ commandId: string; command: string }> = [];

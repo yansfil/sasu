@@ -20,11 +20,12 @@ import { parseContract } from "./contract";
 const { parseQaAnswers } = require("../../lib/qa_register.js") as {
   parseQaAnswers: (content: string) => Array<{ question: string; answer: string }> | null;
 };
-const { splitTableRow, parseFrontmatterBlock, PRD_SECTIONS, parseBehaviorRows, missingPrdSections } = require("../../lib/prd_parser.js") as {
+const { splitTableRow, parseFrontmatterBlock, PRD_SECTIONS, parseBehaviorRows, parseDecisionRows, missingPrdSections } = require("../../lib/prd_parser.js") as {
   parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
   splitTableRow: (text: string) => string[];
   PRD_SECTIONS: readonly string[];
-  parseBehaviorRows(markdown: string): { section: { line: number; headerLine?: number; header?: string[] } | null; rows: Array<{ id: string | null; line: number; defects: string[] }> };
+  parseBehaviorRows(markdown: string): { section: { line: number; headerLine?: number; header?: string[] } | null; rows: Array<{ id: string | null; decisionIds: string[]; line: number; defects: string[] }> };
+  parseDecisionRows(markdown: string): Array<{ id: string }>;
   missingPrdSections(markdown: string): string[];
 };
 
@@ -458,7 +459,7 @@ export function prelintPrdCitedQuestions(prdContent: string, qaLogContent: strin
   return { ok: findings.length === 0, doc: "prd", findings };
 }
 
-// --- PRD rules (spec and verify gate entrances) ---
+// --- PRD rules (spec gate entrance and readiness) ---
 
 /**
  * The six-section PRD (prd-template R1, R11). Structure only: the section
@@ -487,12 +488,18 @@ export function prelintPrd(content: string): PrelintResult {
   }
 
   const behaviors = parseBehaviorRows(content);
+  const decisionIds = new Set(parseDecisionRows(content).map((row) => row.id));
   if (behaviors.section !== null && behaviors.rows.length === 0) {
-    findings.push(finding("prd-behavior-row", behaviors.section.line, "## Behaviors has no table rows", "Add at least one `| B<n> | 행동 | check:|judge:|human: ... | D-n |` row."));
+    findings.push(finding("prd-behavior-row", behaviors.section.line, "## Behaviors has no table rows", "Add at least one `| B<n> | 행동 | D-n |` row."));
   }
   for (const row of behaviors.rows) {
     for (const defect of row.defects) {
-      findings.push(finding("prd-behavior-row", row.line, `${row.id ?? "row"}: ${defect}`, "Each Behaviors row is `| B<n> | what the user observes | check: <one argv command> | judge: <evidence> | human: <what to confirm> | D-n |`; the method lives in the 검사 방법 cell only."));
+      findings.push(finding("prd-behavior-row", row.line, `${row.id ?? "row"}: ${defect}`, "Each Behaviors row has three columns: `| B<n> | what the user observes | D-n |`. Retired four-column PRDs must be rewritten and approved."));
+    }
+    for (const id of row.decisionIds) {
+      if (!decisionIds.has(id)) {
+        findings.push(finding("prd-decision-reference", row.line, `${row.id ?? "row"}: cites ${id}, which is not in the Decisions table`, "Declare the referenced decision in Decisions, or correct the behavior's decision reference."));
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for any agent working on this repository — the harness itself, not a
+Guidance for any agent working on this repository - the harness itself, not a
 project running under it.
 
 ## Review Guide
@@ -11,20 +11,22 @@ every review:
 
 > Verification is the senior sitting next to the implementation. It must be
 > clean, intuitive, mistake-free, and efficient (깔끔하게 · 직관적으로 ·
-> 실수없이 · 효율적으로) — and it must never become a second implementation
+> 실수없이 · 효율적으로) - and it must never become a second implementation
 > that outweighs the first.
 
 Apply these to every design proposal, diff review, and refactor. Items 1 and 2
 are a pair, read together or not at all: ceremony gets cut, proof never does.
 
-1. **Prove every AC with the tools you actually have.** Verification must be
-   tight (촘촘하게). An exit code, an implementation-bound criterion check, a runtime capture, a
-   registered artifact, a read-only agentic judge — reach for the strongest
-   instrument the criterion admits. The agent's report is not evidence, diff
-   reading is the weakest instrument, and cost never justifies dropping a proof.
-2. **Verification must not outweigh implementation.** Watch the verify/review
-   wall-clock ratio and make "it feels slow" a number. What gets cut is
-   ceremony, never item 1's proof.
+1. **Preserve every requirement and review the complete contract.** Every
+   requirement remains in the PRD and independent review input.
+   Use sufficient actual implementation, test, and observation evidence; do not
+   require a separate proof record, lifecycle, PASS object, or judge call per requirement.
+   The CLI guarantees execution facts and input integrity; satisfaction is
+   independent semantic judgment and must be evaluated with planted omissions.
+2. **Verification must not outweigh implementation.** Measure actual review and
+   execution wall-clock, calls, and overlap.
+   Remove repeated bookkeeping and redundant observation while preserving every
+   requirement and sufficient actual evidence.
 3. **Fix the one cause, not the N symptoms.** Five patches to five sites is
    usually one missing concept. Prefer the change that makes the failure class
    structurally impossible.
@@ -36,31 +38,36 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
    Running work concurrently assumes nothing; *skipping* work assumes the
    verdict is a pure function of the inputs compared, which here is usually
    false. Fan out freely; before skipping, prove purity.
-6. **Verify at the semantic unit, not the text unit.** Judge per acceptance
-   criterion, scoped to what that criterion needs.
-7. **The harness absorbs complexity — never the workflow user, never a doc.**
-   Do not add knobs to the human's or agent's contract. A rule that lives only
-   as skill-document prose is a request for discipline, not a guard: push it
-   into code, in ROI order. Push rules into code, never judgments: declare a
-   value in the document only when the harness executes or compares it, and
-   leave meaning to the agent instead of regexing prose.
+6. **Observe product flows and risk boundaries; review the whole contract.**
+   Group actual observations where one flow supports several requirements.
+   Compare the complete requirements and decisions with the implementation and
+   shared evidence; Bn references are issue pointers, never progress ledgers.
+7. **The harness absorbs complexity - never the workflow user, never a doc.**
+   Enforce structure, integrity, authority, actual execution, freshness, and
+   convergence in code.
+   Leave meaning and evidence sufficiency to independent review.
+   Do not replace retired CLI ceremony with mandatory Markdown checklists.
 8. **The whole flow must stay explainable.** One diagram, one small concrete
    example. A wall of text means the structure is the bug.
 9. **Measure it; re-verify before relying on it.** Retest recorded constraints
    before leaning on them, and record measured data in why-comments. A change
    is believed after a real end-to-end run and its transcript, not after unit
    tests pass.
-10. **Records stay honest and singular.** Skipped means skipped; a pass names
-    the tree it was earned on; `state.json` is the only record.
+10. **Records stay honest and singular.** Unrun means unrun, unavailable means
+    unverified, and a past result never becomes a current PASS by assertion.
+    `state.json` is the only authority; receipts derive from current recorded inputs.
 11. **General, not overfit.** Hold across project shapes and case sizes, not
     just the incident that motivated the change. Detection built from one
     sample looks like a guard and behaves like a coin flip: key on structure,
     not on how one document happened to phrase something.
 12. **Compare outward before inventing.** Import the idea, not the machinery.
-13. **Never loop on a stage that cannot converge.** A test suite converges; a
-    fresh adversarial reviewer does not. A generative stage paired with
-    whole-run invalidation needs a harness-owned bound: a delta contract, a
-    severity floor, or a round cap.
+13. **Never loop on a stage that cannot converge.** Preserve concrete findings
+    and explicit resolution history within a harness-owned round bound.
+    A real omission in an unchanged file still counts; optional advice does not
+    trigger endless reviews, and open blocking risk cannot reset the budget.
+
+The approved [2026-09-08 workflow change](docs/plans/2026-09-08-workflow-simplification.md) explicitly replaces the old per-AC proof and per-AC judge policies in items 1 and 6.
+This is a policy change, not a reinterpretation of the retired rules.
 
 Full text, with the reasoning and the incidents behind each item:
 [`PRINCIPLES.md`](PRINCIPLES.md). When a review cites a principle, cite it by
@@ -68,22 +75,29 @@ number.
 
 ## Working Rules
 
-**Tests.** Three suites, all of them before a commit that touches `cli/`:
+**Tests.** Before a coherent commit that touches `cli/`, clean generated
+`cli/dist` only in the owned implementation worktree, then run all checks
+against the same final source in this order:
 
 ```sh
-node --test tests/*.test.mjs        # harness behavior, ship gates, skill-doc contracts
-cd cli && npm test                  # unit
-cd cli && npm run test:e2e          # end to end
-cd cli && npm run build             # tsc; gates live in TypeScript
+npm --prefix cli run build
+node --test tests/*.test.mjs
+npm --prefix cli test
+npm --prefix cli run test:e2e
 ```
+
+Run `./cli/node_modules/.bin/tsc -p cli/tsconfig.json --noEmit` promptly after
+coupled source/caller edits.
+Focused tests serve intermediate work; the final repository-wide suite rule
+wins over the general engineering principle 12's low-impact test-cost default.
+A passing build or fixture suite is not live end-to-end validation.
 
 Golden files regenerate with `UPDATE_GOLDEN=1`; regenerate deliberately, never
 to make a failure go away.
 
 **Namespaces.** Run artifacts live in the target project under `agents/**`
 (`agents/interview/**`, `agents/prd/**`, `agents/runs/**`, `agents/benchmarks/**`,
-`agents/rules/**`, `agents/config.json`, plus the legacy read-only
-`agents/implement/**` and `agents/gates/**` layouts) — the only
+`agents/rules/**`, `agents/config.json`, and historical ignored layouts) - the only
 namespace the harness reads or writes. It is bookkeeping, never a verification
 input: nothing under `agents/**` belongs in a judged diff or a freshness
 fingerprint.
@@ -105,22 +119,28 @@ prose is a request for discipline, not a guard (items 7 and 13). Any hook this
 installer has ever registered must stay listed in `HARNESS_HOOK_MARKERS`, or a
 later run cannot retract it without disturbing a foreign hook.
 
-**Supervision and state attribution.** `state.json` has one physical writer,
-the CLI, and every change is attributed to an issuer: `implementor`,
-`observer`, or `human`. The label is a declaration, not an authentication -
-the CLI cannot tell a supervisor typing `--issuer human` from the human, and
-the mitigation is the transcript, not the code. What the gate does buy is that
-the supervisor is read-only over implementation: one dispatch gate refuses
-`check`, `artifact`, `verify`, `finalize`, `design --accept`, and
-`risk --accept` from an `observer` and records the refusal in the run's verb
-history. `confirm` and `risk --non-convergent` are human-only; `amend` admits
-observer and human and the PRD diff decides which (a changed 검사 방법 cell is
-the observer's, a changed behavior cell or row set is the human's). The gate is
-fail-open on a command it does not know, so a test reads the dispatcher and
-fails if a subcommand reaches it with no authority row. The full table lives
-in `skills/implement/SKILL.md`'s Command Contract, which a test compares
-against `sasu --help` in both directions and against the authority table
-itself.
+**Supervision and state attribution.** The CLI is the only physical writer of
+`state.json`, and domain changes carry an issuer declaration: `implementor`,
+`observer`, or `human`.
+Issuer is an audit declaration, not authentication; the transcript is the
+mitigation for a false declaration.
+The Observer cannot register implementation evidence, verify, finalize, accept
+risk, or retire an implementation; it observes and escalates.
+`confirm`, `amend`, and `risk --non-convergent` are human-only.
+Existing user authorization remains sufficient when it covers the action.
+The full authority/flag table lives in `skills/implement/SKILL.md` and is tested
+against help and the dispatch authority registry in both directions.
+
+**Verification execution lease.** One whole-verify lease holds the owner,
+token, fixed inputs, host/process identity, and child process groups from suite
+execution through judge completion and result persistence.
+All other domain mutations, including risk, confirm, retire, amend, escalation,
+and ownership changes, are refused while it lives.
+Its own progress/close and refusal history merge safely into the latest state
+with CAS.
+A dead owner with live children is interrupted only after process-group cleanup
+is verified; an uncertain process state is not permission to steal the lease.
+Read-only status and event waiting remain available.
 
 **Event wake, not polling.** `sasu implement await` is a background one-shot
 that blocks on the append-only event log inside `state.json` and exits for
@@ -140,25 +160,38 @@ run record stays read-only. The trade is real and is stated in the wake's own
 detail: once that early inspection is spent, per-second target-loss detection
 is gone until a new event. Screen state moves a deadline and decides nothing.
 
-**Correcting a run in flight.** `amend` re-seals the PRD snapshot and
-invalidates only the Behaviors rows whose cells actually changed, archiving
-the superseded snapshot under its amendment id; an observer's amendment is
-refused while a `check:` row is mid-attempt. The Behaviors row is the unit of
-progress: there is no task ledger, and how rows are split into work is the
-implementor's own plan, which the harness does not read.
-`amend --exclude-suite` is the only door out of the sealed suite list, and the
-excluded command's last result stays in the ledger as history rather than
-being deleted. A criterion proved by driving a screen is scripted by
-`qa-brief` and registered by `trail`, which checks the brief id echo, the
-covered step set, and the declared driver role - the implementor may not
-register its own drive. Replacing evidence after a rejection is recorded:
-a superseded trail is preserved, a replaced artifact is invalidated.
+**Correcting a run in flight.** Human-authorized `amend` archives the previous
+PRD, re-seals the new whole contract, refreshes mirrored review/source metadata,
+and invalidates the complete review's freshness.
+`amend --exclude-suite` is the only door out of the sealed required suite list;
+the excluded command's last result remains history with the approval quote.
+Registered observations are run-wide, preserve collector/method/time/target
+provenance, and may support several requirements.
+Replaced evidence remains recorded as superseded rather than erased.
+There is no requirement state machine, QA brief/trail, or separate design lane.
 
-**Human rows.** A `human:` row is closed by the person's own words and by
-nobody else's. `finalize` leaves it OPEN and closes the run
-`complete-pending-human`; `confirm --issuer human` closes it later and
-rewrites the receipt, `--reject` records what was wrong and keeps it OPEN, and
-the fix is a new run. OPEN rows travel in the PR body and never block merge.
+**Human confirmation.** Actual human judgment is an exception finding grounded
+in Decisions, Risks, or recorded user instructions, not a requirement type.
+Only `confirm --issuer human --id <id>` records the person's own confirmation or
+rejection; response history and source freshness are preserved.
+Permitted after-the-fact judgment can leave `complete-pending-human` and travel
+with delivery, but an open explicit rejection makes delivery ineligible.
+Prerequisite authority never becomes after-the-fact judgment.
+A rejected closed result is fixed in a new run; an explicit withdrawal and
+approval of the same unchanged result can resolve the rejection while keeping
+its history.
+
+**Completion and convergence.** A first verify failure keeps the run active
+with a recorded attempt and open findings.
+One routine independent review reads all requirements and actual evidence;
+high-risk adds a distinct safety review using the same fixed inputs.
+Concrete later omissions in unchanged files must not be discarded, and prior
+open issues require explicit dispositions.
+Open risk blockers keep the correction budget incomplete even after routine PASS.
+`finalize --status blocked` may close a valid attempted run without any successful
+judge result, naming the failed phase and unrun work; pre-verify cancellation
+uses `retire`.
+State persists before derived receipts, and finalize never executes verification.
 
 **Repository constants.** These hold for every PRD under this harness and are
 stated here once, never repeated in a PRD: no agent, model, vendor, or tool
@@ -171,9 +204,10 @@ Behaviors row in that PRD.
 
 **Judge policy.** Judge model routing is project-configurable only through the
 `routine` and `high-risk` profiles in `agents/config.json`.
-Both profiles default to Codex Luna max as the primary; they differ only in
-fallback, Claude Sonnet 5 xhigh for routine and Claude Opus 5 xhigh for
-high-risk.
+The actual code defaults are Codex `gpt-5.6-luna` xhigh with Claude
+`claude-sonnet-5` xhigh fallback for routine, and Codex `gpt-5.6-sol` xhigh
+with Claude `claude-opus-5` xhigh fallback for high-risk.
+The workflow change does not change these models.
 Evidence access is a harness-owned capability, not a project knob: Codex gets a
 disposable workspace containing only allowlisted files, runs read-only, and has
 its JSON command trace checked against the allowlist. Any non-bounded read
@@ -190,14 +224,14 @@ For coupled type/caller edits and verification handoffs, follow [Shared-worktree
 
 작업 재개·이관 시 [소유 경계 확인 절차](docs/concurrent-handoff.md)를 따른다.
 
-**Browser tooling.** chromux is the agent's hands — interactive QA, screenshots,
-exploratory drives. It is never the engine of committed test code or PRD
-`Check:` oracles: chromux is one shared daemon, so repeated automated runs leak
+**Browser tooling.** chromux is the agent's hands - interactive QA, screenshots,
+exploratory drives. It is never the engine of committed test code or required
+automated suite commands: chromux is one shared daemon, so repeated automated runs leak
 tabs whenever a run is killed before its cleanup (2026-08-11: ~180 orphaned
 headless tabs wedged CDP and failed innocent oracles) and race concurrent
 invocations. Automated browser verification uses a self-contained tool the test
 itself launches and tears down (e.g. a playwright devDependency). A PRD's
 "zero-dependency" guardrail covers runtime dependencies, not test tooling.
 
-**Comments.** Record the *why* — especially the measurement or the incident a
-decision rests on — next to the code, in the surrounding style.
+**Comments.** Record the *why* - especially the measurement or the incident a
+decision rests on - next to the code, in the surrounding style.

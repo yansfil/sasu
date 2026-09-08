@@ -1,4 +1,4 @@
 interface:
   display_name: "implement"
-  short_description: "Implement PRDs with tasks, evidence, and receipts"
-  default_prompt: "Use $implement to execute the approved PRD with a validated task plan, artifact-backed proof, profile-aware review, and a strict receipt."
+  short_description: "Implement complete PRDs with independent review and current receipts"
+  default_prompt: "Use $implement to implement the approved complete PRD, collect actual shared evidence, run required suites and one comprehensive independent review, and finalize an honest current receipt."

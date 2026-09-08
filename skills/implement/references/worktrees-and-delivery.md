@@ -26,7 +26,7 @@ Implementation completion and PR delivery are separate outcomes.
 ## Local Delivery
 
 The default delivery mode is local.
-After a complete receipt, run the local delivery command to validate freshness and
+After a current delivery-eligible receipt, run the local delivery command to validate freshness and
 rules, commit the allowlisted implementation with a semantic project message, and
 record `delivery/delivery-result.json`.
 It never pushes, opens a PR, watches CI, or merges.
@@ -48,9 +48,12 @@ PR creation and CI are never required to prove implementation completion.
 The new implement state schema does not migrate old runs.
 Start a new run in the intended checkout.
 Do not add compatibility adapters or copy old completion verdicts into the new state.
-An active unfinished run that must be abandoned can release its occupancy with `sasu implement retire --slug <topic-slug>`.
+An active unfinished run that must be abandoned, with no live verify lease, can release its occupancy with `sasu implement retire --slug <topic-slug>`.
+Retirement permits implementor and human issuers.
 Retiring a run owned by another session requires `--adopt '<verbatim user approval>'`, and the evidence is recorded with the transition.
 Run `sasu doctor` to list active retire candidates and worktrees that remain after their run ended.
+
+Permitted pending human confirmation travels with delivery; an open explicit rejection blocks delivery even when the receipt says `complete-pending-human`.
 
 ## Attribution
 

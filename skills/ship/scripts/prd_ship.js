@@ -6,30 +6,12 @@ const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 
-// Namespace layout mirror of implement's util.js constants. Kept local so the
-// ship skill stays installable without an implement checkout, but the values
-// and the namespace.root override lookup must match; change both together.
-function readNamespaceOverride() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), "agents", "config.json"), "utf8"));
-    const root = parsed && parsed.namespace && typeof parsed.namespace.root === "string"
-      ? parsed.namespace.root.trim()
-      : "";
-    if (root && /^[A-Za-z0-9._-]+$/.test(root)) return root;
-  } catch {
-    // Missing or invalid config falls back to the default namespace.
-  }
-  return null;
-}
-
-const NAMESPACE_ROOT = readNamespaceOverride() || "agents";
-// Unified run namespace: gate + implement state share agents/runs/<slug>/.
-// Legacy implement-namespace runs (and their active pointer) stay readable.
+// Current CLI run paths are fixed under agents/runs. Keeping a configurable
+// reader here would select a different completion authority from implement.
+const NAMESPACE_ROOT = "agents";
+// Gate and implement records share the current run namespace.
 const RUNS_ROOT_REL = path.join(NAMESPACE_ROOT, "runs");
-const IMPLEMENT_ROOT_REL = path.join(NAMESPACE_ROOT, "implement");
-const SESSIONS_DIR_REL = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-sessions");
 const ACTIVE_PATH = path.join(RUNS_ROOT_REL, ".prd-implement-active.json");
-const LEGACY_ACTIVE_PATH = path.join(IMPLEMENT_ROOT_REL, ".prd-implement-active.json");
 const SESSION_POINTER_DIR_REL = path.join(RUNS_ROOT_REL, ".active");
 
 // Session-scoped pointer mirror of cli/src/runs/session.ts + runs/paths.ts;
@@ -57,6 +39,7 @@ function main() {
   const [command, ...rest] = process.argv.slice(2);
   const options = parseArgs(rest);
   try {
+    if (options["allow-stale"]) throw new Error("--allow-stale is retired; delivery requires a current verification and receipt");
     if (command === "preflight") return cmdPreflight(options);
     if (command === "body") return cmdBody(options);
     if (command === "local") return cmdLocal(options);
@@ -76,7 +59,7 @@ function usage(exitCode) {
   node prd_ship.js preflight [--state <state.json>]
   node prd_ship.js body [--state <state.json>] [--output <file>] [--force]
   node prd_ship.js local [--state <state.json>] [--commit-message <message>] [--no-gpg-sign] [--include <path>] [--skip-rules --reason <why>]
-  node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
+  node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
   node prd_ship.js watch-ci [--state <state.json>] [--pr <number-or-url>] [--timeout <seconds>] [--interval <seconds>]
   node prd_ship.js merge [--state <state.json>] [--pr <number-or-url>] --approval <verbatim-user-approval> [--method squash|merge|rebase] [--delete-branch]
   node prd_ship.js status [--state <state.json>] [--pr <number-or-url>]
@@ -261,7 +244,6 @@ function resolveState(options) {
     const sessionId = currentSessionId();
     let activePath = sessionId === null ? null : path.join(repoRoot, SESSION_POINTER_DIR_REL, `${sessionId}.json`);
     if (activePath === null || !fs.existsSync(activePath)) activePath = path.join(repoRoot, ACTIVE_PATH);
-    if (!fs.existsSync(activePath)) activePath = path.join(repoRoot, LEGACY_ACTIVE_PATH);
     if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active pointer for this session; pass --state <path>`);
     const active = readJson(activePath);
     // A pointer inside a run's worktree names its record tree explicitly.
@@ -269,11 +251,13 @@ function resolveState(options) {
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
+  assertSchema(state, "sasu.implement.state.v9", "state");
   const stateDir = path.dirname(statePath);
   const receiptPath = path.join(stateDir, "receipt.json");
   const resultPath = path.join(stateDir, "implementation-result.md");
   if (!fs.existsSync(receiptPath)) throw new Error(`Receipt file not found: ${receiptPath}`);
   const receipt = readJson(receiptPath);
+  assertSchema(receipt, "sasu.implement.receipt.v5", "receipt");
   return {
     // Git operations (staging, commit, push) happen in the JUDGED tree: the
     // run's worktree when isolated, else the record tree. Records (state,
@@ -292,15 +276,23 @@ function resolveState(options) {
   };
 }
 
-// A receipt closed `complete-pending-human` ships: every check:/judge: row
-// is proved and only the user's own confirmation is outstanding. The OPEN
-// rows travel in the PR body as a table so the reviewer sees exactly what
-// the person still owes, and a confirm after ship rewrites the receipt only.
 const SHIPPABLE_RECEIPT_STATUSES = new Set(["complete", "complete-pending-human"]);
+const LAST_SUPPORTED_COMMIT = "488d3cc7d6e99742e7f68a1680fcb101710c8e20";
+
+function assertSchema(value, expected, label) {
+  if (value?.schema !== expected) {
+    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${LAST_SUPPORTED_COMMIT}. Start a new run with the current contract.`);
+  }
+}
 
 function assertCompleteReceipt(context) {
   if (!SHIPPABLE_RECEIPT_STATUSES.has(context.receipt.status)) {
     throw new Error(`Cannot ship receipt status '${context.receipt.status}'. Run implement to completion first.`);
+  }
+  // Eligibility is derived by the CLI from current human responses and open
+  // blockers. Status alone cannot distinguish pending consent from rejection.
+  if (context.receipt.delivery?.eligible !== true) {
+    throw new Error(`Receipt is not delivery-eligible: ${(context.receipt.delivery?.reasons || ["missing eligibility"]).join("; ")}`);
   }
 }
 
@@ -326,7 +318,7 @@ function projectDeliveryConfig(context) {
 function deliveryConfig(context, options = {}) {
   // A run-level declaration is authoritative because it is part of the
   // reviewed delivery contract; project config supplies the default when the
-  // run/receipt predates an explicit delivery block.
+  // run does not declare a delivery override.
   const project = projectDeliveryConfig(context);
   const stateDelivery = context.state.delivery && typeof context.state.delivery === "object"
     ? context.state.delivery
@@ -391,6 +383,7 @@ function verifyDelivery(context) {
     violations.push(`unified verification is ${detail.verification ? detail.verification.verdict : "missing"}, not PASS`);
   }
   for (const problem of detail.artifactProblems || []) violations.push(problem);
+  if (detail.delivery?.eligible !== true) violations.push(`implement delivery is ineligible: ${(detail.delivery?.reasons || ["missing eligibility"]).join("; ")}`);
   if (!detail.completion || detail.completion.fingerprint !== context.receipt.completionFingerprint) {
     violations.push("receipt completion fingerprint does not match sasu implement status");
   }
@@ -405,56 +398,45 @@ function requireReason(options, flag) {
 
 // --- PR body draft ------------------------------------------------------
 
-function firstLine(text) {
-  return String(text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean)[0] || "";
-}
-
 function cell(text) {
   return String(text || "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
 }
 
-function rowResultLine(row) {
-  const result = row.result || {};
-  if (result.kind === "check") return result.exitCode === null || result.exitCode === undefined ? "not run" : `exit ${result.exitCode} at ${result.finishedAt || "?"}`;
-  if (result.kind === "judge") return `${result.verdict || "not judged"}${result.reason ? `: ${firstLine(result.reason)}` : ""}`;
-  if (result.kind === "human") return result.evidence ? `confirmed: ${result.evidence}` : String(result.status || "OPEN");
-  return String(result.status || "unknown");
-}
-
-/** The receipt's Behaviors table, one line per row, statuses in the PRD's words. */
-function summarizeBehaviors(receipt) {
-  const rows = Array.isArray(receipt.behaviors) ? receipt.behaviors : [];
-  return rows
-    .map(row => `| ${cell(row.id)} | ${cell(row.behavior)} | ${cell(row.check)} | ${cell(row.result && row.result.status)} | ${cell(rowResultLine(row))} |`)
-    .join("\n") || "| N/A | No Behaviors rows in the receipt | N/A | N/A | N/A |";
-}
-
-/** human: rows still OPEN: what the person must confirm, and the last rejection when there is one. */
-function openHumanRows(receipt) {
-  const rows = Array.isArray(receipt.behaviors) ? receipt.behaviors : [];
-  return rows.filter(row => row.result && row.result.kind === "human" && String(row.result.status || "").startsWith("OPEN"));
-}
-
-function summarizeOpenHumanRows(receipt) {
-  const open = openHumanRows(receipt);
-  if (open.length === 0) return "- None: every human: row is confirmed.";
+function summarizeHumanConfirmations(receipt) {
+  const open = receipt.humanConfirmations.filter(finding => finding.status === "open");
+  if (open.length === 0) return "- No outstanding human confirmations.";
   return [
-    "| # | 사용자가 관찰하는 행동 | 확인할 것 | 상태 |",
+    "| ID | Pending judgment | Contract source | Next action |",
     "| --- | --- | --- | --- |",
-    ...open.map(row => `| ${cell(row.id)} | ${cell(row.behavior)} | ${cell(row.result.confirmation)} | ${cell(row.result.status)} |`),
+    ...open.map(finding => `| ${cell(finding.id)} | ${cell(finding.problem)} | ${cell(finding.human?.sourceRef)} | ${cell(finding.nextAction)} |`),
     "",
-    "These rows do not block merge. The user closes each with `sasu implement confirm --issuer human --row B<n> --evidence \"<user words>\"`, which rewrites the receipt only.",
+    "The permitted post-completion judgments above remain open. The user responds with `sasu implement confirm --issuer human --id <id> --evidence \"<user words>\"`. An explicit rejection makes delivery ineligible.",
   ].join("\n");
 }
 
-function summarizeLanes(receipt) {
-  const lanes = receipt.lanes || {};
+function summarizeVerification(receipt) {
+  const review = receipt.review;
   return [
-    `- Acceptance lane: ${lanes.acceptance || "unknown"}`,
-    `- Fidelity lane: ${lanes.fidelity || "unknown"}`,
-    `- Risk lane: ${lanes.risk || "NOT_REQUIRED"}`,
-    `- Score: ${receipt.scoreLine || "unknown"}`,
+    `- Comprehensive review: ${review?.verdict || "NOT_RUN"}`,
+    review?.result?.summary ? `- Review summary: ${review.result.summary}` : "- No review summary recorded.",
+    `- Reviewed source: ${receipt.sourceFingerprint} (attempt ${receipt.verificationAttemptId})`,
+    `- Completion fingerprint: ${receipt.completionFingerprint}`,
+    `- Distinct risk review: ${receipt.risk?.verdict || "NOT_REQUIRED"}`,
+    ...receipt.riskFindings.map(finding => `- ${finding.id} (risk ${finding.severity}, ${finding.status}): ${finding.text}${finding.resolution ? ` - ${finding.resolution.evidence}` : ""}`),
+    ...receipt.findings.filter(finding => finding.status === "open")
+      .map(finding => `- ${finding.id} (${finding.kind}): ${finding.problem} ${finding.nextAction}`),
   ].join("\n");
+}
+
+function summarizeEvidence(receipt) {
+  if (!receipt.artifacts.length) return "- No registered observation files. This is not a claim of runtime or visual verification.";
+  return receipt.artifacts.map(artifact => `- ${artifact.path}: ${artifact.description}${artifact.provenance ? ` (source: ${artifact.provenance}; observed: ${artifact.observedAt})` : ""}`).join("\n");
+}
+
+function summarizeTests(receipt) {
+  const commands = receipt.mechanical;
+  if (!commands.length) return "- No suite commands executed in the final verification attempt.";
+  return commands.map(command => `- \`${command.command}\` (cwd: ${command.cwd}, exit ${command.exitCode}, ${command.finishedAt})`).join("\n");
 }
 
 function summarizeChangedFiles(context) {
@@ -515,19 +497,21 @@ function buildBodyDraft(context) {
     `- Receipt: ${receiptPath} (status: ${receipt.status})`,
     resultRel ? `- Result report: ${resultRel}` : "- Result report: not found",
     "",
-    "## Behaviors",
+    "## Actual Tests",
     "",
-    "| # | 사용자가 관찰하는 행동 | 검사 방법 | 상태 | 결과 |",
-    "| --- | --- | --- | --- | --- |",
-    summarizeBehaviors(receipt),
+    summarizeTests(receipt),
+    "",
+    "## Actual Observations",
+    "",
+    summarizeEvidence(receipt),
+    "",
+    "## Comprehensive Review",
+    "",
+    summarizeVerification(receipt),
     "",
     "## Open Human Confirmations",
     "",
-    summarizeOpenHumanRows(receipt),
-    "",
-    "## Verification Lanes",
-    "",
-    summarizeLanes(receipt),
+    summarizeHumanConfirmations(receipt),
     "",
     "## Delivery Staging",
     "",
@@ -587,8 +571,6 @@ function defaultExcludedPaths(context) {
   const runDir = context.state.runDir || path.dirname(toRepoRelative(context.statePath, context.repoRoot));
   return [
     ACTIVE_PATH,
-    LEGACY_ACTIVE_PATH,
-    SESSIONS_DIR_REL,
     path.join(runDir, "artifacts"),
     // Gate state shares the unified run dir but was never delivery material:
     // it is runtime bookkeeping, never a verification input (AGENTS.md).
@@ -621,23 +603,16 @@ function pathMatches(candidate, patterns) {
   });
 }
 
-/**
- * The paths this run changed: everything that differs from the baseline
- * commit `implement start` recorded, plus untracked files. This replaces the
- * task write scopes the five-axis PRD declared: the run's own record of
- * where it started is a fact, a declared scope was a promise.
- */
+/** Product paths come from the CLI-owned reviewed attribution, including its
+ * exclusion of dirty changes that existed before this run. */
 function runOwnedPaths(context) {
-  const head = context.state.initialSource && context.state.initialSource.head;
-  if (!head) return [];
-  const diffed = run("git", ["diff", "--name-only", "-z", head], { cwd: context.repoRoot, allowFailure: true });
-  const untracked = run("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: context.repoRoot, allowFailure: true });
-  const paths = [...(diffed.stdout || "").split("\0"), ...(untracked.stdout || "").split("\0")]
-    .map(normalizeRepoPath)
-    .filter(item => item && !path.isAbsolute(item))
-    .filter(item => !isUnsafeBroadWriteScope(item))
-    .filter(item => item !== NAMESPACE_ROOT && !item.startsWith(`${NAMESPACE_ROOT}/`));
-  return Array.from(new Set(paths));
+  if (!Array.isArray(context.receipt.ownedFiles)) throw new Error("receipt.ownedFiles must be an array");
+  return context.receipt.ownedFiles.map(item => {
+    const normalized = normalizeRepoPath(item);
+    if (!normalized || path.isAbsolute(normalized) || normalized.split("/").includes("..") || isUnsafeBroadWriteScope(normalized)
+        || normalized.startsWith(`${NAMESPACE_ROOT}/`)) throw new Error(`Invalid run-owned product path: ${item}`);
+    return normalized;
+  });
 }
 
 function isUnsafeBroadWriteScope(item) {
@@ -1205,14 +1180,11 @@ function cmdShip(options) {
 
   const freshness = verifyDelivery(context);
   if (!freshness.ok) {
-    if (!options["allow-stale"]) {
-      throw new Error([
-        "Implementation state is not delivery-fresh:",
-        ...(freshness.violations || []).map(item => `- ${item}`),
-        "Return to prd-implement (rerun verification and reviews, then finalize), or pass --allow-stale --reason \"<why shipping anyway is safe and user-approved>\".",
-      ].join("\n"));
-    }
-    overrides.push({ kind: "stale", violations: freshness.violations || [], reason: requireReason(options, "allow-stale") });
+    throw new Error([
+      "Implementation state is not delivery-fresh:",
+      ...(freshness.violations || []).map(item => `- ${item}`),
+      "Return to implement, refresh verification and finalize a current receipt before delivery.",
+    ].join("\n"));
   }
 
   const base = baseFreshness(context.repoRoot, config.baseBranch);
@@ -1377,7 +1349,7 @@ function cmdMerge(options) {
     throw new Error([
       "Implementation state is not merge-fresh:",
       ...(freshness.violations || []).map(item => `- ${item}`),
-      "Return to implement, rerun affected verification and both reviews, finalize a fresh receipt, then ship again.",
+      "Return to implement, rerun affected verification and comprehensive review, finalize a fresh receipt, then ship again.",
     ].join("\n"));
   }
   const base = baseFreshness(context.repoRoot, config.baseBranch);

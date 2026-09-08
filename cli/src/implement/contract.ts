@@ -1,14 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config";
-import { parseCommandArgv } from "./checks";
-import type { ReviewProfile, RowCheck } from "./types";
+import { parseCommandArgv } from "./runner";
+import type { ReviewProfile } from "./types";
 
 interface ParsedBehaviorRow {
   id: string | null;
   behavior: string;
-  check: { kind: "check" | "judge" | "human" | null; payload: string | null };
-  decisionCell: string;
   decisionIds: string[];
   line: number;
   defects: string[];
@@ -45,7 +43,6 @@ export interface DecisionRow {
 export interface BehaviorRowContract {
   id: string;
   behavior: string;
-  check: RowCheck;
   decisionIds: string[];
   /** 1-based line of the row in the PRD; amend reports it. */
   line: number;
@@ -65,20 +62,6 @@ export interface ImplementContract {
 function profile(value: string | undefined): ReviewProfile {
   if (value === "trivial" || value === "standard" || value === "high-risk") return value;
   return "standard";
-}
-
-function rowCheck(row: ParsedBehaviorRow): RowCheck {
-  const payload = row.check.payload!;
-  switch (row.check.kind) {
-    case "check":
-      return { kind: "check", command: payload, argv: parseCommandArgv(payload) };
-    case "judge":
-      return { kind: "judge", evidence: payload };
-    case "human":
-      return { kind: "human", confirmation: payload };
-    default:
-      throw new Error(`row ${row.id ?? "?"} has no check kind`);
-  }
 }
 
 /**
@@ -113,7 +96,7 @@ export function parseImplementContract(markdown: string): ImplementContract {
     goal: parser.extractSection(parsed.body, "Goal"),
     nonGoals: parser.extractSection(parsed.body, "Non-goals"),
     decisions,
-    rows: behaviors.rows.map((row) => ({ id: row.id!, behavior: row.behavior, check: rowCheck(row), decisionIds: [...row.decisionIds], line: row.line })),
+    rows: behaviors.rows.map((row) => ({ id: row.id!, behavior: row.behavior, decisionIds: [...row.decisionIds], line: row.line })),
     technicalStructure: parser.extractSection(parsed.body, "Technical structure"),
     risks: parser.extractSection(parsed.body, "Risks"),
   };
@@ -124,7 +107,7 @@ export function reviewProfile(contract: ImplementContract): ReviewProfile {
 }
 
 export interface DetectedCommand {
-  kind: "test" | "e2e" | "build" | "typecheck";
+  kind: "test" | "e2e" | "build" | "typecheck" | "lint";
   command: string;
   cwd: string;
 }
@@ -144,6 +127,7 @@ function packageCommands(projectRoot: string, relativeDir: string): DetectedComm
   if (scripts["test:e2e"] !== undefined) commands.push({ kind: "e2e", command: "npm run test:e2e", cwd });
   if (scripts["build"] !== undefined) commands.push({ kind: "build", command: "npm run build", cwd });
   if (scripts["typecheck"] !== undefined) commands.push({ kind: "typecheck", command: "npm run typecheck", cwd });
+  if (scripts["lint"] !== undefined) commands.push({ kind: "lint", command: "npm run lint", cwd });
   return commands;
 }
 
@@ -160,7 +144,7 @@ function detectedCommands(projectRoot: string): DetectedCommand[] {
 
 function configuredCommands(projectRoot: string): DetectedCommand[] {
   const commands = loadConfig(projectRoot).verify.commands;
-  return (["test", "build", "typecheck"] as const)
+  return (["test", "build", "typecheck", "lint"] as const)
     .filter((kind) => typeof commands[kind] === "string" && commands[kind]!.trim() !== "")
     .map((kind) => ({ kind, command: commands[kind]!, cwd: "." }));
 }
@@ -174,5 +158,13 @@ function configuredCommands(projectRoot: string): DetectedCommand[] {
  */
 export function suiteCommands(configRoot: string, treeRoot: string): DetectedCommand[] {
   const commands = configuredCommands(configRoot);
-  return commands.length > 0 ? commands : detectedCommands(treeRoot);
+  const seen = new Set<string>();
+  return (commands.length > 0 ? commands : detectedCommands(treeRoot)).filter((entry) => {
+    // Labels are reporting metadata. The actual command, working directory and
+    // run-wide execution configuration define an execution, not its test/build label.
+    const key = JSON.stringify([path.resolve(treeRoot, entry.cwd), parseCommandArgv(entry.command)]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

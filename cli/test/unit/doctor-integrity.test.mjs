@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { runIntegritySection, skillFreshnessSection } from "../../dist/doctor.js";
+import { stateFixture } from "../helpers/implement-state.mjs";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..");
 
@@ -15,50 +16,34 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   const writeState = (slug, state) => {
     const file = path.join(root, "agents", "runs", slug, "state.json");
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({
-      schema: "sasu.implement.state.v8",
+    const fixture = stateFixture(root);
+    fs.writeFileSync(file, JSON.stringify(stateFixture(root, {
       topicSlug: slug,
-      projectRoot: root,
       runDir: `agents/runs/${slug}`,
       prdPath: `agents/prd/${slug}/prd.md`,
-      prd: { sha256: "prd-hash", snapshotPath: `agents/runs/${slug}/prd.md`, reviewProfile: "standard" },
-      initialSource: { head: "head", digest: "source-hash", entries: [] },
-      baselineAttribution: { disposition: "clean", paths: [], baselineDigest: "source-hash", head: "head" },
-      rows: [{
-        id: "B1", behavior: "the widget renders", check: { kind: "check", command: "node --version", argv: ["node", "--version"] },
-        decisionIds: [], status: "pending", attempts: [], consecutiveFailures: 0, parks: [], verdict: null, human: null, rejections: [],
-      }],
-      artifacts: [],
-      verificationAttempts: [],
-      riskFindings: [],
-      deviations: [],
-      events: [],
-      verbs: [],
-      amendments: [],
-      suite: { sealedAt: "2026-08-29T00:00:00.000Z", commands: [], exclusions: [], results: [] },
-      qaBriefs: [],
-      trails: [],
-      escalations: [],
-      retirement: null,
-      completion: null,
+      prd: { ...fixture.prd, snapshotPath: `agents/runs/${slug}/prd.md` },
       ...state,
-    }));
+    })));
   };
   writeState("active-run", { status: "active", ownerSessionId: "session-a", worktree: null });
   writeState("ended-run", { status: "retired", worktree: { path: worktree, branch: "sasu/ended-run" } });
   writeState("unknown-status", { status: "paused", worktree: null });
-  writeState("missing-snapshot", { status: "active", worktree: null, prd: { sha256: "prd-hash", reviewProfile: "standard" } });
+  writeState("missing-snapshot", { prd: { ...stateFixture(root).prd, snapshotPath: undefined } });
+  writeState("retired-schema-active", { schema: "sasu.implement.state.v8", status: "active", worktree: null });
   writeState("future-active", { schema: "sasu.implement.state.v99", status: "active", worktree: null });
 
   const section = runIntegritySection(root, null);
   assert.equal(section.ok, false);
   assert.ok(section.lines.includes("retire candidate: active-run owner=session-a command=sasu implement retire --slug active-run --adopt \"<verbatim user approval>\""), section.lines.join("\n"));
   assert.ok(section.lines.includes(`orphan worktree: ended-run status=retired path=${worktree} branch=sasu/ended-run`));
-  assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be active")));
+  assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be one of active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
-  assert.ok(section.lines.includes(
-    "incompatible active run: future-active status=active schema=sasu.implement.state.v99 installed-schema=sasu.implement.state.v8; use a matching CLI to inspect or retire it, or start a new slug",
-  ));
+  for (const [slug, schema] of [["retired-schema-active", "v8"], ["future-active", "v99"]]) {
+    assert.ok(section.lines.includes(
+      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v9; last supported commit: 488d3cc7d6e99742e7f68a1680fcb101710c8e20; use that matching CLI to inspect or retire the old run, or start a new slug`,
+    ));
+    assert.ok(!section.lines.some((line) => line.startsWith(`retire candidate: ${slug} `)));
+  }
 });
 
 test("doctor names the exact installed skill contract that differs from the repository", () => {

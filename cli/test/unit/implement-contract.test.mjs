@@ -1,57 +1,53 @@
-// The six-section contract (prd-template R1, R2): what `implement start`
-// reads and what it refuses. Every refusal here is the same line prelint
-// would flag, because both read the one grammar in cli/lib/prd_parser.js.
 import assert from "node:assert/strict";
+import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
-import { LEGACY_PRD_LAST_COMMIT, parseImplementContract } from "../../dist/implement/contract.js";
+import { parseImplementContract, suiteCommands } from "../../dist/implement/contract.js";
+import { prd, makeProject } from "../helpers/implement-fixture.mjs";
 
-const FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
-const clean = () => fs.readFileSync(path.join(FIXTURES, "prd-clean.md"), "utf8");
-const B1 = "| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |";
-
-test("a clean six-section PRD parses into rows with their kind, payload and cited decisions", () => {
-  const contract = parseImplementContract(clean());
-  assert.deepEqual(contract.rows.map((row) => [row.id, row.check.kind]), [["B1", "check"], ["B2", "judge"], ["B3", "human"]]);
-  assert.deepEqual(contract.rows[0].check, { kind: "check", command: "node --test test/widget.test.mjs", argv: ["node", "--test", "test/widget.test.mjs"] });
-  assert.equal(contract.rows[1].check.evidence, "a before/after screenshot pair registered for B2");
-  assert.equal(contract.rows[2].check.confirmation, "the user reloads and says the widget kept their state");
-  assert.deepEqual(contract.rows[1].decisionIds, ["D-01"]);
-  assert.deepEqual(contract.decisions, [{ id: "D-01", decision: "the widget persists to local storage", rationale: "Q2: the user wants state to survive reload" }]);
-  assert.match(contract.goal, /renders and persists/);
-  assert.match(contract.nonGoals, /No theming/);
-  assert.match(contract.technicalStructure, /storage adapter/);
+test("the complete six-section contract retains thirty requirements and decisions without proof methods", () => {
+  const contract = parseImplementContract(prd({ count: 30 }));
+  assert.equal(contract.rows.length, 30);
+  for (let index = 0; index < 30; index++) {
+    assert.equal(contract.rows[index].id, `B${index + 1}`);
+    assert.equal(contract.rows[index].behavior, `Requirement ${index + 1}: the public command preserves value ${index + 1}.`);
+    assert.deepEqual(contract.rows[index].decisionIds, ["D-01"]);
+    assert.deepEqual(Object.keys(contract.rows[index]).sort(), ["behavior", "decisionIds", "id", "line"]);
+  }
+  assert.equal(contract.decisions[0].decision, "Preserve every value in the approved request.");
+  assert.match(contract.goal, /every requested value/);
+  assert.match(contract.nonGoals, /No network/);
+  assert.match(contract.technicalStructure, /implementation.txt/);
 });
 
-// AC2: the refusal names the format and the last commit that reads it, so
-// the holder of an old PRD knows which checkout still runs it.
-test("a five-axis PRD is refused as the old format, naming the last commit that read it", () => {
-  const legacy = clean().replace("## Behaviors", "## 7. Acceptance Criteria");
-  assert.throws(() => parseImplementContract(legacy), (error) => {
-    assert.match(error.message, /구 형식/);
-    assert.match(error.message, new RegExp(`이 형식을 읽는 마지막 커밋은 \\x60${LEGACY_PRD_LAST_COMMIT}\\x60`));
-    return true;
-  });
-  assert.match(LEGACY_PRD_LAST_COMMIT, /^[0-9a-f]{40}$/);
+test("retired four-column contracts name the old contract and last supporting commit", () => {
+  const legacy = prd().replace("| # | 사용자가 관찰하는 행동 | 결정 |", "| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |").replace("| --- | --- | --- |\n| B1", "| --- | --- | --- | --- |\n| B1").replace(/(\| B\d+ \|[^\n]+) \| D-01 \|/g, "$1 | check: `npm test` | D-01 |");
+  assert.throws(() => parseImplementContract(legacy), /488d3cc/);
 });
 
-test("a missing section is refused by title", () => {
-  assert.throws(() => parseImplementContract(clean().replace("## Risks\n\nNone.\n", "")), /missing section\(s\): ## Risks/);
+test("missing sections, empty behaviors, duplicate references, and unknown decisions fail closed", () => {
+  assert.throws(() => parseImplementContract(prd().replace("## Risks\nNone.\n", "")), /Risks/);
+  assert.throws(() => parseImplementContract(prd({ count: 0 })), /no table rows|empty/);
+  assert.throws(() => parseImplementContract(prd().replace("| B2 |", "| B1 |")), /duplicate|duplicat/i);
+  assert.throws(() => parseImplementContract(prd().replace(/\| D-01 \|\n/g, "| D-99 |\n")), /D-99/);
+  assert.throws(() => parseImplementContract(prd().replace("Requirement 1: the public command preserves value 1.", "")), /empty|behavior|행동/);
 });
 
-test("row defects are refused with the row's line, the same defects prelint reports", () => {
-  const cases = [
-    ["| B1 | check: `x` the widget renders | judge: the diff | - |", /line 28 \(B1\): behavior cell carries a check:/],
-    ["| B1 | the widget renders | verify by hand | - |", /line 28 \(B1\): check cell must start with one of check:, judge:, human:/],
-    ["| B1 | the widget renders | check: `a && b` | - |", /line 28 \(B1\): check: command must be one command/],
-    ["| B1 | the widget renders | check: `npm test` | D-09 |", /line 28 \(B1\): cites D-09, which is not in the Decisions table/],
-  ];
-  for (const [row, pattern] of cases) assert.throws(() => parseImplementContract(clean().replace(B1, row)), pattern);
-  assert.throws(() => parseImplementContract(clean().replace(/\| B[123] \|.*\n/g, "")), /has no table rows/);
+test("a behavior may naturally mention check without creating a method contract", () => {
+  const source = prd().replace("Requirement 1: the public command preserves value 1.", "check: appears literally in the diagnostic output.");
+  assert.equal(parseImplementContract(source).rows[0].behavior, "check: appears literally in the diagnostic output.");
 });
 
-test("a check: command tokenizes the way the runner executes it, quotes included", () => {
-  const contract = parseImplementContract(clean().replace(B1, "| B1 | the widget renders | check: `node --test --test-name-pattern \"a && b\" test/widget.test.mjs` | - |"));
-  assert.deepEqual(contract.rows[0].check.argv, ["node", "--test", "--test-name-pattern", "a && b", "test/widget.test.mjs"]);
+test("suite sealing deduplicates actual argv and cwd while retaining lint and distinct execution roots", () => {
+  const root = makeProject();
+  fs.writeFileSync(path.join(root, "agents/config.json"), JSON.stringify({ verify: { commands: { test: "npm test", build: "npm   test", lint: "npm run lint" } } }));
+  assert.deepEqual(suiteCommands(root, root).map(({ command, cwd }) => ({ command, cwd })), [{ command: "npm test", cwd: "." }, { command: "npm run lint", cwd: "." }]);
+  fs.rmSync(path.join(root, "agents/config.json"));
+  fs.mkdirSync(path.join(root, "cli"));
+  fs.writeFileSync(path.join(root, "cli/package.json"), JSON.stringify({ scripts: { test: "node --test", lint: "node lint.cjs" } }));
+  const suite = suiteCommands(root, root);
+  assert.ok(suite.some((entry) => entry.command === "npm test" && entry.cwd === "."));
+  assert.ok(suite.some((entry) => entry.command === "npm test" && entry.cwd === "cli"));
+  assert.ok(suite.some((entry) => entry.command === "npm run lint" && entry.cwd === "cli"));
+  fs.rmSync(root, { recursive: true, force: true });
 });

@@ -18,11 +18,11 @@ The Sasu harness remains the independent verification authority.
 
 The Spec Owner owns conversation continuity, qa-log closure when applicable, PRD authorship, PRD gates, and the pre-implementation summary.
 The Observer owns conversation continuity, delegation, liveness, exception triage, recovery, and the final user-facing report.
-The Implementor owns implementation repository writes, row checks, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
+The Implementor owns implementation repository writes, focused checks, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
 It never authors or repairs the qa-log or PRD.
 While the implementation phase is active, only the Implementor may mutate implementation files after dispatch; the CLI alone writes Sasu run state.
-The Observer may edit only PRD check cells and seal that correction with `sasu implement amend --slug <topic> --issuer observer --reason '<why and what changed>'` without adoption or human approval.
-Other PRD changes remain human-authorized; the Implementor does not edit the PRD or qa-log.
+All sealed PRD changes require human authorization, recorded by `sasu implement amend --issuer human --approval '<verbatim user approval>' --reason '<why and what changed>'`.
+Existing authorization that covers the change is sufficient; the Implementor does not edit the PRD or qa-log on its own.
 The Observer may read repository state, `sasu gate status`, `sasu implement status`, receipts, and the Implementor transcript.
 It must not become a second implementor or repeat verification.
 
@@ -137,7 +137,7 @@ It returns for exactly one reason - a new event, no progress past the
 no-progress bound, or the watched target no longer being followable - and prints which.
 Progress is decided by the event log alone, never by pane text: pane output is
 not a semantic unit and cannot say what happened.
-A named target is additionally watched by one bounded `herdr agent wait` child, which can only bring the stall forward once per silence interval and can never close a row or declare progress.
+A named target is additionally watched by one bounded `herdr agent wait` child, which can only bring the stall forward once per silence interval and can never resolve a finding or declare progress.
 After that early inspection is spent, no per-second target-loss detection remains until a new event; the wake says so in its own detail rather than leaving the gap unstated.
 This replaces raw `herdr agent get`, hand-run `herdr agent wait`, `herdr agent list --json`, transcript-keyword polling, and home-grown shell loops.
 On a stall wake, `herdr agent read <implementor-name> --source recent-unwrapped --lines 120` is a diagnosis tool only; when herdr is absent, `sasu implement status` names which of `spawn`, `read`, `alive` is unavailable and the run continues without pane diagnosis.
@@ -156,15 +156,16 @@ kind: implementation | product | authority | runtime
 question: <the missing decision or failure>
 recommendation: <the preferred next action and why>
 reversible: yes | no
-scope_or_ac_impact: <none or exact impact>
+scope_or_requirement_impact: <none or exact impact>
 external_effect: none | <exact effect>
 ```
 
 The Observer resolves a block without asking the user when the answer is already in the handoff, follows an established repository convention, or is an in-scope reversible default that does not weaken an acceptance criterion.
 For `$please`, this includes reversible product, copy, and implementation choices that can be listed for final review.
 Send an in-contract decision back to the same Implementor and require it to record the assumption in the final report, never by editing the sealed PRD.
-For a wrong check method, the Observer corrects and amends that cell, then sends the same Implementor the amendment result to continue the existing run.
-An actually executing check must finish before amendment; a recorded failure is finished history, not an active attempt.
+For a required contract change, preserve existing applicable human authority and send the proposed amendment to the same Implementor through the coordinator.
+A live verify execution lease refuses all domain mutations, including amendment, retirement, escalation, adoption, risk decisions, and confirmation.
+Wait for completion or verified process-group cleanup; a settled pane or lost target alone is not proof that its children have stopped.
 
 If the block changes scope, an acceptance criterion, major structure, or product behavior, the Observer must not authorize divergence or edit the sealed PRD while implementation continues.
 Ask the user for the explicit change required by the gate-reopen contract.

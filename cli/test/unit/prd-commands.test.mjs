@@ -74,7 +74,7 @@ test("prd readiness: unchanged contract for the existing subcommand", () => {
   const result = runPrdCommand(dir, "readiness", flags({ prd: "prd.md" }));
   assert.equal(result.ok, true);
   assert.equal(result.detail.status, "ready");
-  assert.deepEqual(result.detail.parsed, { rowCount: 3, rowKinds: { check: 1, judge: 1, human: 1 }, decisionCount: 1 });
+  assert.deepEqual(result.detail.parsed, { behaviorCount: 3, decisionCount: 1 });
   const unknown = runPrdCommand(dir, "nope", flags({ prd: "prd.md" }));
   assert.equal(unknown.exitCode, 2);
 });

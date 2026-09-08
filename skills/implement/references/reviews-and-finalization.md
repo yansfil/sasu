@@ -1,117 +1,86 @@
 # Reviews And Finalization
 
-## Contents
+## Full-Contract Review
 
-- [Review Profiles](#review-profiles)
-- [Design Lane](#design-lane)
-- [Risk Lane](#risk-lane)
-- [Fidelity Rubric](#fidelity-rubric)
-- [Unified Verdict](#unified-verdict)
-- [Finalize](#finalize)
-- [Confirm](#confirm)
-- [Blocked Handoff](#blocked-handoff)
+All profiles use one independent comprehensive review in the routine path.
+The reviewer reads every requirement and decision, actual implementation and permitted surrounding source, executed required-suite results, shared QA observations, and previous findings.
+The source catalog supplies path metadata only; it is neither content evidence nor permission to read a file outside the allowlist.
+One shared artifact containing current surrounding source can support many Bn references without a per-Bn mapping.
+It checks entry points and event wiring, persistence and recovery, failure behavior, approved boundaries, scope, quality, and honest completion claims together.
+It does not emit a success object for each requirement.
 
-Read this reference before unified verify, finalize, or a blocked handoff.
+Results contain a summary, exception findings, and explicit prior dispositions.
+A defect names concrete unmet contract content or insufficient evidence with actual source or observation references and a next action.
+An optional improvement beyond the satisfied contract is advisory and does not block completion.
+A genuine human-confirmation finding cites existing decision/risk/user-instruction provenance.
+The CLI checks shape and references and derives the outcome from open issues; a PASS string cannot override a defect.
 
-## Review Profiles
+The complete review input is a mechanical guarantee; satisfaction of the contract is independent semantic judgment.
+Do not claim that full-input inclusion proves zero omissions.
+Actual planted-omission evaluation tests that judgment separately from JSON and fixture tests.
 
-| Profile | Unified lanes |
-| --- | --- |
-| `trivial` | acceptance and fidelity in parallel |
-| `standard` | acceptance, fidelity, and design in parallel |
-| `high-risk` | acceptance and fidelity vote; design reviews in parallel; risk reviews after them into a ledger |
+## High-Risk Review
 
-Acceptance, fidelity, and design use the project `routine` judge profile.
-The risk lane uses `high-risk`; the defaults are Codex Luna/Sol xhigh with Claude Sonnet 5/Opus 5 xhigh fallbacks respectively.
+`trivial` and `standard` retain the same routine comprehensive review.
+`high-risk` adds a distinct safety check for data loss, permissions, destructive effects, and delivery risk using the same fixed inputs.
+Independent checks may run concurrently.
+The routine configured default is `gpt-5.6-luna` xhigh with `claude-sonnet-5` xhigh fallback.
+The high-risk configured default is `gpt-5.6-sol` xhigh with `claude-opus-5` xhigh fallback.
+These are code defaults, not a request to change a project's configured models.
 
-## Design Lane
+Open blocking risks remain incomplete and consume the existing correction budget even when routine review succeeds.
+A risk approval preserves the person's verbatim evidence and cannot exempt missing product requirements.
+Use `sasu implement risk --accept --id <RF#> --evidence '<verbatim user approval>'` only within existing authority.
+The human-only `risk --non-convergent` declaration allows honest blocked closure with the risk still open.
 
-The design lane reviews the shape of the code - one-cause-N-symptom patching, patch-on-patch accretion, structure drift against the PRD's Technical structure, needless complexity, dead weight - the one failure class the other lanes explicitly do not read for.
-It reads this run's own diff against the pre-run commit, so it judges what the run did, not what the repository already looked like.
+## Reverification And Convergence
 
-It has no verdict: it never fails the run, never consumes fix budget, and a lane error leaves the attempt untouched.
-It produces comments, `finalize --status complete` refuses while any is unanswered, and a comment is answered in exactly one of two ways:
+Source, sealed PRD, linked intent, and registered evidence changes invalidate the current review.
+A new verify executes the sealed suites and reviews the current inputs.
+Old requirement results are never assembled into a new PASS.
+Prior open issues remain open until explicitly resolved with evidence.
+A new real omission in an unchanged file must be considered when grounded in concrete contract text and counterevidence.
+Optional unrelated advice does not force another round.
 
-- **Fix it**, then re-run `sasu implement verify`; the lane stops reporting it and the comment resolves itself. No flag claims a fix, because a claim is not a measurement.
-- **Accept it**: `sasu implement design --id <D#> --accept "<why it is being left alone>"`, recorded beside the comment in `state.json` and `implementation-result.md`.
-
-Identity is the file path - one comment per file - so re-wording or re-labelling one defect keeps one comment with one id, which is what bounds the loop (PRINCIPLES 13).
-The `verify` response carries `design.open` in full plus the count in `message`; relay open comments to the user rather than accepting them all to clear the gate.
-
-This lane owns quality review; do not spawn ad-hoc adversarial review subagents on top of it.
-A prior run burned 92 minutes on five self-invoked review rounds against a verify gate that never returned a criterion FAIL.
-
-## Risk Lane
-
-The high-risk reviewer runs after acceptance and fidelity because their results are part of its input.
-Its lane-local PASS, FAIL, or ERROR is recorded on the attempt but does not vote on the unified verdict.
-A successful result updates the single risk ledger in `state.json`: unresolved prior findings stay open, delta-proven resolved findings become `fixed`, and findings marked `new` receive the next stable `RF<n>` id.
-A risk ERROR changes no ledger entry.
-
-An open blocking finding prevents `finalize --status complete`; an open advisory finding stays visible without blocking completion.
-
-- **Fix it**, then re-run `sasu implement verify`; the next risk review must disposition it as resolved and ground a prior blocking resolution in an exact changed path or new evidence item.
-- **Accept it** with the user's approval verbatim: `sasu implement risk --accept --id <RF#> --evidence "<verbatim user approval>"`.
-
-Both blocking and advisory findings may be accepted.
-The acceptance evidence and every judge-proven resolution remain beside the finding in `state.json` and `implementation-result.md`.
-
-## Fidelity Rubric
-
-The fidelity judge always answers the same five questions:
-
-1. Was the original goal preserved?
-2. Were accepted decisions and constraints preserved?
-3. Were rejected options and non-goals kept out?
-4. Did deviations avoid distorting intent?
-5. Are completion and status claims honest?
-
-The context changes with the PRD source.
-Conversation-only PRDs use the Decisions table as canonical intent.
-Qa-log PRDs use the full qa-log unless a fresh spec gate already proved the qa-log to PRD leg; the Decisions table is always in the prompt as the PRD's own record.
-
-Fidelity does not rejudge per-row artifact sufficiency or code correctness.
-The acceptance judge owns those questions.
-
-## Unified Verdict
-
-Run `sasu implement verify`.
-
-The unified verdict is PASS only when acceptance and fidelity are PASS.
-Design has no verdict, and the risk lane's local verdict updates the ledger instead of voting.
-NOT_RUN, FAIL, BLOCKED, ERROR, and STALE are not completion states.
-
-A source or evidence change after PASS makes the result stale.
-Run verify again explicitly after the implementation and final evidence are coherent.
-Each explicit run returns the current fix budget and consecutive voting-lane judge-error gauges.
-When `budgetExhausted` or `judgeErrorLoop` is true, the CLI refuses further verification work.
-From that terminal state there are exactly two exits, both recorded in the same `state.json`:
-
-- `sasu implement finalize --status blocked` closes the run honestly with the open findings in the receipt.
-- `sasu implement verify --grant-budget "<the user's words verbatim>"` records the user's explicit go-ahead and opens one fresh fix budget.
-
-Do not archive, rename, or replace `state.json` to start over; a fresh run discards every settled verdict and re-judges every criterion from zero.
+The CLI owns the correction bound and separates implementation rounds from backend errors and pre-review input failures.
+Do not create an extra unbounded adversarial loop.
+A first FAIL leaves the run active for repair; it does not finalize implicitly.
+Terminal conditions are an exhausted correction budget, three consecutive identical pre-judge failures on the same inputs, a bounded judge backend error loop, or recorded human risk non-convergence when those risks are the only remaining blockers.
+Before closing an active run, explicit user approval can authorize continued verification through `verify --grant-budget "<the user's words>"`.
+Without that continuation, use `sasu implement finalize --status blocked` once a recorded terminal condition applies.
+Blocked finalization closes the run; a budget grant does not reopen a closed run.
+Never replace run state to reset the budget.
 
 ## Finalize
 
-Run `sasu implement finalize`.
+`sasu implement finalize` validates current state and input/evidence identity, required-suite results, full review, open defects, risks, and human authority.
+It performs no tests, judge calls, captures, or external commands.
+State is persisted before the v5 receipt and implementation Markdown are derived from it.
+Both outputs summarize actual execution and observations, independent review, unresolved issues, approval history, and delivery conditions without requirement PASS tables.
+Repeated finalization of identical inputs is idempotent.
 
-Finalize validates only current state, source hashes, artifact hashes, the fresh unified PASS, every `check:` row green and every `judge:` row PASS, no parked row, design dispositions, and the absence of open blocking risk findings.
-It performs no tests, judge calls, capture calls, browser work, or subprocess execution.
+Permitted after-the-fact human judgment can produce `complete-pending-human`.
+Payment, deletion, deployment authority, unresolved product policy, or missing access are prerequisites and cannot be moved into that status.
+An explicit open human rejection always makes delivery ineligible.
+A failed verify attempt permits an honest blocked receipt only when a recorded terminal condition applies, even if no judge result succeeded.
+The receipt names the stopped phase and unexecuted work; the first failure stays active for repair.
+For cancellation before verify, use `retire`.
 
-An OPEN `human:` row does not block it: the run closes `complete-pending-human`, and the receipt's score counts machine and judge rows apart from human rows.
-Successful finalize writes `agents/runs/<topic-slug>/receipt.json` and `agents/runs/<topic-slug>/implementation-result.md`, both carrying the Behaviors table with one result per row.
-Both outputs derive from `state.json`; they are not independent completion ledgers.
+## Human Confirmation
 
-Running finalize again with the same completion fingerprint returns the existing result.
+```sh
+sasu implement confirm --issuer human --id <confirmation-id> --evidence "<the user's own words>"
+sasu implement confirm --issuer human --id <confirmation-id> --reject --evidence '<what was wrong>'
+```
 
-## Confirm
-
-`sasu implement confirm --issuer human --row B<n> --evidence "<the user's words>"` closes one OPEN `human:` row and rewrites the receipt in place; when the last OPEN row closes the receipt becomes `complete`.
-`--reject` records what the user found wrong and leaves the row OPEN, with the words shown beside it in the receipt; the fix is a new run.
-Only the human issuer is accepted, and a closed run never reopens.
+Only a human issuer closes an actual confirmation item.
+Response history and source freshness remain intact when the receipt is regenerated.
+An explicit withdrawal and approval of the same result resolves a prior rejection without erasing its words.
+A source fix after closure uses a new run; confirmation does not reopen implementation.
+A later rejection records the outcome but does not automatically undo a delivery already made.
 
 ## Blocked Handoff
 
-When proof cannot pass, report the failed stage, exact observable error, recovery path, open items, and stale inputs.
-Do not generate a complete receipt and do not soften the status into Done.
+Report the current stage, actual error and recovery, open issues, failed or unavailable observations, and stale inputs.
+Generate an honest blocked receipt when the recorded attempt supports terminal closure.
+Never soften failed or unrun review into Done.

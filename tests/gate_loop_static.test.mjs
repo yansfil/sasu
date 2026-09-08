@@ -34,13 +34,15 @@ test("AC10: no skill asks an agent to write the qa-log's Audit History or flip i
 
 const RETIRED = ["closure-blocked", "closureExhausted", "closure-exhausted", "judgedRounds", "reviewRound", "reviewPhase", "semantic rounds"];
 
-test("AC3: no round counter or closure phase survives in the harness code or the skills", () => {
+test("document gates do not restore their retired closure lifecycle", () => {
   const files = [
-    ...walk(path.join(repoRoot, "cli", "src")),
+    // Workflow plan section 9 retains implement correction rounds. This
+    // contract concerns only the retired document-gate closure lifecycle.
+    ...walk(path.join(repoRoot, "cli", "src", "gates")),
     ...walk(path.join(repoRoot, "cli", "lib")),
     ...walk(path.join(repoRoot, "cli", "scripts")),
     ...walk(path.join(repoRoot, "scripts")),
-    ...walk(path.join(repoRoot, "skills")),
+    ...["interview-me", "gen-prd", "please"].map((name) => path.join(repoRoot, "skills", name, "SKILL.md")),
   ];
   const offenders = [];
   for (const file of files) {

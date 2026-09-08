@@ -1,60 +1,37 @@
 ---
 name: quick
 description: |
-  Session-context quick pipeline: contract, implement, verified receipt.
+  Session-context quick pipeline: compact contract, implement, verified receipt.
   Use when the user invokes "$quick", asks to implement something small from
-  the current conversation without the PRD pipeline, or wants the minimal
-  path that still ends in a machine-checked verification PASS. The spec is
-  the conversation compressed into acceptance criteria; verification is the
-  full `sasu gate verify` command (mechanical checks plus an independent diff judge).
+  the current conversation without the PRD pipeline, or wants the shortest
+  path with required checks and an independent whole-contract review.
   Do not use when a PRD exists or the user asks for the PRD pipeline.
 ---
 
 # quick
 
-Run a small implementation from the current conversation to a verified receipt with the minimum ceremony that still proves the result.
+Implement a bounded conversation contract and finish with the actual CLI review result.
+Keep this path independent from the PRD/implement lifecycle: no interview, spec gate, implement state, or confirm command is required.
+Requirements keep their `AC1` references, while checks, evidence, and human input belong to the whole run.
+The ordinary path uses one comprehensive independent review without per-AC success results or mandatory per-AC evidence.
 
-What this path keeps from the PRD pipeline: acceptance criteria pinned by content hash, mechanical checks before the judge, an independent judge verdict over the diff and declared runtime evidence, a retry budget, user-only override, and a pin on the exact diff that was judged so a PASS is invalidated when the code changes afterwards.
+## Authority And Preflight
 
-What it drops: the interview, the 12-section PRD, gap-audit/spec gates, the implement state harness, profile reviews, and ship delivery.
+The `$quick` invocation delegates reversible in-scope choices to the implementor as recorded assumptions.
+Use conversation and project conventions to resolve routine details.
+Preserve all requirements, and distinguish assumptions from actual approval.
+Only unresolved expensive choices or new authority for credentials, payment, production data, destructive effects, security policy, or irreversible actions require a user decision.
+Existing authorization continues to apply.
 
-The cost of that trade: the acceptance criteria are the whole spec and there is no separate fidelity lane. Up to eight machine-judged criteria stay in one routine judge call. Larger contracts split into balanced criterion lanes that run concurrently, so the user still gets the quick path without one oversized judgment. There is no hard cap - the user's invocation of `$quick` is the only switch - but say so in the final report when the contract grew past a handful of criteria.
+Record the current base ref with `git rev-parse HEAD` and preserve unrelated dirty changes.
+For a repository without a commit, create the authorized initial baseline before verification.
+Read project instructions and run `sasu principles list --json`.
+Read applicable declared domain documents in full; an empty domain list is normal, but an unreadable declared source is a reported error.
+Translate applicable product behavior into the compact contract and retain actual implementation constraints without inventing a separate proof ledger.
 
-Normal-sized diffs are pushed into the judge prompt. When one lane exceeds the prompt budget, an agentic-capable routine backend receives the exact changed-file allowlist in a scoped read-only workspace; its command trace is audited and recorded. This fallback reads evidence but never executes project code, writes, browses, or explores broadly.
+## 1. Compact Contract
 
-## Ambiguity Policy
-
-The `$quick` invocation is the user's standing decision to trade questions for recorded, veto-able assumptions.
-Default to deciding, not asking: if a reasonable senior implementer could pick a defensible default from the conversation and the repository's conventions, and a wrong pick is reversible in code, it is an assumption — never a question.
-An assumption that shapes the spec lands in the contract as a criterion or non-goal; every assumption lands in the final report, so the user can veto it after the fact.
-
-Ask only when one of these holds:
-
-- The answer is in the hard-stop class: credentials, billing or external spend, production data, destructive or irreversible actions, or an auth/security product decision.
-- No defensible default exists and a wrong guess is expensive to reverse.
-
-When something does clear that bar, front-load it: collect every qualifying question into one single message before Stage 1, each with a recommended default so one short reply settles them all.
-After that message, do not ask again mid-run; the only later stops are the ones in Stops that first materialize during execution.
-
-## Preflight
-
-- Derive a kebab-case `<slug>` from the topic.
-- Record the base ref: `git rev-parse HEAD`. In a repo with no commits yet, make an initial commit first; the verify diff needs a base.
-
-## Stage 1: Contract
-
-Before writing the contract, run `sasu principles list --json`. An empty
-`domains` list means no principles are declared: skip this silently. For each
-domain whose trigger matches this change, read its document in full and
-translate the rules that this diff or its declared evidence can prove into
-proposition-form acceptance criteria. This is the only way a principle gets
-enforced here: the judge refuses taste criteria, so a rule enters the contract
-as an observable proposition ("the list renders without an open edit form"),
-never as its abstract wording. Rules this change cannot prove stay out of the
-contract; note them for the final report's human-review items instead. A
-failing principles command is reported, never silently skipped.
-
-Write `agents/quick/<slug>/contract.md`:
+Write `agents/quick/<slug>/contract.md` from the conversation before editing product code:
 
 ```markdown
 ---
@@ -64,103 +41,90 @@ status: active
 
 ## Goal
 
-<one paragraph: what the user asked for, in this conversation's terms>
+<the requested outcome>
 
 ## Non-goals
 
-<optional: what is deliberately out>
+<optional scope boundaries>
 
 ## Checks
 
-- `<a command that must pass for the whole run, e.g. a smoke test>`
+- `<required command for the whole run>`
 
 ## Acceptance Criteria
 
-- AC1. <a statement the diff judge can check against the code change>
-- AC2. <a statement a command can prove>
-  - check: `<command that passes only when AC2 holds>`
-- AC3. <a statement proven by a runtime artifact>
-  - evidence: agents/quick/<slug>/evidence/response.json
-- AC4. <a statement proven by something visible>
-  - capture: `<command that writes the artifact>` -> agents/quick/<slug>/evidence/screen.png
-- AC5. <a statement only a person can settle>
-  - human: <what to check and why no command can>
+- AC1. Saving a note adds it to the list.
+- AC2. Searching filters saved notes and exposes an empty-result state.
+- AC3. A storage failure preserves the text and reports the failure.
+
+## Evidence
+
+- agents/quick/<slug>/evidence/session.log
+- capture: `<command writing a screenshot>` -> agents/quick/<slug>/evidence/search.png
+
+## Human Review
+
+<optional genuine human judgment and its existing source>
 ```
 
-Rules:
+`Evidence` and `Human Review` are optional: omit them when unnecessary, including empty tables for document-only work.
+`Checks` is the run-level command list, and configured project commands remain required.
+Plain evidence paths (or `evidence: <path>`) register observations; capture declarations execute a command and collect its file.
+Keep paths relative to the project and preserve collection context and limitations in the observation itself.
+Old indented method fields under an AC are rejected as a retired contract rather than silently ignored.
 
-- Every criterion must be verifiable from the diff or from declared evidence. "Works well" is not a criterion; "`sasu gate verify --contract` extracts ACs from a contract document" is.
-- Do not spend a criterion on "tests/lint/build pass": the mechanical stage already gates on those and the judge would only restate it secondhand.
-- Capture the conversation's decisions as criteria or non-goals; an assumption the user never saw goes in the report, not silently into code.
+Every AC is an observable requirement; do not add one merely to restate that build/lint/tests must pass.
+Preserve material decisions, rejected options, non-goals, and assumptions.
+Do not make a requirement PASS table, assign evidence to every AC, or force the compact contract into a PRD.
+Summarize the contract and assumptions in conversation, then continue under existing authorization.
 
-### The evidence lane
+## 2. Implement And Observe
 
-The judge sees the diff plus whatever the harness collected for it. An oversized-diff lane may read only its exact changed-file allowlist, but it does not discover or produce runtime facts. A criterion whose proof is runtime behavior must still declare where that proof comes from, and the harness produces it.
+Implement the coherent scope and choose focused checks appropriate to plausible regressions.
+Drive actual UI and runtime behavior where needed.
+One observation may support many ACs, and the reviewer receives the full contract regardless of evidence type or human judgment.
+A real environment, device, or service that was not observed remains unverified.
+When scope changes under existing authority, update the compact contract before claiming a result; its hash participates in freshness.
 
-Four tiers, most trustworthy first. **Always use the highest tier a criterion can reach**; drop a tier only when the one above is genuinely impossible:
+Use owned, self-contained browser/server lifecycles for repeatable automated tests.
+Manual QA may use the available browser tools, including chromux, with fresh screenshots and cleanup of resources this run created.
+For native apps, verify the actual instance and build being observed.
 
-1. **`check: \`<cmd>\`` under a criterion** - a command that passes only when that criterion holds (`curl -sf localhost:3000/health`, a targeted test). The harness runs it on its own clock and shows the judge the command, its exit code, and its output, labelled with the criterion it proves. Reach for this first, always. A bullet under `## Checks` is the same mechanism scoped to the whole run: it gates the gate, but it proves no particular criterion, so prefer the criterion-scoped form when a command maps to one.
-2. **`evidence: <path>`** - a text artifact (log, API response, DB dump) inlined into the judge prompt and hash-pinned. Cap is 64KB per file; over that, turn it into a tier-1 command. Weaker than tier 1 because you could have written the file by hand.
-
-3. **`capture: \`<cmd>\` -> <path>`** - for what has to be *seen*. Declare the command, not the image: the harness runs it on its own clock, so the artifact is fresh by construction, then attaches it to the judge. An image you produced yourself is not accepted - the judge cannot tell a current screenshot from last week's. Both halves are required: the command in backticks, then ` -> ` and the exact path that command writes, so the harness knows what to look for.
-4. **`human: <why>`** - proof no command can reproduce (a comparison against a design mock, real-device behavior). Never judged; comes back as a `requiresHuman` finding and the run ends by handing it to the user.
-
-Constraints worth knowing before you write the contract:
-
-- Image attachment is a backend capability. Codex supports it directly; Claude can inspect an allowlisted image only in a scoped-read judgment. If a configured routine primary cannot see the image, the criterion falls to the human lane while the capture still runs and is hash-pinned. Configure `judge.profiles.routine.primary` as Codex when a run leans on visual criteria.
-- An image only reaches the judge through `capture:`. The same file declared with `evidence:` goes to the human lane instead, because nothing proves when it was made.
-- Evidence paths must be relative to the project root (an absolute path is refused even when it points inside), and must resolve to an ordinary file whose content lives in the tree - symlinks out of the tree and hard links are refused at read time. Keep artifacts under `agents/quick/<slug>/evidence/`.
-- Inline evidence must be text. Binary content is refused - use a capture for something visual, or a check command for what the binary proves.
-- A criterion cannot carry both `human:` and machine evidence; the contract lint refuses it at $0. Split it in two if a person owns half the proof.
-- **Never write a taste criterion.** "The spacing is balanced", "the design looks clean" - the judge confirms propositions ("the toggle renders", "the response is 200"), not quality. Visual quality goes in the final report as a human-review item, not into an AC.
-- Every evidence file and capture artifact is hashed into the verdict, exactly like the contract itself. Changing one afterwards re-opens the gate.
-- Identical commands run once no matter how many places declare them, and every declaring criterion still gets the result. Naming a configured `verify.commands` entry as a criterion's `check:` is fine when that command really is the criterion's proof; a bare `## Checks` restatement of it is just noise.
-
-From this point, run the explicit verify command and do not claim completion until its current-tree verdict is PASS.
-
-Then summarize the contract in chat (goal, ACs, assumptions). Informational, not an approval request; continue immediately - the user can interrupt.
-
-## Stage 2: Implement
-
-Implement directly in the conversation. No task plan, no state harness. Keep the contract honest: if scope genuinely changes mid-run, update the contract first (the judge verdict is pinned to its hash, so an edited contract correctly re-opens the gate).
-
-## Stage 3: Verify
+## 3. Verify
 
 ```sh
 sasu gate verify --slug <slug> --contract agents/quick/<slug>/contract.md --base <baseRef> --json
 ```
 
-The JSON carries everything the receipt needs, on every settled path: `criteria` (per-AC judge verdicts; empty when no judge ran), `judgedCriteriaIds` (the criteria sent to the judge), `judgedVerdict` (its verdict before the human lane was folded in; absent when no judge ran), `checks` (criterion-scoped command results), `mechanical.runs`, `evidence` (artifact paths with hashes, including artifacts no judge could read), `inputs` (everything pinned), and `status.findings`.
+The gate executes configured/detected required commands, contract Checks, and captures, checks evidence integrity, and independently reviews the complete compact contract against current implementation and shared actual results.
+Evidence paths must resolve to ordinary files inside the project; missing, empty, invalid, oversized, or escaped evidence blocks review explicitly.
+A backend that cannot inspect required images must use an existing capable route or report inability; it cannot remove the requirement or silently convert it to later human approval.
 
-The judge sees the diff against your base ref, including files the run created. It does not see gitignored files - if something only exists there, prove it with a check command instead. The whole `agents/` namespace is excluded from the diff, so your contract prose never crowds out the code and writing the receipt never stales a PASS (the contract is still pinned by content hash, so editing it does re-open the gate). Dependency lockfiles are excluded too, for the same window-budget reason.
+The JSON carries the whole `review`, actual `mechanical.runs`, run-level `checks`, evidence paths/hashes/provenance, pinned `inputs`, errors, and `status.findings`.
+Quote those results rather than authoring your own derived success ledger.
+The judge receives previous findings so they cannot vanish merely by omission.
+It records actual defects, optional advisories, and human judgments; the gate derives the outcome from these issues rather than a bare PASS string.
 
-A failing project check stops the run, but criterion-scoped `check:` commands still execute, so a blocked receipt can still say which criteria were already satisfied. `mechanical.resolved` lists every command the run planned, which is where a genuinely skipped one shows up.
+Bookkeeping under `agents/**` stays outside product diff and source freshness.
+Explicitly declared contracts and artifacts still participate in pinned inputs.
+A current review belongs to the exact source, contract, evidence, and execution inputs it evaluated.
+Committing unchanged reviewed content does not itself change that content identity.
+A source hash alone does not establish that a database, ignored file, external service, or new capture is unchanged.
 
-- Mechanical commands come from `agents/config.json` `verify.commands` or manifest detection, then the contract's own `## Checks` and `capture:` commands. When the CLI suggests pinning detected commands, relay the suggestion once in the final report.
-- On BLOCK/FAIL: fix and re-run, within the judge retry budget (default 5). The budget is N chances to fix and re-verify, not N identical retries: re-running with nothing changed is refused at $0 and spends no attempt, so the fix has to be real. Prelint findings never consume an attempt; every other blocked run does, including a mechanical or evidence failure that costs no judge call. Five typo'd evidence paths exhaust the budget just as five failing test runs would. The CLI reports exhaustion or unchanged-tree refusal explicitly; either ends the fix loop and moves the run to the handoff close. A refusal means the identical question is settled, never that nothing is left to try - it names the base the verdict was judged against, and a verdict earned against the wrong `--base` is one corrected re-run from a different answer.
-- An `evidence` finding means a declared artifact is missing, empty, binary, oversized, or resolves outside the project - fix the declaration or the command that produces it. It blocks before the judge call, so it costs nothing but the attempt.
-- A `human-verification` finding is not a failure to fix: check it yourself, then carry it into the receipt and the report as an open item. The gate stays non-PASS by design, and the run closes through the handoff path below.
-- Never run `sasu gate override`; it is user-only.
-- A verdict is pinned to the contract hash, every evidence artifact's hash, and the sha256 of the diff the judge was shown. Changing the code under judgment re-opens the gate; so does editing a pinned document. Re-run verify on the current state. Committing the exact work that passed does NOT re-open it - the pin is content-based, not commit-based.
+On a failed result, fix concrete defects or missing observations and verify again within the existing retry bound.
+Prelint failures are distinct from executed judge calls.
+Respect exhaustion and identical-input refusals without bypasses; report actual external changes when determining whether a new attempt can add information.
+Do not run extra independent adversarial loops.
+Never execute the user-only `gate override` on the user's behalf; an explicit user override is a deviation, not verification PASS.
 
-## Stage 4: Finalize
+## 4. Close With The Actual Result
 
-A quick run closes in one of two ways. Both write the same three artifacts; only the report differs.
+Write `agents/quick/<slug>/receipt.md` with the goal, implemented outcome, and complete CLI JSON embedded verbatim.
+Describe actual tests and observations, review findings, assumptions, open human judgments, and unavailable work around that record without rewriting its verdicts.
+A current PASS permits `status: complete`; a failure, exhausted correction, or unresolved human judgment closes as `status: blocked` with the actual `NEEDS_HUMAN` or failure result.
+Quick does not import implement's pending-human confirmation state machine.
 
-**Closing on a live PASS** - every criterion was judged and passed.
-
-**Closing on a handoff** - the fix loop ended without a PASS because a finding needs a person (`requiresHuman`), the retry budget is exhausted, or a re-run is refused on the unchanged tree (budget left but unspendable, so the gate is terminal now). This is a legitimate ending, not an abandoned run: a contract with any `human:` criterion can never reach PASS by construction, and it still has to be closed out properly.
-
-In both cases:
-
-1. Write `agents/quick/<slug>/receipt.md`: goal, one-line outcome, then the verify `--json` per-AC verdicts, check results, mechanical runs, and evidence artifacts (path + hash) embedded verbatim - never restate verification results by hand (derived bookkeeping is how ledgers rot). On a handoff, add an "Open items" section listing every unsettled criterion and what a person must check. When no judge ran (an all-human contract), `criteria` is empty and the receipt rests on `status.findings`, `checks`, and `evidence` instead.
-2. Flip the contract frontmatter to `status: complete` - or `status: blocked` on a budget-exhausted or rerun-refused handoff with no `human:` criteria, because that run failed verification and the record must say so (freshness hashing ignores frontmatter, so this does not stale the verdict).
-3. Report: what changed, AC verdicts, assumptions made, anything deferred, and an explicit human-review section for every `human:` criterion plus any visual or taste judgment the judge did not make. On a handoff, say plainly that the run did not reach a full PASS and name what is open - never call it Done. Do not commit or push unless the conversation agreed to it.
-
-## Stops
-
-Never stop for stage transitions, and never stop before Stage 4 has run. Stop and ask only when:
-
-- an ambiguity clears the Ambiguity Policy's bar for asking (hard-stop class, or no defensible default and expensive to reverse).
-- a verify finding is marked `requiresHuman`, the retry budget is exhausted, or a re-run is refused on the unchanged tree - after closing the run through the handoff path.
-- the work touches an implement-pipeline hard stop (real-data migrations, auth/security decisions, payments, production data, credentials, destructive actions, external spend).
+Report what changed, what actually ran, what the full-contract review found, assumptions, remaining limitations, and the receipt path.
+If a person must still decide, say plainly that the run did not reach full completion.
+Complete already authorized commits or delivery; do not add new external effects without authority.
+Never stop merely at a stage boundary or leave a settled failed run without its honest handoff record.

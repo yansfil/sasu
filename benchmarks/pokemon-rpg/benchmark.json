@@ -1,5 +1,5 @@
 {
-  "schema": "sasu.benchmark-case.v2",
+  "schema": "sasu.benchmark-case.v4",
   "id": "pokemon-rpg",
   "prd": "prd.md",
   "environment": {
@@ -14,16 +14,13 @@
       "complete"
     ],
     "requiredStages": [
-      "init",
-      "implementation",
+      "start",
       "verification",
-      "verify-gate",
-      "requirements-fidelity",
+      "mechanical",
+      "review",
       "finalize"
     ],
-    "forbiddenStages": [
-      "final-adversarial-review"
-    ],
+    "forbiddenStages": [],
     "maxVerifyAttempts": 3,
     "falseCompleteAllowed": false
   },

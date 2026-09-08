@@ -57,42 +57,15 @@ export class VerbRejected extends Error {
  * says so.
  */
 export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
-  // Implementation work. The supervisor plans and judges; it does not build,
-  // and it does not get to say the building is done.
-  check: ["implementor", "human"],
   artifact: ["implementor", "human"],
   verify: ["implementor", "human"],
   finalize: ["implementor", "human"],
-  design: ["implementor", "human"],
   risk: ["implementor", "human"],
-  // The supervisor's own channel (R7).
-  park: ["implementor", "observer", "human"],
-  resume: ["implementor", "observer", "human"],
-  // Human-only. A `human:` row is closed by the person's own words and by
-  // nobody else's; the harness records the words, it does not decide (R8).
+  retire: ["implementor", "human"],
   confirm: ["human"],
-  // Briefing and trail registration stay open to every issuer on purpose.
-  // The gate R11 actually names is the DRIVER role recorded on the trail
-  // (AC31/AC32), and PRD 10장 already accepts that a self-declared role
-  // cannot be authenticated. Narrowing the issuer here would add friction
-  // for a QA agent the observer dispatched without closing that hole.
-  "qa-brief": ["implementor", "observer", "human"],
-  trail: ["implementor", "observer", "human"],
   escalate: ["observer", "human"],
-  // Raising a design comment is the supervisor's remark channel (R10). It is
-  // separate from `design` above because raising and answering are opposite
-  // ends of the same comment: the supervisor says what looks wrong, the
-  // implementor answers it. Letting one actor do both would make the finalize
-  // guard self-clearing.
-  "design-raise": ["observer", "human"],
-  // Human-only, for the same reason as `amend`: declaring a finding
-  // structurally unfixable is a judgment about the question, and the run it
-  // closes is the one making the claim (R16 ③).
   "risk-non-convergent": ["human"],
-  // The observer may repair a check cell (how a row is proved); only the
-  // human may change what the user observes. The split is enforced on the
-  // diff inside amend.ts, so the table admits both and the diff decides (R6).
-  amend: ["observer", "human"],
+  amend: ["human"],
 };
 
 /**
@@ -107,7 +80,7 @@ export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[]
  * Subcommands that are deliberately ungated, and why.
  *
  * The gate is fail-open on a command it does not know, which is right for
- * these - anyone may look at a run, and `start`/`retire`/`await` are not
+ * these - anyone may look at a run, and `start`/`await` are not
  * state changes an issuer label means anything about. It is wrong for a
  * command someone forgets to add to the table, so the two lists are compared
  * against the dispatcher by test (implement-authority) rather than trusted to
@@ -119,7 +92,7 @@ export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[]
 // Its guard is not a declaration anyway - dispatchImplementor refuses a pane
 // already marked SASU_HERDR_ROLE=implementor, which is structural and cannot
 // be typed around the way `--issuer` can.
-export const UNGATED_COMMANDS = ["intake", "start", "status", "retire", "await", "dispatch"] as const;
+export const UNGATED_COMMANDS = ["intake", "start", "status", "await", "dispatch"] as const;
 
 export function isIssuedCommand(value: string): value is IssuedCommand {
   return (ISSUED_COMMANDS as string[]).includes(value);

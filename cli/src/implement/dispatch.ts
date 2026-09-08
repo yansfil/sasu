@@ -75,7 +75,7 @@ export function assertDispatchablePrd(projectRoot: string, prdPath: string): { r
     throw new DispatchRejected(`PRD not found: ${resolved.relative}; dispatch hands over a sealed document, it does not create one`);
   }
   const status = frontmatterValue(fs.readFileSync(resolved.absolute, "utf8"), "status")?.trim() ?? "";
-  if (status !== "ready" && status !== "approved") {
+  if (status !== "ready") {
     throw new DispatchRejected(
       `${resolved.relative} is \`status: ${status === "" ? "(unset)" : status}\`; run \`sasu prd ready --prd ${resolved.relative}\` before dispatching`,
     );

@@ -1,88 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import {
-  latestAttemptResult,
-  reconcileRiskFindings,
-  validateRiskVerdict,
-  validateVerdictDelta,
-  verificationInputManifest,
-  verificationRoundContext,
-} from "../../dist/implement/convergence.js";
-
-const snapshot = (entries) => ({ head: "head", entries, digest: JSON.stringify(entries) });
-
-test("lane lineage skips newer partial errors and keeps the latest result for the same semantic unit", () => {
-  const first = {
-    id: "attempt-1",
-    lanes: {
-      acceptance: { result: { criteria: [{ id: "AC1", verdict: "FAIL" }] } },
-      risk: { result: { verdict: "FAIL", findings: [{ id: "RF1", severity: "blocking", text: "unresolved" }] } },
-    },
-  };
-  const partial = {
-    id: "attempt-2",
-    lanes: {
-      acceptance: { result: { criteria: [{ id: "AC2", verdict: "PASS" }] } },
-      risk: { result: null },
-    },
-  };
-  const attempts = [first, partial];
-  const acceptance = latestAttemptResult(attempts, (attempt) =>
-    attempt.lanes.acceptance?.result?.criteria.find((entry) => entry.id === "AC1"));
-  const risk = latestAttemptResult(attempts, (attempt) => attempt.lanes.risk?.result);
-
-  assert.equal(acceptance.attempt.id, "attempt-1");
-  assert.equal(acceptance.result.verdict, "FAIL");
-  assert.equal(risk.attempt.id, "attempt-1");
-  assert.equal(risk.result.findings[0].id, "RF1");
-});
-
-test("round context names exact changed paths and new evidence, and a new FAIL must point to one", () => {
-  const initial = snapshot([]);
-  const firstManifest = verificationInputManifest(initial, snapshot([
-    { path: "src/a.ts", state: "present", sha256: "one" },
-  ]), []);
-  const prior = { id: "attempt-1", inputManifest: firstManifest };
-  const current = verificationInputManifest(initial, snapshot([
-    { path: "src/a.ts", state: "present", sha256: "two" },
-  ]), [{ rowId: "B1", path: "proof.log", sha256: "proof" }]);
-  const context = verificationRoundContext(current, prior);
-
-  assert.deepEqual(context.changedPaths, ["src/a.ts"]);
-  assert.deepEqual(context.newEvidence, [{ rowId: "B1", path: "proof.log", sha256: "proof" }]);
-  assert.deepEqual(validateVerdictDelta({
-    origin: "new",
-    deltaBasis: { kind: "changed-path", value: "src/a.ts" },
-  }, "FAIL", "PASS", context, "AC1"), {
-    origin: "new",
-    deltaBasis: { kind: "changed-path", value: "src/a.ts" },
-  });
-  assert.match(validateVerdictDelta({ origin: "new" }, "FAIL", "PASS", context, "AC1"), /deltaBasis/);
-  assert.match(validateVerdictDelta({
-    origin: "new",
-    deltaBasis: { kind: "changed-path", value: "invented.ts" },
-  }, "FAIL", "PASS", context, "AC1"), /must name an exact changed-path/);
-});
-
-test("a prior FAIL must be dispositioned, while a real changed-path blocker remains allowed", () => {
-  const context = { priorAttemptId: "attempt-1", changedPaths: ["src/fix.ts"], newEvidence: [] };
-  assert.deepEqual(validateVerdictDelta({
-    priorDisposition: { status: "resolved", reason: "the failing branch now has a guard" },
-  }, "PASS", "FAIL", context, "F1"), {
-    priorDisposition: { status: "resolved", reason: "the failing branch now has a guard" },
-  });
-  assert.match(validateVerdictDelta({}, "PASS", "FAIL", context, "F1"), /priorDisposition/);
-  assert.deepEqual(validateVerdictDelta({
-    priorDisposition: { status: "resolved", reason: "the old issue is fixed" },
-    origin: "new",
-    deltaBasis: { kind: "changed-path", value: "src/fix.ts" },
-  }, "FAIL", "FAIL", context, "F1"), {
-    priorDisposition: { status: "resolved", reason: "the old issue is fixed" },
-    origin: "new",
-    deltaBasis: { kind: "changed-path", value: "src/fix.ts" },
-  });
-});
+import { latestAttemptResult, reconcileRiskFindings, validateRiskVerdict, reconcileReviewFindings, verificationInputManifest, verificationRoundContext } from "../../dist/implement/convergence.js";
+import { REVIEW_PASS, defect } from "../helpers/implement-fixture.mjs";
 
 test("risk findings get stable ids and every prior finding is dispositioned on round 2+", () => {
   const first = validateRiskVerdict({
@@ -179,7 +98,8 @@ test("a successful risk result moves the ledger through open, fixed, and newly a
   const second = reconcileRiskFindings(first, secondResult, "attempt-2", "2026-08-25T02:00:00.000Z");
   assert.equal(second[0].status, "fixed");
   assert.match(second[0].resolution.evidence, /attempt attempt-2/);
-  assert.match(second[0].resolution.evidence, /deltaBasis changed-path=src\/write\.ts/);
+  assert.ok(second[0].resolution.evidence.includes("changed-path"));
+  assert.ok(second[0].resolution.evidence.includes("src/write.ts"));
   assert.deepEqual(second[1], {
     id: "RF2",
     severity: "advisory",
@@ -194,4 +114,44 @@ test("a successful risk result moves the ledger through open, fixed, and newly a
     originAttemptId: "attempt-2",
     status: "open",
   });
+});
+
+test("a partial backend error preserves the last actual whole-review result", () => {
+  const attempts = [{ id: "a1", review: { result: { ...REVIEW_PASS, findings: [defect()] } } }, { id: "a2", review: { result: null, verdict: "ERROR" } }];
+  assert.equal(latestAttemptResult(attempts, (entry) => entry.review?.result).attempt.id, "a1");
+});
+
+test("omitted problems stay open and a concrete newly discovered omission in unchanged source is accepted", () => {
+  const first = reconcileReviewFindings([], { ...REVIEW_PASS, findings: [defect({ ref: "B17" })] }, "a1", "t1");
+  const second = reconcileReviewFindings(first, { ...REVIEW_PASS, findings: [defect({ ref: "B28" })] }, "a2", "t2");
+  assert.deepEqual(second.map((item) => [item.id, item.status, item.requirementRefs[0]]), [["F1", "open", "B17"], ["F2", "open", "B28"]]);
+  const third = reconcileReviewFindings(second, { ...REVIEW_PASS, priorDispositions: [{ findingId: "F1", status: "resolved", reason: "Value is now connected.", evidenceRefs: ["implementation.txt"] }] }, "a3", "t3");
+  assert.deepEqual(third.map((item) => item.status), ["resolved", "open"]);
+  assert.equal(first[0].status, "open", "reconciliation never mutates historical input");
+  assert.equal(third[0].history.at(-1).reason, "Value is now connected.");
+});
+
+test("a reviewer cannot downgrade an open defect or close or rewrite a human authority item", () => {
+  const first = reconcileReviewFindings([], { ...REVIEW_PASS, findings: [defect()] }, "a1", "t1");
+  assert.throws(() => reconcileReviewFindings(first, { ...REVIEW_PASS, findings: [{ ...defect({ priorFindingId: "F1" }), kind: "advisory" }] }, "a2", "t2"), /cannot change kind/);
+  const human = { kind: "human-confirmation", requirementRefs: ["D-01"], problem: "Approval is reserved.", evidenceRefs: ["D-01"], nextAction: "Obtain approval.", human: { sourceRef: "D-01", quote: "Owner approves before delivery.", timing: "prerequisite" } };
+  const ledger = reconcileReviewFindings([], { ...REVIEW_PASS, findings: [human] }, "a1", "t1");
+  assert.throws(() => reconcileReviewFindings(ledger, { ...REVIEW_PASS, priorDispositions: [{ findingId: "F1", status: "resolved", reason: "Reviewer approves.", evidenceRefs: ["D-01"] }] }, "a2", "t2"), /only be closed by a human/);
+  assert.throws(() => reconcileReviewFindings(ledger, { ...REVIEW_PASS, findings: [{ ...human, priorFindingId: "F1", human: { ...human.human, timing: "post-completion" } }] }, "a2", "t2"), /cannot change its authority source or timing/);
+});
+
+test("round context keeps source delta distinct from replacement evidence", () => {
+  const prior = { id: "a1", inputManifest: { source: [{ path: "a.txt", state: "file", sha256: "before" }], evidence: [{ path: "agents/capture.png", sha256: "old" }] } };
+  const current = { source: [{ path: "a.txt", state: "file", sha256: "before" }], evidence: [{ path: "agents/capture.png", sha256: "new" }] };
+  assert.deepEqual(verificationRoundContext(current, prior), { priorAttemptId: "a1", changedPaths: [], newEvidence: [{ path: "agents/capture.png", sha256: "new" }] });
+});
+
+test("new risks in unchanged source require concrete valid contract and counterevidence references", () => {
+  const context = { priorAttemptId: "a1", changedPaths: [], newEvidence: [], requirementRefs: ["B1", "D-01"], evidenceRefs: ["src/write.ts"] };
+  const finding = { severity: "blocking", text: "B1 preservation fails when src/write.ts overwrites the existing record.", origin: "new", deltaBasis: { kind: "contract-counterevidence", value: "B1 requires preservation, src/write.ts overwrites without recovery.", requirementRefs: ["B1"], evidenceRefs: ["src/write.ts"] } };
+  const result = { verdict: "FAIL", priorDispositions: [], findings: [finding] };
+  const parsed = validateRiskVerdict(result, { verdict: "PASS", findings: [] }, context);
+  assert.notEqual(typeof parsed, "string", String(parsed));
+  const invalid = { ...result, findings: [{ ...finding, deltaBasis: { ...finding.deltaBasis, requirementRefs: ["B99"] } }] };
+  assert.equal(typeof validateRiskVerdict(invalid, { verdict: "PASS", findings: [] }, context), "string");
 });

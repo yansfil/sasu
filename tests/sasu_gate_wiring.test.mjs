@@ -39,20 +39,20 @@ test("gen-prd routes readiness through the spec gate", () => {
   assert.doesNotMatch(skill, /closure BLOCK is terminal|closure review|third time/i);
   assert.match(skill, /fidelity/i);
   assert.match(skill, /Never run `sasu gate override` yourself/);
-  assert.match(skill, /\| # \| 사용자가 관찰하는 행동 \| 검사 방법 \| 결정 \|/);
-  assert.match(skill, /prd-behavior-row/);
-  assert.match(skill, /Ask a contract-breaking question only when the choice between/);
+  assert.match(skill, /\| # \| 사용자가 관찰하는 행동 \| 결정 \|/);
+  assert.match(skill, /behaviorCount/);
+  assert.match(skill, /Every requirement stays in the PRD and the independent full-contract review input/);
 });
 
 test("implement routes changed-code tasks through unified implement verify", () => {
   const skill = readSkill("implement");
   assert.match(skill, /sasu implement verify/);
   assert.match(skill, /mechanical/i);
-  assert.match(skill, /Do not use overrides on the user's behalf/);
-  assert.match(skill, /sasu implement check --row B1/);
-  assert.match(skill, /sasu implement park/);
-  assert.match(skill, /sasu implement resume --row B1/);
-  assert.match(skill, /parked row.*blocks a complete finalize/is);
+  assert.match(skill, /Do not use user-only overrides/);
+  assert.match(skill, /one comprehensive review/);
+  assert.match(skill, /required suites/);
+  assert.match(skill, /finalize --status blocked/);
+  assert.match(skill, /open explicit rejection makes delivery ineligible/);
 });
 
 test("please runs each PRD gate on its open findings set and hands a NEEDS_HUMAN bundle to the user", () => {
@@ -112,12 +112,15 @@ test("please seals specification in the main session before implementation dispa
   assert.doesNotMatch(observer, /Implementor owns PRD authoring/);
 });
 
-test("quick documents its fast single-lane path and bounded large-input fallback", () => {
+test("quick keeps run-level evidence and comprehensive review without AC outcomes", () => {
   const skill = readSkill("quick");
-  assert.match(skill, /Up to eight machine-judged criteria stay in one routine judge call/);
-  assert.match(skill, /balanced criterion lanes that run concurrently/);
-  assert.match(skill, /command trace is audited and recorded/);
-  assert.doesNotMatch(skill, /single tool-less call/);
+  assert.match(skill, /one comprehensive independent review/);
+  assert.match(skill, /## Acceptance Criteria/);
+  assert.match(skill, /## Evidence/);
+  assert.match(skill, /## Human Review/);
+  assert.match(skill, /whole `review`/);
+  assert.match(skill, /Old indented method fields under an AC are rejected/);
+  assert.doesNotMatch(skill, /judgedCriteriaIds|balanced criterion lanes|per-AC judge verdicts/);
 });
 
 test("every gate-calling skill keeps the override user-only in the same breath", () => {

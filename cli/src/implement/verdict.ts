@@ -1,16 +1,4 @@
-/**
- * The one definition of a mechanical verdict.
- *
- * `outcome` is derived from four inputs recorded beside it on the same
- * record. Three sites used to derive it independently - the single check
- * writer, the verify batch writer, and the state reader - and on 2026-09-02
- * (herdr-ide hide-ux-round4) the batch writer folded a fifth input,
- * mutatedTree, into its verdict while the reader knew nothing of it: six
- * attempts landed as exit 0 / outcome "failed" and every later command refused
- * to load the run. The reader's park comment records the same species once
- * before. One function, called by every writer and by the reader, is what
- * makes writer/reader drift structurally impossible (PRINCIPLES 3, 10).
- */
+/** Mechanical results use the same process facts in both recording and review. */
 export interface VerdictInputs {
   exitCode: number;
   timedOut: boolean;

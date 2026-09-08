@@ -1,18 +1,162 @@
 import fs from "node:fs";
 import path from "node:path";
 import { executeMechanicalArgv, type MechanicalExecution } from "../mechanical";
-import { captureSourceSnapshot, sha256 } from "./store";
-import type { CheckTreeFingerprint, ImplementState } from "./types";
+import { captureSourceSnapshot } from "./store";
+import type { ExecutionTreeFingerprint, ImplementState } from "./types";
 import { mechanicalOutcome, type MechanicalOutcome } from "./verdict";
 
+/** The sealed suite is the sole command ledger for implement verification. */
+const { commandCompositionDefect } = require("../../lib/prd_parser.js") as { commandCompositionDefect(command: string): string | null };
+
+export const IMPLEMENT_SUITE_TIMEOUT_MS = 10 * 60 * 1000;
+const ALLOWED_EXECUTABLES = new Set([
+  "bash", "bun", "bundle", "cargo", "deno", "go", "just", "make", "node", "npm", "npx",
+  "pnpm", "pytest", "python", "python3", "ruby", "sh", "swift", "swiftc", "xcodebuild", "yarn",
+]);
+
+function commandExecutable(command: string): string {
+  return command.trim().split(/\s+/, 1)[0] ?? "";
+}
+
 /**
- * One command, executed once. The suite batch and the single-row check go
- * through this executor alone: two executors for one command string ran the
- * same `(cwd, command)` under different semantics and disagreed, which is
- * the defect the gate-loop PRD's R1 closed. The verify batch now carries
- * only the sealed suite; `check:` rows run one at a time through
- * `sasu implement check --row` and are settled from their own ledger.
+ * Tokenize sealed suite commands without invoking a shell.
  */
+export function parseCommandArgv(command: string): string[] {
+  const argv: string[] = [];
+  let token = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  let started = false;
+  for (const char of command) {
+    if (escaped) {
+      token += char;
+      escaped = false;
+      started = true;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      started = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else token += char;
+      started = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (started) {
+        argv.push(token);
+        token = "";
+        started = false;
+      }
+      continue;
+    }
+    token += char;
+    started = true;
+  }
+  if (escaped || quote !== null) throw new Error("suite: command has an unterminated quote or escape");
+  if (started) argv.push(token);
+  return argv;
+}
+
+function usesInterpreterFlag(argv: string[], flag: string): boolean {
+  return argv.slice(1).some((entry) => {
+    if (flag.startsWith("--")) return entry === flag || entry.startsWith(`${flag}=`);
+    if (!/^-[^-]$/.test(flag) || !/^-[^-]/.test(entry)) return entry === flag;
+    // Short options may be clustered or carry an attached payload (`-lc`,
+    // `-eCODE`). A dangerous interpreter flag is dangerous in either shape.
+    return entry.slice(1).split("=", 1)[0]!.includes(flag.slice(1));
+  });
+}
+
+function assertProjectPath(projectRoot: string, cwd: string, value: string): void {
+  let candidate = value;
+  if (value.startsWith("-")) {
+    const equals = value.indexOf("=");
+    if (equals >= 0) candidate = value.slice(equals + 1);
+    else if (/[\\/]/.test(value)) {
+      // Without the executable's option schema `-rpath/file` is ambiguous:
+      // fail closed and require the auditable `-r path/file` or `--x=path`
+      // form instead of guessing where a flag cluster ends and a path begins.
+      throw new Error(`suite: command option has an ambiguous attached path; pass the project-relative path separately or with '=': ${value}`);
+    } else return;
+  }
+  if (candidate === "") return;
+  const absolute = path.resolve(projectRoot, cwd, candidate);
+  const realRoot = fs.realpathSync(projectRoot);
+  let existingAncestor = absolute;
+  // A missing future test/output is valid, but a dangling symlink is not a
+  // missing directory: existsSync would skip it and overlook its escape.
+  for (;;) {
+    try {
+      if (fs.lstatSync(existingAncestor, { throwIfNoEntry: false }) !== undefined) break;
+    } catch (error) {
+      // An existing file followed by a future child also needs its realpath
+      // checked; stat reports ENOTDIR before it exposes a symlinked file.
+      if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+    }
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  let realAncestor: string;
+  try {
+    realAncestor = fs.realpathSync(existingAncestor);
+  } catch (error) {
+    throw new Error(`suite: command path cannot be resolved safely: ${value} (${error instanceof Error ? error.message : String(error)})`);
+  }
+  const relative = path.relative(realRoot, realAncestor);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`suite: command path resolves outside the working tree: ${value}`);
+  }
+}
+
+/**
+ * The shape a `suite:` command may take, checked against the tree it will
+ * run in. The PRD seals the string; this is the harness refusing to execute
+ * what it should not: shell composition (the rule the cell and the config
+ * share), absolute or traversing paths, an executable outside the runner
+ * allowlist, inline code, or an npx that fetches. The cell has no cwd of
+ * its own; the caller supplies the sealed execution directory.
+ */
+export function validateSuiteCommand(projectRoot: string, command: string): { command: string; argv: string[] } {
+  const trimmed = command.trim();
+  if (trimmed === "") throw new Error("suite: command must be non-empty");
+  if (trimmed.length > 2_000) throw new Error("suite: command exceeds the 2000 character limit");
+  if (/[\r\n\0]/.test(trimmed)) throw new Error("suite: command must be a single line");
+  const composition = commandCompositionDefect(trimmed);
+  if (composition !== null) throw new Error(`suite: command ${composition}`);
+  if (/(?:^|[=\s])(?:~\/|\/)/.test(trimmed) || /(?:^|[\/=\s])\.\.(?:[\/\s]|$)/.test(trimmed)) {
+    throw new Error("suite: command paths must be project-relative and may not traverse outside the working tree");
+  }
+  const argv = parseCommandArgv(trimmed);
+  const executable = argv[0] ?? commandExecutable(trimmed);
+  if (!ALLOWED_EXECUTABLES.has(executable) && !executable.startsWith("./")) {
+    throw new Error(`suite: command executable is outside the allowed runner forms: ${executable}`);
+  }
+  const realProjectRoot = fs.realpathSync(projectRoot);
+  for (const argument of argv) assertProjectPath(realProjectRoot, ".", argument);
+  const inlineCode = (
+    (["bash", "sh"].includes(executable) && (usesInterpreterFlag(argv, "-c") || usesInterpreterFlag(argv, "--command")))
+    || (["node", "bun"].includes(executable) && ["-e", "--eval", "-p", "--print", "--input-type"].some((flag) => usesInterpreterFlag(argv, flag)))
+    || (["python", "python3", "ruby"].includes(executable) && (usesInterpreterFlag(argv, "-c") || usesInterpreterFlag(argv, "-e")))
+    || (executable === "deno" && argv[1] === "eval")
+  );
+  if (inlineCode) throw new Error("suite: command may not execute inline code; name a project-confined script or declared suite instead");
+  if (executable === "npx" && !argv.includes("--no-install")) {
+    throw new Error("npx suite: commands require --no-install so verification cannot fetch and execute a package");
+  }
+  return { command: trimmed, argv };
+}
+
+
 export interface RunUnit {
   command: string;
   argv: string[];
@@ -34,7 +178,7 @@ export interface RunUnitResult {
   outcome: MechanicalOutcome;
   stdout: string;
   stderr: string;
-  tree: CheckTreeFingerprint;
+  tree: ExecutionTreeFingerprint;
 }
 
 /** The active sealed suite as run units, in sealed order. */
@@ -45,29 +189,10 @@ export function planRunUnits(state: ImplementState): RunUnit[] {
     .map((command) => ({ command: command.command, argv: command.argv, cwd: command.cwd, suiteCommandId: command.id }));
 }
 
-function directoryDigest(root: string, skipRelative: string): string {
-  if (!fs.existsSync(root)) return sha256("[]");
-  const entries: Array<[string, string]> = [];
-  const visit = (absolute: string, relative: string): void => {
-    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) continue;
-      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (child === skipRelative || child.startsWith(`${skipRelative}/`)) continue;
-      if (entry.isDirectory()) visit(path.join(absolute, entry.name), child);
-      else if (entry.isFile()) entries.push([child, sha256(fs.readFileSync(path.join(absolute, entry.name)))]);
-    }
-  };
-  visit(root, "");
-  entries.sort(([left], [right]) => left.localeCompare(right));
-  return sha256(JSON.stringify(entries));
-}
-
-export function treeFingerprint(state: ImplementState, workRoot: string): CheckTreeFingerprint {
-  const product = captureSourceSnapshot(workRoot).digest;
-  const agentsRoot = path.join(workRoot, "agents");
-  const runRelativeToAgents = path.relative(agentsRoot, path.join(state.projectRoot, state.runDir)).split(path.sep).join("/");
-  const bookkeeping = directoryDigest(agentsRoot, runRelativeToAgents);
-  return { product, bookkeeping, all: sha256(JSON.stringify({ product, bookkeeping })) };
+export function treeFingerprint(_state: ImplementState, workRoot: string): ExecutionTreeFingerprint {
+  // Run bookkeeping is never a verification input, even as a diagnostic
+  // digest: it changes whenever the CLI records its own execution progress.
+  return { product: captureSourceSnapshot(workRoot).digest };
 }
 
 /**
@@ -76,7 +201,7 @@ export function treeFingerprint(state: ImplementState, workRoot: string): CheckT
  * used to get both; unifying on the stricter side is the point of one runner.
  */
 export function runtimeEnv(state: ImplementState): NodeJS.ProcessEnv {
-  const runtimeRoot = path.join(state.projectRoot, state.runDir, "check-runtime");
+  const runtimeRoot = path.join(state.projectRoot, state.runDir, "suite-runtime");
   const runtimeHome = path.join(runtimeRoot, "home");
   const runtimeTmp = path.join(runtimeRoot, "tmp");
   const runtimeCache = path.join(runtimeRoot, "cache");
@@ -104,7 +229,7 @@ export async function executeUnit(
   unit: Pick<RunUnit, "argv" | "cwd">,
   timeoutMs: number,
   onSpawn?: (pid: number) => void,
-): Promise<{ execution: MechanicalExecution; mutatedTree: boolean; tree: CheckTreeFingerprint }> {
+): Promise<{ execution: MechanicalExecution; mutatedTree: boolean; tree: ExecutionTreeFingerprint }> {
   const before = captureSourceSnapshot(workRoot).digest;
   const execution = await executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state), onSpawn);
   const tree = treeFingerprint(state, workRoot);
@@ -144,25 +269,30 @@ export async function runBatch(
   units: RunUnit[],
   timeoutMs: number,
   onResult?: (result: RunUnitResult) => void,
+  execution?: { prepare(): void; spawned(pid: number): void; settled(): void },
 ): Promise<BatchOutcome> {
   const before = captureSourceSnapshot(workRoot).digest;
   const results: RunUnitResult[] = [];
   for (const unit of units) {
     const started = Date.now();
     const startedAt = new Date().toISOString();
-    const { execution, mutatedTree, tree } = await executeUnit(state, workRoot, unit, timeoutMs);
+    execution?.prepare();
+    let measured: Awaited<ReturnType<typeof executeUnit>>;
+    try { measured = await executeUnit(state, workRoot, unit, timeoutMs, execution?.spawned); }
+    finally { execution?.settled(); }
+    const { execution: executed, mutatedTree, tree } = measured;
     const result: RunUnitResult = {
       unit,
       startedAt,
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
-      exitCode: execution.exitCode,
-      timedOut: execution.timedOut,
-      signal: execution.signal,
+      exitCode: executed.exitCode,
+      timedOut: executed.timedOut,
+      signal: executed.signal,
       mutatedTree,
-      outcome: mechanicalOutcome({ exitCode: execution.exitCode, timedOut: execution.timedOut, signal: execution.signal, mutatedTree }),
-      stdout: execution.stdout,
-      stderr: `${execution.stderr}${execution.timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : ""}${mutatedTree ? "\n[sasu] command changed judged source files and was rejected" : ""}`,
+      outcome: mechanicalOutcome({ exitCode: executed.exitCode, timedOut: executed.timedOut, signal: executed.signal, mutatedTree }),
+      stdout: executed.stdout,
+      stderr: `${executed.stderr}${executed.timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : ""}${mutatedTree ? "\n[sasu] command changed judged source files and was rejected" : ""}`,
       tree,
     };
     results.push(result);

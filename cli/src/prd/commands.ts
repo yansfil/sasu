@@ -2,7 +2,6 @@ import fs from "node:fs";
 import { prelintPrd } from "../gates/prelint";
 import { normalizeProjectPath } from "../implement/store";
 import { parseImplementContract } from "../implement/contract";
-import { validateContractCheckCommands } from "../implement/checks";
 import { setFrontmatterValue } from "../interview/qalog";
 
 const { parseFrontmatterBlock } = require("../../lib/prd_parser.js") as {
@@ -43,16 +42,11 @@ function readinessOf(projectRoot: string, prd: ResolvedPrd): { ok: boolean; deta
   // The contract parser is the reader `implement start` uses; a document
   // prelint passes but start would refuse (a five-axis PRD, a dangling D-id)
   // is reported here with start's own words rather than discovered at start.
-  let parsed: Record<string, unknown> = { rowCount: 0, rowKinds: { check: 0, judge: 0, human: 0 }, decisionCount: 0 };
+  let parsed: Record<string, unknown> = { behaviorCount: 0, decisionCount: 0 };
   let contractError: string | null = null;
   try {
     const contract = parseImplementContract(prd.text);
-    const kinds = contract.rows.reduce<Record<string, number>>((counts, row) => {
-      counts[row.check.kind] = (counts[row.check.kind] ?? 0) + 1;
-      return counts;
-    }, { check: 0, judge: 0, human: 0 });
-    parsed = { rowCount: contract.rows.length, rowKinds: kinds, decisionCount: contract.decisions.length };
-    validateContractCheckCommands(projectRoot, contract.rows);
+    parsed = { behaviorCount: contract.rows.length, decisionCount: contract.decisions.length };
   } catch (error) {
     contractError = error instanceof Error ? error.message : String(error);
   }

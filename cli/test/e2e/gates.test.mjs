@@ -175,87 +175,6 @@ test("delegated spec judges receive the later invocation and the source cannot b
   assert.equal(gatesState(dir, "fixture").delegation.evidence, invocation);
 });
 
-test("verify FAILs mechanically without calling the judge", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"console.error('unit exploded'); process.exit(2)\"" } } },
-    git: true,
-  });
-  // Poison stub: any judge call would return an invalid reply and surface as ERROR.
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, "should never be consumed"),
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /mechanical:test.*FAIL/);
-  assert.match(result.stdout, /unit exploded/);
-  const state = gatesState(dir, "fixture");
-  assert.equal(state.gates.verify.verdict, "FAIL");
-  assert.equal(state.judgeCalls.length, 0, "semantic judge must not run after mechanical failure");
-});
-
-test("verify FAILs semantically with per-criterion reasons after mechanical passes", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
-    git: true,
-  });
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, {
-      verdict: "FAIL",
-      criteria: [
-        { id: "B1", verdict: "PASS", reason: "render() added in widget.js", evidence: "diff hunk" },
-        { id: "B2", verdict: "FAIL", reason: "no persistence code in the diff" },
-        { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
-      ],
-    }),
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /mechanical:test.*ok/);
-  assert.match(result.stdout, /B2: no persistence code/);
-});
-
-test("verify PASSes end to end and records judge usage for the receipt", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
-    git: true,
-  });
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, {
-      verdict: "PASS",
-      criteria: [
-        { id: "B1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
-        { id: "B2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
-        { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
-      ],
-    }),
-  });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  const state = gatesState(dir, "fixture");
-  assert.equal(state.gates.verify.verdict, "PASS");
-  assert.equal(state.judgeCalls.length, 1);
-  assert.equal(state.judgeCalls[0].backend, "stub");
-  assert.equal(state.judgeCalls[0].profile, "routine");
-  // verify spends its own measured budget, not the profile's (2026-08-29).
-  assert.equal(state.judgeCalls[0].effort, "medium");
-});
-
-test("verify auto-detects commands from package.json and suggests pinning them", () => {
-  const dir = makeProject({ git: true });
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ scripts: { test: "node -e \"process.exit(0)\"" } }));
-  // Committed so the judged diff stays the widget.js change alone.
-  gitCommitAll(dir, "declare test script", ["package.json"]);
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, {
-      verdict: "PASS",
-      criteria: [
-        { id: "B1", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
-        { id: "B2", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
-        { id: "B3", verdict: "PASS", reason: "ok", evidence: "diff hunk" },
-      ],
-    }),
-  });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /auto-detected.*verify\.commands/s);
-});
-
 test("hard block: override without --reason is rejected; with reason it unblocks and records a deviation", () => {
   const dir = makeProject();
   runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
@@ -344,26 +263,6 @@ test("retry budget: a judge-error loop spends no budget and terminates on its ow
   assert.equal(state.gates["gap-audit"].consecutiveErrors, 3);
   assert.equal(state.gates["gap-audit"].totalAttempts, 3, "all runs are still in the honest ledger");
   assert.equal(state.gates["gap-audit"].history.length, 3);
-});
-
-test("verify PASS prints a per-criterion semantic summary", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } },
-    git: true,
-  });
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, {
-      verdict: "PASS",
-      criteria: [
-        { id: "B1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
-        { id: "B2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
-        { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
-      ],
-    }),
-  });
-  assert.equal(result.status, 0);
-  assert.match(result.stdout, /\[semantic\] B1 PASS - render\(\) added/);
-  assert.match(result.stdout, /\[semantic\] B2 PASS - persist\(\) added/);
 });
 
 test("fan-out: one blocking lane blocks the merged gate and per-lane records land in the artifact", () => {
@@ -594,25 +493,6 @@ test("prelint: a blocked judge attempt count survives a later prelint failure un
   assert.equal(after.judgeCalls.length, before.judgeCalls.length, "prelint failures must not call the judge");
 });
 
-test("prelint: verify blocks on a broken PRD before the mechanical commands run (D-06 order)", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mechanical-ran.marker','x')\"" } } },
-    git: true,
-  });
-  // A missing required section is a single-document defect, so it fires
-  // without the qa-log the cross-document rules need.
-  const broken = PRD_FIXTURE.replace(/## Non-goals\n[\s\S]*?(?=## Decisions)/, "");
-  assert.notEqual(broken, PRD_FIXTURE, "the Non-goals section this test removes moved");
-  fs.writeFileSync(path.join(dir, "prd.md"), broken);
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, "poison"),
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stdout, /\[prelint\] prd-section-missing/);
-  assert.equal(fs.existsSync(path.join(dir, "mechanical-ran.marker")), false, "mechanical checks must not run after a prelint failure");
-  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), false);
-});
-
 test("prelint: spec gate lints the PRD at its entrance", () => {
   const dir = makeProject();
   fs.writeFileSync(path.join(dir, "prd.md"), PRD_FIXTURE.replace('human_approval: "approved"', 'human_approval: "maybe"'));
@@ -688,145 +568,11 @@ test("json contract: doctor, status, and override all emit contractVersion-tagge
   assert.equal(overrideParsed.status.effective, "PASS");
 });
 
-// --- verify open-row guard + mechanical fresh-pass reuse --------------------
-
-const PASS_STUB = {
-  verdict: "PASS",
-  criteria: [
-    { id: "B1", verdict: "PASS", reason: "render() added", evidence: "diff hunk" },
-    { id: "B2", verdict: "PASS", reason: "persist() added", evidence: "diff hunk" },
-    { id: "B3", verdict: "PASS", reason: "the persisted state is the user's own", evidence: "diff hunk" },
-  ],
-};
-
-function writeImplementState(dir, slug, state, { legacy = false } = {}) {
-  const runDir = legacy ? path.join(dir, "agents", "implement", slug) : path.join(dir, "agents", "runs", slug);
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(runDir, "state.json"),
-    typeof state === "string" ? state : JSON.stringify({ runDir: path.relative(dir, runDir), ...state }),
-  );
-}
-
-/** The slice of a v8 row the guard reads: kind and status. */
-const row = (id, kind, status) => ({ id, check: { kind }, status });
-
-test("verify refuses a mid-run call while a check: row is not green, at zero cost", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
-    git: true,
-  });
-  writeImplementState(dir, "fixture", {
-    rows: [row("B1", "check", "green"), row("B2", "check", "pending")],
-  });
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, "should never be consumed"),
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /check: row\(s\) not green/);
-  assert.match(result.stderr, /B2 \(pending\)/);
-  assert.match(result.stderr, /--allow-open-rows/);
-  assert.ok(!fs.existsSync(path.join(dir, "mech-ran.txt")), "mechanical stage must not run");
-  assert.ok(!fs.existsSync(path.join(dir, "agents", "runs", "fixture", "gates", "gates.json")), "no gate attempt may be recorded");
-});
-
-test("verify open-row guard still reads a legacy agents/implement/<slug> run", () => {
-  const dir = makeProject({
-    config: { verify: { commands: { test: "node -e \"require('fs').writeFileSync('mech-ran.txt','1')\"" } } },
-    git: true,
-  });
-  writeImplementState(dir, "fixture", { rows: [row("B1", "check", "fail")] }, { legacy: true });
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-    stub: stubFile(dir, "should never be consumed"),
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /check: row\(s\) not green/);
-  assert.match(result.stderr, /B1 \(fail\)/);
-});
-
-test("verify open-row guard: --allow-open-rows proceeds with a warning", () => {
-  const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
-  writeImplementState(dir, "fixture", { rows: [row("B1", "check", "pending")] });
-  const result = runCli(
-    dir,
-    ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--allow-open-rows"],
-    { stub: stubFile(dir, PASS_STUB) },
-  );
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stderr, /proceeding despite 1 open check: row\(s\)/);
-  assert.equal(gatesState(dir, "fixture").gates.verify.verdict, "PASS");
-});
-
-// judge: rows wait for implement verify and human: rows for confirm, so
-// neither means the implementor is mid-run; a parked check: row was set aside
-// on the human's word. Only an unproved check: row is work in flight.
-test("verify open-row guard fails open: proved or parked rows, judge/human rows, corrupt state, and missing state all proceed", () => {
-  for (const state of [
-    { rows: [row("B1", "check", "green"), row("B2", "check", "parked"), row("B3", "judge", "pending"), row("B4", "human", "OPEN")] },
-    { rows: "not-an-array" },
-    "{ not json at all",
-    null,
-  ]) {
-    const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
-    if (state !== null) writeImplementState(dir, "fixture", state);
-    const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], {
-      stub: stubFile(dir, PASS_STUB),
-    });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.equal(gatesState(dir, "fixture").gates.verify.verdict, "PASS");
-  }
-});
-
-
-// --- FAIL-side rerun short-circuit through the CLI --------------------------
-
-test("verify short-circuit: an identical semantic FAIL rerun refuses; a corrected --base reruns and may pass", () => {
-  const dir = makeProject({ config: { verify: { commands: { test: "node -e \"process.exit(0)\"" } } }, git: true });
-  const baseShaRun = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" });
-  assert.equal(baseShaRun.status, 0, baseShaRun.stderr);
-  const baseSha = baseShaRun.stdout.trim();
-  // Commit the implementation and leave only unrelated noise in the working
-  // tree: the default base (HEAD) judges a diff MISSING the implementation -
-  // the reproduced trap where the harness's own recovery advice ("point
-  // --base at the commit you started from") used to walk into the refusal.
-  gitCommitAll(dir, "implementation", ["widget.js"]);
-  fs.writeFileSync(path.join(dir, "notes.js"), "// unrelated noise\n");
-
-  const failStub = {
-    verdict: "FAIL",
-    criteria: [
-      { id: "B1", verdict: "PASS", reason: "render() present", evidence: "notes.js hunk" },
-      { id: "B2", verdict: "FAIL", reason: "no persistence code in the diff" },
-      { id: "B3", verdict: "PASS", reason: "nothing to judge yet", evidence: "notes.js hunk" },
-    ],
-  };
-  const first = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
-  assert.equal(first.status, 1, first.stdout + first.stderr);
-  const record = gatesState(dir, "fixture").gates.verify;
-  assert.equal(record.failedStage, "semantic");
-  // The base is pinned as a resolved commit SHA, not the ref string "HEAD": a
-  // ref moves under an unchanged worktree, and a moved base is a different
-  // judged diff.
-  const headAfterCommit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" });
-  assert.equal(headAfterCommit.status, 0, headAfterCommit.stderr);
-  assert.equal(record.diffSource, `git:${headAfterCommit.stdout.trim()}`);
-
-  // Identical base, identical tree: refused at $0, before any stage runs.
-  const refused = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"], { stub: stubFile(dir, failStub) });
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /rerun short-circuit/);
-  assert.match(refused.stderr, /--base/, "the refusal names the corrected-base escape");
-  assert.equal(gatesState(dir, "fixture").gates.verify.history.length, 1, "a refusal records nothing");
-
-  // Corrected base: a different judged diff (now containing the
-  // implementation), so the gate must run it.
-  const corrected = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md", "--base", baseSha], {
-    stub: stubFile(dir, PASS_STUB),
-  });
-  assert.equal(corrected.status, 0, corrected.stdout + corrected.stderr);
-  const passed = gatesState(dir, "fixture").gates.verify;
-  assert.equal(passed.verdict, "PASS");
-  assert.equal(passed.diffSource, `git:${baseSha}`);
+test("the duplicate PRD verify completion path is explicitly retired", () => {
+  const dir = makeProject({git: true});
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /retired|removed/i);
 });
 
 test("delegated run: --assume-human-findings converts non-P0 human findings to a recorded ledger and proceeds", () => {

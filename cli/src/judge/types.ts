@@ -155,23 +155,94 @@ export interface GapVerdict {
   findings: Finding[];
 }
 
-export interface CriterionVerdict {
-  id: string;
-  verdict: "PASS" | "FAIL";
-  reason: string;
-  /**
-   * What the judge actually looked at for this verdict: file/hunk names or
-   * artifact paths (an empty evidence list on an approval is treated as a
-   * verification failure, not a pass). Enforced for
-   * PASS verdicts by validateSemanticVerdict; a FAIL may stand on absence,
-   * which has no artifact to cite.
-   */
-  evidence: string;
+export interface ReviewFinding {
+  kind: "defect" | "advisory" | "human-confirmation";
+  requirementRefs: string[];
+  problem: string;
+  evidenceRefs: string[];
+  nextAction: string;
+  priorFindingId?: string;
+  human?: { sourceRef: string; quote: string; timing: "post-completion" | "prerequisite" };
 }
 
-export interface SemanticVerdict {
-  verdict: "PASS" | "FAIL";
-  criteria: CriterionVerdict[];
+export interface ReviewDisposition {
+  findingId: string;
+  status: "resolved" | "open";
+  reason: string;
+  evidenceRefs: string[];
+}
+
+export interface ReviewResult {
+  summary: string;
+  findings: ReviewFinding[];
+  priorDispositions: ReviewDisposition[];
+}
+
+export interface ReviewValidationContext {
+  requirementRefs: readonly string[];
+  evidenceRefs: readonly string[];
+  priorFindingIds: readonly string[];
+  humanSources?: Readonly<Record<string, string>>;
+}
+
+/** The harness validates structure and references; semantic sufficiency belongs to the independent reviewer. */
+export function validateReviewResult(value: unknown, context: ReviewValidationContext): ReviewResult | string {
+  if (!isRecord(value)) return "review output is not a JSON object";
+  if ("criteria" in value || "verdict" in value) return "retired per-criterion/verdict output; return summary, findings and priorDispositions";
+  const text = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+  const refs = (v: unknown, allowed: readonly string[]): v is string[] => Array.isArray(v) && v.every((r) => text(r) && allowed.includes(r)) && new Set(v).size === v.length;
+  if (!text(value.summary)) return "summary must be a non-empty string";
+  if (!Array.isArray(value.findings)) return "findings must be an array";
+  if (!Array.isArray(value.priorDispositions)) return "priorDispositions must be an array";
+  const findings: ReviewFinding[] = [];
+  const continued = new Set<string>();
+  for (const [i, finding] of value.findings.entries()) {
+    if (!isRecord(finding)) return `findings[${i}] must be an object`;
+    const { kind, problem, nextAction, priorFindingId, human } = finding;
+    if (kind !== "defect" && kind !== "advisory" && kind !== "human-confirmation") return `findings[${i}].kind must be defect|advisory|human-confirmation`;
+    if (!text(problem) || !text(nextAction)) return `findings[${i}] requires concrete problem and nextAction`;
+    if (!refs(finding.requirementRefs, context.requirementRefs)) return `findings[${i}].requirementRefs contains invalid, duplicate or unknown references`;
+    if (!refs(finding.evidenceRefs, context.evidenceRefs)) return `findings[${i}].evidenceRefs contains invalid, duplicate or unknown references`;
+    if (kind === "defect" && finding.evidenceRefs.length === 0) return `findings[${i}] defect requires concrete evidence or a contract reference describing absent evidence`;
+    if (priorFindingId !== undefined) {
+      if (!text(priorFindingId) || !context.priorFindingIds.includes(priorFindingId) || continued.has(priorFindingId)) return `findings[${i}].priorFindingId is unknown or repeated`;
+      continued.add(priorFindingId);
+    }
+    if (kind === "human-confirmation") {
+      if (!isRecord(human) || !text(human.sourceRef) || !text(human.quote) || (human.timing !== "post-completion" && human.timing !== "prerequisite")) return `findings[${i}].human requires sourceRef, original quote and timing`;
+      if (context.humanSources !== undefined && (!Object.prototype.hasOwnProperty.call(context.humanSources, human.sourceRef) || !context.humanSources[human.sourceRef]!.includes(human.quote))) return `findings[${i}].human must cite a known source and its exact original quote`;
+    } else if (human !== undefined) return `findings[${i}].human is only valid for human-confirmation`;
+    findings.push({ kind, requirementRefs: finding.requirementRefs, problem, evidenceRefs: finding.evidenceRefs, nextAction,
+      ...(priorFindingId !== undefined ? { priorFindingId: priorFindingId as string } : {}),
+      ...(human !== undefined ? { human: human as NonNullable<ReviewFinding["human"]> } : {}),
+    });
+  }
+  const dispositions: ReviewDisposition[] = [];
+  const seen = new Set<string>();
+  for (const [i, disposition] of value.priorDispositions.entries()) {
+    if (!isRecord(disposition)) return `priorDispositions[${i}] must be an object`;
+    const { findingId, status, reason, evidenceRefs } = disposition;
+    if (!text(findingId) || !context.priorFindingIds.includes(findingId) || seen.has(findingId)) return `priorDispositions[${i}].findingId is unknown or repeated`;
+    if (status !== "resolved" && status !== "open") return `priorDispositions[${i}].status must be resolved|open`;
+    if (!text(reason) || !refs(evidenceRefs, context.evidenceRefs) || evidenceRefs.length === 0) return `priorDispositions[${i}] requires a reason and valid evidence references`;
+    if (status === "resolved" && continued.has(findingId)) return `priorDispositions[${i}] resolves a finding still returned as open`;
+    seen.add(findingId);
+    dispositions.push({ findingId, status, reason, evidenceRefs });
+  }
+  const missing = context.priorFindingIds.filter((id) => !seen.has(id));
+  if (missing.length > 0) return `priorDispositions missing explicit disposition for: ${missing.join(", ")}`;
+  return { summary: value.summary, findings, priorDispositions: dispositions };
+}
+
+export function reviewResultSchema(): string {
+  return `Return one JSON object with this shape, and no per-requirement PASS array or overall verdict:
+{"summary":"whole-contract assessment","findings":[{"kind":"defect|advisory|human-confirmation","requirementRefs":[],"problem":"specific unmet contract or concrete concern","evidenceRefs":[],"nextAction":"required fix or optional improvement","priorFindingId":"only when continuing an existing finding","human":{"sourceRef":"source of human authority","quote":"verbatim source words","timing":"post-completion|prerequisite"}}],"priorDispositions":[{"findingId":"existing open ID","status":"resolved|open","reason":"what changed or remains wrong","evidenceRefs":[]}]}
+Omit priorFindingId for a new finding. Include human only for human-confirmation, where it is required.
+Every existing open finding needs an explicit disposition; disappearance is not resolution.
+A defect must cite concrete evidence or the contract reference whose required evidence is absent.
+Small missing requirements are defects. Optional improvements are advisory.
+A newly found omission in an unchanged file is still a defect when supported by contract and counterevidence.
+Do not convert an implementation defect or missing access into post-completion human confirmation.`;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -215,37 +286,6 @@ export function validateGapVerdict(value: unknown): GapVerdict | string {
     return "PASS verdict cannot carry P0/P1 findings";
   }
   return { verdict, findings };
-}
-
-export function validateSemanticVerdict(value: unknown, expectedIds: string[]): SemanticVerdict | string {
-  if (!isRecord(value)) return "output is not a JSON object";
-  const verdict = asString(value["verdict"]);
-  if (verdict !== "PASS" && verdict !== "FAIL") return `verdict must be PASS or FAIL, got: ${String(value["verdict"])}`;
-  if (!Array.isArray(value["criteria"])) return "criteria must be an array";
-  const criteria: CriterionVerdict[] = [];
-  for (const [i, c] of (value["criteria"] as unknown[]).entries()) {
-    if (!isRecord(c)) return `criteria[${i}] is not an object`;
-    const id = asString(c["id"]);
-    const cv = asString(c["verdict"]);
-    const reason = asString(c["reason"]) ?? "";
-    const evidence = (asString(c["evidence"]) ?? "").trim();
-    if (id === null) return `criteria[${i}].id must be a string`;
-    if (cv !== "PASS" && cv !== "FAIL") return `criteria[${i}].verdict must be PASS or FAIL`;
-    // A PASS must name what it rests on; rejecting it here routes through the
-    // runner's one-retry loop, so a judge that forgot the field gets exactly
-    // one chance to cite its sources before the call fails as invalid output.
-    if (cv === "PASS" && evidence === "") {
-      return `criteria[${i}] (${id}) is a PASS with empty evidence; cite the file/hunk or artifact the verdict rests on`;
-    }
-    criteria.push({ id, verdict: cv, reason, evidence });
-  }
-  const returned = new Set(criteria.map((c) => c.id));
-  const missing = expectedIds.filter((id) => !returned.has(id));
-  if (missing.length > 0) return `criteria missing verdicts for: ${missing.join(", ")}`;
-  const anyFail = criteria.some((c) => c.verdict === "FAIL");
-  if (verdict === "PASS" && anyFail) return "verdict PASS contradicts FAIL criteria";
-  if (verdict === "FAIL" && !anyFail) return "verdict FAIL requires at least one FAIL criterion";
-  return { verdict, criteria };
 }
 
 /**

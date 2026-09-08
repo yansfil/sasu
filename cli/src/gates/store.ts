@@ -7,6 +7,8 @@ import {
   describeJudgeFailureCause,
   sameJudgeFailureCause,
   type Finding,
+  type ReviewFinding,
+  type ReviewResult,
   type GapVerdict,
   type JudgeCallRecord,
   type JudgeFailureCause,
@@ -131,6 +133,8 @@ export interface VouchedTreeFingerprint {
 
 
 export interface GateRecord {
+  fullReview?: ReviewResult;
+  reviewFindings?: (ReviewFinding & { id: string })[];
   /**
    * PRD gates (gap-audit/spec) end a judged round in one of three states
    * derived from the open findings set alone: PASS (empty, sealed),
@@ -383,7 +387,7 @@ export class GateStore {
     }
     this.projectRoot = projectRoot;
     this.topic = topic;
-    // Unified run layout with legacy fallback; cli/src/runs/paths.ts is the
+    // Unified run layout; cli/src/runs/paths.ts is the
     // single authority so gates and implement can never disagree on identity.
     this.dir = gatesDirFor(projectRoot, topic);
     this.statePath = path.join(this.dir, "gates.json");
@@ -925,7 +929,9 @@ export function recordGateResult(
     | {
         kind: "verdict";
         verdict: GapVerdict["verdict"] | "NEEDS_HUMAN" | "FAIL";
-        /** PRD gates: the open set; verify: failed criteria. */
+        review?: ReviewResult;
+        reviewFindings?: (ReviewFinding & { id?: string })[];
+        /** Open concrete findings. */
         findings: Finding[];
         /** PRD gates: recorded advisories (see GateRecord.warnings). */
         warnings?: Finding[];
@@ -980,6 +986,13 @@ export function recordGateResult(
     let summary: GateRunSummary;
     if (outcome.kind === "verdict") {
     record.verdict = outcome.verdict;
+    if (outcome.review !== undefined) {
+      record.fullReview = outcome.review;
+      let seq = record.findingSeq ?? 0;
+      record.reviewFindings = (outcome.reviewFindings ?? []).map((finding) => ({ ...finding, id: finding.id ?? `F${++seq}` }));
+      record.findingSeq = seq;
+    }
+
     if (prdGate) {
       // Harness-assigned finding ids: a rerun judge echoes them to say "still
       // open", so they must be stable and never reused on this gate. Findings
@@ -996,6 +1009,7 @@ export function recordGateResult(
       if (outcome.laneDigests !== undefined) record.laneDigests = outcome.laneDigests;
     } else {
       record.findings = outcome.findings;
+      record.warnings = outcome.warnings ?? [];
     }
     record.inputs = outcome.inputs ?? [];
     if (outcome.delegationSha256 !== undefined) record.delegationSha256 = outcome.delegationSha256;

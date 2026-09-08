@@ -67,7 +67,7 @@ Then interview:
    still happens in the PRD Summary checklist.
 2. When mode is `pr`: base branch and branch prefix (default `gen-prd`).
    Always write `baseBranch` explicitly: when it is omitted, the harness
-   defaults to whatever branch is current at `implement init` time, not
+   defaults to whatever branch is current at `implement start` time, not
    `main`, so a run started from a feature branch would open its PR against
    that feature branch.
 3. Worktree isolation: `worktree.enabled` (default false).
@@ -86,26 +86,25 @@ Then interview:
      `agents/rules/**`, `agents/config.json`.
    - Generated run state is ignored: `agents/runs/**` (one run dir per slug
      holding gate verdicts and implement state) and `agents/quick/**` (a quick
-     lane's generated contract, receipt, verify verdict and evidence blobs),
+     path's generated contract, receipt, verify verdict and evidence blobs),
      plus the legacy `agents/implement/**` and `agents/gates/**` in projects
      that still carry old-layout runs.
    - Any sasu command auto-provisions both runtime roots into
      `.git/info/exclude`; a committed `.gitignore` line is the project's
      decision and is what a team shares.
-6. Sasu judge gates (optional; defaults work without config):
+6. Required suites and judge profiles (defaults work without config):
    - `judge.profiles.routine`: primary and fallback target for interview,
-     document-gate, acceptance, fidelity, and normal semantic judgment.
-     The default is Codex `gpt-5.6-luna` max, then Claude Sonnet 5 xhigh.
+     document gates and comprehensive implementation/quick review.
+     The default is Codex `gpt-5.6-luna` xhigh, then Claude Sonnet 5 xhigh.
    - `judge.profiles.high-risk`: primary and fallback target for the final
      high-risk lane.
-     The default is Codex `gpt-5.6-luna` max, then Claude Opus 5 xhigh.
-     Both primaries run the same model at the same ceiling; the profiles
-     differ by fallback.
+     The default is Codex `gpt-5.6-sol` xhigh, then Claude Opus 5 xhigh.
+     Keep configured models fixed when comparing workflow changes.
    - Each target has `backend`, `model`, and `effort`; `fallback: null`
      explicitly disables fallback for that profile.
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
-     (default 3; advisory for autonomous loops - a user-instructed re-run is
-     never locked).
+     (default 5 for implementation correction; extra work after exhaustion
+     requires the recorded user grant).
    - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
      lanes) and spec (2 review-axis lanes), merged mechanically by the CLI
      (default `true`; set `false` to restore the single exhaustive judge).
@@ -125,8 +124,7 @@ Then interview:
 7. Principles: `principles` (default `[]`). Paths to principle repositories
    whose ROOT.md domain table names the rule documents (`~` expands). When
    declared, `sasu principles list` serves the domains and the gen-prd/quick
-   skills translate matching rules into PRD guardrails and acceptance
-   criteria before drafting. Declining the question writes no key and changes
+   skills translate matching rules into product requirements, constraints, and decisions before drafting. Declining the question writes no key and changes
    nothing; verify with `sasu principles list` after declaring.
 
 Recommended `.gitignore` block:

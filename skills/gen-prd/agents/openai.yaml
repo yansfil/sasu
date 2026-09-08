@@ -1,4 +1,4 @@
 interface:
   display_name: "gen-prd"
   short_description: "Generate a complete implementation-ready PRD"
-  default_prompt: "Use $gen-prd to turn the current context into a complete, human-reviewable, implementation-ready PRD."
+  default_prompt: "Use $gen-prd to turn the current context into a complete six-section PRD with three-column observable Behaviors and decision provenance, without per-requirement proof methods."

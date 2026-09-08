@@ -1,67 +1,37 @@
 # Verification Environments
 
-Read this reference when binding a browser/runtime, mobile, TUI, desktop, or other interactive-surface V row to concrete commands.
+Choose the project's existing driver for actual product observations and repeatable tests.
+The harness records suites and shared evidence; it does not prescribe one driver or separate evidence per requirement.
 
-The harness never knows which driver you chose.
-Every environment below reduces to the same oracle grammar: a command the harness runs, an exit code, and captured artifact files.
-Pick the driver, wrap it in a command, register the artifacts - the verify pipeline is identical from there.
-
-## Binding Table
-
-| Surface | Default driver | Shape of the binding |
+| Surface | Useful driver | Actual boundary to observe |
 | --- | --- | --- |
-| Web UI | playwright (devDependency) | Script launches the app and browser itself, drives the flow, exits nonzero on failure; screenshots become `capture` artifacts. |
-| Terminal CLI | plain command execution | Exit codes and output assertions; no driver needed. |
-| Terminal TUI | tmux scripting | `tmux send-keys` for input, `capture-pane` output saved to a file as evidence; the script creates and kills its own session. |
-| Electron app | playwright's Electron driver | Same shape as Web UI; no separate tool. |
-| Mobile app | maestro YAML flows | `maestro test flow.yaml` against a simulator/emulator the script boots; YAML flows live in the repo as test assets. |
-| Native desktop app | none scriptable - last resort below | Prefer extracting logic behind a testable boundary; a computer-use agent is evidence collection for human review, never a `check` oracle. Pin which build the capture came from - see Which Build Am I Looking At. |
+| Web UI | Existing browser test framework; Playwright when none is established | Start the app and browser, drive the full user flow, inspect states and errors. |
+| Terminal CLI | Command execution | Exit status, observable output, and persisted effects. |
+| Terminal TUI | An owned terminal session | Send input and capture actual rendered terminal output. |
+| Electron | Existing Electron driver | Drive the real application and record which build ran. |
+| Mobile | Existing simulator/device driver | Exercise the target platform and record device/build identity. |
+| Native desktop | Available native automation and screenshots | Inspect the actual running application and its build/instance identity. |
 
-Rules that hold across every row:
+Manual browser QA uses the current project/browser tooling, including chromux when available.
+Committed repeatable tests create and tear down their own server, browser, simulator, or terminal sessions.
+Never put chromux or a shared daemon inside automated test commands: killed runs leaked roughly 180 headless tabs in the 2026-08-11 incident and concurrent invocations raced.
+A zero-dependency product constraint covers runtime dependencies, not necessary test tooling.
+Nondeterministic computer-use observations are evidence with a stated collector and method, not deterministic test results.
+The independent reviewer assesses their sufficiency without automatically handing unreadable evidence to the human.
 
-- Prefer the driver the project already uses.
-  A repo with cypress binds cypress, not playwright; the table is the default for projects with nothing.
-- Self-contained only.
-  The script launches and tears down everything it needs (server, browser, simulator, tmux session).
-  Never bind chromux or any shared daemon into a committed check: killed runs leak sessions and concurrent runs race (2026-08-11: ~180 orphaned headless tabs wedged CDP and failed innocent checks).
-- A "zero-dependency" product guardrail covers runtime dependencies, not test tooling; a playwright devDependency does not violate it.
-- Nondeterministic drivers (computer-use, screen-reading agents) cannot be `check` oracles.
-  Their output may be registered as evidence for a human-verification row, nothing stronger.
+## Which Build Was Observed
 
-## Which Build Am I Looking At
+Before desktop observation, establish exactly one running target instance and distinguish installed bundle from dev build.
+Do not kill, replace, or mutate another session's app without coordination.
+A stale installed app next to a dev instance can make valid fixes appear absent; source code that declares an icon is not evidence that it renders.
+Capture the actual app and record the binary/build, target environment, collection time, and limitations.
+A dev screenshot cannot establish installed-bundle behavior when that is the requirement.
 
-A desktop app has no URL, so a capture carries no proof of which binary produced it.
-Two failure modes, both observed on 2026-08-17 (herdr-pet):
+## Reach The Relevant State
 
-- A stale installed bundle (`/Applications/<App>.app`) running next to a dev build.
-  Tray actions, window state, and show/hide cross-talk between the instances, and every source fix looks like it never applied.
-  That session burned three rounds on "the pet is not visible" and "a big window opens instead of the pet"; neither was a code bug.
-- Code existence reported as render evidence.
-  "The menu bar icon exists in the code" is not a capture of the icon on screen.
+Before driving a long scenario, identify how to reach its required state: a disposable seed/fixture, a test-only entry point excluded from production, or the actual product's existing fast path.
+A 2026-08-12 benchmark spent hours driving toward late game screens without a reachable fixture and ended incomplete.
+If the required state cannot be reached within the approved scope, report the missing observation as a blocker; do not invent a passing result or silently reclassify it as later human judgment.
 
-So for any desktop V row whose evidence is a capture:
-
-- Assert a single running instance before capturing (`pgrep -fl <executable>` must return one line), and kill the rest.
-- Capture against the build the acceptance criterion is about.
-  If the criterion is about the shipped app, build and replace the installed bundle first; a dev-build capture does not close it.
-- Record which build the artifact came from in the artifact description, not just what it shows.
-
-## Reaching The Evidence State
-
-Choosing the right mode is half the binding; the other half is getting the product into the state the evidence requires.
-A real run (2026-08-12, pokemon-rpg benchmark) failed exactly here: the AC required screenshots of nine screens, three were only reachable after deep game progression, no declared way to reach that state existed, and hours of playwright auto-driving ended in an honest partial.
-
-Before binding a scenario or runtime V row, answer "how does the verifier reach this state?" with one of:
-
-- a seed script or fixture the repo ships (preferred; if missing, it is implementation work for a task, not an excuse).
-- a test-only entry point (route, flag, savefile) that jumps to the state, kept out of production paths.
-- an existing fast path through the product itself.
-
-If none exists and none can be built in scope, say so at binding time and route the row to human verification or blocked - do not burn the retry budget driving toward an unreachable state.
-The PRD's Risks section and the row's cited Decisions say how the product reaches that state; read them before driving the row.
-
-## Multi-Actor Scenarios
-
-A scenario whose card names several actors binds as one script with one context per actor - two playwright `browserContext`s with separate auth, interleaved steps, assertions on what each actor observes.
-The harness has no session or actor concept, and none is needed: the actor model lives entirely inside the test file.
-Seed both actors' accounts through the same Reach mechanism as any other state.
+For multi-actor behavior, use separate contexts or sessions inside the existing test/observation method and inspect each actor's outcome.
+The actor model belongs in the test or actual flow, not in a new harness ledger.

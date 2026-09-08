@@ -1,86 +1,46 @@
 # Verification And Evidence
 
-Read this reference before capturing or registering final runtime evidence and before unified verify.
-
-## Evidence Ownership
-
-- The agent or a suitable tool creates screenshots, recordings, API traces, DB captures, and runtime logs.
-- `sasu implement artifact` validates and registers an existing file.
-- `sasu implement verify` creates mechanical command logs itself.
-- `state.json` records artifact hashes and registration times, attempt-level source fingerprints, metadata, and verification attempts.
-
-## Final Evidence Timing
-
-Capture final runtime evidence after implementation is coherent.
-Temporary evidence created while debugging need not become final registered evidence.
-
-Register final evidence immediately after capture:
+The implementor or an appropriate tool collects actual screenshots, recordings, API traces, database observations, and logs.
+`sasu implement artifact` registers existing files at run level; verify produces the required suite logs itself.
+One coherent flow may support multiple requirements without separate registrations for each requirement.
 
 ```sh
-sasu implement artifact \
-  --row B2 \
-  --kind screenshot \
-  --path docs/screenshots/example.png \
-  --description '<what this proves>'
+sasu implement artifact --kind screenshot --path docs/screenshots/search.png \
+  --description '<collector, collection method and time, actual target/build, observed flow, limitations>'
 ```
 
-`--row` binds the evidence to the `judge:` row it proves; a `judge:` row with no registered artifact fails the acceptance lane before any judge is called.
+Keep observations honest: record who collected them, when, how, against which environment and target, and what was not checked.
+Evidence under `agents/**` may be explicitly registered, while bookkeeping and completion claims never become product source or product proof.
+The CLI pins registered bytes and rejects missing, empty, invalid, or changed files.
+It does not infer sufficiency from keywords in the PRD or require an artifact for every requirement.
+The independent review decides whether the actual implementation and observations support the complete contract.
 
-The file must exist, be non-empty, stay inside the repository, and match its declared kind.
-Image evidence must contain valid PNG or JPEG bytes.
+Capture final material evidence after implementation is coherent.
+Earlier observations retain their original time and target.
+A matching source hash does not prove that a database, ignored file, external service, or installed bundle is unchanged.
+Explain why earlier observations still apply or recapture affected flows.
+Re-registering a file does not manufacture a new observation.
 
-## Artifact Identity And Freshness Judgment
+Verify runs required suites sealed at start and deduplicates identical command/cwd/execution settings only within that attempt.
+Every new verification attempt executes its required suites; there is no cross-attempt test cache.
+A suite failure prevents review and records the actual failed phase and output.
+An empty required suite is reported as no tests configured, never as successful execution.
+Suite exclusions require human authorization and preserve their prior results.
 
-Artifact registration pins the file hash and records `registeredAt`.
-Missing or changed bytes fail the harness's identity check.
-The harness does not infer semantic freshness from the whole source tree.
-Judges see when bare evidence was agent-registered, treat it as the implementer's claim rather than a harness observation, and explain why older evidence remains valid when they rely on it after source changes.
+After mechanical success, one independent routine review receives the entire sealed PRD and decision/intent sources, owned change, permitted surrounding source, suite execution facts, registered observations, and prior findings.
+A distinct high-risk check uses the same fixed inputs when the profile requires it.
+The reviewer may cite any concrete approved requirement and actual counterevidence, including newly discovered omissions in unchanged files.
+Every prior open issue needs an explicit disposition.
 
-Re-registering identical bytes preserves the original `registeredAt`; only changed bytes create a new registration time.
-Do not edit `state.json` to refresh a hash or timestamp.
+The judge may read only allowlisted evidence and source in its disposable read-only workspace.
+Its recorded command trace is audited; broad reads, process execution, writes, network access, and repository history invalidate the verdict.
+The source catalog lists known paths, not file contents or additional read permission.
+If a necessary router, caller, or other surrounding file is inaccessible, the reviewer names the unmet contract, inaccessible path, and specific question in an insufficient-evidence finding.
+Register that current surrounding source once as a shared `file` artifact when appropriate; it can support many Bn references without separate evidence or a per-Bn mapping.
+Its registered bytes must match the current product source, including when the record root and implementation worktree differ.
+Missing surrounding context is an explicit inability-to-verify finding, never permission to broaden access silently.
+An incapable image backend must use an existing capable route or report an error; unreadable evidence cannot silently downgrade a requirement to later human confirmation.
 
-## Mechanical Verification
-
-Unified verify runs the suite sealed at start (`verify.commands` from `agents/config.json`, else the commands detected from the repository) once, on one frozen tree, through the same executor `check --row` uses.
-`check:` rows are not re-run: their exit-code results are read from the row ledger and carried into the receipt as recorded.
-
-The mechanical stage runs before any LLM call.
-A red suite command, a `check:` row that is not green on the current tree, a timeout, malformed state, an invalid artifact, or a source mutation fails closed and makes zero judge calls.
-
-## Judge Verification
-
-After mechanical PASS:
-
-- the acceptance judge checks code and evidence against each `judge:` row.
-- the fidelity judge checks intent preservation with a fixed rubric and dynamic source context.
-- a high-risk run adds one final risk review after the two base lanes finish; it updates the risk ledger and does not vote on their unified verdict.
-
-From the second judged round onward, acceptance and fidelity receive their prior lane result, exact changed paths, and newly registered evidence.
-Risk receives the open ledger findings plus that same delta context, and every prior open risk finding must be dispositioned as resolved or unresolved.
-A prior PASS can become FAIL, and a new blocking finding can appear, only when the judge points to one exact changed path or new evidence item from that round.
-This is an evidence-pointer requirement, not a ban on genuine defects.
-The validator rejects invented or missing pointers through the normal invalid-output retry ladder.
-
-A successful risk result appends new findings, keeps unresolved findings open, and marks resolved findings fixed.
-A risk ERROR is recorded on the attempt without changing the ledger or the unified verdict.
-
-For each `judge:` row, the harness places the row ledger (every row's sealed cell, and for `check:` rows the recorded exit code), the failing suite output, the text artifact content registered against the row, and the Decisions rows it cites directly in the prompt.
-It lists run-owned changed files and visual artifacts as an exact read allowlist instead of copying every changed file into every prompt.
-The default Codex judge gets a disposable workspace containing only those copied allowlisted files.
-Its read-only sandbox blocks writes but is not an OS-hard host-read boundary, so the CLI audits its JSON command trace and invalidates any command beyond bounded `sed` or `rg` reads of an allowlisted path.
-Accepted commands are recorded on the judge call for later review.
-It may not list directories, search broadly, inspect history or environment variables, access the network, or execute project code.
-The Claude fallback can use only Read/Grep against the same prompt-level allowlist.
-The implementing agent does not maintain a second manual file-to-row ledger.
-
-The acceptance and fidelity calls are independent and concurrent.
-Neither can overwrite the other's failure.
-
-## Safety
-
-Use only synthetic or non-production data for tests and live judge smoke runs.
-Never put secrets, personal data, or production source in fixtures.
-Database-writing proof requires an explicitly disposable database.
-
-The live judge check is required for completion.
-If the local judge binary, authentication, or provider is unavailable, record the observable blocker and do not claim Done.
+Use synthetic or non-production data and an explicitly disposable database for writing scenarios.
+Never include secrets or production personal content in fixtures or logs.
+A live backend failure is an observable blocker, and fixture/stub success is not live end-to-end validation.

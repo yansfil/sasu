@@ -89,3 +89,18 @@ test("no commands anywhere yields an empty resolution", () => {
   assert.equal(resolved.length, 0);
   assert.equal(configSuggestion, null);
 });
+
+// Same intent is command plus cwd; separate environments must both execute.
+test("deduplication preserves the same command in distinct working directories", () => {
+  const dir = tempProject();
+  try {
+    for (const name of ["a", "b"]) fs.mkdirSync(path.join(dir, name));
+    const command = 'node -e "require(\'fs\').appendFileSync(\'ran\',\'x\')"';
+    const extra = [{kind: "check", source: "contract", command, cwd: "a"}, {kind: "check", source: "contract", command, cwd: "./a"}, {kind: "check", source: "contract", command, cwd: "b"}];
+    const result = runMechanical(dir, loadConfig(dir), extra);
+    assert.equal(result.ok, true);
+    assert.equal(result.runs.length, 2);
+    assert.equal(fs.readFileSync(path.join(dir, "a/ran"), "utf8"), "x");
+    assert.equal(fs.readFileSync(path.join(dir, "b/ran"), "utf8"), "x");
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});

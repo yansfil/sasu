@@ -1,98 +1,17 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-
 import { ESCALATE_LIMIT_PER_RUN } from "../../dist/implement/types.js";
-
-const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
-const SESSION_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
-
+import { makeProject as createProject, start, run as runCli, registerEvidence, CLI, isolatedEnv } from "../helpers/implement-fixture.mjs";
+function makeProject() { const root = createProject({ count: 1 }); start(root); return root; }
+const run = (root, args, env = {}) => runCli(root, args, { env });
 const DIAGNOSIS = {
   summary: "the implementor keeps re-running the same failing command",
   likelyCause: "the check reads a fixture the run never wrote, so it never sees the built output",
   suggestedNextStep: "write the fixture, then run the check once from the repository root",
 };
-
-function prd() {
-  return `---
-topic: "implement solver fixture"
-status: "ready"
-human_approval: "approved"
-review_profile: "standard"
-review_rationale: "solver protocol fixture"
-source_intake: "current conversation"
----
-
-# PRD: implement solver fixture
-
-## Goal
-
-A stuck implementor has to be recovered by an event, not by waiting.
-
-## Non-goals
-
-Nothing beyond the escalate lifecycle.
-
-## Decisions
-
-| D-n | 결정 | 근거 |
-| --- | --- | --- |
-| D-01 | the solver diagnoses and never writes | a solver that acts inherits the stuck reasoning |
-
-## Behaviors
-
-| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
-| --- | --- | --- | --- |
-| B1 | The runner executes each command once. | check: \`npm test\` | D-01 |
-
-## Technical structure
-
-No fixture structure change.
-
-## Risks
-
-None.
-`;
-}
-
-function run(root, args, env = {}) {
-  const merged = { ...process.env, ...env };
-  for (const key of SESSION_KEYS) delete merged[key];
-  delete merged.SASU_HERDR_ROLE;
-  // herdr must look absent unless a test says otherwise, so the fixture never
-  // reaches for a real pane on the machine running the suite.
-  delete merged.HERDR_ENV;
-  const executed = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd: root, encoding: "utf8", env: merged });
-  let json;
-  try {
-    json = JSON.parse(executed.stdout);
-  } catch {
-    json = { stdout: executed.stdout, stderr: executed.stderr };
-  }
-  return { ...executed, json };
-}
-
-function makeProject() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-implement-solver-e2e-"));
-  fs.mkdirSync(path.join(root, "agents", "prd", "fixture"), { recursive: true });
-  fs.writeFileSync(path.join(root, "agents", "prd", "fixture", "prd.md"), prd());
-  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('fixture suite green')\"" } }));
-  for (const args of [
-    ["init", "-q"],
-    ["add", "package.json"],
-    ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"],
-  ]) {
-    const executed = spawnSync("git", args, { cwd: root, encoding: "utf8" });
-    assert.equal(executed.status, 0, executed.stderr);
-  }
-  const started = run(root, ["implement", "start", "--prd", "agents/prd/fixture/prd.md"]);
-  assert.equal(started.status, 0, started.stderr + started.stdout);
-  fs.writeFileSync(path.join(root, "implementation.txt"), "run-owned fixture implementation\n");
-  return root;
-}
 
 const STATE_REL = path.join("agents", "runs", "fixture", "state.json");
 const state = (root) => JSON.parse(fs.readFileSync(path.join(root, STATE_REL), "utf8"));
@@ -105,7 +24,7 @@ function stubEnv(root, diagnosis = DIAGNOSIS) {
 }
 
 const escalate = (root, env, extra = []) => run(root, [
-  "implement", "escalate", "--issuer", "observer", "--reason", "eight rounds on one row", ...extra,
+  "implement", "escalate", "--issuer", "observer", "--reason", "repeated incomplete verification", ...extra,
 ], env);
 
 // --- AC33: no state write during the solver's execution ---------------------
@@ -115,7 +34,7 @@ test("AC33: the solver runs read-only and the run's only write happens after it 
   const env = stubEnv(root);
   const before = state(root);
 
-  const escalated = escalate(root, env, ["--target", "B1"]);
+  const escalated = escalate(root, env);
   assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
 
   // The stub writes its capture at the moment the solver is called. The state
@@ -127,8 +46,8 @@ test("AC33: the solver runs read-only and the run's only write happens after it 
   // And the write that did happen changed only the escalation ledger and the
   // event log - no row or verification moved under the solver.
   const after = state(root);
-  const changed = Object.keys(after).filter((key) => JSON.stringify(after[key]) !== JSON.stringify(before[key]));
-  assert.deepEqual(changed.sort(), ["escalations", "events", "updatedAt"]);
+  for (const key of ["requirements", "suite", "artifacts", "verificationAttempts", "findings"]) assert.deepEqual(after[key], before[key], `${key} must remain unchanged by diagnosis`);
+  assert.equal(after.escalations.length, before.escalations.length + 1);
 });
 
 test("AC33: what comes back is a diagnosis, and it is recorded as text", () => {
@@ -163,7 +82,7 @@ test("AC33: a solver that returns anything but the three fields is not accepted"
 test("AC34: the replacement briefing carries the three artifacts and no conversation", () => {
   const root = makeProject();
   const env = stubEnv(root);
-  const escalated = escalate(root, env, ["--target", "B1"]);
+  const escalated = escalate(root, env);
   assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
 
   const { handoff, briefing } = escalated.json.detail;
@@ -176,10 +95,9 @@ test("AC34: the replacement briefing carries the three artifacts and no conversa
   assert.match(briefing, /previous implementor's conversation is not available/);
 
   // The ledger handed over is the row ledger, not a transcript.
-  const ledger = JSON.parse(fs.readFileSync(path.join(root, handoff.checkLedgerPath), "utf8"));
-  assert.ok(Array.isArray(ledger.rows));
-  assert.equal(ledger.rows[0].rowId, "B1");
-  assert.equal(typeof ledger.sha256, "string");
+  const ledger = JSON.parse(fs.readFileSync(path.join(root, handoff.findingsPath), "utf8"));
+  assert.ok(Array.isArray(ledger.findings));
+  assert.ok(Array.isArray(ledger.attempts));
 });
 
 test("AC34: with no herdr the reset is reported as the supervisor's to perform, not silently skipped", () => {
@@ -198,7 +116,7 @@ test("AC34: with no herdr the reset is reported as the supervisor's to perform, 
 test("AC35: a summon failure is recorded as a failed escalation and the implementor is not reset", () => {
   const root = makeProject();
   const file = path.join(root, "agents", "judge.json");
-  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:acceptance": { verdict: "PASS" } } }));
+  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "not-the-solver": { verdict: "PASS" } } }));
   const escalated = escalate(root, { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file });
 
   assert.notEqual(escalated.status, 0);
@@ -223,7 +141,7 @@ test("AC35: the run-wide bound refuses the escalation past the constant", () => 
   assert.notEqual(refused.status, 0);
   assert.equal(refused.json.detail.rejectedCheck, "transition");
   assert.match(refused.json.message, new RegExp(`used all ${ESCALATE_LIMIT_PER_RUN} escalations`));
-  assert.match(refused.json.message, /park the row, amend the PRD, or finalize blocked/);
+  assert.match(refused.json.message, /amend the PRD or finalize blocked/);
   assert.equal(state(root).escalations.length, ESCALATE_LIMIT_PER_RUN, "a refused escalation is not charged");
 });
 
@@ -236,7 +154,7 @@ test("AC35: escalate needs a reason and a target that exists", () => {
 
   const badTarget = escalate(root, env, ["--target", "B9"]);
   assert.notEqual(badTarget.status, 0);
-  assert.match(badTarget.json.message, /unknown --target B9; name a Behaviors row/);
+  assert.match(badTarget.json.message, /unknown --target B9; name an open finding/);
   assert.equal(state(root).escalations.length, 0, "neither refusal spent an escalation");
 });
 
@@ -258,8 +176,7 @@ test("await names which liveness probe it used, and refuses two answers to one q
 
   // Give the waiter an event to return on, or it would sit until the stall
   // bound - correct behaviour, but not what this test is about.
-  const checked = run(root, ["implement", "check", "--row", "B1"]);
-  assert.equal(checked.status, 0, checked.stderr + checked.stdout);
+  registerEvidence(root);
 
   // Without herdr the adapter's alive hole is shut, so the waiter says the
   // probe was unavailable rather than assuming a live implementor.
@@ -286,13 +203,12 @@ test("AC41: once the bound is spent, status names the run's state and the move t
 
   // AC41: the supervisor deciding what to do next reads status, not the
   // message of a command it has not run yet.
-  const merged = { ...process.env };
-  for (const key of SESSION_KEYS) delete merged[key];
-  delete merged.HERDR_ENV;
+  const merged = isolatedEnv();
   const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
   assert.match(summary, /escalations: 3 of 3 used/);
-  assert.match(summary, /the bound is spent/);
-  assert.match(summary, /park the blocked row|amend the PRD|finalize --status blocked/);
+  assert.match(summary, /bound (?:is )?spent/);
+  assert.match(summary, /amend.*human approval/);
+  assert.match(summary, /finalize.*blocked/);
   // ...and the verb it can no longer issue is not offered.
   assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
 });
@@ -311,7 +227,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   assert.match(prompt, /## What the implementor is stuck on/);
   assert.match(prompt, /## Why the supervisor escalated/);
   assert.match(prompt, /## Sealed PRD/);
-  assert.match(prompt, /## Behaviors row ledger/);
+  assert.match(prompt, /## Run findings and actual attempts/);
 
   // The output shape, recorded on success.
   const record = state(root).escalations.at(-1);
@@ -323,7 +239,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   assert.equal(record.diagnosis, DIAGNOSIS.summary);
 
   // The three handoff artifacts, in the shape a replacement is briefed with.
-  assert.deepEqual(Object.keys(record.handoff).sort(), ["checkLedgerPath", "diagnosisPath", "prdSnapshotPath"]);
+  assert.deepEqual(Object.keys(record.handoff).sort(), ["diagnosisPath", "findingsPath", "prdSnapshotPath"]);
   for (const rel of Object.values(record.handoff)) {
     assert.ok(fs.existsSync(path.join(root, rel)), `${rel} must exist for the replacement to read`);
   }
@@ -334,7 +250,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   const briefing = summoned.json.detail.briefing;
   assert.match(briefing, /1\. The sealed PRD/);
   assert.match(briefing, /2\. The solver's diagnosis/);
-  assert.match(briefing, /3\. The row ledger/);
+  assert.match(briefing, /3\. The findings and actual attempts/);
 
   // ...and a failed summon records the other half of the shape.
   const failing = makeProject();

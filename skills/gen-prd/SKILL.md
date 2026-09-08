@@ -4,8 +4,7 @@ description: |
   Project-local PRD writer. Use when the user invokes "$gen-prd", asks for a PRD,
   product requirements document, implementation-ready requirements, or wants to
   turn intake/clarify output into a human-reviewable contract of about 100
-  lines: a goal, non-goals, a Decisions table, a Behaviors table whose rows the
-  harness executes, judges, or hands to the user, a short technical structure,
+  lines: a goal, non-goals, a Decisions table, a complete Behaviors table with decision references, a short technical structure,
   and risks.
 ---
 
@@ -31,8 +30,7 @@ agents/interview/<topic-slug>/qa-log.md
 ```
 
 If no context path is provided, inspect `agents/interview/` first for the matching
-or most recent qa-log (then the legacy `agents/intake/` path for interviews
-started before the rename). If no complete interview source
+or most recent qa-log. If no complete interview source
 exists and major ambiguity remains, ask one blocking question or recommend
 `$interview-me`.
 
@@ -51,7 +49,7 @@ agents/prd/<topic-slug>/prd.md
 Do not write side files (context notes, audit reports).
 Decisions and their provenance live in the Decisions table inside `prd.md`;
 quality checks are inline self-checks plus the mechanical Harness Readiness
-Gate, and the implementation-side fidelity review re-verifies intent at the
+Gate, and the implementation-side full-contract review re-verifies intent at the
 end.
 
 Use short kebab-case topic slugs. If the source intake topic exists, reuse the
@@ -87,21 +85,20 @@ updated_at: "YYYY-MM-DD"
 
 ## Behaviors
 
-| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
-| --- | --- | --- | --- |
+| # | 사용자가 관찰하는 행동 | 결정 |
+| --- | --- | --- |
 
 ## Technical structure
 
 ## Risks
 ```
 
-There is no requirements list, acceptance-criteria table, task list,
-verification matrix, scenario section, pre-work checklist, guardrails section,
-or report contract. One Behaviors row carries what those used to say three
-times over: the behavior the user observes, how it is proved, and the decision
-it rests on. `sasu prd readiness` refuses a PRD that is missing one of the six
-sections (`prd-section-missing`) and a PRD in the retired five-axis shape is
-refused by `implement start` outright.
+The six sections preserve all product requirements and decision provenance.
+Behaviors use exactly three columns: reference, observable behavior, and cited decisions.
+There is no required verification section, task list, method column, evidence matrix, or replacement checkbox ceremony.
+Do not compress distinct requirements to reduce review calls or split implementation details into artificial harness tasks.
+The harness reviews the complete contract once and records only discovered issues and the run outcome.
+Retired document shapes fail explicitly with current-format guidance.
 
 ## Section Intent
 
@@ -118,13 +115,13 @@ refused by `implement start` outright.
   `sasu prd approve --prd <path> --evidence "<the user's verbatim approval>"` -
   the CLI requires the quote and refuses a non-ready PRD, so never edit the
   line by hand.
-- `implement` refuses to initialize against a PRD whose `human_approval` is
-  not `approved`, so a PRD that skips human review cannot be executed silently.
+- Implementation requires `status: ready` plus either recorded `human_approval: approved` or already authorized conversational approval supplied verbatim through `implement start --allow-unapproved-prd "<the user's words>"`.
+  A conversational start exception does not change a pending document approval to approved.
+  Preserve `human_approval: pending` honestly when the user authorized implementation without separately reviewing the finished PRD.
+  Do not ask again when the existing invocation already authorizes this scope.
 
-To make the human review fast, end `## Goal` with a short `Approval checklist`
-bullet list: the 3 to 7 concrete things the user is approving (scope boundary,
-structure changes, which rows are `human:`, delivery mode, any risky decision),
-each pointing at its row or section.
+Make the final human review concise by summarizing scope, material structure, delivery, risks, and real unresolved decisions in conversation.
+Do not add a mandatory approval checklist or a second approval document.
 
 ### Delivery Contract
 
@@ -133,7 +130,6 @@ Do not treat PR delivery as an implementation detail that can be decided later.
 
 Represent delivery mode in the existing sections instead of adding a new one:
 
-- Add an Approval checklist item for `delivery mode: local | pr`.
 - Add a Decisions row for the accepted delivery choice and the rejected alternatives.
 - Add a Behaviors row only for implementation work that must be complete before the receipt, such as release notes or PR-ready evidence.
 - Keep branch creation, push, PR URL, CI verdict, and merge result out of the Behaviors table because `$ship` records them after the implementation receipt.
@@ -145,7 +141,7 @@ The config is not a substitute for human approval when delivery can create branc
 
 One paragraph: who the user is, what changes for them, and why now. The
 sentence that states the goal is one the user can confirm verbatim, so write it
-plainly. End with the Approval checklist.
+plainly.
 
 ### Non-goals
 
@@ -196,57 +192,29 @@ Treat a short affirmative response as acceptance of a recommendation only when i
 Silence, lack of objection, a topic change, or continued participation is not approval.
 If that distinction would materially change scope or behavior, ask one contract-breaking question instead of inventing consent.
 
-This table is what the fidelity judge compares the implementation against at
+This table is what the independent comprehensive reviewer compares the implementation against at
 the end of `implement`, and for a conversation-only PRD it is the only record
 of the conversation the harness can read. Preserve the essential user decision
 text here rather than relying on chat history.
 
 ### Behaviors
 
-One row per behavior the user observes, `| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |`:
+Use `| # | 사용자가 관찰하는 행동 | 결정 |`.
 
-- `#` is `B<n>`, numbered in reading order. Rows are the unit of progress:
-  `implement` reports, parks, amends, and closes rows, and the receipt is this
-  table with a result column.
-- `사용자가 관찰하는 행동` states one observable outcome in product terms -
-  a state, a message, a bound, a refusal. Failure and recovery paths are
-  their own rows, not clauses of the happy path. Never write the proof
-  procedure as the behavior (`tests pass`, `a screenshot is registered`) and
-  never put a command or path in this cell; `prd-behavior-row` blocks a
-  method that leaks into it.
-- `검사 방법` starts with exactly one of three prefixes and names how the
-  harness settles the row:
-  - `check: \`<command>\`` - a deterministic command the harness runs on the
-    judged tree from its root; exit 0 is green, anything else is fail. One
-    argv, no `&&`, `|`, `;`, redirection, or substitution - the same rule
-    `verify.commands` obeys. The command is visible here so the human and the
-    spec judge see it before it is trusted.
-  - `judge: <evidence shape>` - a read-only acceptance judge decides from the
-    diff and registered evidence; say what evidence must exist (a capture, a
-    transcript, a before/after pair), not a future file path.
-  - `human: <what the user confirms>` - only the person can settle it (taste,
-    copy, a live account, a physical device). The row stays OPEN through
-    `finalize`, the run closes `complete-pending-human`, and the user closes
-    it later with `sasu implement confirm`. A row the agent could have checked
-    or a judge could have judged is not a `human:` row.
-- `결정` cites the Decisions rows the behavior rests on (`D-01, D-03`) or
-  `-`.
+- `#` is a unique `B<n>` reference in reading order.
+  It names requirements in review findings; it has no status, proof lifecycle, or outcome column.
+- `사용자가 관찰하는 행동` describes a specific user-visible state, message, bound, refusal, or recovery.
+  Preserve the complete intended behavior, including meaningful failure and recovery boundaries.
+  Write the product outcome rather than a harness procedure or an implementation task.
+- `결정` cites existing decision IDs such as `D-01, D-03`, or `-` when none applies.
 
-Keep every row small enough to be proved in one sitting: a row is one thing the
-user observes. Ask a contract-breaking question only when the choice between
-`check:`, `judge:`, and `human:` would materially change required human
-involvement or evidence.
-
-Bias the `check:` rows toward regression protection that earns its keep:
-pure logic and data transformation, API and service boundaries, component
-behavior, then a browser or runtime smoke for a critical flow. Do not write
-`check:` rows that only lock implementation details, duplicate framework
-behavior, snapshot brittle output, depend on production data, or slow the suite
-without covering a realistic regression. When the repository has no test
-infrastructure, add it only when at least one row justifies it.
-
-Live external, API, or DB proof needs an approved non-production and
-side-effect boundary stated in Risks, or it is a `human:` row.
+The content decides the number of requirements.
+Every requirement stays in the PRD and the independent full-contract review input.
+Do not assign a proof method, evidence file, reviewer, separate judge call, or PASS object to each requirement.
+The implementor chooses suitable focused checks and shared actual user-flow observations; the CLI executes the required project suites and pins evidence identity.
+A material actual human judgment belongs in Decisions or Risks with its source, not a type applied to every behavior.
+Distinguish permitted after-the-fact taste review from prerequisite authority such as payment, deployment, access, or destructive data actions.
+Live external/API/database observations preserve the approved non-production and side-effect boundary in Risks.
 
 ### Technical structure
 
@@ -271,7 +239,7 @@ ask for it once. If nothing is needed from the user, say so.
 Mechanical checks belong to the Harness Readiness Gate below; do not re-derive
 what it already checks. The semantic self-check is this single inline pass,
 with no audit file and no auditor subagent; the sasu Spec Gate and the
-implementation-side fidelity review independently re-verify the same intent.
+implementation-side full-contract review independently re-verify the same intent.
 
 After drafting and before marking the PRD `ready`, verify inline:
 
@@ -285,10 +253,8 @@ After drafting and before marking the PRD `ready`, verify inline:
 - Intent: every user decision and accepted proposal is represented; rejected
   and deferred options stayed rejected; the PRD does not quietly expand beyond
   its sources.
-- Rows: each behavior is one observable outcome; each `check:` command is one
-  argv that proves the row rather than a proxy; each `judge:` cell names an
-  evidence shape; each `human:` row is something only the person can settle;
-  every cited `D-n` exists.
+- Behaviors: every requirement is clear and observable, every reference is unique, and every cited decision exists.
+  No requirement was lost, combined for review-call economy, or assigned a proof lifecycle.
 - Product completeness: the rows cover the coherent intended journey and the
   relevant quality boundaries, and every omission is a non-goal rather than an
   implicit MVP cut.
@@ -306,14 +272,10 @@ repository root before marking the PRD `ready`:
 sasu prd readiness --prd agents/prd/<topic-slug>/prd.md
 ```
 
-This is stateless: it parses the PRD exactly the way `implement` will and
-writes nothing. It reports the row count, how many rows are `check:`,
-`judge:`, and `human:`, and the Decisions count, so the approval review can see
-the planned proof mix. Exit code 2 means the contract is not harness-readable:
-a missing section, a row whose method cell has no prefix or an empty payload, a
-`check:` command with shell composition, a method in the behavior cell, a
-duplicate or non-`B<n>` row id, or a `D-n` citation with no row.
-Fix the PRD and rerun until `blockingGaps` is empty.
+This stateless command parses the same new-format PRD used by implement and writes nothing.
+It reports `behaviorCount`, `decisionCount`, and blocking structural/provenance gaps.
+A missing section, empty behavior, duplicate or invalid Bn, dangling decision reference, or retired four-column document is refused.
+Fix structural gaps before requesting ready status.
 
 Open decisions must be explicit. Blocking decisions prevent `ready` status.
 Classify remaining items as blocking, deferred, or human taste/approval.
@@ -327,11 +289,9 @@ run the independent spec gate when the PRD has an interview qa-log source:
 sasu gate spec --slug <topic-slug> --prd agents/prd/<topic-slug>/prd.md --qa-log agents/interview/<topic-slug>/qa-log.md
 ```
 
-An independent judge checks fidelity (every material Decision Register entry
-represented in the Decisions table without distortion) and testability (every
-Behaviors row observable with no vague qualifiers, every `check:` command a
-real proof of its row, every `human:` row genuinely human-only); the
-deterministic prelint already reports structural defects at $0.
+An independent judge checks source fidelity, clear observable requirements, scope, and decision consistency.
+It checks every material Decision Register entry is represented without distortion.
+Deterministic prelint handles structural defects before that semantic review.
 
 - The gate keeps an open findings set, not a round budget. Every judged run
   ends in one of three states:
@@ -423,29 +383,23 @@ wins, name the principle it overrides.
 6. Run the Inline Self-Check Before Ready and fix failures.
 7. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
    blocking gaps.
-8. Run the sasu Spec Gate and fix findings until it passes or a
-   human-decision finding stops the loop. When the `sasu` binary or its judge
-   backend is unavailable, record that limitation in the final report and
-   proceed on the Harness Readiness Gate plus the inline self-check alone;
-   that recorded limitation (or the documented no-qa-log skip) is the
-   "skip/fallback" step 9 refers to.
+8. Run the sasu Spec Gate and fix findings until it passes or a human-decision finding stops the loop.
+   If a required CLI or backend is unavailable, report the actual blocker and retain not-ready status.
+   A conversation-only PRD with no qa-log uses the documented no-source skip; this does not excuse a failed required review.
 9. Mark `status: ready` only when blocking decisions are resolved, the inline
    self-check passes, the Harness Readiness Gate reports zero blocking
-   gaps, and the Spec Gate passes (or its skip/fallback is recorded).
-10. Ask the user to review the PRD using the Approval checklist. Set
-   `human_approval: "approved"` only after their explicit approval; otherwise
-   leave it `pending` and say implementation is blocked on their review.
+   gaps, and the Spec Gate passes (or the documented no-qa-log skip applies).
+10. Present the concrete PRD for user review, using existing approval if the conversation already authorized this scope. Set
+   `human_approval: "approved"` only after their explicit approval; otherwise leave it `pending` and report whether existing conversational implementation authority permits start or a new human decision is required.
 
 ## Final Report
 
 After writing the PRD, report concisely:
 
 - PRD path.
-- inline self-check, Harness Readiness Gate, and Spec Gate results, with the
-  row counts by `check:` / `judge:` / `human:`.
+- inline self-check, Harness Readiness Gate, and Spec Gate results, with behavior and decision counts.
 - source intake or clarify path.
-- status and `human_approval` state, with the Approval checklist items the
-  user needs to review before `implement` can run.
+- status and `human_approval` state, and any actual decision still required before implementation.
 - remaining blocking questions, if any.
 - summary of goal, non-goals, decisions, the Behaviors rows, technical
   structure, delivery mode when relevant, and risks.

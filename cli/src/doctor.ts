@@ -7,7 +7,7 @@ import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
 import { loadState } from "./implement/store";
-import { IMPLEMENT_SCHEMA } from "./implement/types";
+import { IMPLEMENT_SCHEMA, RETIRED_IMPLEMENT_SUPPORT_COMMIT } from "./implement/types";
 import { currentSessionId } from "./runs/session";
 
 const skillContract: {
@@ -65,7 +65,7 @@ export function runIntegritySection(projectRoot: string, sessionId: string | nul
             `retire candidate: ${entry.name} owner=${owner ?? "unowned"} command=sasu implement retire --slug ${entry.name}${adoption}`,
           );
         }
-        if ((state.status === "complete" || state.status === "blocked" || state.status === "retired")
+        if ((state.status === "complete" || state.status === "complete-pending-human" || state.status === "blocked" || state.status === "retired")
           && state.worktree !== null && state.worktree !== undefined && fs.existsSync(state.worktree.path)) {
           orphans.push(
             `orphan worktree: ${entry.name} status=${state.status} path=${state.worktree.path} branch=${state.worktree.branch}`,
@@ -74,7 +74,7 @@ export function runIntegritySection(projectRoot: string, sessionId: string | nul
       } catch (error) {
         if (raw?.["status"] === "active" && raw["schema"] !== IMPLEMENT_SCHEMA) {
           incompatibleActive.push(
-            `incompatible active run: ${entry.name} status=active schema=${String(raw["schema"] ?? "missing")} installed-schema=${IMPLEMENT_SCHEMA}; use a matching CLI to inspect or retire it, or start a new slug`,
+            `incompatible active run: ${entry.name} status=active schema=${String(raw["schema"] ?? "missing")} installed-schema=${IMPLEMENT_SCHEMA}; last supported commit: ${RETIRED_IMPLEMENT_SUPPORT_COMMIT}; use that matching CLI to inspect or retire the old run, or start a new slug`,
           );
         } else {
           malformed.push(`malformed run state: ${entry.name} (${error instanceof Error ? error.message : String(error)})`);

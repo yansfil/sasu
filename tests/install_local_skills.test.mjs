@@ -301,3 +301,34 @@ test("installer changes no runtime contracts when CLI preparation fails", () => 
   assert.equal(fs.readFileSync(existing, "utf8"), "unchanged\n");
   assert.equal(fs.existsSync(path.join(home, ".claude")), false);
 });
+
+test("candidate staging binds package siblings and preserves external skills for both runtimes", async () => {
+  // Plan section 19 requires both runtime inputs to use the candidate together.
+  // A project-local skill whose sibling path still points globally can execute
+  // an old ship script against a new receipt even when its own text is current.
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const { transformContractFile } = require("../cli/lib/skill-contract.js");
+  const source = "Use $implement and read ~/.codex/skills/ship/scripts/prd_ship.js";
+  for (const [runtime, root, invocation] of [
+    ["codex", "/validation/product/.agents/skills", "$implement"],
+    ["claude", "/validation/product/.claude/skills", "/implement"],
+  ]) {
+    assert.equal(
+      transformContractFile(runtime, "SKILL.md", source, { skillsRoot: root }),
+      `Use ${invocation} and read ${root}/ship/scripts/prd_ship.js`,
+    );
+    assert.equal(
+      transformContractFile(runtime, "references/delivery.md", source, { skillsRoot: root }),
+      `Use ${invocation} and read ${root}/ship/scripts/prd_ship.js`,
+    );
+    assert.equal(transformContractFile(runtime, "scripts/example.js", source, { skillsRoot: root }), source);
+    const external = "Read ~/.codex/skills/herdr/SKILL.md, ~/.claude/skills/herdr/SKILL.md, ~/.agents/skills/herdr/SKILL.md, and ~/.codex/skills/ship-external/SKILL.md";
+    assert.equal(
+      transformContractFile(runtime, "references/observer-and-herdr.md", external, { skillsRoot: root }),
+      runtime === "claude" ? external.replaceAll("~/.codex/skills/", "~/.claude/skills/") : external,
+    );
+  }
+  assert.equal(transformContractFile("codex", "SKILL.md", source), source);
+  assert.equal(transformContractFile("claude", "SKILL.md", source), "Use /implement and read ~/.claude/skills/ship/scripts/prd_ship.js");
+});

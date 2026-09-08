@@ -3,144 +3,563 @@
   "version": 2,
   "source": "sasu",
   "elements": [
-    {"type":"rectangle","id":"zone1","x":60,"y":120,"width":2520,"height":300,"backgroundColor":"#dbe4ff","fillStyle":"solid","strokeColor":"#4a9eed","strokeWidth":1,"opacity":35,"roundness":{"type":3}},
-    {"type":"text","id":"zone1t","x":85,"y":140,"text":"1. 계약과 준비","fontSize":20,"fontFamily":1,"strokeColor":"#2563eb","originalText":"1. 계약과 준비","autoResize":true},
-    {"type":"rectangle","id":"zone2","x":60,"y":455,"width":2520,"height":410,"backgroundColor":"#e5dbff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":1,"opacity":35,"roundness":{"type":3}},
-    {"type":"text","id":"zone2t","x":85,"y":475,"text":"2. 구현과 증거","fontSize":20,"fontFamily":1,"strokeColor":"#6d28d9","originalText":"2. 구현과 증거","autoResize":true},
-    {"type":"rectangle","id":"zone3","x":60,"y":900,"width":2520,"height":360,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":1,"opacity":40,"roundness":{"type":3}},
-    {"type":"text","id":"zone3t","x":85,"y":920,"text":"3. 동결 후 독립 검증","fontSize":20,"fontFamily":1,"strokeColor":"#b45309","originalText":"3. 동결 후 독립 검증","autoResize":true},
-    {"type":"rectangle","id":"zone4","x":60,"y":1295,"width":2520,"height":300,"backgroundColor":"#d3f9d8","fillStyle":"solid","strokeColor":"#22c55e","strokeWidth":1,"opacity":35,"roundness":{"type":3}},
-    {"type":"text","id":"zone4t","x":85,"y":1315,"text":"4. 완료 권한과 전달","fontSize":20,"fontFamily":1,"strokeColor":"#15803d","originalText":"4. 완료 권한과 전달","autoResize":true},
-
-    {"type":"text","id":"title","x":660,"y":32,"text":"implement 스킬 - Receipt-backed 전체 워크플로우","fontSize":32,"fontFamily":1,"strokeColor":"#1e1e1e","originalText":"implement 스킬 - Receipt-backed 전체 워크플로우","autoResize":true},
-    {"type":"text","id":"subtitle","x":750,"y":78,"text":"PRD 계약 -> state.json 단일 상태 -> artifact-backed proof -> receipt.json","fontSize":18,"fontFamily":1,"strokeColor":"#757575","originalText":"PRD 계약 -> state.json 단일 상태 -> artifact-backed proof -> receipt.json","autoResize":true},
-
-    {"type":"rectangle","id":"prd","x":115,"y":220,"width":230,"height":110,"backgroundColor":"#a5d8ff","fillStyle":"solid","strokeColor":"#4a9eed","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"prd_t","type":"text"}]},
-    {"type":"text","id":"prd_t","x":125,"y":237,"width":210,"height":75,"text":"승인된 PRD\nstatus: ready\nhuman_approval: approved","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"prd","originalText":"승인된 PRD\nstatus: ready\nhuman_approval: approved","autoResize":true},
-    {"type":"arrow","id":"a_prd_ready","x":345,"y":275,"width":100,"height":0,"points":[[0,0],[100,0]],"strokeColor":"#4a9eed","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"diamond","id":"ready","x":445,"y":205,"width":190,"height":140,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"ready_t","type":"text"}]},
-    {"type":"text","id":"ready_t","x":470,"y":235,"width":140,"height":80,"text":"필수 pre-work,\n구조 결정, 권한\n모두 해결?","fontSize":17,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"ready","originalText":"필수 pre-work,\n구조 결정, 권한\n모두 해결?","autoResize":true},
-    {"type":"arrow","id":"a_ready_init","x":635,"y":275,"width":90,"height":0,"points":[[0,0],[90,0]],"strokeColor":"#22c55e","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_ready_init_t","type":"text"}]},
-    {"type":"text","id":"a_ready_init_t","x":657,"y":250,"width":45,"height":20,"text":"YES","fontSize":14,"fontFamily":1,"strokeColor":"#15803d","textAlign":"center","verticalAlign":"middle","containerId":"a_ready_init","originalText":"YES","autoResize":true},
-    {"type":"arrow","id":"a_ready_stop","x":540,"y":345,"width":0,"height":60,"points":[[0,0],[0,60]],"strokeColor":"#ef4444","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_ready_stop_t","type":"text"}]},
-    {"type":"text","id":"a_ready_stop_t","x":555,"y":360,"width":40,"height":20,"text":"NO","fontSize":14,"fontFamily":1,"strokeColor":"#b91c1c","textAlign":"center","verticalAlign":"middle","containerId":"a_ready_stop","originalText":"NO","autoResize":true},
-    {"type":"text","id":"hardstop","x":385,"y":392,"text":"HARD STOP - 사용자 결정 / 승인 / 안전한 실행 환경 요청","fontSize":16,"fontFamily":1,"strokeColor":"#b91c1c","originalText":"HARD STOP - 사용자 결정 / 승인 / 안전한 실행 환경 요청","autoResize":true},
-
-    {"type":"rectangle","id":"init","x":725,"y":215,"width":245,"height":120,"backgroundColor":"#d0bfff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"init_t","type":"text"}]},
-    {"type":"text","id":"init_t","x":735,"y":235,"width":225,"height":80,"text":"Goal tracking + init\nPRD 파싱\n초기 worktree snapshot","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"init","originalText":"Goal tracking + init\nPRD 파싱\n초기 worktree snapshot","autoResize":true},
-    {"type":"arrow","id":"a_init_state","x":970,"y":275,"width":90,"height":0,"points":[[0,0],[90,0]],"strokeColor":"#8b5cf6","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"state","x":1060,"y":195,"width":280,"height":160,"backgroundColor":"#c3fae8","fillStyle":"solid","strokeColor":"#06b6d4","strokeWidth":3,"roundness":{"type":3},"boundElements":[{"id":"state_t","type":"text"}]},
-    {"type":"text","id":"state_t","x":1075,"y":215,"width":250,"height":120,"text":"state.json\n유일한 machine record\nTasks + AC + V + Plans\nPre-work + Deviations","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"state","originalText":"state.json\n유일한 machine record\nTasks + AC + V + Plans\nPre-work + Deviations","autoResize":true},
-    {"type":"arrow","id":"a_state_plan","x":1340,"y":275,"width":95,"height":0,"points":[[0,0],[95,0]],"strokeColor":"#06b6d4","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"plans","x":1435,"y":215,"width":250,"height":120,"backgroundColor":"#d0bfff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"plans_t","type":"text"}]},
-    {"type":"text","id":"plans_t","x":1445,"y":235,"width":230,"height":80,"text":"자동 계획 2개\nverificationPlan\nexecutionPlan + traceability","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"plans","originalText":"자동 계획 2개\nverificationPlan\nexecutionPlan + traceability","autoResize":true},
-    {"type":"arrow","id":"a_plans_check","x":1685,"y":275,"width":90,"height":0,"points":[[0,0],[90,0]],"strokeColor":"#8b5cf6","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"diamond","id":"plangate","x":1775,"y":205,"width":190,"height":140,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"plangate_t","type":"text"}]},
-    {"type":"text","id":"plangate_t","x":1805,"y":235,"width":130,"height":80,"text":"계획 gap 없음 +\nmain-agent\ncoverage OK?","fontSize":17,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"plangate","originalText":"계획 gap 없음 +\nmain-agent\ncoverage OK?","autoResize":true},
-    {"type":"arrow","id":"a_plangate_ready","x":1965,"y":275,"width":100,"height":0,"points":[[0,0],[100,0]],"strokeColor":"#22c55e","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_plangate_ready_t","type":"text"}]},
-    {"type":"text","id":"a_plangate_ready_t","x":1988,"y":250,"width":48,"height":20,"text":"READY","fontSize":14,"fontFamily":1,"strokeColor":"#15803d","textAlign":"center","verticalAlign":"middle","containerId":"a_plangate_ready","originalText":"READY","autoResize":true},
-
-    {"type":"rectangle","id":"taskready","x":2065,"y":215,"width":250,"height":120,"backgroundColor":"#a5d8ff","fillStyle":"solid","strokeColor":"#4a9eed","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"taskready_t","type":"text"}]},
-    {"type":"text","id":"taskready_t","x":2075,"y":235,"width":230,"height":80,"text":"ready task 선택\n기본 sequential\n안전하고 유용할 때만 parallel","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"taskready","originalText":"ready task 선택\n기본 sequential\n안전하고 유용할 때만 parallel","autoResize":true},
-    {"type":"arrow","id":"a_task_down","x":2190,"y":335,"width":0,"height":185,"points":[[0,0],[0,185]],"strokeColor":"#4a9eed","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"impl","x":130,"y":555,"width":270,"height":120,"backgroundColor":"#d0bfff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"impl_t","type":"text"}]},
-    {"type":"text","id":"impl_t","x":140,"y":575,"width":250,"height":80,"text":"가장 작은 mapped change\n관련 파일 재확인\n결정은 context-notes.md","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"impl","originalText":"가장 작은 mapped change\n관련 파일 재확인\n결정은 context-notes.md","autoResize":true},
-    {"type":"arrow","id":"a_impl_focus","x":400,"y":615,"width":85,"height":0,"points":[[0,0],[85,0]],"strokeColor":"#8b5cf6","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"focus","x":485,"y":555,"width":225,"height":120,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"focus_t","type":"text"}]},
-    {"type":"text","id":"focus_t","x":495,"y":575,"width":205,"height":80,"text":"Focused check\n변경 중 가장 작은 probe\nDB write면 disposable만","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"focus","originalText":"Focused check\n변경 중 가장 작은 probe\nDB write면 disposable만","autoResize":true},
-    {"type":"arrow","id":"a_focus_evidence","x":710,"y":615,"width":85,"height":0,"points":[[0,0],[85,0]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"evidence","x":795,"y":525,"width":360,"height":180,"backgroundColor":"#c3fae8","fillStyle":"solid","strokeColor":"#06b6d4","strokeWidth":3,"roundness":{"type":3},"boundElements":[{"id":"evidence_t","type":"text"}]},
-    {"type":"text","id":"evidence_t","x":810,"y":545,"width":330,"height":140,"text":"실제 run의 증거 등록\nverify-run: command-log\nrecord-artifact: browser / API / DB\noracle-run: AC machine oracle\nmanifest.jsonl에 hash + provenance","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"evidence","originalText":"실제 run의 증거 등록\nverify-run: command-log\nrecord-artifact: browser / API / DB\noracle-run: AC machine oracle\nmanifest.jsonl에 hash + provenance","autoResize":true},
-    {"type":"arrow","id":"a_evidence_mark","x":1155,"y":615,"width":85,"height":0,"points":[[0,0],[85,0]],"strokeColor":"#06b6d4","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"mark","x":1240,"y":555,"width":245,"height":120,"backgroundColor":"#d0bfff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"mark_t","type":"text"}]},
-    {"type":"text","id":"mark_t","x":1250,"y":575,"width":225,"height":80,"text":"mark task / AC / V\nAC는 covering V가 정착되면\nauto-met","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"mark","originalText":"mark task / AC / V\nAC는 covering V가 정착되면\nauto-met","autoResize":true},
-    {"type":"arrow","id":"a_mark_done","x":1485,"y":615,"width":95,"height":0,"points":[[0,0],[95,0]],"strokeColor":"#8b5cf6","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"diamond","id":"allclosed","x":1580,"y":540,"width":205,"height":150,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"allclosed_t","type":"text"}]},
-    {"type":"text","id":"allclosed_t","x":1615,"y":575,"width":135,"height":80,"text":"모든 Task, AC,\nrequired V가\n증거와 함께 닫힘?","fontSize":17,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"allclosed","originalText":"모든 Task, AC,\nrequired V가\n증거와 함께 닫힘?","autoResize":true},
-    {"type":"arrow","id":"a_allclosed_no","x":265,"y":675,"width":1415,"height":105,"points":[[0,0],[0,105],[1415,105],[1415,15]],"strokeColor":"#ef4444","strokeWidth":2,"strokeStyle":"dashed","startArrowhead":"arrow","endArrowhead":null,"boundElements":[{"id":"a_allclosed_no_t","type":"text"}]},
-    {"type":"text","id":"a_allclosed_no_t","x":930,"y":754,"width":100,"height":20,"text":"NO - 계속 구현","fontSize":14,"fontFamily":1,"strokeColor":"#b91c1c","textAlign":"center","verticalAlign":"middle","containerId":"a_allclosed_no","originalText":"NO - 계속 구현","autoResize":true},
-    {"type":"arrow","id":"a_allclosed_freeze","x":1785,"y":615,"width":115,"height":0,"points":[[0,0],[115,0]],"strokeColor":"#22c55e","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_allclosed_freeze_t","type":"text"}]},
-    {"type":"text","id":"a_allclosed_freeze_t","x":1818,"y":590,"width":50,"height":20,"text":"YES","fontSize":14,"fontFamily":1,"strokeColor":"#15803d","textAlign":"center","verticalAlign":"middle","containerId":"a_allclosed_freeze","originalText":"YES","autoResize":true},
-
-    {"type":"rectangle","id":"freeze","x":1900,"y":555,"width":255,"height":120,"backgroundColor":"#b2f2bb","fillStyle":"solid","strokeColor":"#22c55e","strokeWidth":3,"roundness":{"type":3},"boundElements":[{"id":"freeze_t","type":"text"}]},
-    {"type":"text","id":"freeze_t","x":1910,"y":575,"width":235,"height":80,"text":"Residue check + code freeze\nsource / evidence / plan\n변경 시 review stale","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"freeze","originalText":"Residue check + code freeze\nsource / evidence / plan\n변경 시 review stale","autoResize":true},
-    {"type":"arrow","id":"a_freeze_validation","x":367,"y":1010,"width":1660,"height":335,"points":[[0,0],[0,-215],[1660,-215],[1660,-335]],"strokeColor":"#22c55e","strokeWidth":2,"startArrowhead":"arrow","endArrowhead":null},
-
-    {"type":"rectangle","id":"frozen","x":155,"y":1010,"width":220,"height":100,"backgroundColor":"#b2f2bb","fillStyle":"solid","strokeColor":"#22c55e","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"frozen_t","type":"text"}]},
-    {"type":"text","id":"frozen_t","x":165,"y":1030,"width":200,"height":60,"text":"Frozen code +\n등록된 evidence","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"frozen","originalText":"Frozen code +\n등록된 evidence","autoResize":true},
-    {"type":"arrow","id":"a_frozen_gate","x":375,"y":1038,"width":145,"height":-48,"points":[[0,0],[145,-48]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_frozen_gate_t","type":"text"}]},
-    {"type":"text","id":"a_frozen_gate_t","x":410,"y":995,"width":75,"height":20,"text":"동시에","fontSize":14,"fontFamily":1,"strokeColor":"#b45309","textAlign":"center","verticalAlign":"middle","containerId":"a_frozen_gate","originalText":"동시에","autoResize":true},
-    {"type":"arrow","id":"a_frozen_fidelity","x":375,"y":1082,"width":145,"height":48,"points":[[0,0],[145,48]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"gate","x":520,"y":955,"width":300,"height":120,"backgroundColor":"#ffd8a8","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"gate_t","type":"text"}]},
-    {"type":"text","id":"gate_t","x":530,"y":975,"width":280,"height":80,"text":"sasu verify gate\nprelint -> mechanical ->\nindependent AC judge","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"gate","originalText":"sasu verify gate\nprelint -> mechanical ->\nindependent AC judge","autoResize":true},
-
-    {"type":"rectangle","id":"fidelity","x":520,"y":1100,"width":300,"height":120,"backgroundColor":"#d0bfff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"fidelity_t","type":"text"}]},
-    {"type":"text","id":"fidelity_t","x":530,"y":1120,"width":280,"height":80,"text":"Requirements fidelity\nqa-log -> PRD -> 구현\nintent / 결정 / 증거 계보","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"fidelity","originalText":"Requirements fidelity\nqa-log -> PRD -> 구현\nintent / 결정 / 증거 계보","autoResize":true},
-
-    {"type":"rectangle","id":"profiles","x":885,"y":965,"width":390,"height":245,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"profiles_t","type":"text"}]},
-    {"type":"text","id":"profiles_t","x":900,"y":985,"width":360,"height":205,"text":"Review profile\n\ntrivial\nmain-agent compact fidelity\n\nstandard\nindependent full fidelity\n\nhigh-risk\nmain-agent full fidelity -> independent final review","fontSize":17,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"profiles","originalText":"Review profile\n\ntrivial\nmain-agent compact fidelity\n\nstandard\nindependent full fidelity\n\nhigh-risk\nmain-agent full fidelity -> independent final review","autoResize":true},
-    {"type":"arrow","id":"a_gate_profiles","x":820,"y":1015,"width":65,"height":45,"points":[[0,0],[65,45]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow"},
-    {"type":"arrow","id":"a_fidelity_profiles","x":820,"y":1160,"width":65,"height":-45,"points":[[0,0],[65,-45]],"strokeColor":"#8b5cf6","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"diamond","id":"validationpass","x":1340,"y":1015,"width":210,"height":155,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"validationpass_t","type":"text"}]},
-    {"type":"text","id":"validationpass_t","x":1375,"y":1050,"width":140,"height":85,"text":"gate + fidelity\nPASS & fresh?","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"validationpass","originalText":"gate + fidelity\nPASS & fresh?","autoResize":true},
-    {"type":"arrow","id":"a_profiles_pass","x":1275,"y":1090,"width":65,"height":0,"points":[[0,0],[65,0]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow"},
-    {"type":"arrow","id":"a_validation_fail","x":285,"y":795,"width":1160,"height":445,"points":[[0,0],[0,445],[1160,445],[1160,375]],"strokeColor":"#ef4444","strokeWidth":2,"strokeStyle":"dashed","startArrowhead":"arrow","endArrowhead":null,"boundElements":[{"id":"a_validation_fail_t","type":"text"}]},
-    {"type":"text","id":"a_validation_fail_t","x":770,"y":1215,"width":190,"height":20,"text":"FAIL / STALE -> 원인 수정 + 영향 증거 재캡처","fontSize":14,"fontFamily":1,"strokeColor":"#b91c1c","textAlign":"center","verticalAlign":"middle","containerId":"a_validation_fail","originalText":"FAIL / STALE -> 원인 수정 + 영향 증거 재캡처","autoResize":true},
-
-    {"type":"diamond","id":"highrisk","x":1615,"y":1015,"width":210,"height":155,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"highrisk_t","type":"text"}]},
-    {"type":"text","id":"highrisk_t","x":1650,"y":1050,"width":140,"height":85,"text":"effective profile이\nhigh-risk?","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"highrisk","originalText":"effective profile이\nhigh-risk?","autoResize":true},
-    {"type":"arrow","id":"a_validation_high","x":1550,"y":1090,"width":65,"height":0,"points":[[0,0],[65,0]],"strokeColor":"#22c55e","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"finalreview","x":1890,"y":1030,"width":300,"height":120,"backgroundColor":"#d0bfff","fillStyle":"solid","strokeColor":"#8b5cf6","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"finalreview_t","type":"text"}]},
-    {"type":"text","id":"finalreview_t","x":1900,"y":1040,"width":280,"height":100,"text":"Fresh independent\nfinal adversarial review\n(fidelity 기록 후에만)\nFAIL -> fix + evidence/fidelity refresh","fontSize":16,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"finalreview","originalText":"Fresh independent\nfinal adversarial review\n(fidelity 기록 후에만)\nFAIL -> fix + evidence/fidelity refresh","autoResize":true},
-    {"type":"arrow","id":"a_high_yes","x":1825,"y":1090,"width":65,"height":0,"points":[[0,0],[65,0]],"strokeColor":"#8b5cf6","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_high_yes_t","type":"text"}]},
-    {"type":"text","id":"a_high_yes_t","x":1836,"y":1065,"width":45,"height":20,"text":"YES","fontSize":14,"fontFamily":1,"strokeColor":"#6d28d9","textAlign":"center","verticalAlign":"middle","containerId":"a_high_yes","originalText":"YES","autoResize":true},
-    {"type":"arrow","id":"a_high_no","x":277,"y":1390,"width":1443,"height":220,"points":[[0,0],[0,-75],[1443,-75],[1443,-220]],"strokeColor":"#22c55e","strokeWidth":2,"startArrowhead":"arrow","endArrowhead":null},
-    {"type":"text","id":"a_high_no_t","x":1735,"y":1238,"text":"NO - finalize path","fontSize":14,"fontFamily":1,"strokeColor":"#15803d","originalText":"NO - finalize path","autoResize":true},
-    {"type":"arrow","id":"a_finalreview_down","x":277,"y":1390,"width":1763,"height":240,"points":[[0,0],[0,-35],[1763,-35],[1763,-240]],"strokeColor":"#22c55e","strokeWidth":2,"startArrowhead":"arrow","endArrowhead":null},
-
-    {"type":"rectangle","id":"cleanup","x":155,"y":1390,"width":245,"height":110,"backgroundColor":"#ffd8a8","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"cleanup_t","type":"text"}]},
-    {"type":"text","id":"cleanup_t","x":165,"y":1410,"width":225,"height":70,"text":"Runtime cleanup\n서버 / 브라우저 / tunnel 종료\n또는 예외 기록","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"cleanup","originalText":"Runtime cleanup\n서버 / 브라우저 / tunnel 종료\n또는 예외 기록","autoResize":true},
-    {"type":"arrow","id":"a_cleanup_finalize","x":400,"y":1445,"width":100,"height":0,"points":[[0,0],[100,0]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"diamond","id":"finalize","x":500,"y":1370,"width":250,"height":150,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"finalize_t","type":"text"}]},
-    {"type":"text","id":"finalize_t","x":545,"y":1405,"width":160,"height":80,"text":"finalize\ncomplete | partial | blocked\n최종 command reverification","fontSize":17,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"finalize","originalText":"finalize\ncomplete | partial | blocked\n최종 command reverification","autoResize":true},
-    {"type":"arrow","id":"a_finalize_receipt","x":750,"y":1445,"width":100,"height":0,"points":[[0,0],[100,0]],"strokeColor":"#22c55e","strokeWidth":3,"endArrowhead":"arrow"},
-
-    {"type":"rectangle","id":"receipt","x":850,"y":1360,"width":315,"height":170,"backgroundColor":"#b2f2bb","fillStyle":"solid","strokeColor":"#22c55e","strokeWidth":4,"roundness":{"type":3},"boundElements":[{"id":"receipt_t","type":"text"}]},
-    {"type":"text","id":"receipt_t","x":865,"y":1380,"width":285,"height":130,"text":"receipt.json\n유일한 완료 증명\n\nimplementation-result.md\nDone | Partially Done | Blocked","fontSize":20,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"receipt","originalText":"receipt.json\n유일한 완료 증명\n\nimplementation-result.md\nDone | Partially Done | Blocked","autoResize":true},
-    {"type":"arrow","id":"a_receipt_delivery","x":1165,"y":1445,"width":100,"height":0,"points":[[0,0],[100,0]],"strokeColor":"#22c55e","strokeWidth":2,"endArrowhead":"arrow"},
-
-    {"type":"diamond","id":"delivery","x":1265,"y":1370,"width":230,"height":150,"backgroundColor":"#fff3bf","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"boundElements":[{"id":"delivery_t","type":"text"}]},
-    {"type":"text","id":"delivery_t","x":1305,"y":1405,"width":150,"height":80,"text":"delivery mode?","fontSize":19,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"delivery","originalText":"delivery mode?","autoResize":true},
-
-    {"type":"rectangle","id":"local","x":1570,"y":1355,"width":270,"height":120,"backgroundColor":"#c3fae8","fillStyle":"solid","strokeColor":"#06b6d4","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"local_t","type":"text"}]},
-    {"type":"text","id":"local_t","x":1580,"y":1375,"width":250,"height":80,"text":"local\ncleanup-active\nGoal complete은 complete receipt 후","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"local","originalText":"local\ncleanup-active\nGoal complete은 complete receipt 후","autoResize":true},
-    {"type":"arrow","id":"a_delivery_local","x":1495,"y":1415,"width":75,"height":0,"points":[[0,0],[75,0]],"strokeColor":"#06b6d4","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_delivery_local_t","type":"text"}]},
-    {"type":"text","id":"a_delivery_local_t","x":1505,"y":1390,"width":55,"height":20,"text":"LOCAL","fontSize":14,"fontFamily":1,"strokeColor":"#0e7490","textAlign":"center","verticalAlign":"middle","containerId":"a_delivery_local","originalText":"LOCAL","autoResize":true},
-
-    {"type":"rectangle","id":"ship","x":1570,"y":1490,"width":270,"height":80,"backgroundColor":"#ffd8a8","fillStyle":"solid","strokeColor":"#f59e0b","strokeWidth":2,"roundness":{"type":3},"boundElements":[{"id":"ship_t","type":"text"}]},
-    {"type":"text","id":"ship_t","x":1580,"y":1500,"width":250,"height":60,"text":"PR -> $ship\nPR / CI는 post-receipt delivery","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"ship","originalText":"PR -> $ship\nPR / CI는 post-receipt delivery","autoResize":true},
-    {"type":"arrow","id":"a_delivery_ship","x":1380,"y":1520,"width":190,"height":10,"points":[[0,0],[190,10]],"strokeColor":"#f59e0b","strokeWidth":2,"endArrowhead":"arrow","boundElements":[{"id":"a_delivery_ship_t","type":"text"}]},
-    {"type":"text","id":"a_delivery_ship_t","x":1440,"y":1495,"width":70,"height":20,"text":"PR MODE","fontSize":14,"fontFamily":1,"strokeColor":"#b45309","textAlign":"center","verticalAlign":"middle","containerId":"a_delivery_ship","originalText":"PR MODE","autoResize":true},
-
-    {"type":"rectangle","id":"cross","x":1905,"y":1335,"width":610,"height":210,"backgroundColor":"#ffc9c9","fillStyle":"solid","strokeColor":"#ef4444","strokeWidth":2,"strokeStyle":"dashed","roundness":{"type":3},"boundElements":[{"id":"cross_t","type":"text"}]},
-    {"type":"text","id":"cross_t","x":1925,"y":1355,"width":570,"height":170,"text":"교차 규칙\n\nPRD 변경 -> reconcile (init --force 금지)\n사용자 redirect -> pause, 다음 mutation에서 resume\n구조 이탈 / unmapped scope / prod DB / destructive action -> HARD STOP\n모든 state mutation과 최종 편집은 coordinator만 수행","fontSize":18,"fontFamily":1,"strokeColor":"#1e1e1e","textAlign":"center","verticalAlign":"middle","containerId":"cross","originalText":"교차 규칙\n\nPRD 변경 -> reconcile (init --force 금지)\n사용자 redirect -> pause, 다음 mutation에서 resume\n구조 이탈 / unmapped scope / prod DB / destructive action -> HARD STOP\n모든 state mutation과 최종 편집은 coordinator만 수행","autoResize":true}
+    {
+      "type": "text",
+      "id": "title",
+      "x": 125,
+      "y": 20,
+      "width": 1060,
+      "height": 42,
+      "text": "전체 요구사항을 보존하는 implement 흐름",
+      "originalText": "전체 요구사항을 보존하는 implement 흐름",
+      "fontSize": 30,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "text",
+      "id": "subtitle",
+      "x": 125,
+      "y": 85,
+      "width": 1060,
+      "height": 25.2,
+      "text": "하나의 state.json · 실제 실행과 관찰 · 현재 입력의 종합 리뷰",
+      "originalText": "하나의 state.json · 실제 실행과 관찰 · 현재 입력의 종합 리뷰",
+      "fontSize": 18,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "rectangle",
+      "id": "prd",
+      "x": 80,
+      "y": 170,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#dbeafe",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "prd_t",
+      "x": 95,
+      "y": 201.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "승인된 전체 PRD\n여섯 섹션 · 세 열 Behaviors\n요구사항과 결정은 모두 유지",
+      "originalText": "승인된 전체 PRD\n여섯 섹션 · 세 열 Behaviors\n요구사항과 결정은 모두 유지",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "rectangle",
+      "id": "start",
+      "x": 500,
+      "y": 170,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#dbeafe",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "start_t",
+      "x": 515,
+      "y": 201.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "start\nPRD·소스·소유권 봉인\n필수 suite 목록 고정",
+      "originalText": "start\nPRD·소스·소유권 봉인\n필수 suite 목록 고정",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "rectangle",
+      "id": "implement",
+      "x": 920,
+      "y": 170,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#dbeafe",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "implement_t",
+      "x": 935,
+      "y": 201.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "자율 구현과 실제 QA\n사용자 흐름·위험 경계로 관찰\n공유 증거와 출처 등록",
+      "originalText": "자율 구현과 실제 QA\n사용자 흐름·위험 경계로 관찰\n공유 증거와 출처 등록",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "p_s",
+      "x": 390,
+      "y": 235,
+      "width": 110,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          110,
+          0
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "arrow",
+      "id": "s_i",
+      "x": 810,
+      "y": 235,
+      "width": 110,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          110,
+          0
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "verify",
+      "x": 920,
+      "y": 430,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#fef3c7",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "verify_t",
+      "x": 935,
+      "y": 461.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "verify 실행권\n고정 입력의 필수 suite 실행\n동일 실행은 시도 안에서 한 번",
+      "originalText": "verify 실행권\n고정 입력의 필수 suite 실행\n동일 실행은 시도 안에서 한 번",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "i_v",
+      "x": 1075,
+      "y": 300,
+      "width": 0,
+      "height": 130,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          130
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "review",
+      "x": 500,
+      "y": 430,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#fef3c7",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "review_t",
+      "x": 515,
+      "y": 461.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "독립 종합 리뷰 한 번\n전체 계약·코드·공유 증거\n고유한 위험은 high-risk로 검토",
+      "originalText": "독립 종합 리뷰 한 번\n전체 계약·코드·공유 증거\n고유한 위험은 high-risk로 검토",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "v_r",
+      "x": 920,
+      "y": 495,
+      "width": 110,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -110,
+          0
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "findings",
+      "x": 80,
+      "y": 430,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#fee2e2",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "findings_t",
+      "x": 95,
+      "y": 450.2,
+      "width": 280,
+      "height": 89.6,
+      "text": "구체적인 발견 문제와 이력\n결함 수정 · 이전 문제 처분\n변경 안 된 파일의 실제 누락도\n전체 계약과 반증으로 검토",
+      "originalText": "구체적인 발견 문제와 이력\n결함 수정 · 이전 문제 처분\n변경 안 된 파일의 실제 누락도\n전체 계약과 반증으로 검토",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "r_f",
+      "x": 500,
+      "y": 495,
+      "width": 110,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -110,
+          0
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "arrow",
+      "id": "f_fix",
+      "x": 235,
+      "y": 430,
+      "width": 840,
+      "height": 130,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          -65
+        ],
+        [
+          840,
+          -65
+        ],
+        [
+          840,
+          -130
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "text",
+      "id": "fix_label",
+      "x": 375,
+      "y": 330,
+      "width": 600,
+      "height": 22.4,
+      "text": "수정 후 명시적 재검증 · 하네스 소유 반복 한도",
+      "originalText": "수정 후 명시적 재검증 · 하네스 소유 반복 한도",
+      "fontSize": 15,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "rectangle",
+      "id": "finalize",
+      "x": 500,
+      "y": 700,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#dcfce7",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "finalize_t",
+      "x": 515,
+      "y": 731.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "finalize\n현재 입력·문제·권한 확인\nstate 확정 후 receipt 생성",
+      "originalText": "finalize\n현재 입력·문제·권한 확인\nstate 확정 후 receipt 생성",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "r_done",
+      "x": 655,
+      "y": 560,
+      "width": 0,
+      "height": 140,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          140
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "blocked",
+      "x": 80,
+      "y": 700,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#fee2e2",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "blocked_t",
+      "x": 95,
+      "y": 720.2,
+      "width": 280,
+      "height": 89.6,
+      "text": "blocked receipt\n오류 단계·미실행·남은 문제\n성공 judge 결과가 없어도\n정직하게 종료",
+      "originalText": "blocked receipt\n오류 단계·미실행·남은 문제\n성공 judge 결과가 없어도\n정직하게 종료",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "f_b",
+      "x": 235,
+      "y": 560,
+      "width": 0,
+      "height": 140,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          140
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "rectangle",
+      "id": "delivery",
+      "x": 920,
+      "y": 700,
+      "width": 310,
+      "height": 130,
+      "backgroundColor": "#dcfce7",
+      "fillStyle": "solid",
+      "strokeColor": "#64748b",
+      "strokeWidth": 2,
+      "roundness": {
+        "type": 3
+      }
+    },
+    {
+      "type": "text",
+      "id": "delivery_t",
+      "x": 935,
+      "y": 731.4,
+      "width": 280,
+      "height": 67.19999999999999,
+      "text": "기존 승인 범위의 전달\ncomplete / pending-human\n사람이 거절하면 전달 차단",
+      "originalText": "기존 승인 범위의 전달\ncomplete / pending-human\n사람이 거절하면 전달 차단",
+      "fontSize": 16,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    },
+    {
+      "type": "arrow",
+      "id": "f_d",
+      "x": 810,
+      "y": 765,
+      "width": 110,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          110,
+          0
+        ]
+      ],
+      "strokeColor": "#475569",
+      "strokeWidth": 2,
+      "endArrowhead": "arrow"
+    },
+    {
+      "type": "text",
+      "id": "footer",
+      "x": 125,
+      "y": 915,
+      "width": 1060,
+      "height": 50.4,
+      "text": "finalize는 재실행하지 않음 · 요구별 PASS/증거/체크리스트 없음\n실행 사실·무결성·권한은 CLI, 요구 충족의 의미 판단은 독립 리뷰",
+      "originalText": "finalize는 재실행하지 않음 · 요구별 PASS/증거/체크리스트 없음\n실행 사실·무결성·권한은 CLI, 요구 충족의 의미 판단은 독립 리뷰",
+      "fontSize": 18,
+      "fontFamily": 2,
+      "strokeColor": "#183153",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "autoResize": false,
+      "lineHeight": 1.4
+    }
   ],
   "appState": {
     "viewBackgroundColor": "#ffffff",
-    "gridSize": 20
+    "gridSize": null
   },
   "files": {}
 }

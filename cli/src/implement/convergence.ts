@@ -1,8 +1,7 @@
 import { changedPathsSince } from "./store";
+import type { ReviewResult } from "../judge/types";
 import type {
   DeltaBasis,
-  FindingOrigin,
-  PriorDisposition,
   RegisteredArtifact,
   RiskDisposition,
   RiskFinding,
@@ -10,23 +9,13 @@ import type {
   SourceEntry,
   SourceSnapshot,
   TrackedRiskFinding,
+  TrackedReviewFinding,
   UnifiedVerificationAttempt,
   VerificationInputManifest,
   VerificationRoundContext,
 } from "./types";
 
-export interface VerdictDeltaFields {
-  priorDisposition?: PriorDisposition;
-  origin?: FindingOrigin;
-  deltaBasis?: DeltaBasis;
-}
-
-/**
- * Finds the newest successful result for one semantic unit, not merely the
- * newest attempt containing some other lane's result. Partial judge errors
- * are deliberately skipped: otherwise an ERROR in risk (or one acceptance
- * criterion) can erase an older unresolved finding from the next prompt.
- */
+/** Latest completed independent result; backend errors never erase open findings. */
 export function latestAttemptResult<T>(
   attempts: readonly UnifiedVerificationAttempt[],
   select: (attempt: UnifiedVerificationAttempt) => T | null | undefined,
@@ -39,15 +28,14 @@ export function latestAttemptResult<T>(
   return null;
 }
 
-export function evidenceDeltaKey(entry: { rowId?: string; path: string }): string {
-  return `${entry.rowId ?? "unbound"}:${entry.path}`;
+export function evidenceDeltaKey(entry: { path: string }): string {
+  return entry.path;
 }
 
 export function verificationInputManifest(
   initial: SourceSnapshot,
   current: SourceSnapshot,
   artifacts: RegisteredArtifact[],
-  checkLedger: VerificationInputManifest["checkLedger"] = { sha256: "none", rows: [] },
 ): VerificationInputManifest {
   const currentByPath = new Map(current.entries.map((entry) => [entry.path, entry]));
   const source: SourceEntry[] = changedPathsSince(initial, current).map((relative) =>
@@ -56,12 +44,11 @@ export function verificationInputManifest(
   const evidence = artifacts
     .filter((entry) => entry.command === undefined)
     .map((entry) => ({
-      ...(entry.rowId !== undefined ? { rowId: entry.rowId } : {}),
       path: entry.path,
       sha256: entry.sha256,
     }))
     .sort((left, right) => evidenceDeltaKey(left).localeCompare(evidenceDeltaKey(right)));
-  return { source, evidence, checkLedger };
+  return { source, evidence };
 }
 
 export function verificationRoundContext(
@@ -83,19 +70,6 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
-function parsePriorDisposition(value: unknown, label: string): PriorDisposition | string {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return `${label}.priorDisposition must be an object`;
-  }
-  const record = value as Record<string, unknown>;
-  if (record["status"] !== "resolved" && record["status"] !== "unresolved") {
-    return `${label}.priorDisposition.status must be resolved or unresolved`;
-  }
-  const reason = nonEmptyString(record["reason"]);
-  if (reason === null) return `${label}.priorDisposition.reason must be a non-empty string`;
-  return { status: record["status"], reason };
-}
-
 function parseDeltaBasis(value: unknown, context: VerificationRoundContext, label: string): DeltaBasis | string {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return `${label}.deltaBasis must be an object`;
@@ -103,10 +77,21 @@ function parseDeltaBasis(value: unknown, context: VerificationRoundContext, labe
   const record = value as Record<string, unknown>;
   const kind = record["kind"];
   const held = nonEmptyString(record["value"]);
-  if (kind !== "changed-path" && kind !== "new-evidence") {
-    return `${label}.deltaBasis.kind must be changed-path or new-evidence`;
+  if (kind !== "changed-path" && kind !== "new-evidence" && kind !== "contract-counterevidence") {
+    return `${label}.deltaBasis.kind must be changed-path, new-evidence or contract-counterevidence`;
   }
   if (held === null) return `${label}.deltaBasis.value must be a non-empty string`;
+  if (kind === "contract-counterevidence") {
+    const validRefs = (refs: unknown, allowed: readonly string[]): refs is string[] =>
+      Array.isArray(refs) && refs.length > 0 && refs.every((ref) => typeof ref === "string" && allowed.includes(ref)) && new Set(refs).size === refs.length;
+    if (!validRefs(record["requirementRefs"], context.requirementRefs ?? [])) {
+      return `${label}.deltaBasis.requirementRefs must name approved contract references`;
+    }
+    if (!validRefs(record["evidenceRefs"], context.evidenceRefs ?? [])) {
+      return `${label}.deltaBasis.evidenceRefs must name actual allowed source or evidence references`;
+    }
+    return { kind, value: held, requirementRefs: record["requirementRefs"], evidenceRefs: record["evidenceRefs"] };
+  }
   const allowed = kind === "changed-path"
     ? context.changedPaths
     : context.newEvidence.map(evidenceDeltaKey);
@@ -117,51 +102,69 @@ function parseDeltaBasis(value: unknown, context: VerificationRoundContext, labe
 }
 
 /**
- * Mechanical half of the round-2 delta contract. A judge may still report a
- * real new blocker, but it cannot turn a prior PASS into FAIL or mint a new
- * blocker by inventing an unobserved change. The prompt asks; this validator
- * enforces (PRINCIPLES 7 and 13).
+ * An omitted finding remains open. Only a validated explicit disposition can
+ * resolve a defect, while human authority is retained until confirm or amend.
+ * The 2026-09-08 contract deliberately allows new omissions in unchanged files:
+ * path deltas guide reading, never decide whether a real defect is admissible.
  */
-export function validateVerdictDelta(
-  raw: Record<string, unknown>,
-  currentVerdict: "PASS" | "FAIL",
-  priorVerdict: "PASS" | "FAIL" | null,
-  context: VerificationRoundContext,
-  label: string,
-): VerdictDeltaFields | string {
-  if (context.priorAttemptId === null) return {};
-  let priorDisposition: PriorDisposition | undefined;
-  if (priorVerdict === "FAIL") {
-    const parsed = parsePriorDisposition(raw["priorDisposition"], label);
-    if (typeof parsed === "string") return parsed;
-    priorDisposition = parsed;
-  }
-  if (currentVerdict === "PASS") {
-    if (priorVerdict === "FAIL" && priorDisposition?.status !== "resolved") {
-      return `${label} must disposition the prior FAIL as resolved before returning PASS`;
+export function reconcileReviewFindings(
+  tracked: readonly TrackedReviewFinding[],
+  result: ReviewResult,
+  attemptId: string,
+  at: string,
+): TrackedReviewFinding[] {
+  const next = structuredClone(tracked) as TrackedReviewFinding[];
+  const byId = new Map(next.map((entry) => [entry.id, entry]));
+  const dispositionIds = new Set<string>();
+  const continuedIds = new Set<string>();
+  for (const disposition of result.priorDispositions) {
+    const entry = byId.get(disposition.findingId);
+    if (entry === undefined || entry.status !== "open") {
+      throw new Error(`review disposition ${disposition.findingId} does not name an open ledger finding`);
     }
-    return priorDisposition === undefined ? {} : { priorDisposition };
-  }
-  const origin = raw["origin"];
-  if (origin !== "prior-unresolved" && origin !== "new") {
-    return `${label}.origin must be prior-unresolved or new on round 2+ FAIL`;
-  }
-  if (origin === "prior-unresolved") {
-    if (priorVerdict !== "FAIL" || priorDisposition?.status !== "unresolved") {
-      return `${label} can use prior-unresolved only for an unresolved prior FAIL`;
+    if (dispositionIds.has(entry.id)) throw new Error(`duplicate review disposition ${entry.id}`);
+    dispositionIds.add(entry.id);
+    if (disposition.reason.trim() === "" || disposition.evidenceRefs.length === 0) {
+      throw new Error(`review disposition ${entry.id} requires a reason and evidence references`);
     }
-    return { priorDisposition, origin };
+    if (entry.kind === "human-confirmation" && disposition.status === "resolved") {
+      throw new Error(`human confirmation ${entry.id} can only be closed by a human response or approved amendment`);
+    }
+    if (disposition.status === "resolved") entry.status = "resolved";
+    entry.history.push({ at, attemptId, status: disposition.status, reason: disposition.reason, evidenceRefs: [...disposition.evidenceRefs] });
   }
-  if (priorVerdict === "FAIL" && priorDisposition?.status !== "resolved") {
-    return `${label} must resolve the prior FAIL before replacing it with a new blocker`;
+  let nextId = next.reduce((high, entry) => Math.max(high, Number(entry.id.replace(/^F/, "")) || 0), 0) + 1;
+  for (const finding of result.findings) {
+    if (finding.priorFindingId !== undefined) {
+      const entry = byId.get(finding.priorFindingId);
+      if (entry === undefined || entry.status !== "open") {
+        throw new Error(`continued review finding ${finding.priorFindingId} does not name an open ledger finding`);
+      }
+      if (continuedIds.has(entry.id)) throw new Error(`review finding ${entry.id} was continued twice`);
+      continuedIds.add(entry.id);
+      // A reviewer cannot launder an unfixed defect into advice or transfer it
+      // to the human. Resolve the old defect with evidence before changing kind.
+      if (entry.kind !== finding.kind) throw new Error(`unresolved review finding ${entry.id} cannot change kind`);
+      if (entry.kind === "human-confirmation") {
+        if (entry.human?.sourceRef !== finding.human?.sourceRef || entry.human?.quote !== finding.human?.quote || entry.human?.timing !== finding.human?.timing) {
+          throw new Error(`human confirmation ${entry.id} cannot change its authority source or timing in review; use an approved amendment`);
+        }
+      }
+      const copy = structuredClone(finding);
+      delete copy.priorFindingId;
+      Object.assign(entry, copy);
+      continue;
+    }
+    const copy = structuredClone(finding);
+    const entry: TrackedReviewFinding = {
+      ...copy, id: `F${nextId++}`, originAttemptId: attemptId, status: "open",
+      history: [{ at, attemptId, status: "open", reason: finding.problem, evidenceRefs: [...finding.evidenceRefs] }],
+      responses: [],
+    };
+    next.push(entry);
+    byId.set(entry.id, entry);
   }
-  const basis = parseDeltaBasis(raw["deltaBasis"], context, label);
-  if (typeof basis === "string") return basis;
-  return {
-    ...(priorDisposition !== undefined ? { priorDisposition } : {}),
-    origin,
-    deltaBasis: basis,
-  };
+  return next;
 }
 
 function parseRiskDisposition(
@@ -202,8 +205,8 @@ export function validateRiskVerdict(
   if (raw["verdict"] !== "PASS" && raw["verdict"] !== "FAIL") return "verdict must be PASS or FAIL";
   if (!Array.isArray(raw["findings"])) return "findings must be an array";
 
-  const rerun = context.priorAttemptId !== null;
   const priorFindings = prior?.findings ?? [];
+  const rerun = context.priorAttemptId !== null || priorFindings.length > 0;
   const priorById = new Map(priorFindings.map((entry) => [entry.id, entry]));
   let priorDispositions: RiskDisposition[] | undefined;
   if (rerun) {
@@ -242,7 +245,13 @@ export function validateRiskVerdict(
     const text = nonEmptyString(finding["text"]);
     if (text === null) return `findings[${index}].text must be a non-empty string`;
     if (!rerun) {
-      findings.push({ id: `RF${nextId++}`, severity: finding["severity"], text });
+      let deltaBasis: DeltaBasis | undefined;
+      if (finding["severity"] === "blocking" || finding["deltaBasis"] !== undefined) {
+        const basis = parseDeltaBasis(finding["deltaBasis"], context, `findings[${index}]`);
+        if (typeof basis === "string") return basis;
+        deltaBasis = basis;
+      }
+      findings.push({ id: `RF${nextId++}`, severity: finding["severity"], text, ...(deltaBasis === undefined ? {} : { deltaBasis }) });
       continue;
     }
     const origin = finding["origin"];
@@ -339,7 +348,7 @@ export function reconcileRiskFindings(
       }
       const deltaEvidence = disposition.deltaBasis === undefined
         ? "deltaBasis=none (advisory resolution)"
-        : `deltaBasis ${disposition.deltaBasis.kind}=${disposition.deltaBasis.value}`;
+        : `deltaBasis ${JSON.stringify(disposition.deltaBasis)}`;
       entry.status = "fixed";
       entry.resolution = {
         at,

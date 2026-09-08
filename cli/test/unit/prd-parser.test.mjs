@@ -16,7 +16,6 @@ const {
   cleanTableCell,
   parseFrontmatterBlock,
   stripFrontmatter,
-  parseCheckCell,
   commandCompositionDefect,
   parseBehaviorRows,
   missingPrdSections,
@@ -104,25 +103,16 @@ test("cleanTableCell protects code-span content from cosmetic transforms", () =>
   assert.equal(cleanTableCell("a<br>b `x<br>y`"), "a; b `x<br>y`");
 });
 
-test("parseCheckCell reads the prefix, unwraps one code span, and refuses composition", () => {
-  assert.deepEqual(parseCheckCell("check: `node --test a.mjs`"), { kind: "check", payload: "node --test a.mjs", defect: null });
-  assert.deepEqual(parseCheckCell("judge: the diff"), { kind: "judge", payload: "the diff", defect: null });
-  assert.equal(parseCheckCell("human:").defect, "human: cell has no payload after the prefix");
-  assert.match(parseCheckCell("verify by hand").defect, /must start with one of check:, judge:, human:/);
-  assert.match(parseCheckCell("check: a | b").defect, /shell composition/);
-  assert.equal(parseCheckCell("check: node -e \"a && b\"").defect, null, "quoted text is an argument");
-});
-
-test("commandCompositionDefect is the one rule config and cells share", () => {
+test("commandCompositionDefect is the one rule project suite commands use", () => {
   assert.equal(commandCompositionDefect("npm test"), null);
   for (const bad of ["a && b", "a; b", "a | b", "a > out", "$(a)", "a &", "`a`"]) assert.match(commandCompositionDefect(bad) ?? "", /shell composition/, bad);
 });
 
 test("parseBehaviorRows returns every row with defects instead of dropping it", () => {
-  const doc = "## Behaviors\n\n| # | a | b | c |\n| --- | --- | --- | --- |\n| B1 | ok | check: `x` | D-01, D-02 |\n| bad | | | |\n";
+  const doc = "## Behaviors\n\n| # | behavior | decision |\n| --- | --- | --- |\n| B1 | ok | D-01, D-02 |\n| bad | | |\n";
   const parsed = parseBehaviorRows(doc);
   assert.equal(parsed.section.line, 1);
-  assert.deepEqual(parsed.rows.map((row) => [row.id, row.line, row.defects.length]), [["B1", 5, 0], [null, 6, 3]]);
+  assert.deepEqual(parsed.rows.map((row) => [row.id, row.line, row.defects.length]), [["B1", 5, 0], [null, 6, 2]]);
   assert.deepEqual(parsed.rows[0].decisionIds, ["D-01", "D-02"]);
   assert.deepEqual(parseBehaviorRows("# nothing"), { section: null, rows: [] });
 });
@@ -133,4 +123,9 @@ test("missingPrdSections and isLegacyFiveAxisPrd key on heading structure only",
   assert.equal(isLegacyFiveAxisPrd("## 7. Acceptance Criteria\n"), true);
   assert.equal(isLegacyFiveAxisPrd("## 7. Acceptance Criteria\n## Behaviors\n"), false);
   assert.equal(isLegacyFiveAxisPrd("## Goal\n"), false);
+});
+
+ test("four-column documents are refused rather than reinterpreted", () => {
+  const result = parseBehaviorRows("## Behaviors\n| # | behavior | method | decision |\n| --- | --- | --- | --- |\n| B1 | saves | check: run | D-01 |\n");
+  assert.match(result.rows[0].defects.join(" "), /retired four-column.*488d3cc/);
 });

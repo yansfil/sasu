@@ -11,53 +11,38 @@ every review:
 
 > Verification is the senior sitting next to the implementation. It must be
 > clean, intuitive, mistake-free, and efficient (깔끔하게 · 직관적으로 ·
-> 실수없이 · 효율적으로) — and it must never become a second implementation
+> 실수없이 · 효율적으로) - and it must never become a second implementation
 > that outweighs the first.
 
-Items 1 and 2 are a pair, and they are read together or not at all. Ceremony
-gets cut; proof never does.
+Items 1 and 2 are read together: every requirement remains in scope while evidence and review avoid redundant procedure.
+The approved 2026-09-08 workflow plan explicitly changes the earlier per-AC proof and per-AC judge policies in items 1 and 6.
+See [the approved direction](docs/plans/2026-09-08-workflow-simplification.md); this is a policy change, not a reinterpretation.
 
-## 1. Prove every AC with the tools you actually have
+## 1. Preserve every requirement and review the complete contract
 
-Verification must be tight (촘촘하게). Every acceptance criterion carries an
-observable fact that the harness itself can see — not the agent's report that
-it implemented something. "I made the change" is not evidence; an exit code, a
-captured response, a rendered screen, a queried row is.
+Every requirement remains in the approved PRD and the independent review input.
+Use sufficient actual code, test results, and product observations to judge the entire intended result.
+A build or function definition alone does not establish working user behavior.
+An absent observation stays unverified until evidence supports it.
 
-So use the full instrument set before falling back to reading a diff: a
-mechanical command's exit code, an implementation-bound criterion check, a runtime capture
-(browser, API, DB), a registered artifact, an agentic judge with read-only
-repository access when the proof lives outside the diff. Judging a criterion
-from the diff alone is the weakest available instrument, not the default one.
-Reach for the strongest instrument the criterion admits, and reach hard — the
-work of finding a way to observe the fact is the job, not an optional extra.
-
-Two consequences:
-
-- If no instrument can observe an AC, that is usually a defect in the AC, not
-  a licence to pass it. Rewrite it so something can be observed. If it still
-  cannot be, record it as unproven — see item 10; skipped means skipped.
-- Cost is never grounds for deleting a proof. The only grounds are the ones in
-  item 4: a stage that catches nothing another stage does not already catch.
-  "This is slow" argues for making the proof cheaper or concurrent, never for
-  not having it.
+There is no requirement-by-requirement proof record, lifecycle, mandatory separate evidence, PASS array, or judge call.
+One coherent observation can support multiple requirements, and one independent comprehensive review compares every requirement with the complete result.
+The CLI guarantees execution facts, evidence integrity, current-input identity, ownership, authority, and an honest record.
+Whether the implementation satisfies the contract is semantic judgment by the independent reviewer, not a mechanical guarantee of zero omissions.
+Evaluate that judgment by planting realistic omissions and observing whether the review finds them.
 
 ## 2. Verification must not outweigh implementation
 
-Watch the ratio of verify/review/orchestration wall-clock to actual
-implementation time. A stage that dominates the run is a bottleneck to fix,
-not a cost of correctness. Measure before optimizing — phase timings exist so
-that "it feels slow" becomes a number.
-
-What gets cut here is ceremony: bookkeeping, restated structure, prose
-validated for shape, a review re-reading what a settled gate already judged.
-Never the proof of item 1.
+Measure actual suite and review calls, elapsed execution, overlap, and orchestration relative to implementation.
+Distinguish sums of concurrent intervals from wall-clock union time and report unavailable timing honestly.
+Cut repeated bookkeeping, duplicate review responsibilities, and redundant observations while preserving the full requirement set and sufficient actual evidence.
+Do not calculate savings from work that was never repeated, such as finalize executing tests.
 
 ## 3. Fix the one cause, not the N symptoms
 
 Before accepting a fix list, ask whether the entries are one disease. A list of
 five plausible patches to five sites is usually a missing single concept, and
-patch-by-patch does not hold in this codebase — the freshness deadlock proved
+patch-by-patch does not hold in this codebase - the freshness deadlock proved
 it, where a fix applied to one fingerprint never propagated to its two
 siblings. Prefer the change that makes the failure class structurally
 impossible over the change that handles today's instance. When a proposal is
@@ -66,8 +51,7 @@ impossible over the change that handles today's instance. When a proposal is
 ## 4. Every stage must earn its place, and every addition names its deletion
 
 For each gate, review, or pass, name the failure it uniquely catches. Two
-stages that catch the same failure get merged or one gets deleted (fidelity
-vs final review is the canonical example — final review became a delta pass).
+stages that catch the same failure get merged or one gets deleted (the comprehensive review replacing separate acceptance, fidelity, and standard design is the current example).
 Default posture toward the review stack is suspicion of weight: when in doubt,
 put it on a diet.
 
@@ -95,55 +79,34 @@ verdict is a pure function of the inputs you compared.
 In this harness that assumption is usually false - mechanical checks, oracles,
 captures, and agentic lanes all read state the tree fingerprint cannot see
 (2026-08-11: a rerun short-circuit trapped a run twice, once on a capture and
-once on a `check:` command, whose FAIL came from a gitignored service that had
+once on a required command, whose FAIL came from a gitignored service that had
 since been fixed).
 Fan out freely; before skipping, prove purity.
 
-## 6. Verify at the semantic unit, not the text unit
+## 6. Observe flows and risk boundaries; review the whole contract
 
-Judging happens per acceptance criterion, and each judge's input is scoped to
-what that criterion needs. Handing every lane the entire diff is a smell;
-mechanically slicing text is not semantic verification. Prefer designs where
-the AC, its evidence, and its slice of the change travel together.
+The natural unit of actual observation is a coherent product flow or risk boundary.
+The natural unit of requirement judgment is the complete contract compared with implementation and shared evidence.
+Requirement identifiers let a finding point precisely to unmet behavior or a decision; they do not become progress states or a coverage graph.
+Grouping observations never permits grouping distinct requirements merely to reduce their count.
+Every requirement still reaches the independent reviewer.
 
-## 7. The harness absorbs complexity — never the workflow user, never a doc
+## 7. The harness absorbs complexity - never the workflow user, never a doc
 
-A fix that makes the PRD author or the implementing agent configure something
-new (per-AC diff files, extra knobs, manual bookkeeping) is the wrong fix,
-even if it works. The harness infers, records, and carries the burden. If a
-proposal complicates the contract the human or agent writes, look again.
+The CLI enforces structure, execution facts, input identity, evidence integrity, ownership, human authority, concurrency, and bounded retries in code.
+The reviewer decides meaning, contract satisfaction, and observation sufficiency.
+A field belongs in a document only when the harness executes or compares it; do not pattern-match natural-language requirements into mandatory evidence kinds.
 
-The same rule applies to enforcement. A rule that lives only as skill-document
-prose is a request for discipline, not a guard: it is skipped under context
-pressure and cannot be tested. Whatever the harness can decide in code — an
-ordering constraint, a scope check, a required input, a refusal — belongs in
-code, and the doc shrinks to one line. Move the natural-language rules down
-into code in ROI order (the ones that burn the most time or admit the worst
-failure first), not all at once.
-
-Pushing a rule into code is not the same as pushing a *judgment* into code,
-and the line between them has one test: does the harness execute or compare
-the value?
-`Scope:` globs slice a diff, `Check:` commands run, `Covers:` references are
-matched - the value is machine input, so asking the document to declare it is
-honest work.
-A value the harness only reads in order to decide who to talk to is not: that
-belongs to the agent, which reads natural language for a living.
-The failure this prevents is the harness pattern-matching prose for meaning.
-A keyword regex over Korean pre-work bullets missed every human-only item in a
-real PRD whose author had stated the property plainly one line above, and the
-empty result actively overrode what the agent already knew, because the agent
-had written that PRD seven minutes earlier (2026-08-11, the second recurrence
-of the same stall the checklist was built to prevent).
-Extract the structure mechanically, force the disposition mechanically, and
-leave the meaning to the agent.
+Do not replace deleted commands with a required Markdown PASS checklist, flow-ID table, user mode, or manual coverage ledger.
+Reuse the existing command runner, snapshot, evidence registration, review sandbox, and receipt path.
+One new whole-run review and its issue history replace row acceptance, separate fidelity, and standard design reviews; the distinct high-risk check must retain a unique safety question.
 
 ## 8. The whole flow must stay explainable
 
 The end-to-end workflow must be drawable as one simple diagram and walkable
 with a small concrete example (three tasks, a few verifications). If
-explaining a stage honestly takes a wall of text, the structure — not the
-explanation — is the bug.
+explaining a stage honestly takes a wall of text, the structure - not the
+explanation - is the bug.
 
 ## 9. Measure it; re-verify before relying on it
 
@@ -154,20 +117,26 @@ to the code, in this codebase's style.
 
 This extends to the harness's own new work: a change is believed after a real
 run exercises it end to end, not after its unit tests pass. Running live
-pipelines and analyzing the resulting session transcripts — where time went,
-where the agent wandered, what it worked around — is the harness's regression
+pipelines and analyzing the resulting session transcripts - where time went,
+where the agent wandered, what it worked around - is the harness's regression
 test, and its findings outrank any reasoning about how it ought to behave.
 
 ## 10. Records stay honest and singular
 
-Receipts, docs, and provenance never overclaim: skipped means skipped, and a
-pass names the tree it was earned on. `state.json` is the only record — no
-derived views or ledgers that can drift from it.
+`state.json` is the only completion authority; portable receipts and Markdown results derive from it.
+A result names the current source and input identity on which it was earned.
+Unrun means unrun, unavailable means unverified, and an old PASS never becomes current merely because the agent says so.
+No configured tests is reported separately from successful test execution.
+
+A valid attempt records the phase where it stopped, including preflight or evidence errors before any judge call.
+A first failure leaves the run active for repair; explicit finalization closes an honest blocked result when work cannot continue.
+Blocked closure cannot require a successful judge result that the failed run never obtained.
+Human responses retain their original words and history, and an open explicit rejection makes delivery ineligible even under complete-pending-human.
 
 ## 11. General, not overfit
 
 The harness must hold across many project shapes and case sizes (large diffs,
-many ACs, quick sessions), not just the case that motivated the change. A fix
+many requirements, quick sessions), not just the case that motivated the change. A fix
 tuned to one incident gets checked against the others before it lands.
 
 Detection built from one sample is the sharpest form of this failure, because
@@ -182,30 +151,20 @@ the sample before shipping it, or key on structure instead of phrasing.
 ## 12. Compare outward before inventing
 
 When a design question is genuinely open, look at how peer harnesses and
-agent-OS projects solve it before inventing — and import the idea, not the
+agent-OS projects solve it before inventing - and import the idea, not the
 machinery.
 
 ## 13. Never loop on a stage that cannot converge
 
-A test suite converges: fix it, it goes green, it is done.
-A fresh adversarial reviewer does not - handed any codebase it will produce
-findings, so "re-run it whenever anything changed" has no fixed point.
-Pairing a generative stage with whole-run invalidation builds a loop whose
-only brake is the agent deciding to stop.
-In an audited run, five adversarial review rounds spanned 92 minutes (08:27 to
-09:59), the last two returning only LOW items, on a run whose verify gate never
-once returned a criterion FAIL in ten attempts and whose entire measured judge
-spend was 5.5 minutes (2026-08-11).
-Each round was a sidecar the agent summoned on its own judgment: nothing in
-`state.json` or the receipt records that a round happened, so the loop the
-harness cannot see is also the loop it cannot bound.
-Wall-clock alone would have overstated this by 85 minutes of user absence -
-re-derive a duration from what actually ran before resting a rule on it
-(item 9).
+A test suite converges; a fresh generative reviewer can always suggest another improvement.
+Use concrete contract/counterevidence, persistent issue IDs and explicit dispositions, and the existing harness-owned correction bound to make the review process terminate honestly.
+Optional advice beyond a satisfied contract stays advisory.
 
-A stage that cannot converge on its own needs a bound the harness owns: a
-delta contract so round N+1 sees only what changed since round N, a severity
-floor so advisory findings are recorded as follow-ups instead of re-triggering
-the chain, or an explicit round cap.
-Recording an open LOW finding in the receipt is more honest than a fifth round
-that pretends to close it (item 10).
+A real omission discovered later in an unchanged file still counts as a defect when it names approved contract content and actual counterevidence.
+Changed-path-only validation cannot discard that omission merely to shrink the issue list.
+A prior open issue does not disappear because a later review omitted it.
+Open blocking risk keeps the entire run incomplete and cannot reset the budget just because routine review passed.
+Backend errors and pre-review input failures remain distinct from implementation correction rounds.
+
+At the bound, preserve the failed attempt and open issues and close blocked, or continue only under recorded existing human authority.
+Do not replace state, create a second review engine, or silently forgive unmet requirements to manufacture convergence.

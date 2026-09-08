@@ -54,7 +54,7 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   const stateDir = path.join(root, "agents", "runs", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
   const state = {
-    schema: "sasu.implement.state.v8",
+    schema: "sasu.implement.state.v9",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
@@ -64,12 +64,19 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };
   write(statePath, JSON.stringify(state, null, 2));
   write(path.join(stateDir, "receipt.json"), JSON.stringify({
-    schema: "sasu.implement.receipt.v4",
+    schema: "sasu.implement.receipt.v5",
     status: "complete",
     completionFingerprint: "fixture-completion",
-    behaviors: [
-      { id: "B1", behavior: "feature is ready", check: "check: node src/check.js", decisions: [], parked: null, result: { kind: "check", status: "green", exitCode: 0, finishedAt: "2026-07-14T11:00:00Z" } },
-    ],
+    ownedFiles: ["src/feature.js"],
+    sourceFingerprint: "fixture-source",
+    verificationAttemptId: "verify-1",
+    delivery: { eligible: true, reasons: [] },
+    artifacts: [],
+    mechanical: [{ command: "node src/check.js", cwd: root, exitCode: 0, finishedAt: "2026-07-14T11:00:00Z" }],
+    review: { verdict: "PASS", result: { summary: "The complete contract matches the implementation.", findings: [] } },
+    findings: [],
+    humanConfirmations: [],
+    riskFindings: [],
   }, null, 2));
 
   const bin = path.join(root, "fake-bin");
@@ -105,6 +112,7 @@ if (args.startsWith("rules check")) {
     detail: {
       status: "complete",
       verification: { verdict: "PASS" },
+      delivery: { eligible: true, reasons: [] },
       artifactProblems: [],
       completion: { fingerprint: "fixture-completion" }
     }
@@ -178,6 +186,21 @@ test("local delivery is idempotent and does not create a second commit", () => {
   assert.equal(events.length, 1);
 });
 
+test("default state discovery uses the current CLI namespace", () => {
+  const fixture = initLocalFixture();
+  write(path.join(fixture.root, "agents", "runs", ".prd-implement-active.json"), JSON.stringify({
+    statePath: fixture.statePath,
+    projectRoot: fixture.root,
+  }));
+  write(path.join(fixture.root, "agents", "config.json"), JSON.stringify({ namespace: { root: "retired-root" } }));
+  const result = run(process.execPath, [shipScript, "body"], {
+    cwd: fixture.root,
+    env: stripSessionEnv(fixture.env),
+  });
+  assert.equal(JSON.parse(result.stdout).ok, true);
+  assert.equal(fs.existsSync(path.join(fixture.stateDir, "delivery", "pr-body.md")), true);
+});
+
 test("local delivery promotes an unpushed checkpoint instead of stacking another commit", () => {
   const fixture = initLocalFixture({ checkpoint: true });
   const before = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
@@ -244,7 +267,7 @@ test("merge pins the reviewed PR head, requires passing CI, and records delivery
   assert.match(shipLog, /"event":"merge"/);
 });
 
-test("merge records a later explicit PR-delivery approval for v3 state without delivery config", () => {
+test("merge records a later explicit PR-delivery approval for a current state with default delivery config", () => {
   const fixture = initMergeFixture({ includeDelivery: false });
   const approval = "User approved immediate merge";
   const result = run(process.execPath, [
@@ -267,39 +290,79 @@ test("merge records a later explicit PR-delivery approval for v3 state without d
   assert.match(shipLog, /User approved immediate merge/);
 });
 
-test("a complete-pending-human receipt ships locally and the PR body lists OPEN human rows as a table", () => {
+test("permitted pending human judgments ship and the body describes shared tests and review", () => {
   const fixture = initLocalFixture();
   const receiptPath = path.join(fixture.stateDir, "receipt.json");
   const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
   receipt.status = "complete-pending-human";
-  receipt.behaviors.push({
-    id: "B2",
-    behavior: "the user likes the wording",
-    check: "human: the user says the wording is fine",
-    decisions: [],
-    parked: null,
-    result: { kind: "human", confirmation: "the user says the wording is fine", status: "OPEN (rejected: too stiff)", confirmedAt: null, evidence: null, rejections: [] },
+  receipt.humanConfirmations.push({
+    id: "F1", kind: "human-confirmation", status: "open", problem: "The user judges the wording.",
+    nextAction: "Confirm the wording after completion.", human: { sourceRef: "D-01", quote: "I will review the wording afterwards", timing: "post-completion" }, responses: [],
   });
   write(receiptPath, JSON.stringify(receipt, null, 2));
   const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
   state.status = "complete-pending-human";
   write(fixture.statePath, JSON.stringify(state, null, 2));
-  // The stub `sasu implement status` reports the same closing status.
   const sasuStub = path.join(fixture.root, "fake-bin", "sasu");
   write(sasuStub, fs.readFileSync(sasuStub, "utf8").replace('status: "complete",', 'status: "complete-pending-human",'), 0o755);
-
   const body = JSON.parse(run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
   const draft = fs.readFileSync(path.join(fixture.root, body.bodyPath), "utf8");
   assert.match(draft, /## Open Human Confirmations/);
-  assert.match(draft, /\| B2 \| the user likes the wording \| the user says the wording is fine \| OPEN \(rejected: too stiff\) \|/);
-  assert.match(draft, /\| B1 \| feature is ready \| check: node src\/check\.js \| green \| exit 0/);
-  assert.doesNotMatch(draft, /Acceptance Result|Verification Evidence/);
-
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env });
-  const output = JSON.parse(result.stdout);
+  assert.match(draft, /F1.*The user judges the wording/);
+  assert.match(draft, /node src\/check.js/);
+  assert.match(draft, /The complete contract matches the implementation/);
+  assert.doesNotMatch(draft, /## Behaviors|Verification Lanes|Acceptance lane|Fidelity lane|Score:|--row/);
+  const output = JSON.parse(run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
   assert.equal(output.ok, true);
-  assert.equal(output.status, "committed");
   assert.deepEqual(output.commit.staged, ["src/feature.js"]);
+});
+
+test("an explicit human rejection refuses delivery before any side effect", () => {
+  const fixture = initLocalFixture();
+  const receiptPath = path.join(fixture.stateDir, "receipt.json");
+  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  receipt.status = "complete-pending-human";
+  receipt.delivery = { eligible: false, reasons: ["F1: human rejected the wording"] };
+  receipt.humanConfirmations = [{ id: "F1", status: "open", responses: [{ response: "rejected", evidence: "too stiff" }] }];
+  write(receiptPath, JSON.stringify(receipt, null, 2));
+  const head = gitHead(fixture.root);
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not delivery-eligible.*human rejected/);
+  assert.equal(gitHead(fixture.root), head);
+  assert.equal(fs.existsSync(fixture.ghLog), false);
+});
+
+function gitHead(root) { return run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim(); }
+
+test("current CLI rejection cannot be bypassed by an older eligible receipt", () => {
+  const fixture = initLocalFixture();
+  const stub = path.join(fixture.root, "fake-bin", "sasu");
+  write(stub, fs.readFileSync(stub, "utf8").replace('delivery: { eligible: true, reasons: [] }', 'delivery: { eligible: false, reasons: ["human rejection"] }'), 0o755);
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /human rejection/);
+  assert.equal(fs.existsSync(fixture.ghLog), false);
+});
+
+test("receipt schema is checked before completed status is consumed", () => {
+  const fixture = initLocalFixture();
+  write(path.join(fixture.stateDir, "receipt.json"), JSON.stringify({ schema: "sasu.implement.receipt.v4", status: "complete" }));
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /received schema sasu.implement.receipt.v4; expected sasu.implement.receipt.v5; last supported commit 488d3cc/);
+  assert.equal(fs.existsSync(fixture.ghLog), false);
+});
+
+test("local delivery refuses unrelated dirty paths outside receipt ownership", () => {
+  const fixture = initLocalFixture();
+  write(path.join(fixture.root, "unrelated.js"), "export const unrelated = true;");
+  const head = gitHead(fixture.root);
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /outside the PRD delivery allowlist/);
+  assert.equal(gitHead(fixture.root), head);
+  assert.equal(fs.readFileSync(path.join(fixture.root, "unrelated.js"), "utf8").trim(), "export const unrelated = true;");
 });
 
 test("a blocked receipt does not ship", () => {
@@ -311,4 +374,21 @@ test("a blocked receipt does not ship", () => {
   const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /Cannot ship receipt status 'blocked'/);
+});
+
+test("stale verification and mismatched completion identities refuse local delivery", () => {
+  for (const [from, to, expected] of [
+    ['verification: { verdict: "PASS" }', 'verification: { verdict: "STALE" }', /not PASS/],
+    ['completion: { fingerprint: "fixture-completion" }', 'completion: { fingerprint: "changed-completion" }', /completion fingerprint does not match/],
+  ]) {
+    const fixture = initLocalFixture();
+    const stub = path.join(fixture.root, "fake-bin", "sasu");
+    write(stub, fs.readFileSync(stub, "utf8").replace(from, to), 0o755);
+    const head = gitHead(fixture.root);
+    const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expected);
+    assert.equal(gitHead(fixture.root), head);
+    assert.equal(fs.existsSync(fixture.ghLog), false);
+  }
 });

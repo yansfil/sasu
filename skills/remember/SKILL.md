@@ -16,6 +16,10 @@ A lesson that only becomes prose is not learned; it must end up somewhere that a
 
 Match the user's language by default.
 
+Read current receipt findings, recorded deviations, actual execution results, and proposals as candidate evidence.
+Do not infer a lesson from retired row outcomes, scores, or review lanes, and do not treat an advisory as user approval.
+Keep only actionable recurrence prevention with a concrete source; current confirmation and registration boundaries below still apply.
+
 ## The Landing Model
 
 Every lesson gets classified twice, then landed:

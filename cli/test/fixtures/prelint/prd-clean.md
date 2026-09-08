@@ -23,11 +23,11 @@ A widget that renders and persists.
 
 ## Behaviors
 
-| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |
-| --- | --- | --- | --- |
-| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |
-| B2 | the widget persists its state across reload | judge: a before/after screenshot pair registered for B2 | D-01 |
-| B3 | the persisted state feels right to the user | human: the user reloads and says the widget kept their state | D-01 |
+| # | 사용자가 관찰하는 행동 | 결정 |
+| --- | --- | --- |
+| B1 | the widget renders | - |
+| B2 | the widget persists its state across reload | D-01 |
+| B3 | the persisted state feels right to the user | D-01 |
 
 ## Technical structure
 

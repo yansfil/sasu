@@ -44,36 +44,27 @@ Usage:
   sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
   sasu gate answer    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user answer to the NEEDS_HUMAN bundle>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
-  sasu gate verify    --slug <topic> (--prd <path> | --contract <path>) [--base <git-ref>] [--skip-mechanical] [--allow-open-rows] [--json]
+  sasu gate verify    --slug <topic> --contract <path> [--base <git-ref>] [--json]
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
-  sasu implement check    --row <Bn> [--json]   (runs the row's sealed check: command on the judged tree; judge:/human: rows are refused)
-  sasu implement park     --row <Bn> --approval "<verbatim human approval>" --reason "<why>" [--evidence "<link>"] [--json]
-  sasu implement resume   --row <Bn> [--json]
-  sasu implement confirm  --issuer human --row <Bn> --evidence "<the user's own words>" [--reject] [--json]
-    (closes a human: row after finalize; --reject keeps it OPEN with the words on record. Human-only.)
-  sasu implement amend    --issuer <observer|human> --reason "<why>" [--approval "<verbatim human approval>"] [--exclude-suite "<S1,...>"] [--json]
-    (edit the source PRD first; observer check-cell corrections keep run ownership and need no approval. Human amendments require --approval.)
-  sasu implement qa-brief --row <Bn> [--json]
-  sasu implement trail    --row <Bn> --brief <briefId> --steps "<S1,S2,...>" --driver <human|observer|qa-agent> [--artifacts "<path,...>"] [--json]
-    (the driver role is self-declared and recorded for audit; implementor and solver are refused by name.)
+  sasu implement confirm  --issuer human --id <confirmation-id> --evidence "<the user's own words>" [--reject] [--json]
+    (records a human response and refreshes a closed run's receipt; explicit rejection blocks delivery.)
+  sasu implement amend    --issuer human --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
+    (archives and re-seals the edited PRD, refreshes metadata, and invalidates full-review freshness.)
   sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--json]
-    (starts exactly one implementor beside this pane, handoff packet on stdin; refused from a pane already marked as the implementor.)
-  sasu implement escalate --reason "<what the implementor is stuck on>" [--target <Bn>] [--agent <herdr-agent>] [--json]
-    (summons a read-only solver for a diagnosis, then resets the implementor's context; ${"`"}ESCALATE_LIMIT_PER_RUN${"`"} per run.)
+    (starts exactly one marked implementor beside this pane with the handoff packet on stdin; recursive dispatch is refused.)
+  sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
+    (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
   sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--notify-after <epoch-ms>] [--json]
-    (state-changing implement commands accept --issuer <implementor|observer|human>, default implementor.
-     The label is self-declared and recorded for audit; the CLI does not authenticate it.)
-  sasu implement artifact [--row <Bn>] --kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<proof>" [--json]
+  sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
-  sasu implement design   --id <D#> --accept "<why the comment is being left alone>" [--slug <topic> | --state <path>] [--json]
-  sasu implement design   --raise --issuer <observer|human> --area <area> --path <path> --text "<what looks wrong>" --suggestion "<what to do>" [--json]
   sasu implement risk     --accept --id <RF#> --evidence "<verbatim user approval>" [--slug <topic> | --state <path>] [--json]
   sasu implement risk     --non-convergent --issuer human --id <RF#> --approval "<verbatim user approval>" --reason "<why no round can fix it>" [--json]
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
-    (mutating implement commands on a run owned by another session require --adopt "<verbatim user approval>", except observer check-cell amendments)
+    (state-changing commands accept --issuer <implementor|observer|human>, default implementor; issuer is an audited declaration, not authentication.
+     Mutating another session's run requires --adopt "<verbatim user approval>"; all domain mutations are refused during a live verify lease.)
   sasu prd readiness       --prd <path> [--json]
   sasu prd ready           --prd <path> [--json]   (flips status to ready; refused while readiness has blocking gaps)
   sasu prd approve         --prd <path> --evidence "<verbatim user approval>" [--json]   (records human approval; requires status ready)
@@ -148,7 +139,7 @@ compatible origin instead of api.anthropic.com); this CLI never executes
 implementation work. Each gate's lanes spend a budget measured for
 that gate, not the profile's: gap-audit and spec at high, verify at medium
 (gap-audit and spec are open searches where budget buys coverage; verify is a
-closed diff-vs-criterion comparison where it does not). 'judge.laneEffort'
+bounded full-contract comparison where it does not). 'judge.laneEffort'
 pins one budget across all three - measure with cli/scripts/effort_sweep.mjs
 before setting it, never guess.`;
 
@@ -283,9 +274,10 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
         );
       }
     }
-    if (result.criteria) {
-      for (const criterion of result.criteria) {
-        process.stdout.write(`[semantic] ${criterion.id} ${criterion.verdict} - ${criterion.reason}\n`);
+    if (result.review) {
+      process.stdout.write(`[review] ${result.review.summary}\n`);
+      for (const finding of result.review.findings) {
+        process.stdout.write(`[review:${finding.kind}] ${finding.problem} - ${finding.nextAction}\n`);
       }
     }
     if (result.error) {
@@ -545,12 +537,13 @@ async function main(): Promise<void> {
     const config = loadConfig(projectRoot);
     if (subcommand === "verify") {
       const topic = requireFlag(args, "slug");
+      const retired = ["prd", "skip-mechanical", "allow-open-rows"].filter((name) => args.flags.has(name));
+      if (retired.length > 0) {
+        fail(`gate verify ${retired.map((name) => `--${name}`).join(" ")} was removed in contract 0.9.0; use implement verify for an approved PRD or gate verify --contract for quick work. Last supported commit: 488d3cc.`);
+      }
       const result = await runVerifyGate(projectRoot, config, topic, {
-        prdPath: typeof args.flags.get("prd") === "string" ? (args.flags.get("prd") as string) : undefined,
-        contractPath: typeof args.flags.get("contract") === "string" ? (args.flags.get("contract") as string) : undefined,
+        contractPath: requireFlag(args, "contract"),
         baseRef: typeof args.flags.get("base") === "string" ? (args.flags.get("base") as string) : undefined,
-        skipMechanical: args.flags.get("skip-mechanical") === true,
-        allowOpenRows: args.flags.get("allow-open-rows") === true,
       });
       emitGateResult(result, asJson);
     }

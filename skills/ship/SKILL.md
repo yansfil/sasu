@@ -85,7 +85,7 @@ relative path prefixes.
 They augment the default delivery allowlist.
 The default allowlist includes the PRD directory, the current implementation
 run directory, the project `agents/config.json` when recorded in state, and
-execution-plan write scopes.
+recorded run-owned source files.
 
 ## Required Flow
 
@@ -113,7 +113,9 @@ Do not move judgment into the script, and do not bypass guardrails with ad-hoc g
 
 Script-enforced guardrails (fail closed):
 
-- receipt must be `complete` or `complete-pending-human` (every check:/judge: row proved; OPEN human: rows travel in the PR body and never block merge).
+- receipt schema must be v5 and state schema v9 before any result is consumed; retired formats fail explicitly with the last supported commit.
+- receipt must be `complete` or `complete-pending-human` and currently delivery-eligible.
+  Permitted pending human confirmation travels in the PR body; an open explicit rejection blocks delivery.
 - `local` accepts only local mode; it never pushes, invokes GitHub, creates a PR,
   watches CI, or merges.
 - `ship` and `merge` accept only `pr` mode unless their documented explicit
@@ -159,8 +161,7 @@ node ~/.codex/skills/ship/scripts/prd_ship.js status --state agents/runs/<topic-
 ```
 
 `body` writes a draft to `agents/runs/<topic-slug>/delivery/pr-body.md`.
-The draft contains deterministic evidence sections generated from state (acceptance, verification,
-reviews, staging, changed paths) plus `AGENT-FILL` placeholders for the prose sections.
+The draft contains deterministic evidence sections derived from the current receipt (actual tests, shared QA observations, comprehensive review, open issues and human responses, staging, changed paths) plus `AGENT-FILL` placeholders for the prose sections.
 Fill every placeholder with prose grounded in `implementation-result.md` and the recorded reviews,
 following the repository PR template rules, then run `ship`.
 `body` refuses to overwrite an existing body file without `--force`, so agent-written prose is not
@@ -204,7 +205,7 @@ delivery commit in a non-interactive session.
 PRD directory
 agents/config.json when recorded in state
 agents/runs/<topic-slug>/ except artifacts/ and gates/
-execution-plan write scopes
+recorded run-owned source files
 delivery.staging.include entries
 ```
 
@@ -214,6 +215,9 @@ Review the delivery command output and `git status --short` before running `loca
 If unrelated user changes are present, `local` and `ship` must fail instead of staging them.
 Commit only the current PRD implementation, skill updates, or delivery artifacts
 that belong in the PR.
+
+Completed-result freshness and explicit human rejection have no delivery bypass.
+Only the existing approved base/mode/rules exceptions remain, with their recorded reasons.
 
 ## CI Failure Loop
 
@@ -228,8 +232,7 @@ When checks fail (exit `2`):
 2. Diagnose and fix the underlying issue in the same branch or worktree.
 3. Run the closest local verification first.
 4. Source fixes make the recorded reviews stale.
-   Rerun the affected verification, requirements fidelity review, final review, and
-   `finalize` through the implement harness before shipping again.
+   A closed run is not reopened: start an authorized new run for the source fix, execute its required suites and full-contract review, and finalize a current receipt before shipping again.
    `ship` re-checks freshness and will refuse a stale re-ship.
 5. Rerun `ship` to commit, push, and refresh the PR body if the fix changed anything the body
    describes.
@@ -253,8 +256,8 @@ Include:
 - PRD path.
 - implementation receipt path and status.
 - user-visible or developer-visible changes.
-- verification evidence grouped by mode.
-- requirements fidelity and final review verdicts.
+- actual required tests and shared QA observations, including limitations.
+- comprehensive independent review and any distinct high-risk result.
 - deviations or remaining human review.
 
 For visual PRs, include reviewer-visible screenshots in `Screenshots / Demo`.

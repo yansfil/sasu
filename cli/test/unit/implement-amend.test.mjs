@@ -1,343 +1,83 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-
-import { AmendmentRejected, applyAmendment, planAmendment, sealRow } from "../../dist/implement/amend.js";
+import { scratchDir } from "../scratch.mjs";
+import { stateFixture, humanFinding, AT } from "../helpers/implement-state.mjs";
+import { prd } from "../helpers/implement-fixture.mjs";
+import { applyAmendment, planAmendment, sealRequirement } from "../../dist/implement/amend.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
-import { sha256 } from "../../dist/implement/store.js";
+import { sha256, persistState, persistClose, loadState } from "../../dist/implement/store.js";
 
-// Test-only approval strings. They are deliberately self-identifying rather
-// than plausible user speech: a fixture must never be mistakable for a
-// verbatim quote from a real person in an audit ledger.
-const TEST_APPROVAL = "TEST-FIXTURE-APPROVAL: not a real human quote";
-const TEST_REASON = "TEST-FIXTURE-REASON: the row named the wrong module";
-const AT = "2026-08-29T12:00:00.000Z";
-
-const B1 = "| B1 | The runner executes each command once. | check: `node --test test/runner.test.mjs` | D-01 |";
-const B2 = "| B2 | The receipt names every parked row. | check: `node --test test/receipt.test.mjs` | D-01 |";
-const B3 = "| B3 | The operator can read the summary. | judge: a capture of the summary output | D-01 |";
-const BASE_ROWS = [B1, B2, B3];
-
-function prd(rows = BASE_ROWS, { nonGoals = "Task parallelism.", decisions = ["| D-01 | one runner for every command | two executors disagreed |"] } = {}) {
-  return [
-    "---",
-    'topic: "fixture"',
-    'status: "ready"',
-    'human_approval: "approved"',
-    "---",
-    "",
-    "# PRD: fixture",
-    "",
-    "## Goal",
-    "",
-    "The thing works.",
-    "",
-    "## Non-goals",
-    "",
-    nonGoals,
-    "",
-    "## Decisions",
-    "",
-    "| D-n | 결정 | 근거 |",
-    "| --- | --- | --- |",
-    ...decisions,
-    "",
-    "## Behaviors",
-    "",
-    "| # | 사용자가 관찰하는 행동 | 검사 방법 | 결정 |",
-    "| --- | --- | --- | --- |",
-    ...rows,
-    "",
-    "## Technical structure",
-    "",
-    "One runner.",
-    "",
-    "## Risks",
-    "",
-    "None.",
-    "",
-  ].join("\n");
+const APPROVAL = "TEST-FIXTURE-APPROVAL: approved contract change";
+function fixture(t, text = prd()) {
+  const root = scratchDir("sasu-amend-");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const state = stateFixture(root);
+  const pinned = path.join(root, state.prd.snapshotPath);
+  fs.mkdirSync(path.dirname(pinned), { recursive: true }); fs.writeFileSync(pinned, text);
+  state.requirements = parseImplementContract(text).rows.map(sealRequirement);
+  state.prd.sha256 = sha256(text);
+  const statePath = path.join(root, "agents/runs/fixture/state.json");
+  persistState(statePath, state);
+  return { root, state, statePath, text, pinned };
 }
+const input = (text, extra = {}) => ({ issuer: "human", approval: APPROVAL, reason: "TEST-FIXTURE: change the approved contract", text, ...extra });
 
-function fixture(text = prd()) {
-  const contract = parseImplementContract(text);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-amend-"));
-  const runDir = "agents/runs/fixture";
-  fs.mkdirSync(path.join(root, runDir), { recursive: true });
-  fs.writeFileSync(path.join(root, runDir, "prd.md"), text);
-  const state = {
-    projectRoot: root,
-    runDir,
-    prdPath: "agents/prd/fixture/prd.md",
-    prd: { sha256: sha256(text), snapshotPath: `${runDir}/prd.md`, reviewProfile: "standard" },
-    rows: contract.rows.map(sealRow),
-    amendments: [],
-    suite: { sealedAt: AT, commands: [], exclusions: [], results: [] },
-  };
-  return { root, state, text };
-}
-
-// applyAmendment returns its snapshot writes instead of performing them, so
-// the caller can land them only after the state write commits (persistClose).
-// The helper stands in for that caller.
-const amend = (root, state, text, extra = {}) => {
-  const outcome = applyAmendment(
-    root,
-    state,
-    { issuer: "human", approval: TEST_APPROVAL, reason: TEST_REASON, text, ...extra },
-    AT,
-  );
-  for (const entry of outcome.derived) {
-    fs.mkdirSync(path.dirname(entry.file), { recursive: true });
-    fs.writeFileSync(entry.file, entry.text);
-  }
-  return outcome;
-};
-
-const row = (state, id) => state.rows.find((entry) => entry.id === id);
-
-function makeGreen(state, id) {
-  const entry = row(state, id);
-  entry.status = "green";
-  entry.attempts.push({ id: "A1", startedAt: AT, finishedAt: AT, exitCode: 0, outcome: "green" });
-  return entry;
-}
-
-// --- identity is per cell ---------------------------------------------------
-
-test("a table re-alignment amends nothing away", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "B1");
-  makeGreen(state, "B2");
-  const realigned = text.replace(B1, "|  B1  |  The runner executes each command once.  |  check: `node --test test/runner.test.mjs`  |  D-01  |");
-  assert.throws(() => amend(root, state, realigned), (error) => {
-    assert.ok(error instanceof AmendmentRejected);
-    assert.equal(error.check, "arguments");
-    return /nothing to amend/.test(error.message);
-  });
-  assert.equal(row(state, "B1").status, "green", "a formatter run must not cost a green");
-  assert.equal(state.amendments.length, 0);
+test("every PRD amendment and suite exclusion is human-only", (t) => {
+  const f = fixture(t);
+  for (const issuer of ["implementor", "observer"]) assert.throws(() => applyAmendment(f.root, f.state, input(prd({ count: 3 }), { issuer }), AT), /human-only/);
+  assert.throws(() => applyAmendment(f.root, f.state, input(prd({ count: 3 }), { approval: "" }), AT), /approval/);
+  assert.equal(f.state.amendments.length, 0);
+  assert.equal(fs.readFileSync(f.pinned, "utf8"), f.text);
 });
 
-test("a check-cell edit invalidates only that row; untouched evidence survives", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "B1");
-  makeGreen(state, "B2");
-  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs");
-  const { plan, record } = amend(root, state, next, { issuer: "observer" });
-
-  assert.equal(plan.scope, "check-cells");
-  assert.deepEqual(plan.checkCellChanged, ["B2"]);
-  assert.deepEqual(plan.invalidatedRows, ["B2"]);
-  assert.deepEqual(plan.unchangedRows, ["B1", "B3"]);
-  assert.equal(record.issuer, "observer");
-  assert.equal(record.scope, "check-cells");
-  assert.equal(row(state, "B1").status, "green", "B1's question did not change, so its proof stands");
-  assert.equal(row(state, "B2").status, "pending");
-  assert.equal(row(state, "B2").attempts.length, 1, "the attempt history stays readable; only the verdict is taken back");
-  assert.deepEqual(row(state, "B2").check.argv, ["node", "--test", "test/receipt-v2.test.mjs"], "the new cell is what the next check runs");
+test("amendment invalidates the whole contract and refreshes execution metadata together", (t) => {
+  const f = fixture(t);
+  const text = prd({ count: 3, profile: "high-risk", sourceIntake: "agents/interview/new/qa-log.md" });
+  const outcome = applyAmendment(f.root, f.state, input(text), AT);
+  assert.equal(f.state.prd.reviewProfile, "high-risk");
+  assert.equal(f.state.prd.sourceIntake, "agents/interview/new/qa-log.md");
+  assert.equal(f.state.prd.reviewRationale, "CLI regression fixture");
+  assert.equal(f.state.prd.sha256, sha256(text));
+  assert.deepEqual(outcome.record.addedRequirements, ["B3"]);
+  assert.equal(fs.readFileSync(f.pinned, "utf8"), f.text, "snapshot cannot change before state CAS");
+  persistClose(f.statePath, f.state, outcome.derived);
+  const loaded = loadState(f.root, { slug: "fixture" }).state;
+  assert.equal(loaded.requirements.length, 3);
+  assert.equal(fs.readFileSync(path.join(f.root, outcome.record.previousSnapshotPath), "utf8"), f.text);
+  assert.equal(fs.readFileSync(f.pinned, "utf8"), text);
 });
 
-test("a forbidden correction leaves the sealed contract and existing proof untouched", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "B1");
-  makeGreen(state, "B2");
-  const before = structuredClone(state);
-  const next = text.replace("node --test test/receipt.test.mjs", "node --test /tmp/future-receipt.test.mjs");
-  assert.notEqual(next, text, "the fixture really changes a check cell");
-  assert.throws(() => amend(root, state, next, { issuer: "observer", approval: "" }), /Check commands violate execution policy/);
-  assert.deepEqual(state, before, "refusal cannot invalidate rows or re-seal state");
-  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text);
+test("removed human provenance is closed through explicit amendment history without erasing responses", (t) => {
+  const quote = "The person confirms the visual result after implementation.";
+  const f = fixture(t, prd({ risks: quote }));
+  f.state.findings.push(humanFinding({ responses: [{ at: AT, response: "rejected", evidence: "TEST-FIXTURE: rejected visual result" }] }));
+  const result = applyAmendment(f.root, f.state, input(prd({ risks: "No human review is deferred." })), AT);
+  assert.deepEqual(result.record.closedHumanFindings, ["F1"]);
+  assert.equal(f.state.findings[0].status, "amended");
+  assert.equal(f.state.findings[0].history[0].amendmentId, result.record.id);
+  assert.equal(f.state.findings[0].responses[0].response, "rejected");
 });
 
-test("a behavior-cell edit is a scope change: the observer is refused and the human is accepted", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "B2");
-  const next = text.replace("The receipt names every parked row.", "The receipt names every parked row and its reason.");
-  assert.throws(() => amend(root, state, next, { issuer: "observer" }), (error) => {
-    assert.ok(error instanceof AmendmentRejected);
-    assert.equal(error.check, "authority");
-    return /changes what the user observes \(B2 behavior cell\)/.test(error.message);
-  });
-  assert.equal(state.amendments.length, 0, "a refused amendment reaches no ledger");
-  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text, "and seals no snapshot");
-
-  const { plan, record } = amend(root, state, next, { issuer: "human" });
-  assert.equal(plan.scope, "behaviors");
-  assert.deepEqual(plan.behaviorChanged, ["B2"]);
-  assert.equal(record.issuer, "human");
-  assert.equal(row(state, "B2").status, "pending");
-  assert.match(row(state, "B2").behavior, /and its reason/);
+test("suite exclusion keeps its observed failure and validates the complete exclusion request first", (t) => {
+  const f = fixture(t);
+  f.state.suite.commands = [{ id: "S1", command: "npm test", argv: ["npm", "test"], cwd: "." }];
+  f.state.suite.results = [{ commandId: "S1", attemptId: "V1", status: "RED", exitCode: 1, mutatedTree: false, startedAt: AT, finishedAt: AT, durationMs: 1, logPath: "agents/fail.log" }];
+  assert.throws(() => applyAmendment(f.root, f.state, input(f.text, { excludeSuite: ["S1", "S9"] }), AT), /unknown suite/);
+  assert.equal(f.state.suite.exclusions.length, 0);
+  const result = applyAmendment(f.root, f.state, input(f.text, { excludeSuite: ["S1"] }), AT);
+  assert.equal(result.record.excludedSuiteCommands[0].priorResult, "RED");
+  assert.equal(f.state.suite.results[0].status, "RED");
+  assert.equal(f.state.suite.exclusions[0].approval, APPROVAL);
 });
 
-test("moving Non-goals or a Decisions row is a scope change even when no Behaviors row moved", () => {
-  const { root, state, text } = fixture();
-  const nonGoals = text.replace("Task parallelism.", "Task parallelism and retries.");
-  assert.throws(() => amend(root, state, nonGoals, { issuer: "observer" }), /\(Non-goals\)/);
-  const decisions = text.replace("two executors disagreed", "two executors disagreed on cwd");
-  assert.throws(() => amend(root, state, decisions, { issuer: "observer" }), /\(Decisions\)/);
-  const { plan } = amend(root, state, decisions, { issuer: "human" });
-  assert.equal(plan.scope, "behaviors");
-  assert.deepEqual(plan.scopeSectionsChanged, ["Decisions"]);
-  assert.deepEqual(plan.invalidatedRows, [], "a Decisions edit changes the reason, not the proof already filed against each row");
-});
-
-// --- who may issue ----------------------------------------------------------
-
-test("the implementor may not amend the PRD it is being marked on", () => {
-  const { root, state, text } = fixture();
-  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
-  assert.throws(() => amend(root, state, next, { issuer: "implementor" }), (error) => {
-    assert.equal(error.check, "authority");
-    return /implementor may not amend/.test(error.message);
-  });
-  assert.equal(state.amendments.length, 0);
-});
-
-test("an amendment without an approval quote or without a reason is refused", () => {
-  const { root, state, text } = fixture();
-  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
-  assert.throws(() => amend(root, state, next, { approval: "  " }), (error) => {
-    assert.ok(error instanceof AmendmentRejected);
-    assert.equal(error.check, "arguments");
-    return /requires --approval/.test(error.message);
-  });
-  assert.throws(() => amend(root, state, next, { reason: "" }), /requires --reason/);
-  assert.equal(state.amendments.length, 0);
-  assert.equal(fs.readFileSync(path.join(root, state.runDir, "prd.md"), "utf8"), text);
-});
-
-test("a finished failed check does not prevent correcting a different check cell", () => {
-  const { root, state, text } = fixture();
-  const failing = row(state, "B1");
-  failing.status = "fail";
-  failing.consecutiveFailures = 1;
-  failing.attempts.push({ id: "A1", startedAt: AT, finishedAt: AT, exitCode: 1, outcome: "failed" });
-  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/other.test.mjs");
-  assert.doesNotThrow(() => amend(root, state, next, { issuer: "observer", approval: "" }));
-  assert.equal(row(state, "B1").status, "fail", "the unrelated failure remains unproved");
-  assert.equal(state.amendments[0].approval, null);
-});
-
-test("check-cell authority cannot carry changes to the goal, structure, risks or metadata", () => {
-  for (const [before, after, section] of [
-    ["The thing works.", "The scope expands.", "Goal"],
-    ["One runner.", "Two runners.", "Technical structure"],
-    ["None.", "Data may be lost.", "Risks"],
-    ['status: "ready"', 'status: "draft"', "frontmatter"],
-  ]) {
-    const { root, state, text } = fixture();
-    const changed = text.replace(before, after).replace("test/receipt.test.mjs", "test/new.test.mjs");
-    assert.throws(() => amend(root, state, changed, { issuer: "observer", approval: "" }), (error) => {
-      assert.equal(error.check, "authority");
-      return error.message.includes(section);
-    });
-    assert.equal(state.amendments.length, 0);
-  }
-});
-
-test("a human frontmatter amendment refreshes the execution metadata mirrored in state", () => {
-  const { root, state, text } = fixture();
-  const next = text.replace(
-    'status: "ready"',
-    'status: "draft"\nreview_profile: "high-risk"\nreview_rationale: "security-sensitive change"\nsource_intake: "agents/interview/fixture/qa-log.md"',
-  );
-
-  amend(root, state, next);
-
-  assert.equal(state.prd.status, "draft");
-  assert.equal(state.prd.reviewProfile, "high-risk");
-  assert.equal(state.prd.reviewRationale, "security-sensitive change");
-  assert.equal(state.prd.sourceIntake, "agents/interview/fixture/qa-log.md");
-});
-
-// --- sealing, history, added and removed rows, unparking --------------------
-
-test("the new snapshot is sealed and the one it replaced is archived distinguishably", () => {
-  const { root, state, text } = fixture();
-  const next = text.replace("node --test test/runner.test.mjs", "node --test test/runner-v2.test.mjs");
-  const { record } = amend(root, state, next);
-
-  const pinned = fs.readFileSync(path.join(root, record.snapshotPath), "utf8");
-  const superseded = fs.readFileSync(path.join(root, record.previousSnapshotPath), "utf8");
-  assert.equal(pinned, next, "the pinned snapshot is now the amended text");
-  assert.equal(superseded, text, "and the text it replaced is recoverable");
-  assert.equal(record.snapshotPath, `${state.runDir}/prd.md`, "the pinned path is stable so every reader keeps resolving it");
-  assert.equal(state.prd.sha256, sha256(next));
-  assert.equal(record.prdSha256, sha256(next));
-  assert.equal(record.approval, TEST_APPROVAL);
-  assert.equal(record.suiteSnapshotUpdated, false);
-});
-
-test("the history is append-only with monotonic ids and never rewritten", () => {
-  const { root, state, text } = fixture();
-  const first = text.replace("node --test test/runner.test.mjs", "node --test test/runner-v2.test.mjs");
-  amend(root, state, first);
-  const frozen = JSON.parse(JSON.stringify(state.amendments[0]));
-  const second = first.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs");
-  amend(root, state, second);
-
-  assert.deepEqual(state.amendments.map((entry) => entry.id), [1, 2]);
-  assert.deepEqual(state.amendments[0], frozen, "an earlier amendment is not touched by a later one");
-  assert.notEqual(state.amendments[0].previousSnapshotPath, state.amendments[1].previousSnapshotPath);
-  assert.equal(fs.readFileSync(path.join(root, state.amendments[0].previousSnapshotPath), "utf8"), text);
-});
-
-test("an added row joins unproven, a removed row leaves the ledger, and both are human-only", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "B1");
-  const added = text.replace(B3, `${B3}\n| B4 | The waiter reports its exit reason. | human: the operator says the reason reads well | D-01 |`);
-  assert.throws(() => amend(root, state, added, { issuer: "observer" }), /\(\+B4\)/);
-  const { plan } = amend(root, state, added);
-  assert.deepEqual(plan.addedRows, ["B4"]);
-  assert.deepEqual(plan.invalidatedRows, []);
-  assert.equal(row(state, "B4").status, "OPEN", "a human: row starts OPEN");
-  assert.equal(row(state, "B1").status, "green", "adding a question does not un-answer the others");
-
-  const removed = added.replace(`${B2}\n`, "");
-  assert.throws(() => amend(root, state, removed, { issuer: "observer" }), /\(-B2\)/);
-  const outcome = amend(root, state, removed);
-  assert.deepEqual(outcome.plan.removedRows, ["B2"]);
-  assert.deepEqual(state.rows.map((entry) => entry.id), ["B1", "B3", "B4"]);
-});
-
-test("a parked row whose cell changed is unparked; one left alone stays parked", () => {
-  const { root, state, text } = fixture();
-  for (const id of ["B1", "B2"]) {
-    const entry = row(state, id);
-    entry.status = "parked";
-    entry.parks.push({ parkedAt: AT, approval: TEST_APPROVAL, reason: TEST_REASON, evidence: null, resumedAt: null });
-  }
-  const next = text.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs");
-  const { plan } = amend(root, state, next, { issuer: "observer" });
-
-  assert.deepEqual(plan.unparkedRows, ["B2"]);
-  assert.equal(row(state, "B2").status, "pending");
-  assert.equal(row(state, "B2").parks.at(-1).resumedAt, AT);
-  assert.equal(row(state, "B1").status, "parked", "a park survives an amendment that did not touch its row");
-  assert.equal(row(state, "B1").parks.at(-1).resumedAt, null);
-});
-
-test("a row that changes kind starts its ledger over", () => {
-  const { root, state, text } = fixture();
-  makeGreen(state, "B2");
-  const next = text.replace("check: `node --test test/receipt.test.mjs`", "judge: the receipt is read by the judge");
-  const { plan } = amend(root, state, next);
-  assert.deepEqual(plan.invalidatedRows, ["B2"]);
-  assert.equal(row(state, "B2").check.kind, "judge");
-  assert.deepEqual(row(state, "B2").attempts, [], "an exit code proves nothing about a judge: question");
-  assert.equal(row(state, "B2").status, "pending");
-});
-
-test("planAmendment reports without writing anything", () => {
-  const { state, text } = fixture();
-  makeGreen(state, "B1");
-  const current = parseImplementContract(text);
-  const next = parseImplementContract(text.replace("node --test test/receipt.test.mjs", "node --test test/receipt-v2.test.mjs"));
-  const plan = planAmendment(state, current, next);
-  assert.deepEqual(plan.invalidatedRows, ["B2"]);
-  assert.equal(row(state, "B1").status, "green");
-  assert.equal(state.amendments.length, 0);
+test("amendment planning is read-only and identifies actual static requirement changes", (t) => {
+  const f = fixture(t);
+  const before = JSON.stringify(f.state);
+  const next = prd({ count: 1 }).replace("preserves value 1", "preserves a changed value");
+  const plan = planAmendment(f.state, parseImplementContract(f.text), parseImplementContract(next));
+  assert.deepEqual(plan.changedRequirements, ["B1"]);
+  assert.deepEqual(plan.removedRequirements, ["B2"]);
+  assert.equal(JSON.stringify(f.state), before);
 });

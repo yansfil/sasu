@@ -92,11 +92,18 @@ function contractFiles(skillsRoot, name, runtime) {
   return files;
 }
 
-function transformContractFile(runtime, relative, text) {
+function transformContractFile(runtime, relative, text, options = {}) {
   assertRuntime(runtime);
   const substituted = relative === "SKILL.md"
     || (relative.startsWith("references/") && relative.endsWith(".md"));
-  return runtime === "claude" && substituted ? substituteForClaude(text) : text;
+  const transformed = runtime === "claude" && substituted ? substituteForClaude(text) : text;
+  if (!substituted || !options.skillsRoot) return transformed;
+  // Bind only this package's siblings: a staged candidate must use its own
+  // scripts, while external tools such as Herdr stay at their installed paths.
+  const skillsRoot = path.resolve(options.skillsRoot);
+  return SKILL_NAMES.reduce((content, name) => content
+    .split(`~/.${runtime}/skills/${name}/`)
+    .join(`${skillsRoot}/${name}/`), transformed);
 }
 
 module.exports = { SKILL_NAMES, contractFiles, runtimeIncludesEntry, transformContractFile, treeFiles };

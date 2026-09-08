@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractJsonObject, validateGapVerdict, validateSemanticVerdict } from "../../dist/judge/types.js";
+import { extractJsonObject, validateGapVerdict, validateReviewResult } from "../../dist/judge/types.js";
 
 test("extractJsonObject parses direct JSON", () => {
   assert.deepEqual(extractJsonObject('{"a":1}'), { a: 1 });
@@ -50,63 +50,34 @@ test("validateGapVerdict rejects numeric-score-shaped output", () => {
   assert.equal(typeof validateGapVerdict({ verdict: 0.19, findings: [] }), "string");
 });
 
-test("validateSemanticVerdict requires every expected criterion id", () => {
-  const result = validateSemanticVerdict(
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/x.ts hunk" }] },
-    ["AC1", "AC2"],
-  );
-  assert.match(String(result), /AC2/);
+const context = { requirementRefs: ["B1", "D-01"], evidenceRefs: ["B1", "src/app.ts"], priorFindingIds: [] };
+const result = (findings = [], priorDispositions = []) => ({ summary: "Assessed full contract", findings, priorDispositions });
+const defect = { kind: "defect", requirementRefs: ["B1"], problem: "Save button has no event handler", evidenceRefs: ["src/app.ts"], nextAction: "Connect save button" };
+
+test("full-contract review uses exception findings without per-requirement PASS records", () => {
+  assert.deepEqual(validateReviewResult(result(), context), result());
+  assert.deepEqual(validateReviewResult(result([defect]), context), result([defect]));
+  assert.equal(typeof validateReviewResult({ verdict: "PASS", criteria: [] }, context), "string");
 });
 
-// An approval that cites nothing is a verification failure, not a pass - the
-// runner's retry loop gets one chance to make the judge cite its sources.
-test("validateSemanticVerdict rejects a PASS criterion with empty evidence", () => {
-  const result = validateSemanticVerdict(
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok" }] },
-    ["AC1"],
-  );
-  assert.match(String(result), /empty evidence/);
-  const blank = validateSemanticVerdict(
-    { verdict: "PASS", criteria: [{ id: "AC1", verdict: "PASS", reason: "ok", evidence: "   " }] },
-    ["AC1"],
-  );
-  assert.match(String(blank), /empty evidence/);
+test("unknown references and evidence-free defects fail closed", () => {
+  for (const bad of [{ ...defect, requirementRefs: ["B2"] }, { ...defect, evidenceRefs: ["secret"] }, { ...defect, evidenceRefs: [] }]) assert.equal(typeof validateReviewResult(result([bad]), context), "string");
+  assert.equal(typeof validateReviewResult(result([{ ...defect, evidenceRefs: ["B1"] }]), context), "object", "absent evidence can cite the contract");
 });
 
-test("validateSemanticVerdict lets a FAIL criterion stand on absence (no evidence to cite)", () => {
-  const result = validateSemanticVerdict(
-    { verdict: "FAIL", criteria: [{ id: "AC1", verdict: "FAIL", reason: "nothing in the diff implements it" }] },
-    ["AC1"],
-  );
-  assert.equal(typeof result, "object");
-  assert.equal(result.criteria[0].evidence, "");
+test("prior open issues require explicit non-contradictory dispositions", () => {
+  const previous = { ...context, priorFindingIds: ["F1"] };
+  assert.match(validateReviewResult(result(), previous), /missing.*F1/);
+  const resolved = { findingId: "F1", status: "resolved", reason: "Button now invokes save", evidenceRefs: ["src/app.ts"] };
+  assert.equal(typeof validateReviewResult(result([], [resolved]), previous), "object");
+  assert.match(validateReviewResult(result([{ ...defect, priorFindingId: "F1" }], [resolved]), previous), /still returned as open/);
 });
 
-test("validateSemanticVerdict rejects PASS verdict with FAIL criteria", () => {
-  const result = validateSemanticVerdict(
-    {
-      verdict: "PASS",
-      criteria: [
-        { id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/x.ts" },
-        { id: "AC2", verdict: "FAIL", reason: "missing" },
-      ],
-    },
-    ["AC1", "AC2"],
-  );
-  assert.equal(typeof result, "string");
-});
-
-test("validateSemanticVerdict accepts a consistent FAIL", () => {
-  const result = validateSemanticVerdict(
-    {
-      verdict: "FAIL",
-      criteria: [
-        { id: "AC1", verdict: "PASS", reason: "ok", evidence: "src/x.ts" },
-        { id: "AC2", verdict: "FAIL", reason: "not in diff" },
-      ],
-    },
-    ["AC1", "AC2"],
-  );
-  assert.equal(typeof result, "object");
-  assert.equal(result.verdict, "FAIL");
+test("human confirmation needs source authority and exact quotation", () => {
+  const human = { ...defect, kind: "human-confirmation", human: { sourceRef: "Risks", quote: "Owner checks visual fit later", timing: "post-completion" } };
+  const inputs = { ...context, humanSources: { Risks: "Owner checks visual fit later." } };
+  assert.equal(typeof validateReviewResult(result([human]), inputs), "object");
+  assert.equal(typeof validateReviewResult(result([{ ...human, human: { ...human.human, quote: "approved" } }]), inputs), "string");
+  assert.equal(typeof validateReviewResult(result([{ ...human, human: { ...human.human, sourceRef: "toString" } }]), inputs), "string");
+  assert.equal(typeof validateReviewResult(result([{ ...defect, human: human.human }]), inputs), "string");
 });

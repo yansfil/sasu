@@ -46,7 +46,7 @@ Store its path and hash, and cite stable session event identifiers in qualitativ
 ```text
 prepare a fresh worktree and reserve a run ID
   -> run the approved PRD through $implement in the coordinator session
-  -> wait for receipt.json, including honest partial or blocked receipts
+  -> wait for receipt.json, including permitted pending-human or honest blocked receipts
   -> locate the raw runtime transcript
   -> fresh read-only evaluator produces qualitative.json
   -> deterministic reporter produces report.json
@@ -55,7 +55,7 @@ prepare a fresh worktree and reserve a run ID
 
 ### 1. Validate The Case
 
-Require `benchmark.json` using `sasu.benchmark-case.v2`.
+Require `benchmark.json` using `sasu.benchmark-case.v4`.
 Require an approved PRD, expected terminal statuses, required and forbidden stages, `falseCompleteAllowed: false`, and the fixed evaluator models.
 Before reserving a run or creating a worktree, `prepare-run` requires `status: ready`, `human_approval: approved`, and a passing result from the current harness's `sasu prd readiness` command.
 An obsolete or malformed fixed PRD therefore fails preparation without leaving a runnable benchmark environment.
@@ -82,7 +82,9 @@ node ~/.codex/skills/benchmark-implement/scripts/benchmark_report.js prepare-run
 Use only the returned worktree, PRD path, run directory, gates path, result directory, and run ID for the remainder of that invocation.
 The command atomically reserves the next run ID, creates a detached disposable worktree from the contract's base ref, proves the declared product path and the implement run namespaces are absent, copies the fixed case inputs, and writes `run.json` with the initial snapshot.
 If preparation fails, stop and report the recorded `prepare-failed` result.
-Never fall back to the caller's worktree, an existing `agents/runs/**` (or legacy `agents/implement/**`) directory, or an earlier report.
+Never fall back to the caller's worktree, an existing `agents/runs/**` directory, or an earlier report.
+Prepared case/PRD copies are pre-existing input bytes at start, not run-owned product changes.
+Preserve their `pre-existing` dirty attribution so the implement baseline matches the prepared source binding.
 Existing reports may be read only when the user explicitly asks to analyze or compare existing runs.
 
 When coordinates differ, still emit both reports but let `comparison.json` mark them non-comparable.
@@ -95,10 +97,10 @@ The coordinator is the implementation executor for this benchmark.
 Do not spawn an implementation worker session and do not delegate implementation through a subagent.
 This preserves the coordinator's approved-PRD context while the prepared worktree still isolates the source tree and run records.
 Bind the implement run to the current session ID when initializing, and record the coordinator's actual runtime and model as the executor coordinates.
-Let that skill own init, task execution, verification, review, finalization, and its receipt.
+Let that skill own start, autonomous implementation, actual QA, required suites, comprehensive review, finalization, and its receipt.
 Do not reproduce or bypass implement commands in this skill.
-Treat `complete`, `partial`, and `blocked` receipts as analyzable outcomes.
-Do not call a partial or blocked run successful unless its case contract expected that terminal state.
+Treat `complete`, `complete-pending-human`, and `blocked` receipts as analyzable outcomes.
+Do not call a pending-human or blocked run successful unless its case contract expected that terminal state.
 
 The implementation clock ends at receipt creation.
 Evaluation time starts afterward and must not be added to implementation wall-clock time.
@@ -153,11 +155,14 @@ node ~/.codex/skills/benchmark-implement/scripts/benchmark_report.js report \
 ```
 
 The reporter first proves that the receipt belongs to the prepared worktree and initial snapshot.
-It then calculates statuses, stages, timing, retry counts, repeated identical-diff judgments, hashes, and comparability coordinates.
+It then calculates statuses, stages, timing, retry counts, repeated identical-input reviews, hashes, and comparability coordinates.
 The evaluator judges only process behavior such as flow adherence, recovery, review efficiency, evidence honesty, and session efficiency.
 
 Do not score UI taste, entertainment value, code elegance, visual polish, or general product quality.
-Contract satisfaction remains a harness fact, not an evaluator taste score.
+The harness records the comprehensive reviewer's semantic contract judgment; it does not mechanically guarantee zero omissions.
+For workflow-quality pilots, separately evaluate planted middle/end omissions, disconnected entry points, and missing data-failure handling against fixed expectations with a real backend.
+Do not claim fixture success proves that omission detection worked live.
+This pilot is evaluation work, not an extra mandatory workflow stage for users.
 
 ### 6. Compare Runs
 

@@ -125,35 +125,30 @@ test("prd-section-missing names the one absent six-section title", () => {
   assert.match(renamed.findings.find((f) => f.rule === "prd-section-missing").missing, /## Technical structure$/);
 });
 
-// prd-behavior-row is the one row rule (R11): every cell-grammar defect
-// fires it at the row's line, and a command in the behavior cell is the
-// defect it was added for.
-test("prd-behavior-row fires on each cell-grammar defect at the row's line", () => {
+// The shared reader owns cell grammar; prelint leaves behavior meaning to review.
+test("prd-behavior-row reports structural defects without judging proof methods", () => {
   const clean = fixture("prd-clean.md");
-  const b1 = "| B1 | the widget renders | check: `node --test test/widget.test.mjs` | - |";
-  const cases = [
-    ["command in the behavior cell", "| B1 | check: `node --test x.mjs` the widget renders | judge: the diff | - |", /behavior cell carries a check:\/judge:\/human: method/],
-    ["no prefix", "| B1 | the widget renders | verify by hand | - |", /must start with one of check:, judge:, human:/],
-    ["empty payload", "| B1 | the widget renders | human: | - |", /human: cell has no payload/],
-    ["shell composition", "| B1 | the widget renders | check: `npm test && npm run build` | - |", /one command without shell composition/],
-    ["bad id", "| AC1 | the widget renders | check: `npm test` | - |", /row id must be B<n>/],
-    ["cell count", "| B1 | the widget renders | check: `npm test` |", /has 3 cell\(s\)/],
-    // The duplicate is reported on the second occurrence: that is the row to fix.
-    ["duplicate id", "| B2 | the widget renders | check: `npm test` | - |", /duplicate row id B2/, 29],
-  ];
-  for (const [label, row, pattern, line = 28] of cases) {
+  const b1 = "| B1 | the widget renders | - |";
+  for (const [row, pattern] of [
+    ["| B1 | the widget renders | check: run | - |", /retired four-column/],
+    ["| AC1 | the widget renders | - |", /row id must be B<n>/],
+    ["| B1 | | - |", /behavior cell is empty/],
+    ["| B1 | the widget renders |", /3 columns/],
+    ["| B2 | the widget renders | - |", /duplicate row id B2/],
+  ]) {
     const result = prelintPrd(clean.replace(b1, row));
-    assert.equal(result.ok, false, label);
-    assert.ok(result.findings.every((f) => f.rule === "prd-behavior-row"), `${label}: ${result.findings.map((f) => f.rule).join(",")}`);
-    assert.ok(result.findings.some((f) => pattern.test(f.missing) && f.line === line), `${label}: ${JSON.stringify(result.findings)}`);
+    assert.equal(result.ok, false);
+    assert.ok(result.findings.some(f => pattern.test(f.missing)), JSON.stringify(result.findings));
   }
-  const noRows = prelintPrd(clean.replace(/\| B[123] \|.*\n/g, ""));
-  assert.deepEqual(noRows.findings.map((f) => f.rule), ["prd-behavior-row"]);
+  const prose = prelintPrd(clean.replace("the widget renders", "the literal check: prefix is rendered"));
+  assert.equal(prose.ok, true, "behavior prose is not interpreted as a proof method");
 });
 
-test("a quoted argument is not shell composition in a check: cell", () => {
-  const result = prelintPrd(fixture("prd-clean.md").replace("check: `node --test test/widget.test.mjs`", "check: `node --test --test-name-pattern \"a && b\" test/widget.test.mjs`"));
-  assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2));
+test("behavior decision references must resolve in the PRD Decisions table", () => {
+  const prd = fixture("prd-clean.md").replace("| B1 | the widget renders | - |", "| B1 | the widget renders | D-99 |");
+  const result = prelintPrd(prd);
+  assert.equal(result.ok, false);
+  assert.ok(result.findings.some(f => f.rule === "prd-decision-reference" && /B1: cites D-99/.test(f.missing)));
 });
 
 test("ID numbering gaps alone are NOT flagged (continuity is an explicit non-goal)", () => {

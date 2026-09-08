@@ -291,12 +291,9 @@ function tableValue(headers, cells, aliases) {
  */
 const PRD_SECTIONS = Object.freeze(["Goal", "Non-goals", "Decisions", "Behaviors", "Technical structure", "Risks"]);
 
-/** The three ways a Behaviors row is settled; the cell's prefix chooses (D-06). */
-const CHECK_KINDS = Object.freeze(["check", "judge", "human"]);
-
 /**
  * One command, no shell composition: the rule `agents/config.json`
- * verify.commands and a `check:` cell share (R2). Both are run as argv
+ * verify.commands uses. Required implement suites run as argv
  * without a shell, so `a && b` would arrive as literal tokens - measured on
  * the gate-loop run (2026-09-03/06): `&&` in a config command made node
  * --test open "cli" as a test file, two RED results at 67 s each and a human
@@ -309,32 +306,6 @@ function commandCompositionDefect(command) {
     return "must be one command without shell composition, redirection, or substitution (it runs as argv, without a shell)";
   }
   return null;
-}
-
-/**
- * A check cell is `<kind>: <payload>`. Nothing else is read from it: for
- * `check:` the payload is the exact command the harness executes, for
- * `judge:` it names the evidence shape the acceptance judge receives, for
- * `human:` it says what the person confirms. A payload written as one
- * backtick code span (the natural Markdown for a command) is unwrapped so
- * the cell reads as the author sees it rendered.
- */
-function parseCheckCell(text) {
-  const raw = String(text || "").trim();
-  const match = raw.match(/^([a-z]+):\s*([\s\S]*)$/);
-  if (!match || !CHECK_KINDS.includes(match[1])) {
-    return { kind: null, payload: null, defect: `check cell must start with one of ${CHECK_KINDS.map((kind) => `${kind}:`).join(", ")}` };
-  }
-  const kind = match[1];
-  let payload = match[2].trim();
-  const span = payload.match(/^`([^`]+)`$/);
-  if (span) payload = span[1].trim();
-  if (payload === "") return { kind, payload: null, defect: `${kind}: cell has no payload after the prefix` };
-  if (kind === "check") {
-    const defect = commandCompositionDefect(payload);
-    if (defect !== null) return { kind, payload, defect: `check: command ${defect}` };
-  }
-  return { kind, payload, defect: null };
 }
 
 /** `[start, end)` line indexes of one `## <title>` section in the whole document. */
@@ -381,17 +352,15 @@ function behaviorRowId(cell) {
   return /^B[1-9]\d*$/.test(compact) ? compact : null;
 }
 
-const CHECK_PREFIX_IN_PROSE = /(?:^|\s)(?:check|judge|human):/i;
-
 /**
- * Read the Behaviors table: `# | 사용자가 관찰하는 행동 | 검사 방법 | 결정`.
+ * Read the Behaviors table: `# | 사용자가 관찰하는 행동 | 결정`.
  *
  * Every row comes back, valid or not, with its defects listed instead of
  * being dropped: prelint turns each defect into a `prd-behavior-row` finding
  * at the row's line, and the contract parser refuses the document while any
  * remain. One reader, two consumers, so a row cannot lint clean and then be
  * unreadable at start (R2, R11). Structure only is read - the id shape, the
- * cell count, the check prefix grammar - never the prose (AGENTS.md 11).
+ * cell count, the decision references - never the prose (AGENTS.md 11).
  */
 function parseBehaviorRows(markdown) {
   const lines = String(markdown || "").split(/\r?\n/);
@@ -403,18 +372,13 @@ function parseBehaviorRows(markdown) {
     const defects = [];
     const id = behaviorRowId(row.cells[0]);
     if (id === null) defects.push(`row id must be B<n>, got "${row.cells[0] ?? ""}"`);
-    if (row.cells.length !== 4) defects.push(`row has ${row.cells.length} cell(s); the Behaviors table has 4 columns (# | 행동 | 검사 방법 | 결정)`);
+    if (table.header.length === 4 || row.cells.length === 4) defects.push("retired four-column PRD contract; expected 3 columns (# | 행동 | 결정). Last supporting commit: 488d3cc7d6e99742e7f68a1680fcb101710c8e20. Rewrite and approve the three-column PRD.");
+    else if (table.header.length !== 3 || row.cells.length !== 3) defects.push(`row has ${row.cells.length} cell(s); the Behaviors table has 3 columns (# | 행동 | 결정)`);
     const behavior = String(row.cells[1] ?? "").trim();
     if (behavior === "") defects.push("behavior cell is empty");
-    // A command belongs in the check cell and nowhere else (R11): a
-    // `check:`/`judge:`/`human:` token in the behavior cell is the structural
-    // sign that a method leaked into the observation.
-    if (CHECK_PREFIX_IN_PROSE.test(behavior)) defects.push("behavior cell carries a check:/judge:/human: method; keep the method in the 검사 방법 cell");
-    const check = parseCheckCell(row.cells[2] ?? "");
-    if (check.defect !== null) defects.push(check.defect);
-    const decisionCell = String(row.cells[3] ?? "").trim();
+    const decisionCell = String(row.cells[2] ?? "").trim();
     const decisionIds = uniqueMatches(decisionCell, /\bD-\d+\b/g);
-    return { id, behavior, check: { kind: check.kind, payload: check.payload }, decisionCell, decisionIds, line: row.line, defects };
+    return { id, behavior, decisionIds, line: row.line, defects };
   });
   const seen = new Set();
   for (const row of rows) {
@@ -477,9 +441,7 @@ module.exports = {
   headerIndex,
   tableValue,
   PRD_SECTIONS,
-  CHECK_KINDS,
   commandCompositionDefect,
-  parseCheckCell,
   parseBehaviorRows,
   parseDecisionRows,
   missingPrdSections,

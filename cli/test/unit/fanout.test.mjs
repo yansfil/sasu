@@ -122,7 +122,7 @@ test("lane prompts: gap-audit lane prompt scopes the judge and keeps the JSON co
 
 test("lane prompts: spec lane prompt narrows to a single axis", () => {
   const prompt = specGatePrompt("prd body", "qa body", [], { lane: SPEC_LANES[1], laneCount: SPEC_LANES.length });
-  assert.match(prompt, /exactly ONE axis - TESTABILITY AND VERIFICATION INTENT/);
+  assert.match(prompt, /exactly ONE axis - REQUIREMENT CLARITY AND OBSERVABILITY/);
   assert.doesNotMatch(prompt, /\(a\) FIDELITY/);
 });
 
@@ -131,8 +131,8 @@ test("lane prompts: spec lane prompt narrows to a single axis", () => {
 // its semantic residue and absorb its re-run finding routing.
 test("spec lanes: two lanes remain and old verification/coverage findings route to testability", () => {
   assert.deepEqual(SPEC_LANES.map((lane) => lane.id), ["fidelity", "testability"]);
-  assert.match(SPEC_LANES[1].scope, /pass intent/i);
-  assert.match(SPEC_LANES[1].scope, /human-verification or non-goal disposition/i);
+  assert.match(SPEC_LANES[1].scope, /observable user outcome/i);
+  assert.match(SPEC_LANES[1].scope, /Do not prescribe a proof method per requirement/i);
   const routed = routePriorFindings(
     [
       { severity: "P1", area: "verification", missing: "V2 pass intent unobservable" },

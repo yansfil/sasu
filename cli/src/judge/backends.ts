@@ -24,7 +24,14 @@ export interface BackendRunResult {
   };
 }
 
+export interface ExecutionLifecycle {
+  prepare(): void;
+  spawned(pid: number): void;
+  settled(): void;
+}
+
 export interface BackendRunOptions {
+  execution?: ExecutionLifecycle;
   model: string | null;
   timeoutMs: number;
   /** Telemetry, plus the stub backend's lane selector. */
@@ -133,8 +140,10 @@ export function processSpawnOptions(options: { env?: NodeJS.ProcessEnv; cwd?: st
   env: NodeJS.ProcessEnv;
   stdio: ["pipe", "pipe", "pipe"];
   cwd?: string;
+  detached: boolean;
 } {
   return {
+    detached: process.platform !== "win32",
     env: options.env ?? process.env,
     stdio: ["pipe", "pipe", "pipe"],
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
@@ -193,10 +202,14 @@ function runProcess(
      * already void.
      */
     abortOnLine?: (line: string) => ActivityProblem | null;
+    execution?: ExecutionLifecycle;
   },
 ): Promise<ProcessOutcome> {
-  return new Promise((resolve) => {
-    const child = spawn(binary, args, processSpawnOptions(options));
+  return new Promise((resolve, reject) => {
+    options.execution?.prepare();
+    let child: ReturnType<typeof spawn>;
+    try { child = spawn(binary, args, processSpawnOptions(options)); }
+    catch (error) { options.execution?.settled(); reject(error); return; }
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -206,24 +219,72 @@ function runProcess(
     // SIGTERM is a request the child may trap; both kill paths (timeout and
     // audit abort) escalate to SIGKILL after a short grace so a judge binary
     // with a graceful-shutdown handler cannot hold the lane open forever.
+    let hardKill: NodeJS.Timeout | undefined;
+    let registrationError: unknown;
+    let signalError: unknown;
+    const killGroup = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
+      try {
+        if (process.platform === "win32") child.kill(signal);
+        else process.kill(-child.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") signalError ??= error;
+      }
+    };
     const terminate = (): void => {
-      child.kill("SIGTERM");
-      const hardKill = setTimeout(() => child.kill("SIGKILL"), 2000);
-      hardKill.unref?.();
+      killGroup("SIGTERM");
+      hardKill ??= setTimeout(() => killGroup("SIGKILL"), 250);
     };
     const timer = setTimeout(() => {
       timedOut = true;
       terminate();
     }, options.timeoutMs);
     const MAX_PENDING_LINE_CHARS = 1024 * 1024;
-    const settle = (outcome: ProcessOutcome) => {
+    const settle = async (outcome: ProcessOutcome): Promise<void> => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (hardKill !== undefined) clearTimeout(hardKill);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      // A parent exit is not descendant exit. This is the judge counterpart
+      // of the suite's d2aef7e process-group cleanup, including drain bounds.
+      killGroup("SIGKILL");
+      let groupExited = process.platform === "win32" || child.pid === undefined;
+      if (process.platform !== "win32" && child.pid !== undefined) {
+        const deadline = Date.now() + 1000;
+        for (;;) {
+          try { process.kill(-child.pid, 0); }
+          catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === "ESRCH") {
+              groupExited = true;
+              // On macOS a just-exiting group returned EPERM to SIGTERM,
+              // then ESRCH to both SIGKILL and this probe in the same ms
+              // (2026-09-08 audit regression). Only confirmed absence can
+              // resolve that signal uncertainty; callback errors still fail.
+              signalError = undefined;
+              break;
+            }
+            if (code !== "EPERM") { registrationError ??= error; break; }
+          }
+          if (Date.now() >= deadline) {
+            signalError ??= new Error(`judge process group ${child.pid} remained after cleanup`);
+            break;
+          }
+          await new Promise((done) => setTimeout(done, 20));
+        }
+      }
+      if (groupExited) {
+        try { options.execution?.settled(); }
+        catch (error) { registrationError ??= error; }
+      }
+      if (registrationError !== undefined) { reject(registrationError); return; }
+      if (signalError !== undefined) { reject(signalError); return; }
       resolve(aborted === undefined ? outcome : { ...outcome, aborted });
     };
     child.on("error", (error) => settle({ error, stdout, stderr }));
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       if (stdout.length < MAX_OUTPUT_CHARS) stdout += text;
       const watch = options.abortOnLine;
@@ -255,7 +316,7 @@ function runProcess(
         terminate();
       }
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr!.on("data", (chunk: Buffer) => {
       if (stderr.length < MAX_OUTPUT_CHARS) stderr += chunk.toString("utf8");
     });
     child.on("close", (code, signal) => {
@@ -271,8 +332,13 @@ function runProcess(
       );
       grace.unref?.();
     });
-    if (options.input !== undefined) child.stdin.write(options.input);
-    child.stdin.end();
+    if (child.pid !== undefined) {
+      try { options.execution?.spawned(child.pid); }
+      catch (error) { registrationError = error; terminate(); }
+    }
+    child.stdin!.on("error", () => { /* Early exit may close stdin before the prompt drains. */ });
+    if (options.input !== undefined) child.stdin!.write(options.input);
+    child.stdin!.end();
   });
 }
 
@@ -312,6 +378,7 @@ export class ClaudeBackend implements JudgeBackend {
       const result = await runProcess(this.binary, args, {
         input: prompt,
         timeoutMs,
+        ...(options.execution !== undefined ? { execution: options.execution } : {}),
         env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
         ...(evidenceRoot !== undefined ? { cwd: evidenceRoot } : cwd !== undefined ? { cwd } : {}),
       });
@@ -1079,6 +1146,7 @@ export class CodexBackend implements JudgeBackend {
       const result = await runProcess(binaryRealPath(this.binary), args, {
         timeoutMs,
         env: judgeEnv,
+        ...(options.execution !== undefined ? { execution: options.execution } : {}),
         // The audit used to run only once the process had exited. On the
         // 2026-08-27 crawler-arena run that cost the design lane 565s and
         // 646s of judge time whose verdict was then discarded whole for one
