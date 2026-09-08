@@ -1,0 +1,106 @@
+{
+  "root": "/tmp/sasu-workflow-pilots/claude",
+  "aggregateSha256": "0b2aa9ddf2609a6e5f751ba4f80f7f68d6d9c05962d0b19684a820cfe2ec234d",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "90c79bc2c7664cc2cdd168381bba5ec1c2d7d9dc3ab9cf2ca789e409dc877df9",
+      "bytes": 2598
+    },
+    {
+      "path": "index.html",
+      "sha256": "0c602387a5c323f9ddffb45c67bf5c31df242b7c5057577763c2c7008d769e76",
+      "bytes": 296
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "0fc5cf36d751a9cbe0426f4d584a26e3b2ab4a09dfd9eda3559209b2a96eba5c",
+      "bytes": 39111
+    },
+    {
+      "path": "package.json",
+      "sha256": "998b1e09656c7c0a85f6dec5e472b5a25fd9cf0c4aee0e1a7f9999040cb924d3",
+      "bytes": 377
+    },
+    {
+      "path": "playwright.config.ts",
+      "sha256": "fb632c044112d861a5d7f24bbc7355608a53eb0f8d332e42e04b6dd36ea2493d",
+      "bytes": 1181
+    },
+    {
+      "path": "src/app.ts",
+      "sha256": "474d6ed3a012bd020e969a2a8e7983c912d1720402275f2fb52bb506707edcb4",
+      "bytes": 25379
+    },
+    {
+      "path": "src/dom.ts",
+      "sha256": "227cf1588878f652778faa6a44ff0b2344e623f6e8a83b7f3935f45031825ddc",
+      "bytes": 598
+    },
+    {
+      "path": "src/main.ts",
+      "sha256": "6b73361486170638353a9474f3cc779b911cfc14e6514bc71bd8c300ab8f95f0",
+      "bytes": 227
+    },
+    {
+      "path": "src/model.ts",
+      "sha256": "7632d2cc0448373455643be81abc5f3d8340e8d7218c09b298b46ed2a930026b",
+      "bytes": 5698
+    },
+    {
+      "path": "src/storage.ts",
+      "sha256": "17a68e3745bebc174c706a71b1faf349c68c2bcd768892619f23e186b162fc20",
+      "bytes": 1704
+    },
+    {
+      "path": "src/style.css",
+      "sha256": "536ff375b9e509c5c4fe22584c590ea863051521e29da8dcd2e27033d053477e",
+      "bytes": 6152
+    },
+    {
+      "path": "src/vite-env.d.ts",
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5",
+      "bytes": 38
+    },
+    {
+      "path": "tests/actions.spec.ts",
+      "sha256": "6f102c961bc1584a5f35dcb810026c4bfa08708ef77ca0908daf40b1ae0fbe82",
+      "bytes": 7559
+    },
+    {
+      "path": "tests/docs.spec.ts",
+      "sha256": "152bdbdd736c97a20e8e8d5b69d0953fa2b3f3a3cc9b4a7115348e3ce690d3fa",
+      "bytes": 1239
+    },
+    {
+      "path": "tests/helpers.ts",
+      "sha256": "b6951cfa40b603d17ab1c3eebebee8719314c513fe3564ba245c78bcb42ef68c",
+      "bytes": 2722
+    },
+    {
+      "path": "tests/link-form.spec.ts",
+      "sha256": "e4547dad3f058222546b2d57f50a5c3416de272a4f390cf902e616ee1060af80",
+      "bytes": 5955
+    },
+    {
+      "path": "tests/startup.spec.ts",
+      "sha256": "840237800dc5977f392de7407ddaac946eba9ff5ecf63a22bc6c398df78ef7e9",
+      "bytes": 535
+    },
+    {
+      "path": "tests/storage-recovery.spec.ts",
+      "sha256": "2f897e4288e7768e49e3959e8baf613949f50bd9cf70d7f3f7651dffd2552731",
+      "bytes": 8054
+    },
+    {
+      "path": "tests/workspace.spec.ts",
+      "sha256": "04c491b83183d1276638494b49ed29b6365d26940c9b02fae3eab568e36ea3f4",
+      "bytes": 7778
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "d03a6c31da3d7765940a790dee66677089bd71169c197b4a893852ae064622a3",
+      "bytes": 385
+    }
+  ]
+}

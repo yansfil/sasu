@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-09-08T08:01:04.434111+00:00",
+  "head": "0f2e1b20d644be9c897904c6900c6b9da16f7808",
+  "aggregate": "57d2150cd4689b41d72b0f23848d170ab39475c7a1189594d92d96ca960f26a1",
+  "files": {
+    "README.md": "42d4d5bbbbd07863c23a304ec4e2e07a97119719ed19b38be33dd33189239ac2",
+    "docs/screenshots/link-pocket/populated-light.png": "78f6efc1580dcaa4de66cc0d83a1438cd34e84fd7c393d170dcce2204c9655c8",
+    "docs/screenshots/link-pocket/populated-mobile-360.png": "b2f6c8229db9a5be5fa0b4ce9c5ab05bddfa955ffaa92ca87fdf9e8427c05361",
+    "docs/screenshots/link-pocket/responsive-mobile-360.png": "92391a0e741786bf23846f9a13d0aad08c93898550372bee461cf4efa07350bd",
+    "index.html": "71bba99a4d7a30c14d6b425447e1938f6a44e8abb54225b6bbe8dfebe27ef262",
+    "package-lock.json": "0fc5cf36d751a9cbe0426f4d584a26e3b2ab4a09dfd9eda3559209b2a96eba5c",
+    "package.json": "998b1e09656c7c0a85f6dec5e472b5a25fd9cf0c4aee0e1a7f9999040cb924d3",
+    "src/main.ts": "4a76dc9217af0de65cad4d3853b0a8033166b0b41c9587ec5159fcf1287b07e1",
+    "src/storage.ts": "456c54d04cca9f22d8b46582026e55883de7b35dc11a903a516ec2cb23d50276",
+    "src/style.css": "c3f7eb8266c3dab05ce495db6510fdd7358bad2945efa7ed4f2aa1332c8d0d55",
+    "src/vite-env.d.ts": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5",
+    "tests/startup.spec.ts": "aaf2e40f641cf375a32f16ad1caaf3cce4b7bb3976439b7fc06b02c875bca076"
+  }
+}

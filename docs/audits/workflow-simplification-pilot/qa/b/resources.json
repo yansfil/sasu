@@ -1,0 +1,25 @@
+{
+  "candidate": "/tmp/sasu-workflow-pilots/claude",
+  "gitHead": "0f2e1b20d644be9c897904c6900c6b9da16f7808",
+  "server": {
+    "url": "http://127.0.0.1:42842/",
+    "pid": 10024,
+    "finalState": "stopped; no listener on port 42842"
+  },
+  "browser": {
+    "workspace": "w72",
+    "rootPane": "w72:p1",
+    "ownedPane": "w72:pD",
+    "ownedView": "4b196559-f859-4ea6-bfed-5f9ab5cf1f55",
+    "targetId": "8B5F859E637AA830EC8AB231001FBEB0",
+    "cdpHttpUrl": "http://127.0.0.1:64651",
+    "chromuxSession": "sasu-b-qa-0908",
+    "externalChromuxDaemonPid": 9437,
+    "finalState": "session detached, owned view closed, pane closed, external daemon stopped"
+  },
+  "preservedForeignBrowser": {
+    "pane": "w72:p6",
+    "view": "e1ec6036-f0e3-448d-b3c0-28dc3e2b54e7",
+    "url": "http://127.0.0.1:42831/"
+  }
+}

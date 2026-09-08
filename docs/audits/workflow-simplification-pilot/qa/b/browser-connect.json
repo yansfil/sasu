@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "contract_version": 1,
+  "view_id": "4b196559-f859-4ea6-bfed-5f9ab5cf1f55",
+  "cdp_scope": "view",
+  "tab_authority": "external-cdp",
+  "cdp_http_url": "http://127.0.0.1:64651",
+  "browser_ws_url": "ws://127.0.0.1:64651/devtools/browser/4b196559-f859-4ea6-bfed-5f9ab5cf1f55",
+  "active_target_id": "8B5F859E637AA830EC8AB231001FBEB0",
+  "active_page_ws_url": "ws://127.0.0.1:64651/devtools/page/8B5F859E637AA830EC8AB231001FBEB0",
+  "url": "http://127.0.0.1:42842/",
+  "title": "127.0.0.1",
+  "chrome_pid": 45515,
+  "chrome_executable": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "chrome_profile_dir": "/Users/hoyeonlee/.local/state/herdr/plugins/official.browser/chrome-profiles/default-37a8eec1ce19",
+  "viewport": {
+    "width": 176,
+    "height": 1870,
+    "deviceScaleFactor": 1
+  },
+  "snippets": {
+    "playwright_mcp": "npx @playwright/mcp@latest --cdp-endpoint=http://127.0.0.1:64651",
+    "browser_use_env": "BU_CDP_URL=http://127.0.0.1:64651 browser-use",
+    "playwright_connect_over_cdp": "const browser = await chromium.connectOverCDP(\"http://127.0.0.1:64651\");",
+    "pinchtab_attach": "pinchtab bridge --cdp-attach http://127.0.0.1:64651",
+    "chrome_devtools_mcp": "npx chrome-devtools-mcp --browser-url=http://127.0.0.1:64651"
+  }
+}

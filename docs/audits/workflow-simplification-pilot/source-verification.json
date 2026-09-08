@@ -1,0 +1,218 @@
+{
+  "baseCommit": "c96a6621d655d984df4322fb12aa0236a6856f93",
+  "sourceTree": "453c9e86609e9e1a4d9f05209b81e4325de50bcd",
+  "checks": {
+    "cleanBuild": "PASS",
+    "noEmit": "PASS",
+    "root": {
+      "passed": 98,
+      "failed": 0
+    },
+    "unit": {
+      "passed": 447,
+      "failed": 0
+    },
+    "e2e": {
+      "passed": 120,
+      "failed": 0
+    }
+  },
+  "backendResults": {
+    "codex": {
+      "acceptedReviews": 7,
+      "actualInvocations": 8,
+      "retries": [
+        {
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "code": "judge-invalid-output",
+          "reason": "non-read-command",
+          "detail": "isolated codex judge used a non-read command in segment (printf \\n--- smoke.log ---\\n): /bin/zsh -lc \"sed -n '1,240p' src/public.mjs && printf '\\\\n--- smoke.log ---\\\\n' && sed -n '1,160p' smoke.log\""
+        }
+      ],
+      "schemaErrors": [],
+      "cases": [
+        {
+          "variant": "complete",
+          "model": "gpt-5.6-luna",
+          "attempts": 1,
+          "findings": [],
+          "commands": [
+            "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+          ]
+        },
+        {
+          "variant": "middle-omission",
+          "model": "gpt-5.6-luna",
+          "attempts": 2,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B17",
+                "D-01"
+              ]
+            }
+          ],
+          "commands": [
+            "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+          ]
+        },
+        {
+          "variant": "final-omission",
+          "model": "gpt-5.6-luna",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B30"
+              ]
+            }
+          ],
+          "commands": [
+            "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+          ]
+        },
+        {
+          "variant": "unwired",
+          "model": "gpt-5.6-luna",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B28",
+                "D-01"
+              ]
+            }
+          ],
+          "commands": [
+            "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs; sed -n '1,120p' smoke.log\""
+          ]
+        },
+        {
+          "variant": "storage-failure",
+          "model": "gpt-5.6-luna",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31",
+                "D-01"
+              ]
+            }
+          ],
+          "commands": [
+            "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+          ]
+        },
+        {
+          "variant": "authorized-assumptions",
+          "model": "gpt-5.6-luna",
+          "attempts": 1,
+          "findings": [],
+          "commands": [
+            "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+          ]
+        },
+        {
+          "variant": "actual-image-attachment",
+          "model": "gpt-5.6-luna",
+          "attempts": 1,
+          "findings": [],
+          "commands": []
+        }
+      ]
+    },
+    "claude": {
+      "acceptedReviews": 6,
+      "actualInvocations": 6,
+      "retries": [],
+      "schemaErrors": [],
+      "cases": [
+        {
+          "variant": "complete",
+          "model": "claude-sonnet-5",
+          "attempts": 1,
+          "findings": [],
+          "commands": []
+        },
+        {
+          "variant": "middle-omission",
+          "model": "claude-sonnet-5",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B17"
+              ]
+            }
+          ],
+          "commands": []
+        },
+        {
+          "variant": "final-omission",
+          "model": "claude-sonnet-5",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B30",
+                "D-01"
+              ]
+            }
+          ],
+          "commands": []
+        },
+        {
+          "variant": "unwired",
+          "model": "claude-sonnet-5",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B28",
+                "D-01"
+              ]
+            }
+          ],
+          "commands": []
+        },
+        {
+          "variant": "storage-failure",
+          "model": "claude-sonnet-5",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31",
+                "D-01"
+              ]
+            }
+          ],
+          "commands": []
+        },
+        {
+          "variant": "authorized-assumptions",
+          "model": "claude-sonnet-5",
+          "attempts": 1,
+          "findings": [
+            {
+              "kind": "advisory",
+              "requirementRefs": []
+            }
+          ],
+          "commands": []
+        }
+      ]
+    }
+  },
+  "originalC96": "Clean; recorded dist hashes unchanged. Product pilots and global installation were not mutated.",
+  "commit": "f6963672454207cbce08908cc33eaf6e74d866c7"
+}

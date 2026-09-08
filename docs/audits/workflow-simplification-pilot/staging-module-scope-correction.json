@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-08T08:03:46.200Z",
+  "reason": "Copied CommonJS ship script inherited the ESM target project scope; preserve source semantics at fixture skill root. Script bytes unchanged; installed symlink source scope unaffected.",
+  "records": [
+    {
+      "path": "/tmp/sasu-workflow-pilots/spec/.agents/skills/package.json",
+      "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+    },
+    {
+      "path": "/tmp/sasu-workflow-pilots/spec/.claude/skills/package.json",
+      "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+    },
+    {
+      "path": "/tmp/sasu-workflow-pilots/codex/.agents/skills/package.json",
+      "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+    },
+    {
+      "path": "/tmp/sasu-workflow-pilots/codex/.claude/skills/package.json",
+      "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+    },
+    {
+      "path": "/tmp/sasu-workflow-pilots/claude/.agents/skills/package.json",
+      "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+    },
+    {
+      "path": "/tmp/sasu-workflow-pilots/claude/.claude/skills/package.json",
+      "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+    }
+  ]
+}

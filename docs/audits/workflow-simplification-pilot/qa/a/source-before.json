@@ -1,0 +1,72 @@
+{
+  "capturedAt": "2026-09-08T07:37:08.293865+00:00",
+  "root": "/tmp/sasu-workflow-pilots/codex",
+  "gitHead": "0f2e1b20d644be9c897904c6900c6b9da16f7808",
+  "gitStatus": [
+    " M README.md",
+    " M index.html",
+    " M src/main.ts",
+    " M src/style.css",
+    " M tests/startup.spec.ts",
+    "?? docs/",
+    "?? src/storage.ts"
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "42d4d5bbbbd07863c23a304ec4e2e07a97119719ed19b38be33dd33189239ac2",
+      "bytes": 1462
+    },
+    {
+      "path": "docs/screenshots/link-pocket/populated-light.png",
+      "sha256": "26fab17e4b068d2553bdea53c011ac8e2d3c6fbe4d58adef0c826036627376f9",
+      "bytes": 36476
+    },
+    {
+      "path": "docs/screenshots/link-pocket/populated-mobile-360.png",
+      "sha256": "e5f67ffc39cbe2d94a47ed8dede9b14f998390806dc7141ef21748b9fdeaf52a",
+      "bytes": 29926
+    },
+    {
+      "path": "index.html",
+      "sha256": "71bba99a4d7a30c14d6b425447e1938f6a44e8abb54225b6bbe8dfebe27ef262",
+      "bytes": 391
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "0fc5cf36d751a9cbe0426f4d584a26e3b2ab4a09dfd9eda3559209b2a96eba5c",
+      "bytes": 39111
+    },
+    {
+      "path": "package.json",
+      "sha256": "998b1e09656c7c0a85f6dec5e472b5a25fd9cf0c4aee0e1a7f9999040cb924d3",
+      "bytes": 377
+    },
+    {
+      "path": "src/main.ts",
+      "sha256": "8ea239865a3cdd328f380e44e66e64bf233291f1736425d4e7c5c920c20b8e8c",
+      "bytes": 18211
+    },
+    {
+      "path": "src/storage.ts",
+      "sha256": "456c54d04cca9f22d8b46582026e55883de7b35dc11a903a516ec2cb23d50276",
+      "bytes": 4005
+    },
+    {
+      "path": "src/style.css",
+      "sha256": "2cc7d5ee10483543763e86eb6e1c2f4ea5fe7a77990032af852e00e7907351d2",
+      "bytes": 9008
+    },
+    {
+      "path": "src/vite-env.d.ts",
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5",
+      "bytes": 38
+    },
+    {
+      "path": "tests/startup.spec.ts",
+      "sha256": "d623f6a1e86e4ecea7b8bba1dc92a3ea83ce28afd9a642bfa3f38bb6b9ee198a",
+      "bytes": 8745
+    }
+  ],
+  "aggregateSha256": "fbb191b39bf05194bc71f178fa7940f1e7a5a2cfe10528ccb96423a5853b40ac"
+}

@@ -1,0 +1,8 @@
+{
+  "at": "2026-09-08T07:52:14.658627+00:00",
+  "fromCommit": "c96a6621d655d984df4322fb12aa0236a6856f93",
+  "toCommit": "f6963672454207cbce08908cc33eaf6e74d866c7",
+  "beforeSha256": "8799eb08c27b1fab9bd71c0b783625c2a68b77d556b9c3ce3505f0a68f935727",
+  "afterSha256": "3ece03a315b225a678f3b38ffe5a341e0c1395012848e328452f46c1261003fc",
+  "reason": "Both owners notified of explicit corrected CLI; A has no active lease and B current verify is already the explicit corrected process; ship subprocess resolves shared wrapper."
+}
