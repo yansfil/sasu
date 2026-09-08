@@ -1,0 +1,46 @@
+{
+  "sharedProductBase": {
+    "commit": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "tree": "36382c4e52e2bbce81016d7c122b6179fb1d0229"
+  },
+  "starterHashes": {
+    "package.json": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+    "test/task-list.test.mjs": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+    "agents/config.json": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+  },
+  "preparationCorrectionPath": "/tmp/sasu-full-implementation-comparison/preparation-correction.json",
+  "runs": [
+    {
+      "version": "old",
+      "contract": "0.8.0",
+      "sessionId": "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+      "launcherRoot": "/tmp/sasu-full-implementation-comparison/old",
+      "prdPath": "/tmp/sasu-full-implementation-comparison/old/benchmarks/task-list-full/prd.md",
+      "expectedSkillPaths": [
+        "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/benchmark-implement/SKILL.md",
+        "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/implement/SKILL.md"
+      ],
+      "expectedCliPath": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/cli/dist/cli.js",
+      "workingRoot": "REPLACE_AFTER_PREPARE_RUN",
+      "statePath": "REPLACE_AFTER_PREPARE_RUN",
+      "receiptPath": "REPLACE_AFTER_FINALIZE",
+      "nativeReportPath": "REPLACE_AFTER_NATIVE_REPORT"
+    },
+    {
+      "version": "new",
+      "contract": "0.9.0",
+      "sessionId": "REPLACE_WITH_FRESH_SESSION",
+      "launcherRoot": "/tmp/sasu-full-implementation-comparison/new",
+      "prdPath": "/tmp/sasu-full-implementation-comparison/new/benchmarks/task-list-full/prd.md",
+      "expectedSkillPaths": [
+        "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/benchmark-implement/SKILL.md",
+        "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/implement/SKILL.md"
+      ],
+      "expectedCliPath": "/Users/hoyeonlee/projects/sasu/cli/dist/cli.js",
+      "workingRoot": "REPLACE_AFTER_PREPARE_RUN",
+      "statePath": "REPLACE_AFTER_PREPARE_RUN",
+      "receiptPath": "REPLACE_AFTER_FINALIZE",
+      "nativeReportPath": "REPLACE_AFTER_NATIVE_REPORT"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "kind": "fresh-implementation-version-pair",
+  "userRequest": "음 이제 구, 신 버전의 같은 요구사항의 PRD는 있는거야? 그리고 그걸 예전 버전과 최신버전으로 돌려보면 되지 않아? 그러면 구현속도와 어디서 시간썻는지 그런 병목지점 비교가 다 되는거아닌가? \n어려워서 그런거야??",
+  "executor": {"runtime": "codex", "model": "gpt-5.6-sol", "effort": "medium", "freshSessionPerVersion": true},
+  "order": ["old", "new"],
+  "overlap": "Do not overlap the two implementation windows or post-run evaluators with an implementation window.",
+  "old": {"commit": "488d3cc7d6e99742e7f68a1680fcb101710c8e20", "source": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline", "contract": "0.8.0"},
+  "new": {"commit": "a04ebf3edb7b01b2888e035bd4f92f8e118ca2b1", "source": "/Users/hoyeonlee/projects/sasu", "contract": "0.9.0"},
+  "fixed": ["six behavior texts", "product starting commit", "supplied test suite", "executor runtime/model/effort", "judge primary and fallback policy"],
+  "variable": ["version-required PRD table and benchmark schema", "CLI and skill version", "independently produced implementation and meaningful additional tests"],
+  "clock": {
+    "requestToReceipt": "First implementation handoff submitted until CLI receipt finalized timestamp; includes skill reading, prepare-run and workflow handling after handoff.",
+    "runToReceipt": "CLI state start through finalized receipt; strict completion required.",
+    "phases": ["preparation", "initial implementation", "focused tests and observations", "required suite", "independent judge", "repairs", "finalization", "unattributed"],
+    "overlap": "Report wall-clock unions and resource sums separately; never sum nested or concurrent durations as elapsed time.",
+    "incomplete": "Record observed duration and exact blocker; never label a stopped run as completion time.",
+    "evaluation": "Post-receipt analysis is separate and excluded from implementation duration."
+  },
+  "honesty": ["No prior implementation or previous result provided to executors", "No PRD change during run without existing applicable human authority", "No failure deletion, budget reset, fake identity, diagnostic judge override or global rollback", "One pair is an exploratory observation, not a general speedup estimate", "Raw benchmark reports remain in their native schemas; do not fake strict cross-schema comparability"],
+  "delivery": "Local isolated benchmark artifacts and ordinary preservation commits only; no push, PR, deployment or global install changes."
+}

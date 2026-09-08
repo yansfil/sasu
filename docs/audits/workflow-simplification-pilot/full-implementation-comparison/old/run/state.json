@@ -1,0 +1,885 @@
+{
+  "schema": "sasu.implement.state.v8",
+  "status": "complete",
+  "topicSlug": "task-list-full",
+  "projectRoot": "/private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree",
+  "worktree": null,
+  "runDir": "agents/runs/task-list-full",
+  "prdPath": "benchmarks/task-list-full/prd.md",
+  "prd": {
+    "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999",
+    "snapshotPath": "agents/runs/task-list-full/prd.md",
+    "status": "ready",
+    "approval": {
+      "source": "frontmatter",
+      "evidence": "human_approval: approved"
+    },
+    "reviewProfile": "standard",
+    "reviewRationale": "Small deterministic non-UI library comparison",
+    "sourceIntake": "current conversation",
+    "judge": {
+      "required": false,
+      "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+      "gapAudit": null,
+      "spec": null
+    }
+  },
+  "initialSource": {
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+      },
+      {
+        "path": "benchmarks/task-list-full/benchmark.json",
+        "state": "present",
+        "sha256": "4d007500af0687e15df22cff91c09dfed3667f0a983773663205cfdbbdeca733"
+      },
+      {
+        "path": "benchmarks/task-list-full/prd.md",
+        "state": "present",
+        "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      {
+        "path": "test/task-list.test.mjs",
+        "state": "present",
+        "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+      }
+    ],
+    "digest": "df641fa3499a219f2df5b31ad5e6fff5eff1d362e186521df8a886c517dcacd8"
+  },
+  "baselineAttribution": {
+    "disposition": "pre-existing",
+    "paths": [
+      {
+        "path": "benchmarks/task-list-full/benchmark.json",
+        "disposition": "pre-existing"
+      },
+      {
+        "path": "benchmarks/task-list-full/prd.md",
+        "disposition": "pre-existing"
+      }
+    ],
+    "baselineDigest": "df641fa3499a219f2df5b31ad5e6fff5eff1d362e186521df8a886c517dcacd8",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+  },
+  "ownerSessionId": "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+  "adoptions": [],
+  "rows": [
+    {
+      "id": "B1",
+      "behavior": "Adding a task trims its title and assigns the next stable numeric id.",
+      "check": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result."
+      },
+      "decisionIds": [
+        "D-01"
+      ],
+      "status": "PASS",
+      "attempts": [],
+      "consecutiveFailures": 0,
+      "parks": [],
+      "verdict": {
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "verdict": "PASS",
+        "reason": "addItem trims the title via normalizeTitle and assigns max existing numeric id plus one; npm test passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test))"
+      },
+      "human": null,
+      "rejections": []
+    },
+    {
+      "id": "B2",
+      "behavior": "Adding a blank title throws and leaves the supplied list unchanged.",
+      "check": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result."
+      },
+      "decisionIds": [
+        "D-01"
+      ],
+      "status": "PASS",
+      "attempts": [],
+      "consecutiveFailures": 0,
+      "parks": [],
+      "verdict": {
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "verdict": "PASS",
+        "reason": "normalizeTitle trims the title and throws for an empty result before addItem computes or returns a new list, so the supplied list is unchanged. (src/task-list.mjs; npm test GREEN (exit 0))"
+      },
+      "human": null,
+      "rejections": []
+    },
+    {
+      "id": "B3",
+      "behavior": "Toggling a known id changes only that task's completed state.",
+      "check": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result."
+      },
+      "decisionIds": [
+        "D-01"
+      ],
+      "status": "PASS",
+      "attempts": [],
+      "consecutiveFailures": 0,
+      "parks": [],
+      "verdict": {
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "verdict": "PASS",
+        "reason": "toggleItem maps the list and changes only the matching item's done value; all other item fields and tasks remain unchanged. The required suite passed. (src/task-list.mjs; S1 GREEN (npm test, exit 0); agents/runs/task-list-full/artifacts/task-list-test.tap)"
+      },
+      "human": null,
+      "rejections": []
+    },
+    {
+      "id": "B4",
+      "behavior": "Removing a known id returns a list without that task and preserves the others.",
+      "check": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result."
+      },
+      "decisionIds": [
+        "D-01"
+      ],
+      "status": "PASS",
+      "attempts": [],
+      "consecutiveFailures": 0,
+      "parks": [],
+      "verdict": {
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "verdict": "PASS",
+        "reason": "removeItem filters out only items whose id matches the requested id, preserving all other tasks. The required npm test suite passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test, exit 0))"
+      },
+      "human": null,
+      "rejections": []
+    },
+    {
+      "id": "B5",
+      "behavior": "Taking a snapshot returns defensive task copies that callers cannot use to mutate the source list.",
+      "check": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result."
+      },
+      "decisionIds": [
+        "D-01"
+      ],
+      "status": "PASS",
+      "attempts": [],
+      "consecutiveFailures": 0,
+      "parks": [],
+      "verdict": {
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "verdict": "PASS",
+        "reason": "snapshot returns a new array with a new object for every task via items.map((item) => ({ ...item })), so callers cannot mutate the source list or its task records through the snapshot. The required suite also passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test, exit 0))"
+      },
+      "human": null,
+      "rejections": []
+    },
+    {
+      "id": "B6",
+      "behavior": "The summary uses singular '1 item' for one task and plural '<n> items' for every other count.",
+      "check": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result."
+      },
+      "decisionIds": [
+        "D-01"
+      ],
+      "status": "PASS",
+      "attempts": [],
+      "consecutiveFailures": 0,
+      "parks": [],
+      "verdict": {
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "verdict": "PASS",
+        "reason": "summary() selects singular \"item\" when items.length === 1 and plural \"items\" otherwise. Required suite S1 also passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test, exit 0))"
+      },
+      "human": null,
+      "rejections": []
+    }
+  ],
+  "artifacts": [
+    {
+      "rowId": "B1",
+      "kind": "log",
+      "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "description": "Passing public suite proves trimmed title and stable next id behavior.",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157,
+      "registeredAt": "2026-09-08T09:57:20.672Z"
+    },
+    {
+      "rowId": "B2",
+      "kind": "log",
+      "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "description": "Passing public suite proves blank title rejection and unchanged input behavior.",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157,
+      "registeredAt": "2026-09-08T09:57:20.833Z"
+    },
+    {
+      "rowId": "B3",
+      "kind": "log",
+      "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "description": "Passing public suite proves known-id toggle behavior without unrelated changes.",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157,
+      "registeredAt": "2026-09-08T09:57:21.055Z"
+    },
+    {
+      "rowId": "B4",
+      "kind": "log",
+      "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "description": "Passing public suite proves known-id removal while preserving remaining tasks.",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157,
+      "registeredAt": "2026-09-08T09:57:21.303Z"
+    },
+    {
+      "rowId": "B5",
+      "kind": "log",
+      "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "description": "Passing public suite proves snapshots are defensive copies.",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157,
+      "registeredAt": "2026-09-08T09:57:21.517Z"
+    },
+    {
+      "rowId": "B6",
+      "kind": "log",
+      "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "description": "Passing public suite proves task-count summary pluralization behavior.",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157,
+      "registeredAt": "2026-09-08T09:57:21.710Z"
+    },
+    {
+      "kind": "command-log",
+      "path": "agents/runs/task-list-full/artifacts/logs/mechanical-e8945441dac89ab2.log",
+      "description": "mechanical PASS: npm test",
+      "sha256": "18058aa7eba71c2cfd767a48ba781b1a3d45bef1a2f14f4ae808b10682bfcd65",
+      "bytes": 363,
+      "registeredAt": "2026-09-08T09:57:33.343Z",
+      "command": "npm test",
+      "cwd": ".",
+      "exitCode": 0
+    }
+  ],
+  "verificationAttempts": [
+    {
+      "id": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+      "inputFingerprint": "b4f9b0831d4f0e29e0f74c85659c291dd22840370affcc6d7da57e9f4bf82efc",
+      "sourceFingerprint": "d54a84ecc09cca375d042417aad1ce2b55a83790ebd54a421dc4214a57c76f0b",
+      "inputManifest": {
+        "source": [
+          {
+            "path": "src/task-list.mjs",
+            "state": "present",
+            "sha256": "eb528006ac5f59b48afdef1f6e61977d0b785f5338f9587ffe9eaa25a23f3ce3"
+          }
+        ],
+        "evidence": [
+          {
+            "rowId": "B1",
+            "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+            "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+          },
+          {
+            "rowId": "B2",
+            "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+            "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+          },
+          {
+            "rowId": "B3",
+            "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+            "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+          },
+          {
+            "rowId": "B4",
+            "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+            "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+          },
+          {
+            "rowId": "B5",
+            "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+            "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+          },
+          {
+            "rowId": "B6",
+            "path": "agents/runs/task-list-full/artifacts/task-list-test.tap",
+            "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+          }
+        ],
+        "checkLedger": {
+          "sha256": "29f9ff76baea07442a2ccc218d206df4a8504a1c3981d7c49eb647eacb43b421",
+          "rows": [
+            {
+              "rowId": "B1",
+              "kind": "judge",
+              "payload": "inspect src/task-list.mjs and the required suite result.",
+              "status": "pending"
+            },
+            {
+              "rowId": "B2",
+              "kind": "judge",
+              "payload": "inspect src/task-list.mjs and the required suite result.",
+              "status": "pending"
+            },
+            {
+              "rowId": "B3",
+              "kind": "judge",
+              "payload": "inspect src/task-list.mjs and the required suite result.",
+              "status": "pending"
+            },
+            {
+              "rowId": "B4",
+              "kind": "judge",
+              "payload": "inspect src/task-list.mjs and the required suite result.",
+              "status": "pending"
+            },
+            {
+              "rowId": "B5",
+              "kind": "judge",
+              "payload": "inspect src/task-list.mjs and the required suite result.",
+              "status": "pending"
+            },
+            {
+              "rowId": "B6",
+              "kind": "judge",
+              "payload": "inspect src/task-list.mjs and the required suite result.",
+              "status": "pending"
+            }
+          ]
+        }
+      },
+      "roundContexts": {
+        "acceptance": {
+          "B1": {
+            "priorAttemptId": null,
+            "changedPaths": [],
+            "newEvidence": []
+          },
+          "B2": {
+            "priorAttemptId": null,
+            "changedPaths": [],
+            "newEvidence": []
+          },
+          "B3": {
+            "priorAttemptId": null,
+            "changedPaths": [],
+            "newEvidence": []
+          },
+          "B4": {
+            "priorAttemptId": null,
+            "changedPaths": [],
+            "newEvidence": []
+          },
+          "B5": {
+            "priorAttemptId": null,
+            "changedPaths": [],
+            "newEvidence": []
+          },
+          "B6": {
+            "priorAttemptId": null,
+            "changedPaths": [],
+            "newEvidence": []
+          }
+        },
+        "fidelity": {
+          "priorAttemptId": null,
+          "changedPaths": [],
+          "newEvidence": []
+        },
+        "risk": null,
+        "design": {
+          "priorAttemptId": null,
+          "changedPaths": [],
+          "newEvidence": []
+        }
+      },
+      "fidelityInput": {
+        "routing": "decisions",
+        "contentSha256": "58e63e0b2b57e742cd8a85f722ae1ff770b6ef2e97a2918ecf04e52107f794c1"
+      },
+      "startedAt": "2026-09-08T09:57:32.741Z",
+      "finishedAt": "2026-09-08T09:57:58.706Z",
+      "durationMs": 25965,
+      "verdict": "PASS",
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-08T09:57:32.796Z",
+          "finishedAt": "2026-09-08T09:57:33.343Z",
+          "durationMs": 547,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/task-list-full/artifacts/logs/mechanical-e8945441dac89ab2.log"
+        }
+      ],
+      "parkedRows": [],
+      "lanes": {
+        "acceptance": {
+          "invocationId": "bff35e57-5b56-42df-89f5-3ebe55726ba8",
+          "startedAt": "2026-09-08T09:57:33.415Z",
+          "finishedAt": "2026-09-08T09:57:58.706Z",
+          "durationMs": 25291,
+          "verdict": "PASS",
+          "result": {
+            "verdict": "PASS",
+            "criteria": [
+              {
+                "id": "B1",
+                "verdict": "PASS",
+                "reason": "addItem trims the title via normalizeTitle and assigns max existing numeric id plus one; npm test passed with exit 0.",
+                "evidence": "src/task-list.mjs; S1 GREEN (npm test)"
+              },
+              {
+                "id": "B2",
+                "verdict": "PASS",
+                "reason": "normalizeTitle trims the title and throws for an empty result before addItem computes or returns a new list, so the supplied list is unchanged.",
+                "evidence": "src/task-list.mjs; npm test GREEN (exit 0)"
+              },
+              {
+                "id": "B3",
+                "verdict": "PASS",
+                "reason": "toggleItem maps the list and changes only the matching item's done value; all other item fields and tasks remain unchanged. The required suite passed.",
+                "evidence": "src/task-list.mjs; S1 GREEN (npm test, exit 0); agents/runs/task-list-full/artifacts/task-list-test.tap"
+              },
+              {
+                "id": "B4",
+                "verdict": "PASS",
+                "reason": "removeItem filters out only items whose id matches the requested id, preserving all other tasks. The required npm test suite passed with exit 0.",
+                "evidence": "src/task-list.mjs; S1 GREEN (npm test, exit 0)"
+              },
+              {
+                "id": "B5",
+                "verdict": "PASS",
+                "reason": "snapshot returns a new array with a new object for every task via items.map((item) => ({ ...item })), so callers cannot mutate the source list or its task records through the snapshot. The required suite also passed with exit 0.",
+                "evidence": "src/task-list.mjs; S1 GREEN (npm test, exit 0)"
+              },
+              {
+                "id": "B6",
+                "verdict": "PASS",
+                "reason": "summary() selects singular \"item\" when items.length === 1 and plural \"items\" otherwise. Required suite S1 also passed with exit 0.",
+                "evidence": "src/task-list.mjs; S1 GREEN (npm test, exit 0)"
+              }
+            ],
+            "invocations": [
+              {
+                "rowId": "B1",
+                "invocationId": "8568da93-46db-4d34-9dc4-d4dfb926445d",
+                "startedAt": "2026-09-08T09:57:33.415Z",
+                "finishedAt": "2026-09-08T09:57:57.810Z",
+                "durationMs": 24395,
+                "verdict": "PASS",
+                "judge": {
+                  "at": "2026-09-08T09:57:33.416Z",
+                  "backend": "codex",
+                  "model": "gpt-5.6-luna",
+                  "profile": "routine",
+                  "effort": "xhigh",
+                  "purpose": "implement:acceptance:B1",
+                  "durationMs": 24394,
+                  "attempts": 1,
+                  "outcome": "ok",
+                  "activity": {
+                    "commands": [
+                      "/bin/zsh -lc \"sed -n '1,220p' src/task-list.mjs\""
+                    ]
+                  },
+                  "usage": {
+                    "inputTokens": 45591,
+                    "outputTokens": 514,
+                    "cachedInputTokens": 31232,
+                    "reasoningOutputTokens": 354
+                  }
+                },
+                "error": null,
+                "source": "judge"
+              },
+              {
+                "rowId": "B2",
+                "invocationId": "c98ee4d8-905d-4421-9839-c6f9b7104b3e",
+                "startedAt": "2026-09-08T09:57:33.416Z",
+                "finishedAt": "2026-09-08T09:57:55.362Z",
+                "durationMs": 21946,
+                "verdict": "PASS",
+                "judge": {
+                  "at": "2026-09-08T09:57:33.416Z",
+                  "backend": "codex",
+                  "model": "gpt-5.6-luna",
+                  "profile": "routine",
+                  "effort": "xhigh",
+                  "purpose": "implement:acceptance:B2",
+                  "durationMs": 21946,
+                  "attempts": 1,
+                  "outcome": "ok",
+                  "activity": {
+                    "commands": [
+                      "/bin/zsh -lc \"sed -n '1,220p' src/task-list.mjs\""
+                    ]
+                  },
+                  "usage": {
+                    "inputTokens": 45404,
+                    "outputTokens": 372,
+                    "cachedInputTokens": 37376,
+                    "reasoningOutputTokens": 208
+                  }
+                },
+                "error": null,
+                "source": "judge"
+              },
+              {
+                "rowId": "B3",
+                "invocationId": "0b83302b-f76e-4b2a-880e-6299fcfd639c",
+                "startedAt": "2026-09-08T09:57:33.416Z",
+                "finishedAt": "2026-09-08T09:57:58.705Z",
+                "durationMs": 25289,
+                "verdict": "PASS",
+                "judge": {
+                  "at": "2026-09-08T09:57:33.416Z",
+                  "backend": "codex",
+                  "model": "gpt-5.6-luna",
+                  "profile": "routine",
+                  "effort": "xhigh",
+                  "purpose": "implement:acceptance:B3",
+                  "durationMs": 25289,
+                  "attempts": 1,
+                  "outcome": "ok",
+                  "activity": {
+                    "commands": [
+                      "/bin/zsh -lc \"sed -n '1,220p' src/task-list.mjs\""
+                    ]
+                  },
+                  "usage": {
+                    "inputTokens": 45472,
+                    "outputTokens": 564,
+                    "cachedInputTokens": 31232,
+                    "reasoningOutputTokens": 383
+                  }
+                },
+                "error": null,
+                "source": "judge"
+              },
+              {
+                "rowId": "B4",
+                "invocationId": "ca574a6a-8208-4c93-9b6a-2a16fe5d969c",
+                "startedAt": "2026-09-08T09:57:33.416Z",
+                "finishedAt": "2026-09-08T09:57:56.325Z",
+                "durationMs": 22909,
+                "verdict": "PASS",
+                "judge": {
+                  "at": "2026-09-08T09:57:33.416Z",
+                  "backend": "codex",
+                  "model": "gpt-5.6-luna",
+                  "profile": "routine",
+                  "effort": "xhigh",
+                  "purpose": "implement:acceptance:B4",
+                  "durationMs": 22909,
+                  "attempts": 1,
+                  "outcome": "ok",
+                  "activity": {
+                    "commands": [
+                      "/bin/zsh -lc \"sed -n '1,220p' src/task-list.mjs\""
+                    ]
+                  },
+                  "usage": {
+                    "inputTokens": 45478,
+                    "outputTokens": 377,
+                    "cachedInputTokens": 42496,
+                    "reasoningOutputTokens": 207
+                  }
+                },
+                "error": null,
+                "source": "judge"
+              },
+              {
+                "rowId": "B5",
+                "invocationId": "d59927a9-3595-44e5-b04e-06075f2f8e33",
+                "startedAt": "2026-09-08T09:57:33.416Z",
+                "finishedAt": "2026-09-08T09:57:54.614Z",
+                "durationMs": 21198,
+                "verdict": "PASS",
+                "judge": {
+                  "at": "2026-09-08T09:57:33.416Z",
+                  "backend": "codex",
+                  "model": "gpt-5.6-luna",
+                  "profile": "routine",
+                  "effort": "xhigh",
+                  "purpose": "implement:acceptance:B5",
+                  "durationMs": 21198,
+                  "attempts": 1,
+                  "outcome": "ok",
+                  "activity": {
+                    "commands": [
+                      "/bin/zsh -lc \"sed -n '1,220p' src/task-list.mjs\""
+                    ]
+                  },
+                  "usage": {
+                    "inputTokens": 45433,
+                    "outputTokens": 345,
+                    "cachedInputTokens": 31232,
+                    "reasoningOutputTokens": 145
+                  }
+                },
+                "error": null,
+                "source": "judge"
+              },
+              {
+                "rowId": "B6",
+                "invocationId": "a5c5799d-7c00-44f9-acb9-0e386e281f6a",
+                "startedAt": "2026-09-08T09:57:33.416Z",
+                "finishedAt": "2026-09-08T09:57:57.647Z",
+                "durationMs": 24231,
+                "verdict": "PASS",
+                "judge": {
+                  "at": "2026-09-08T09:57:33.416Z",
+                  "backend": "codex",
+                  "model": "gpt-5.6-luna",
+                  "profile": "routine",
+                  "effort": "xhigh",
+                  "purpose": "implement:acceptance:B6",
+                  "durationMs": 24231,
+                  "attempts": 1,
+                  "outcome": "ok",
+                  "activity": {
+                    "commands": [
+                      "/bin/zsh -lc \"sed -n '1,200p' src/task-list.mjs\""
+                    ]
+                  },
+                  "usage": {
+                    "inputTokens": 45463,
+                    "outputTokens": 329,
+                    "cachedInputTokens": 31232,
+                    "reasoningOutputTokens": 157
+                  }
+                },
+                "error": null,
+                "source": "judge"
+              }
+            ]
+          },
+          "judge": null,
+          "error": null
+        },
+        "fidelity": {
+          "invocationId": "0e852157-3ba3-4c4e-b8a8-fbaad76b9960",
+          "startedAt": "2026-09-08T09:57:33.416Z",
+          "finishedAt": "2026-09-08T09:57:52.977Z",
+          "durationMs": 19561,
+          "verdict": "PASS",
+          "result": {
+            "verdict": "PASS",
+            "checks": [
+              {
+                "id": "F1",
+                "verdict": "PASS",
+                "reason": "The implementation preserves the goal of providing six deterministic task-list behaviors as a public Node library.",
+                "evidence": "PRD Goal; src/task-list.mjs exports six corresponding behaviors."
+              },
+              {
+                "id": "F2",
+                "verdict": "PASS",
+                "reason": "The dependency-free Node library constraint is preserved.",
+                "evidence": "Decision D-01; src/task-list.mjs uses only built-in language features and exports public functions."
+              },
+              {
+                "id": "F3",
+                "verdict": "PASS",
+                "reason": "No rejected options or non-goals are reintroduced.",
+                "evidence": "PRD Non-goals; changed paths contain only src/task-list.mjs with no UI, network, persistence, or deployment work."
+              },
+              {
+                "id": "F4",
+                "verdict": "PASS",
+                "reason": "No recorded deviations distort the intended product or workflow.",
+                "evidence": "Recorded deviations: none; implementation directly matches the six specified behaviors."
+              },
+              {
+                "id": "F5",
+                "verdict": "PASS",
+                "reason": "Status claims are appropriately qualified and do not overstate independent acceptance.",
+                "evidence": "Implementation claims state run=active and explicitly note that row statuses are omitted because the independent acceptance lane is concurrent; the suite result is labeled mechanical PASS."
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T09:57:33.416Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:fidelity",
+            "durationMs": 19561,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 22783,
+              "outputTokens": 455,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 193
+            }
+          },
+          "error": null
+        },
+        "risk": null,
+        "design": {
+          "invocationId": "b347c1a6-a89a-4337-90f4-074b0ec733a7",
+          "startedAt": "2026-09-08T09:57:33.400Z",
+          "finishedAt": "2026-09-08T09:57:46.268Z",
+          "durationMs": 12868,
+          "verdict": "FAIL",
+          "result": {
+            "comments": []
+          },
+          "judge": {
+            "at": "2026-09-08T09:57:33.401Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:design",
+            "durationMs": 12867,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 22480,
+              "outputTokens": 95,
+              "cachedInputTokens": 15104,
+              "reasoningOutputTokens": 85
+            }
+          },
+          "error": null
+        }
+      },
+      "error": null
+    }
+  ],
+  "budgetGrants": [],
+  "deviations": [],
+  "riskFindings": [],
+  "events": [
+    {
+      "id": 1,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "row-status",
+      "actor": "implementor",
+      "subject": "B1",
+      "summary": "B1 is PASS"
+    },
+    {
+      "id": 2,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "row-status",
+      "actor": "implementor",
+      "subject": "B2",
+      "summary": "B2 is PASS"
+    },
+    {
+      "id": 3,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "row-status",
+      "actor": "implementor",
+      "subject": "B3",
+      "summary": "B3 is PASS"
+    },
+    {
+      "id": 4,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "row-status",
+      "actor": "implementor",
+      "subject": "B4",
+      "summary": "B4 is PASS"
+    },
+    {
+      "id": 5,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "row-status",
+      "actor": "implementor",
+      "subject": "B5",
+      "summary": "B5 is PASS"
+    },
+    {
+      "id": 6,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "row-status",
+      "actor": "implementor",
+      "subject": "B6",
+      "summary": "B6 is PASS"
+    },
+    {
+      "id": 7,
+      "at": "2026-09-08T09:57:58.706Z",
+      "kind": "verify",
+      "actor": "implementor",
+      "subject": null,
+      "summary": "verify PASS (attempt ac7b7225-3b47-4b8d-abe7-5f89644a25b2)"
+    },
+    {
+      "id": 8,
+      "at": "2026-09-08T09:58:13.439Z",
+      "kind": "finalize",
+      "actor": "implementor",
+      "subject": null,
+      "summary": "run closed complete"
+    }
+  ],
+  "verbs": [],
+  "amendments": [],
+  "evidenceReplacements": [],
+  "suite": {
+    "sealedAt": "2026-09-08T09:55:27.209Z",
+    "commands": [
+      {
+        "id": "S1",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "."
+      }
+    ],
+    "exclusions": [],
+    "results": [
+      {
+        "commandId": "S1",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+        "startedAt": "2026-09-08T09:57:32.796Z",
+        "finishedAt": "2026-09-08T09:57:33.343Z",
+        "durationMs": 547,
+        "exitCode": 0,
+        "mutatedTree": false,
+        "status": "GREEN",
+        "logPath": "agents/runs/task-list-full/artifacts/logs/mechanical-e8945441dac89ab2.log"
+      }
+    ]
+  },
+  "qaBriefs": [],
+  "trails": [],
+  "escalations": [],
+  "retirement": null,
+  "completion": {
+    "fingerprint": "2b5bbc9f9b5ee875c39ed5dee517e00d42e6fc101b230685bab86a1c87170b6b",
+    "completedAt": "2026-09-08T09:58:13.439Z",
+    "receiptPath": "agents/runs/task-list-full/receipt.json",
+    "implementationResultPath": "agents/runs/task-list-full/implementation-result.md"
+  },
+  "createdAt": "2026-09-08T09:55:27.209Z",
+  "updatedAt": "2026-09-08T09:58:13.441Z",
+  "designComments": []
+}

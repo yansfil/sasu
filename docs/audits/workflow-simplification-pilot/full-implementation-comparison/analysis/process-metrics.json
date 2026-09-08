@@ -1,0 +1,1076 @@
+{
+  "schema": "sasu.full-implementation-process-analysis.v1",
+  "generatedAt": "2026-09-08T10:16:53.415Z",
+  "scope": "Observable assistant and tool events plus CLI state and receipt fields. Reasoning content is not read or reported.",
+  "comparisonBoundary": {
+    "exploratoryPairOnly": true,
+    "implementationSpeedEstimate": false,
+    "nativeReportsCrossSchemaComparable": false,
+    "note": "Old benchmark-run/report v1 and new v2 remain intact under nativeReport. This analysis normalizes clocks and counts from transcripts and states without presenting either native report as schema-compatible with the other."
+  },
+  "semanticAnchor": {
+    "behaviorTexts": {
+      "old": [
+        {
+          "id": "B1",
+          "text": "Adding a task trims its title and assigns the next stable numeric id."
+        },
+        {
+          "id": "B2",
+          "text": "Adding a blank title throws and leaves the supplied list unchanged."
+        },
+        {
+          "id": "B3",
+          "text": "Toggling a known id changes only that task's completed state."
+        },
+        {
+          "id": "B4",
+          "text": "Removing a known id returns a list without that task and preserves the others."
+        },
+        {
+          "id": "B5",
+          "text": "Taking a snapshot returns defensive task copies that callers cannot use to mutate the source list."
+        },
+        {
+          "id": "B6",
+          "text": "The summary uses singular '1 item' for one task and plural '<n> items' for every other count."
+        }
+      ],
+      "new": [
+        {
+          "id": "B1",
+          "text": "Adding a task trims its title and assigns the next stable numeric id."
+        },
+        {
+          "id": "B2",
+          "text": "Adding a blank title throws and leaves the supplied list unchanged."
+        },
+        {
+          "id": "B3",
+          "text": "Toggling a known id changes only that task's completed state."
+        },
+        {
+          "id": "B4",
+          "text": "Removing a known id returns a list without that task and preserves the others."
+        },
+        {
+          "id": "B5",
+          "text": "Taking a snapshot returns defensive task copies that callers cannot use to mutate the source list."
+        },
+        {
+          "id": "B6",
+          "text": "The summary uses singular '1 item' for one task and plural '<n> items' for every other count."
+        }
+      ]
+    },
+    "sixTextsExactlyEqual": true,
+    "sharedProductBaseExpected": {
+      "commit": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+      "tree": "36382c4e52e2bbce81016d7c122b6179fb1d0229"
+    },
+    "starterHashes": {
+      "package.json": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+      "test/task-list.test.mjs": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+      "agents/config.json": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+    }
+  },
+  "preparationCorrection": {
+    "file": "/tmp/sasu-full-implementation-comparison/preparation-correction.json",
+    "sha256": "b548a8b265ecef691ce361c5e2ee82e7e100722987c35f7b5705fd0d1b81d017",
+    "value": {
+      "at": "2026-09-08T09:54:37.606Z",
+      "kind": "topic format only",
+      "failedSession": "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+      "allocatedRun": false,
+      "records": [
+        {
+          "version": "old",
+          "path": "/tmp/sasu-full-implementation-comparison/old/benchmarks/task-list-full/prd.md",
+          "before": "b237aa51aed5d50f470e9bda9c4e16c2860ef1203cf2798f0fae00adc1f9e7a1",
+          "after": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999"
+        },
+        {
+          "version": "new",
+          "path": "/tmp/sasu-full-implementation-comparison/new/benchmarks/task-list-full/prd.md",
+          "before": "3b6385d87f190c28d44fb8414aea05f5beba98cc3d2e701de510fbb959d72150",
+          "after": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f"
+        }
+      ]
+    }
+  },
+  "nativeReportAttempts": [
+    {
+      "file": "/tmp/sasu-full-implementation-comparison/native-report-attempts/old.json",
+      "sha256": "320bf710bd758842d4567236a3caf6c7f89c936f58f3554438e4c6f51ec9eadc",
+      "value": {
+        "version": "old",
+        "startedAt": "2026-09-08T10:12:47.808739+00:00",
+        "finishedAt": "2026-09-08T10:12:47.847571+00:00",
+        "argv": [
+          "node",
+          "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/skills/benchmark-implement/scripts/benchmark_report.js",
+          "report",
+          "--case",
+          "benchmarks/task-list-full/benchmark.json",
+          "--run-id",
+          "task-list-full-run-1",
+          "--run-dir",
+          "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full",
+          "--runtime",
+          "codex",
+          "--model",
+          "gpt-5.6-sol",
+          "--session-id",
+          "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+          "--session",
+          "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-49-37-01a0806c-4f72-7920-8143-d7fa85a16bfc.jsonl"
+        ],
+        "cwd": "/tmp/sasu-full-implementation-comparison/old",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "benchmark-report: --run-dir does not match the prepared fresh environment: /var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/matched-task-list-library\n",
+        "recordsModifiedByCoordinator": false
+      }
+    },
+    {
+      "file": "/tmp/sasu-full-implementation-comparison/native-report-attempts/new.json",
+      "sha256": "dcc505d141208651d4351bd4876e408b0205e1aa776364d48514067aeb4e8231",
+      "value": {
+        "version": "new",
+        "startedAt": "2026-09-08T10:12:47.847871+00:00",
+        "finishedAt": "2026-09-08T10:12:47.881631+00:00",
+        "argv": [
+          "node",
+          "/Users/hoyeonlee/projects/sasu/skills/benchmark-implement/scripts/benchmark_report.js",
+          "report",
+          "--case",
+          "benchmarks/task-list-full/benchmark.json",
+          "--run-id",
+          "task-list-full-run-1",
+          "--run-dir",
+          "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full",
+          "--runtime",
+          "codex",
+          "--model",
+          "gpt-5.6-sol",
+          "--session-id",
+          "01a08074-a1aa-7ff1-93b2-da2f6d148efa",
+          "--session",
+          "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-58-42-01a08074-a1aa-7ff1-93b2-da2f6d148efa.jsonl"
+        ],
+        "cwd": "/tmp/sasu-full-implementation-comparison/new",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "benchmark-report: --run-dir does not match the prepared fresh environment: /var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/matched-task-list-library\n",
+        "recordsModifiedByCoordinator": false
+      }
+    }
+  ],
+  "runs": [
+    {
+      "version": "old",
+      "expectedContract": "0.8.0",
+      "status": "complete",
+      "complete": true,
+      "blocker": null,
+      "clocks": {
+        "handoffAt": "2026-09-08T09:50:47.844Z",
+        "cliRunStartedAt": "2026-09-08T09:55:27.209Z",
+        "receiptFinalizedAt": "2026-09-08T09:58:13.439Z",
+        "requestToReceiptMs": 445595,
+        "runToReceiptMs": 166230,
+        "observedToNowMs": null,
+        "wallClockBreakdown": {
+          "preparationMs": 279365,
+          "initialImplementationMs": 125304,
+          "focusedChecksMs": 228,
+          "requiredSuitesMs": 547,
+          "independentJudgeMs": 25305,
+          "repairsMs": 0,
+          "finalizationMs": 14733,
+          "suiteJudgeOverlapMs": 0,
+          "unattributedMs": 113,
+          "note": "Preparation, pre-verify implementation, repair gaps, and finalization use state boundaries. Focused checks are removed from implementation or repair windows. Suite and judge time uses interval unions; leftover time inside verification attempts is unattributed."
+        },
+        "preparationBreakdown": {
+          "handoffToFailureMs": 96180,
+          "failureAt": "2026-09-08T09:52:24.024Z",
+          "failureToCorrectionMs": 133582,
+          "correctionAt": "2026-09-08T09:54:37.606Z",
+          "correctionToRetryMs": 20424,
+          "failureToRetryMs": 154006,
+          "retryAt": "2026-09-08T09:54:58.030Z",
+          "retryToRunStartMs": 29179,
+          "allocatedRunBeforeRetry": false
+        },
+        "coarsePhases": {
+          "handoffToStateStartMs": 279365,
+          "stateStartToFirstVerifyMs": 125532,
+          "verificationAttemptWallMs": 25965,
+          "interAttemptRecoveryMs": 0,
+          "finalVerifyToReceiptMs": 14733,
+          "verificationNested": {
+            "requiredSuiteWallUnionMs": 547,
+            "requiredSuiteResourceSumMs": 547,
+            "judgeWallUnionMs": 25305,
+            "judgeResourceSumMs": 172397
+          }
+        },
+        "postFinalVerifyEvents": [
+          {
+            "startedAt": "2026-09-08T09:58:13.220Z",
+            "finishedAt": "2026-09-08T09:58:13.473Z",
+            "phase": "finalization",
+            "action": "implement finalize",
+            "failure": null
+          }
+        ]
+      },
+      "phases": {
+        "preparation": {
+          "calls": 12,
+          "wallUnionMs": 2175,
+          "resourceSumMs": 2175
+        },
+        "initial-implementation": {
+          "calls": 1,
+          "wallUnionMs": 218,
+          "resourceSumMs": 218
+        },
+        "focused-checks": {
+          "calls": 1,
+          "wallUnionMs": 228,
+          "resourceSumMs": 228
+        },
+        "repairs": {
+          "calls": 0,
+          "wallUnionMs": 0,
+          "resourceSumMs": 0
+        },
+        "finalization": {
+          "calls": 1,
+          "wallUnionMs": 253,
+          "resourceSumMs": 253
+        },
+        "verify-wrapper": {
+          "calls": 1,
+          "wallUnionMs": 26510,
+          "resourceSumMs": 26510
+        },
+        "unattributed-tool": {
+          "calls": 7,
+          "wallUnionMs": 2553,
+          "resourceSumMs": 2553
+        },
+        "required-suite": {
+          "calls": 1,
+          "wallUnionMs": 547,
+          "resourceSumMs": 547
+        },
+        "independent-judge": {
+          "calls": 8,
+          "lanes": 8,
+          "wallUnionMs": 25305,
+          "resourceSumMs": 172397
+        }
+      },
+      "verification": {
+        "attempts": [
+          {
+            "id": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+            "startedAt": "2026-09-08T09:57:32.741Z",
+            "finishedAt": "2026-09-08T09:57:58.706Z",
+            "durationMs": 25965,
+            "verdict": "PASS",
+            "phase": null,
+            "error": null
+          }
+        ],
+        "suites": [
+          {
+            "pointer": "/verificationAttempts/0/mechanical/0",
+            "command": "npm test",
+            "startedAt": "2026-09-08T09:57:32.796Z",
+            "finishedAt": "2026-09-08T09:57:33.343Z",
+            "durationMs": 547,
+            "exitCode": 0,
+            "status": "PASS"
+          }
+        ],
+        "judges": [
+          {
+            "pointer": "/verificationAttempts/0/lanes/design",
+            "startedAt": "2026-09-08T09:57:33.400Z",
+            "finishedAt": "2026-09-08T09:57:46.268Z",
+            "durationMs": 12868,
+            "verdict": "FAIL",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 22480,
+              "outputTokens": 95,
+              "cachedInputTokens": 15104,
+              "reasoningOutputTokens": 85
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/acceptance/result/invocations/0",
+            "startedAt": "2026-09-08T09:57:33.415Z",
+            "finishedAt": "2026-09-08T09:57:57.810Z",
+            "durationMs": 24395,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 45591,
+              "outputTokens": 514,
+              "cachedInputTokens": 31232,
+              "reasoningOutputTokens": 354
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/acceptance/result/invocations/1",
+            "startedAt": "2026-09-08T09:57:33.416Z",
+            "finishedAt": "2026-09-08T09:57:55.362Z",
+            "durationMs": 21946,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 45404,
+              "outputTokens": 372,
+              "cachedInputTokens": 37376,
+              "reasoningOutputTokens": 208
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/acceptance/result/invocations/2",
+            "startedAt": "2026-09-08T09:57:33.416Z",
+            "finishedAt": "2026-09-08T09:57:58.705Z",
+            "durationMs": 25289,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 45472,
+              "outputTokens": 564,
+              "cachedInputTokens": 31232,
+              "reasoningOutputTokens": 383
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/acceptance/result/invocations/3",
+            "startedAt": "2026-09-08T09:57:33.416Z",
+            "finishedAt": "2026-09-08T09:57:56.325Z",
+            "durationMs": 22909,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 45478,
+              "outputTokens": 377,
+              "cachedInputTokens": 42496,
+              "reasoningOutputTokens": 207
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/acceptance/result/invocations/4",
+            "startedAt": "2026-09-08T09:57:33.416Z",
+            "finishedAt": "2026-09-08T09:57:54.614Z",
+            "durationMs": 21198,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 45433,
+              "outputTokens": 345,
+              "cachedInputTokens": 31232,
+              "reasoningOutputTokens": 145
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/acceptance/result/invocations/5",
+            "startedAt": "2026-09-08T09:57:33.416Z",
+            "finishedAt": "2026-09-08T09:57:57.647Z",
+            "durationMs": 24231,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 45463,
+              "outputTokens": 329,
+              "cachedInputTokens": 31232,
+              "reasoningOutputTokens": 157
+            }
+          },
+          {
+            "pointer": "/verificationAttempts/0/lanes/fidelity",
+            "startedAt": "2026-09-08T09:57:33.416Z",
+            "finishedAt": "2026-09-08T09:57:52.977Z",
+            "durationMs": 19561,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 22783,
+              "outputTokens": 455,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 193
+            }
+          }
+        ]
+      },
+      "failures": {
+        "transcriptCommands": [
+          {
+            "at": "2026-09-08T09:52:24.024Z",
+            "kind": "command",
+            "exitCode": 1,
+            "command": "/bin/zsh -lc node /Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/skills/benchmark-implement/scripts/benchmark_report.js prepare-run --case benchmarks/task-list-full/benchmark.json",
+            "cwd": "file:///private/tmp/sasu-full-implementation-comparison/old"
+          }
+        ],
+        "verificationAttempts": [],
+        "suites": [],
+        "judges": []
+      },
+      "executor": {
+        "sessionId": "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+        "transcript": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-49-37-01a0806c-4f72-7920-8143-d7fa85a16bfc.jsonl",
+        "transcriptSha256": "0f97a789f278e6da043f8291ab8bb11bd22414ecbb60532f633a7bc65da53dc7",
+        "cwd": "/private/tmp/sasu-full-implementation-comparison/old",
+        "nativeCliVersion": "0.153.4",
+        "modelEffort": [
+          "gpt-5.6-sol:medium"
+        ],
+        "usage": {
+          "input_tokens": 1288042,
+          "cached_input_tokens": 1212416,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 7873,
+          "reasoning_output_tokens": 3325,
+          "total_tokens": 1295915
+        },
+        "usageBoundaryAt": "2026-09-08T09:58:13.327Z",
+        "usageBoundary": "last cumulative session usage record at or before receipt",
+        "turns": [
+          {
+            "turnId": "01a0806d-6287-7be3-a047-25cb1e736f48",
+            "startedAt": "2026-09-08T09:50:47.453Z",
+            "finishedAt": "2026-09-08T09:53:04.347Z"
+          },
+          {
+            "turnId": "01a08070-e749-77a1-b84f-d47f663fab08",
+            "startedAt": "2026-09-08T09:54:38.046Z",
+            "finishedAt": "2026-09-08T09:59:53.732Z"
+          }
+        ],
+        "interTurnGaps": [
+          {
+            "priorTurnId": "01a0806d-6287-7be3-a047-25cb1e736f48",
+            "nextTurnId": "01a08070-e749-77a1-b84f-d47f663fab08",
+            "startedAt": "2026-09-08T09:53:04.347Z",
+            "finishedAt": "2026-09-08T09:54:38.046Z",
+            "durationMs": 93699
+          }
+        ],
+        "provenance": {
+          "expectedSkillPaths": [
+            "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/benchmark-implement/SKILL.md",
+            "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/implement/SKILL.md"
+          ],
+          "observedExactSkillReads": [
+            {
+              "expected": "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/benchmark-implement/SKILL.md",
+              "observed": true
+            },
+            {
+              "expected": "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/implement/SKILL.md",
+              "observed": true
+            }
+          ],
+          "expectedCliPath": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/cli/dist/cli.js",
+          "observedPinnedCliUse": true
+        }
+      },
+      "judge": {
+        "backendModels": [
+          "codex:gpt-5.6-luna:xhigh"
+        ],
+        "usage": {
+          "inputTokens": 318104,
+          "outputTokens": 3051,
+          "cachedInputTokens": 228864,
+          "reasoningOutputTokens": 1732
+        },
+        "usageCoverage": {
+          "lanesWithUsage": 8,
+          "lanesWithoutUsage": 0,
+          "actualCallsRepresentedByUsage": 8,
+          "actualCallsWithoutUsage": 0
+        }
+      },
+      "source": {
+        "launcherRoot": "/tmp/sasu-full-implementation-comparison/old",
+        "launcherIdentity": {
+          "commit": "9d00320a7dbfec17527217a2f6e3242cf427733e",
+          "tree": "53594a8a25c1718e5104f18aff91bc978c8bc74b"
+        },
+        "workingRoot": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree",
+        "statePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/state.json",
+        "receiptPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/receipt.json",
+        "fileHashes": {
+          "src/task-list.mjs": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/src/task-list.mjs",
+            "sha256": "eb528006ac5f59b48afdef1f6e61977d0b785f5338f9587ffe9eaa25a23f3ce3"
+          },
+          "test/task-list.test.mjs": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/test/task-list.test.mjs",
+            "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+          },
+          "package.json": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/package.json",
+            "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+          },
+          "agents/config.json": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/config.json",
+            "sha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+          }
+        }
+      },
+      "receipt": {
+        "schema": "sasu.implement.receipt.v4",
+        "status": "complete",
+        "completedAt": "2026-09-08T09:58:13.439Z",
+        "sourceFingerprint": "d54a84ecc09cca375d042417aad1ce2b55a83790ebd54a421dc4214a57c76f0b",
+        "completionFingerprint": "2b5bbc9f9b5ee875c39ed5dee517e00d42e6fc101b230685bab86a1c87170b6b",
+        "verificationAttemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      },
+      "metadataPathDiscrepancy": {
+        "predictedStatePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/matched-task-list-library/state.json",
+        "actualStatePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/state.json",
+        "preserved": true
+      },
+      "nativeReport": null
+    },
+    {
+      "version": "new",
+      "expectedContract": "0.9.0",
+      "status": "complete",
+      "complete": true,
+      "blocker": null,
+      "clocks": {
+        "handoffAt": "2026-09-08T09:59:26.960Z",
+        "cliRunStartedAt": "2026-09-08T10:00:38.971Z",
+        "receiptFinalizedAt": "2026-09-08T10:05:19.952Z",
+        "requestToReceiptMs": 352992,
+        "runToReceiptMs": 280981,
+        "observedToNowMs": null,
+        "wallClockBreakdown": {
+          "preparationMs": 72011,
+          "initialImplementationMs": 146827,
+          "focusedChecksMs": 193,
+          "requiredSuitesMs": 483,
+          "independentJudgeMs": 62353,
+          "repairsMs": 9605,
+          "finalizationMs": 61346,
+          "suiteJudgeOverlapMs": 0,
+          "unattributedMs": 174,
+          "note": "Preparation, pre-verify implementation, repair gaps, and finalization use state boundaries. Focused checks are removed from implementation or repair windows. Suite and judge time uses interval unions; leftover time inside verification attempts is unattributed."
+        },
+        "preparationBreakdown": null,
+        "coarsePhases": {
+          "handoffToStateStartMs": 72011,
+          "stateStartToFirstVerifyMs": 147020,
+          "verificationAttemptWallMs": 63009,
+          "interAttemptRecoveryMs": 9605,
+          "finalVerifyToReceiptMs": 61346,
+          "verificationNested": {
+            "requiredSuiteWallUnionMs": 483,
+            "requiredSuiteResourceSumMs": 483,
+            "judgeWallUnionMs": 62353,
+            "judgeResourceSumMs": 62353
+          }
+        },
+        "postFinalVerifyEvents": [
+          {
+            "startedAt": "2026-09-08T10:04:29.682Z",
+            "finishedAt": "2026-09-08T10:04:29.873Z",
+            "phase": "finalization",
+            "action": "implement finalize",
+            "failure": null
+          },
+          {
+            "startedAt": "2026-09-08T10:04:49.364Z",
+            "finishedAt": "2026-09-08T10:04:49.494Z",
+            "phase": "unattributed-tool",
+            "action": "filesystem and stale-temp diagnostics",
+            "failure": null
+          },
+          {
+            "startedAt": "2026-09-08T10:05:08.538Z",
+            "finishedAt": "2026-09-08T10:05:08.573Z",
+            "phase": "finalization",
+            "action": "rejected rm cleanup, then finalize",
+            "failure": {
+              "at": "2026-09-08T10:05:08.573Z",
+              "kind": "tool-rejection",
+              "callId": "call_9SvY1Eg9vSGqWeCrZr2kyNSm",
+              "action": "rejected rm cleanup, then finalize"
+            }
+          },
+          {
+            "startedAt": "2026-09-08T10:05:19.626Z",
+            "finishedAt": "2026-09-08T10:05:19.980Z",
+            "phase": "finalization",
+            "action": "trash stale temp files, then finalize",
+            "failure": null
+          }
+        ]
+      },
+      "phases": {
+        "preparation": {
+          "calls": 10,
+          "wallUnionMs": 2054,
+          "resourceSumMs": 2054
+        },
+        "initial-implementation": {
+          "calls": 2,
+          "wallUnionMs": 714,
+          "resourceSumMs": 714
+        },
+        "focused-checks": {
+          "calls": 1,
+          "wallUnionMs": 193,
+          "resourceSumMs": 193
+        },
+        "repairs": {
+          "calls": 2,
+          "wallUnionMs": 427,
+          "resourceSumMs": 427
+        },
+        "finalization": {
+          "calls": 3,
+          "wallUnionMs": 580,
+          "resourceSumMs": 580
+        },
+        "verify-wrapper": {
+          "calls": 2,
+          "wallUnionMs": 55279,
+          "resourceSumMs": 55279
+        },
+        "unattributed-tool": {
+          "calls": 2,
+          "wallUnionMs": 4278,
+          "resourceSumMs": 4278
+        },
+        "required-suite": {
+          "calls": 2,
+          "wallUnionMs": 483,
+          "resourceSumMs": 483
+        },
+        "independent-judge": {
+          "calls": 3,
+          "lanes": 2,
+          "wallUnionMs": 62353,
+          "resourceSumMs": 62353
+        }
+      },
+      "verification": {
+        "attempts": [
+          {
+            "id": "7a090e58-b294-40fd-a865-96e8874536d3",
+            "startedAt": "2026-09-08T10:03:05.991Z",
+            "finishedAt": "2026-09-08T10:03:44.079Z",
+            "durationMs": 38087,
+            "verdict": "ERROR",
+            "phase": "complete",
+            "error": {
+              "stage": "review",
+              "code": "judge-error",
+              "message": "judge-invalid-output (backend: codex): codex exec produced no last message"
+            }
+          },
+          {
+            "id": "b87121a4-9d73-4355-9eb2-69fdf9f6b509",
+            "startedAt": "2026-09-08T10:03:53.684Z",
+            "finishedAt": "2026-09-08T10:04:18.606Z",
+            "durationMs": 24922,
+            "verdict": "PASS",
+            "phase": "complete",
+            "error": null
+          }
+        ],
+        "suites": [
+          {
+            "pointer": "/verificationAttempts/0/mechanical/0",
+            "command": "npm test",
+            "startedAt": "2026-09-08T10:03:06.013Z",
+            "finishedAt": "2026-09-08T10:03:06.270Z",
+            "durationMs": 257,
+            "exitCode": 0,
+            "status": "PASS"
+          },
+          {
+            "pointer": "/verificationAttempts/1/mechanical/0",
+            "command": "npm test",
+            "startedAt": "2026-09-08T10:03:53.705Z",
+            "finishedAt": "2026-09-08T10:03:53.931Z",
+            "durationMs": 226,
+            "exitCode": 0,
+            "status": "PASS"
+          }
+        ],
+        "judges": [
+          {
+            "pointer": "/verificationAttempts/0/review",
+            "startedAt": "2026-09-08T10:03:06.309Z",
+            "finishedAt": "2026-09-08T10:03:44.058Z",
+            "durationMs": 37749,
+            "verdict": "ERROR",
+            "error": {
+              "code": "judge-invalid-output",
+              "message": "judge-invalid-output (backend: codex): codex exec produced no last message",
+              "cause": {
+                "code": "judge-invalid-output",
+                "backend": "codex",
+                "reason": "empty-response"
+              }
+            },
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 2,
+            "retries": [
+              {
+                "at": "2026-09-08T10:03:11.016Z",
+                "backend": "codex",
+                "model": "gpt-5.6-luna",
+                "code": "judge-invalid-output",
+                "reason": "missing-allowlisted-path",
+                "detail": "isolated codex judge used an unsafe read command in segment (sed -n 1,200p package.json; sed named no allowlisted evidence path): /bin/zsh -lc \"sed -n '1,200p' package.json && sed -n '1,200p' agents/runs/task-list-full/artifacts/logs/mechanical-5eec2fe4f3cbeff8.log\"",
+                "durationMs": 17300
+              },
+              {
+                "at": "2026-09-08T10:03:28.316Z",
+                "backend": "codex",
+                "model": "gpt-5.6-luna",
+                "code": "judge-invalid-output",
+                "reason": "empty-response",
+                "detail": "codex exec produced no last message",
+                "durationMs": 15742
+              }
+            ],
+            "outcome": "judge-invalid-output",
+            "usage": null
+          },
+          {
+            "pointer": "/verificationAttempts/1/review",
+            "startedAt": "2026-09-08T10:03:53.970Z",
+            "finishedAt": "2026-09-08T10:04:18.574Z",
+            "durationMs": 24604,
+            "verdict": "PASS",
+            "error": null,
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 1,
+            "retries": [],
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 25349,
+              "outputTokens": 899,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 845
+            }
+          }
+        ]
+      },
+      "failures": {
+        "transcriptCommands": [
+          {
+            "at": "2026-09-08T10:03:44.084Z",
+            "kind": "command",
+            "exitCode": 1,
+            "command": "/bin/zsh -lc node /Users/hoyeonlee/projects/sasu/cli/dist/cli.js implement verify --json",
+            "cwd": "file:///var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree"
+          },
+          {
+            "at": "2026-09-08T10:04:29.857Z",
+            "kind": "command",
+            "exitCode": 2,
+            "command": "/bin/zsh -lc node /Users/hoyeonlee/projects/sasu/cli/dist/cli.js implement finalize --json",
+            "cwd": "file:///var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree"
+          },
+          {
+            "at": "2026-09-08T10:05:08.573Z",
+            "kind": "tool-rejection",
+            "callId": "call_9SvY1Eg9vSGqWeCrZr2kyNSm",
+            "action": "rejected rm cleanup, then finalize"
+          }
+        ],
+        "verificationAttempts": [
+          {
+            "id": "7a090e58-b294-40fd-a865-96e8874536d3",
+            "startedAt": "2026-09-08T10:03:05.991Z",
+            "finishedAt": "2026-09-08T10:03:44.079Z",
+            "durationMs": 38087,
+            "verdict": "ERROR",
+            "phase": "complete",
+            "error": {
+              "stage": "review",
+              "code": "judge-error",
+              "message": "judge-invalid-output (backend: codex): codex exec produced no last message"
+            }
+          }
+        ],
+        "suites": [],
+        "judges": [
+          {
+            "pointer": "/verificationAttempts/0/review",
+            "startedAt": "2026-09-08T10:03:06.309Z",
+            "finishedAt": "2026-09-08T10:03:44.058Z",
+            "durationMs": 37749,
+            "verdict": "ERROR",
+            "error": {
+              "code": "judge-invalid-output",
+              "message": "judge-invalid-output (backend: codex): codex exec produced no last message",
+              "cause": {
+                "code": "judge-invalid-output",
+                "backend": "codex",
+                "reason": "empty-response"
+              }
+            },
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": "xhigh",
+            "attempts": 2,
+            "retries": [
+              {
+                "at": "2026-09-08T10:03:11.016Z",
+                "backend": "codex",
+                "model": "gpt-5.6-luna",
+                "code": "judge-invalid-output",
+                "reason": "missing-allowlisted-path",
+                "detail": "isolated codex judge used an unsafe read command in segment (sed -n 1,200p package.json; sed named no allowlisted evidence path): /bin/zsh -lc \"sed -n '1,200p' package.json && sed -n '1,200p' agents/runs/task-list-full/artifacts/logs/mechanical-5eec2fe4f3cbeff8.log\"",
+                "durationMs": 17300
+              },
+              {
+                "at": "2026-09-08T10:03:28.316Z",
+                "backend": "codex",
+                "model": "gpt-5.6-luna",
+                "code": "judge-invalid-output",
+                "reason": "empty-response",
+                "detail": "codex exec produced no last message",
+                "durationMs": 15742
+              }
+            ],
+            "outcome": "judge-invalid-output",
+            "usage": null
+          }
+        ]
+      },
+      "executor": {
+        "sessionId": "01a08074-a1aa-7ff1-93b2-da2f6d148efa",
+        "transcript": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-58-42-01a08074-a1aa-7ff1-93b2-da2f6d148efa.jsonl",
+        "transcriptSha256": "196c8eeb62e7cdc308309c0cd82fef867c4e77b5442f01fdbde22d8aa0f1513b",
+        "cwd": "/private/tmp/sasu-full-implementation-comparison/new",
+        "nativeCliVersion": "0.153.4",
+        "modelEffort": [
+          "gpt-5.6-sol:medium"
+        ],
+        "usage": {
+          "input_tokens": 1135966,
+          "cached_input_tokens": 1068672,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 7051,
+          "reasoning_output_tokens": 2940,
+          "total_tokens": 1143017
+        },
+        "usageBoundaryAt": "2026-09-08T10:05:19.759Z",
+        "usageBoundary": "last cumulative session usage record at or before receipt",
+        "turns": [
+          {
+            "turnId": "01a08075-4d62-7671-b01c-3cee9139dade",
+            "startedAt": "2026-09-08T09:59:26.332Z",
+            "finishedAt": "2026-09-08T10:06:44.162Z"
+          }
+        ],
+        "interTurnGaps": [],
+        "provenance": {
+          "expectedSkillPaths": [
+            "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/benchmark-implement/SKILL.md",
+            "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/implement/SKILL.md"
+          ],
+          "observedExactSkillReads": [
+            {
+              "expected": "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/benchmark-implement/SKILL.md",
+              "observed": true
+            },
+            {
+              "expected": "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/implement/SKILL.md",
+              "observed": true
+            }
+          ],
+          "expectedCliPath": "/Users/hoyeonlee/projects/sasu/cli/dist/cli.js",
+          "observedPinnedCliUse": true
+        }
+      },
+      "judge": {
+        "backendModels": [
+          "codex:gpt-5.6-luna:xhigh"
+        ],
+        "usage": {
+          "inputTokens": 25349,
+          "outputTokens": 899,
+          "cachedInputTokens": 8960,
+          "reasoningOutputTokens": 845
+        },
+        "usageCoverage": {
+          "lanesWithUsage": 1,
+          "lanesWithoutUsage": 1,
+          "actualCallsRepresentedByUsage": 1,
+          "actualCallsWithoutUsage": 2
+        }
+      },
+      "source": {
+        "launcherRoot": "/tmp/sasu-full-implementation-comparison/new",
+        "launcherIdentity": {
+          "commit": "14ff294d156bf1909e22e5fc00073c0d5530de49",
+          "tree": "04c136d99477de6a649edc808b768cf11190f224"
+        },
+        "workingRoot": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree",
+        "statePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/state.json",
+        "receiptPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/receipt.json",
+        "fileHashes": {
+          "src/task-list.mjs": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/src/task-list.mjs",
+            "sha256": "8e7bb99c244fe20910da120027e11b28ff728ecf550eba6311ce8100c45058a6"
+          },
+          "test/task-list.test.mjs": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/test/task-list.test.mjs",
+            "sha256": "d08838ea6ffb14250c45c6bf3a6e6fa628e6c17373bdf6db813570eadaed6ca6"
+          },
+          "package.json": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/package.json",
+            "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+          },
+          "agents/config.json": {
+            "file": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/config.json",
+            "sha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+          }
+        }
+      },
+      "receipt": {
+        "schema": "sasu.implement.receipt.v5",
+        "status": "complete",
+        "completedAt": "2026-09-08T10:05:19.952Z",
+        "sourceFingerprint": "a5b3701f70d45ecf324ea206e4567f5d7b0f341d290e5cedb9bbcf6eb377465e",
+        "completionFingerprint": "5d3fa8da4816ed602f0c34b24f75cd08b24e8f4cbaa88beb4e47963b1b197236",
+        "verificationAttemptId": "b87121a4-9d73-4355-9eb2-69fdf9f6b509"
+      },
+      "metadataPathDiscrepancy": {
+        "predictedStatePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/matched-task-list-library/state.json",
+        "actualStatePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/state.json",
+        "preserved": true
+      },
+      "nativeReport": null
+    }
+  ],
+  "outputHashComparison": {
+    "src/task-list.mjs": {
+      "hashes": {
+        "old": "eb528006ac5f59b48afdef1f6e61977d0b785f5338f9587ffe9eaa25a23f3ce3",
+        "new": "8e7bb99c244fe20910da120027e11b28ff728ecf550eba6311ce8100c45058a6"
+      },
+      "exactlyEqual": false
+    },
+    "test/task-list.test.mjs": {
+      "hashes": {
+        "old": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+        "new": "d08838ea6ffb14250c45c6bf3a6e6fa628e6c17373bdf6db813570eadaed6ca6"
+      },
+      "exactlyEqual": false
+    },
+    "package.json": {
+      "hashes": {
+        "old": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+        "new": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      "exactlyEqual": true
+    },
+    "agents/config.json": {
+      "hashes": {
+        "old": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460",
+        "new": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+      },
+      "exactlyEqual": true
+    }
+  },
+  "outputRelationships": {
+    "src/task-list.mjs": {
+      "leftBytes": 871,
+      "rightBytes": 866,
+      "exactlyEqual": false,
+      "rightStartsWithExactLeftBytes": false
+    },
+    "test/task-list.test.mjs": {
+      "leftBytes": 905,
+      "rightBytes": 1365,
+      "exactlyEqual": false,
+      "rightStartsWithExactLeftBytes": true
+    },
+    "package.json": {
+      "leftBytes": 152,
+      "rightBytes": 152,
+      "exactlyEqual": true,
+      "rightStartsWithExactLeftBytes": true
+    },
+    "agents/config.json": {
+      "leftBytes": 317,
+      "rightBytes": 317,
+      "exactlyEqual": true,
+      "rightStartsWithExactLeftBytes": true
+    }
+  }
+}

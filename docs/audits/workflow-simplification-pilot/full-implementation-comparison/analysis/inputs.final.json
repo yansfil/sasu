@@ -1,0 +1,64 @@
+{
+  "sharedProductBase": {
+    "commit": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "tree": "36382c4e52e2bbce81016d7c122b6179fb1d0229"
+  },
+  "starterHashes": {
+    "package.json": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+    "test/task-list.test.mjs": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+    "agents/config.json": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+  },
+  "preparationCorrectionPath": "/tmp/sasu-full-implementation-comparison/preparation-correction.json",
+  "runs": [
+    {
+      "version": "old",
+      "contract": "0.8.0",
+      "sessionId": "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+      "transcriptPath": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-49-37-01a0806c-4f72-7920-8143-d7fa85a16bfc.jsonl",
+      "launcherRoot": "/tmp/sasu-full-implementation-comparison/old",
+      "prdPath": "/tmp/sasu-full-implementation-comparison/old/benchmarks/task-list-full/prd.md",
+      "expectedSkillPaths": [
+        "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/benchmark-implement/SKILL.md",
+        "/private/tmp/sasu-full-implementation-comparison/old/.agents/skills/implement/SKILL.md"
+      ],
+      "expectedCliPath": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/cli/dist/cli.js",
+      "workingRoot": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree",
+      "predictedStatePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/matched-task-list-library/state.json",
+      "statePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/state.json",
+      "receiptPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/receipt.json",
+      "sourceFiles": {
+        "src/task-list.mjs": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/src/task-list.mjs",
+        "test/task-list.test.mjs": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/test/task-list.test.mjs",
+        "package.json": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/package.json",
+        "agents/config.json": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/config.json"
+      }
+    },
+    {
+      "version": "new",
+      "contract": "0.9.0",
+      "sessionId": "01a08074-a1aa-7ff1-93b2-da2f6d148efa",
+      "transcriptPath": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-58-42-01a08074-a1aa-7ff1-93b2-da2f6d148efa.jsonl",
+      "launcherRoot": "/tmp/sasu-full-implementation-comparison/new",
+      "prdPath": "/tmp/sasu-full-implementation-comparison/new/benchmarks/task-list-full/prd.md",
+      "expectedSkillPaths": [
+        "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/benchmark-implement/SKILL.md",
+        "/private/tmp/sasu-full-implementation-comparison/new/.agents/skills/implement/SKILL.md"
+      ],
+      "expectedCliPath": "/Users/hoyeonlee/projects/sasu/cli/dist/cli.js",
+      "workingRoot": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree",
+      "predictedStatePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/matched-task-list-library/state.json",
+      "statePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/state.json",
+      "receiptPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/receipt.json",
+      "sourceFiles": {
+        "src/task-list.mjs": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/src/task-list.mjs",
+        "test/task-list.test.mjs": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/test/task-list.test.mjs",
+        "package.json": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/package.json",
+        "agents/config.json": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/config.json"
+      }
+    }
+  ],
+  "nativeReportAttempts": [
+    "/tmp/sasu-full-implementation-comparison/native-report-attempts/old.json",
+    "/tmp/sasu-full-implementation-comparison/native-report-attempts/new.json"
+  ]
+}

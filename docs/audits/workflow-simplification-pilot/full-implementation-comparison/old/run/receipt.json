@@ -1,0 +1,161 @@
+{
+  "schema": "sasu.implement.receipt.v4",
+  "status": "complete",
+  "topicSlug": "task-list-full",
+  "prdPath": "benchmarks/task-list-full/prd.md",
+  "prdSnapshotPath": "agents/runs/task-list-full/prd.md",
+  "prdJudge": {
+    "required": false,
+    "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+    "gapAudit": null,
+    "spec": null
+  },
+  "baselineAttribution": {
+    "disposition": "pre-existing",
+    "paths": [
+      {
+        "path": "benchmarks/task-list-full/benchmark.json",
+        "disposition": "pre-existing"
+      },
+      {
+        "path": "benchmarks/task-list-full/prd.md",
+        "disposition": "pre-existing"
+      }
+    ],
+    "baselineDigest": "df641fa3499a219f2df5b31ad5e6fff5eff1d362e186521df8a886c517dcacd8",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+  },
+  "completedAt": "2026-09-08T09:58:13.439Z",
+  "completionFingerprint": "2b5bbc9f9b5ee875c39ed5dee517e00d42e6fc101b230685bab86a1c87170b6b",
+  "sourceFingerprint": "d54a84ecc09cca375d042417aad1ce2b55a83790ebd54a421dc4214a57c76f0b",
+  "verificationAttemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2",
+  "unifiedVerdict": "PASS",
+  "lanes": {
+    "acceptance": "PASS",
+    "fidelity": "PASS",
+    "risk": "NOT_REQUIRED"
+  },
+  "behaviors": [
+    {
+      "id": "B1",
+      "behavior": "Adding a task trims its title and assigns the next stable numeric id.",
+      "check": "judge: inspect src/task-list.mjs and the required suite result.",
+      "decisions": [
+        "D-01"
+      ],
+      "parked": null,
+      "result": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result.",
+        "status": "PASS",
+        "verdict": "PASS",
+        "reason": "addItem trims the title via normalizeTitle and assigns max existing numeric id plus one; npm test passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test))",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      }
+    },
+    {
+      "id": "B2",
+      "behavior": "Adding a blank title throws and leaves the supplied list unchanged.",
+      "check": "judge: inspect src/task-list.mjs and the required suite result.",
+      "decisions": [
+        "D-01"
+      ],
+      "parked": null,
+      "result": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result.",
+        "status": "PASS",
+        "verdict": "PASS",
+        "reason": "normalizeTitle trims the title and throws for an empty result before addItem computes or returns a new list, so the supplied list is unchanged. (src/task-list.mjs; npm test GREEN (exit 0))",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      }
+    },
+    {
+      "id": "B3",
+      "behavior": "Toggling a known id changes only that task's completed state.",
+      "check": "judge: inspect src/task-list.mjs and the required suite result.",
+      "decisions": [
+        "D-01"
+      ],
+      "parked": null,
+      "result": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result.",
+        "status": "PASS",
+        "verdict": "PASS",
+        "reason": "toggleItem maps the list and changes only the matching item's done value; all other item fields and tasks remain unchanged. The required suite passed. (src/task-list.mjs; S1 GREEN (npm test, exit 0); agents/runs/task-list-full/artifacts/task-list-test.tap)",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      }
+    },
+    {
+      "id": "B4",
+      "behavior": "Removing a known id returns a list without that task and preserves the others.",
+      "check": "judge: inspect src/task-list.mjs and the required suite result.",
+      "decisions": [
+        "D-01"
+      ],
+      "parked": null,
+      "result": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result.",
+        "status": "PASS",
+        "verdict": "PASS",
+        "reason": "removeItem filters out only items whose id matches the requested id, preserving all other tasks. The required npm test suite passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test, exit 0))",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      }
+    },
+    {
+      "id": "B5",
+      "behavior": "Taking a snapshot returns defensive task copies that callers cannot use to mutate the source list.",
+      "check": "judge: inspect src/task-list.mjs and the required suite result.",
+      "decisions": [
+        "D-01"
+      ],
+      "parked": null,
+      "result": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result.",
+        "status": "PASS",
+        "verdict": "PASS",
+        "reason": "snapshot returns a new array with a new object for every task via items.map((item) => ({ ...item })), so callers cannot mutate the source list or its task records through the snapshot. The required suite also passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test, exit 0))",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      }
+    },
+    {
+      "id": "B6",
+      "behavior": "The summary uses singular '1 item' for one task and plural '<n> items' for every other count.",
+      "check": "judge: inspect src/task-list.mjs and the required suite result.",
+      "decisions": [
+        "D-01"
+      ],
+      "parked": null,
+      "result": {
+        "kind": "judge",
+        "evidence": "inspect src/task-list.mjs and the required suite result.",
+        "status": "PASS",
+        "verdict": "PASS",
+        "reason": "summary() selects singular \"item\" when items.length === 1 and plural \"items\" otherwise. Required suite S1 also passed with exit 0. (src/task-list.mjs; S1 GREEN (npm test, exit 0))",
+        "attemptId": "ac7b7225-3b47-4b8d-abe7-5f89644a25b2"
+      }
+    }
+  ],
+  "parkedRows": [],
+  "score": {
+    "rows": {
+      "passed": 6,
+      "total": 6,
+      "open": [],
+      "confirmed": 0,
+      "parked": [],
+      "unproven": []
+    },
+    "suite": {
+      "green": 1,
+      "total": 1,
+      "red": [],
+      "excluded": []
+    }
+  },
+  "scoreLine": "기계·판사: 6/6 PASS | suite: 1/1 GREEN",
+  "executionCallsDuringFinalize": 0
+}

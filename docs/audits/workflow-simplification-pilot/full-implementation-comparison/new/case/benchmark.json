@@ -1,0 +1,31 @@
+{
+  "schema": "sasu.benchmark-case.v4",
+  "id": "task-list-full",
+  "prd": "prd.md",
+  "environment": {
+    "mode": "fresh-worktree",
+    "baseRef": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "mustBeAbsent": ["src/task-list.mjs"]
+  },
+  "expected": {
+    "terminalStatuses": ["complete"],
+    "requiredStages": [
+      "start",
+      "verification",
+      "mechanical",
+      "review",
+      "finalize"
+    ],
+    "forbiddenStages": ["risk"],
+    "maxVerifyAttempts": 3,
+    "falseCompleteAllowed": false
+  },
+  "evaluation": {
+    "required": true,
+    "requiredCoverage": "complete",
+    "models": {
+      "claudeCode": "opus",
+      "codex": "gpt-5.6-sol"
+    }
+  }
+}

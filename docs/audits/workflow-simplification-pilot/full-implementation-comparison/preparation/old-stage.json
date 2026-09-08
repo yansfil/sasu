@@ -1,0 +1,210 @@
+{
+  "source": "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline",
+  "target": "/tmp/sasu-full-implementation-comparison/old",
+  "skillsRoot": "/tmp/sasu-full-implementation-comparison/old/.agents/skills",
+  "records": [
+    {
+      "name": "interview-me",
+      "relative": "SKILL.md",
+      "sourceSha256": "96c7af50aa4d552af42db6a028038a0de8c45ec4573c1bf2691ed255b236bf35",
+      "stagedSha256": "96c7af50aa4d552af42db6a028038a0de8c45ec4573c1bf2691ed255b236bf35",
+      "link": false
+    },
+    {
+      "name": "interview-me",
+      "relative": "agents/openai.yaml",
+      "sourceSha256": "0449d3324ca0c490c115d838dfee1d11bf89e1c11874525d454f3257328b5cf8",
+      "stagedSha256": "0449d3324ca0c490c115d838dfee1d11bf89e1c11874525d454f3257328b5cf8",
+      "link": true
+    },
+    {
+      "name": "gen-prd",
+      "relative": "SKILL.md",
+      "sourceSha256": "93712825d46318225b437a4734b0cdb85e33c868d1622adbd4976f1eae4c3308",
+      "stagedSha256": "93712825d46318225b437a4734b0cdb85e33c868d1622adbd4976f1eae4c3308",
+      "link": false
+    },
+    {
+      "name": "gen-prd",
+      "relative": "agents/openai.yaml",
+      "sourceSha256": "ab6c031027b557c4ce4399564b92367468a7aefc3754a439249c975e3de0c2fc",
+      "stagedSha256": "ab6c031027b557c4ce4399564b92367468a7aefc3754a439249c975e3de0c2fc",
+      "link": true
+    },
+    {
+      "name": "implement",
+      "relative": "SKILL.md",
+      "sourceSha256": "41c491d84e1d33692c9352b45f4e5ed411a233724e7c5a99f16ff991ee07a49a",
+      "stagedSha256": "95f39c40c6ce771ea6be12c96a3d7939a9ea6f550d6d3b08412611d9e8675cee",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "agents/openai.yaml",
+      "sourceSha256": "85709e6c882ee03a25b0e2576d96ab69b521a11ccc1e618d01ef54348541217c",
+      "stagedSha256": "85709e6c882ee03a25b0e2576d96ab69b521a11ccc1e618d01ef54348541217c",
+      "link": true
+    },
+    {
+      "name": "implement",
+      "relative": "references/execution-planning.md",
+      "sourceSha256": "4d471c0e056be9434df00e7215e2d56dfc8c6ff86ff82c49bca0225c44a749f6",
+      "stagedSha256": "4d471c0e056be9434df00e7215e2d56dfc8c6ff86ff82c49bca0225c44a749f6",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "references/observer-and-herdr.md",
+      "sourceSha256": "5549405c2a82b186afe62d75afd08f495818343601729eca7d9de016371fbb80",
+      "stagedSha256": "eaea328ebb4a9d98f7da8e967364a777d7beb59905b816c1c61259eb9c5da75a",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "references/reviews-and-finalization.md",
+      "sourceSha256": "fa07744c684c4b6138a8d4416e038aa037c593c204fc8be2c6ede9a8560ea908",
+      "stagedSha256": "fa07744c684c4b6138a8d4416e038aa037c593c204fc8be2c6ede9a8560ea908",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "references/verification-and-evidence.md",
+      "sourceSha256": "7b8c83011206415f429b201ea0972ccebdc6739905218c7196d273e2825f358b",
+      "stagedSha256": "7b8c83011206415f429b201ea0972ccebdc6739905218c7196d273e2825f358b",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "references/verification-environments.md",
+      "sourceSha256": "c87665105a2b470b37c18d97c0d62f72e45361f7293d4a3bf98b94211e25de53",
+      "stagedSha256": "c87665105a2b470b37c18d97c0d62f72e45361f7293d4a3bf98b94211e25de53",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "references/worktrees-and-delivery.md",
+      "sourceSha256": "add4151ed105bba0284ebf1b29d7600e236253bb879b39bc7b804f746d774bb9",
+      "stagedSha256": "add4151ed105bba0284ebf1b29d7600e236253bb879b39bc7b804f746d774bb9",
+      "link": false
+    },
+    {
+      "name": "implement",
+      "relative": "scripts/prd_state_harness.js",
+      "sourceSha256": "75f0ab3767a528fd5764f39c0bb18dd15b73f140b69b3fccad918862b9082c1a",
+      "stagedSha256": "75f0ab3767a528fd5764f39c0bb18dd15b73f140b69b3fccad918862b9082c1a",
+      "link": true
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "SKILL.md",
+      "sourceSha256": "cd90a75e51174910e499b5e530c4c1577ff07f26584d8d8755d905855ec6c1e6",
+      "stagedSha256": "58d4f5a2f99cd2545984c44a43d5d05af458f29c69a78ac49e0e0893556ebb8d",
+      "link": false
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "agents/openai.yaml",
+      "sourceSha256": "7fec8bc7134c3b594a10328c813f77c4703c54385c6d234a93efd328d3d95586",
+      "stagedSha256": "7fec8bc7134c3b594a10328c813f77c4703c54385c6d234a93efd328d3d95586",
+      "link": true
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "references/contracts.md",
+      "sourceSha256": "47e01c368075584bb027a8bbd91ac2d779d3b073ebc5a3dd538a6aa51057f4c6",
+      "stagedSha256": "47e01c368075584bb027a8bbd91ac2d779d3b073ebc5a3dd538a6aa51057f4c6",
+      "link": false
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "references/evaluator-rubric.md",
+      "sourceSha256": "62a80bbab32592d97dd0a15d69b4f8b8741b19d337c8ac7143336d155a1f5943",
+      "stagedSha256": "62a80bbab32592d97dd0a15d69b4f8b8741b19d337c8ac7143336d155a1f5943",
+      "link": false
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "scripts/benchmark_report.js",
+      "sourceSha256": "cb3e3878de064d3cdf4265db1eeab0e73bd208ba877f79fb366426726f2705c2",
+      "stagedSha256": "cb3e3878de064d3cdf4265db1eeab0e73bd208ba877f79fb366426726f2705c2",
+      "link": true
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "scripts/lib/case_contract.js",
+      "sourceSha256": "8e87577cb5562c9bd58703b0ba37fa6aeaf21b9399863c4a8e8a89cd4851e94e",
+      "stagedSha256": "8e87577cb5562c9bd58703b0ba37fa6aeaf21b9399863c4a8e8a89cd4851e94e",
+      "link": true
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "scripts/lib/detectors.js",
+      "sourceSha256": "19e8eb1fd2df90e4ce9267df63f6a3435684469ce8736979f53fa5374b4e3f03",
+      "stagedSha256": "19e8eb1fd2df90e4ce9267df63f6a3435684469ce8736979f53fa5374b4e3f03",
+      "link": true
+    },
+    {
+      "name": "benchmark-implement",
+      "relative": "scripts/lib/sealing.js",
+      "sourceSha256": "317429121bb2674a00dee3641d156dcd1afc9b0a1063f9a4479c02f805137ef2",
+      "stagedSha256": "317429121bb2674a00dee3641d156dcd1afc9b0a1063f9a4479c02f805137ef2",
+      "link": true
+    },
+    {
+      "name": "ship",
+      "relative": "SKILL.md",
+      "sourceSha256": "92d0e42496dd6d8244b84b72af95cf5ac12d8e66d603e291ebbbe8db17e2cdef",
+      "stagedSha256": "1060b2efca931f44adcf4d2003b8f335309c35910d49bb4e8aa49dda4fd66a1b",
+      "link": false
+    },
+    {
+      "name": "ship",
+      "relative": "agents/openai.yaml",
+      "sourceSha256": "9d4df588faa9f0bad171d5729cfe36bf6d8e7a394d9ace808a3d7ca1034b634b",
+      "stagedSha256": "9d4df588faa9f0bad171d5729cfe36bf6d8e7a394d9ace808a3d7ca1034b634b",
+      "link": true
+    },
+    {
+      "name": "ship",
+      "relative": "scripts/prd_ship.js",
+      "sourceSha256": "f1f8852eda7fa476f29191316796a2a993565c505894996df7a84dde8cdbe03d",
+      "stagedSha256": "f1f8852eda7fa476f29191316796a2a993565c505894996df7a84dde8cdbe03d",
+      "link": true
+    },
+    {
+      "name": "sasu-setup",
+      "relative": "SKILL.md",
+      "sourceSha256": "34f721a2845070ad8f5a342bb983603bb8d12b49cfc70a8a7f40ef1523fd4c7f",
+      "stagedSha256": "34f721a2845070ad8f5a342bb983603bb8d12b49cfc70a8a7f40ef1523fd4c7f",
+      "link": false
+    },
+    {
+      "name": "please",
+      "relative": "SKILL.md",
+      "sourceSha256": "4406ed597c92e2ae3dc1c5391056faa92a4525ca1833b845bb5b77d440366131",
+      "stagedSha256": "b1abfe85c2ca4bd1328dac6f0250e8e9686f0cd6e262eee2d475f3f458583b91",
+      "link": false
+    },
+    {
+      "name": "remember",
+      "relative": "SKILL.md",
+      "sourceSha256": "2e1687fabcf44900c8c51e32ea81f0ccd9f7ea212545e64c359cdd0ac0fa3c39",
+      "stagedSha256": "2e1687fabcf44900c8c51e32ea81f0ccd9f7ea212545e64c359cdd0ac0fa3c39",
+      "link": false
+    },
+    {
+      "name": "quick",
+      "relative": "SKILL.md",
+      "sourceSha256": "39abdc659af60bb7dc4fd53bafc187a2817bc56bd70802db007b1b9ca36b69b3",
+      "stagedSha256": "39abdc659af60bb7dc4fd53bafc187a2817bc56bd70802db007b1b9ca36b69b3",
+      "link": false
+    },
+    {
+      "name": "challenge",
+      "relative": "SKILL.md",
+      "sourceSha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323",
+      "stagedSha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323",
+      "link": false
+    }
+  ]
+}

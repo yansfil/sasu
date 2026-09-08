@@ -1,0 +1,138 @@
+{
+  "schema": "sasu.implement.receipt.v5",
+  "status": "complete",
+  "topicSlug": "task-list-full",
+  "prdPath": "benchmarks/task-list-full/prd.md",
+  "prdSnapshotPath": "agents/runs/task-list-full/prd.md",
+  "prdJudge": {
+    "required": false,
+    "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+    "gapAudit": null,
+    "spec": null
+  },
+  "baselineAttribution": {
+    "disposition": "pre-existing",
+    "paths": [
+      {
+        "path": "benchmarks/task-list-full/benchmark.json",
+        "disposition": "pre-existing"
+      },
+      {
+        "path": "benchmarks/task-list-full/prd.md",
+        "disposition": "pre-existing"
+      }
+    ],
+    "baselineDigest": "ad0513f29e6bf6bc0f3451fe45794734efe068ea869424911a31fda3401f3f81",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+  },
+  "completedAt": "2026-09-08T10:05:19.952Z",
+  "completionFingerprint": "5d3fa8da4816ed602f0c34b24f75cd08b24e8f4cbaa88beb4e47963b1b197236",
+  "sourceFingerprint": "a5b3701f70d45ecf324ea206e4567f5d7b0f341d290e5cedb9bbcf6eb377465e",
+  "sourceAvailability": "captured",
+  "inputFingerprint": "34c5e44442f4a53b62b5836fce5cdc7a5a05896252ecba55342b262dcb6bcea6",
+  "verificationAttemptId": "b87121a4-9d73-4355-9eb2-69fdf9f6b509",
+  "unifiedVerdict": "PASS",
+  "phase": "complete",
+  "error": null,
+  "review": {
+    "invocationId": "5e1fed10-2f5b-49ac-97a4-447e88b8a1af",
+    "verdict": "PASS",
+    "result": {
+      "summary": "The allowlisted implementation satisfies the approved behaviors B1-B6 and decision D-01. The required test suite passes with exit code 0, and no contract exceptions were found.",
+      "findings": [],
+      "priorDispositions": []
+    },
+    "startedAt": "2026-09-08T10:03:53.970Z",
+    "finishedAt": "2026-09-08T10:04:18.574Z",
+    "durationMs": 24604,
+    "error": null
+  },
+  "risk": null,
+  "mechanical": [
+    {
+      "command": "npm test",
+      "cwd": ".",
+      "startedAt": "2026-09-08T10:03:53.705Z",
+      "finishedAt": "2026-09-08T10:03:53.931Z",
+      "durationMs": 226,
+      "exitCode": 0,
+      "mutatedTree": false,
+      "status": "PASS",
+      "logPath": "agents/runs/task-list-full/artifacts/logs/mechanical-8d1aa8b8282cc84c.log"
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "command-log",
+      "path": "agents/runs/task-list-full/artifacts/logs/mechanical-8d1aa8b8282cc84c.log",
+      "description": "mechanical PASS: npm test",
+      "sha256": "407e4dd0b70617b0671f289673c7a818c6b588c7e699af0354efac1ac7d1cc5a",
+      "bytes": 504,
+      "registeredAt": "2026-09-08T10:03:53.931Z",
+      "observedAt": "2026-09-08T10:03:53.931Z",
+      "provenance": "CLI executed npm test in .",
+      "command": "npm test",
+      "cwd": ".",
+      "exitCode": 0
+    }
+  ],
+  "findings": [],
+  "humanConfirmations": [],
+  "riskFindings": [],
+  "suite": {
+    "sealedAt": "2026-09-08T10:00:38.971Z",
+    "commands": [
+      {
+        "id": "S1",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "."
+      }
+    ],
+    "exclusions": [],
+    "results": [
+      {
+        "commandId": "S1",
+        "attemptId": "b87121a4-9d73-4355-9eb2-69fdf9f6b509",
+        "startedAt": "2026-09-08T10:03:53.705Z",
+        "finishedAt": "2026-09-08T10:03:53.931Z",
+        "durationMs": 226,
+        "exitCode": 0,
+        "mutatedTree": false,
+        "status": "GREEN",
+        "logPath": "agents/runs/task-list-full/artifacts/logs/mechanical-8d1aa8b8282cc84c.log"
+      }
+    ]
+  },
+  "ownedFiles": [
+    "src/task-list.mjs",
+    "test/task-list.test.mjs"
+  ],
+  "requirementCount": 6,
+  "verificationBudget": {
+    "fixAttempts": 0,
+    "totalAttempts": 2,
+    "budget": 1,
+    "budgetExhausted": false,
+    "consecutiveErrors": 0,
+    "judgeErrorThreshold": 3,
+    "judgeErrorCause": null,
+    "judgeErrorLoop": false,
+    "prejudgeFailures": 0,
+    "prejudgeFailureLimit": 3,
+    "prejudgeFailureLoop": false,
+    "grants": 0
+  },
+  "openItems": [],
+  "delivery": {
+    "eligible": true,
+    "reasons": []
+  },
+  "deviations": [],
+  "adoptions": [],
+  "worktree": null,
+  "executionCallsDuringFinalize": 0
+}

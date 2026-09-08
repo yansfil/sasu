@@ -1,5 +1,8 @@
 # 전체 요구 검토 방식의 실제 실행 검증
 
+같은 요구사항으로 제품 코드가 없는 출발점에서 구현부터 receipt까지 실행한 후속 측정은 [구·신 버전 전체 실행 비교](workflow-simplification-pilot/full-implementation-comparison/README.md)에 있다.
+아래의 21.353→26.665초는 이미 완성된 코드의 검증 경로를 비교한 과거 수치이며 구현 시간을 포함하지 않는다.
+
 ## 결과 범위
 
 이 문서는 workflow simplification 후보의 실제 실행과 전환 결과를 기록한다.

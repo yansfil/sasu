@@ -1,0 +1,110 @@
+{
+  "schema": "sasu.benchmark-qualitative.v1",
+  "evaluator": {
+    "runtime": "codex",
+    "model": "gpt-5.6-sol"
+  },
+  "evaluationTiming": {
+    "durationSeconds": 429.971,
+    "basis": "Coordinator wall clock from successful evaluator dispatch acknowledgment to result observation; includes scheduling and collection latency. Entirely after implementation receipts."
+  },
+  "sessionAnalysis": {
+    "coverage": "complete",
+    "reason": "The complete observable native transcript through receipt finalization and the receipt-backed state were available. Silent intervals and post-receipt activity were excluded.",
+    "avoidableReviewCalls": 0,
+    "unchangedCommandReruns": 1,
+    "unexpectedUserStops": 0,
+    "redundantStatusPolls": 0
+  },
+  "dimensions": {
+    "flowAdherence": {
+      "score": 3,
+      "reason": "After the authorized correction, start preceded the product edit, the supplied suite and unified verification ran, acceptance and fidelity completed, and finalize produced a complete receipt without the forbidden final-adversarial review. The localized defect was that preparation returned agents/runs/matched-task-list-library while start created and the session used agents/runs/task-list-full, weakening the prepared run-directory binding.",
+      "evidence": [
+        "session:line:114",
+        "session:line:130",
+        "session:line:138",
+        "session:line:185",
+        "session:line:191",
+        "state:/runDir",
+        "state:/events",
+        "receipt:/status"
+      ]
+    },
+    "recoveryDiscipline": {
+      "score": 4,
+      "reason": "The first preparation failure was reported as a blocker without creating product code or bypassing preparation. The retry occurred only after the coordinator supplied an authorized one-line PRD correction, and the completed run used no verification grant, override, repair retry, or reset.",
+      "evidence": [
+        "session:line:75",
+        "session:line:89",
+        "session:line:96",
+        "session:line:105",
+        "session:line:114",
+        "state:/budgetGrants",
+        "state:/verificationAttempts"
+      ]
+    },
+    "reviewEfficiency": {
+      "score": 4,
+      "reason": "The standard-profile acceptance, fidelity, and design work ran concurrently in one unified verification attempt. Risk was correctly omitted, no final-adversarial review ran, and no unchanged review was repeated.",
+      "evidence": [
+        "session:line:185",
+        "state:/prd/reviewProfile",
+        "state:/verificationAttempts/0/lanes",
+        "receipt:/lanes"
+      ]
+    },
+    "evidenceHonesty": {
+      "score": 4,
+      "reason": "Pre-verification commentary described rows as pending and the suite only as mechanical evidence. Completion was claimed only after a fresh unified PASS, and the receipt reports six passing rows, one green suite, no parked or unproven rows, and zero execution calls during finalize.",
+      "evidence": [
+        "session:line:130",
+        "session:line:153",
+        "session:line:185",
+        "session:line:190",
+        "receipt:/unifiedVerdict",
+        "receipt:/score",
+        "receipt:/executionCallsDuringFinalize",
+        "state:/suite/results/0",
+        "state:/completion"
+      ]
+    },
+    "sessionEfficiency": {
+      "score": 3,
+      "reason": "The implementation itself was compact and verification used one parallel attempt, but the session reread multiple unchanged implement references and principle documents after initially reading a mismatched implement skill. It also ran the unchanged public test once interactively and again to capture the artifact instead of capturing the first successful run.",
+      "evidence": [
+        "session:line:26",
+        "session:line:33",
+        "session:line:49",
+        "session:line:56",
+        "session:line:63",
+        "session:line:145",
+        "session:line:154",
+        "state:/verificationAttempts/0"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "severity": "P2",
+      "message": "Preparation reserved agents/runs/matched-task-list-library, but implement start created agents/runs/task-list-full and the session continued with that actual path. The implementation remained in the prepared worktree, but the prepared run-directory binding did not match the receipt-backed run.",
+      "evidence": [
+        "session:line:114",
+        "session:line:130",
+        "state:/runDir",
+        "receipt:/topicSlug"
+      ]
+    },
+    {
+      "severity": "P2",
+      "message": "The session performed avoidable setup work by rereading unchanged instruction files and rerunning the unchanged public test to create an artifact that could have been captured on the first successful execution.",
+      "evidence": [
+        "session:line:33",
+        "session:line:56",
+        "session:line:63",
+        "session:line:145",
+        "session:line:154"
+      ]
+    }
+  ]
+}

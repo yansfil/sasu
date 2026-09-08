@@ -1,0 +1,306 @@
+{
+  "kind": "full-implementation-comparison-evidence",
+  "files": [
+    {
+      "path": "preparation/protocol.json",
+      "source": "/tmp/sasu-full-implementation-comparison/protocol.json",
+      "sha256": "fb054c6a84c2b6943b52fd09476c65926e889ecc4f507593fa570f37b2f996ae",
+      "bytes": 2599
+    },
+    {
+      "path": "preparation/preparation-correction.json",
+      "source": "/tmp/sasu-full-implementation-comparison/preparation-correction.json",
+      "sha256": "b548a8b265ecef691ce361c5e2ee82e7e100722987c35f7b5705fd0d1b81d017",
+      "bytes": 769
+    },
+    {
+      "path": "preparation/old-prd-before-topic-fix.md",
+      "source": "/tmp/sasu-full-implementation-comparison/old-prd-before-topic-fix.md",
+      "sha256": "b237aa51aed5d50f470e9bda9c4e16c2860ef1203cf2798f0fae00adc1f9e7a1",
+      "bytes": 2141
+    },
+    {
+      "path": "preparation/new-prd-before-topic-fix.md",
+      "source": "/tmp/sasu-full-implementation-comparison/new-prd-before-topic-fix.md",
+      "sha256": "3b6385d87f190c28d44fb8414aea05f5beba98cc3d2e701de510fbb959d72150",
+      "bytes": 1723
+    },
+    {
+      "path": "preparation/old-stage.json",
+      "source": "/tmp/sasu-full-implementation-comparison/old-stage.json",
+      "sha256": "7d1e2cf075aa753b2aeb4705809783c9407db36ca0524c0889598a346cbb64dc",
+      "bytes": 8469
+    },
+    {
+      "path": "preparation/new-stage.json",
+      "source": "/tmp/sasu-full-implementation-comparison/new-stage.json",
+      "sha256": "a2c2e43c4a9e2a696835c10c100a3b81e906d9a6db6a6de60edea8ed606cb7e7",
+      "bytes": 7853
+    },
+    {
+      "path": "preparation/old-discovery.json",
+      "source": "/tmp/sasu-full-implementation-comparison/old-discovery.json",
+      "sha256": "1959a577ed2fc44c5f47adfb55e93b75361298b90183a841092f996f1b2e5f97",
+      "bytes": 157
+    },
+    {
+      "path": "preparation/new-discovery.json",
+      "source": "/tmp/sasu-full-implementation-comparison/new-discovery.json",
+      "sha256": "9d101ad38d652ed38595e9971dfcf80ce89a53983556690c3b69e2e5513d79da",
+      "bytes": 157
+    },
+    {
+      "path": "old/run/state.json",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/state.json",
+      "sha256": "015fffc07c36db5851156f0460fcefa779c35baccd2dde265f9e0c38604a49cc",
+      "bytes": 31640
+    },
+    {
+      "path": "old/run/receipt.json",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/receipt.json",
+      "sha256": "2a4cbbd82a73440408109d804bc8e670eff46234f6d38bdf649868bcbcf74bcb",
+      "bytes": 6232
+    },
+    {
+      "path": "old/run/prd.md",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/prd.md",
+      "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999",
+      "bytes": 2141
+    },
+    {
+      "path": "old/run/implementation-result.md",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/implementation-result.md",
+      "sha256": "2e0b4ac122b034a41a5275faaa4304599fa9be81a654a76dcddbfbeda58e6df4",
+      "bytes": 4470
+    },
+    {
+      "path": "old/run/artifacts/task-list-test.tap",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/artifacts/task-list-test.tap",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9",
+      "bytes": 157
+    },
+    {
+      "path": "old/run/artifacts/logs/mechanical-e8945441dac89ab2.log",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full/artifacts/logs/mechanical-e8945441dac89ab2.log",
+      "sha256": "18058aa7eba71c2cfd767a48ba781b1a3d45bef1a2f14f4ae808b10682bfcd65",
+      "bytes": 363
+    },
+    {
+      "path": "old/product/src/task-list.mjs",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/src/task-list.mjs",
+      "sha256": "eb528006ac5f59b48afdef1f6e61977d0b785f5338f9587ffe9eaa25a23f3ce3",
+      "bytes": 871
+    },
+    {
+      "path": "old/product/test/task-list.test.mjs",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/test/task-list.test.mjs",
+      "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+      "bytes": 905
+    },
+    {
+      "path": "old/product/package.json",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+      "bytes": 152
+    },
+    {
+      "path": "old/case/benchmark.json",
+      "source": "/tmp/sasu-full-implementation-comparison/old/benchmarks/task-list-full/benchmark.json",
+      "sha256": "4d007500af0687e15df22cff91c09dfed3667f0a983773663205cfdbbdeca733",
+      "bytes": 735
+    },
+    {
+      "path": "old/case/prd.md",
+      "source": "/tmp/sasu-full-implementation-comparison/old/benchmarks/task-list-full/prd.md",
+      "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999",
+      "bytes": 2141
+    },
+    {
+      "path": "old/prepared-run.json",
+      "source": "/tmp/sasu-full-implementation-comparison/old/agents/benchmarks/task-list-full/task-list-full-run-1/run.json",
+      "sha256": "edeb25361099061bac1b9df0a0ca951d67bba0d55770adf4c6dc9db940e7541a",
+      "bytes": 2569
+    },
+    {
+      "path": "preparation/old-handoff.txt",
+      "source": "/tmp/sasu-full-implementation-comparison/old-handoff.txt",
+      "sha256": "8af8e954bc7382212dc73c06b1279c2022b527efd5f829d74fd11af98afac94d",
+      "bytes": 4138
+    },
+    {
+      "path": "new/run/state.json",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/state.json",
+      "sha256": "5bde77798333081ef86ebd4e7b941f18edcef85157ba01c114fc573b184d99bf",
+      "bytes": 14721
+    },
+    {
+      "path": "new/run/receipt.json",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/receipt.json",
+      "sha256": "5761366d0d8f713ec939b156908f6840b2fc9a40832552d9c45ab4cf56cbb632",
+      "bytes": 4178
+    },
+    {
+      "path": "new/run/prd.md",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/prd.md",
+      "sha256": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f",
+      "bytes": 1723
+    },
+    {
+      "path": "new/run/implementation-result.md",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/implementation-result.md",
+      "sha256": "43757e7ca41a9235474dbce4bfe349373ed2eded7d8fdf201a5d447347520801",
+      "bytes": 817
+    },
+    {
+      "path": "new/run/artifacts/logs/mechanical-8d1aa8b8282cc84c.log",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/artifacts/logs/mechanical-8d1aa8b8282cc84c.log",
+      "sha256": "407e4dd0b70617b0671f289673c7a818c6b588c7e699af0354efac1ac7d1cc5a",
+      "bytes": 504
+    },
+    {
+      "path": "new/run/artifacts/logs/mechanical-5eec2fe4f3cbeff8.log",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/task-list-full/artifacts/logs/mechanical-5eec2fe4f3cbeff8.log",
+      "sha256": "a191d305fa5a555c127cca882d6d6c03bf58b75ddba9275e68a78c40f60edd88",
+      "bytes": 504
+    },
+    {
+      "path": "new/product/src/task-list.mjs",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/src/task-list.mjs",
+      "sha256": "8e7bb99c244fe20910da120027e11b28ff728ecf550eba6311ce8100c45058a6",
+      "bytes": 866
+    },
+    {
+      "path": "new/product/test/task-list.test.mjs",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/test/task-list.test.mjs",
+      "sha256": "d08838ea6ffb14250c45c6bf3a6e6fa628e6c17373bdf6db813570eadaed6ca6",
+      "bytes": 1365
+    },
+    {
+      "path": "new/product/package.json",
+      "source": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+      "bytes": 152
+    },
+    {
+      "path": "new/case/benchmark.json",
+      "source": "/tmp/sasu-full-implementation-comparison/new/benchmarks/task-list-full/benchmark.json",
+      "sha256": "f45bb03dc37d079c07b54fb23a27f321c92bea7186ff47f83f80d5967f7b7f99",
+      "bytes": 676
+    },
+    {
+      "path": "new/case/prd.md",
+      "source": "/tmp/sasu-full-implementation-comparison/new/benchmarks/task-list-full/prd.md",
+      "sha256": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f",
+      "bytes": 1723
+    },
+    {
+      "path": "new/prepared-run.json",
+      "source": "/tmp/sasu-full-implementation-comparison/new/agents/benchmarks/task-list-full/task-list-full-run-1/run.json",
+      "sha256": "99b5075acc76c73a40f9adf13567eba801f15c0f518749bf4bd50404e08d5d54",
+      "bytes": 2750
+    },
+    {
+      "path": "preparation/new-handoff.txt",
+      "source": "/tmp/sasu-full-implementation-comparison/new-handoff.txt",
+      "sha256": "86d380688e8968f74fc2b0b02e13eebfb307b4309a9ed9bc6ec3aec1aab70c50",
+      "bytes": 4082
+    },
+    {
+      "path": "starter/.gitignore",
+      "source": "/tmp/sasu-full-implementation-comparison/old/.gitignore",
+      "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5",
+      "bytes": 47
+    },
+    {
+      "path": "starter/package.json",
+      "source": "/tmp/sasu-full-implementation-comparison/old/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+      "bytes": 152
+    },
+    {
+      "path": "starter/test/task-list.test.mjs",
+      "source": "/tmp/sasu-full-implementation-comparison/old/test/task-list.test.mjs",
+      "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+      "bytes": 905
+    },
+    {
+      "path": "starter/agents/config.json",
+      "source": "/tmp/sasu-full-implementation-comparison/old/agents/config.json",
+      "sha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460",
+      "bytes": 317
+    },
+    {
+      "path": "analysis/process-metrics.json",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/process-metrics.json",
+      "sha256": "045ec647a7d870f7f5349ca382e6392073dd34e56516c18f03f302a893239374",
+      "bytes": 41256
+    },
+    {
+      "path": "analysis/report.md",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/report.md",
+      "sha256": "c14794440252310d1f7871ada9e5b9b5c04c09c2412ea1d776c16c44f0a4a15b",
+      "bytes": 6501
+    },
+    {
+      "path": "analysis/README.md",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/README.md",
+      "sha256": "8709d7da507bee00b61e2256e94a2e80a357f57ca3cb101717323e7daf1fb20c",
+      "bytes": 2364
+    },
+    {
+      "path": "analysis/extract-process.mjs",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/extract-process.mjs",
+      "sha256": "0686489ba14dd5614eb0be2ddff3ee4d46951de7827213d1e0512d6bd792d543",
+      "bytes": 27334
+    },
+    {
+      "path": "analysis/render-summary.mjs",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/render-summary.mjs",
+      "sha256": "8641affaad35aaf62780d4c0425cc7610ff829cc2d3f53dbd71ef319d6f459ef",
+      "bytes": 6477
+    },
+    {
+      "path": "analysis/inputs.final.json",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/inputs.final.json",
+      "sha256": "233b871bc475db21421f7591cae497fea00dd754c472780f0b17469b7baf14a9",
+      "bytes": 4739
+    },
+    {
+      "path": "analysis/inputs.example.json",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/inputs.example.json",
+      "sha256": "d29300bc4377ec4fa2118de6f3c87f9374db9c1daa225ad267599b48b3e1403b",
+      "bytes": 2211
+    },
+    {
+      "path": "analysis/qualitative-old.json",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/qualitative-old.json",
+      "sha256": "0e188ec98996ee72793fabfa42e3d49b33e8d7e1c9f1a5af0a465e1b476f1e47",
+      "bytes": 4862
+    },
+    {
+      "path": "analysis/qualitative-new.json",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/qualitative-new.json",
+      "sha256": "248ace0cffcb3971d7d3544f55b77f707b66ff525f75138604e33606f3fadb3c",
+      "bytes": 5223
+    },
+    {
+      "path": "analysis/new-observable-excerpts.json",
+      "source": "/tmp/sasu-full-implementation-comparison/analysis/new-observable-excerpts.json",
+      "sha256": "012af7685c96bae67f281eac5ee30ce974d4edca022bca6b59426b9a7faf8932",
+      "bytes": 24918
+    },
+    {
+      "path": "native-report-attempts/old.json",
+      "source": "/tmp/sasu-full-implementation-comparison/native-report-attempts/old.json",
+      "sha256": "320bf710bd758842d4567236a3caf6c7f89c936f58f3554438e4c6f51ec9eadc",
+      "bytes": 1164
+    },
+    {
+      "path": "native-report-attempts/new.json",
+      "source": "/tmp/sasu-full-implementation-comparison/native-report-attempts/new.json",
+      "sha256": "dcc505d141208651d4351bd4876e408b0205e1aa776364d48514067aeb4e8231",
+      "bytes": 1136
+    }
+  ],
+  "note": "Exact copied evidence; state and receipts remain owned by original CLI. No runtime cache or raw session-wide prompt is copied."
+}

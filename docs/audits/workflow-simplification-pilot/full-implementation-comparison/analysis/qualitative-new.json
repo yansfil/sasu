@@ -1,0 +1,125 @@
+{
+  "schema": "sasu.benchmark-qualitative.v1",
+  "evaluator": {
+    "runtime": "codex",
+    "model": "gpt-5.6-sol"
+  },
+  "evaluationTiming": {
+    "durationSeconds": 258.003,
+    "basis": "Coordinator wall clock from successful evaluator dispatch acknowledgment to result observation; includes scheduling and collection latency. Entirely after implementation receipts."
+  },
+  "sessionAnalysis": {
+    "coverage": "complete",
+    "reason": "The complete native transcript through receipt creation and the current receipt and state records were available.",
+    "avoidableReviewCalls": 0,
+    "unchangedCommandReruns": 1,
+    "unexpectedUserStops": 0,
+    "redundantStatusPolls": 0
+  },
+  "dimensions": {
+    "flowAdherence": {
+      "score": 2,
+      "reason": "Start preceded product edits, actual tests, the sealed mechanical suite, comprehensive review, and finalize occurred in order, and the forbidden risk stage did not run. However, preparation returned matched-task-list-library as the bound run directory while start created task-list-full; the mismatch was noticed but implementation continued under the different directory.",
+      "evidence": [
+        "session:line:43",
+        "session:line:59",
+        "session:line:66",
+        "session:line:90",
+        "session:line:100",
+        "session:line:138",
+        "session:line:169",
+        "state:/runDir",
+        "receipt:/status",
+        "receipt:/risk"
+      ]
+    },
+    "recoveryDiscipline": {
+      "score": 3,
+      "reason": "The agent correctly classified the first verification failure as a review-backend error, performed one bounded unchanged-input retry, and obtained PASS. It also diagnosed ENOSPC, removed only failed state temporary files, and finalized successfully, with one rejected cleanup command adding minor friction.",
+      "evidence": [
+        "session:line:129",
+        "session:line:134",
+        "session:line:138",
+        "session:line:147",
+        "session:line:153",
+        "session:line:162",
+        "session:line:169",
+        "state:/verificationAttempts/0/error",
+        "state:/verificationAttempts/1/verdict",
+        "receipt:/verificationBudget"
+      ]
+    },
+    "reviewEfficiency": {
+      "score": 3,
+      "reason": "Only the standard comprehensive review was required and no forbidden risk review ran. Two invalid-output judge attempts forced a second review of unchanged inputs, but the retry was justified by backend failure and the successful review then terminated the review work.",
+      "evidence": [
+        "state:/verificationAttempts/0/review/judge",
+        "state:/verificationAttempts/1/review/judge",
+        "state:/verificationAttempts/0/inputFingerprint",
+        "state:/verificationAttempts/1/inputFingerprint",
+        "receipt:/review",
+        "receipt:/risk"
+      ]
+    },
+    "evidenceHonesty": {
+      "score": 4,
+      "reason": "The agent explicitly reported that the first suite passed while review errored, disclosed the ENOSPC finalize failure, and claimed completion only after the current receipt recorded PASS, no findings, and delivery eligibility.",
+      "evidence": [
+        "session:line:134",
+        "session:line:152",
+        "session:line:169",
+        "receipt:/status",
+        "receipt:/unifiedVerdict",
+        "receipt:/mechanical",
+        "receipt:/findings",
+        "receipt:/delivery"
+      ]
+    },
+    "sessionEfficiency": {
+      "score": 3,
+      "reason": "The session used focused implementation and test commands, one justified status inspection for the directory mismatch, and no redundant polling or user pauses. One cleanup attempt used a rejected rm command before immediately switching to the accepted trash operation.",
+      "evidence": [
+        "session:line:67",
+        "session:line:97",
+        "session:line:111",
+        "session:line:160",
+        "session:line:162",
+        "session:line:166"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "severity": "P1",
+      "message": "The prepared run binding named agents/runs/matched-task-list-library, but start created and completed agents/runs/task-list-full; the agent observed the mismatch and continued, leaving the receipt outside the run directory returned by preparation.",
+      "evidence": [
+        "session:line:43",
+        "session:line:59",
+        "session:line:66",
+        "state:/runDir",
+        "receipt:/topicSlug"
+      ]
+    },
+    {
+      "severity": "P2",
+      "message": "The independent review produced two invalid-output attempts and required a full unchanged-input verification retry before returning PASS.",
+      "evidence": [
+        "state:/verificationAttempts/0/review/judge/retries",
+        "state:/verificationAttempts/1/review/judge",
+        "state:/verificationAttempts/0/inputFingerprint",
+        "state:/verificationAttempts/1/inputFingerprint"
+      ]
+    },
+    {
+      "severity": "P2",
+      "message": "ENOSPC recovery included one rejected rm cleanup command before the same scoped temporary files were moved to trash and finalize succeeded.",
+      "evidence": [
+        "session:line:147",
+        "session:line:160",
+        "session:line:162",
+        "session:line:166",
+        "session:line:169"
+      ]
+    }
+  ]
+}

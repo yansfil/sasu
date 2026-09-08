@@ -1,0 +1,27 @@
+command: npm test
+cwd: .
+startedAt: 2026-09-08T10:03:53.705Z
+finishedAt: 2026-09-08T10:03:53.931Z
+durationMs: 226
+exitCode: 0
+
+--- stdout ---
+
+> test
+> node --test test/task-list.test.mjs
+
+✔ task-list public behavior (0.824416ms)
+✔ blank additions fail without changing caller-owned input (0.063625ms)
+✔ summary uses the singular form only for one task (0.050834ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 39.867583
+
+
+--- stderr ---
+

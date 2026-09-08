@@ -1,0 +1,67 @@
+{
+  "schema": "sasu.benchmark-run.v2",
+  "id": "task-list-full-run-1",
+  "caseId": "task-list-full",
+  "status": "prepared",
+  "createdAt": "2026-09-08T10:00:15.549Z",
+  "casePath": "benchmarks/task-list-full/benchmark.json",
+  "caseHash": "f45bb03dc37d079c07b54fb23a27f321c92bea7186ff47f83f80d5967f7b7f99",
+  "prdPath": "benchmarks/task-list-full/prd.md",
+  "prdHash": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f",
+  "prdReadiness": {
+    "prdPath": "benchmarks/task-list-full/prd.md",
+    "parsed": {
+      "behaviorCount": 6,
+      "decisionCount": 1
+    },
+    "contractError": null,
+    "blockingGaps": [],
+    "warnings": [],
+    "status": "ready"
+  },
+  "environment": {
+    "mode": "fresh-worktree",
+    "baseRef": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "headSha": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "mustBeAbsent": [
+      "src/task-list.mjs"
+    ]
+  },
+  "preparedAt": "2026-09-08T10:00:15.730Z",
+  "worktreePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree",
+  "preparedCasePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/benchmarks/task-list-full/benchmark.json",
+  "preparedPrdPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/benchmarks/task-list-full/prd.md",
+  "runDir": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/matched-task-list-library",
+  "gatesPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-PEYZT9/worktree/agents/runs/matched-task-list-library/gates/gates.json",
+  "initialSource": {
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+      },
+      {
+        "path": "benchmarks/task-list-full/benchmark.json",
+        "state": "present",
+        "sha256": "f45bb03dc37d079c07b54fb23a27f321c92bea7186ff47f83f80d5967f7b7f99"
+      },
+      {
+        "path": "benchmarks/task-list-full/prd.md",
+        "state": "present",
+        "sha256": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      {
+        "path": "test/task-list.test.mjs",
+        "state": "present",
+        "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+      }
+    ],
+    "digest": "ad0513f29e6bf6bc0f3451fe45794734efe068ea869424911a31fda3401f3f81"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "audit-artifact-validation",
+  "jsonParse": "PASS",
+  "exactCopiedEvidenceHashes": "PASS: 50 copied files checked against evidence-manifest.json",
+  "sixBehaviorTexts": "PASS: exact equality across version-specific PRDs",
+  "startingSource": "PASS: common base HEAD; old native initialWorktreeSnapshot and new native initialSource compared using their own layouts",
+  "receiptStateBinding": "PASS: both complete, current last verify PASS, matching completion fingerprints",
+  "readmeLocalLinks": "PASS",
+  "sourceAndTestIntegrity": "PASS: common starter package/config; old test unchanged; new test retains entire supplied test as exact byte prefix",
+  "nativeBenchmarkReporter": "FAIL preserved for both versions: prepared runDir differs from actual CLI runDir",
+  "whitespace": "Authored README and parent audit pass standard diff --check. Exact copied evidence contains original trailing blank lines; all staged files pass diff --check with only blank-at-eof disabled for that command. No repository or global Git config changed.",
+  "productionChanges": "None in this audit commit; no CLI or installed skill changes and no new production-suite run",
+  "scope": "Actual implementation runs completed; native benchmark report generation did not. One exploratory pair does not establish a general speedup."
+}

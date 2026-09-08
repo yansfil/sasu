@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-08T09:54:37.606Z",
+  "kind": "topic format only",
+  "failedSession": "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+  "allocatedRun": false,
+  "records": [
+    {
+      "version": "old",
+      "path": "/tmp/sasu-full-implementation-comparison/old/benchmarks/task-list-full/prd.md",
+      "before": "b237aa51aed5d50f470e9bda9c4e16c2860ef1203cf2798f0fae00adc1f9e7a1",
+      "after": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999"
+    },
+    {
+      "version": "new",
+      "path": "/tmp/sasu-full-implementation-comparison/new/benchmarks/task-list-full/prd.md",
+      "before": "3b6385d87f190c28d44fb8414aea05f5beba98cc3d2e701de510fbb959d72150",
+      "after": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f"
+    }
+  ]
+}

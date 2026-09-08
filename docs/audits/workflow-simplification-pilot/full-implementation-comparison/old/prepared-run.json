@@ -1,0 +1,67 @@
+{
+  "schema": "sasu.benchmark-run.v1",
+  "id": "task-list-full-run-1",
+  "caseId": "task-list-full",
+  "status": "prepared",
+  "createdAt": "2026-09-08T09:54:58.308Z",
+  "casePath": "benchmarks/task-list-full/benchmark.json",
+  "caseHash": "4d007500af0687e15df22cff91c09dfed3667f0a983773663205cfdbbdeca733",
+  "prdPath": "benchmarks/task-list-full/prd.md",
+  "prdHash": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999",
+  "prdReadiness": {
+    "prdPath": "benchmarks/task-list-full/prd.md",
+    "parsed": {
+      "rowCount": 6,
+      "rowKinds": {
+        "check": 0,
+        "judge": 6,
+        "human": 0
+      },
+      "decisionCount": 1
+    },
+    "contractError": null,
+    "blockingGaps": [],
+    "warnings": [],
+    "status": "ready"
+  },
+  "environment": {
+    "mode": "fresh-worktree",
+    "baseRef": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "headSha": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "mustBeAbsent": [
+      "src/task-list.mjs"
+    ]
+  },
+  "preparedAt": "2026-09-08T09:54:58.361Z",
+  "worktreePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree",
+  "preparedCasePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/benchmarks/task-list-full/benchmark.json",
+  "preparedPrdPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/benchmarks/task-list-full/prd.md",
+  "runDir": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/matched-task-list-library",
+  "gatesPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/matched-task-list-library/gates/gates.json",
+  "initialWorktreeSnapshot": {
+    "capturedAt": "2026-09-08T09:54:58.361Z",
+    "headSha": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "statusHash": "3bb5e9f1",
+    "entryCount": 2,
+    "entries": [
+      {
+        "status": "??",
+        "path": "benchmarks/task-list-full/benchmark.json",
+        "originalPath": null,
+        "sha256": "4d007500af0687e15df22cff91c09dfed3667f0a983773663205cfdbbdeca733",
+        "bytes": 735,
+        "kind": "file",
+        "executable": false
+      },
+      {
+        "status": "??",
+        "path": "benchmarks/task-list-full/prd.md",
+        "originalPath": null,
+        "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999",
+        "bytes": 2141,
+        "kind": "file",
+        "executable": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "version": "old",
+  "startedAt": "2026-09-08T10:12:47.808739+00:00",
+  "finishedAt": "2026-09-08T10:12:47.847571+00:00",
+  "argv": [
+    "node",
+    "/Users/hoyeonlee/projects/sasu.worktrees/workflow-baseline/skills/benchmark-implement/scripts/benchmark_report.js",
+    "report",
+    "--case",
+    "benchmarks/task-list-full/benchmark.json",
+    "--run-id",
+    "task-list-full-run-1",
+    "--run-dir",
+    "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/task-list-full",
+    "--runtime",
+    "codex",
+    "--model",
+    "gpt-5.6-sol",
+    "--session-id",
+    "01a0806c-4f72-7920-8143-d7fa85a16bfc",
+    "--session",
+    "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T18-49-37-01a0806c-4f72-7920-8143-d7fa85a16bfc.jsonl"
+  ],
+  "cwd": "/tmp/sasu-full-implementation-comparison/old",
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "benchmark-report: --run-dir does not match the prepared fresh environment: /var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-full-UNOlgg/worktree/agents/runs/matched-task-list-library\n",
+  "recordsModifiedByCoordinator": false
+}

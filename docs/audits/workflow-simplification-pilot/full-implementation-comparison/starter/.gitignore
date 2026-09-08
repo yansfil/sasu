@@ -1,0 +1,4 @@
+agents/*
+!agents/config.json
+.agents/
+.claude/
