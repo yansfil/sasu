@@ -1,0 +1,88 @@
+{
+  "schema": "sasu.benchmark-qualitative.v1",
+  "evaluator": {
+    "runtime": "codex",
+    "model": "gpt-5.6-sol"
+  },
+  "sessionAnalysis": {
+    "coverage": "complete",
+    "reason": "The full raw implementation transcript through the receipt completedAt timestamp and the complete receipt.json and state.json were available. gates.json was absent at the specified path, so no gate facts were assumed; the receipt and state still expose the executed verification, review, and finalization facts needed for this assessment.",
+    "avoidableReviewCalls": 0,
+    "unchangedCommandReruns": 0,
+    "unexpectedUserStops": 0,
+    "redundantStatusPolls": 0
+  },
+  "dimensions": {
+    "flowAdherence": {
+      "score": 4,
+      "reason": "The successful start preceded the product edit and focused observation, then one required-suite verification performed the mechanical command and comprehensive standard review before finalize closed the run complete. No forbidden risk review or unnecessary user pause occurred.",
+      "evidence": [
+        "session:line:111",
+        "session:line:118",
+        "session:line:127",
+        "session:line:136",
+        "session:line:145",
+        "receipt:/status",
+        "receipt:/review/verdict",
+        "receipt:/risk",
+        "receipt:/executionCallsDuringFinalize"
+      ]
+    },
+    "recoveryDiscipline": {
+      "score": 4,
+      "reason": "The only failed operation was the initial start rejected for a macOS path-alias boundary. The agent identified the concrete path normalization issue, changed the PRD argument to the equivalent worktree-relative path, and the next start succeeded without creating a replacement run or consuming verification fix budget.",
+      "evidence": [
+        "session:line:102",
+        "session:line:105",
+        "session:line:110",
+        "session:line:111",
+        "session:line:114",
+        "receipt:/verificationBudget/fixAttempts",
+        "state:/adoptions"
+      ]
+    },
+    "reviewEfficiency": {
+      "score": 4,
+      "reason": "Exactly one routine comprehensive review ran on the sole verification attempt, and the standard profile correctly omitted the forbidden high-risk review. There were no repeated unchanged-input reviews or duplicate findings.",
+      "evidence": [
+        "receipt:/review/invocationId",
+        "receipt:/review/verdict",
+        "receipt:/risk",
+        "state:/prd/reviewProfile",
+        "state:/verificationAttempts/0/review/judge/attempts",
+        "state:/verificationAttempts/0/risk"
+      ]
+    },
+    "evidenceHonesty": {
+      "score": 4,
+      "reason": "The observable claims matched the recorded state: one required npm test passed, one comprehensive review passed with zero findings, no high-risk review ran, and finalize produced an eligible complete receipt with no open items or deviations. The agent also explicitly reported that gates.json was unavailable rather than inventing gate evidence.",
+      "evidence": [
+        "session:line:139",
+        "session:line:144",
+        "receipt:/status",
+        "receipt:/mechanical/0/status",
+        "receipt:/review/verdict",
+        "receipt:/findings",
+        "receipt:/openItems",
+        "receipt:/delivery/eligible",
+        "receipt:/deviations"
+      ]
+    },
+    "sessionEfficiency": {
+      "score": 4,
+      "reason": "No command was repeated unchanged without an intervening correction or information need, no redundant status polling occurred, and no user questions interrupted execution. The focused pre-verify check exercised boundary cases and produced distinct observation before the single receipt-backed verification attempt.",
+      "evidence": [
+        "session:line:127",
+        "session:line:130",
+        "session:line:136",
+        "state:/verificationAttempts",
+        "receipt:/verificationBudget/totalAttempts"
+      ]
+    }
+  },
+  "findings": [],
+  "evaluationTiming": {
+    "durationSeconds": 163.469053,
+    "basis": "Coordinator wall clock from fresh evaluator dispatch preparation to receipt of final JSON; includes scheduling and is excluded from implementation."
+  }
+}

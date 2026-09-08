@@ -1,0 +1,1 @@
+Before any live calls, fixture extraction used cli/assets instead of the source helper resolved project assets path. Corrected only external extraction to /Users/hoyeonlee/projects/sasu/assets/mascot.png. No fixture bytes or assertions changed. Initial freeze failed ENOENT.

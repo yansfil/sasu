@@ -1,0 +1,41 @@
+{
+  "schema": "sasu.benchmark-comparison.v2",
+  "caseId": "task-list-review-comparison",
+  "baselineRunId": "task-list-review-comparison-run-1",
+  "candidateRunId": "task-list-review-comparison-run-1",
+  "strictlyComparable": true,
+  "comparabilityReasons": [],
+  "outcome": {
+    "baselineValid": true,
+    "candidateValid": true,
+    "changed": false
+  },
+  "harness": {
+    "baselineCommit": "3f549dcfff71fe1f7fa974a383f6e8a055ce8463",
+    "candidateCommit": "6b88d83ce325a2a871af69d4e32cdf737c6dc229",
+    "baselineFingerprint": "1ceb1408bfaa77b79f90775013a3d580a226efe8f43f8732767390abeff8d527",
+    "candidateFingerprint": "899e014879cd930a234c461901a6912054f48a869dbf60c319769d4a96e81904",
+    "changed": true
+  },
+  "deltas": {
+    "wallClockSeconds": 17.2,
+    "verificationUnionSeconds": 13.4,
+    "verificationSumSeconds": 13.4,
+    "judgeUnionSeconds": 13.7,
+    "verificationCommandSeconds": -0.2,
+    "judgeSeconds": 33.3,
+    "judgeCalls": 1,
+    "verifyAttempts": 0,
+    "processScore": -5
+  },
+  "sources": {
+    "baseline": {
+      "path": "/private/tmp/sasu-parallel-review-prep/unified/agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/report.json",
+      "hash": "3a3b2b1e177955d55062b45453cd1e30d56f5c181bd55fe0f25576bf09887f20"
+    },
+    "candidate": {
+      "path": "/private/tmp/sasu-parallel-review-prep/split/agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/report.json",
+      "hash": "ee7578780d6c087977482bf962f6ac4d1b476ee482aab3cbc444ba7abb3b112d"
+    }
+  }
+}

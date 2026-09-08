@@ -1,0 +1,47 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:58:47.466Z",
+  "finishedAt": "2026-09-08T11:59:16.647Z",
+  "review": {
+    "summary": "The public API and dispatch are present, and source establishes the required behavior for commands 1-16 and 18-30 plus save error preservation. One contract requirement is unmet: command(17) returns undefined.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B17",
+          "D-01"
+        ],
+        "problem": "Calling the exported command with input 17 resolves actions[16] to value17, whose implementation returns undefined instead of the required number 17.",
+        "evidenceRefs": [
+          "B17",
+          "Technical structure",
+          "src/public.mjs"
+        ],
+        "nextAction": "Change value17 to return 17 and verify command(17)."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:58:47.467Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:middle-omission",
+    "durationMs": 29180,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49304,
+      "outputTokens": 1063,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 819
+    }
+  }
+}

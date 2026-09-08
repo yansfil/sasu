@@ -1,0 +1,4 @@
+
+> sasu-cli@0.9.0 typecheck
+> tsc -p tsconfig.json --noEmit
+

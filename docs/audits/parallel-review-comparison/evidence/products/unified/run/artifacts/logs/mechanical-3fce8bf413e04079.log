@@ -1,0 +1,25 @@
+command: npm test
+cwd: .
+startedAt: 2026-09-08T12:13:43.195Z
+finishedAt: 2026-09-08T12:13:43.699Z
+durationMs: 504
+exitCode: 0
+
+--- stdout ---
+
+> test
+> node --test test/task-list.test.mjs
+
+✔ task-list public behavior (1.533625ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.729167
+
+
+--- stderr ---
+

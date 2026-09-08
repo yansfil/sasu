@@ -1,0 +1,304 @@
+{
+  "schema": "sasu.parallel-native-skill-staging.v1",
+  "mode": "staged",
+  "arm": "split",
+  "source": {
+    "root": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison",
+    "commit": "6b88d83ce325a2a871af69d4e32cdf737c6dc229",
+    "tree": "9dcc328bbde0a9ee588539ef14b61d3f69b6a08f",
+    "contractSha256": "7edcd223f0a58452b61447a50a4ceff9f47bc93a4d8861dda52f1687d0b48be5"
+  },
+  "target": {
+    "root": "/private/tmp/sasu-parallel-review-prep/native-sessions/split",
+    "skillsRoot": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills"
+  },
+  "runtime": "codex",
+  "skillNames": [
+    "interview-me",
+    "gen-prd",
+    "implement",
+    "benchmark-implement",
+    "ship",
+    "sasu-setup",
+    "please",
+    "remember",
+    "quick",
+    "challenge"
+  ],
+  "packageScope": {
+    "path": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/package.json",
+    "sha256": "dbf8353f77358bc12169b7bb7301e1978d5b503e002ee927229a8993672818fc"
+  },
+  "invocation": {
+    "node": "/opt/homebrew/Cellar/node/26.5.0/bin/node",
+    "cli": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/cli/dist/cli.js",
+    "cliSha256": "a62edaea6ddefa3be6a7abf1601a30ec0ff9cf8fb79fa3a65caec22aff66dffe",
+    "reporter": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js",
+    "reporterSha256": "3e09d88a369db66b68d2c1459aa43ab97e7bb4def9263afeba3bb8eb87ada235",
+    "ship": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/ship/scripts/prd_ship.js"
+  },
+  "nativeSession": {
+    "startCwd": "/private/tmp/sasu-parallel-review-prep/native-sessions/split",
+    "skill": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/SKILL.md",
+    "launcherCwd": "/private/tmp/sasu-parallel-review-prep/split",
+    "preparation": [
+      "/opt/homebrew/Cellar/node/26.5.0/bin/node",
+      "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js",
+      "prepare-run",
+      "--case",
+      "benchmarks/task-list-review-comparison/benchmark.json"
+    ],
+    "instructions": "Start the native session in startCwd to load project-local Codex skills. Invoke $benchmark-implement there; change to launcherCwd before the pinned preparation command. Use only the command's returned product coordinates afterward. Keep skill reads pinned to this external staged directory, and use the original reporter for every later benchmark command."
+  },
+  "limitations": [
+    "The copied benchmark reporter derives its harness root from its script location and cannot run prepare-run from the staged layout. Invoke invocation.reporter from the pinned arm checkout for every benchmark command; the native handoff must explicitly override staged reporter command paths.",
+    "This stages skill files only, not PATH, native session trust, benchmark worktrees, configuration or state. The coordinator must pin every sasu invocation to invocation.cli.",
+    "External skills such as Herdr retain their existing installed references under the canonical arm transformer. No external skill is copied."
+  ],
+  "files": [
+    {
+      "skill": "interview-me",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/interview-me/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/interview-me/SKILL.md",
+      "sourceSha256": "928dfcbc569d7267540cd258e9015bf28e923c72696661eea2237b439d927cc5",
+      "outputSha256": "928dfcbc569d7267540cd258e9015bf28e923c72696661eea2237b439d927cc5",
+      "mode": 420
+    },
+    {
+      "skill": "interview-me",
+      "relative": "agents/openai.yaml",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/interview-me/agents/openai.yaml",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/interview-me/agents/openai.yaml",
+      "sourceSha256": "0449d3324ca0c490c115d838dfee1d11bf89e1c11874525d454f3257328b5cf8",
+      "outputSha256": "0449d3324ca0c490c115d838dfee1d11bf89e1c11874525d454f3257328b5cf8",
+      "mode": 420
+    },
+    {
+      "skill": "gen-prd",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/gen-prd/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/gen-prd/SKILL.md",
+      "sourceSha256": "4a58aeaa8393d315de9e20bceb2ea1efe4c2dcdfcfe1532b3386d36d3c8a8bfc",
+      "outputSha256": "4a58aeaa8393d315de9e20bceb2ea1efe4c2dcdfcfe1532b3386d36d3c8a8bfc",
+      "mode": 420
+    },
+    {
+      "skill": "gen-prd",
+      "relative": "agents/openai.yaml",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/gen-prd/agents/openai.yaml",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/gen-prd/agents/openai.yaml",
+      "sourceSha256": "8906705acf6622efc9e5654b4ba26898f939543205dee7c8d71866b7f2b2fa6c",
+      "outputSha256": "8906705acf6622efc9e5654b4ba26898f939543205dee7c8d71866b7f2b2fa6c",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/SKILL.md",
+      "sourceSha256": "1ed5601f387f1316495e24827731b73b273c59fdcd0536ed41cc225dfe82c6f5",
+      "outputSha256": "c05c3ca311cc8aa172f01c3dfc99dc75928992125042b6e2c216fccc3bc8299a",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "agents/openai.yaml",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/agents/openai.yaml",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/agents/openai.yaml",
+      "sourceSha256": "658f1dd3c5ef62e5aee9775f37669d77c210a76a0dad219828fae7e85865faf2",
+      "outputSha256": "658f1dd3c5ef62e5aee9775f37669d77c210a76a0dad219828fae7e85865faf2",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "references/execution-planning.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/references/execution-planning.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/references/execution-planning.md",
+      "sourceSha256": "6e0dd947268830eb727ddf9415fdd2beca84eab1fb00e5cbaf1fcd7895b01d77",
+      "outputSha256": "6e0dd947268830eb727ddf9415fdd2beca84eab1fb00e5cbaf1fcd7895b01d77",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "references/observer-and-herdr.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/references/observer-and-herdr.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/references/observer-and-herdr.md",
+      "sourceSha256": "d4f103fbf8e0a3b81d477a654a55c0f2f010921ff500a86cf3f5f3b24dde7bd5",
+      "outputSha256": "a66b6bb6089bda4d768aeeafac9cd3111ec94444b45ede6a871c0dd5455b2d55",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "references/reviews-and-finalization.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/references/reviews-and-finalization.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/references/reviews-and-finalization.md",
+      "sourceSha256": "552c5e8908496ee18d09dc36225a68ba7014b59d30fd7f3d72c0e13e34fc81b6",
+      "outputSha256": "552c5e8908496ee18d09dc36225a68ba7014b59d30fd7f3d72c0e13e34fc81b6",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "references/verification-and-evidence.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/references/verification-and-evidence.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/references/verification-and-evidence.md",
+      "sourceSha256": "a19166005f59d77508add28380e455846ba3f47ffd76455b15242beba54a8ae4",
+      "outputSha256": "a19166005f59d77508add28380e455846ba3f47ffd76455b15242beba54a8ae4",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "references/verification-environments.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/references/verification-environments.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/references/verification-environments.md",
+      "sourceSha256": "5d60fe92fdc861747deb37b68922c8a7c5271b987256cc58ce10d0820e10d542",
+      "outputSha256": "5d60fe92fdc861747deb37b68922c8a7c5271b987256cc58ce10d0820e10d542",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "references/worktrees-and-delivery.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/references/worktrees-and-delivery.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/references/worktrees-and-delivery.md",
+      "sourceSha256": "8822872eb75dc34c67e6ae8e21b945f6243ab5859527064d741afe5998d27675",
+      "outputSha256": "8822872eb75dc34c67e6ae8e21b945f6243ab5859527064d741afe5998d27675",
+      "mode": 420
+    },
+    {
+      "skill": "implement",
+      "relative": "scripts/prd_state_harness.js",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/implement/scripts/prd_state_harness.js",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/scripts/prd_state_harness.js",
+      "sourceSha256": "1cb9259e43cc2645a58a28c8262c0685ca21e368ae13c36d6df9b84ec2fb6a95",
+      "outputSha256": "1cb9259e43cc2645a58a28c8262c0685ca21e368ae13c36d6df9b84ec2fb6a95",
+      "mode": 493
+    },
+    {
+      "skill": "benchmark-implement",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/SKILL.md",
+      "sourceSha256": "8187a2ecfd4c57fba3fdc359ac285a4023f4826579b3ff117312548bf2e83e24",
+      "outputSha256": "acd8a2312e63434b78a600db6474c427fd5a4a884714b5658e54d567bca78c91",
+      "mode": 420
+    },
+    {
+      "skill": "benchmark-implement",
+      "relative": "agents/openai.yaml",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/agents/openai.yaml",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/agents/openai.yaml",
+      "sourceSha256": "7fec8bc7134c3b594a10328c813f77c4703c54385c6d234a93efd328d3d95586",
+      "outputSha256": "7fec8bc7134c3b594a10328c813f77c4703c54385c6d234a93efd328d3d95586",
+      "mode": 420
+    },
+    {
+      "skill": "benchmark-implement",
+      "relative": "references/contracts.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/references/contracts.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/references/contracts.md",
+      "sourceSha256": "7a884b6eaf5db6617382f53e7108282454856930dac9174f020f6f6c6d2f33c9",
+      "outputSha256": "7a884b6eaf5db6617382f53e7108282454856930dac9174f020f6f6c6d2f33c9",
+      "mode": 420
+    },
+    {
+      "skill": "benchmark-implement",
+      "relative": "references/evaluator-rubric.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/references/evaluator-rubric.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/references/evaluator-rubric.md",
+      "sourceSha256": "0513b818fc251e0735bfdb6f126f57e1a97331fe60707cb89d956e42fed36c8b",
+      "outputSha256": "0513b818fc251e0735bfdb6f126f57e1a97331fe60707cb89d956e42fed36c8b",
+      "mode": 420
+    },
+    {
+      "skill": "benchmark-implement",
+      "relative": "scripts/benchmark_report.js",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/scripts/benchmark_report.js",
+      "sourceSha256": "3e09d88a369db66b68d2c1459aa43ab97e7bb4def9263afeba3bb8eb87ada235",
+      "outputSha256": "3e09d88a369db66b68d2c1459aa43ab97e7bb4def9263afeba3bb8eb87ada235",
+      "mode": 493
+    },
+    {
+      "skill": "benchmark-implement",
+      "relative": "scripts/lib/case_contract.js",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/lib/case_contract.js",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/scripts/lib/case_contract.js",
+      "sourceSha256": "d3fd5833a74b8967959912e8e1ffb835ef3c9b0564cead4c22866d1a6114e98d",
+      "outputSha256": "d3fd5833a74b8967959912e8e1ffb835ef3c9b0564cead4c22866d1a6114e98d",
+      "mode": 420
+    },
+    {
+      "skill": "ship",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/ship/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/ship/SKILL.md",
+      "sourceSha256": "3f444d9edf43a456a6bf70868c3268365a039d1290ca3341b7d0f0a3b20e4eef",
+      "outputSha256": "6a9986cea4e0d742766a191c6f4b948d36a69237b5a9f5b91bcba1be42b9f975",
+      "mode": 420
+    },
+    {
+      "skill": "ship",
+      "relative": "agents/openai.yaml",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/ship/agents/openai.yaml",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/ship/agents/openai.yaml",
+      "sourceSha256": "48db66589132f99bec775e50deed99ff36afcb326a037807cad99b39bec745d1",
+      "outputSha256": "48db66589132f99bec775e50deed99ff36afcb326a037807cad99b39bec745d1",
+      "mode": 420
+    },
+    {
+      "skill": "ship",
+      "relative": "scripts/prd_ship.js",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/ship/scripts/prd_ship.js",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/ship/scripts/prd_ship.js",
+      "sourceSha256": "580036744439339064ded3e1a2ae38864de3cf72dc75afcc23198a77a616fdc3",
+      "outputSha256": "580036744439339064ded3e1a2ae38864de3cf72dc75afcc23198a77a616fdc3",
+      "mode": 493
+    },
+    {
+      "skill": "sasu-setup",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/sasu-setup/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/sasu-setup/SKILL.md",
+      "sourceSha256": "ebb295855b5645f12d201340c596486de2daca54aa49ac3154a28c292a46ad63",
+      "outputSha256": "ebb295855b5645f12d201340c596486de2daca54aa49ac3154a28c292a46ad63",
+      "mode": 420
+    },
+    {
+      "skill": "please",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/please/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/please/SKILL.md",
+      "sourceSha256": "646307a000e4e4c72f302866ba6f2630dac48c7c8a38c118a768267a253ea316",
+      "outputSha256": "1c9b1a2c9d6a9f8b3f8609a1199d403101aa6b12de15f838eec0d86090f78964",
+      "mode": 420
+    },
+    {
+      "skill": "remember",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/remember/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/remember/SKILL.md",
+      "sourceSha256": "6f25761d2cee7d208a1d5bbeec102df228026f7caa922161b39f3aff2414fc93",
+      "outputSha256": "6f25761d2cee7d208a1d5bbeec102df228026f7caa922161b39f3aff2414fc93",
+      "mode": 420
+    },
+    {
+      "skill": "quick",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/quick/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/quick/SKILL.md",
+      "sourceSha256": "36493ecff9d65551c4feec522382f4cd78fba539414ad771ecd7458ed11eeb7f",
+      "outputSha256": "36493ecff9d65551c4feec522382f4cd78fba539414ad771ecd7458ed11eeb7f",
+      "mode": 420
+    },
+    {
+      "skill": "challenge",
+      "relative": "SKILL.md",
+      "source": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/challenge/SKILL.md",
+      "target": "/private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/challenge/SKILL.md",
+      "sourceSha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323",
+      "outputSha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323",
+      "mode": 420
+    }
+  ],
+  "generatedAt": "2026-09-08T12:00:43.468Z"
+}

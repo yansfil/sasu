@@ -1,0 +1,45 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:59:59.072Z",
+  "finishedAt": "2026-09-08T12:00:20.360Z",
+  "review": {
+    "summary": "The contract is not fully satisfied: B1-B29 and B31 are implemented, but B30 fails.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B30"
+        ],
+        "problem": "The public caller command(30) dispatches to value30, which returns undefined instead of the required number 30.",
+        "evidenceRefs": [
+          "src/public.mjs",
+          "B30"
+        ],
+        "nextAction": "Change value30 to return 30."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:59:59.072Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:fidelity:final-omission",
+    "durationMs": 21288,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49449,
+      "outputTokens": 655,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 448
+    }
+  }
+}

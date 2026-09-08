@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "node",
+    "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js",
+    "compare",
+    "--baseline",
+    "/private/tmp/sasu-parallel-review-prep/unified/agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/report.json",
+    "--candidate",
+    "/private/tmp/sasu-parallel-review-prep/split/agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/report.json",
+    "--output",
+    "/private/tmp/sasu-parallel-review-prep/comparison.json"
+  ],
+  "exitCode": 0
+}

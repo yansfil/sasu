@@ -1,0 +1,32 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:57:54.515Z",
+  "finishedAt": "2026-09-08T11:58:20.342Z",
+  "review": {
+    "summary": "The implementation satisfies the complete approved contract. The exported command dispatches inputs 1 through 30 to the corresponding numeric values, and save preserves the input value while returning the required failure shape when store.write throws.",
+    "findings": [],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:57:54.515Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:complete",
+    "durationMs": 25827,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49354,
+      "outputTokens": 607,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 444
+    }
+  }
+}

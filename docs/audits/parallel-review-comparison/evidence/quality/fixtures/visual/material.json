@@ -1,0 +1,112 @@
+{
+  "prdText": "---\ntopic: \"implement fixture\"\nstatus: \"ready\"\nhuman_approval: \"approved\"\nreview_profile: \"standard\"\nreview_rationale: \"CLI regression fixture\"\nsource_intake: \"current conversation\"\n---\n\n# PRD: implement fixture\n\n## Goal\nProvide the requested character illustration.\n\n## Non-goals\nNo network service or second state store.\n\n## Decisions\n| D-n | 결정 | 근거 |\n| --- | --- | --- |\n| D-01 | Provide the specified character illustration. | The requested visual details are the complete contract. |\n\n## Behaviors\n| # | 사용자가 관찰하는 행동 | 결정 |\n| --- | --- | --- |\n| B1 | The image depicts an illustrated person wearing rectangular glasses. | D-01 |\n| B2 | The person wears a red plaid shirt and a red marker is visible. | D-01 |\n\n## Technical structure\nThe delivered image is visual.png.\n\n## Risks\nNone.\n",
+  "contract": {
+    "frontmatter": {
+      "topic": "implement fixture",
+      "status": "ready",
+      "human_approval": "approved",
+      "review_profile": "standard",
+      "review_rationale": "CLI regression fixture",
+      "source_intake": "current conversation"
+    },
+    "body": "\n# PRD: implement fixture\n\n## Goal\nProvide the requested character illustration.\n\n## Non-goals\nNo network service or second state store.\n\n## Decisions\n| D-n | 결정 | 근거 |\n| --- | --- | --- |\n| D-01 | Provide the specified character illustration. | The requested visual details are the complete contract. |\n\n## Behaviors\n| # | 사용자가 관찰하는 행동 | 결정 |\n| --- | --- | --- |\n| B1 | The image depicts an illustrated person wearing rectangular glasses. | D-01 |\n| B2 | The person wears a red plaid shirt and a red marker is visible. | D-01 |\n\n## Technical structure\nThe delivered image is visual.png.\n\n## Risks\nNone.\n",
+    "goal": "Provide the requested character illustration.",
+    "nonGoals": "No network service or second state store.",
+    "decisions": [
+      {
+        "id": "D-01",
+        "decision": "Provide the specified character illustration.",
+        "rationale": "The requested visual details are the complete contract."
+      }
+    ],
+    "rows": [
+      {
+        "id": "B1",
+        "behavior": "The image depicts an illustrated person wearing rectangular glasses.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 26
+      },
+      {
+        "id": "B2",
+        "behavior": "The person wears a red plaid shirt and a red marker is visible.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 27
+      }
+    ],
+    "technicalStructure": "The delivered image is visual.png.",
+    "risks": "None."
+  },
+  "approval": {
+    "source": "frontmatter",
+    "evidence": "human_approval: approved"
+  },
+  "intentSource": {
+    "routing": "decisions",
+    "content": "- D-01: Provide the specified character illustration. (근거: The requested visual details are the complete contract.)",
+    "explanation": "fixed visual contract"
+  },
+  "changeMaterial": [],
+  "runOwnedDiff": "",
+  "checks": [],
+  "evidence": [
+    {
+      "path": "visual.png",
+      "kind": "image",
+      "description": "Delivered character illustration",
+      "sha256": "9d60ca3491a82c7058d384edfbb7905b9ee7318705437ed9cffe92a5675ca23b",
+      "bytes": 1116609,
+      "registeredAt": "2026-09-08T11:57:43.778Z",
+      "observedAt": "2026-09-08T11:57:43.780Z",
+      "provenance": "fixed visual fixture",
+      "target": "visual.png",
+      "attachedImage": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "visual.png",
+      "kind": "image",
+      "description": "Delivered character illustration",
+      "sha256": "9d60ca3491a82c7058d384edfbb7905b9ee7318705437ed9cffe92a5675ca23b",
+      "bytes": 1116609,
+      "registeredAt": "2026-09-08T11:57:43.778Z",
+      "observedAt": "2026-09-08T11:57:43.780Z",
+      "provenance": "fixed visual fixture",
+      "target": "visual.png"
+    }
+  ],
+  "readablePaths": [
+    "visual.png"
+  ],
+  "referenceContext": {
+    "requirementRefs": [
+      "B1",
+      "B2",
+      "D-01"
+    ],
+    "evidenceRefs": [
+      "PRD",
+      "B1",
+      "B2",
+      "D-01",
+      "visual.png"
+    ],
+    "priorFindingIds": [],
+    "humanSources": {
+      "Decisions": "Provide the specified character illustration.\nThe requested visual details are the complete contract.",
+      "Risks": "None.",
+      "instruction": "- D-01: Provide the specified character illustration. (근거: The requested visual details are the complete contract.)",
+      "D-01": "Provide the specified character illustration."
+    }
+  },
+  "priorFindings": [],
+  "roundContext": {
+    "priorAttemptId": null,
+    "changedPaths": [],
+    "newEvidence": []
+  }
+}

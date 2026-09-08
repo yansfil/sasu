@@ -1,0 +1,396 @@
+{
+  "unified": {
+    "cases": 7,
+    "oraclePasses": 7,
+    "roleInvocations": 7,
+    "contentAttempts": 7,
+    "retries": 0,
+    "elapsedSeconds": 169.589,
+    "summedContentSeconds": 169.582,
+    "casesTable": [
+      {
+        "variant": "complete",
+        "oracle": "pass",
+        "elapsedSeconds": 25.829,
+        "summedContentSeconds": 25.827,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": []
+          }
+        ]
+      },
+      {
+        "variant": "middle-omission",
+        "oracle": "pass",
+        "elapsedSeconds": 29.181,
+        "summedContentSeconds": 29.18,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B17",
+                  "D-01"
+                ],
+                "problem": "Calling the exported command with input 17 resolves actions[16] to value17, whose implementation returns undefined instead of the required number 17.",
+                "evidenceRefs": [
+                  "B17",
+                  "Technical structure",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change value17 to return 17 and verify command(17)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "final-omission",
+        "oracle": "pass",
+        "elapsedSeconds": 19.338,
+        "summedContentSeconds": 19.337,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30"
+                ],
+                "problem": "command(30) dispatches to value30, whose implementation returns undefined. Therefore the public exported command(30) returns undefined rather than the required number 30.",
+                "evidenceRefs": [
+                  "B30",
+                  "Behaviors",
+                  "Technical structure",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change value30 to return 30, then verify command(30)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "unwired",
+        "oracle": "pass",
+        "elapsedSeconds": 23.286,
+        "summedContentSeconds": 23.285,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B28",
+                  "D-01"
+                ],
+                "problem": "command(28) returns undefined because actions[27] is undefined, so the approved command(28) behavior does not return 28.",
+                "evidenceRefs": [
+                  "B28",
+                  "Technical structure",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Replace the undefined entry at index 27 with value28 and verify command(28) returns 28."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "storage-failure",
+        "oracle": "pass",
+        "elapsedSeconds": 35.911,
+        "summedContentSeconds": 35.91,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B31",
+                  "D-01"
+                ],
+                "problem": "For save({write(){throw new Error(\"disk full\")}}, 42), store.write(value) throws, the empty catch swallows the error, and save returns {ok:true} without the error message or input value. The contract requires ok:false with both preserved.",
+                "evidenceRefs": [
+                  "B31",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Handle the caught error by returning a contract-compatible failure result with ok:false, the error message, and the original input value."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "authorized-assumptions",
+        "oracle": "pass",
+        "elapsedSeconds": 25.265,
+        "summedContentSeconds": 25.265,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": []
+          }
+        ]
+      },
+      {
+        "variant": "visual",
+        "oracle": "pass",
+        "elapsedSeconds": 10.779,
+        "summedContentSeconds": 10.778,
+        "findings": [
+          {
+            "role": "unified",
+            "findings": []
+          }
+        ]
+      }
+    ]
+  },
+  "split": {
+    "cases": 7,
+    "oraclePasses": 7,
+    "roleInvocations": 14,
+    "contentAttempts": 14,
+    "retries": 0,
+    "elapsedSeconds": 153.006,
+    "summedContentSeconds": 290.498,
+    "casesTable": [
+      {
+        "variant": "complete",
+        "oracle": "pass",
+        "elapsedSeconds": 27.122,
+        "summedContentSeconds": 54.079,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": []
+          },
+          {
+            "role": "code",
+            "findings": []
+          }
+        ]
+      },
+      {
+        "variant": "middle-omission",
+        "oracle": "pass",
+        "elapsedSeconds": 23.085,
+        "summedContentSeconds": 41.676,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B17",
+                  "D-01"
+                ],
+                "problem": "command(17) dispatches to actions[16], which invokes value17; value17 returns undefined instead of 17.",
+                "evidenceRefs": [
+                  "B17",
+                  "D-01",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change value17 to return 17 and verify command(17)."
+              }
+            ]
+          },
+          {
+            "role": "code",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B17",
+                  "D-01"
+                ],
+                "problem": "value17 returns undefined, so command(17) dispatches to an implementation that does not return the requested number 17.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "B17"
+                ],
+                "nextAction": "Change value17 to return 17."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "final-omission",
+        "oracle": "pass",
+        "elapsedSeconds": 21.288,
+        "summedContentSeconds": 40.065,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30"
+                ],
+                "problem": "The public caller command(30) dispatches to value30, which returns undefined instead of the required number 30.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "B30"
+                ],
+                "nextAction": "Change value30 to return 30."
+              }
+            ]
+          },
+          {
+            "role": "code",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30",
+                  "D-01"
+                ],
+                "problem": "command(30) dispatches to value30 through actions[29], but value30 returns undefined instead of 30.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "B30",
+                  "D-01"
+                ],
+                "nextAction": "Change value30 to return 30 and verify command(30)."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "unwired",
+        "oracle": "pass",
+        "elapsedSeconds": 22.714,
+        "summedContentSeconds": 42.368,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B28"
+                ],
+                "problem": "command(28) returns undefined: actions[27] is explicitly undefined, so the optional call in command(n) does not return 28.",
+                "evidenceRefs": [
+                  "B28",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Replace the undefined action entry with value28."
+              }
+            ]
+          },
+          {
+            "role": "code",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B28",
+                  "D-01"
+                ],
+                "problem": "command(28) returns undefined because the actions array contains undefined at index 27. The public call command(28) evaluates actions[27]?.() and therefore does not preserve the requested value 28.",
+                "evidenceRefs": [
+                  "B28",
+                  "D-01",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Replace the undefined entry at the command(28) position with value28 and verify command(28) returns 28."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "storage-failure",
+        "oracle": "pass",
+        "elapsedSeconds": 27.261,
+        "summedContentSeconds": 53.951,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B31",
+                  "D-01"
+                ],
+                "problem": "For an exported save call with a store whose write(value) throws Error(\"boom\"), the catch block discards the error and save returns {ok:true}. This violates the required ok:false result with the error message and preservation of the input value.",
+                "evidenceRefs": [
+                  "B31",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Implement the save error path to return ok:false, include the thrown error message, and preserve the supplied input value as required by B31."
+              }
+            ]
+          },
+          {
+            "role": "code",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B31"
+                ],
+                "problem": "For a store whose write(value) throws, save catches the exception, discards its message, and returns {ok:true}. For example, save({write(){throw new Error(\"disk full\")}},42) returns ok true instead of ok false with the error message and preserved input value.",
+                "evidenceRefs": [
+                  "B31",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Return ok:false with the thrown error message and preserve the input value in the failure result."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "variant": "authorized-assumptions",
+        "oracle": "pass",
+        "elapsedSeconds": 23.879,
+        "summedContentSeconds": 43.635,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": []
+          },
+          {
+            "role": "code",
+            "findings": []
+          }
+        ]
+      },
+      {
+        "variant": "visual",
+        "oracle": "pass",
+        "elapsedSeconds": 7.657,
+        "summedContentSeconds": 14.724,
+        "findings": [
+          {
+            "role": "fidelity",
+            "findings": []
+          },
+          {
+            "role": "code",
+            "findings": []
+          }
+        ]
+      }
+    ]
+  },
+  "actualProcesses": {
+    "preflight": 2,
+    "content": 21,
+    "completed": 23
+  }
+}

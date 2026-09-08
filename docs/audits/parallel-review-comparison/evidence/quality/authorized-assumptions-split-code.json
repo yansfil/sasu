@@ -1,0 +1,32 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:02:34.798Z",
+  "finishedAt": "2026-09-08T12:02:54.556Z",
+  "review": {
+    "summary": "The approved contract is satisfied. src/public.mjs exports command and save; command(1) through command(30) return their requested values, and save preserves the input value while reporting write errors. Runtime evidence exercised only command(1), but complete readable source establishes the remaining deterministic behavior.",
+    "findings": [],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:02:34.799Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:code:authorized-assumptions",
+    "durationMs": 19757,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49642,
+      "outputTokens": 694,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 516
+    }
+  }
+}

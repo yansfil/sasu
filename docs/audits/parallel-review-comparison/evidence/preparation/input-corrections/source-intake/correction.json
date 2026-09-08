@@ -1,0 +1,20 @@
+{
+  "schema": "sasu.experiment-input-correction.v1",
+  "at": "2026-09-08T12:01:25.040450+00:00",
+  "reason": "Restore the original approved fixture intent routing; preparation introduced a descriptive value that was interpreted as a missing relative file path.",
+  "originalSourcePrd": "/Users/hoyeonlee/projects/sasu/docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/case/prd.md",
+  "originalSourcePrdSha256": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f",
+  "previousSourceIntake": "reused approved benchmark case",
+  "sourceIntake": "current conversation",
+  "beforePrdSha256": "675011a030d65022950d055fdc047f09fc58374797326c62723c171f348749d6",
+  "afterPrdSha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+  "changedPaths": [
+    "/private/tmp/sasu-parallel-review-prep/unified/benchmarks/task-list-review-comparison/prd.md",
+    "/private/tmp/sasu-parallel-review-prep/split/benchmarks/task-list-review-comparison/prd.md"
+  ],
+  "behaviorsDecisionsApprovalUnchanged": true,
+  "bothArmsByteIdentical": true,
+  "productRunReserved": false,
+  "harnessSourceChanged": false,
+  "authority": "Existing comparison authorization; restoration to the preserved approved fixture metadata, with no new behavior, decision, approval, or source text."
+}

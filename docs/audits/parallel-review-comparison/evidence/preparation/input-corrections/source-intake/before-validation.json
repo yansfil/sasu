@@ -1,0 +1,10 @@
+[
+  {
+    "arm": "unified",
+    "expectedFailure": "canonical intent source is missing or is not a file: reused approved benchmark case"
+  },
+  {
+    "arm": "split",
+    "expectedFailure": "canonical intent source is missing or is not a file: reused approved benchmark case"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "arm": "split",
+  "startedAt": "2026-09-08T12:14:45.602025+00:00",
+  "argv": [
+    "/Users/hoyeonlee/Library/pnpm/codex",
+    "exec",
+    "--model",
+    "gpt-5.6-sol",
+    "-c",
+    "model_reasoning_effort=\"medium\"",
+    "--sandbox",
+    "danger-full-access",
+    "--skip-git-repo-check",
+    "--json",
+    "-C",
+    "/private/tmp/sasu-parallel-review-prep/native-sessions/split",
+    "-o",
+    "/private/tmp/sasu-parallel-review-prep/native-split/last-message.txt",
+    "-"
+  ],
+  "pane": "w72:pN",
+  "role": "implementor",
+  "persistentSession": true
+}

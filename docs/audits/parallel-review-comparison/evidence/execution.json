@@ -1,0 +1,152 @@
+{
+  "status": "complete",
+  "frozenHarnesses": {
+    "unified": "3f549dcfff71fe1f7fa974a383f6e8a055ce8463",
+    "split": "6b88d83ce325a2a871af69d4e32cdf737c6dc229"
+  },
+  "order": [
+    "unified",
+    "split"
+  ],
+  "qualityRoot": "/private/tmp/sasu-parallel-quality-5_c0rs1c",
+  "preparationBindingIssue": {
+    "field": "source_intake",
+    "value": "reused approved benchmark case",
+    "observed": "Path absent in both launchers; current source resolver treats it as a required relative source file",
+    "status": "restored to exact original source metadata before reservation",
+    "productInputsChanged": false,
+    "correctionRecord": {
+      "path": "/private/tmp/sasu-parallel-review-prep/input-corrections/source-intake/correction.json",
+      "sha256": "b4eb6ef840fb0f0c03a6abce94899e41089a346e973d356ef0d2da89efe92347"
+    },
+    "preservationCommit": "7f3bfea"
+  },
+  "arms": {
+    "unified": {
+      "sessionId": "01a080ec-f833-74c2-b8ad-de56f6920e5f",
+      "pane": "w72:pM",
+      "coordinates": {
+        "ok": true,
+        "runId": "task-list-review-comparison-run-1",
+        "resultDir": "agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1",
+        "worktree": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree",
+        "prd": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/benchmarks/task-list-review-comparison/prd.md",
+        "runDir": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/agents/runs/task-list-review-comparison",
+        "gates": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/agents/runs/task-list-review-comparison/gates/gates.json",
+        "prdReadiness": {
+          "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+          "parsed": {
+            "behaviorCount": 6,
+            "decisionCount": 1
+          },
+          "contractError": null,
+          "blockingGaps": [],
+          "warnings": [],
+          "status": "ready"
+        }
+      },
+      "nativeStart": {
+        "arm": "unified",
+        "startedAt": "2026-09-08T12:10:08.729438+00:00",
+        "argv": [
+          "/Users/hoyeonlee/Library/pnpm/codex",
+          "exec",
+          "--model",
+          "gpt-5.6-sol",
+          "-c",
+          "model_reasoning_effort=\"medium\"",
+          "--sandbox",
+          "danger-full-access",
+          "--skip-git-repo-check",
+          "--json",
+          "-C",
+          "/private/tmp/sasu-parallel-review-prep/native-sessions/unified",
+          "-o",
+          "/private/tmp/sasu-parallel-review-prep/native-unified/last-message.txt",
+          "-"
+        ],
+        "pane": "w72:pM",
+        "role": "implementor",
+        "persistentSession": true
+      },
+      "configSha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460",
+      "transcript": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T21-10-08-01a080ec-f833-74c2-b8ad-de56f6920e5f.jsonl",
+      "receiptCompletedAt": "2026-09-08T12:14:17.446Z",
+      "terminalStatus": "complete"
+    },
+    "split": {
+      "sessionId": "01a080f1-31ef-7ea1-9191-5cec1e984ada",
+      "pane": "w72:pN",
+      "coordinates": {
+        "ok": true,
+        "runId": "task-list-review-comparison-run-1",
+        "resultDir": "agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1",
+        "worktree": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree",
+        "prd": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/benchmarks/task-list-review-comparison/prd.md",
+        "runDir": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison",
+        "gates": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison/gates/gates.json",
+        "prdReadiness": {
+          "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+          "parsed": {
+            "behaviorCount": 6,
+            "decisionCount": 1
+          },
+          "contractError": null,
+          "blockingGaps": [],
+          "warnings": [],
+          "status": "ready"
+        }
+      },
+      "nativeStart": {
+        "arm": "split",
+        "startedAt": "2026-09-08T12:14:45.602025+00:00",
+        "argv": [
+          "/Users/hoyeonlee/Library/pnpm/codex",
+          "exec",
+          "--model",
+          "gpt-5.6-sol",
+          "-c",
+          "model_reasoning_effort=\"medium\"",
+          "--sandbox",
+          "danger-full-access",
+          "--skip-git-repo-check",
+          "--json",
+          "-C",
+          "/private/tmp/sasu-parallel-review-prep/native-sessions/split",
+          "-o",
+          "/private/tmp/sasu-parallel-review-prep/native-split/last-message.txt",
+          "-"
+        ],
+        "pane": "w72:pN",
+        "role": "implementor",
+        "persistentSession": true
+      },
+      "configSha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460",
+      "transcript": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T21-14-45-01a080f1-31ef-7ea1-9191-5cec1e984ada.jsonl",
+      "terminalStatus": "complete",
+      "receiptCompletedAt": "2026-09-08T12:18:48.135Z"
+    }
+  },
+  "qualityFinishedAt": "2026-09-08T12:03:17.113Z",
+  "nativeStartupEvents": [
+    {
+      "arm": "unified",
+      "pane": "w72:pM",
+      "beforeAnyNativeSessionOrReservation": true,
+      "error": "shell codex alias appended --dangerously-bypass-approvals-and-sandbox; explicit -a never conflicted; agent start timed out",
+      "resolution": "unalias codex only in owned pane; same explicit native options retained",
+      "globalConfigChanged": false
+    },
+    {
+      "arm": "unified",
+      "pane": "w72:pM",
+      "beforeAnyNativeSessionOrReservation": true,
+      "error": "Interactive startup still requested folder trust; exited with No before any prompt",
+      "resolution": "Use persistent native codex exec in owned Herdr panes for both arms, with same model and effort, without global trust edits",
+      "globalConfigChanged": false
+    }
+  ],
+  "recommendation": "retain unified default",
+  "nativeComparison": "comparison.json",
+  "reportingCompletedAt": "2026-09-08T12:24:35.028658+00:00"
+}

@@ -1,0 +1,46 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:59:16.648Z",
+  "finishedAt": "2026-09-08T11:59:35.239Z",
+  "review": {
+    "summary": "The implementation satisfies the contract except for B17: command(17) returns undefined instead of 17. The save error path preserves the input value and reports the error message.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B17",
+          "D-01"
+        ],
+        "problem": "value17 returns undefined, so command(17) dispatches to an implementation that does not return the requested number 17.",
+        "evidenceRefs": [
+          "src/public.mjs",
+          "B17"
+        ],
+        "nextAction": "Change value17 to return 17."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:59:16.648Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:code:middle-omission",
+    "durationMs": 18591,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49444,
+      "outputTokens": 640,
+      "cachedInputTokens": 17920,
+      "reasoningOutputTokens": 414
+    }
+  }
+}

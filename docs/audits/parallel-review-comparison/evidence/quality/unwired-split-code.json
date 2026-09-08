@@ -1,0 +1,47 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:00:43.646Z",
+  "finishedAt": "2026-09-08T12:01:06.360Z",
+  "review": {
+    "summary": "The implementation satisfies the contract except command(28), which returns undefined instead of 28. Source inspection establishes the remaining command and save behaviors; the limited smoke execution does not alter that conclusion.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B28",
+          "D-01"
+        ],
+        "problem": "command(28) returns undefined because the actions array contains undefined at index 27. The public call command(28) evaluates actions[27]?.() and therefore does not preserve the requested value 28.",
+        "evidenceRefs": [
+          "B28",
+          "D-01",
+          "src/public.mjs"
+        ],
+        "nextAction": "Replace the undefined entry at the command(28) position with value28 and verify command(28) returns 28."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:00:43.646Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:code:unwired",
+    "durationMs": 22714,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49423,
+      "outputTokens": 730,
+      "cachedInputTokens": 38400,
+      "reasoningOutputTokens": 467
+    }
+  }
+}

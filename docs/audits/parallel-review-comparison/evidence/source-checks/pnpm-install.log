@@ -1,0 +1,11 @@
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +3
++++
+Progress: resolved 3, reused 1, downloaded 2, added 3, done
+
+devDependencies:
++ @types/node 22.20.1
++ typescript 5.9.3
+
+Done in 382ms using pnpm v10.14.0

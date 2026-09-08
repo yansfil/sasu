@@ -1,0 +1,16 @@
+exitCode: 2
+Original input/log bytes intentionally preserved.
+docs/audits/parallel-review-comparison/evidence/case/config.json:19: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/case/package.json:9: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/case/task-list.test.mjs:19: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/products/split/native-last-message.txt:26: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/products/split/run/artifacts/logs/mechanical-fc8169cbf6b86a79.log:25: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/products/split/run/review-inputs/61cf8cea-474b-4cbe-8e90-d15e5d479c7e/agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log:25: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/products/unified/run/artifacts/logs/mechanical-3fce8bf413e04079.log:25: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/products/unified/run/review-inputs/e7ccd269-a4e8-481d-9007-2d7515d7b2d1/agents/runs/task-list-review-comparison/artifacts/logs/mechanical-3fce8bf413e04079.log:25: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/source-checks/build-final.log:4: new blank line at EOF.
+docs/audits/parallel-review-comparison/evidence/source-checks/focused.log:99: trailing whitespace.
++  
+docs/audits/parallel-review-comparison/evidence/source-checks/focused.log:101: trailing whitespace.
++  
+docs/audits/parallel-review-comparison/evidence/source-checks/typecheck-final.log:4: new blank line at EOF.

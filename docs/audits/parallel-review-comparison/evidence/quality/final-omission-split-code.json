@@ -1,0 +1,47 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:59:59.072Z",
+  "finishedAt": "2026-09-08T12:00:17.852Z",
+  "review": {
+    "summary": "The public API implements command(1) through command(29) and save's error path, but command(30) violates the approved value-preservation contract.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B30",
+          "D-01"
+        ],
+        "problem": "command(30) dispatches to value30 through actions[29], but value30 returns undefined instead of 30.",
+        "evidenceRefs": [
+          "src/public.mjs",
+          "B30",
+          "D-01"
+        ],
+        "nextAction": "Change value30 to return 30 and verify command(30)."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:59:59.075Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:code:final-omission",
+    "durationMs": 18777,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,200p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49476,
+      "outputTokens": 534,
+      "cachedInputTokens": 38400,
+      "reasoningOutputTokens": 303
+    }
+  }
+}

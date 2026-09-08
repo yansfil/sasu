@@ -1,0 +1,137 @@
+{
+  "schema": "parallel-review.quality-roster.v1",
+  "frozenAt": "2026-09-08T11:57:54.498Z",
+  "arms": {
+    "unified": {
+      "harness": "/Users/hoyeonlee/projects/sasu",
+      "commit": "3f549dcfff71fe1f7fa974a383f6e8a055ce8463"
+    },
+    "split": {
+      "harness": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison",
+      "commit": "6b88d83ce325a2a871af69d4e32cdf737c6dc229"
+    }
+  },
+  "armOrder": [
+    "unified",
+    "split"
+  ],
+  "cases": [
+    {
+      "variant": "complete",
+      "expectedBlockingRefs": [],
+      "materialSha256": "b23ed19ca41c4da54f8b24453a20aa8492f727ce97010a17297bf09994170a36",
+      "files": [
+        {
+          "path": "src/public.mjs",
+          "sha256": "29e70467e4d1ee17dbf9637e1cee5ac49962b8e6eeb1c0dba91e64778581345e"
+        },
+        {
+          "path": "smoke.log",
+          "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+        }
+      ]
+    },
+    {
+      "variant": "middle-omission",
+      "expectedBlockingRefs": [
+        "B17"
+      ],
+      "materialSha256": "b23ed19ca41c4da54f8b24453a20aa8492f727ce97010a17297bf09994170a36",
+      "files": [
+        {
+          "path": "src/public.mjs",
+          "sha256": "06d5f36072d46210d0374c11c003f83c69e89bfca7fbeda48b4b280e4aa5f7c2"
+        },
+        {
+          "path": "smoke.log",
+          "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+        }
+      ]
+    },
+    {
+      "variant": "final-omission",
+      "expectedBlockingRefs": [
+        "B30"
+      ],
+      "materialSha256": "b23ed19ca41c4da54f8b24453a20aa8492f727ce97010a17297bf09994170a36",
+      "files": [
+        {
+          "path": "src/public.mjs",
+          "sha256": "027fbff8ab3fbb4d0b165b3144f315770ea04543d1f179e1afe17ce1110999f7"
+        },
+        {
+          "path": "smoke.log",
+          "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+        }
+      ]
+    },
+    {
+      "variant": "unwired",
+      "expectedBlockingRefs": [
+        "B28"
+      ],
+      "materialSha256": "b23ed19ca41c4da54f8b24453a20aa8492f727ce97010a17297bf09994170a36",
+      "files": [
+        {
+          "path": "src/public.mjs",
+          "sha256": "0f2f3338f37ef6e825e02d0abd0bfb2b7d86096e812cb0650b3cf1e823c2729a"
+        },
+        {
+          "path": "smoke.log",
+          "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+        }
+      ]
+    },
+    {
+      "variant": "storage-failure",
+      "expectedBlockingRefs": [
+        "B31"
+      ],
+      "materialSha256": "b23ed19ca41c4da54f8b24453a20aa8492f727ce97010a17297bf09994170a36",
+      "files": [
+        {
+          "path": "src/public.mjs",
+          "sha256": "80379d2d2eff97c87f67a515e68dedafc7b0fa3f6381e878b674ab98c42fd667"
+        },
+        {
+          "path": "smoke.log",
+          "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+        }
+      ]
+    },
+    {
+      "variant": "authorized-assumptions",
+      "expectedBlockingRefs": [],
+      "materialSha256": "a019359d5703825623294b0250b9c7c188d62324891fe69b56e7c3dd9e04c796",
+      "files": [
+        {
+          "path": "src/public.mjs",
+          "sha256": "29e70467e4d1ee17dbf9637e1cee5ac49962b8e6eeb1c0dba91e64778581345e"
+        },
+        {
+          "path": "smoke.log",
+          "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+        }
+      ]
+    },
+    {
+      "variant": "visual",
+      "expectedBlockingRefs": [],
+      "materialSha256": "39c0821bbb3f2a919503fe91ac4fa5500ba9ec6e9f5d837204845983d561df28",
+      "files": [
+        {
+          "path": "visual.png",
+          "sha256": "9d60ca3491a82c7058d384edfbb7905b9ee7318705437ed9cffe92a5675ca23b"
+        }
+      ]
+    }
+  ],
+  "profile": {
+    "primary": {
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "xhigh"
+    },
+    "fallback": null
+  }
+}

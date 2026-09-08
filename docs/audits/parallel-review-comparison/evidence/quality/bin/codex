@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+import os,sys,subprocess,threading,pathlib,json,datetime,time
+root=pathlib.Path('/private/tmp/sasu-parallel-quality-5_c0rs1c/provider-traces')
+id=str(time.time_ns())+'-'+str(os.getpid())
+args=sys.argv[1:]
+kind='preflight' if args and args[-1].endswith('Reply with exactly: OK') else 'content'
+meta={'id':id,'kind':kind,'startedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'argv':args,'actualBinary':'/Users/hoyeonlee/Library/pnpm/codex'}
+(root/(id+'.json')).write_text(json.dumps(meta))
+child=subprocess.Popen(['/Users/hoyeonlee/Library/pnpm/codex',*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+def forward(stream,target,suffix):
+ with (root/(id+suffix)).open('wb') as out:
+  while True:
+   data=stream.read1(65536)
+   if not data: break
+   out.write(data);out.flush();target.write(data);target.flush()
+a=threading.Thread(target=forward,args=(child.stdout,sys.stdout.buffer,'.stdout.jsonl'));b=threading.Thread(target=forward,args=(child.stderr,sys.stderr.buffer,'.stderr.txt'));a.start();b.start();status=child.wait();a.join();b.join()
+meta.update(finishedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),exitCode=status)
+(root/(id+'.json')).write_text(json.dumps(meta))
+sys.exit(status if status>=0 else 128-status)

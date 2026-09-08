@@ -1,0 +1,137 @@
+{
+  "schema": "sasu.implement.receipt.v5",
+  "status": "complete",
+  "topicSlug": "task-list-review-comparison",
+  "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+  "prdSnapshotPath": "agents/runs/task-list-review-comparison/prd.md",
+  "prdJudge": {
+    "required": false,
+    "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+    "gapAudit": null,
+    "spec": null
+  },
+  "baselineAttribution": {
+    "disposition": "pre-existing",
+    "paths": [
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "disposition": "pre-existing"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "disposition": "pre-existing"
+      }
+    ],
+    "baselineDigest": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+  },
+  "completedAt": "2026-09-08T12:14:17.446Z",
+  "completionFingerprint": "5d64abfeb3f54d69635b257e991c6b51bc4ce4c7ebad3fd4f1ab5a90e8403ea8",
+  "sourceFingerprint": "2ac462aba880eec001c55c52e926ce7d052e246f9df9424c4c9466bac12c4e78",
+  "sourceAvailability": "captured",
+  "inputFingerprint": "a1cc4c96a1623c83ff8ae277cc3ed2226a234232d57f3bc0dd0c79388ae3de20",
+  "verificationAttemptId": "e7ccd269-a4e8-481d-9007-2d7515d7b2d1",
+  "unifiedVerdict": "PASS",
+  "phase": "complete",
+  "error": null,
+  "review": {
+    "invocationId": "5b39ef59-2238-4a5a-9302-7ac7a80b9708",
+    "verdict": "PASS",
+    "result": {
+      "summary": "The supplied source satisfies the approved behaviors and technical constraints. The test command completed successfully, and no contract exceptions were identified.",
+      "findings": [],
+      "priorDispositions": []
+    },
+    "startedAt": "2026-09-08T12:13:43.762Z",
+    "finishedAt": "2026-09-08T12:14:08.673Z",
+    "durationMs": 24911,
+    "error": null
+  },
+  "risk": null,
+  "mechanical": [
+    {
+      "command": "npm test",
+      "cwd": ".",
+      "startedAt": "2026-09-08T12:13:43.195Z",
+      "finishedAt": "2026-09-08T12:13:43.699Z",
+      "durationMs": 504,
+      "exitCode": 0,
+      "mutatedTree": false,
+      "status": "PASS",
+      "logPath": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-3fce8bf413e04079.log"
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "command-log",
+      "path": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-3fce8bf413e04079.log",
+      "description": "mechanical PASS: npm test",
+      "sha256": "3716cea730205d6b985fe0c461151cdcc72d87b8108fc7fc524c7e5657fc3ca8",
+      "bytes": 364,
+      "registeredAt": "2026-09-08T12:13:43.699Z",
+      "observedAt": "2026-09-08T12:13:43.699Z",
+      "provenance": "CLI executed npm test in .",
+      "command": "npm test",
+      "cwd": ".",
+      "exitCode": 0
+    }
+  ],
+  "findings": [],
+  "humanConfirmations": [],
+  "riskFindings": [],
+  "suite": {
+    "sealedAt": "2026-09-08T12:12:46.938Z",
+    "commands": [
+      {
+        "id": "S1",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "."
+      }
+    ],
+    "exclusions": [],
+    "results": [
+      {
+        "commandId": "S1",
+        "attemptId": "e7ccd269-a4e8-481d-9007-2d7515d7b2d1",
+        "startedAt": "2026-09-08T12:13:43.195Z",
+        "finishedAt": "2026-09-08T12:13:43.699Z",
+        "durationMs": 504,
+        "exitCode": 0,
+        "mutatedTree": false,
+        "status": "GREEN",
+        "logPath": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-3fce8bf413e04079.log"
+      }
+    ]
+  },
+  "ownedFiles": [
+    "src/task-list.mjs"
+  ],
+  "requirementCount": 6,
+  "verificationBudget": {
+    "fixAttempts": 0,
+    "totalAttempts": 1,
+    "budget": 1,
+    "budgetExhausted": false,
+    "consecutiveErrors": 0,
+    "judgeErrorThreshold": 3,
+    "judgeErrorCause": null,
+    "judgeErrorLoop": false,
+    "prejudgeFailures": 0,
+    "prejudgeFailureLimit": 3,
+    "prejudgeFailureLoop": false,
+    "grants": 0
+  },
+  "openItems": [],
+  "delivery": {
+    "eligible": true,
+    "reasons": []
+  },
+  "deviations": [],
+  "adoptions": [],
+  "worktree": null,
+  "executionCallsDuringFinalize": 0
+}

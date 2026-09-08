@@ -1,0 +1,32 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:02:34.798Z",
+  "finishedAt": "2026-09-08T12:02:58.676Z",
+  "review": {
+    "summary": "The complete approved contract is satisfied by the supplied source and evidence. The exported command dispatches values 1 through 30 correctly, save preserves the input value on write failure, and no unresolved boundary requires additional evidence.",
+    "findings": [],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:02:34.798Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:fidelity:authorized-assumptions",
+    "durationMs": 23878,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49577,
+      "outputTokens": 870,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 707
+    }
+  }
+}

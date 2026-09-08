@@ -1,0 +1,24 @@
+{
+  "arm": "unified",
+  "startedAt": "2026-09-08T12:10:08.729438+00:00",
+  "argv": [
+    "/Users/hoyeonlee/Library/pnpm/codex",
+    "exec",
+    "--model",
+    "gpt-5.6-sol",
+    "-c",
+    "model_reasoning_effort=\"medium\"",
+    "--sandbox",
+    "danger-full-access",
+    "--skip-git-repo-check",
+    "--json",
+    "-C",
+    "/private/tmp/sasu-parallel-review-prep/native-sessions/unified",
+    "-o",
+    "/private/tmp/sasu-parallel-review-prep/native-unified/last-message.txt",
+    "-"
+  ],
+  "pane": "w72:pM",
+  "role": "implementor",
+  "persistentSession": true
+}

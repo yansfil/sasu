@@ -1,0 +1,32 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:02:09.533Z",
+  "finishedAt": "2026-09-08T12:02:34.798Z",
+  "review": {
+    "summary": "The implementation satisfies the complete approved contract. Exported command dispatches values 1 through 30 correctly, and exported save preserves the input value and returns an error message when store.write throws. Source inspection is sufficient; no runtime QA was claimed.",
+    "findings": [],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:02:09.533Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:authorized-assumptions",
+    "durationMs": 25265,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs\nsed -n '1,120p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49509,
+      "outputTokens": 903,
+      "cachedInputTokens": 38400,
+      "reasoningOutputTokens": 734
+    }
+  }
+}

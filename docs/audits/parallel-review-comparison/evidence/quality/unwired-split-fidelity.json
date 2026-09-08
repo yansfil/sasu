@@ -1,0 +1,45 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:00:43.646Z",
+  "finishedAt": "2026-09-08T12:01:03.300Z",
+  "review": {
+    "summary": "The public API satisfies the requested command values except command(28), and save correctly preserves the input on write failure.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B28"
+        ],
+        "problem": "command(28) returns undefined: actions[27] is explicitly undefined, so the optional call in command(n) does not return 28.",
+        "evidenceRefs": [
+          "B28",
+          "src/public.mjs"
+        ],
+        "nextAction": "Replace the undefined action entry with value28."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:00:43.646Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:fidelity:unwired",
+    "durationMs": 19654,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49472,
+      "outputTokens": 643,
+      "cachedInputTokens": 43520,
+      "reasoningOutputTokens": 430
+    }
+  }
+}

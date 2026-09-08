@@ -1,0 +1,380 @@
+{
+  "commit": "6b88d83ce325a2a871af69d4e32cdf737c6dc229",
+  "tree": "9dcc328bbde0a9ee588539ef14b61d3f69b6a08f",
+  "baseline": "3f549dcfff71fe1f7fa974a383f6e8a055ce8463",
+  "protocolHead": "ea3131017f9a9582e6901aec52205a3108c8b6e1",
+  "worktree": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison",
+  "branch": "experiment/parallel-review",
+  "worktreeClean": true,
+  "cliPath": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/cli/dist/cli.js",
+  "sourceFiles": [
+    {
+      "path": "cli/src/implement/commands.ts",
+      "sha256": "c7cc5c7c5a4d4601fc4e24caa6f005cd92a0fd6351c96fb0de55eb67219ba848"
+    },
+    {
+      "path": "cli/src/implement/convergence.ts",
+      "sha256": "f23729ffad7d4936784da9a478d7c1f8ea92bab129a3ad7e5a80b922530d0423"
+    },
+    {
+      "path": "cli/src/implement/prompts.ts",
+      "sha256": "9e6278e4261b4455f58fea51b8b74ce79a350c2a92684e7c5d4f6ad942bc466d"
+    },
+    {
+      "path": "cli/src/implement/store.ts",
+      "sha256": "4243ea75a52184efe49aafbdbb8297dbe7e44bd548f0e3d6bf417d35fec5c1fc"
+    },
+    {
+      "path": "cli/src/implement/types.ts",
+      "sha256": "52c7be284e4cebfcddc58745ffa39de8a1ff4f4ca0b5486b67d6d81b848cd085"
+    },
+    {
+      "path": "cli/src/implement/verification-activity.ts",
+      "sha256": "aeed87d57d051259287bb6c5f3e59bc7e8af83169b6c322d72cd2e16574d9b38"
+    },
+    {
+      "path": "cli/test/e2e/implement-calibrated.test.mjs",
+      "sha256": "5fcb55b957fd3a7a25a417fd36dfef2a73f8ccba60cbf6957c593924816fe6ca"
+    },
+    {
+      "path": "cli/test/e2e/implement-defects.test.mjs",
+      "sha256": "bce6fe734e9a29778387ca65845c458bba4889759d6d61b3cfc9e77d1d670cd0"
+    },
+    {
+      "path": "cli/test/e2e/implement-envelope.test.mjs",
+      "sha256": "038b84f590dc12ef9e5c80f401a5c8db5591ca4cee6188b1bc1b8e8ca815dfe2"
+    },
+    {
+      "path": "cli/test/e2e/implement-parallel-review.test.mjs",
+      "sha256": "05564defbfeede915c64e17ce47005cc8e7e9d172c1991eb983a0e47d70d5f70"
+    },
+    {
+      "path": "cli/test/e2e/implement.test.mjs",
+      "sha256": "3376f7aa933223f77ea4785e9ecbd4a11cd6c6b129d16efe72bf075625a69ee2"
+    },
+    {
+      "path": "cli/test/helpers/implement-fixture.mjs",
+      "sha256": "2731841173bf2f63316f2970e681a6b919ce2920d744b3f9c666efeed5ed8d84"
+    },
+    {
+      "path": "cli/test/helpers/implement-live-review.mjs",
+      "sha256": "7b8b18ef0b4c0537021f0af0d7080110623354df3e89a80fcbd2cd94a60368c4"
+    },
+    {
+      "path": "cli/test/helpers/implement-state.mjs",
+      "sha256": "3cfe8056cf1f792150307eb7441d8462fc49b48bb72f54a4d7c85b4176c1444e"
+    },
+    {
+      "path": "cli/test/smoke/implement-acceptance-agentic.test.mjs",
+      "sha256": "faf4b1dbf2fc199180dc54ec052573913c662b198165755d298cfba54309db24"
+    },
+    {
+      "path": "cli/test/smoke/implement-acceptance-codex-agentic.test.mjs",
+      "sha256": "7b6bdd6fcf88471f0ccc1ce8468f736cfba6620ed98f7bdd457ae9dadf159b7e"
+    },
+    {
+      "path": "cli/test/unit/doctor-integrity.test.mjs",
+      "sha256": "f447824372e0434fe4217ed6bb78e3284f0c41a67ebcceab978e034f822ada70"
+    },
+    {
+      "path": "cli/test/unit/implement-convergence.test.mjs",
+      "sha256": "167b2077aef5e7da609d8a71e5e38e7b076e91162580e661e125df07b8c337e2"
+    },
+    {
+      "path": "cli/test/unit/implement-envelope.test.mjs",
+      "sha256": "4c91d993f010051a8edec9e80e144f43e3a4a72ad6afc96bd47de472f9aefbbd"
+    },
+    {
+      "path": "cli/test/unit/implement-prompts.test.mjs",
+      "sha256": "19a8e3c7b8a893f02304ebd8b1e374afca916255352a04928bdd2600d1c458ec"
+    },
+    {
+      "path": "cli/test/unit/implement-runner.test.mjs",
+      "sha256": "9e2b242f9242ac7abca91d12470779ff5d936483c48ea17d0d6d078699b845d0"
+    },
+    {
+      "path": "cli/test/unit/implement-store.test.mjs",
+      "sha256": "ae0140ce0dd65f3b2ee2c84f880c2194fc5dc316f2428db0483a2d34cd4f5c59"
+    },
+    {
+      "path": "cli/test/unit/implement-verification-activity.test.mjs",
+      "sha256": "e2e95ea1e8989364460f69de7efecfcff6fa059baea92da5712cfa1082c78bf9"
+    },
+    {
+      "path": "skills/benchmark-implement/SKILL.md",
+      "sha256": "8187a2ecfd4c57fba3fdc359ac285a4023f4826579b3ff117312548bf2e83e24"
+    },
+    {
+      "path": "skills/benchmark-implement/references/contracts.md",
+      "sha256": "7a884b6eaf5db6617382f53e7108282454856930dac9174f020f6f6c6d2f33c9"
+    },
+    {
+      "path": "skills/benchmark-implement/references/evaluator-rubric.md",
+      "sha256": "0513b818fc251e0735bfdb6f126f57e1a97331fe60707cb89d956e42fed36c8b"
+    },
+    {
+      "path": "skills/benchmark-implement/scripts/benchmark_report.js",
+      "sha256": "3e09d88a369db66b68d2c1459aa43ab97e7bb4def9263afeba3bb8eb87ada235"
+    },
+    {
+      "path": "skills/implement/SKILL.md",
+      "sha256": "1ed5601f387f1316495e24827731b73b273c59fdcd0536ed41cc225dfe82c6f5"
+    },
+    {
+      "path": "skills/implement/agents/openai.yaml",
+      "sha256": "658f1dd3c5ef62e5aee9775f37669d77c210a76a0dad219828fae7e85865faf2"
+    },
+    {
+      "path": "skills/implement/references/reviews-and-finalization.md",
+      "sha256": "552c5e8908496ee18d09dc36225a68ba7014b59d30fd7f3d72c0e13e34fc81b6"
+    },
+    {
+      "path": "skills/implement/references/verification-and-evidence.md",
+      "sha256": "a19166005f59d77508add28380e455846ba3f47ffd76455b15242beba54a8ae4"
+    },
+    {
+      "path": "skills/please/SKILL.md",
+      "sha256": "646307a000e4e4c72f302866ba6f2630dac48c7c8a38c118a768267a253ea316"
+    },
+    {
+      "path": "skills/ship/SKILL.md",
+      "sha256": "3f444d9edf43a456a6bf70868c3268365a039d1290ca3341b7d0f0a3b20e4eef"
+    },
+    {
+      "path": "skills/ship/scripts/prd_ship.js",
+      "sha256": "580036744439339064ded3e1a2ae38864de3cf72dc75afcc23198a77a616fdc3"
+    },
+    {
+      "path": "tests/benchmark_report.test.mjs",
+      "sha256": "5a1b9481530460519e499d09c49f2a34e2e44f2e2cdb8044bdd964c50871b781"
+    },
+    {
+      "path": "tests/prd_ship.test.mjs",
+      "sha256": "80ff8ff52fdcc328efcf47d64cb94c0afbdb2a339eec6ad5af47ccb634ed5eac"
+    },
+    {
+      "path": "tests/sasu_gate_wiring.test.mjs",
+      "sha256": "f87f69053b4ef09c173f9b235fe9c98c6f969b44283b3775a1dcddce868470f1"
+    }
+  ],
+  "generatedDist": [
+    {
+      "path": "cli/dist/cli.js",
+      "sha256": "a62edaea6ddefa3be6a7abf1601a30ec0ff9cf8fb79fa3a65caec22aff66dffe"
+    },
+    {
+      "path": "cli/dist/config.js",
+      "sha256": "22666a81689e262d48715a06a7593e1e7177f83530f0106925b37c524e856849"
+    },
+    {
+      "path": "cli/dist/doctor.js",
+      "sha256": "48d5f0b30fbb6775bd0dbe861ddf43ccbafd0537890b098ad996ff1dd576ce3d"
+    },
+    {
+      "path": "cli/dist/gates/commands.js",
+      "sha256": "e61a4075b2a090b42c48bdd79b5a5fc49c560d6125d6370cf5f26c65d58e02d8"
+    },
+    {
+      "path": "cli/dist/gates/contract.js",
+      "sha256": "e9bbad6f00aed867faa7a259692a6dc5fbbb1d5631b3b824286ca2bb320c5f0d"
+    },
+    {
+      "path": "cli/dist/gates/prelint.js",
+      "sha256": "9c7c88d30cc378d4fc51a507c874609a23ecfcaf7f0e90c8ac8300beb911b142"
+    },
+    {
+      "path": "cli/dist/gates/prompts.js",
+      "sha256": "6ccb717a643e2d8ff72153153183a6cb1f79036e0ebd3b42777389e75a72606c"
+    },
+    {
+      "path": "cli/dist/gates/store.js",
+      "sha256": "bdbdc3f11d35324c33aa6ca8e382ef390a7fdd2db94da6b8ef9beac4ce9e199d"
+    },
+    {
+      "path": "cli/dist/implement/amend.js",
+      "sha256": "a8239554528102cfb905ccee554d5f03d86935dd3d061261e2a9ca25d5059e3a"
+    },
+    {
+      "path": "cli/dist/implement/commands.js",
+      "sha256": "17940a2a8e084fbcaacb47b7607d257e18776013e822f8270e306d2d2abd1d1d"
+    },
+    {
+      "path": "cli/dist/implement/contract.js",
+      "sha256": "e50facb228797195b70b9e95163149acc59a75a89675aeaf71718d555f225b13"
+    },
+    {
+      "path": "cli/dist/implement/convergence.js",
+      "sha256": "abe6ef877a025646026fac90508aa8638bb6d2b307e87f874ccdd255f4eac1ef"
+    },
+    {
+      "path": "cli/dist/implement/dispatch.js",
+      "sha256": "2a20d2596d31449a407ebc1d02bcc6b5ac7f4196173479a1f6ce0cfdeb19156e"
+    },
+    {
+      "path": "cli/dist/implement/events.js",
+      "sha256": "17a257d4c7c3bc4a872d21a8f651f43291660ff05687ef67f340a79c46bb9728"
+    },
+    {
+      "path": "cli/dist/implement/herdr.js",
+      "sha256": "9c9e2a8d986cbfee477e58e8e8de03d3090e21f31cb1576afcb5fd5cef2125c8"
+    },
+    {
+      "path": "cli/dist/implement/prd-snapshot.js",
+      "sha256": "9a4f5f69cef1c2dc05ef14b01e83bf28c536fdad79046648dac64cb94557e2e0"
+    },
+    {
+      "path": "cli/dist/implement/prompts.js",
+      "sha256": "efd1d331334c5df26e3e576dfa51a19727f3c0f6b2fdc76b9e0d65e5ca0b380b"
+    },
+    {
+      "path": "cli/dist/implement/runner.js",
+      "sha256": "3fcc30761ea1b70e7c7e0835bd32e633aa6cdd032a232aa377b7876843246774"
+    },
+    {
+      "path": "cli/dist/implement/solver.js",
+      "sha256": "2ebbddb26122fd775dbd778399ff1cd3091698d02e84c8ac246a02efbf9eec0b"
+    },
+    {
+      "path": "cli/dist/implement/store.js",
+      "sha256": "a8d50dfa564c8d86bff1a62e2769dc904a9b6e184cc7455ef668a32f3f75fd72"
+    },
+    {
+      "path": "cli/dist/implement/suite.js",
+      "sha256": "e51c20eaea47f898e02c45644e4f56045e58bfa5cdfab562481d47745b027bf1"
+    },
+    {
+      "path": "cli/dist/implement/types.js",
+      "sha256": "2c3fd31c57d35798ddd154bceb92b7d2b033b117450f2ddabbeff5a070a5b47d"
+    },
+    {
+      "path": "cli/dist/implement/verbs.js",
+      "sha256": "49012765be4ef5e5222b26458c36954df5fb29678bf40373b9f023f6cc45fb0a"
+    },
+    {
+      "path": "cli/dist/implement/verdict.js",
+      "sha256": "8063fbe35b828c5c9af43b435e70b5df85fe41853093805cd212f5de661c2087"
+    },
+    {
+      "path": "cli/dist/implement/verification-activity.js",
+      "sha256": "1ec45bd2064ae5282825237976b556c6246677639fd99c983bf0f706f9e67c95"
+    },
+    {
+      "path": "cli/dist/implement/waiter.js",
+      "sha256": "2e1235c9716a80ebc890f8c68c274c081bad88d1c59f68542ee0bb940c73ecf8"
+    },
+    {
+      "path": "cli/dist/implement/worktree.js",
+      "sha256": "4381598fb2cb4e8107c18edab121275633cdf0d0ce167ee9c52ae471338af66d"
+    },
+    {
+      "path": "cli/dist/interview/cadence.js",
+      "sha256": "8a9acb67b957b4f68c06ffc5caa51eb1ff41ee0711b49ff76f024b8faa4d8b45"
+    },
+    {
+      "path": "cli/dist/interview/coherence.js",
+      "sha256": "dc96d50eeeebb3b28da28375ba1c5269ab0f79e192d938d0d0f22d84ef91b1e9"
+    },
+    {
+      "path": "cli/dist/interview/commands.js",
+      "sha256": "766781bf915ff143ed75cb06dab772f78f97e775a6af4f5bb2f72a32f1f98f1e"
+    },
+    {
+      "path": "cli/dist/interview/qalog.js",
+      "sha256": "086fa911d7f2ae9cf6ace35e65197996be46aaaff54d847fcb91560591bf0d6c"
+    },
+    {
+      "path": "cli/dist/interview/transcript.js",
+      "sha256": "4945ecb3e8dfdbf6dea10dc9148b24e892bf79061329f9181c1a7710bbad0e98"
+    },
+    {
+      "path": "cli/dist/judge/api-backend.js",
+      "sha256": "dacf0019ba5ecd1aaaa88a05216ab3b95863c763d7242bd7735b1fb94903bb90"
+    },
+    {
+      "path": "cli/dist/judge/backends.js",
+      "sha256": "98da4db642a1b1f1620312c84e91cbdd298f6c4fe4c06c1b9c42502532ef056e"
+    },
+    {
+      "path": "cli/dist/judge/fanout.js",
+      "sha256": "563e1189af67aea696cd0bc97ade3359f7048eb75c86456b65c5a3b4c08c8756"
+    },
+    {
+      "path": "cli/dist/judge/runner.js",
+      "sha256": "fcbf41a718e4f7592526963649d4d6f6513ac50f98163f000582aa8ea83a47c8"
+    },
+    {
+      "path": "cli/dist/judge/types.js",
+      "sha256": "4581bb3df373f60abeb9bd1519c46e267b8de0bb9df56b0d1567d1d76f09d496"
+    },
+    {
+      "path": "cli/dist/mechanical.js",
+      "sha256": "7edfbe5095578d57d1f3be123f47eec31d279f9bd77ca9da577767b1b417bc6e"
+    },
+    {
+      "path": "cli/dist/prd/commands.js",
+      "sha256": "4018c1405d125670d3286889bd1c8bada21a94a1752d803a8c028335bf9ada3b"
+    },
+    {
+      "path": "cli/dist/principles/commands.js",
+      "sha256": "64d479cc6d6597c800b13ce252083ce75567a1d4e7d7f1ed5217d2c52fba75bc"
+    },
+    {
+      "path": "cli/dist/runs/paths.js",
+      "sha256": "74668216b469df99802d3d8b16f7693637d74b04a99fab13b534f306aaf64f41"
+    },
+    {
+      "path": "cli/dist/runs/session.js",
+      "sha256": "fbdca381ea74edafcc5d505bf1fba0ca735dc307d1dbb6f785546dfa53a74228"
+    },
+    {
+      "path": "cli/dist/support/commands.js",
+      "sha256": "a6dc680d36de22c3c932bdfa0782259990bc9d438831e07aed8b30e238619944"
+    },
+    {
+      "path": "cli/dist/support/ensure-setup.js",
+      "sha256": "6657c3037b8528b61ba05136a3ce6d796afdd97d37a0fd6335fedb5cc095f823"
+    },
+    {
+      "path": "cli/dist/version.js",
+      "sha256": "4efe2d992ed8b7df651853874e70b2e5768e94449307f1d43b10de0e99096091"
+    }
+  ],
+  "checks": [
+    {
+      "command": "npm --prefix cli run build",
+      "exitCode": 0,
+      "log": "build-final.log",
+      "cleanDist": true
+    },
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exitCode": 0,
+      "passed": 100,
+      "failed": 0,
+      "skipped": 0,
+      "log": "root-final.log"
+    },
+    {
+      "command": "npm --prefix cli test",
+      "exitCode": 0,
+      "passed": 453,
+      "failed": 0,
+      "skipped": 0,
+      "log": "unit-final.log"
+    },
+    {
+      "command": "npm --prefix cli run test:e2e",
+      "exitCode": 0,
+      "passed": 125,
+      "failed": 0,
+      "skipped": 0,
+      "log": "e2e-final.log"
+    },
+    {
+      "command": "npm --prefix cli run typecheck",
+      "exitCode": 0,
+      "log": "typecheck-final.log"
+    }
+  ],
+  "liveCandidateCalls": 0
+}

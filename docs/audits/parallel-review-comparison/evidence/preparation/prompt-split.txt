@@ -1,0 +1,39 @@
+$benchmark-implement
+
+Execute the already approved fixed benchmark in this FRESH native session through current final verify/finalize receipt, or honestly bounded blocked outcome.
+You are the benchmark executor, Codex gpt-5.6-sol with medium effort, and the native in-session Implementor.
+The outer comparison coordinator is w72:p2; user-facing Observer is w72:p1.
+Confirm actual runtime session identity and SASU_HERDR_ROLE=implementor from structural environment; never fabricate identity or adopt an old run.
+Do not delegate product implementation or recursively dispatch: the benchmark skill explicitly requires you to implement IN THIS SESSION.
+You are not alone; own only the product worktree returned by your one prepare-run and its generated agents records, plus your reserved benchmark outputs.
+Do not edit the harness, other arm, global configuration/install, fixed tests, fixed PRD, benchmark contract, or agents/config.json.
+
+AUTHORIZATION VERBATIM: ㅇㅇㅇㅇ 그렇게 하자. 그리고 하나더 질문은 herdr observer + implementor 패턴은 그대로 가져가는거야?
+The current user explicitly authorized fresh runs of this reused approved six-behavior task-list case under the comparison protocol.
+Use the full fixed PRD as product contract; do not invent new requirements or seek the same approval again.
+No UI, network, persistence or deployment is requested by this product case.
+
+READ AND FOLLOW: /private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/benchmark-implement/SKILL.md, its contracts and evaluator rubric, then /private/tmp/sasu-parallel-review-prep/native-sessions/split/.agents/skills/implement/SKILL.md and applicable references.
+This is a pinned local skill invocation; prefer these project-local skills over globally installed same-name skills.
+IMPORTANT SCRIPT LOCATION BINDING: the staged benchmark script cannot derive the actual harness root. For ALL benchmark commands use the ORIGINAL pinned reporter:
+/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js
+For ALL Sasu commands use:
+node /Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/cli/dist/cli.js
+The local PATH shim also maps sasu to that exact CLI.
+Do not call globally installed sasu or a different harness.
+
+After the required skill reads, cd /private/tmp/sasu-parallel-review-prep/split and call prepare-run EXACTLY ONCE:
+node /Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js prepare-run --case benchmarks/task-list-review-comparison/benchmark.json
+Preserve its output. Use ONLY returned worktree, prd, runDir, gates, resultDir, runId coordinates.
+Do not reserve another run if a stage fails.
+Change to the returned worktree and invoke the pinned $implement in this same session with the returned PRD.
+Start before creating src/task-list.mjs, using --dirty-attribution pre-existing for the prepared PRD/case input copies if needed.
+Use your real native session ID; no fabricated --issuer human, no --adopt, no budget grants or state edits.
+Read the full six behaviors, decisions and supplied fixed test suite.
+Implement the requested public library, run meaningful focused checks, then the actual required suite through implement verify, repair concrete findings only within existing budget, and finalize the current eligible result.
+Do not commit before receipt, because the benchmark measures implementation through receipt; do not push/ship/merge.
+Do not repeatedly verify unchanged errors to seek PASS. Preserve every failed attempt. When a genuine recorded terminal condition permits it, finalize --status blocked honestly.
+If an unexpected prerequisite prevents progress, emit OBSERVER_BLOCK with the exact evidence and stop, not an interactive question UI.
+
+At receipt creation your implementation clock stops. Leave evaluation and report generation to the outer comparison coordinator, who will supply the required fresh evaluator and pinned native reporter.
+Return terminal status, run/session ID, returned coordinates, receipt/state/result paths, actual checks and unresolved limitations. Do not initiate another review after the receipt.

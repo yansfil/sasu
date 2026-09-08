@@ -1,0 +1,9 @@
+{
+  "name": "matched-task-list-library",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/task-list.test.mjs"
+  }
+}
+

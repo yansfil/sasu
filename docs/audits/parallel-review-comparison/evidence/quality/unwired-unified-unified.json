@@ -1,0 +1,47 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:00:20.360Z",
+  "finishedAt": "2026-09-08T12:00:43.645Z",
+  "review": {
+    "summary": "The public API exports command and save, and the save failure path preserves the input value. However, one command mapping is missing.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B28",
+          "D-01"
+        ],
+        "problem": "command(28) returns undefined because actions[27] is undefined, so the approved command(28) behavior does not return 28.",
+        "evidenceRefs": [
+          "B28",
+          "Technical structure",
+          "src/public.mjs"
+        ],
+        "nextAction": "Replace the undefined entry at index 27 with value28 and verify command(28) returns 28."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:00:20.360Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:unwired",
+    "durationMs": 23285,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49218,
+      "outputTokens": 749,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 515
+    }
+  }
+}

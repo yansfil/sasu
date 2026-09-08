@@ -1,0 +1,113 @@
+✔ routine success never resets the round budget while a distinct blocking risk stays open (1502.113583ms)
+✔ an explicit user grant preserves prior findings and extends the exhausted budget in the same run (902.162375ms)
+✔ persistent backend errors terminate separately from implementation-fix rounds and permit a blocked receipt (1352.43275ms)
+✔ repeated identical pre-judge errors reach the harness bound and produce an honest blocked receipt (731.248083ms)
+✔ high-risk and routine review execute concurrently on the same input with no duplicate suite (1312.16575ms)
+✔ accepted risk can release delivery while historical review failure remains honest and product defects remain blocking (1340.002291ms)
+✔ only a human non-convergence declaration permits early blocked closure and never accepts the risk (917.292541ms)
+✔ a current PASS becomes ineligible after source changes, including a previously finalized run (1146.293917ms)
+✔ a current PASS becomes ineligible after prd changes, including a previously finalized run (852.881875ms)
+✔ a current PASS becomes ineligible after artifact-changed changes, including a previously finalized run (860.62275ms)
+✔ a current PASS becomes ineligible after artifact-missing changes, including a previously finalized run (841.663625ms)
+✔ missing or altered registered evidence stops review, while a replacement preserves history (802.036417ms)
+✔ artifact registration rejects self-referential and escaping symlink evidence (409.010833ms)
+✔ an absent prior disposition cannot silently resolve a defect, and a new unchanged-file omission is retained (1544.232291ms)
+✔ advice is recorded without an acceptance ceremony, while a top-level PASS cannot hide a defect (1143.75075ms)
+✔ review receives recorded conversational admission and exact human-source quotation boundaries (579.724542ms)
+✔ post-completion human input remains open, rejection blocks delivery, explicit withdrawal restores it with history (1035.387959ms)
+✔ a prerequisite human judgment cannot be downgraded into deliverable pending-human (829.6445ms)
+✔ a human confirmation cannot refresh a completed result after source has changed (703.579583ms)
+✔ a change to the canonical interview invalidates review even when a prior spec gate selected decisions (724.080625ms)
+✔ a foreign session mutation needs recorded adoption before ownership changes (262.334ms)
+✔ a confirmed human authority remains visible to the next full review and is not reopened by omission (944.369916ms)
+✔ the source catalog is metadata until one shared run artifact supplies exact unchanged source context (925.2695ms)
+✔ registered record-tree source cannot replace different current source in an isolated worktree (619.96775ms)
+✔ the whole verify lease refuses every domain mutation and merges their refusal history before releasing (4608.858458ms)
+✔ recovery terminates a dead owner's command group before a new verification can run (801.495333ms)
+✔ thirty requirements and all decisions reach both independent reviews with no requirement PASS ledger (1075.887416ms)
+✔ a first review defect leaves the run active with open findings and cannot close prematurely (702.364542ms)
+✔ a failed mandatory suite is an actual failed attempt and leaves the correction path active (650.573291ms)
+✔ retired commands and old state schemas fail explicitly instead of replaying legacy proof (557.512ms)
+✔ an empty source change is recorded as preflight failure rather than a successful review (343.084667ms)
+✔ a qa-log-backed PRD cannot start before both PRD review gates pass (100.062084ms)
+✔ dirty attribution and retire cover refusal, recovery, cross-session evidence, and released occupancy (850.352875ms)
+✔ dirty intake presents one operator question and commit-first produces a committed baseline (324.713625ms)
+✔ isolated starts carry source dirtiness and preserve its selected attribution (493.108ms)
+✔ an unborn Git repository still requires attribution and keeps its files in the run-owned diff (620.864833ms)
+✔ worktree.enabled isolates the first run too (204.889125ms)
+✔ dirty worktree setup output is attributed before state and a refused provision is rolled back (411.1465ms)
+✔ a failure after worktree setup removes the unrecorded worktree and branch (213.206708ms)
+✔ a failed worktree rollback reports its cleanup failures (572.966625ms)
+✔ per-session pointers keep two sessions' bare commands on their own runs (530.200458ms)
+✔ a successful command that changes product source cannot earn a current review or receipt (627.591875ms)
+✔ a backend without bounded evidence access fails visibly instead of reviewing from unavailable source (554.538667ms)
+✔ parallel reconciliation retains different defects sharing a requirement and only deduplicates identical content (2.079583ms)
+✔ both roles must explicitly resolve a prior defect; missing or disputed disposition stays open (0.682458ms)
+✔ parallel continued findings preserve stable authority and both explanations without double-closing (0.455625ms)
+✔ risk findings get stable ids and every prior finding is dispositioned on round 2+ (0.385459ms)
+✔ an unresolved blocker cannot be downgraded and resolving it requires an exact delta (0.129708ms)
+✔ a successful risk result moves the ledger through open, fixed, and newly appended entries (0.187875ms)
+✔ a partial backend error preserves the last actual whole-review result (0.067875ms)
+✔ omitted problems stay open and a concrete newly discovered omission in unchanged source is accepted (0.111917ms)
+✔ a reviewer cannot downgrade an open defect or close or rewrite a human authority item (0.178209ms)
+✔ round context keeps source delta distinct from replacement evidence (0.158667ms)
+✔ new risks in unchanged source require concrete valid contract and counterevidence references (0.100833ms)
+✔ retired states are refused before reading their fields with the last supporting commit (2.151ms)
+✔ source freshness is commit-invariant when judged bytes do not change (127.846292ms)
+✔ baseline snapshot pins dirty paths to HEAD so pre-start work stays run-owned (348.178917ms)
+✔ baseline snapshot without a git HEAD is the working tree (73.887375ms)
+✔ source snapshot excludes only the root agents bookkeeping namespace (15.788ms)
+✔ artifact integrity pins file identity without coupling it to the source tree (26.227417ms)
+✔ static requirements cannot carry retired lifecycle or proof fields (0.808125ms)
+✔ a PASS must agree with the whole-review and mechanical results (0.269083ms)
+✔ human confirmations and rejections cannot be promoted by review (0.392459ms)
+✔ CAS rejects a stale close without publishing its receipt (5.584917ms)
+✔ event and refusal ledgers reject contradictory records (0.587209ms)
+✖ report and comparison preserve hard outcomes while scoring only evidenced process behavior (861.368333ms)
+✔ prepare-run rejects unapproved and unreadable PRDs before reserving a run (207.247042ms)
+✔ local delivery verifies, commits the allowlisted change, and never contacts GitHub (774.348667ms)
+✔ local delivery is idempotent and does not create a second commit (709.4205ms)
+✔ default state discovery uses the current CLI namespace (291.895ms)
+✔ local delivery promotes an unpushed checkpoint instead of stacking another commit (625.685625ms)
+✔ local delivery refuses a PR-configured run before any delivery side effect (295.044625ms)
+✔ merge requires explicit user approval before contacting GitHub (269.414792ms)
+✔ merge pins the reviewed PR head, requires passing CI, and records delivery evidence (667.374792ms)
+✔ merge records a later explicit PR-delivery approval for a current state with default delivery config (642.439875ms)
+✔ permitted pending human judgments ship and the body describes shared tests and review (583.171125ms)
+✔ an explicit human rejection refuses delivery before any side effect (280.534291ms)
+✔ current CLI rejection cannot be bypassed by an older eligible receipt (411.383083ms)
+✔ receipt schema is checked before completed status is consumed (265.627042ms)
+✔ delivery requires both completed role results even when eligibility is recorded (1089.120333ms)
+✔ delivery preserves historical role FAIL after the CLI settles human authority and risk (560.426625ms)
+✔ local delivery refuses unrelated dirty paths outside receipt ownership (463.801625ms)
+✔ a blocked receipt does not ship (265.460167ms)
+✔ stale verification and mismatched completion identities refuse local delivery (844.541375ms)
+ℹ tests 84
+ℹ suites 0
+ℹ pass 83
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14298.660958
+
+✖ failing tests:
+
+test at tests/benchmark_report.test.mjs:37:1
+✖ report and comparison preserve hard outcomes while scoring only evidenced process behavior (861.368333ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  -3 !== -1
+  
+      at TestContext.<anonymous> (file:///Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/tests/benchmark_report.test.mjs:273:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: -3,
+    expected: -1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

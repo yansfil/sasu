@@ -1,0 +1,152 @@
+{
+  "schema": "sasu.implement.receipt.v5.parallel-review",
+  "status": "complete",
+  "topicSlug": "task-list-review-comparison",
+  "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+  "prdSnapshotPath": "agents/runs/task-list-review-comparison/prd.md",
+  "prdJudge": {
+    "required": false,
+    "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+    "gapAudit": null,
+    "spec": null
+  },
+  "baselineAttribution": {
+    "disposition": "pre-existing",
+    "paths": [
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "disposition": "pre-existing"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "disposition": "pre-existing"
+      }
+    ],
+    "baselineDigest": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+  },
+  "completedAt": "2026-09-08T12:18:48.135Z",
+  "completionFingerprint": "e5bef29596a858f6543680e5a32206e70d4bf59b412a8443171df8b1aa88be92",
+  "sourceFingerprint": "38c5839e95edac8703cb0504ded807e2ef6e4335ad46cfb6e2f8ceca900a2fbf",
+  "sourceAvailability": "captured",
+  "inputFingerprint": "8a1e611749bb27f72bc3e7451fd8d619d0a2d940a1d0a06be854d98fdbbca2e2",
+  "verificationAttemptId": "61cf8cea-474b-4cbe-8e90-d15e5d479c7e",
+  "unifiedVerdict": "PASS",
+  "phase": "complete",
+  "error": null,
+  "reviews": {
+    "fidelity": {
+      "invocationId": "a628daa4-0318-4ff1-b8d3-6e89b5c02e5a",
+      "verdict": "PASS",
+      "result": {
+        "summary": "All approved behaviors and the dependency-free public-library decision are satisfied by the supplied implementation and passing suite.",
+        "findings": [],
+        "priorDispositions": []
+      },
+      "startedAt": "2026-09-08T12:17:56.145Z",
+      "finishedAt": "2026-09-08T12:18:15.732Z",
+      "durationMs": 19587,
+      "error": null
+    },
+    "code": {
+      "invocationId": "b6348429-7111-416f-9a49-f5c89e199a62",
+      "verdict": "PASS",
+      "result": {
+        "summary": "The supplied implementation satisfies all six approved behaviors, follows the dependency-free module structure, and the required test command passed successfully. No concrete contract defects or unresolved evidence gaps were found.",
+        "findings": [],
+        "priorDispositions": []
+      },
+      "startedAt": "2026-09-08T12:17:56.152Z",
+      "finishedAt": "2026-09-08T12:18:34.752Z",
+      "durationMs": 38600,
+      "error": null
+    }
+  },
+  "risk": null,
+  "mechanical": [
+    {
+      "command": "npm test",
+      "cwd": ".",
+      "startedAt": "2026-09-08T12:17:55.846Z",
+      "finishedAt": "2026-09-08T12:17:56.108Z",
+      "durationMs": 262,
+      "exitCode": 0,
+      "mutatedTree": false,
+      "status": "PASS",
+      "logPath": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log"
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "command-log",
+      "path": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log",
+      "description": "mechanical PASS: npm test",
+      "sha256": "9afc65820129ebbeda58625a32657f99334ee4b3b6aceb2b1c38aec1985a5818",
+      "bytes": 361,
+      "registeredAt": "2026-09-08T12:17:56.108Z",
+      "observedAt": "2026-09-08T12:17:56.108Z",
+      "provenance": "CLI executed npm test in .",
+      "command": "npm test",
+      "cwd": ".",
+      "exitCode": 0
+    }
+  ],
+  "findings": [],
+  "humanConfirmations": [],
+  "riskFindings": [],
+  "suite": {
+    "sealedAt": "2026-09-08T12:17:00.450Z",
+    "commands": [
+      {
+        "id": "S1",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "."
+      }
+    ],
+    "exclusions": [],
+    "results": [
+      {
+        "commandId": "S1",
+        "attemptId": "61cf8cea-474b-4cbe-8e90-d15e5d479c7e",
+        "startedAt": "2026-09-08T12:17:55.846Z",
+        "finishedAt": "2026-09-08T12:17:56.108Z",
+        "durationMs": 262,
+        "exitCode": 0,
+        "mutatedTree": false,
+        "status": "GREEN",
+        "logPath": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log"
+      }
+    ]
+  },
+  "ownedFiles": [
+    "src/task-list.mjs"
+  ],
+  "requirementCount": 6,
+  "verificationBudget": {
+    "fixAttempts": 0,
+    "totalAttempts": 1,
+    "budget": 1,
+    "budgetExhausted": false,
+    "consecutiveErrors": 0,
+    "judgeErrorThreshold": 3,
+    "judgeErrorCause": null,
+    "judgeErrorLoop": false,
+    "prejudgeFailures": 0,
+    "prejudgeFailureLimit": 3,
+    "prejudgeFailureLoop": false,
+    "grants": 0
+  },
+  "openItems": [],
+  "delivery": {
+    "eligible": true,
+    "reasons": []
+  },
+  "deviations": [],
+  "adoptions": [],
+  "worktree": null,
+  "executionCallsDuringFinalize": 0
+}

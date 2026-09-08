@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a080e6-9285-7992-a1d2-5923a34b280d"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"summary\":\"The delivered illustration satisfies the complete approved contract: it depicts a person wearing rectangular glasses, a red plaid shirt, and a visible red marker.\",\"findings\":[],\"priorDispositions\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":25470,"cached_input_tokens":8960,"cache_write_input_tokens":0,"output_tokens":128,"reasoning_output_tokens":82}}

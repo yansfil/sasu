@@ -1,0 +1,47 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:59:16.648Z",
+  "finishedAt": "2026-09-08T11:59:39.733Z",
+  "review": {
+    "summary": "The contract is fulfilled except for B17: the public command dispatch returns undefined for input 17. The save failure behavior is implemented, and source inspection establishes the remaining command mappings.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B17",
+          "D-01"
+        ],
+        "problem": "command(17) dispatches to actions[16], which invokes value17; value17 returns undefined instead of 17.",
+        "evidenceRefs": [
+          "B17",
+          "D-01",
+          "src/public.mjs"
+        ],
+        "nextAction": "Change value17 to return 17 and verify command(17)."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:59:16.648Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:fidelity:middle-omission",
+    "durationMs": 23085,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49515,
+      "outputTokens": 897,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 662
+    }
+  }
+}

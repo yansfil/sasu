@@ -1,0 +1,27 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:02:58.677Z",
+  "finishedAt": "2026-09-08T12:03:09.455Z",
+  "review": {
+    "summary": "The delivered illustration satisfies the complete approved visual contract: it depicts a person wearing rectangular glasses, a red plaid shirt, and a visible red marker.",
+    "findings": [],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:02:58.677Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:visual",
+    "durationMs": 10778,
+    "attempts": 1,
+    "outcome": "ok",
+    "usage": {
+      "inputTokens": 25384,
+      "outputTokens": 219,
+      "cachedInputTokens": 8960,
+      "reasoningOutputTokens": 172
+    }
+  }
+}

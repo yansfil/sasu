@@ -1,0 +1,18 @@
+0 verbose cli /opt/homebrew/Cellar/node/26.5.0/bin/node /opt/homebrew/bin/npm
+1 info using npm@11.17.0
+2 info using node@v26.5.0
+3 silly config load:file:/opt/homebrew/lib/node_modules/npm/npmrc
+4 silly config load:file:/private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/.npmrc
+5 silly config load:file:/private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison/suite-runtime/home/.npmrc
+6 silly config load:file:/opt/homebrew/etc/npmrc
+7 verbose title npm test
+8 verbose argv "test"
+9 verbose logfile logs-max:10 dir:/private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison/suite-runtime/cache/npm/_logs/2026-09-08T12_17_55_944Z-
+10 verbose logfile /private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison/suite-runtime/cache/npm/_logs/2026-09-08T12_17_55_944Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd /private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree
+13 verbose os Darwin 24.1.0
+14 verbose node v26.5.0
+15 verbose npm  v11.17.0
+16 verbose exit 0
+17 info ok

@@ -1,0 +1,74 @@
+[
+  {
+    "arm": "unified",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "sourceFingerprint": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e",
+    "prdSha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+    "caseSha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4",
+    "judgeConfigSha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460",
+    "productAbsent": true,
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "state": "present",
+        "sha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "state": "present",
+        "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      {
+        "path": "test/task-list.test.mjs",
+        "state": "present",
+        "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+      }
+    ]
+  },
+  {
+    "arm": "split",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "sourceFingerprint": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e",
+    "prdSha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+    "caseSha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4",
+    "judgeConfigSha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460",
+    "productAbsent": true,
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "state": "present",
+        "sha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "state": "present",
+        "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      {
+        "path": "test/task-list.test.mjs",
+        "state": "present",
+        "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+      }
+    ]
+  }
+]

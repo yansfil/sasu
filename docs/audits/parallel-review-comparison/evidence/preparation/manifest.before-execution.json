@@ -1,0 +1,56 @@
+{
+  "schema": "sasu.parallel-review-prep.v1",
+  "status": "inputs-prepared-no-run-reserved",
+  "productBase": {
+    "commit": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "tree": "36382c4e52e2bbce81016d7c122b6179fb1d0229",
+    "preparedSourceFingerprint": "94738c3c16f667d1033a93cff31d6837560cf3d0b2a2910b553a38b06dca6b1a",
+    "priorSolutionReachable": false
+  },
+  "harnesses": {
+    "unified": {
+      "path": "/Users/hoyeonlee/projects/sasu",
+      "requiredCommit": "3f549dcfff71fe1f7fa974a383f6e8a055ce8463"
+    },
+    "split": {
+      "path": "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison",
+      "requiredCommit": null,
+      "requiredAncestor": "3f549dcfff71fe1f7fa974a383f6e8a055ce8463",
+      "readiness": "pending candidate implementation and verification"
+    }
+  },
+  "launchers": {
+    "unified": "/private/tmp/sasu-parallel-review-prep/unified",
+    "split": "/private/tmp/sasu-parallel-review-prep/split"
+  },
+  "case": {
+    "id": "task-list-review-comparison",
+    "topic": "task-list-review-comparison",
+    "parentDirectory": "task-list-review-comparison",
+    "prdSha256": "675011a030d65022950d055fdc047f09fc58374797326c62723c171f348749d6",
+    "caseSha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4"
+  },
+  "starterSha256": {
+    "package.json": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+    "test/task-list.test.mjs": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+    "agents/config.json": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+  },
+  "coordinates": {
+    "executorRuntime": "codex",
+    "executorModel": "gpt-5.6-sol",
+    "executorEffort": "medium",
+    "routineJudgeBackend": "codex",
+    "routineJudgeModel": "gpt-5.6-luna",
+    "routineJudgeEffort": "xhigh",
+    "routineJudgeFallback": null,
+    "postReceiptEvaluatorModel": "gpt-5.6-sol"
+  },
+  "pending": [
+    "candidate commit and full harness verification",
+    "readiness under each pinned harness",
+    "fresh native session IDs",
+    "chosen execution order",
+    "prepare-run outputs",
+    "receipts and post-receipt evaluations"
+  ]
+}

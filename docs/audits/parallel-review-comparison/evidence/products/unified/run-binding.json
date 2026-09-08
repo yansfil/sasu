@@ -1,0 +1,69 @@
+{
+  "schema": "sasu.benchmark-run.v2",
+  "id": "task-list-review-comparison-run-1",
+  "caseId": "task-list-review-comparison",
+  "status": "reported",
+  "createdAt": "2026-09-08T12:11:49.066Z",
+  "casePath": "benchmarks/task-list-review-comparison/benchmark.json",
+  "caseHash": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4",
+  "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+  "prdHash": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+  "prdReadiness": {
+    "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+    "parsed": {
+      "behaviorCount": 6,
+      "decisionCount": 1
+    },
+    "contractError": null,
+    "blockingGaps": [],
+    "warnings": [],
+    "status": "ready"
+  },
+  "environment": {
+    "mode": "fresh-worktree",
+    "baseRef": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "headSha": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "mustBeAbsent": [
+      "src/task-list.mjs"
+    ]
+  },
+  "preparedAt": "2026-09-08T12:11:49.105Z",
+  "worktreePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree",
+  "preparedCasePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/benchmarks/task-list-review-comparison/benchmark.json",
+  "preparedPrdPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/benchmarks/task-list-review-comparison/prd.md",
+  "runDir": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/agents/runs/task-list-review-comparison",
+  "gatesPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/agents/runs/task-list-review-comparison/gates/gates.json",
+  "initialSource": {
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "state": "present",
+        "sha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "state": "present",
+        "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      {
+        "path": "test/task-list.test.mjs",
+        "state": "present",
+        "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+      }
+    ],
+    "digest": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e"
+  },
+  "reportedAt": "2026-09-08T12:23:11.377Z",
+  "reportPath": "agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/report.json"
+}

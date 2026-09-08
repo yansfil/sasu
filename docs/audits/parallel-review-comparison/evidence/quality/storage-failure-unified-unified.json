@@ -1,0 +1,46 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T12:01:06.360Z",
+  "finishedAt": "2026-09-08T12:01:42.271Z",
+  "review": {
+    "summary": "B1-B30 are implemented by the exported command dispatch. B31 is not satisfied.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B31",
+          "D-01"
+        ],
+        "problem": "For save({write(){throw new Error(\"disk full\")}}, 42), store.write(value) throws, the empty catch swallows the error, and save returns {ok:true} without the error message or input value. The contract requires ok:false with both preserved.",
+        "evidenceRefs": [
+          "B31",
+          "src/public.mjs"
+        ],
+        "nextAction": "Handle the caught error by returning a contract-compatible failure result with ok:false, the error message, and the original input value."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T12:01:06.361Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:storage-failure",
+    "durationMs": 35910,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49330,
+      "outputTokens": 1483,
+      "cachedInputTokens": 24064,
+      "reasoningOutputTokens": 1192
+    }
+  }
+}

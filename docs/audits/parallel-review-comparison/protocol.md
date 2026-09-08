@@ -1,6 +1,6 @@
 # Unified versus parallel review experiment
 
-Status: approved comparison, implementation and live measurements pending.
+Status: approved comparison completed; see [measured results](results.ko.md).
 Baseline source: `3f549dcfff71fe1f7fa974a383f6e8a055ce8463`.
 Candidate branch: `experiment/parallel-review`.
 This experiment does not change the installed workflow or authorize a production rollout.

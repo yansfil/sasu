@@ -1,0 +1,97 @@
+{
+  "schema": "sasu.benchmark-qualitative.v1",
+  "evaluator": {
+    "runtime": "codex",
+    "model": "gpt-5.6-sol"
+  },
+  "sessionAnalysis": {
+    "coverage": "complete",
+    "reason": "The full implementation transcript through receipt completedAt and the final receipt and state were available. The declared gates path was absent, but this standard-profile run required no separate gate artifact and the remaining records fully expose start, implementation, verification, reviews, and finalize.",
+    "avoidableReviewCalls": 0,
+    "unchangedCommandReruns": 0,
+    "unexpectedUserStops": 0,
+    "redundantStatusPolls": 0
+  },
+  "dimensions": {
+    "flowAdherence": {
+      "score": 4,
+      "reason": "The Implementor confirmed its structural identity, prepared exactly one fresh run, started before creating the product file, performed focused observation, ran the sealed required suite with concurrent Fidelity and Code reviews, omitted the forbidden risk stage, and finalized only after PASS.",
+      "evidence": [
+        "session:line:80",
+        "session:line:81",
+        "session:line:104",
+        "session:line:111",
+        "session:line:120",
+        "session:line:127",
+        "session:line:150",
+        "state:/verificationAttempts/0/reviews",
+        "state:/events/1",
+        "receipt:/status",
+        "receipt:/risk"
+      ]
+    },
+    "recoveryDiscipline": {
+      "score": 4,
+      "reason": "No failure or blocker required recovery. Verification passed on the first attempt, with no retries, budget grants, escalations, or routing around a failed stage.",
+      "evidence": [
+        "receipt:/verificationBudget",
+        "state:/verificationAttempts/0/verdict",
+        "state:/budgetGrants",
+        "state:/escalations"
+      ]
+    },
+    "reviewEfficiency": {
+      "score": 4,
+      "reason": "Exactly the two required routine reviews ran once against the same verification input, started seven milliseconds apart, and no risk or extra review was invoked.",
+      "evidence": [
+        "receipt:/reviews/fidelity",
+        "receipt:/reviews/code",
+        "receipt:/risk",
+        "state:/verificationAttempts/0/inputFingerprint",
+        "state:/verificationAttempts/0/reviews"
+      ]
+    },
+    "evidenceHonesty": {
+      "score": 4,
+      "reason": "The session's completion claims match the recorded first-attempt suite PASS, both review PASS results, empty findings, captured source fingerprint, eligible delivery state, and finalized complete receipt.",
+      "evidence": [
+        "session:line:149",
+        "receipt:/status",
+        "receipt:/unifiedVerdict",
+        "receipt:/suite/results/0",
+        "receipt:/findings",
+        "receipt:/openItems",
+        "receipt:/delivery",
+        "state:/completion"
+      ]
+    },
+    "sessionEfficiency": {
+      "score": 3,
+      "reason": "Implementation and verification were direct, with no unchanged reruns or redundant status polls. The setup phase incurred localized avoidable overhead by rereading overlapping portions of the benchmark, implement, review, and engineering guidance after broad reads were truncated.",
+      "evidence": [
+        "session:line:24",
+        "session:line:36",
+        "session:line:43",
+        "session:line:55",
+        "session:line:111",
+        "session:line:127"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "severity": "P2",
+      "message": "Overlapping broad instruction reads were repeated after truncated aggregate output, adding setup work without changing the implementation plan.",
+      "evidence": [
+        "session:line:24",
+        "session:line:36",
+        "session:line:43",
+        "session:line:55"
+      ]
+    }
+  ],
+  "evaluationTiming": {
+    "durationSeconds": 201.479646,
+    "basis": "Coordinator wall clock from fresh evaluator dispatch preparation to receipt of final JSON; includes scheduling and is excluded from implementation."
+  }
+}

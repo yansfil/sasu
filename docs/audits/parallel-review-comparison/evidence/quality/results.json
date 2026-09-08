@@ -1,0 +1,1014 @@
+[
+  {
+    "variant": "complete",
+    "arm": "unified",
+    "startedAt": "2026-09-08T11:57:54.514Z",
+    "finishedAt": "2026-09-08T11:58:20.343Z",
+    "elapsedMs": 25829,
+    "expectedBlockingRefs": [],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:57:54.515Z",
+        "finishedAt": "2026-09-08T11:58:20.342Z",
+        "review": {
+          "summary": "The implementation satisfies the complete approved contract. The exported command dispatches inputs 1 through 30 to the corresponding numeric values, and save preserves the input value while returning the required failure shape when store.write throws.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:57:54.515Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:complete",
+          "durationMs": 25827,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49354,
+            "outputTokens": 607,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 444
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "complete",
+    "arm": "split",
+    "startedAt": "2026-09-08T11:58:20.344Z",
+    "finishedAt": "2026-09-08T11:58:47.466Z",
+    "elapsedMs": 27122,
+    "expectedBlockingRefs": [],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:58:20.344Z",
+        "finishedAt": "2026-09-08T11:58:47.466Z",
+        "review": {
+          "summary": "The complete public source satisfies B1-B31 and exposes both command and save from src/public.mjs. The limited smoke run is sufficient for B1, while source inspection establishes the remaining deterministic behaviors. No contract defects found.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:58:20.345Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:complete",
+          "durationMs": 27121,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49476,
+            "outputTokens": 677,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 464
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:58:20.352Z",
+        "finishedAt": "2026-09-08T11:58:47.311Z",
+        "review": {
+          "summary": "The exported command and save implementations satisfy B1-B31. Source establishes deterministic behavior for all requested values and preserves the input value with an error message when saving throws. The smoke output confirms command(1), and no additional runtime QA was claimed, but no further runtime evidence is required for these deterministic source paths.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:58:20.353Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:complete",
+          "durationMs": 26958,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49495,
+            "outputTokens": 819,
+            "cachedInputTokens": 38400,
+            "reasoningOutputTokens": 637
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "middle-omission",
+    "arm": "unified",
+    "startedAt": "2026-09-08T11:58:47.466Z",
+    "finishedAt": "2026-09-08T11:59:16.647Z",
+    "elapsedMs": 29181,
+    "expectedBlockingRefs": [
+      "B17"
+    ],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:58:47.466Z",
+        "finishedAt": "2026-09-08T11:59:16.647Z",
+        "review": {
+          "summary": "The public API and dispatch are present, and source establishes the required behavior for commands 1-16 and 18-30 plus save error preservation. One contract requirement is unmet: command(17) returns undefined.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B17",
+                "D-01"
+              ],
+              "problem": "Calling the exported command with input 17 resolves actions[16] to value17, whose implementation returns undefined instead of the required number 17.",
+              "evidenceRefs": [
+                "B17",
+                "Technical structure",
+                "src/public.mjs"
+              ],
+              "nextAction": "Change value17 to return 17 and verify command(17)."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:58:47.467Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:middle-omission",
+          "durationMs": 29180,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49304,
+            "outputTokens": 1063,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 819
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "middle-omission",
+    "arm": "split",
+    "startedAt": "2026-09-08T11:59:16.648Z",
+    "finishedAt": "2026-09-08T11:59:39.733Z",
+    "elapsedMs": 23085,
+    "expectedBlockingRefs": [
+      "B17"
+    ],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:59:16.648Z",
+        "finishedAt": "2026-09-08T11:59:39.733Z",
+        "review": {
+          "summary": "The contract is fulfilled except for B17: the public command dispatch returns undefined for input 17. The save failure behavior is implemented, and source inspection establishes the remaining command mappings.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B17",
+                "D-01"
+              ],
+              "problem": "command(17) dispatches to actions[16], which invokes value17; value17 returns undefined instead of 17.",
+              "evidenceRefs": [
+                "B17",
+                "D-01",
+                "src/public.mjs"
+              ],
+              "nextAction": "Change value17 to return 17 and verify command(17)."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:59:16.648Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:middle-omission",
+          "durationMs": 23085,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49515,
+            "outputTokens": 897,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 662
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:59:16.648Z",
+        "finishedAt": "2026-09-08T11:59:35.239Z",
+        "review": {
+          "summary": "The implementation satisfies the contract except for B17: command(17) returns undefined instead of 17. The save error path preserves the input value and reports the error message.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B17",
+                "D-01"
+              ],
+              "problem": "value17 returns undefined, so command(17) dispatches to an implementation that does not return the requested number 17.",
+              "evidenceRefs": [
+                "src/public.mjs",
+                "B17"
+              ],
+              "nextAction": "Change value17 to return 17."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:59:16.648Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:middle-omission",
+          "durationMs": 18591,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49444,
+            "outputTokens": 640,
+            "cachedInputTokens": 17920,
+            "reasoningOutputTokens": 414
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "final-omission",
+    "arm": "unified",
+    "startedAt": "2026-09-08T11:59:39.733Z",
+    "finishedAt": "2026-09-08T11:59:59.071Z",
+    "elapsedMs": 19338,
+    "expectedBlockingRefs": [
+      "B30"
+    ],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:59:39.733Z",
+        "finishedAt": "2026-09-08T11:59:59.071Z",
+        "review": {
+          "summary": "The public API satisfies B1-B29 and B31 by source inspection, but B30 is not satisfied: command(30) returns undefined instead of 30. Runtime evidence covers only command(1), but the complete source establishes the remaining deterministic behavior.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B30"
+              ],
+              "problem": "command(30) dispatches to value30, whose implementation returns undefined. Therefore the public exported command(30) returns undefined rather than the required number 30.",
+              "evidenceRefs": [
+                "B30",
+                "Behaviors",
+                "Technical structure",
+                "src/public.mjs"
+              ],
+              "nextAction": "Change value30 to return 30, then verify command(30)."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:59:39.734Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:final-omission",
+          "durationMs": 19337,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49269,
+            "outputTokens": 633,
+            "cachedInputTokens": 38400,
+            "reasoningOutputTokens": 376
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "final-omission",
+    "arm": "split",
+    "startedAt": "2026-09-08T11:59:59.072Z",
+    "finishedAt": "2026-09-08T12:00:20.360Z",
+    "elapsedMs": 21288,
+    "expectedBlockingRefs": [
+      "B30"
+    ],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:59:59.072Z",
+        "finishedAt": "2026-09-08T12:00:20.360Z",
+        "review": {
+          "summary": "The contract is not fully satisfied: B1-B29 and B31 are implemented, but B30 fails.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B30"
+              ],
+              "problem": "The public caller command(30) dispatches to value30, which returns undefined instead of the required number 30.",
+              "evidenceRefs": [
+                "src/public.mjs",
+                "B30"
+              ],
+              "nextAction": "Change value30 to return 30."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:59:59.072Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:final-omission",
+          "durationMs": 21288,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49449,
+            "outputTokens": 655,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 448
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T11:59:59.072Z",
+        "finishedAt": "2026-09-08T12:00:17.852Z",
+        "review": {
+          "summary": "The public API implements command(1) through command(29) and save's error path, but command(30) violates the approved value-preservation contract.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B30",
+                "D-01"
+              ],
+              "problem": "command(30) dispatches to value30 through actions[29], but value30 returns undefined instead of 30.",
+              "evidenceRefs": [
+                "src/public.mjs",
+                "B30",
+                "D-01"
+              ],
+              "nextAction": "Change value30 to return 30 and verify command(30)."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T11:59:59.075Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:final-omission",
+          "durationMs": 18777,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,200p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49476,
+            "outputTokens": 534,
+            "cachedInputTokens": 38400,
+            "reasoningOutputTokens": 303
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "unwired",
+    "arm": "unified",
+    "startedAt": "2026-09-08T12:00:20.360Z",
+    "finishedAt": "2026-09-08T12:00:43.646Z",
+    "elapsedMs": 23286,
+    "expectedBlockingRefs": [
+      "B28"
+    ],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:00:20.360Z",
+        "finishedAt": "2026-09-08T12:00:43.645Z",
+        "review": {
+          "summary": "The public API exports command and save, and the save failure path preserves the input value. However, one command mapping is missing.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B28",
+                "D-01"
+              ],
+              "problem": "command(28) returns undefined because actions[27] is undefined, so the approved command(28) behavior does not return 28.",
+              "evidenceRefs": [
+                "B28",
+                "Technical structure",
+                "src/public.mjs"
+              ],
+              "nextAction": "Replace the undefined entry at index 27 with value28 and verify command(28) returns 28."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:00:20.360Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:unwired",
+          "durationMs": 23285,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49218,
+            "outputTokens": 749,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 515
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "unwired",
+    "arm": "split",
+    "startedAt": "2026-09-08T12:00:43.646Z",
+    "finishedAt": "2026-09-08T12:01:06.360Z",
+    "elapsedMs": 22714,
+    "expectedBlockingRefs": [
+      "B28"
+    ],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:00:43.646Z",
+        "finishedAt": "2026-09-08T12:01:03.300Z",
+        "review": {
+          "summary": "The public API satisfies the requested command values except command(28), and save correctly preserves the input on write failure.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B28"
+              ],
+              "problem": "command(28) returns undefined: actions[27] is explicitly undefined, so the optional call in command(n) does not return 28.",
+              "evidenceRefs": [
+                "B28",
+                "src/public.mjs"
+              ],
+              "nextAction": "Replace the undefined action entry with value28."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:00:43.646Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:unwired",
+          "durationMs": 19654,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49472,
+            "outputTokens": 643,
+            "cachedInputTokens": 43520,
+            "reasoningOutputTokens": 430
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:00:43.646Z",
+        "finishedAt": "2026-09-08T12:01:06.360Z",
+        "review": {
+          "summary": "The implementation satisfies the contract except command(28), which returns undefined instead of 28. Source inspection establishes the remaining command and save behaviors; the limited smoke execution does not alter that conclusion.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B28",
+                "D-01"
+              ],
+              "problem": "command(28) returns undefined because the actions array contains undefined at index 27. The public call command(28) evaluates actions[27]?.() and therefore does not preserve the requested value 28.",
+              "evidenceRefs": [
+                "B28",
+                "D-01",
+                "src/public.mjs"
+              ],
+              "nextAction": "Replace the undefined entry at the command(28) position with value28 and verify command(28) returns 28."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:00:43.646Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:unwired",
+          "durationMs": 22714,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49423,
+            "outputTokens": 730,
+            "cachedInputTokens": 38400,
+            "reasoningOutputTokens": 467
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "storage-failure",
+    "arm": "unified",
+    "startedAt": "2026-09-08T12:01:06.360Z",
+    "finishedAt": "2026-09-08T12:01:42.271Z",
+    "elapsedMs": 35911,
+    "expectedBlockingRefs": [
+      "B31"
+    ],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:01:06.360Z",
+        "finishedAt": "2026-09-08T12:01:42.271Z",
+        "review": {
+          "summary": "B1-B30 are implemented by the exported command dispatch. B31 is not satisfied.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31",
+                "D-01"
+              ],
+              "problem": "For save({write(){throw new Error(\"disk full\")}}, 42), store.write(value) throws, the empty catch swallows the error, and save returns {ok:true} without the error message or input value. The contract requires ok:false with both preserved.",
+              "evidenceRefs": [
+                "B31",
+                "src/public.mjs"
+              ],
+              "nextAction": "Handle the caught error by returning a contract-compatible failure result with ok:false, the error message, and the original input value."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:01:06.361Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:storage-failure",
+          "durationMs": 35910,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49330,
+            "outputTokens": 1483,
+            "cachedInputTokens": 24064,
+            "reasoningOutputTokens": 1192
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "storage-failure",
+    "arm": "split",
+    "startedAt": "2026-09-08T12:01:42.271Z",
+    "finishedAt": "2026-09-08T12:02:09.532Z",
+    "elapsedMs": 27261,
+    "expectedBlockingRefs": [
+      "B31"
+    ],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:01:42.271Z",
+        "finishedAt": "2026-09-08T12:02:09.532Z",
+        "review": {
+          "summary": "B1-B30 are implemented by exported command(n) dispatch, but B31 is not satisfied.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31",
+                "D-01"
+              ],
+              "problem": "For an exported save call with a store whose write(value) throws Error(\"boom\"), the catch block discards the error and save returns {ok:true}. This violates the required ok:false result with the error message and preservation of the input value.",
+              "evidenceRefs": [
+                "B31",
+                "src/public.mjs"
+              ],
+              "nextAction": "Implement the save error path to return ok:false, include the thrown error message, and preserve the supplied input value as required by B31."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:01:42.271Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:storage-failure",
+          "durationMs": 27261,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49402,
+            "outputTokens": 866,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 612
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:01:42.271Z",
+        "finishedAt": "2026-09-08T12:02:08.962Z",
+        "review": {
+          "summary": "B1-B30 are correctly implemented. The save failure path violates B31 by swallowing the error and always returning ok true.",
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31"
+              ],
+              "problem": "For a store whose write(value) throws, save catches the exception, discards its message, and returns {ok:true}. For example, save({write(){throw new Error(\"disk full\")}},42) returns ok true instead of ok false with the error message and preserved input value.",
+              "evidenceRefs": [
+                "B31",
+                "src/public.mjs"
+              ],
+              "nextAction": "Return ok:false with the thrown error message and preserve the input value in the failure result."
+            }
+          ],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:01:42.272Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:storage-failure",
+          "durationMs": 26690,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,160p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49479,
+            "outputTokens": 916,
+            "cachedInputTokens": 24064,
+            "reasoningOutputTokens": 664
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "authorized-assumptions",
+    "arm": "unified",
+    "startedAt": "2026-09-08T12:02:09.533Z",
+    "finishedAt": "2026-09-08T12:02:34.798Z",
+    "elapsedMs": 25265,
+    "expectedBlockingRefs": [],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:02:09.533Z",
+        "finishedAt": "2026-09-08T12:02:34.798Z",
+        "review": {
+          "summary": "The implementation satisfies the complete approved contract. Exported command dispatches values 1 through 30 correctly, and exported save preserves the input value and returns an error message when store.write throws. Source inspection is sufficient; no runtime QA was claimed.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:02:09.533Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:authorized-assumptions",
+          "durationMs": 25265,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs\nsed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49509,
+            "outputTokens": 903,
+            "cachedInputTokens": 38400,
+            "reasoningOutputTokens": 734
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "authorized-assumptions",
+    "arm": "split",
+    "startedAt": "2026-09-08T12:02:34.798Z",
+    "finishedAt": "2026-09-08T12:02:58.677Z",
+    "elapsedMs": 23879,
+    "expectedBlockingRefs": [],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:02:34.798Z",
+        "finishedAt": "2026-09-08T12:02:58.676Z",
+        "review": {
+          "summary": "The complete approved contract is satisfied by the supplied source and evidence. The exported command dispatches values 1 through 30 correctly, save preserves the input value on write failure, and no unresolved boundary requires additional evidence.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:02:34.798Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:authorized-assumptions",
+          "durationMs": 23878,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49577,
+            "outputTokens": 870,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 707
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:02:34.798Z",
+        "finishedAt": "2026-09-08T12:02:54.556Z",
+        "review": {
+          "summary": "The approved contract is satisfied. src/public.mjs exports command and save; command(1) through command(30) return their requested values, and save preserves the input value while reporting write errors. Runtime evidence exercised only command(1), but complete readable source establishes the remaining deterministic behavior.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:02:34.799Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:authorized-assumptions",
+          "durationMs": 19757,
+          "attempts": 1,
+          "outcome": "ok",
+          "activity": {
+            "commands": [
+              "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+            ]
+          },
+          "usage": {
+            "inputTokens": 49642,
+            "outputTokens": 694,
+            "cachedInputTokens": 32256,
+            "reasoningOutputTokens": 516
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "visual",
+    "arm": "unified",
+    "startedAt": "2026-09-08T12:02:58.677Z",
+    "finishedAt": "2026-09-08T12:03:09.456Z",
+    "elapsedMs": 10779,
+    "expectedBlockingRefs": [],
+    "reviews": {
+      "unified": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:02:58.677Z",
+        "finishedAt": "2026-09-08T12:03:09.455Z",
+        "review": {
+          "summary": "The delivered illustration satisfies the complete approved visual contract: it depicts a person wearing rectangular glasses, a red plaid shirt, and a visible red marker.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:02:58.677Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:unified:visual",
+          "durationMs": 10778,
+          "attempts": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 25384,
+            "outputTokens": 219,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 172
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  },
+  {
+    "variant": "visual",
+    "arm": "split",
+    "startedAt": "2026-09-08T12:03:09.456Z",
+    "finishedAt": "2026-09-08T12:03:17.113Z",
+    "elapsedMs": 7657,
+    "expectedBlockingRefs": [],
+    "reviews": {
+      "fidelity": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:03:09.456Z",
+        "finishedAt": "2026-09-08T12:03:16.525Z",
+        "review": {
+          "summary": "The delivered illustration satisfies the complete approved contract: it depicts a person wearing rectangular glasses, a red plaid shirt, and a visible red marker.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:03:09.456Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:fidelity:visual",
+          "durationMs": 7069,
+          "attempts": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 25470,
+            "outputTokens": 128,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 82
+          }
+        }
+      },
+      "code": {
+        "status": "complete",
+        "startedAt": "2026-09-08T12:03:09.456Z",
+        "finishedAt": "2026-09-08T12:03:17.112Z",
+        "review": {
+          "summary": "The delivered illustration satisfies the complete approved visual contract: it shows a person with rectangular glasses wearing a red plaid shirt, with a red marker visible.",
+          "findings": [],
+          "priorDispositions": []
+        },
+        "call": {
+          "at": "2026-09-08T12:03:09.457Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "smoke:implement:review:code:visual",
+          "durationMs": 7655,
+          "attempts": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 25487,
+            "outputTokens": 143,
+            "cachedInputTokens": 20224,
+            "reasoningOutputTokens": 96
+          }
+        }
+      }
+    },
+    "oracle": "pass",
+    "oracleError": null
+  }
+]

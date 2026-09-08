@@ -1,0 +1,32 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:58:20.344Z",
+  "finishedAt": "2026-09-08T11:58:47.466Z",
+  "review": {
+    "summary": "The complete public source satisfies B1-B31 and exposes both command and save from src/public.mjs. The limited smoke run is sufficient for B1, while source inspection establishes the remaining deterministic behaviors. No contract defects found.",
+    "findings": [],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:58:20.345Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:fidelity:complete",
+    "durationMs": 27121,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,240p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49476,
+      "outputTokens": 677,
+      "cachedInputTokens": 32256,
+      "reasoningOutputTokens": 464
+    }
+  }
+}

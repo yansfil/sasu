@@ -1,0 +1,47 @@
+{
+  "status": "complete",
+  "startedAt": "2026-09-08T11:59:39.733Z",
+  "finishedAt": "2026-09-08T11:59:59.071Z",
+  "review": {
+    "summary": "The public API satisfies B1-B29 and B31 by source inspection, but B30 is not satisfied: command(30) returns undefined instead of 30. Runtime evidence covers only command(1), but the complete source establishes the remaining deterministic behavior.",
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B30"
+        ],
+        "problem": "command(30) dispatches to value30, whose implementation returns undefined. Therefore the public exported command(30) returns undefined rather than the required number 30.",
+        "evidenceRefs": [
+          "B30",
+          "Behaviors",
+          "Technical structure",
+          "src/public.mjs"
+        ],
+        "nextAction": "Change value30 to return 30, then verify command(30)."
+      }
+    ],
+    "priorDispositions": []
+  },
+  "call": {
+    "at": "2026-09-08T11:59:39.734Z",
+    "backend": "codex",
+    "model": "gpt-5.6-luna",
+    "profile": "routine",
+    "effort": "xhigh",
+    "purpose": "smoke:implement:review:unified:final-omission",
+    "durationMs": 19337,
+    "attempts": 1,
+    "outcome": "ok",
+    "activity": {
+      "commands": [
+        "/bin/zsh -lc \"sed -n '1,240p' src/public.mjs && sed -n '1,120p' smoke.log\""
+      ]
+    },
+    "usage": {
+      "inputTokens": 49269,
+      "outputTokens": 633,
+      "cachedInputTokens": 38400,
+      "reasoningOutputTokens": 376
+    }
+  }
+}

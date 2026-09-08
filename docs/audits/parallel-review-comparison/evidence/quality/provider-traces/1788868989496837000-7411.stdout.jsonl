@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a080e6-92b9-7ec1-89ab-8e94a04871ab"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"summary\":\"The delivered illustration satisfies the complete approved visual contract: it shows a person with rectangular glasses wearing a red plaid shirt, with a red marker visible.\",\"findings\":[],\"priorDispositions\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":25487,"cached_input_tokens":20224,"cache_write_input_tokens":0,"output_tokens":143,"reasoning_output_tokens":96}}

@@ -1,0 +1,359 @@
+{
+  "schema": "sasu.implement.state.v9.parallel-review",
+  "status": "complete",
+  "topicSlug": "task-list-review-comparison",
+  "projectRoot": "/private/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree",
+  "worktree": null,
+  "runDir": "agents/runs/task-list-review-comparison",
+  "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+  "prd": {
+    "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+    "snapshotPath": "agents/runs/task-list-review-comparison/prd.md",
+    "status": "ready",
+    "approval": {
+      "source": "frontmatter",
+      "evidence": "human_approval: approved"
+    },
+    "reviewProfile": "standard",
+    "reviewRationale": "Small deterministic non-UI library comparison",
+    "sourceIntake": "current conversation",
+    "judge": {
+      "required": false,
+      "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+      "gapAudit": null,
+      "spec": null
+    }
+  },
+  "initialSource": {
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "state": "present",
+        "sha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "state": "present",
+        "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+      },
+      {
+        "path": "test/task-list.test.mjs",
+        "state": "present",
+        "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+      }
+    ],
+    "digest": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e"
+  },
+  "baselineAttribution": {
+    "disposition": "pre-existing",
+    "paths": [
+      {
+        "path": "benchmarks/task-list-review-comparison/benchmark.json",
+        "disposition": "pre-existing"
+      },
+      {
+        "path": "benchmarks/task-list-review-comparison/prd.md",
+        "disposition": "pre-existing"
+      }
+    ],
+    "baselineDigest": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e",
+    "head": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+  },
+  "ownerSessionId": "01a080f1-31ef-7ea1-9191-5cec1e984ada",
+  "adoptions": [],
+  "requirements": [
+    {
+      "id": "B1",
+      "behavior": "Adding a task trims its title and assigns the next stable numeric id.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B2",
+      "behavior": "Adding a blank title throws and leaves the supplied list unchanged.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B3",
+      "behavior": "Toggling a known id changes only that task's completed state.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B4",
+      "behavior": "Removing a known id returns a list without that task and preserves the others.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B5",
+      "behavior": "Taking a snapshot returns defensive task copies that callers cannot use to mutate the source list.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B6",
+      "behavior": "The summary uses singular '1 item' for one task and plural '<n> items' for every other count.",
+      "decisionIds": [
+        "D-01"
+      ]
+    }
+  ],
+  "findings": [],
+  "artifacts": [
+    {
+      "kind": "command-log",
+      "path": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log",
+      "description": "mechanical PASS: npm test",
+      "sha256": "9afc65820129ebbeda58625a32657f99334ee4b3b6aceb2b1c38aec1985a5818",
+      "bytes": 361,
+      "registeredAt": "2026-09-08T12:17:56.108Z",
+      "observedAt": "2026-09-08T12:17:56.108Z",
+      "provenance": "CLI executed npm test in .",
+      "command": "npm test",
+      "cwd": ".",
+      "exitCode": 0
+    }
+  ],
+  "verificationAttempts": [
+    {
+      "id": "61cf8cea-474b-4cbe-8e90-d15e5d479c7e",
+      "inputFingerprint": "8a1e611749bb27f72bc3e7451fd8d619d0a2d940a1d0a06be854d98fdbbca2e2",
+      "sourceFingerprint": "38c5839e95edac8703cb0504ded807e2ef6e4335ad46cfb6e2f8ceca900a2fbf",
+      "inputManifest": {
+        "source": [
+          {
+            "path": "src/task-list.mjs",
+            "state": "present",
+            "sha256": "3a2d053d08365abca55edca754af553b9bb5c10310e6bf087f502f0fa6e8d1a3"
+          }
+        ],
+        "evidence": []
+      },
+      "roundContext": {
+        "priorAttemptId": null,
+        "changedPaths": [],
+        "newEvidence": [],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "D-01"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "D-01",
+          ".gitignore",
+          "benchmarks/task-list-review-comparison/benchmark.json",
+          "benchmarks/task-list-review-comparison/prd.md",
+          "package.json",
+          "src/task-list.mjs",
+          "test/task-list.test.mjs",
+          "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log"
+        ]
+      },
+      "intentInput": {
+        "routing": "decisions",
+        "contentSha256": "58e63e0b2b57e742cd8a85f722ae1ff770b6ef2e97a2918ecf04e52107f794c1"
+      },
+      "startedAt": "2026-09-08T12:17:55.821Z",
+      "finishedAt": "2026-09-08T12:18:34.778Z",
+      "durationMs": 38956,
+      "phase": "complete",
+      "verdict": "PASS",
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-08T12:17:55.846Z",
+          "finishedAt": "2026-09-08T12:17:56.108Z",
+          "durationMs": 262,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log"
+        }
+      ],
+      "reviews": {
+        "fidelity": {
+          "invocationId": "a628daa4-0318-4ff1-b8d3-6e89b5c02e5a",
+          "startedAt": "2026-09-08T12:17:56.145Z",
+          "finishedAt": "2026-09-08T12:18:15.732Z",
+          "durationMs": 19587,
+          "verdict": "PASS",
+          "result": {
+            "summary": "All approved behaviors and the dependency-free public-library decision are satisfied by the supplied implementation and passing suite.",
+            "findings": [],
+            "priorDispositions": []
+          },
+          "judge": {
+            "at": "2026-09-08T12:17:56.145Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:fidelity",
+            "durationMs": 19587,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 24790,
+              "outputTokens": 554,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 516
+            }
+          },
+          "error": null
+        },
+        "code": {
+          "invocationId": "b6348429-7111-416f-9a49-f5c89e199a62",
+          "startedAt": "2026-09-08T12:17:56.152Z",
+          "finishedAt": "2026-09-08T12:18:34.752Z",
+          "durationMs": 38600,
+          "verdict": "PASS",
+          "result": {
+            "summary": "The supplied implementation satisfies all six approved behaviors, follows the dependency-free module structure, and the required test command passed successfully. No concrete contract defects or unresolved evidence gaps were found.",
+            "findings": [],
+            "priorDispositions": []
+          },
+          "judge": {
+            "at": "2026-09-08T12:17:56.152Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:code",
+            "durationMs": 38600,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 24805,
+              "outputTokens": 1605,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 1552
+            }
+          },
+          "error": null
+        }
+      },
+      "risk": null,
+      "error": null
+    }
+  ],
+  "budgetGrants": [],
+  "deviations": [],
+  "riskFindings": [],
+  "events": [
+    {
+      "id": 1,
+      "at": "2026-09-08T12:18:34.778Z",
+      "kind": "verify",
+      "actor": "implementor",
+      "subject": null,
+      "summary": "verify PASS (61cf8cea-474b-4cbe-8e90-d15e5d479c7e)"
+    },
+    {
+      "id": 2,
+      "at": "2026-09-08T12:18:48.136Z",
+      "kind": "finalize",
+      "actor": "implementor",
+      "subject": null,
+      "summary": "run closed complete"
+    }
+  ],
+  "verbs": [
+    {
+      "id": 1,
+      "at": "2026-09-08T12:18:34.778Z",
+      "verb": "verify",
+      "issuer": "implementor",
+      "target": null,
+      "reason": "PASS",
+      "outcome": "accepted",
+      "rejection": null
+    },
+    {
+      "id": 2,
+      "at": "2026-09-08T12:18:48.136Z",
+      "verb": "finalize",
+      "issuer": "implementor",
+      "target": null,
+      "reason": "complete",
+      "outcome": "accepted",
+      "rejection": null
+    }
+  ],
+  "amendments": [],
+  "evidenceReplacements": [],
+  "suite": {
+    "sealedAt": "2026-09-08T12:17:00.450Z",
+    "commands": [
+      {
+        "id": "S1",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "."
+      }
+    ],
+    "exclusions": [],
+    "results": [
+      {
+        "commandId": "S1",
+        "attemptId": "61cf8cea-474b-4cbe-8e90-d15e5d479c7e",
+        "startedAt": "2026-09-08T12:17:55.846Z",
+        "finishedAt": "2026-09-08T12:17:56.108Z",
+        "durationMs": 262,
+        "exitCode": 0,
+        "mutatedTree": false,
+        "status": "GREEN",
+        "logPath": "agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log"
+      }
+    ]
+  },
+  "escalations": [],
+  "retirement": null,
+  "completion": {
+    "fingerprint": "e5bef29596a858f6543680e5a32206e70d4bf59b412a8443171df8b1aa88be92",
+    "completedAt": "2026-09-08T12:18:48.135Z",
+    "receiptPath": "agents/runs/task-list-review-comparison/receipt.json",
+    "implementationResultPath": "agents/runs/task-list-review-comparison/implementation-result.md"
+  },
+  "createdAt": "2026-09-08T12:17:00.450Z",
+  "updatedAt": "2026-09-08T12:18:48.137Z"
+}

@@ -1,0 +1,392 @@
+{
+  "prdText": "---\ntopic: \"implement fixture\"\nstatus: \"ready\"\nhuman_approval: \"approved\"\nreview_profile: \"standard\"\nreview_rationale: \"CLI regression fixture\"\nsource_intake: \"current conversation\"\n---\n\n# PRD: implement fixture\n\n## Goal\nThe public command preserves every requested value.\n\n## Non-goals\nNo network service or second state store.\n\n## Decisions\n| D-n | 결정 | 근거 |\n| --- | --- | --- |\n| D-01 | Preserve every value in the approved request. | The user requested all values. |\n\n## Behaviors\n| # | 사용자가 관찰하는 행동 | 결정 |\n| --- | --- | --- |\n| B1 | The exported command(1) function returns the number 1. | D-01 |\n| B2 | The exported command(2) function returns the number 2. | D-01 |\n| B3 | The exported command(3) function returns the number 3. | D-01 |\n| B4 | The exported command(4) function returns the number 4. | D-01 |\n| B5 | The exported command(5) function returns the number 5. | D-01 |\n| B6 | The exported command(6) function returns the number 6. | D-01 |\n| B7 | The exported command(7) function returns the number 7. | D-01 |\n| B8 | The exported command(8) function returns the number 8. | D-01 |\n| B9 | The exported command(9) function returns the number 9. | D-01 |\n| B10 | The exported command(10) function returns the number 10. | D-01 |\n| B11 | The exported command(11) function returns the number 11. | D-01 |\n| B12 | The exported command(12) function returns the number 12. | D-01 |\n| B13 | The exported command(13) function returns the number 13. | D-01 |\n| B14 | The exported command(14) function returns the number 14. | D-01 |\n| B15 | The exported command(15) function returns the number 15. | D-01 |\n| B16 | The exported command(16) function returns the number 16. | D-01 |\n| B17 | The exported command(17) function returns the number 17. | D-01 |\n| B18 | The exported command(18) function returns the number 18. | D-01 |\n| B19 | The exported command(19) function returns the number 19. | D-01 |\n| B20 | The exported command(20) function returns the number 20. | D-01 |\n| B21 | The exported command(21) function returns the number 21. | D-01 |\n| B22 | The exported command(22) function returns the number 22. | D-01 |\n| B23 | The exported command(23) function returns the number 23. | D-01 |\n| B24 | The exported command(24) function returns the number 24. | D-01 |\n| B25 | The exported command(25) function returns the number 25. | D-01 |\n| B26 | The exported command(26) function returns the number 26. | D-01 |\n| B27 | The exported command(27) function returns the number 27. | D-01 |\n| B28 | The exported command(28) function returns the number 28. | D-01 |\n| B29 | The exported command(29) function returns the number 29. | D-01 |\n| B30 | The exported command(30) function returns the number 30. | D-01 |\n| B31 | If the injected store throws while saving, save returns ok false with the error message and preserves the input value. | D-01 |\n\n## Technical structure\nThe public API is command and save exported from src/public.mjs; internal helper presence alone does not satisfy command behavior.\n\n## Risks\nNone.\n",
+  "contract": {
+    "frontmatter": {
+      "topic": "implement fixture",
+      "status": "ready",
+      "human_approval": "approved",
+      "review_profile": "standard",
+      "review_rationale": "CLI regression fixture",
+      "source_intake": "current conversation"
+    },
+    "body": "\n# PRD: implement fixture\n\n## Goal\nThe public command preserves every requested value.\n\n## Non-goals\nNo network service or second state store.\n\n## Decisions\n| D-n | 결정 | 근거 |\n| --- | --- | --- |\n| D-01 | Preserve every value in the approved request. | The user requested all values. |\n\n## Behaviors\n| # | 사용자가 관찰하는 행동 | 결정 |\n| --- | --- | --- |\n| B1 | The exported command(1) function returns the number 1. | D-01 |\n| B2 | The exported command(2) function returns the number 2. | D-01 |\n| B3 | The exported command(3) function returns the number 3. | D-01 |\n| B4 | The exported command(4) function returns the number 4. | D-01 |\n| B5 | The exported command(5) function returns the number 5. | D-01 |\n| B6 | The exported command(6) function returns the number 6. | D-01 |\n| B7 | The exported command(7) function returns the number 7. | D-01 |\n| B8 | The exported command(8) function returns the number 8. | D-01 |\n| B9 | The exported command(9) function returns the number 9. | D-01 |\n| B10 | The exported command(10) function returns the number 10. | D-01 |\n| B11 | The exported command(11) function returns the number 11. | D-01 |\n| B12 | The exported command(12) function returns the number 12. | D-01 |\n| B13 | The exported command(13) function returns the number 13. | D-01 |\n| B14 | The exported command(14) function returns the number 14. | D-01 |\n| B15 | The exported command(15) function returns the number 15. | D-01 |\n| B16 | The exported command(16) function returns the number 16. | D-01 |\n| B17 | The exported command(17) function returns the number 17. | D-01 |\n| B18 | The exported command(18) function returns the number 18. | D-01 |\n| B19 | The exported command(19) function returns the number 19. | D-01 |\n| B20 | The exported command(20) function returns the number 20. | D-01 |\n| B21 | The exported command(21) function returns the number 21. | D-01 |\n| B22 | The exported command(22) function returns the number 22. | D-01 |\n| B23 | The exported command(23) function returns the number 23. | D-01 |\n| B24 | The exported command(24) function returns the number 24. | D-01 |\n| B25 | The exported command(25) function returns the number 25. | D-01 |\n| B26 | The exported command(26) function returns the number 26. | D-01 |\n| B27 | The exported command(27) function returns the number 27. | D-01 |\n| B28 | The exported command(28) function returns the number 28. | D-01 |\n| B29 | The exported command(29) function returns the number 29. | D-01 |\n| B30 | The exported command(30) function returns the number 30. | D-01 |\n| B31 | If the injected store throws while saving, save returns ok false with the error message and preserves the input value. | D-01 |\n\n## Technical structure\nThe public API is command and save exported from src/public.mjs; internal helper presence alone does not satisfy command behavior.\n\n## Risks\nNone.\n",
+    "goal": "The public command preserves every requested value.",
+    "nonGoals": "No network service or second state store.",
+    "decisions": [
+      {
+        "id": "D-01",
+        "decision": "Preserve every value in the approved request.",
+        "rationale": "The user requested all values."
+      }
+    ],
+    "rows": [
+      {
+        "id": "B1",
+        "behavior": "The exported command(1) function returns the number 1.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 26
+      },
+      {
+        "id": "B2",
+        "behavior": "The exported command(2) function returns the number 2.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 27
+      },
+      {
+        "id": "B3",
+        "behavior": "The exported command(3) function returns the number 3.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 28
+      },
+      {
+        "id": "B4",
+        "behavior": "The exported command(4) function returns the number 4.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 29
+      },
+      {
+        "id": "B5",
+        "behavior": "The exported command(5) function returns the number 5.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 30
+      },
+      {
+        "id": "B6",
+        "behavior": "The exported command(6) function returns the number 6.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 31
+      },
+      {
+        "id": "B7",
+        "behavior": "The exported command(7) function returns the number 7.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 32
+      },
+      {
+        "id": "B8",
+        "behavior": "The exported command(8) function returns the number 8.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 33
+      },
+      {
+        "id": "B9",
+        "behavior": "The exported command(9) function returns the number 9.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 34
+      },
+      {
+        "id": "B10",
+        "behavior": "The exported command(10) function returns the number 10.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 35
+      },
+      {
+        "id": "B11",
+        "behavior": "The exported command(11) function returns the number 11.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 36
+      },
+      {
+        "id": "B12",
+        "behavior": "The exported command(12) function returns the number 12.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 37
+      },
+      {
+        "id": "B13",
+        "behavior": "The exported command(13) function returns the number 13.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 38
+      },
+      {
+        "id": "B14",
+        "behavior": "The exported command(14) function returns the number 14.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 39
+      },
+      {
+        "id": "B15",
+        "behavior": "The exported command(15) function returns the number 15.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 40
+      },
+      {
+        "id": "B16",
+        "behavior": "The exported command(16) function returns the number 16.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 41
+      },
+      {
+        "id": "B17",
+        "behavior": "The exported command(17) function returns the number 17.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 42
+      },
+      {
+        "id": "B18",
+        "behavior": "The exported command(18) function returns the number 18.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 43
+      },
+      {
+        "id": "B19",
+        "behavior": "The exported command(19) function returns the number 19.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 44
+      },
+      {
+        "id": "B20",
+        "behavior": "The exported command(20) function returns the number 20.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 45
+      },
+      {
+        "id": "B21",
+        "behavior": "The exported command(21) function returns the number 21.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 46
+      },
+      {
+        "id": "B22",
+        "behavior": "The exported command(22) function returns the number 22.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 47
+      },
+      {
+        "id": "B23",
+        "behavior": "The exported command(23) function returns the number 23.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 48
+      },
+      {
+        "id": "B24",
+        "behavior": "The exported command(24) function returns the number 24.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 49
+      },
+      {
+        "id": "B25",
+        "behavior": "The exported command(25) function returns the number 25.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 50
+      },
+      {
+        "id": "B26",
+        "behavior": "The exported command(26) function returns the number 26.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 51
+      },
+      {
+        "id": "B27",
+        "behavior": "The exported command(27) function returns the number 27.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 52
+      },
+      {
+        "id": "B28",
+        "behavior": "The exported command(28) function returns the number 28.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 53
+      },
+      {
+        "id": "B29",
+        "behavior": "The exported command(29) function returns the number 29.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 54
+      },
+      {
+        "id": "B30",
+        "behavior": "The exported command(30) function returns the number 30.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 55
+      },
+      {
+        "id": "B31",
+        "behavior": "If the injected store throws while saving, save returns ok false with the error message and preserves the input value.",
+        "decisionIds": [
+          "D-01"
+        ],
+        "line": 56
+      }
+    ],
+    "technicalStructure": "The public API is command and save exported from src/public.mjs; internal helper presence alone does not satisfy command behavior.",
+    "risks": "None."
+  },
+  "approval": {
+    "source": "frontmatter",
+    "evidence": "human_approval: approved"
+  },
+  "intentSource": {
+    "routing": "decisions",
+    "content": "- D-01: Preserve every value in the approved request. (근거: The user requested all values.)",
+    "explanation": "fixed approved evaluation contract"
+  },
+  "changeMaterial": [],
+  "runOwnedDiff": "",
+  "checks": [
+    {
+      "command": "node first-requirement-smoke",
+      "exitCode": 0,
+      "tail": "command(1)=1; only the first requirement was executed\n"
+    }
+  ],
+  "evidence": [],
+  "artifacts": [],
+  "readablePaths": [
+    "src/public.mjs",
+    "smoke.log"
+  ],
+  "referenceContext": {
+    "requirementRefs": [
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+      "B6",
+      "B7",
+      "B8",
+      "B9",
+      "B10",
+      "B11",
+      "B12",
+      "B13",
+      "B14",
+      "B15",
+      "B16",
+      "B17",
+      "B18",
+      "B19",
+      "B20",
+      "B21",
+      "B22",
+      "B23",
+      "B24",
+      "B25",
+      "B26",
+      "B27",
+      "B28",
+      "B29",
+      "B30",
+      "B31",
+      "D-01"
+    ],
+    "evidenceRefs": [
+      "PRD",
+      "Goal",
+      "Non-goals",
+      "Decisions",
+      "Behaviors",
+      "Technical structure",
+      "Risks",
+      "intent",
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+      "B6",
+      "B7",
+      "B8",
+      "B9",
+      "B10",
+      "B11",
+      "B12",
+      "B13",
+      "B14",
+      "B15",
+      "B16",
+      "B17",
+      "B18",
+      "B19",
+      "B20",
+      "B21",
+      "B22",
+      "B23",
+      "B24",
+      "B25",
+      "B26",
+      "B27",
+      "B28",
+      "B29",
+      "B30",
+      "B31",
+      "D-01",
+      "src/public.mjs",
+      "smoke.log"
+    ],
+    "priorFindingIds": [],
+    "humanSources": {
+      "Decisions": "Preserve every value in the approved request.\nThe user requested all values.",
+      "Risks": "None.",
+      "instruction": "- D-01: Preserve every value in the approved request. (근거: The user requested all values.)",
+      "D-01": "Preserve every value in the approved request."
+    }
+  },
+  "priorFindings": [],
+  "roundContext": {
+    "priorAttemptId": null,
+    "changedPaths": [],
+    "newEvidence": []
+  }
+}

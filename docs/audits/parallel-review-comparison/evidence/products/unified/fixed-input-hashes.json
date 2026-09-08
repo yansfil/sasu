@@ -1,0 +1,7 @@
+{
+  "benchmarks/task-list-review-comparison/prd.md": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+  "benchmarks/task-list-review-comparison/benchmark.json": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4",
+  "test/task-list.test.mjs": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5",
+  "package.json": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764",
+  "agents/config.json": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+}

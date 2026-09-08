@@ -1,0 +1,56 @@
+[
+  {
+    "arm": "unified",
+    "prdSha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+    "intent": {
+      "routing": "decisions",
+      "content": "- D-01: Use a dependency-free Node public library and the supplied meaningful suite; implementation decisions remain executor-owned. (근거: The requested behaviors need no runtime dependency or external system.)",
+      "explanation": "The CLI cannot read chat history; the approved Decisions table records the canonical user intent."
+    },
+    "readiness": {
+      "contractVersion": "0.9.0",
+      "ok": true,
+      "action": "readiness",
+      "exitCode": 0,
+      "message": "PRD contract is ready for implementation",
+      "detail": {
+        "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+        "parsed": {
+          "behaviorCount": 6,
+          "decisionCount": 1
+        },
+        "contractError": null,
+        "blockingGaps": [],
+        "warnings": [],
+        "status": "ready"
+      }
+    }
+  },
+  {
+    "arm": "split",
+    "prdSha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e",
+    "intent": {
+      "routing": "decisions",
+      "content": "- D-01: Use a dependency-free Node public library and the supplied meaningful suite; implementation decisions remain executor-owned. (근거: The requested behaviors need no runtime dependency or external system.)",
+      "explanation": "The CLI cannot read chat history; the approved Decisions table records the canonical user intent."
+    },
+    "readiness": {
+      "contractVersion": "0.9.0",
+      "ok": true,
+      "action": "readiness",
+      "exitCode": 0,
+      "message": "PRD contract is ready for implementation",
+      "detail": {
+        "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+        "parsed": {
+          "behaviorCount": 6,
+          "decisionCount": 1
+        },
+        "contractError": null,
+        "blockingGaps": [],
+        "warnings": [],
+        "status": "ready"
+      }
+    }
+  }
+]

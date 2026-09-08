@@ -1,0 +1,295 @@
+{
+  "schema": "sasu.benchmark-report.v2",
+  "case": {
+    "id": "task-list-review-comparison",
+    "casePath": "benchmarks/task-list-review-comparison/benchmark.json",
+    "caseHash": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4",
+    "prdPath": "benchmarks/task-list-review-comparison/prd.md",
+    "prdHash": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+  },
+  "run": {
+    "id": "task-list-review-comparison-run-1",
+    "executor": {
+      "runtime": "codex",
+      "model": "gpt-5.6-sol"
+    },
+    "session": {
+      "id": "01a080f1-31ef-7ea1-9191-5cec1e984ada",
+      "transcriptPath": "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T21-14-45-01a080f1-31ef-7ea1-9191-5cec1e984ada.jsonl",
+      "transcriptHash": "f8efd1103f392a6e5ebc07b276cb6d4cc86c0c88468c08e89889c5fc059b4278",
+      "eventCount": 151,
+      "startedAt": "2026-09-08T12:14:45.746Z",
+      "endedAt": "2026-09-08T12:18:48.110Z",
+      "coversInit": true,
+      "coversReceipt": true
+    },
+    "harness": {
+      "commit": "6b88d83ce325a2a871af69d4e32cdf737c6dc229",
+      "fingerprint": "899e014879cd930a234c461901a6912054f48a869dbf60c319769d4a96e81904",
+      "reporterHash": "3e09d88a369db66b68d2c1459aa43ab97e7bb4def9263afeba3bb8eb87ada235"
+    },
+    "startingTree": {
+      "headSha": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d",
+      "sourceFingerprint": "5f4b1b1b1da355fb5aaa3334e6b1e969253452f4b206a8ca7093ad235af2fa5e"
+    },
+    "environment": {
+      "worktreePath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree",
+      "preparedAt": "2026-09-08T12:16:25.029Z",
+      "baseRef": "c8191eff3b08cd63a7c349c7eda964fcd6bac83d"
+    },
+    "receiptPath": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison/receipt.json",
+    "receiptHash": "e1fab2580ee8adb2b07ec97acdac145d177d8005184a1f21f0099ac5a9b24406"
+  },
+  "outcome": {
+    "expectedTerminalStatuses": [
+      "complete"
+    ],
+    "actualStatus": "complete",
+    "expectedStatusMatched": true,
+    "validRun": true,
+    "expectationChecks": {
+      "terminalStatusMatched": true,
+      "requiredStagesPresent": true,
+      "forbiddenStagesAbsent": true,
+      "verifyAttemptsWithinLimit": true,
+      "falseCompleteAbsent": true,
+      "evaluationAvailable": true,
+      "evaluationCoverageMatched": true,
+      "evaluatorRuntimeMatched": true,
+      "evaluatorModelMatched": true
+    },
+    "openTrackedItems": 0
+  },
+  "flow": {
+    "observedStages": [
+      "start",
+      "verification",
+      "mechanical",
+      "review",
+      "finalize"
+    ],
+    "requiredStagesMissing": [],
+    "forbiddenStagesRun": []
+  },
+  "timing": {
+    "wallClockSeconds": 107.685,
+    "verificationUnionSeconds": 38.956,
+    "verificationSumSeconds": 38.956,
+    "commandUnionSeconds": 0.262,
+    "verificationCommandSeconds": 0.262,
+    "verificationCommandRuns": 1,
+    "judgeUnionSeconds": 38.607,
+    "judgeSeconds": 58.187,
+    "judgeCalls": 2,
+    "judgeInvocations": 2,
+    "reviewExecutions": [
+      {
+        "attemptId": "61cf8cea-474b-4cbe-8e90-d15e5d479c7e",
+        "role": "fidelity",
+        "invocationId": "a628daa4-0318-4ff1-b8d3-6e89b5c02e5a",
+        "startedAt": "2026-09-08T12:17:56.145Z",
+        "finishedAt": "2026-09-08T12:18:15.732Z",
+        "durationMs": 19587,
+        "verdict": "PASS",
+        "error": null,
+        "judge": {
+          "at": "2026-09-08T12:17:56.145Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "implement:fidelity",
+          "durationMs": 19587,
+          "attempts": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 24790,
+            "outputTokens": 554,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 516
+          }
+        }
+      },
+      {
+        "attemptId": "61cf8cea-474b-4cbe-8e90-d15e5d479c7e",
+        "role": "code",
+        "invocationId": "b6348429-7111-416f-9a49-f5c89e199a62",
+        "startedAt": "2026-09-08T12:17:56.152Z",
+        "finishedAt": "2026-09-08T12:18:34.752Z",
+        "durationMs": 38600,
+        "verdict": "PASS",
+        "error": null,
+        "judge": {
+          "at": "2026-09-08T12:17:56.152Z",
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "profile": "routine",
+          "effort": "xhigh",
+          "purpose": "implement:code",
+          "durationMs": 38600,
+          "attempts": 1,
+          "outcome": "ok",
+          "usage": {
+            "inputTokens": 24805,
+            "outputTokens": 1605,
+            "cachedInputTokens": 8960,
+            "reasoningOutputTokens": 1552
+          }
+        }
+      }
+    ],
+    "solverInvocationSeconds": 0,
+    "answeringUsage": {
+      "inputTokens": 49595,
+      "outputTokens": 2159,
+      "reportedInvocations": 2
+    },
+    "usageScope": "Provider-reported answering attempts only; retries and unavailable usage are not estimated.",
+    "milestones": {
+      "initAt": "2026-09-08T12:17:00.450Z",
+      "finalizedAt": "2026-09-08T12:18:48.135Z"
+    },
+    "evaluationSeconds": 201.479646
+  },
+  "efficiency": {
+    "verifyAttempts": 1,
+    "verifyAttemptLimit": 3,
+    "repeatedIdenticalInputReviews": 0,
+    "reviewInvocations": 2,
+    "reviewInvocationsByRole": {
+      "fidelity": 1,
+      "code": 1
+    },
+    "riskInvocations": 0,
+    "solverInvocations": 0,
+    "executionErrorsByStage": {},
+    "escalationAttempts": 0,
+    "diagnosedRecoveries": 0,
+    "registeredObservations": 1,
+    "avoidableReviewCalls": 0,
+    "unchangedCommandReruns": 0,
+    "unexpectedUserStops": 0,
+    "redundantStatusPolls": 0
+  },
+  "honesty": {
+    "falseComplete": false,
+    "receiptStatus": "complete",
+    "verificationStatus": "PASS",
+    "deliveryEligible": true
+  },
+  "qualitative": {
+    "status": "available",
+    "evaluator": {
+      "runtime": "codex",
+      "model": "gpt-5.6-sol"
+    },
+    "evaluationTiming": {
+      "durationSeconds": 201.479646,
+      "basis": "Coordinator wall clock from fresh evaluator dispatch preparation to receipt of final JSON; includes scheduling and is excluded from implementation."
+    },
+    "evaluatorRuntimeMatched": true,
+    "evaluatorModelMatched": true,
+    "sessionAnalysis": {
+      "coverage": "complete",
+      "reason": "The full implementation transcript through receipt completedAt and the final receipt and state were available. The declared gates path was absent, but this standard-profile run required no separate gate artifact and the remaining records fully expose start, implementation, verification, reviews, and finalize.",
+      "avoidableReviewCalls": 0,
+      "unchangedCommandReruns": 0,
+      "unexpectedUserStops": 0,
+      "redundantStatusPolls": 0
+    },
+    "dimensions": {
+      "flowAdherence": {
+        "score": 4,
+        "reason": "The Implementor confirmed its structural identity, prepared exactly one fresh run, started before creating the product file, performed focused observation, ran the sealed required suite with concurrent Fidelity and Code reviews, omitted the forbidden risk stage, and finalized only after PASS.",
+        "evidence": [
+          "session:line:80",
+          "session:line:81",
+          "session:line:104",
+          "session:line:111",
+          "session:line:120",
+          "session:line:127",
+          "session:line:150",
+          "state:/verificationAttempts/0/reviews",
+          "state:/events/1",
+          "receipt:/status",
+          "receipt:/risk"
+        ]
+      },
+      "recoveryDiscipline": {
+        "score": 4,
+        "reason": "No failure or blocker required recovery. Verification passed on the first attempt, with no retries, budget grants, escalations, or routing around a failed stage.",
+        "evidence": [
+          "receipt:/verificationBudget",
+          "state:/verificationAttempts/0/verdict",
+          "state:/budgetGrants",
+          "state:/escalations"
+        ]
+      },
+      "reviewEfficiency": {
+        "score": 4,
+        "reason": "Exactly the two required routine reviews ran once against the same verification input, started seven milliseconds apart, and no risk or extra review was invoked.",
+        "evidence": [
+          "receipt:/reviews/fidelity",
+          "receipt:/reviews/code",
+          "receipt:/risk",
+          "state:/verificationAttempts/0/inputFingerprint",
+          "state:/verificationAttempts/0/reviews"
+        ]
+      },
+      "evidenceHonesty": {
+        "score": 4,
+        "reason": "The session's completion claims match the recorded first-attempt suite PASS, both review PASS results, empty findings, captured source fingerprint, eligible delivery state, and finalized complete receipt.",
+        "evidence": [
+          "session:line:149",
+          "receipt:/status",
+          "receipt:/unifiedVerdict",
+          "receipt:/suite/results/0",
+          "receipt:/findings",
+          "receipt:/openItems",
+          "receipt:/delivery",
+          "state:/completion"
+        ]
+      },
+      "sessionEfficiency": {
+        "score": 3,
+        "reason": "Implementation and verification were direct, with no unchanged reruns or redundant status polls. The setup phase incurred localized avoidable overhead by rereading overlapping portions of the benchmark, implement, review, and engineering guidance after broad reads were truncated.",
+        "evidence": [
+          "session:line:24",
+          "session:line:36",
+          "session:line:43",
+          "session:line:55",
+          "session:line:111",
+          "session:line:127"
+        ]
+      }
+    },
+    "findings": [
+      {
+        "severity": "P2",
+        "message": "Overlapping broad instruction reads were repeated after truncated aggregate output, adding setup work without changing the implementation plan.",
+        "evidence": [
+          "session:line:24",
+          "session:line:36",
+          "session:line:43",
+          "session:line:55"
+        ]
+      }
+    ],
+    "processScore": {
+      "score": 95,
+      "scoredDimensions": 5,
+      "totalDimensions": 5
+    }
+  },
+  "sources": {
+    "state": {
+      "path": "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison/state.json",
+      "hash": "7f0301a33606f8c4ea8e697e6a5f3c5875282b7a220beaa2ab6a31f18beb8812"
+    },
+    "gates": null,
+    "qualitative": {
+      "path": "agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/qualitative.json",
+      "hash": "8e37dae9d836e1a200989e1eeefa41db56a568c1b706681285d6626b1db59167"
+    }
+  }
+}

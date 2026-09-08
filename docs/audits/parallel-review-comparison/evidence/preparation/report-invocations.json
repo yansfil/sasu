@@ -1,0 +1,52 @@
+{
+  "unified": {
+    "argv": [
+      "node",
+      "/Users/hoyeonlee/projects/sasu/skills/benchmark-implement/scripts/benchmark_report.js",
+      "report",
+      "--case",
+      "benchmarks/task-list-review-comparison/benchmark.json",
+      "--run-id",
+      "task-list-review-comparison-run-1",
+      "--run-dir",
+      "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-Nwi5du/worktree/agents/runs/task-list-review-comparison",
+      "--runtime",
+      "codex",
+      "--model",
+      "gpt-5.6-sol",
+      "--session-id",
+      "01a080ec-f833-74c2-b8ad-de56f6920e5f",
+      "--session",
+      "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T21-10-08-01a080ec-f833-74c2-b8ad-de56f6920e5f.jsonl",
+      "--qualitative",
+      "agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/qualitative.json"
+    ],
+    "cwd": "/private/tmp/sasu-parallel-review-prep/unified",
+    "exitCode": 0
+  },
+  "split": {
+    "argv": [
+      "node",
+      "/Users/hoyeonlee/projects/sasu.worktrees/parallel-review-comparison/skills/benchmark-implement/scripts/benchmark_report.js",
+      "report",
+      "--case",
+      "benchmarks/task-list-review-comparison/benchmark.json",
+      "--run-id",
+      "task-list-review-comparison-run-1",
+      "--run-dir",
+      "/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-benchmark-task-list-review-comparison-bfMqEK/worktree/agents/runs/task-list-review-comparison",
+      "--runtime",
+      "codex",
+      "--model",
+      "gpt-5.6-sol",
+      "--session-id",
+      "01a080f1-31ef-7ea1-9191-5cec1e984ada",
+      "--session",
+      "/Users/hoyeonlee/.codex/sessions/2026/09/08/rollout-2026-09-08T21-14-45-01a080f1-31ef-7ea1-9191-5cec1e984ada.jsonl",
+      "--qualitative",
+      "agents/benchmarks/task-list-review-comparison/task-list-review-comparison-run-1/qualitative.json"
+    ],
+    "cwd": "/private/tmp/sasu-parallel-review-prep/split",
+    "exitCode": 0
+  }
+}

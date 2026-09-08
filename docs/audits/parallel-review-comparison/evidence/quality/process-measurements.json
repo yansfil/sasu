@@ -1,0 +1,643 @@
+{
+  "note": "Actual process intervals and emitted turn usage; usage is not a billing total or count of hidden internal provider requests.",
+  "processes": [
+    {
+      "id": "1788868674903509000-95239",
+      "kind": "preflight",
+      "start": "2026-09-08T11:57:54.903512+00:00",
+      "end": "2026-09-08T11:57:59.890501+00:00",
+      "durationSeconds": 4.986989,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868674903509000-95239.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 20819,
+          "cached_input_tokens": 8960,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 19,
+          "reasoning_output_tokens": 12
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 1,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "complete"
+    },
+    {
+      "id": "1788868679927644000-95410",
+      "kind": "content",
+      "start": "2026-09-08T11:57:59.927647+00:00",
+      "end": "2026-09-08T11:58:20.335114+00:00",
+      "durationSeconds": 20.407467,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868679927644000-95410.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49354,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 607,
+          "reasoning_output_tokens": 444
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "complete"
+    },
+    {
+      "id": "1788868700393781000-95916",
+      "kind": "preflight",
+      "start": "2026-09-08T11:58:20.393785+00:00",
+      "end": "2026-09-08T11:58:25.103501+00:00",
+      "durationSeconds": 4.709716,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868700393781000-95916.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 20813,
+          "cached_input_tokens": 15104,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 5,
+          "reasoning_output_tokens": 0
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 1,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "complete"
+    },
+    {
+      "id": "1788868705137817000-96053",
+      "kind": "content",
+      "start": "2026-09-08T11:58:25.137821+00:00",
+      "end": "2026-09-08T11:58:47.459994+00:00",
+      "durationSeconds": 22.322173,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868705137817000-96053.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49476,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 677,
+          "reasoning_output_tokens": 464
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 3,
+        "item.started": 1,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "complete"
+    },
+    {
+      "id": "1788868705140873000-96061",
+      "kind": "content",
+      "start": "2026-09-08T11:58:25.140876+00:00",
+      "end": "2026-09-08T11:58:47.304453+00:00",
+      "durationSeconds": 22.163577,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868705140873000-96061.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49495,
+          "cached_input_tokens": 38400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 819,
+          "reasoning_output_tokens": 637
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "complete"
+    },
+    {
+      "id": "1788868727508925000-96758",
+      "kind": "content",
+      "start": "2026-09-08T11:58:47.508928+00:00",
+      "end": "2026-09-08T11:59:16.640102+00:00",
+      "durationSeconds": 29.131174,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868727508925000-96758.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49304,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1063,
+          "reasoning_output_tokens": 819
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "middle-omission"
+    },
+    {
+      "id": "1788868756686555000-97664",
+      "kind": "content",
+      "start": "2026-09-08T11:59:16.686560+00:00",
+      "end": "2026-09-08T11:59:35.232112+00:00",
+      "durationSeconds": 18.545552,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868756686555000-97664.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49444,
+          "cached_input_tokens": 17920,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 640,
+          "reasoning_output_tokens": 414
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "middle-omission"
+    },
+    {
+      "id": "1788868756686557000-97656",
+      "kind": "content",
+      "start": "2026-09-08T11:59:16.686562+00:00",
+      "end": "2026-09-08T11:59:39.727997+00:00",
+      "durationSeconds": 23.041435,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868756686557000-97656.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49515,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 897,
+          "reasoning_output_tokens": 662
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "middle-omission"
+    },
+    {
+      "id": "1788868779775282000-98831",
+      "kind": "content",
+      "start": "2026-09-08T11:59:39.775286+00:00",
+      "end": "2026-09-08T11:59:59.066011+00:00",
+      "durationSeconds": 19.290725,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868779775282000-98831.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49269,
+          "cached_input_tokens": 38400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 633,
+          "reasoning_output_tokens": 376
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "final-omission"
+    },
+    {
+      "id": "1788868799107413000-618",
+      "kind": "content",
+      "start": "2026-09-08T11:59:59.107416+00:00",
+      "end": "2026-09-08T12:00:20.354490+00:00",
+      "durationSeconds": 21.247074,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868799107413000-618.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49449,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 655,
+          "reasoning_output_tokens": 448
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "final-omission"
+    },
+    {
+      "id": "1788868799108042000-626",
+      "kind": "content",
+      "start": "2026-09-08T11:59:59.108047+00:00",
+      "end": "2026-09-08T12:00:17.846461+00:00",
+      "durationSeconds": 18.738414,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868799108042000-626.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49476,
+          "cached_input_tokens": 38400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 534,
+          "reasoning_output_tokens": 303
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "final-omission"
+    },
+    {
+      "id": "1788868820395669000-1338",
+      "kind": "content",
+      "start": "2026-09-08T12:00:20.395672+00:00",
+      "end": "2026-09-08T12:00:43.640683+00:00",
+      "durationSeconds": 23.245011,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868820395669000-1338.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49218,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 749,
+          "reasoning_output_tokens": 515
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "unwired"
+    },
+    {
+      "id": "1788868843685882000-2294",
+      "kind": "content",
+      "start": "2026-09-08T12:00:43.685888+00:00",
+      "end": "2026-09-08T12:01:03.294695+00:00",
+      "durationSeconds": 19.608807,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868843685882000-2294.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49472,
+          "cached_input_tokens": 43520,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 643,
+          "reasoning_output_tokens": 430
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "unwired"
+    },
+    {
+      "id": "1788868843685882000-2302",
+      "kind": "content",
+      "start": "2026-09-08T12:00:43.685885+00:00",
+      "end": "2026-09-08T12:01:06.355146+00:00",
+      "durationSeconds": 22.669261,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868843685882000-2302.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49423,
+          "cached_input_tokens": 38400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 730,
+          "reasoning_output_tokens": 467
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "unwired"
+    },
+    {
+      "id": "1788868866393918000-3077",
+      "kind": "content",
+      "start": "2026-09-08T12:01:06.393921+00:00",
+      "end": "2026-09-08T12:01:42.266480+00:00",
+      "durationSeconds": 35.872559,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868866393918000-3077.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49330,
+          "cached_input_tokens": 24064,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1483,
+          "reasoning_output_tokens": 1192
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 3,
+        "item.started": 1,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "storage-failure"
+    },
+    {
+      "id": "1788868902305678000-4094",
+      "kind": "content",
+      "start": "2026-09-08T12:01:42.305685+00:00",
+      "end": "2026-09-08T12:02:09.525043+00:00",
+      "durationSeconds": 27.219358,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868902305678000-4094.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49402,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 866,
+          "reasoning_output_tokens": 612
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "storage-failure"
+    },
+    {
+      "id": "1788868902307909000-4102",
+      "kind": "content",
+      "start": "2026-09-08T12:01:42.307913+00:00",
+      "end": "2026-09-08T12:02:08.955943+00:00",
+      "durationSeconds": 26.64803,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868902307909000-4102.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49479,
+          "cached_input_tokens": 24064,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 916,
+          "reasoning_output_tokens": 664
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "storage-failure"
+    },
+    {
+      "id": "1788868929574229000-4946",
+      "kind": "content",
+      "start": "2026-09-08T12:02:09.574232+00:00",
+      "end": "2026-09-08T12:02:34.791928+00:00",
+      "durationSeconds": 25.217696,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868929574229000-4946.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49509,
+          "cached_input_tokens": 38400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 903,
+          "reasoning_output_tokens": 734
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "authorized-assumptions"
+    },
+    {
+      "id": "1788868954837402000-6087",
+      "kind": "content",
+      "start": "2026-09-08T12:02:34.837406+00:00",
+      "end": "2026-09-08T12:02:58.670748+00:00",
+      "durationSeconds": 23.833342,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868954837402000-6087.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49577,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 870,
+          "reasoning_output_tokens": 707
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "authorized-assumptions"
+    },
+    {
+      "id": "1788868954837403000-6095",
+      "kind": "content",
+      "start": "2026-09-08T12:02:34.837406+00:00",
+      "end": "2026-09-08T12:02:54.550271+00:00",
+      "durationSeconds": 19.712865,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868954837403000-6095.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 49642,
+          "cached_input_tokens": 32256,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 694,
+          "reasoning_output_tokens": 516
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.started": 1,
+        "item.completed": 2,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "authorized-assumptions"
+    },
+    {
+      "id": "1788868978716845000-7089",
+      "kind": "content",
+      "start": "2026-09-08T12:02:58.716849+00:00",
+      "end": "2026-09-08T12:03:09.446056+00:00",
+      "durationSeconds": 10.729207,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868978716845000-7089.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 25384,
+          "cached_input_tokens": 8960,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 219,
+          "reasoning_output_tokens": 172
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 1,
+        "turn.completed": 1
+      },
+      "arm": "unified",
+      "variant": "visual"
+    },
+    {
+      "id": "1788868989496826000-7403",
+      "kind": "content",
+      "start": "2026-09-08T12:03:09.496830+00:00",
+      "end": "2026-09-08T12:03:16.520885+00:00",
+      "durationSeconds": 7.024055,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868989496826000-7403.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 25470,
+          "cached_input_tokens": 8960,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 128,
+          "reasoning_output_tokens": 82
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 1,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "visual"
+    },
+    {
+      "id": "1788868989496837000-7411",
+      "kind": "content",
+      "start": "2026-09-08T12:03:09.496840+00:00",
+      "end": "2026-09-08T12:03:17.107333+00:00",
+      "durationSeconds": 7.610493,
+      "exitCode": 0,
+      "traceFile": "provider-traces/1788868989496837000-7411.stdout.jsonl",
+      "reportedTurnUsage": [
+        {
+          "input_tokens": 25487,
+          "cached_input_tokens": 20224,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 143,
+          "reasoning_output_tokens": 96
+        }
+      ],
+      "eventCounts": {
+        "thread.started": 1,
+        "turn.started": 1,
+        "item.completed": 1,
+        "turn.completed": 1
+      },
+      "arm": "split",
+      "variant": "visual"
+    }
+  ],
+  "byArm": {
+    "unified": {
+      "preflight": {
+        "count": 1,
+        "summedProcessSeconds": 4.986989
+      },
+      "content": {
+        "count": 7,
+        "summedProcessSeconds": 163.893839
+      }
+    },
+    "split": {
+      "preflight": {
+        "count": 1,
+        "summedProcessSeconds": 4.709716
+      },
+      "content": {
+        "count": 14,
+        "summedProcessSeconds": 280.384436
+      }
+    }
+  }
+}
