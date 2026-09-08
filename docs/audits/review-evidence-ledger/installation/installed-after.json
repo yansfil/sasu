@@ -1,0 +1,155 @@
+{
+  "ok": true,
+  "records": [
+    {
+      "runtime": "codex",
+      "name": "interview-me",
+      "regularSkillFile": true,
+      "checkedFiles": 2,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "gen-prd",
+      "regularSkillFile": true,
+      "checkedFiles": 2,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "implement",
+      "regularSkillFile": true,
+      "checkedFiles": 9,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "benchmark-implement",
+      "regularSkillFile": true,
+      "checkedFiles": 6,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "ship",
+      "regularSkillFile": true,
+      "checkedFiles": 3,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "sasu-setup",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "please",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "remember",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "quick",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "codex",
+      "name": "challenge",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "interview-me",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "gen-prd",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "implement",
+      "regularSkillFile": true,
+      "checkedFiles": 8,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "benchmark-implement",
+      "regularSkillFile": true,
+      "checkedFiles": 5,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "ship",
+      "regularSkillFile": true,
+      "checkedFiles": 2,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "sasu-setup",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "please",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "remember",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "quick",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    },
+    {
+      "runtime": "claude",
+      "name": "challenge",
+      "regularSkillFile": true,
+      "checkedFiles": 1,
+      "mismatches": []
+    }
+  ],
+  "hooks": [
+    {
+      "path": "/Users/hoyeonlee/.codex/hooks.json",
+      "sha256": "dfadc27f3d8a5cd3f858d0dd5a8dbfda5c26c1786dd861f614e47492e1924a46"
+    },
+    {
+      "path": "/Users/hoyeonlee/.claude/settings.json",
+      "sha256": "658971502ed6ed6de1c83a8cdd8b1aa2b6a5a74fb33725ab8cdcb4348a387e39"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "ok": true,
+  "command": "codex debug prompt-input",
+  "runtime": "codex",
+  "root": "/Users/hoyeonlee/.codex/skills",
+  "skills": [
+    {
+      "name": "interview-me",
+      "catalogLine": "- interview-me: Project-local pre-PRD requirements interview. Use when the user invokes \"$interview-me\", asks to interview an idea, clarify or pressure-test requirements, reduce ambiguity, prepare a PRD source, or wants UX, behavior, scope, technical, verifi (file: r0/interview-me/SKILL.md)"
+    },
+    {
+      "name": "gen-prd",
+      "catalogLine": "- gen-prd: Project-local PRD writer. Use when the user invokes \"$gen-prd\", asks for a PRD, product requirements document, implementation-ready requirements, or wants to turn intake/clarify output into a human-reviewable contract of about 100 lines: a goal (file: r0/gen-prd/SKILL.md)"
+    },
+    {
+      "name": "implement",
+      "catalogLine": "- implement: Project-local approved-PRD implementation executor and Observer entrypoint. Use when the user invokes \"$implement\", explicitly asks to execute an approved PRD through the receipt-backed workflow, or wants the complete PRD implemented, independe (file: r0/implement/SKILL.md)"
+    },
+    {
+      "name": "benchmark-implement",
+      "catalogLine": "- benchmark-implement: Run an approved PRD through the existing receipt-backed implement workflow, analyze its runtime session with a fresh independent evaluator, emit a deterministic process report, and compare it with an earlier run. Use when the user invokes \"$ben (file: r0/benchmark-implement/SKILL.md)"
+    },
+    {
+      "name": "ship",
+      "catalogLine": "- ship: Deliver a completed `implement` receipt locally or through GitHub PR delivery. Use when the user invokes \"$ship\" or explicitly asks to create a local implementation commit, open or update a PR, push a completed PRD implementation, watch CI, o (file: r0/ship/SKILL.md)"
+    },
+    {
+      "name": "sasu-setup",
+      "catalogLine": "- sasu-setup: Project-local PRD pipeline configuration. Use when the user invokes \"$sasu-setup\", asks to enable or change PR delivery mode, configure worktree/secrets sync for implement, configure the agents/ namespace gitignore policy, inspect the current (file: r0/sasu-setup/SKILL.md)"
+    },
+    {
+      "name": "please",
+      "catalogLine": "- please: All-in-one PRD pipeline runner. Use when the user invokes \"$please\", asks to take the current conversation and carry it through to a finished implementation in one shot, wants the gen-prd then implement then ship chain run automatically witho (file: r0/please/SKILL.md)"
+    },
+    {
+      "name": "remember",
+      "catalogLine": "- remember: Land a lesson as an enforcement asset so the same mistake cannot repeat. Use when the user invokes \"$remember\", says \"remember this\", \"learn from this\", \"don't do that again\", \"배워둬\", \"기억해둬\", \"같은 실수 하지마\", when a finalize receipt suggests lesso (file: r0/remember/SKILL.md)"
+    },
+    {
+      "name": "quick",
+      "catalogLine": "- quick: Session-context quick pipeline: compact contract, implement, verified receipt. Use when the user invokes \"$quick\", asks to implement something small from the current conversation without the PRD pipeline, or wants the shortest path with require (file: r0/quick/SKILL.md)"
+    },
+    {
+      "name": "challenge",
+      "catalogLine": "- challenge: Red-team a conclusion that is already on the table: take the dissenting opinion seriously, investigate it on its own terms, then rule on it. Use when the user invokes \"$challenge\", types the \"!rv\" trigger, says \"반박해봐\", \"이거 아니라는데\", \"다시 검증해봐\", \"red (file: r0/challenge/SKILL.md)"
+    }
+  ]
+}

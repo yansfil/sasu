@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "sourceCommit": "b9d741e2428b0b31797fdc0e3da790745ada4974",
+  "originalEntries": 846,
+  "changedOriginalEntries": [],
+  "addedAuditEntries": 63,
+  "unexpectedAdditions": [],
+  "skills": 20,
+  "skillFiles": 49,
+  "hooksUnchanged": true,
+  "cliVersion": "0.10.0",
+  "shimSha256": "ecad4fcc4fa9b7fcf0f34fb66827587b01d32b5b920bcacad0c8ad14e82519d6",
+  "codexSkillDiscovery": true,
+  "recordedAt": "2026-09-08T13:34:10.802Z",
+  "installedManifest": {
+    "files": 909,
+    "sha256": "477f6a5edc9c48d1a408637b877c6d32b8137e89f2bebae5cf4219cd80ae7e11"
+  },
+  "note": "All 846 pre-live source/build entries match the installed main checkout; additions are release audit records only. Installer reported Claude hook reconciliation changed, but final hook/settings bytes equal the recorded pre-install hashes."
+}

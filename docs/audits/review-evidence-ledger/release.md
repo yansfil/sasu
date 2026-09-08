@@ -84,7 +84,27 @@ FAIL과 PASS 시도의 저장된 JSON은 finalize 뒤에도 동일했다.
 루트의 846개 원본 항목은 실행 전후 모두 동일했다.
 실행 뒤 추가된 파일은 이 감사 보고서와 증거뿐이었다.
 검증용 CLI는 `/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli/dist/cli.js`이고, 기존 전역 설치는 이 작업에서 변경하지 않았다.
-최종 main 통합·설치 및 설치본 검사는 루트 담당으로 남는다.
+최종 main 통합·설치 결과는 아래에 별도로 기록한다.
+
+## main 통합과 설치 완료
+
+소스 커밋 `b9d741e2428b0b31797fdc0e3da790745ada4974`를 로컬 main에 fast-forward로 통합했다.
+기존 `node scripts/install-local-skills.mjs`로 양쪽 런타임을 갱신했고, 실제 PATH의 `sasu --contract-version`은 `0.10.0`이다.
+전역 실행 파일은 main의 `cli/dist/cli.js`를 가리킨다.
+
+라이브 검증 전 동결한 846개 소스·빌드 항목은 main 설치 후에도 모두 동일했다.
+추가된 항목은 이 릴리스의 감사 기록뿐이며, 검사한 코드와 설치한 코드 사이에 변경은 없다.
+양쪽 런타임의 스킬 20개, 계약 파일 49개가 소스와 정확히 일치하고 모든 `SKILL.md`는 일반 파일이다.
+`codex debug prompt-input`에서도 정규 스킬 10개가 실제 모델 입력 목록에 나타나는 것을 확인했다.
+Claude 설치본은 경로·호출 문법 변환을 포함한 파일 일치로 확인했으며, 설치 후 별도 대화형 제품 실행을 추가하지 않았다.
+두 런타임의 기존 hook·settings 파일 해시도 설치 전과 동일하다.
+설치기가 표시한 Claude hook의 `changed: true`는 최종 바이트 변경을 뜻하지 않았다.
+
+[설치 바인딩](installation/binding.json), [스킬 파일 비교](installation/installed-after.json), [스킬 인식 결과](installation/skill-discovery.json), [설치 로그](installation/install.log)에 근거를 보관했다.
+문서에 적힌 suite와 라이브 결과는 소스 커밋의 결과이며, 이후 변경은 이 설치 기록뿐이다.
+코드와 설치 반영은 완료됐고 원격 push는 수행하지 않았다.
+기존 v9 run과 이전 제품 pilot의 실패 상태·예산은 변경하지 않았다.
+새 버전은 퇴역 상태 형식을 자동 변환하지 않으므로, 기존 run을 그대로 새 버전에서 이어갈 수 있다는 의미는 아니다.
 
 ## 변경 파일
 

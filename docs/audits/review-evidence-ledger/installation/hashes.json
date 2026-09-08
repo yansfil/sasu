@@ -1,0 +1,22 @@
+[
+  {
+    "file": "binding.json",
+    "sha256": "2c7fd58138eb602e6e51e1e6072135c9a64657957fdcb34e760474e567336d6b"
+  },
+  {
+    "file": "check-install.mjs",
+    "sha256": "38518193ce2c1362dd4c353b86ffc19bd72bc672d7e418d2fdc0c2927bbaaaa7"
+  },
+  {
+    "file": "install.log",
+    "sha256": "52ee0488b9db425990801a554b4ee5479b8f376819124b38b6753eb87336f70a"
+  },
+  {
+    "file": "installed-after.json",
+    "sha256": "756d258441b295b45f37b6bd3b2014652322a0a209d18a2f4099f7ac40b82c3f"
+  },
+  {
+    "file": "skill-discovery.json",
+    "sha256": "213e550e6f1eaf97706b4d33625a120c3c6c1ecec0b20c57a97a4ec78a968b17"
+  }
+]

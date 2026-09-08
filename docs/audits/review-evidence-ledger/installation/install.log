@@ -1,0 +1,130 @@
+{
+  "ok": true,
+  "repoRoot": "/Users/hoyeonlee/projects/sasu",
+  "cliBinary": {
+    "ok": true,
+    "shimPath": "/Users/hoyeonlee/Library/pnpm/sasu",
+    "contractVersion": "0.10.0"
+  },
+  "installed": {
+    "codex": [
+      {
+        "skill": "interview-me",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/interview-me",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/interview-me"
+      },
+      {
+        "skill": "gen-prd",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/gen-prd",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/gen-prd"
+      },
+      {
+        "skill": "implement",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/implement",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/implement"
+      },
+      {
+        "skill": "benchmark-implement",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/benchmark-implement",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/benchmark-implement"
+      },
+      {
+        "skill": "ship",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/ship",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/ship"
+      },
+      {
+        "skill": "sasu-setup",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/sasu-setup",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/sasu-setup"
+      },
+      {
+        "skill": "please",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/please",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/please"
+      },
+      {
+        "skill": "remember",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/remember",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/remember"
+      },
+      {
+        "skill": "quick",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/quick",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/quick"
+      },
+      {
+        "skill": "challenge",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/challenge",
+        "targetDir": "/Users/hoyeonlee/.codex/skills/challenge"
+      }
+    ],
+    "claude": [
+      {
+        "skill": "interview-me",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/interview-me",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/interview-me"
+      },
+      {
+        "skill": "gen-prd",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/gen-prd",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/gen-prd"
+      },
+      {
+        "skill": "implement",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/implement",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/implement"
+      },
+      {
+        "skill": "benchmark-implement",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/benchmark-implement",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/benchmark-implement"
+      },
+      {
+        "skill": "ship",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/ship",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/ship"
+      },
+      {
+        "skill": "sasu-setup",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/sasu-setup",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/sasu-setup"
+      },
+      {
+        "skill": "please",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/please",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/please"
+      },
+      {
+        "skill": "remember",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/remember",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/remember"
+      },
+      {
+        "skill": "quick",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/quick",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/quick"
+      },
+      {
+        "skill": "challenge",
+        "sourceDir": "/Users/hoyeonlee/projects/sasu/skills/challenge",
+        "targetDir": "/Users/hoyeonlee/.claude/skills/challenge"
+      }
+    ]
+  },
+  "removedLegacy": {
+    "codex": [],
+    "claude": []
+  },
+  "hooks": {
+    "codex": {
+      "file": "/Users/hoyeonlee/.codex/hooks.json",
+      "changed": false
+    },
+    "claude": {
+      "file": "/Users/hoyeonlee/.claude/settings.json",
+      "changed": true
+    }
+  },
+  "note": "SKILL.md files are real copies (Claude copies are path/invocation substituted); auxiliary entries are symlinks."
+}
