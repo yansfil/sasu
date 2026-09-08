@@ -58,7 +58,7 @@ Build the complete Handoff Packet below and send it on stdin to the harness's ow
 ```sh
 sasu implement dispatch --name <unique-agent-name> --prd <ready-prd-path> \
   [--kind <agent>] [--model <agent-model>] [--effort <reasoning-effort>] --json <<'SASU_HANDOFF'
-ROLE: Implementor. Confirm the marker with the role helper and never dispatch recursively.
+ROLE: Implementor. Confirm the marker with `test "$SASU_HERDR_ROLE" = implementor` and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
 GOAL AND CONTEXT: <implementation goal and operational facts not represented in the PRD>
@@ -101,7 +101,7 @@ Never fall back to mutating implementation state or implementing inline from an 
 Send one lossless handoff through the dispatch helper's stdin.
 The packet must contain:
 
-- `ROLE`: Implementor, with instructions to confirm the `SASU_HERDR_ROLE=implementor` marker through the role helper and never dispatch recursively.
+- `ROLE`: Implementor, with instructions to confirm the marker with `test "$SASU_HERDR_ROLE" = implementor` and never dispatch recursively.
 - `PIPELINE`: `implement`, plus the exact skill path to read. Never dispatch `please`; its specification phase stays in the main session.
 - `ORIGINAL INVOCATION`: the user's delegating message verbatim.
 - `GOAL AND CONTEXT`: the implementation goal and operational facts that are not represented in the ready PRD.
