@@ -21,8 +21,8 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
    requirement remains in the PRD and independent review input.
    Use sufficient actual implementation, test, and observation evidence; do not
    require a separate proof record, lifecycle, PASS object, or judge call per requirement.
-   The CLI guarantees execution facts and input integrity; satisfaction is
-   independent semantic judgment and must be evaluated with planted omissions.
+   Fidelity records every Bn in grouped assessments with actual evidence references; Code records its own substantive grounds without duplicate all-Bn accounting.
+   The CLI guarantees structural coverage, execution facts, and input integrity; satisfaction is independent semantic judgment and must be evaluated with planted omissions.
 2. **Verification must not outweigh implementation.** Measure actual review and
    execution wall-clock, calls, and overlap.
    Remove repeated bookkeeping and redundant observation while preserving every
@@ -40,8 +40,7 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
    false. Fan out freely; before skipping, prove purity.
 6. **Observe product flows and risk boundaries; review the whole contract.**
    Group actual observations where one flow supports several requirements.
-   Compare the complete requirements and decisions with the implementation and
-   shared evidence; Bn references are issue pointers, never progress ledgers.
+   Compare the complete requirements and decisions with the implementation and shared evidence; Bn references identify findings and assessment scope, never progress states.
 7. **The harness absorbs complexity - never the workflow user, never a doc.**
    Enforce structure, integrity, authority, actual execution, freshness, and
    convergence in code.
@@ -56,6 +55,7 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
 10. **Records stay honest and singular.** Unrun means unrun, unavailable means
     unverified, and a past result never becomes a current PASS by assertion.
     `state.json` is the only authority; receipts derive from current recorded inputs.
+    Settled role judgments remain unchanged in verification history; corrections append a new attempt.
 11. **General, not overfit.** Hold across project shapes and case sizes, not
     just the incident that motivated the change. Detection built from one
     sample looks like a guard and behaves like a coin flip: key on structure,
@@ -68,6 +68,7 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
 
 The approved [2026-09-08 workflow change](docs/plans/2026-09-08-workflow-simplification.md) explicitly replaces the old per-AC proof and per-AC judge policies in items 1 and 6.
 This is a policy change, not a reinterpretation of the retired rules.
+The subsequent approved production change replaces the comprehensive reviewer with parallel Fidelity and Code reviews and adds CLI-validated grouped assessment records without restoring per-AC execution or evidence ceremony.
 
 Full text, with the reasoning and the incidents behind each item:
 [`PRINCIPLES.md`](PRINCIPLES.md). When a review cites a principle, cite it by
@@ -183,15 +184,20 @@ its history.
 
 **Completion and convergence.** A first verify failure keeps the run active
 with a recorded attempt and open findings.
-One routine independent review reads all requirements and actual evidence;
-high-risk adds a distinct safety review using the same fixed inputs.
-Concrete later omissions in unchanged files must not be discarded, and prior
-open issues require explicit dispositions.
+Independent Fidelity and Code reviews run concurrently on the same complete contract and actual evidence, without the current peer verdict.
+Fidelity accounts for every Bn exactly once in grouped assessments with concrete rationale and actual evidence references; Code records its own substantive grounds without another all-Bn form.
+Missing, duplicate, unknown, empty, invalid, or unresolved assessment coverage cannot silently pass.
+This guarantees inspectable structural coverage, not the correctness of semantic conclusions.
+An assessment may remain `pending-human` only with a corresponding validated post-completion human finding for every cited requirement; it neither asserts satisfaction nor waives prerequisites.
+Both roles share one lease, attempt, correction budget, and finding history; high-risk adds a distinct safety review using the same fixed inputs.
+Concrete later omissions in unchanged files must not be discarded, and prior open issues close only when both roles explicitly resolve them with evidence.
 Open risk blockers keep the correction budget incomplete even after routine PASS.
 `finalize --status blocked` may close a valid attempted run without any successful
 judge result, naming the failed phase and unrun work; pre-verify cancellation
 uses `retire`.
 State persists before derived receipts, and finalize never executes verification.
+Settled judgments retain their attempt, source, PRD, and input identity in `verificationAttempts`; later CLI mutations cannot rewrite or delete them.
+There is no second physical writer or parallel review ledger file.
 
 **Repository constants.** These hold for every PRD under this harness and are
 stated here once, never repeated in a PRD: no agent, model, vendor, or tool

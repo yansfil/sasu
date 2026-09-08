@@ -113,7 +113,7 @@ Do not move judgment into the script, and do not bypass guardrails with ad-hoc g
 
 Script-enforced guardrails (fail closed):
 
-- receipt schema must be `v5.parallel-review` and state schema `v9.parallel-review` before any result is consumed; retired formats fail explicitly with the last supported commit.
+- receipt schema must be `sasu.implement.receipt.v6` and state schema `sasu.implement.state.v10` before any result is consumed; retired formats fail explicitly with the last supported commit.
 - receipt must be `complete` or `complete-pending-human` and currently delivery-eligible.
   Permitted pending human confirmation travels in the PR body; an open explicit rejection blocks delivery.
 - `local` accepts only local mode; it never pushes, invokes GitHub, creates a PR,
@@ -121,6 +121,7 @@ Script-enforced guardrails (fail closed):
 - `ship` and `merge` accept only `pr` mode unless their documented explicit
   mode override is supplied.
 - the implement receipt must match the fresh PASS reported by `sasu implement status` for the current worktree.
+  Both settled role results and their valid assessment grounds must be present; missing or unresolved Fidelity coverage cannot be delivered as complete.
 - for PR delivery, the branch must not be behind `origin/<base>`; `preflight` fetches and reports
   `baseFreshness`, and `ship` refuses a stale base (`--allow-stale-base --reason` to override).
   When behind, rebase onto the origin base, resolve conflicts, rerun the relevant
@@ -164,6 +165,7 @@ node ~/.codex/skills/ship/scripts/prd_ship.js status --state agents/runs/<topic-
 The draft contains deterministic evidence sections derived from the current receipt (actual tests, shared QA observations, separate Fidelity and Code review results, open issues and human responses, staging, changed paths) plus `AGENT-FILL` placeholders for the prose sections.
 Fill every placeholder with prose grounded in `implementation-result.md` and the recorded reviews,
 following the repository PR template rules, then run `ship`.
+The receipt retains grouped assessment grounds; summarize their actual support and limitations without turning them into a per-requirement proof table or claiming mechanical certainty.
 `body` refuses to overwrite an existing body file without `--force`, so agent-written prose is not
 silently discarded.
 
@@ -257,7 +259,7 @@ Include:
 - implementation receipt path and status.
 - user-visible or developer-visible changes.
 - actual required tests and shared QA observations, including limitations.
-- independent Fidelity and Code review results and any distinct high-risk result.
+- independent Fidelity and Code review results, their actual assessment grounds and limitations, and any distinct high-risk result.
 - deviations or remaining human review.
 
 For visual PRs, include reviewer-visible screenshots in `Screenshots / Demo`.

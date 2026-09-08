@@ -1,0 +1,529 @@
+{
+  "backend": "codex",
+  "candidate": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger",
+  "root": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex",
+  "startedAt": "2026-09-08T13:24:08.724Z",
+  "outcome": "PASS",
+  "commands": [
+    {
+      "label": "start",
+      "args": [
+        "implement",
+        "start",
+        "--prd",
+        "agents/prd/fixture/prd.md",
+        "--dirty-attribution",
+        "run-owned"
+      ],
+      "startedAt": "2026-09-08T13:24:09.140Z",
+      "finishedAt": "2026-09-08T13:24:09.935Z",
+      "status": 0
+    },
+    {
+      "label": "verify-missing-final",
+      "args": [
+        "implement",
+        "verify"
+      ],
+      "startedAt": "2026-09-08T13:24:09.936Z",
+      "finishedAt": "2026-09-08T13:24:49.415Z",
+      "status": 1
+    },
+    {
+      "label": "finalize-refused",
+      "args": [
+        "implement",
+        "finalize"
+      ],
+      "startedAt": "2026-09-08T13:24:49.416Z",
+      "finishedAt": "2026-09-08T13:24:49.685Z",
+      "status": 2
+    },
+    {
+      "label": "verify-complete",
+      "args": [
+        "implement",
+        "verify"
+      ],
+      "startedAt": "2026-09-08T13:24:49.685Z",
+      "finishedAt": "2026-09-08T13:25:18.752Z",
+      "status": 0
+    },
+    {
+      "label": "finalize",
+      "args": [
+        "implement",
+        "finalize"
+      ],
+      "startedAt": "2026-09-08T13:25:18.752Z",
+      "finishedAt": "2026-09-08T13:25:19.091Z",
+      "status": 0
+    }
+  ],
+  "attempts": [
+    {
+      "label": "missing-final",
+      "id": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+      "verdict": "FAIL",
+      "inputFingerprint": "d8b457e4b1a2e959b3224012908746f8a6af9bd2022acfba7adda7bfa34d64c9",
+      "sourceFingerprint": "f907b1ec7c82659f01b447fcf9ad25dce3ab77811c9387684d3072280c4f5887",
+      "durationMs": 39093,
+      "mechanical": [
+        {
+          "command": "npm test",
+          "status": "PASS",
+          "durationMs": 971
+        }
+      ],
+      "reviews": {
+        "fidelity": {
+          "invocationId": "4ecb9d9f-54b2-47b3-99b7-7bee4b81f0ad",
+          "startedAt": "2026-09-08T13:24:11.850Z",
+          "finishedAt": "2026-09-08T13:24:38.771Z",
+          "durationMs": 26921,
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The implementation satisfies B1-B29 but fails B30: command(30) returns undefined because the guard excludes 30.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30"
+                ],
+                "problem": "command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change the upper bound to allow 30, then rerun the required suite."
+              }
+            ],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The exported command returns its integer input for every integer from 1 through 29.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B30"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "The implementation excludes input 30 with n < 30, causing command(30) to return undefined.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T13:24:11.850Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:fidelity",
+            "durationMs": 26921,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 25145,
+              "outputTokens": 822,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 516
+            }
+          },
+          "error": null
+        },
+        "code": {
+          "invocationId": "504c1945-e311-4705-a539-8d2b9466cc58",
+          "startedAt": "2026-09-08T13:24:11.899Z",
+          "finishedAt": "2026-09-08T13:24:49.233Z",
+          "durationMs": 37334,
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The implementation satisfies commands 1-29 but fails command 30, so the approved contract is incomplete.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30",
+                  "D-01"
+                ],
+                "problem": "command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change the upper-bound condition to include 30, such as n <= 30."
+              }
+            ],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The exported command returns n for every integer n from 1 through 29 because the implementation checks n >= 1 and n < 30 before returning n.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B30",
+                  "D-01"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "The upper bound excludes the approved value 30, violating preservation of every requested value.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T13:24:11.899Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:code",
+            "durationMs": 37334,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 25172,
+              "outputTokens": 1359,
+              "cachedInputTokens": 15104,
+              "reasoningOutputTokens": 1034
+            }
+          },
+          "error": null
+        }
+      },
+      "blockers": [
+        {
+          "kind": "defect",
+          "requirementRefs": [
+            "B30"
+          ],
+          "problem": "command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ],
+          "nextAction": "Change the upper bound to allow 30, then rerun the required suite.",
+          "id": "F1",
+          "originAttemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+          "status": "open",
+          "history": [
+            {
+              "at": "2026-09-08T13:24:49.234Z",
+              "attemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+              "status": "open",
+              "reason": "command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.",
+              "evidenceRefs": [
+                "src/public.mjs"
+              ]
+            }
+          ],
+          "responses": []
+        },
+        {
+          "kind": "defect",
+          "requirementRefs": [
+            "B30",
+            "D-01"
+          ],
+          "problem": "command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ],
+          "nextAction": "Change the upper-bound condition to include 30, such as n <= 30.",
+          "id": "F2",
+          "originAttemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+          "status": "open",
+          "history": [
+            {
+              "at": "2026-09-08T13:24:49.234Z",
+              "attemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+              "status": "open",
+              "reason": "command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+              "evidenceRefs": [
+                "src/public.mjs"
+              ]
+            }
+          ],
+          "responses": []
+        }
+      ]
+    },
+    {
+      "label": "complete",
+      "id": "adfb1c8c-a96b-4f51-b457-56451a0a32fe",
+      "verdict": "PASS",
+      "inputFingerprint": "ae8739c8f8b23f747ff1f6894f7c6f23618b957d4674004341636bcd6649b7cc",
+      "sourceFingerprint": "2f99745810de1553550ac2a11307c648167bebee89cd4552e69c87959039217f",
+      "durationMs": 28806,
+      "mechanical": [
+        {
+          "command": "npm test",
+          "status": "PASS",
+          "durationMs": 529
+        }
+      ],
+      "reviews": {
+        "fidelity": {
+          "invocationId": "16d7e9f9-ade5-42f1-a462-67ffbb87e6d2",
+          "startedAt": "2026-09-08T13:24:50.811Z",
+          "finishedAt": "2026-09-08T13:25:18.598Z",
+          "durationMs": 27787,
+          "verdict": "PASS",
+          "result": {
+            "summary": "The complete exported implementation satisfies all approved behaviors B1-B30 and preserves the requested values. The prior upper-bound findings are resolved by the current inclusive condition.",
+            "findings": [],
+            "priorDispositions": [
+              {
+                "findingId": "F1",
+                "status": "resolved",
+                "reason": "src/public.mjs now uses n <= 30, so command(30) returns 30.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              },
+              {
+                "findingId": "F2",
+                "status": "resolved",
+                "reason": "The current implementation returns each integer from 1 through 30, including 30.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The exported command validates integers from 1 through 30 inclusively and returns n unchanged, establishing deterministic fulfillment of every requested value.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T13:24:50.812Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:fidelity",
+            "durationMs": 27786,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 25610,
+              "outputTokens": 793,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 516
+            }
+          },
+          "error": null
+        },
+        "code": {
+          "invocationId": "6c4c1339-682e-4c10-b64d-afdb104f19b5",
+          "startedAt": "2026-09-08T13:24:50.863Z",
+          "finishedAt": "2026-09-08T13:25:12.214Z",
+          "durationMs": 21351,
+          "verdict": "PASS",
+          "result": {
+            "summary": "The exported command preserves and returns every integer from 1 through 30. The prior upper-bound defect is resolved; the source establishes deterministic behavior for all requirements, although the suite log only exercised command(1).",
+            "findings": [],
+            "priorDispositions": [
+              {
+                "findingId": "F1",
+                "status": "resolved",
+                "reason": "The current source uses n <= 30, so command(30) returns 30.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              },
+              {
+                "findingId": "F2",
+                "status": "resolved",
+                "reason": "The current source includes 30 in the accepted integer range and returns n, so command(30) returns 30.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "src/public.mjs exports command and returns n for every integer n where 1 <= n <= 30, covering each requested value deterministically.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T13:24:50.863Z",
+            "backend": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:code",
+            "durationMs": 21351,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 25639,
+              "outputTokens": 636,
+              "cachedInputTokens": 8960,
+              "reasoningOutputTokens": 339
+            }
+          },
+          "error": null
+        }
+      },
+      "blockers": []
+    }
+  ],
+  "contractVersion": "0.10.0",
+  "candidateCommit": "2b1f638dd587261be7e7b0e600db16657421971d",
+  "cliEntrySha256": "8715b0e29363a590314643dd5934af087e9e44ce0e5e29c329920ca384128e51",
+  "prdSha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811",
+  "workRoot": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex",
+  "finalSourceSha256": "b170d68c824ab87596160d7a2b2583c6f95146044fdf84ed3787cfde145f90b0",
+  "receipt": {
+    "schema": "sasu.implement.receipt.v6",
+    "status": "complete",
+    "path": "agents/runs/fixture/receipt.json"
+  },
+  "finishedAt": "2026-09-08T13:25:19.091Z"
+}

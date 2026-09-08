@@ -1,0 +1,310 @@
+✔ the executable case uses whole-run stages and Logscan remains a PRD workload (7.737541ms)
+✔ retired case schemas are rejected before any payload field is consumed (0.319416ms)
+✔ fresh environment, honest completion, and executable stage declarations are enforced (1.312958ms)
+✔ both workloads preserve requirements in the current three-column PRD format (14.430583ms)
+✔ report and comparison preserve hard outcomes while scoring only evidenced process behavior (3414.980584ms)
+✔ prepare-run rejects unapproved and unreadable PRDs before reserving a run (309.207ms)
+✔ the round cap is owned by the harness, not by the prompt (1.892583ms)
+✔ a clamped request tells the agent it was clamped (0.249875ms)
+✔ the trigger routes to the challenge skill and disowns the token (0.059625ms)
+✔ non-trigger prompts produce no output at all (60.759417ms)
+✔ the hook never fails a turn on a payload it does not understand (459.030416ms)
+✔ a firing trigger emits UserPromptSubmit additionalContext (82.379875ms)
+✔ AC10: no skill asks an agent to write the qa-log's Audit History or flip its status by hand (2.634375ms)
+✔ document gates do not restore their retired closure lifecycle (14.679375ms)
+✔ the documented command set and the --help command set match in both directions (114.575209ms)
+✔ each command's documented flags and its --help flags match in both directions (151.161833ms)
+✔ every documented command is one the CLI actually dispatches (23.747584ms)
+✔ the documented issuer column is the authority table, not a retelling of it (2.841375ms)
+✔ AC26: the harness still registers exactly the two hooks it always did (1.282917ms)
+✔ AC26: no implement source registers a lifecycle hook (20.615542ms)
+✔ AC28: the polling observer is gone and nothing outside the adapter calls herdr (14.474958ms)
+✔ AC28: no 250ms pane poll survives in the harness (5.199334ms)
+✔ AC28: no skill document still points at the removed helper (2.794333ms)
+✔ implement keeps a compact entrypoint with explicit conditional reference routing (10.139292ms)
+✖ implement references stay direct, bounded, and navigable (2.373625ms)
+✔ implement entrypoint retains lifecycle, safety, and completion authority (0.274542ms)
+✖ gen-prd and implement preserve all requirements without per-requirement ceremony (2.467291ms)
+✔ removed dispatcher rejects direct legacy invocations with new-command guidance (250.671417ms)
+✔ installer installs canonical skills with correct substitutions and no aliases (4320.780125ms)
+✔ installer removes owned legacy directories and keeps foreign ones (2029.355417ms)
+✔ installer is idempotent and preserves foreign hooks and settings (2589.487375ms)
+✔ installer retires legacy harness hooks without touching foreign hooks (1089.214542ms)
+✔ installer retracts a stale challenge trigger and keeps foreign UserPromptSubmit hooks (1100.815834ms)
+✔ installer refuses to overwrite a foreign skill directory (32.99725ms)
+✔ installer refuses a target directory whose ownership cannot be proven (71.786666ms)
+✔ installer validates every skill target before replacing the CLI shim or any skill (33.729ms)
+✔ installer changes no runtime contracts when CLI preparation fails (153.778ms)
+✔ candidate staging binds package siblings and preserves external skills for both runtimes (1.044542ms)
+✔ canonical workflow uses qa-log as the only intake artifact (5.140167ms)
+✔ interview capture stays off the ordinary answer-to-question path (0.606708ms)
+✔ stripFrontmatter splits yaml-ish frontmatter from body (0.556542ms)
+✔ extractSection matches numbered h2 headings case-insensitively and stops at the next h2 (0.500167ms)
+✔ extractNestedSection scopes an h3 to the next heading of same or higher level (0.347875ms)
+✔ local delivery verifies, commits the allowlisted change, and never contacts GitHub (2085.886666ms)
+✔ local delivery is idempotent and does not create a second commit (1503.627042ms)
+✔ default state discovery uses the current CLI namespace (1134.846958ms)
+✔ local delivery promotes an unpushed checkpoint instead of stacking another commit (1343.402375ms)
+✔ local delivery refuses a PR-configured run before any delivery side effect (955.269417ms)
+✔ merge requires explicit user approval before contacting GitHub (823.629459ms)
+✔ merge pins the reviewed PR head, requires passing CI, and records delivery evidence (848.053916ms)
+✔ merge records a later explicit PR-delivery approval for a current state with default delivery config (717.29175ms)
+✔ permitted pending human judgments ship and the body describes shared tests and review (638.815083ms)
+✔ an explicit human rejection refuses delivery before any side effect (288.766875ms)
+✔ current CLI rejection cannot be bypassed by an older eligible receipt (438.014417ms)
+✔ receipt schema is checked before completed status is consumed (318.808208ms)
+✔ experimental receipt schema names its actual last supporting commit (319.1385ms)
+✔ delivery refuses receipt-only edits to coverage grounds and pinned input identity (1848.9715ms)
+✔ delivery requires both completed role results even when eligibility is recorded (1077.072833ms)
+✔ delivery preserves historical role FAIL after the CLI settles human authority and risk (588.671333ms)
+✔ local delivery refuses unrelated dirty paths outside receipt ownership (464.071875ms)
+✔ a blocked receipt does not ship (254.0145ms)
+✔ stale verification and mismatched completion identities refuse local delivery (795.513833ms)
+✔ rules add rejects evidence-free and unverifiable rules (675.304875ms)
+✔ rules add registers a valid invariant atomically and blocks duplicates (355.729083ms)
+✔ rules check matches trigger globs against changed files and fails closed (466.621ms)
+✔ grep checks support present and absent expectations (489.235166ms)
+✔ fact and regression rules land in the ledger; pending lessons surface in checks (636.022375ms)
+✔ rules relevant finds invariants by path and text query (351.570833ms)
+✔ seed-agents-md creates AGENTS.md with the namespace section and a CLAUDE.md symlink, idempotently (179.876709ms)
+✔ seed-agents-md refuses a bare CLAUDE.md without --adopt-claude-md, then adopts it verbatim (173.819834ms)
+✔ namespace.root override relocates harness artifacts (223.388292ms)
+✔ interview-me routes closure through the gap-audit gate (3.490917ms)
+✔ gen-prd routes readiness through the spec gate (0.251958ms)
+✔ implement routes changed-code tasks through unified implement verify (0.128458ms)
+✔ please runs each PRD gate on its open findings set and hands a NEEDS_HUMAN bundle to the user (0.292917ms)
+✔ please seals specification in the main session before implementation dispatch (0.218417ms)
+✔ quick keeps run-level evidence and comprehensive review without AC outcomes (0.782959ms)
+✔ every gate-calling skill keeps the override user-only in the same breath (1.063792ms)
+✔ a project configured for backend api gets a verdict through runJudge (70.190833ms)
+✔ a lane effort override reaches the api wire, not just the record (27.16375ms)
+✔ an unreachable api primary falls back to the configured other backend (8.257042ms)
+✔ SASU_JUDGE_BACKEND accepts every backend the config accepts (1.257667ms)
+✔ a judge backend that failed authentication is skipped by the next call in the same run (1523.117791ms)
+✔ a judge backend that failed runtime is skipped only after a second independent call (2300.255875ms)
+✔ a fallback known dead in this run is not dialled again to prove it (1268.6905ms)
+✔ a runtime failure on one codex model does not disable another codex model (1372.534209ms)
+✔ a success clears runtime strikes so a transient blip cannot condemn the backend (1276.109083ms)
+✔ a disallowed judge command kills the call instead of being audited after it (1109.003958ms)
+✔ an allowed judge command is not aborted by the streaming audit (1296.770167ms)
+✔ a judge binary that traps SIGTERM is still killed within the escalation grace (1189.775ms)
+✔ exceeding the agentic read budget aborts the call with its own reason (1020.168292ms)
+✔ a newline-less flood aborts the call as unauditable instead of blinding the audit (698.3685ms)
+✔ a single oversized read event cannot evade the read budget (704.949583ms)
+✔ an agentic claude judge that over-reads is rejected by the post-hoc round budget (593.011708ms)
+✔ a caller's lane effort reaches the backend and the persisted record (630.98825ms)
+✔ without an override the profile budget is still used (1027.184792ms)
+✔ an unconfigured project gets each gate's own measured budget, not one shared number (1.678209ms)
+✔ judge.laneEffort pins every gate to one budget when a project sets it (0.659625ms)
+✔ judge.laneEffort accepts a valid budget and rejects anything else (0.864417ms)
+✔ a codex judge call records provider usage and every rejected attempt (1076.81775ms)
+✔ a claude judge call records envelope usage, and a clean call records no retries (1073.660875ms)
+✔ sasu judge calls time out per call after the async refactor (387.296542ms)
+ℹ tests 102
+ℹ suites 0
+ℹ pass 100
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16556.53225
+
+✖ failing tests:
+
+test at tests/implement_skill_structure.test.mjs:43:1
+✖ implement references stay direct, bounded, and navigable (2.373625ms)
+  AssertionError [ERR_ASSERTION]: reviews-and-finalization.md needs a near-top table of contents
+      at TestContext.<anonymous> (file:///Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/tests/implement_skill_structure.test.mjs:55:14)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: '# Reviews And Finalization\n\n## Full-Contract Review\n\nAll profiles use concurrent independent Fidelity and Code reviews in the routine path.\nBoth read every requirement and decision, actual implementation and permitted surrounding source, executed required-suite results, shared QA observations, and previous findings.\nBoth receive the same fixed original inputs without the current peer verdict.\nThe source catalog supplies path metadata only; it is neither content evidence nor permission to read a file outside the allowlist.\nOne shared artifact containing current surrounding source can support many Bn references without a per-Bn mapping.\nFidelity owns complete intent and observable behavior fulfillment, including omitted requirements and explicit human authority.\nCode review owns concrete implementation, integration and error-path defects and consequential design problems.\nCosmetic preferences and speculative improvements remain advisory.\nNeither requires a separate execution, artifact, or model call for each requirement or assumes the other role has passed.\nThe two roles replace the comprehensive review; no third general judge combines their judgments.\n\nResults contain a summary, grouped `assessments`, exception findings, and explicit prior dispositions.\nEach assessment contains:\n\n| Field | Contract |\n| --- | --- |\n| `requirementRefs` | Approved requirement or decision references for the semantic group. Fidelity includes every Bn exactly once across its groups; Code does not repeat an all-Bn accounting form. |\n| `conclusion` | `satisfied`, `unresolved`, or `pending-human`. Unresolved coverage cannot pass; pending-human requires a corresponding validated post-completion human-confirmation finding for every cited requirement. |\n| `rationale` | A short, concrete assessment of the implementation and the grounds for the conclusion. Empty rationale is invalid. |\n| `evidenceRefs` | Valid references from the fixed review input. A satisfied assessment includes actual supplied source, an execution log, or an artifact, not only PRD text or catalog metadata. |\n',
+    expected: /^## Contents$/m,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at tests/implement_skill_structure.test.mjs:89:1
+✖ gen-prd and implement preserve all requirements without per-requirement ceremony (2.467291ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Markdown checkboxes or a coverage ledger/. Input:
+  
+  '---\n' +
+    'name: implement\n' +
+    'description: |\n' +
+    '  Project-local approved-PRD implementation executor and Observer entrypoint.\n' +
+    '  Use when the user invokes "$implement", explicitly asks to execute an approved\n' +
+    '  PRD through the receipt-backed workflow, or wants the complete PRD implemented,\n' +
+    '  independently reviewed, and finalized with current evidence.\n' +
+    '  Do not use for ordinary implementation requests that have no approved PRD.\n' +
+    '---\n' +
+    '\n' +
+    '# implement\n' +
+    '\n' +
+    'Implement the complete approved PRD and finish with an honest current receipt.\n' +
+    "Match the user's language.\n" +
+    'The routine path runs independent Fidelity and Code reviews concurrently.\n' +
+    'The Observer and Implementor responsibilities and user-facing commands remain the same.\n' +
+    'Before any repository write or mutating command, resolve the structural session role using the Observer reference below.\n' +
+    'In Herdr, the user-facing session observes and one marked Implementor executes; `$please` keeps specification in the main session until the PRD is ready.\n' +
+    'The benchmark coordinator is the explicit in-session Implementor when its contract requires that arrangement.\n' +
+    '\n' +
+    '```text\n' +
+    'approved PRD -> autonomous implementation and actual QA\n' +
+    '  -> verify: required suites + concurrent Fidelity and Code reviews\n' +
+    '  -> fix concrete findings and verify again within the recorded bound\n' +
+    '  -> finalize: current complete, complete-pending-human, or blocked receipt\n' +
+    '  -> authorized local or PR delivery\n' +
+    '```\n' +
+    '\n' +
+    '`state.json` is the only machine record.\n' +
+    '`receipt.json` and `implementation-result.md` are derived outputs.\n' +
+    'Every requirement remains in the sealed PRD and independent review input.\n' +
+    'No requirement has its own lifecycle, mandatory evidence file, judge call, or PASS object.\n' +
+    'Fidelity records grouped requirement assessments and shared evidence references in the CLI-owned review result.\n' +
+    'Do not add Markdown checkboxes or a manually maintained coverage ledger.\n' +
+    '\n' +
+    '## Reference Routing\n' +
+    '\n' +
+    'Read each directly linked reference completely when its condition applies.\n' +
+    '\n' +
+    '| Reference | Read when |\n' +
+    '| --- | --- |\n' +
+    '| [`references/observer-and-herdr.md`](references/observer-and-herdr.md) | Before a direct Herdr invocation, when dispatched after `$please` PRD readiness, or when an Implementor blocks or needs recovery. |\n' +
+    '| [`references/execution-planning.md`](references/execution-planning.md) | Before implementation or when execution order is unclear. |\n' +
+    '| [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before collecting or registering actual evidence and before verify. |\n' +
+    '| [`references/verification-environments.md`](references/verification-environments.md) | When a browser, mobile, TUI, or native desktop flow needs observation. |\n' +
+    '| [`references/reviews-and-finalization.md`](references/reviews-and-finalization.md) | Before verify, finalize, human confirmation, or a blocked handoff. |\n' +
+    '| [`references/worktrees-and-delivery.md`](references/worktrees-and-delivery.md) | When delivery is `pr`, a worktree is configured, or post-receipt delivery is requested. |\n' +
+    '\n' +
+    '## Core Invariants\n' +
+    '\n' +
+    "- Never implement a pending PRD without explicit human approval or the user's verbatim conversational approval.\n" +
+    '- Read the full Goal, Non-goals, Decisions, Behaviors, Technical structure, and Risks.\n' +
+    '  Preserve all requirements and decision provenance without inventing scope.\n' +
+    '- The CLI executes the sealed required suites before independent review, records actual execution, validates evidence integrity, and pins the current inputs.\n' +
+    '- Both independent reviewers compare the complete contract with implementation, permitted surrounding source, actual test results, shared observations, and prior findings.\n' +
+    '  Neither receives the current peer verdict.\n' +
+    '  A high-risk run retains a distinct safety review with the same fixed inputs.\n' +
+    '- The implementor may collect and register its own QA evidence with honest provenance.\n' +
+    '  The independent review decides whether those observations are sufficient.\n' +
+    '- `sasu implement finalize` never runs tests, judges, capture tools, or external commands.\n' +
+    '- `state.json` is the completion authority; receipt files are its portable derived result.\n' +
+    '  Never hand-edit the state, hashes, execution history, review findings, or counters.\n' +
+    '  Settled role judgments remain unchanged in `verificationAttempts`; corrections append a new attempt with its own input identity.\n' +
+    '- The whole verify execution holds one lease through suite execution, judge completion, and state persistence.\n' +
+    '  Other domain mutations are refused while it is live; status and event waiting remain available.\n' +
+    '- A first failed verify leaves the run active with the failed attempt and open findings.\n' +
+    '  Fix the actual cause; do not replace state to reset the budget.\n' +
+    "- Only the person's own words resolve a human confirmation, and an open explicit rejection makes delivery ineligible.\n" +
+    '- Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.\n' +
+    '\n' +
+    '## 1. Confirm Readiness And Start\n' +
+    '\n' +
+    'Read the complete PRD, relevant project instructions, likely source files, and `git status --short`.\n' +
+    'Confirm `status: ready` and `human_approval: approved`, or preserve existing conversational approval exactly.\n' +
+    'Read prerequisite decisions and risks before acting; pending deployment, payment, access, destructive action, or unresolved product policy cannot become an after-the-fact confirmation.\n' +
+    '\n' +
+    '```sh\n' +
+    'sasu implement start --prd agents/prd/<topic-slug>/prd.md\n' +
+    '```\n' +
+    '\n' +
+    'When approval is in conversation:\n' +
+    '\n' +
+    '```sh\n' +
+    'sasu implement start --prd agents/prd/<topic-slug>/prd.md \\\n' +
+    "  --allow-unapproved-prd '<verbatim user approval>'\n" +
+    '```\n' +
+    '\n' +
+    'Start seals the full PRD, static behavior references, source baseline, ownership, and required suite list from `agents/config.json` or repository detection.\n' +
+    'A missing suite is reported as no required tests, never as tests all passed.\n' +
+    'The three-column Behaviors table contains `#`, `사용자가 관찰하는 행동`, and `결정`.\n' +
+    'Retired document and state formats fail with the expected contract and last supported commit; rewrite and approve a new document rather than migrating old results.\n' +
+    '\n' +
+    'If start reports dirty judged paths, use the authorized attribution: `--dirty-attribution pre-existing`, `--dirty-attribution run-owned`, or the exact path-complete JSON map provided in its refusal.\n' +
+    'Preserve unrelated changes.\n' +
+    'For a handoff with `DIRTY ATTRIBUTION`, pass the supplied value exactly; do not repeat the ownership interview in the Implementor pane.\n' +
+    'Read `workingRoot` from the response and implement in that directory.\n' +
+    '\n' +
+    '```sh\n' +
+    'sasu implement status\n' +
+    '```\n' +
+    '\n' +
+    'Status reports current source identity, required suites, review state, open findings, human responses, delivery eligibility, and the next action.\n' +
+    'Do not create a Codex Goal unless the user explicitly requested goal tracking.\n' +
+    '\n' +
+    '## 2. Implement And Observe\n' +
+    '\n' +
+    'Choose a plan suited to the work, grouping changes by coherent product flow and risk boundary.\n' +
+    'Requirements are references for understanding scope, not mandatory execution units.\n' +
+    'Use focused tests while editing and observe actual product behavior where it matters.\n' +
+    'For screens, drive the real flow and inspect the result; a build or function definition does not establish a working interaction.\n' +
+    '\n' +
+    'Delegate independent work when useful with explicit non-overlapping file ownership and the relevant requirements and decisions in each brief.\n' +
+    'Workers return changes, observed checks, and evidence provenance; the Implementor coordinates run commands.\n' +
+    'The CLI alone writes `state.json`.\n' +
+    'Do not add a required task document, flow-ID scheme, or requirement-by-requirement checklist.\n' +
+    '\n' +
+    'Collect final screenshots, recordings, API traces, database observations, or logs when the implementation is coherent.\n' +
+    'One flow may support several requirements.\n' +
+    'Register material actual evidence once at run level:\n' +
+    '\n' +
+    '```sh\n' +
+    'sasu implement artifact --kind screenshot --path docs/screenshots/example.png \\\n' +
+    "  --description '<observed flow and limitations>' --source '<collector and method>' \\\n" +
+    "  --collected-at '<ISO capture time>' --target '<actual build or URL>' --environment '<environment>'\n" +
+    '```\n' +
+    '\n' +
+    'For several files, use `artifact --manifest <path>` with a JSON array of objects containing `kind`, `path`, and `description`, plus optional `source`, `collectedAt`, `target`, `environment`, and `requirementRefs` (an array of Bn strings).\n' +
+    '`--refs B1,B2` adds optional explanatory requirement references; it is never a coverage requirement.\n' +
+    'Registration pins file identity and preserves provenance.\n' +
+    'Missing or modified registered files fail integrity checks.\n' +
+    'A source hash cannot establish that an external service, ignored fixture, database, or installed app is unchanged; explain the validity of earlier observations or recapture affected behavior.\n' +
+    'No artifact is required merely because a keyword occurs in the PRD.\n' +
+    'The source catalog lists paths, not file contents or read permission.\n' +
+    'When surrounding source is needed, one current shared `file` artifact may support many Bn references without a per-Bn mapping.\n' +
+    '\n' +
+    '## 3. Apply Authorized Contract Changes\n' +
+    '\n' +
+    'The Implementor reports proposed requirement, decision, scope, profile, or source-intake changes to the user-facing coordinator.\n' +
+    'Only human-authorized amendments change the sealed contract:\n' +
+    '\n' +
+    '```sh\n' +
+    "sasu implement amend --issuer human --approval '<verbatim user approval>' --reason '<what changed and why>'\n" +
+    '```\n' +
+    '\n' +
+    'Existing approval that covers the change is sufficient; do not ask the same permission again.\n' +
+    "Amend archives the superseded PRD, refreshes the snapshot and mirrored metadata, and invalidates the whole review's freshness.\n" +
+    '`--exclude-suite <S#,...>` is the only way to exclude a sealed suite; it preserves the command, its last result, and approval history.\n' +
+    'Changing config after start cannot quietly weaken required verification.\n' +
+    'Human confirmations whose source changes retain their closure or replacement history.\n' +
+    'Wait for a live verify lease to settle before any amendment or other mutation.\n' +
+    '\n' +
+    '## 4. Verify The Whole Result\n' +
+    '\n' +
+    'Freeze implementation and registered evidence, then run:\n' +
+    '\n' +
+    '```sh\n' +
+    'sasu implement verify\n' +
+    '```\n' +
+    '\n' +
+    'The CLI records one a'... 9570 more characters
+  
+      at TestContext.<anonymous> (file:///Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/tests/implement_skill_structure.test.mjs:98:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '---\nname: implement\ndescription: |\n  Project-local approved-PRD implementation executor and Observer entrypoint.\n  Use when the user invokes "$implement", explicitly asks to execute an approved\n  PRD through the receipt-backed workflow, or wants the complete PRD implemented,\n  independently reviewed, and finalized with current evidence.\n  Do not use for ordinary implementation requests that have no approved PRD.\n---\n\n# implement\n\nImplement the complete approved PRD and finish with an honest current receipt.\nMatch the user\'s language.\nThe routine path runs independent Fidelity and Code reviews concurrently.\nThe Observer and Implementor responsibilities and user-facing commands remain the same.\nBefore any repository write or mutating command, resolve the structural session role using the Observer reference below.\nIn Herdr, the user-facing session observes and one marked Implementor executes; `$please` keeps specification in the main session until the PRD is ready.\nThe benchmark coordinator is the explicit in-session Implementor when its contract requires that arrangement.\n\n```text\napproved PRD -> autonomous implementation and actual QA\n  -> verify: required suites + concurrent Fidelity and Code reviews\n  -> fix concrete findings and verify again within the recorded bound\n  -> finalize: current complete, complete-pending-human, or blocked receipt\n  -> authorized local or PR delivery\n```\n\n`state.json` is the only machine record.\n`receipt.json` and `implementation-result.md` are derived outputs.\nEvery requirement remains in the sealed PRD and independent review input.\nNo requirement has its own lifecycle, mandatory evidence file, judge call, or PASS object.\nFidelity records grouped requirement assessments and shared evidence references in the CLI-owned review result.\nDo not add Markdown checkboxes or a manually maintained coverage ledger.\n\n## Reference Routing\n\nRead each directly linked reference completely when its condition applies.\n\n| Reference | Read when |\n| --- | --- |\n| [`references/observer-and-herdr.md`](references/observer-and-herdr.md) | Before a direct Herdr invocation, when dispatched after `$please` PRD readiness, or when an Implementor blocks or needs recovery. |\n| [`references/execution-planning.md`](references/execution-planning.md) | Before implementation or when execution order is unclear. |\n| [`references/verification-and-evidence.md`](references/verification-and-evidence.md) | Before collecting or registering actual evidence and before verify. |\n| [`references/verification-environments.md`](references/verification-environments.md) | When a browser, mobile, TUI, or native desktop flow needs observation. |\n| [`references/reviews-and-finalization.md`](references/reviews-and-finalization.md) | Before verify, finalize, human confirmation, or a blocked handoff. |\n| [`references/worktrees-and-delivery.md`](references/worktrees-and-delivery.md) | When delivery is `pr`, a worktree is configured, or post-receipt delivery is requested. |\n\n## Core Invariants\n\n- Never implement a pending PRD without explicit human approval or the user\'s verbatim conversational approval.\n- Read the full Goal, Non-goals, Decisions, Behaviors, Technical structure, and Risks.\n  Preserve all requirements and decision provenance without inventing scope.\n- The CLI executes the sealed required suites before independent review, records actual execution, validates evidence integrity, and pins the current inputs.\n- Both independent reviewers compare the complete contract with implementation, permitted surrounding source, actual test results, shared observations, and prior findings.\n  Neither receives the current peer verdict.\n  A high-risk run retains a distinct safety review with the same fixed inputs.\n- The implementor may collect and register its own QA evidence with honest provenance.\n  The independent review decides whether those observations are sufficient.\n- `sasu implement finalize` never runs tests, judges, capture tools, or external commands.\n- `state.json` is the completion authority; receipt files are its portable derived result.\n  Never hand-edit the state, hashes, execution history, review findings, or counters.\n  Settled role judgments remain unchanged in `verificationAttempts`; corrections append a new attempt with its own input identity.\n- The whole verify execution holds one lease through suite execution, judge completion, and state persistence.\n  Other domain mutations are refused while it is live; status and event waiting remain available.\n- A first failed verify leaves the run active with the failed attempt and open findings.\n  Fix the actual cause; do not replace state to reset the budget.\n- Only the person\'s own words resolve a human confirmation, and an open explicit rejection makes delivery ineligible.\n- Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.\n\n## 1. Confirm Readiness And Start\n\nRead the complete PRD, relevant project instructions, likely source files, and `git status --short`.\nConfirm `status: ready` and `human_approval: approved`, or preserve existing conversational approval exactly.\nRead prerequisite decisions and risks before acting; pending deployment, payment, access, destructive action, or unresolved product policy cannot become an after-the-fact confirmation.\n\n```sh\nsasu implement start --prd agents/prd/<topic-slug>/prd.md\n```\n\nWhen approval is in conversation:\n\n```sh\nsasu implement start --prd agents/prd/<topic-slug>/prd.md \\\n  --allow-unapproved-prd \'<verbatim user approval>\'\n```\n\nStart seals the full PRD, static behavior references, source baseline, ownership, and required suite list from `agents/config.json` or repository detection.\nA missing suite is reported as no required tests, never as tests all passed.\nThe three-column Behaviors table contains `#`, `사용자가 관찰하는 행동`, and `결정`.\nRetired document and state formats fail with the expected contract and last supported commit; rewrite and approve a new document rather than migrating old results.\n\nIf start reports dirty judged paths, use the authorized attribution: `--dirty-attribution pre-existing`, `--dirty-attribution run-owned`, or the exact path-complete JSON map provided in its refusal.\nPreserve unrelated changes.\nFor a handoff with `DIRTY ATTRIBUTION`, pass the supplied value exactly; do not repeat the ownership interview in the Implementor pane.\nRead `workingRoot` from the response and implement in that directory.\n\n```sh\nsasu implement status\n```\n\nStatus reports current source identity, required suites, review state, open findings, human responses, delivery eligibility, and the next action.\nDo not create a Codex Goal unless the user explicitly requested goal tracking.\n\n## 2. Implement And Observe\n\nChoose a plan suited to the work, grouping changes by coherent product flow and risk boundary.\nRequirements are references for understanding scope, not mandatory execution units.\nUse focused tests while editing and observe actual product behavior where it matters.\nFor screens, drive the real flow and inspect the result; a build or function definition does not establish a working interaction.\n\nDelegate independent work when useful with explicit non-overlapping file ownership and the relevant requirements and decisions in each brief.\nWorkers return changes, observed checks, and evidence provenance; the Implementor coordinates run commands.\nThe CLI alone writes `state.json`.\nDo not add a required task document, flow-ID scheme, or requirement-by-requirement checklist.\n\nCollect final screenshots, recordings, API traces, database observations, or logs when the implementation is coherent.\nOne flow may support several requirements.\nRegister material actual evidence once at run level:\n\n```sh\nsasu implement artifact --kind screenshot --path docs/screenshots/example.png \\\n  --description \'<observed flow and limitations>\' --source \'<collector and method>\' \\\n  --collected-at \'<ISO capture time>\' --target \'<actual build or URL>\' --environment \'<environment>\'\n```\n\nFor several files, use `artifact --manifest <path>` with a JSON array of objects containing `kind`, `path`, and `description`, plus optional `source`, `collectedAt`, `target`, `environment`, and `requirementRefs` (an array of Bn strings).\n`--refs B1,B2` adds optional explanatory requirement references; it is never a coverage requirement.\nRegistration pins file identity and preserves provenance.\nMissing or modified registered files fail integrity checks.\nA source hash cannot establish that an external service, ignored fixture, database, or installed app is unchanged; explain the validity of earlier observations or recapture affected behavior.\nNo artifact is required merely because a keyword occurs in the PRD.\nThe source catalog lists paths, not file contents or read permission.\nWhen surrounding source is needed, one current shared `file` artifact may support many Bn references without a per-Bn mapping.\n\n## 3. Apply Authorized Contract Changes\n\nThe Implementor reports proposed requirement, decision, scope, profile, or source-intake changes to the user-facing coordinator.\nOnly human-authorized amendments change the sealed contract:\n\n```sh\nsasu implement amend --issuer human --approval \'<verbatim user approval>\' --reason \'<what changed and why>\'\n```\n\nExisting approval that covers the change is sufficient; do not ask the same permission again.\nAmend archives the superseded PRD, refreshes the snapshot and mirrored metadata, and invalidates the whole review\'s freshness.\n`--exclude-suite <S#,...>` is the only way to exclude a sealed suite; it preserves the command, its last result, and approval history.\nChanging config after start cannot quietly weaken required verification.\nHuman confirmations whose source changes retain their closure or replacement history.\nWait for a live verify lease to settle before any amendment or other mutation.\n\n## 4. Verify The Whole Result\n\nFreeze implementation and registered evidence, then run:\n\n```sh\nsasu implement verify\n```\n\nThe CLI records one a'... 9570 more characters,
+    expected: /Markdown checkboxes or a coverage ledger/,
+    operator: 'match',
+    diff: 'simple'
+  }

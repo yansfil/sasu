@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
-import { reviewResultSchema, type ReviewValidationContext } from "../judge/types";
+import { implementationReviewSchema } from "./review-contract";
 import type { ImplementContract } from "./contract";
-import type { ImplementState, RegisteredArtifact, RiskLaneResult, RoutineReviewRole, TrackedReviewFinding, VerificationRoundContext } from "./types";
+import type { ImplementationReviewContext, ImplementState, RegisteredArtifact, RiskLaneResult, RoutineReviewRole, TrackedReviewFinding, VerificationRoundContext } from "./types";
 
 const JSON_RULE = "Reply with ONLY the requested JSON object. Do not use prose or code fences.";
 export const IMPLEMENT_REVIEW_DIFF_MAX_CHARS = 120_000;
@@ -107,7 +107,7 @@ export interface ReviewPromptMaterial {
   /** Exact files actually made readable to this judge, including surroundings. */
   readablePaths: string[];
   /** Live smoke advertised section IDs rejected by its validator; share one exact vocabulary. */
-  referenceContext: ReviewValidationContext & { humanSources: Readonly<Record<string, string>> };
+  referenceContext: ImplementationReviewContext;
   priorFindings: readonly TrackedReviewFinding[];
   priorRiskResult?: RiskLaneResult | null;
   roundContext: VerificationRoundContext;
@@ -264,6 +264,12 @@ ${pathList(material.referenceContext.requirementRefs)}
 VALID EVIDENCE REFERENCES (use exact entries; catalog-only paths may identify an access gap, never unseen content; describe line locations only for bytes actually inspected):
 ${pathList(material.referenceContext.evidenceRefs)}
 
+REQUIRED FIDELITY REFERENCES (account for every entry exactly once, grouping shared grounds is allowed):
+${pathList(material.referenceContext.requiredRequirementRefs)}
+
+ACTUAL EVIDENCE REFERENCES (provided source, execution logs and observations; assess sufficiency from their contents):
+${pathList(material.referenceContext.actualEvidenceRefs)}
+
 ${roundSection(material, comprehensive)}`;
 }
 
@@ -276,14 +282,14 @@ Own complete intent and observable behavior fulfillment. Compare canonical user 
 Own concrete implementation, integration and error-path defects, including consequential design or maintainability problems with an identified failure or material impact on the approved result. Trace public callers through the relevant implementation. Cosmetic preferences, speculative improvements and optional restructuring are advisory, not blocking defects.`;
   return `${responsibility}
 Fidelity and Code review run independently on the same fixed contract, source and evidence. Do not assume the other role passed or delegate an unresolved concern to it. Your role changes emphasis, never the approved scope, evidence access or authority boundary.
-Read every requirement and accepted decision in the complete PRD and compare them with actual source, execution and observations. Return a whole-contract assessment and only the exceptions; never produce a per-requirement PASS array.
+Read every requirement and accepted decision in the complete PRD and compare them with actual source, execution and observations. Return grounded assessments and exception findings in one result; never produce a per-requirement PASS array.
 
 REVIEW RESPONSIBILITY:
 - Check Goal, Non-goals, Decisions, every Behaviors requirement, Technical structure and Risks together. Preserve original user intent, rejected alternatives and constraints.
 - Verify usable entrypoints and event/caller wiring, storage and recovery, failure handling, and existing behavior. Detect stubs, fixed responses, omitted small requirements and claims beyond the evidence.
 - For a source-defect finding, trace a concrete input from its public caller through dispatch to the failing expression. Check identifiers, index positions and control flow against the actual bytes before assigning affected requirementRefs; do not infer other failures from a nearby defect. Describe this counterexample within the finding, not as a separate proof artifact.
 - Missing approved behavior, a concrete implementation defect, material risk or insufficient evidence is a defect. Optional improvements after the contract is satisfied are advisory and do not block completion.
-- Assess code structure when it affects the approved contract, concrete correctness or maintainability; avoid unrelated taste, invented scope and mandatory coverage accounting.
+- Assess code structure when it affects the approved contract, concrete correctness or maintainability; avoid unrelated taste, invented scope and per-requirement test or artifact obligations.
 - Shared observations may support several requirements. Judge their sufficiency for the real boundary; never demand a separate artifact or judge call for each requirement.
 - Complete readable source can establish deterministic behavior when its public entrypoint, dispatch and relevant implementation are all present. Do not require runtime execution of every requirement merely because only some were exercised; an execution count or absent per-requirement test is not itself a defect.
 - Require further runtime evidence when a specific boundary cannot be established from the supplied source and observations, such as rendered UI, an external service, real persistence, permissions or environment-dependent behavior. Name that boundary, the approved requirement it affects, and what remains unknown. Keep actual required suite failures blocking; source reasoning never substitutes for a configured suite execution.
@@ -292,7 +298,7 @@ REVIEW RESPONSIBILITY:
 - Payment, destructive actions, deployment permission, unresolved product policy and needed access are prerequisites. Never convert an unresolved defect or unavailable evidence into later human confirmation.
 
 ${JSON_RULE}
-${reviewResultSchema()}
+${implementationReviewSchema(role)}
 
 ${sharedInput(material)}`;
 }

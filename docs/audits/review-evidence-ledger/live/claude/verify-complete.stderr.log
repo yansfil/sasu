@@ -1,0 +1,3 @@
+[implement:verify] running 1 required command(s)
+[implement:verify] PASS: npm test (1.0s)
+[implement:verify] verification PASS; 66.7s

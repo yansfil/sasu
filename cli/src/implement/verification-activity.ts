@@ -65,11 +65,12 @@ export function beginVerification(statePath: string, state: ImplementState, atte
   assertNoActiveVerification(state);
   if (state.status !== "active") throw new Error("verification requires an active run");
   if (state.verificationAttempts.some((entry) => entry.id === attempt.id)) throw new Error(`verification attempt ${attempt.id} already exists`);
+  if (attempt.prdSha256 !== state.prd.sha256) throw new Error("verification attempt PRD identity does not match the current sealed contract");
   state.verificationAttempts.push(attempt);
   state.activeVerification = {
     token: crypto.randomUUID(), attemptId: attempt.id, pid: process.pid,
     hostname: os.hostname(), startedAt: attempt.startedAt,
-    inputFingerprint: attempt.inputFingerprint, prdSha256: state.prd.sha256,
+    inputFingerprint: attempt.inputFingerprint, prdSha256: attempt.prdSha256,
     executionPids: [], pendingSpawns: 0,
   };
   persistState(statePath, state);

@@ -61,6 +61,7 @@ Usage:
   sasu implement risk     --accept --id <RF#> --evidence "<verbatim user approval>" [--slug <topic> | --state <path>] [--json]
   sasu implement risk     --non-convergent --issuer human --id <RF#> --approval "<verbatim user approval>" --reason "<why no round can fix it>" [--json]
   sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
+    (executes the required suite, then independent parallel Fidelity and Code reviews with recorded requirement/evidence grounds; high-risk review stays separate.)
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
   sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
     (state-changing commands accept --issuer <implementor|observer|human>, default implementor; issuer is an audited declaration, not authentication.

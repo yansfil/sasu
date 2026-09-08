@@ -9,9 +9,22 @@ import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapsh
 
 import { stateFixture, attemptFixture, humanFinding, AT } from "../helpers/implement-state.mjs";
 
+const REVIEW_CONTEXT = {
+  requirementRefs: ["B1"], requiredRequirementRefs: ["B1"],
+  evidenceRefs: ["B1", "Risks", "implementation.txt"], actualEvidenceRefs: ["implementation.txt"],
+  priorFindingIds: [], humanSources: { Risks: "The person confirms the visual result after implementation." },
+};
+function reviewFixture(overrides = {}) {
+  return { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0, verdict: "PASS",
+    result: { summary: "The public command preserves its input.", findings: [], priorDispositions: [],
+      assessments: [{ requirementRefs: ["B1"], conclusion: "satisfied", rationale: "The public implementation returns the original value.", evidenceRefs: ["implementation.txt"] }] },
+    judge: null, error: null, ...overrides };
+}
+
 test("retired states are refused before reading their fields with the last supporting commit", () => {
-  for (const version of ["v5", "v6", "v7", "v8", "v9"]) {
-    assert.throws(() => parseImplementState(JSON.stringify({ schema: `sasu.implement.state.${version}` })), /unsupported implement state schema.*sasu.implement.state.v9.*3f549dc/);
+  for (const version of ["v5", "v6", "v7", "v8", "v9", "v9.parallel-review"]) {
+    const lastSupport = version === "v9.parallel-review" ? "2b1f638dd587261be7e7b0e600db16657421971d" : "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
+    assert.throws(() => parseImplementState(JSON.stringify({ schema: `sasu.implement.state.${version}` })), new RegExp(`unsupported implement state schema.*sasu.implement.state.v10.*last supported by ${lastSupport}`));
   }
 });
 
@@ -158,9 +171,8 @@ test("a PASS must agree with the whole-review and mechanical results", () => {
 });
 
 test("candidate PASS requires both completed records and rejects the replaced review field", () => {
-  const lane = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0, verdict: "PASS",
-    result: { summary: "Full approved contract reviewed.", findings: [], priorDispositions: [] }, judge: null, error: null };
-  const state = stateFixture(undefined, { verificationAttempts: [attemptFixture({ phase: "complete", verdict: "PASS", reviews: { fidelity: lane, code: null } })] });
+  const lane = reviewFixture();
+  const state = stateFixture(undefined, { verificationAttempts: [attemptFixture({ phase: "complete", verdict: "PASS", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: lane, code: null } })] });
   assert.throws(() => parseImplementState(JSON.stringify(state)), /PASS contradicts/);
   state.verificationAttempts[0].reviews.code = { ...lane, invocationId: "J2" };
   assert.doesNotThrow(() => parseImplementState(JSON.stringify(state)));
@@ -173,10 +185,101 @@ test("human confirmations and rejections cannot be promoted by review", () => {
     assert.throws(() => parseImplementState(JSON.stringify(stateFixture(undefined, { findings: [humanFinding({ status })] }))), /human/);
   }
   const finding = humanFinding({ responses: [{ at: AT, response: "rejected", evidence: "TEST-FIXTURE: reject this result" }] });
-  const review = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0, verdict: "PASS", result: { summary: "Full review complete", findings: [], priorDispositions: [] }, judge: null, error: null };
-  const completed = { findings: [finding], verificationAttempts: [attemptFixture({ verdict: "PASS", reviews: { fidelity: review, code: structuredClone(review) } })], completion: { fingerprint: "a".repeat(64), completedAt: AT, receiptPath: "agents/receipt.json", implementationResultPath: "agents/result.md" } };
+  const review = reviewFixture();
+  const completed = { findings: [finding], verificationAttempts: [attemptFixture({ verdict: "PASS", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: review, code: structuredClone(review) } })], completion: { fingerprint: "a".repeat(64), completedAt: AT, receiptPath: "agents/receipt.json", implementationResultPath: "agents/result.md" } };
   assert.doesNotThrow(() => parseImplementState(JSON.stringify(stateFixture(undefined, { ...completed, status: "complete-pending-human" }))));
   assert.throws(() => parseImplementState(JSON.stringify(stateFixture(undefined, { ...completed, status: "complete" }))), /contradicts human findings/);
+});
+
+test("stored reviews are revalidated against their own pinned contract and evidence", () => {
+  const baseline = stateFixture(undefined, { verificationAttempts: [attemptFixture({ reviewContext: REVIEW_CONTEXT, reviews: { fidelity: reviewFixture(), code: null } })] });
+  for (const [mutate, reason] of [
+    [s => s.verificationAttempts[0].reviewContext = null, /pinned reviewContext/],
+    [s => delete s.verificationAttempts[0].prdSha256, /prdSha256/],
+    [s => delete s.verificationAttempts[0].reviews.fidelity.result.assessments, /assessments/],
+    [s => s.verificationAttempts[0].reviews.fidelity.result.assessments = [], /B1|assessments/],
+    [s => s.verificationAttempts[0].reviews.fidelity.result.assessments[0].evidenceRefs = ["invented.log"], /evidenceRefs/],
+    [s => s.verificationAttempts[0].reviews.fidelity.result.findings.push({ kind: "human-confirmation", requirementRefs: [], evidenceRefs: ["Risks"], problem: "Confirm the result.", nextAction: "Obtain confirmation.", human: { sourceRef: "Risks", quote: "Invented user approval", timing: "post-completion" } }), /quote/],
+  ]) {
+    const changed = structuredClone(baseline); mutate(changed);
+    assert.throws(() => parseImplementState(JSON.stringify(changed)), reason);
+  }
+  baseline.prd.sha256 = "b".repeat(64);
+  baseline.requirements = [{ id: "B2", behavior: "The amended contract adds a different value.", decisionIds: [] }];
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(baseline)), "amendment cannot reinterpret a prior review under the replacement contract");
+});
+
+test("unresolved assessments cannot be promoted to PASS or a complete result", () => {
+  const lane = reviewFixture({ verdict: "FAIL" });
+  lane.result.assessments[0].conclusion = "unresolved";
+  lane.result.assessments[0].rationale = "The implementation never returns the requested value.";
+  lane.result.findings = [{ kind: "defect", requirementRefs: ["B1"], evidenceRefs: ["implementation.txt"], problem: "The requested value is absent.", nextAction: "Return the requested value." }];
+  const state = stateFixture(undefined, { verificationAttempts: [attemptFixture({ phase: "complete", verdict: "FAIL", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: lane, code: reviewFixture() } })] });
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(state)));
+  lane.verdict = "PASS";
+  assert.throws(() => parseImplementState(JSON.stringify(state)), /PASS/);
+  lane.verdict = "FAIL";
+  state.status = "complete";
+  state.completion = { fingerprint: "a".repeat(64), completedAt: AT, receiptPath: "agents/receipt.json", implementationResultPath: "agents/result.md" };
+  assert.throws(() => parseImplementState(JSON.stringify(state)), /complete.*unresolved/);
+});
+
+test("pending human assessments retain their finding until the human confirms", () => {
+  const human = humanFinding({ requirementRefs: ["B1"] });
+  const lane = reviewFixture();
+  lane.result.assessments[0].conclusion = "pending-human";
+  lane.result.findings = [structuredClone(human)];
+  const state = stateFixture(undefined, { status: "complete-pending-human", findings: [human],
+    verificationAttempts: [attemptFixture({ phase: "complete", verdict: "PASS", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: lane, code: reviewFixture() } })],
+    completion: { fingerprint: "a".repeat(64), completedAt: AT, receiptPath: "agents/receipt.json", implementationResultPath: "agents/result.md" } });
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(state)));
+  const missing = structuredClone(state); missing.findings = []; missing.status = "complete";
+  assert.throws(() => parseImplementState(JSON.stringify(missing)), /pending-human.*recorded human finding/);
+  state.status = "complete";
+  assert.throws(() => parseImplementState(JSON.stringify(state)), /contradicts human findings/);
+  human.status = "confirmed";
+  human.responses.push({ at: AT, response: "confirmed", evidence: "TEST-FIXTURE: the human confirmed the result." });
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(state)));
+  assert.equal(lane.result.assessments[0].conclusion, "pending-human", "confirmation never rewrites the settled assessment");
+});
+
+test("persistence preserves every historical verdict and appends correction attempts", (t) => {
+  const root = scratchDir("sasu-store-history-");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const statePath = path.join(root, "agents/runs/fixture/state.json");
+  const original = attemptFixture({ phase: "complete", verdict: "ERROR", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: reviewFixture(), code: reviewFixture({ invocationId: "J2", verdict: "ERROR", result: null, error: { code: "judge-failed", message: "Review did not finish." } }) } });
+  persistState(statePath, stateFixture(root, { verificationAttempts: [original, attemptFixture({ id: "V2", phase: "complete", verdict: "ERROR" })] }));
+  const before = fs.readFileSync(statePath, "utf8");
+  for (const mutate of [
+    s => s.verificationAttempts.pop(),
+    s => s.verificationAttempts.reverse(),
+    s => s.verificationAttempts[0].id = "replacement",
+    s => s.verificationAttempts[0].inputFingerprint = "b".repeat(64),
+    s => s.verificationAttempts[0].sourceFingerprint = "b".repeat(64),
+    s => s.verificationAttempts[0].prdSha256 = "b".repeat(64),
+    s => s.verificationAttempts[0].inputManifest.evidence.push({ path: "invented.log", sha256: "b".repeat(64) }),
+    s => s.verificationAttempts[0].intentInput.routing = "full-qa-log",
+    s => s.verificationAttempts[0].startedAt = "2026-09-09T00:00:00.000Z",
+    s => s.verificationAttempts[0].reviewContext.evidenceRefs.push("invented.log"),
+    s => s.verificationAttempts[0].reviews.fidelity.result.summary = "A revised judgment",
+    s => s.verificationAttempts[0].reviews.fidelity.judge = { backend: "rewritten" },
+    s => s.verificationAttempts[0].reviews.code.verdict = "PASS",
+    s => s.verificationAttempts[0].reviews.code.error = null,
+    s => s.verificationAttempts[0].reviews.code = null,
+    s => s.verificationAttempts[0].durationMs = 99,
+  ]) {
+    const state = loadState(root, { state: statePath }).state; mutate(state);
+    assert.throws(() => persistState(statePath, state), /immutable|append-only/);
+    assert.equal(fs.readFileSync(statePath, "utf8"), before, "rejected history edits cannot touch the durable record");
+  }
+  const corrected = loadState(root, { state: statePath }).state;
+  corrected.prd.sha256 = "b".repeat(64);
+  corrected.requirements = [{ id: "B2", behavior: "The amended contract preserves another value.", decisionIds: [] }];
+  corrected.verificationAttempts.push(attemptFixture({ id: "V3", prdSha256: corrected.prd.sha256 }));
+  persistState(statePath, corrected);
+  const saved = loadState(root, { state: statePath }).state;
+  assert.deepEqual(saved.verificationAttempts[0], original);
+  assert.equal(saved.verificationAttempts[2].prdSha256, corrected.prd.sha256);
 });
 
 test("CAS rejects a stale close without publishing its receipt", (t) => {

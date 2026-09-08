@@ -7,7 +7,7 @@ import { resolveMechanicalCommands } from "./mechanical";
 import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
 import { loadState } from "./implement/store";
-import { IMPLEMENT_SCHEMA, RETIRED_IMPLEMENT_SUPPORT_COMMIT } from "./implement/types";
+import { IMPLEMENT_SCHEMA, retiredImplementSupportCommit } from "./implement/types";
 import { currentSessionId } from "./runs/session";
 
 const skillContract: {
@@ -74,7 +74,7 @@ export function runIntegritySection(projectRoot: string, sessionId: string | nul
       } catch (error) {
         if (raw?.["status"] === "active" && raw["schema"] !== IMPLEMENT_SCHEMA) {
           incompatibleActive.push(
-            `incompatible active run: ${entry.name} status=active schema=${String(raw["schema"] ?? "missing")} installed-schema=${IMPLEMENT_SCHEMA}; last supported commit: ${RETIRED_IMPLEMENT_SUPPORT_COMMIT}; use that matching CLI to inspect or retire the old run, or start a new slug`,
+            `incompatible active run: ${entry.name} status=active schema=${String(raw["schema"] ?? "missing")} installed-schema=${IMPLEMENT_SCHEMA}; last supported commit: ${retiredImplementSupportCommit(raw["schema"])}; use that matching CLI to inspect or retire the old run, or start a new slug`,
           );
         } else {
           malformed.push(`malformed run state: ${entry.name} (${error instanceof Error ? error.message : String(error)})`);

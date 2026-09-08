@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "originalEntryCount": 846,
+  "changedOriginalEntries": [],
+  "additions": [
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/final-build.log",
+      "sha256": "5d2282f844c955c6e9508aeb69194bdb0f7dbadadab1d62142cd7ed15addac1d"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/final-e2e.log",
+      "sha256": "b8b8d43a21c8ddcb10fa4acf9c0ce188611fe3d06116b12384948ba6431e5ce9"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/final-frozen-manifest.json",
+      "sha256": "54bcedaf002f1f1d9a5ec80cce2d8d0c34131082a5b0a4dd0092e287f23e31cb"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/final-noemit.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/final-root.log",
+      "sha256": "079e55150360ef9f1896e8962445a7c804c140fe9f9a68d15e632e7f1e100b24"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/final-unit.log",
+      "sha256": "1a040a184afc8fcda5bdea98e8f01a5f029fe6237e98182ce997fd875aba2cf6"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/checks/sequential-checks.json",
+      "sha256": "203faed0e0d03c5290be7dedfd4067968ac0c96de15d1087bd63dbaab5a25c3b"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/evidence-hashes.json",
+      "sha256": "bd9c564260f1943a04b0684c20e91fbdd7b945d29c41db7b84685849e79f0f27"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/failures/frozen-manifest.json",
+      "sha256": "22ce7865a502dffbfb205786b1367a089abcf92f0f94f706f752422776a2a172"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/failures/full-e2e.log",
+      "sha256": "9bef73dd566c5c0cd78190023e5f6eb798349f6c132a7684986ea58837d84ab8"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/failures/full-root.log",
+      "sha256": "e2ca16a2c7fdbb7e186eb736f4dbd4e17a0d572275b044d18b8129beb340ca7b"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/failures/full-unit.log",
+      "sha256": "91ddbeb0066b2ba3c16894e1a11d4696d47227a65a41c11e0da686c7a3dd3390"
+    },
+    {
+      "path": "docs/audits/review-evidence-ledger/release.md",
+      "sha256": "de15211f9fbdd1b7b34fd68306bcc8b9c54c583912a33254a0ff90ea3e8b2e3a"
+    }
+  ],
+  "reason": "Every pre-launch source/build entry is unchanged. Only release audit records were added; these are not runtime inputs."
+}

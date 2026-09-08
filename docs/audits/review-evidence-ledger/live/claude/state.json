@@ -1,0 +1,901 @@
+{
+  "schema": "sasu.implement.state.v10",
+  "status": "complete",
+  "topicSlug": "fixture",
+  "projectRoot": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude",
+  "worktree": null,
+  "runDir": "agents/runs/fixture",
+  "prdPath": "agents/prd/fixture/prd.md",
+  "prd": {
+    "sha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811",
+    "snapshotPath": "agents/runs/fixture/prd.md",
+    "status": "ready",
+    "approval": {
+      "source": "frontmatter",
+      "evidence": "human_approval: approved"
+    },
+    "reviewProfile": "standard",
+    "reviewRationale": "CLI regression fixture",
+    "sourceIntake": "current conversation",
+    "judge": {
+      "required": false,
+      "skippedReason": "judge not run: no user utterances to judge against (source_intake is \"current conversation\", not an interview qa-log)",
+      "gapAudit": null,
+      "spec": null
+    }
+  },
+  "initialSource": {
+    "head": "5ec7f5cf7dc66beddee55034e2abfc825c337f42",
+    "entries": [
+      {
+        "path": ".gitignore",
+        "state": "present",
+        "sha256": "0cb858583935cdf7532bddee32d90d2a73f740ff80b6f4cb56dfd939370a2531"
+      },
+      {
+        "path": "package.json",
+        "state": "present",
+        "sha256": "e79face87dcf2dbd00ec9719c8a469107021f84fe34826f665fd66012eacd5d0"
+      },
+      {
+        "path": "suite.mjs",
+        "state": "present",
+        "sha256": "42e34804a31fbaa7381719d75149a7d416c8654c70b26fa473cec7f1e8a91b1f"
+      }
+    ],
+    "digest": "630a90db94f949c5752397db3a718d5c5324fdb1ee193fcfce2b73203a41cc48"
+  },
+  "baselineAttribution": {
+    "disposition": "clean",
+    "paths": [],
+    "baselineDigest": "630a90db94f949c5752397db3a718d5c5324fdb1ee193fcfce2b73203a41cc48",
+    "head": "5ec7f5cf7dc66beddee55034e2abfc825c337f42"
+  },
+  "ownerSessionId": null,
+  "adoptions": [],
+  "requirements": [
+    {
+      "id": "B1",
+      "behavior": "The exported command(1) returns the number 1.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B2",
+      "behavior": "The exported command(2) returns the number 2.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B3",
+      "behavior": "The exported command(3) returns the number 3.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B4",
+      "behavior": "The exported command(4) returns the number 4.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B5",
+      "behavior": "The exported command(5) returns the number 5.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B6",
+      "behavior": "The exported command(6) returns the number 6.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B7",
+      "behavior": "The exported command(7) returns the number 7.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B8",
+      "behavior": "The exported command(8) returns the number 8.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B9",
+      "behavior": "The exported command(9) returns the number 9.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B10",
+      "behavior": "The exported command(10) returns the number 10.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B11",
+      "behavior": "The exported command(11) returns the number 11.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B12",
+      "behavior": "The exported command(12) returns the number 12.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B13",
+      "behavior": "The exported command(13) returns the number 13.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B14",
+      "behavior": "The exported command(14) returns the number 14.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B15",
+      "behavior": "The exported command(15) returns the number 15.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B16",
+      "behavior": "The exported command(16) returns the number 16.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B17",
+      "behavior": "The exported command(17) returns the number 17.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B18",
+      "behavior": "The exported command(18) returns the number 18.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B19",
+      "behavior": "The exported command(19) returns the number 19.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B20",
+      "behavior": "The exported command(20) returns the number 20.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B21",
+      "behavior": "The exported command(21) returns the number 21.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B22",
+      "behavior": "The exported command(22) returns the number 22.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B23",
+      "behavior": "The exported command(23) returns the number 23.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B24",
+      "behavior": "The exported command(24) returns the number 24.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B25",
+      "behavior": "The exported command(25) returns the number 25.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B26",
+      "behavior": "The exported command(26) returns the number 26.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B27",
+      "behavior": "The exported command(27) returns the number 27.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B28",
+      "behavior": "The exported command(28) returns the number 28.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B29",
+      "behavior": "The exported command(29) returns the number 29.",
+      "decisionIds": [
+        "D-01"
+      ]
+    },
+    {
+      "id": "B30",
+      "behavior": "The exported command(30) returns the number 30.",
+      "decisionIds": [
+        "D-01"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "kind": "advisory",
+      "requirementRefs": [],
+      "problem": "suite.mjs (per the harness log) only exercises command(1); B2-B30 are verified here by source reading, not by an executed regression test, so future edits to the range/return logic would not be caught automatically.",
+      "evidenceRefs": [
+        "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+      ],
+      "nextAction": "Optionally expand suite.mjs to assert command(n) === n for n = 1..30 to give the test suite the same coverage the source review already provides.",
+      "id": "F1",
+      "originAttemptId": "d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8",
+      "status": "open",
+      "history": [
+        {
+          "at": "2026-09-08T13:25:16.837Z",
+          "attemptId": "d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8",
+          "status": "open",
+          "reason": "suite.mjs (per the harness log) only exercises command(1); B2-B30 are verified here by source reading, not by an executed regression test, so future edits to the range/return logic would not be caught automatically.",
+          "evidenceRefs": [
+            "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+          ]
+        }
+      ],
+      "responses": []
+    },
+    {
+      "kind": "advisory",
+      "requirementRefs": [
+        "B2",
+        "B3",
+        "B4",
+        "B5",
+        "B6",
+        "B7",
+        "B8",
+        "B9",
+        "B10",
+        "B11",
+        "B12",
+        "B13",
+        "B14",
+        "B15",
+        "B16",
+        "B17",
+        "B18",
+        "B19",
+        "B20",
+        "B21",
+        "B22",
+        "B23",
+        "B24",
+        "B25",
+        "B26",
+        "B27",
+        "B28",
+        "B29",
+        "B30"
+      ],
+      "problem": "The suite.mjs test run (per the log: 'Actual required suite: command(1) returned 1. This suite did not execute the other requirements.') only asserts command(1); a future edit to command() could silently break B2-B30 with no automated failure signal, even though the current source is correct for all of them.",
+      "evidenceRefs": [
+        "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log",
+        "src/public.mjs"
+      ],
+      "nextAction": "Optionally extend suite.mjs to assert command(n) === n for n = 1..30 so regressions are caught mechanically instead of relying solely on source inspection.",
+      "id": "F2",
+      "originAttemptId": "d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8",
+      "status": "open",
+      "history": [
+        {
+          "at": "2026-09-08T13:25:16.837Z",
+          "attemptId": "d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8",
+          "status": "open",
+          "reason": "The suite.mjs test run (per the log: 'Actual required suite: command(1) returned 1. This suite did not execute the other requirements.') only asserts command(1); a future edit to command() could silently break B2-B30 with no automated failure signal, even though the current source is correct for all of them.",
+          "evidenceRefs": [
+            "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log",
+            "src/public.mjs"
+          ]
+        }
+      ],
+      "responses": []
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "command-log",
+      "path": "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log",
+      "description": "mechanical PASS: npm test",
+      "sha256": "bd2def5cdfc26dc41b550da53a467baa9ade3d31896b49010c9919e5166b37fd",
+      "bytes": 283,
+      "registeredAt": "2026-09-08T13:24:11.494Z",
+      "observedAt": "2026-09-08T13:24:11.494Z",
+      "provenance": "CLI executed npm test in .",
+      "command": "npm test",
+      "cwd": ".",
+      "exitCode": 0
+    }
+  ],
+  "verificationAttempts": [
+    {
+      "id": "d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8",
+      "inputFingerprint": "ae8739c8f8b23f747ff1f6894f7c6f23618b957d4674004341636bcd6649b7cc",
+      "prdSha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811",
+      "reviewContext": {
+        "requiredRequirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30"
+        ],
+        "actualEvidenceRefs": [
+          "src/public.mjs",
+          "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        ],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01",
+          ".gitignore",
+          "package.json",
+          "src/public.mjs",
+          "suite.mjs",
+          "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        ],
+        "priorFindingIds": [],
+        "humanSources": {
+          "Decisions": "Preserve every value in the approved request.\nThe user requested all values.",
+          "Risks": "None.",
+          "instruction": "- D-01: Preserve every value in the approved request. (근거: The user requested all values.)",
+          "D-01": "Preserve every value in the approved request."
+        }
+      },
+      "sourceFingerprint": "2f99745810de1553550ac2a11307c648167bebee89cd4552e69c87959039217f",
+      "inputManifest": {
+        "source": [
+          {
+            "path": "src/public.mjs",
+            "state": "present",
+            "sha256": "b170d68c824ab87596160d7a2b2583c6f95146044fdf84ed3787cfde145f90b0"
+          }
+        ],
+        "evidence": []
+      },
+      "roundContext": {
+        "priorAttemptId": null,
+        "changedPaths": [],
+        "newEvidence": [],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01",
+          ".gitignore",
+          "package.json",
+          "src/public.mjs",
+          "suite.mjs",
+          "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        ]
+      },
+      "intentInput": {
+        "routing": "decisions",
+        "contentSha256": "36614b5cb8da878163ce929f5301b56ebe59d1c07cce33be2a9dcc38a1f99ccb"
+      },
+      "startedAt": "2026-09-08T13:24:10.317Z",
+      "finishedAt": "2026-09-08T13:25:16.986Z",
+      "durationMs": 66669,
+      "phase": "complete",
+      "verdict": "PASS",
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-08T13:24:10.522Z",
+          "finishedAt": "2026-09-08T13:24:11.494Z",
+          "durationMs": 972,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        }
+      ],
+      "reviews": {
+        "fidelity": {
+          "invocationId": "1af9f834-3b82-410f-9055-e7a894cfcee4",
+          "startedAt": "2026-09-08T13:24:11.850Z",
+          "finishedAt": "2026-09-08T13:25:16.835Z",
+          "durationMs": 64985,
+          "verdict": "PASS",
+          "result": {
+            "summary": "The delivered command(n) in src/public.mjs is a single deterministic expression: for any integer n in [1,30] it returns n unchanged, and returns undefined otherwise. Because the full source of the sole entrypoint is inlined and contains no branching per value beyond the range check, static inspection deterministically establishes B1 through B30 (command(k) returns k for every k in 1..30) and satisfies D-01's intent of preserving the requested value. The harness suite only executed command(1) and returned 1, consistent with but not itself proof of the other 29 behaviors; per the review rules, complete readable source is sufficient to close the remaining behaviors since no per-requirement runtime execution is mandated. No prior open findings exist to disposition.",
+            "findings": [
+              {
+                "kind": "advisory",
+                "requirementRefs": [],
+                "problem": "suite.mjs (per the harness log) only exercises command(1); B2-B30 are verified here by source reading, not by an executed regression test, so future edits to the range/return logic would not be caught automatically.",
+                "evidenceRefs": [
+                  "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+                ],
+                "nextAction": "Optionally expand suite.mjs to assert command(n) === n for n = 1..30 to give the test suite the same coverage the source review already provides."
+              }
+            ],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "src/public.mjs defines the sole exported entrypoint as `export function command(n) { if (Number.isInteger(n) && n >= 1 && n <= 30) return n; }`. For every integer n from 1 to 30 the guard condition is true and the function returns n itself, so command(k) === k for all k in 1..30, matching B1-B30 exactly and fulfilling D-01's requirement to preserve the requested value. The harness log confirms command(1) actually returned 1 at runtime, and the remaining 29 cases follow deterministically from the identical, branch-free return path in the same inlined function body.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+                ]
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T13:24:11.850Z",
+            "backend": "claude",
+            "model": "claude-sonnet-5",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:fidelity",
+            "durationMs": 64985,
+            "attempts": 2,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 2,
+              "outputTokens": 2447,
+              "cachedInputTokens": 5931
+            },
+            "retries": [
+              {
+                "at": "2026-09-08T13:24:11.850Z",
+                "backend": "claude",
+                "model": "claude-sonnet-5",
+                "code": "judge-invalid-output",
+                "reason": "invalid-contract",
+                "detail": "priorDispositions must be an array",
+                "durationMs": 37962
+              }
+            ]
+          },
+          "error": null
+        },
+        "code": {
+          "invocationId": "71292ad7-b22e-479e-bf3c-4ac56eff4f93",
+          "startedAt": "2026-09-08T13:24:11.850Z",
+          "finishedAt": "2026-09-08T13:24:46.301Z",
+          "durationMs": 34451,
+          "verdict": "PASS",
+          "result": {
+            "summary": "src/public.mjs exports command(n) = n for integers 1..30 (undefined otherwise), which is a complete, deterministic implementation of D-01 and all of B1-B30. The harness only executed command(1) via suite.mjs, but the full source is short and unambiguous enough to establish the remaining 29 behaviors by inspection: the single guard `Number.isInteger(n) && n >= 1 && n <= 30` returns n for every integer 1 through 30 inclusive, covering B2-B30 without needing separate runtime proof. No network service, second state store, or other non-goal violation is present. The only gap is that suite.mjs (not allowlisted, but its behavior is disclosed in the log) exercises only B1, leaving B2-B30 without regression protection going forward — an advisory maintainability concern, not a contract defect given the source is fully readable and trivially correct.",
+            "findings": [
+              {
+                "kind": "advisory",
+                "requirementRefs": [
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "problem": "The suite.mjs test run (per the log: 'Actual required suite: command(1) returned 1. This suite did not execute the other requirements.') only asserts command(1); a future edit to command() could silently break B2-B30 with no automated failure signal, even though the current source is correct for all of them.",
+                "evidenceRefs": [
+                  "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log",
+                  "src/public.mjs"
+                ],
+                "nextAction": "Optionally extend suite.mjs to assert command(n) === n for n = 1..30 so regressions are caught mechanically instead of relying solely on source inspection."
+              }
+            ],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "D-01",
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "src/public.mjs contains the complete, single-expression implementation `export function command(n) { if (Number.isInteger(n) && n >= 1 && n <= 30) return n; }`. For every integer n in [1,30] the guard is true and n is returned unchanged, which deterministically satisfies B1 through B30 and preserves every requested value per D-01. The npm test run (exit 0) empirically confirms command(1) === 1 at runtime; the remaining values are established by direct reading of the same short, branch-free function body rather than separate execution, which is sufficient given the entrypoint and full implementation are both present and inspected.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+                ]
+              }
+            ]
+          },
+          "judge": {
+            "at": "2026-09-08T13:24:11.850Z",
+            "backend": "claude",
+            "model": "claude-sonnet-5",
+            "profile": "routine",
+            "effort": "xhigh",
+            "purpose": "implement:code",
+            "durationMs": 34451,
+            "attempts": 1,
+            "outcome": "ok",
+            "usage": {
+              "inputTokens": 2,
+              "outputTokens": 2995,
+              "cachedInputTokens": 0
+            }
+          },
+          "error": null
+        }
+      },
+      "risk": null,
+      "error": null
+    }
+  ],
+  "budgetGrants": [],
+  "deviations": [],
+  "riskFindings": [],
+  "events": [
+    {
+      "id": 1,
+      "at": "2026-09-08T13:25:16.986Z",
+      "kind": "verify",
+      "actor": "implementor",
+      "subject": null,
+      "summary": "verify PASS (d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8)"
+    },
+    {
+      "id": 2,
+      "at": "2026-09-08T13:25:17.348Z",
+      "kind": "finalize",
+      "actor": "implementor",
+      "subject": null,
+      "summary": "run closed complete"
+    }
+  ],
+  "verbs": [
+    {
+      "id": 1,
+      "at": "2026-09-08T13:25:16.986Z",
+      "verb": "verify",
+      "issuer": "implementor",
+      "target": null,
+      "reason": "PASS",
+      "outcome": "accepted",
+      "rejection": null
+    },
+    {
+      "id": 2,
+      "at": "2026-09-08T13:25:17.348Z",
+      "verb": "finalize",
+      "issuer": "implementor",
+      "target": null,
+      "reason": "complete",
+      "outcome": "accepted",
+      "rejection": null
+    }
+  ],
+  "amendments": [],
+  "evidenceReplacements": [],
+  "suite": {
+    "sealedAt": "2026-09-08T13:24:09.928Z",
+    "commands": [
+      {
+        "id": "S1",
+        "command": "npm test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "."
+      }
+    ],
+    "exclusions": [],
+    "results": [
+      {
+        "commandId": "S1",
+        "attemptId": "d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8",
+        "startedAt": "2026-09-08T13:24:10.522Z",
+        "finishedAt": "2026-09-08T13:24:11.494Z",
+        "durationMs": 972,
+        "exitCode": 0,
+        "mutatedTree": false,
+        "status": "GREEN",
+        "logPath": "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+      }
+    ]
+  },
+  "escalations": [],
+  "retirement": null,
+  "completion": {
+    "fingerprint": "117ab3750a4006c53e1ca51cde71e11fdf3fc184ef236a45f6959fdf845c48ee",
+    "completedAt": "2026-09-08T13:25:17.347Z",
+    "receiptPath": "agents/runs/fixture/receipt.json",
+    "implementationResultPath": "agents/runs/fixture/implementation-result.md"
+  },
+  "createdAt": "2026-09-08T13:24:09.928Z",
+  "updatedAt": "2026-09-08T13:25:17.350Z"
+}

@@ -1,0 +1,175 @@
+
+> sasu-cli@0.10.0 test:e2e
+> node --test "test/e2e/*.test.mjs"
+
+✔ AC1: a rerun on an unchanged document returns a subset of the open findings and no new id (574.003666ms)
+✔ AC2: a lane whose Decision Register rows changed may add a finding; an unchanged lane may not (239.847875ms)
+✔ AC3: a state file written by this CLI carries no round counter and no review phase (299.90875ms)
+✔ AC3: a legacy state file carrying the retired review lifecycle fails loudly instead of being coerced (422.713209ms)
+✔ AC4: two open requiresHuman findings become one NEEDS_HUMAN bundle, and the user's answer seals PASS with no judge call (850.720458ms)
+✔ AC4: a mixed open set blocks instead of asking the user; the human question waits for the agent-fixable one (246.542958ms)
+✔ AC5: a goal-scope lane P1 with every other lane empty is a PASS with the finding in warnings (217.999917ms)
+✔ AC6: a data-tech lane requiresHuman finding joins the human bundle and is not a PASS (143.53975ms)
+✔ AC6: a data-tech lane P2 marked requiresHuman is promoted into the bundle rather than warned away (195.429083ms)
+✔ AC7: after a sealed PASS, a Q anchor line, an Audit History block, and the status value do not make the gate STALE (1028.575ms)
+✔ AC8: after a sealed PASS, one changed Decision Register decision cell makes the gate STALE (472.605ms)
+✔ gap-audit reopen records operational evidence without manufacturing a Raw Q&A answer or staling the sibling gate (1151.954416ms)
+✔ spec reopen records operational evidence without manufacturing a Raw Q&A answer or staling the sibling gate (1074.3735ms)
+✔ a substantive reopen request reaches the judge and its missing normalization can block once without unbounded new findings (403.216375ms)
+✔ AC11: gate reopen is refused before any verdict and records nothing (71.005084ms)
+✔ AC9: a gap-audit run records itself in the qa-log's Audit History, moves the status, and writes nothing else (224.859584ms)
+✔ AC9: a judge error and a spec run are recorded too; spec never moves the qa-log status (222.276958ms)
+✔ AC14: a PRD citing a Q turn with an empty answer is blocked by prd-cited-question-unanswered at $0 (135.073ms)
+✔ AC14: a PRD citing an answered Q turn passes the rule, and a quarter is not a citation (71.581875ms)
+✔ an Implementor role refuses specification gates before setup writes, and an unmarked session recovers (806.075375ms)
+✔ gate gap-audit stops on a human gap then PASSes when the log is complete (516.371292ms)
+✔ gate spec BLOCKs on a fidelity gap and records the artifact (98.148ms)
+✔ delegated spec judges receive the later invocation and the source cannot be replaced (523.056542ms)
+✔ hard block: override without --reason is rejected; with reason it unblocks and records a deviation (345.892667ms)
+✔ fail-closed: a missing judge binary keeps the gate blocked with cause and override path (111.513667ms)
+✔ fail-closed: invalid judge replies surface as a blocked ERROR run naming the lanes, not a pass (97.292542ms)
+✔ retry budget: a judge-error loop spends no budget and terminates on its own cause (463.6225ms)
+✔ fan-out: one blocking lane blocks the merged gate and per-lane records land in the artifact (205.670875ms)
+✔ fan-out: judge.fanout=false restores the single-judge path with exactly one call (105.866334ms)
+✔ fan-out: spec gate runs its two review-axis lanes (172.548959ms)
+✔ fan-out rerun: a new lane finding on an unchanged document is discarded, and the resolved set seals (318.97125ms)
+✔ sealed PASS: input drift refuses automatic re-judgment and explicit reopen starts a fresh review (1034.326583ms)
+✔ freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gate status (691.584375ms)
+✔ gate status reports all three gates and the judge call count (198.246458ms)
+✔ prelint: a structural qa-log defect blocks at $0 - no judge call, no attempt, no state (192.722167ms)
+✔ prelint: a blocked judge attempt count survives a later prelint failure untouched (185.305083ms)
+✔ prelint: spec gate lints the PRD at its entrance (84.043583ms)
+✔ prelint: an unreadable document path fails closed with a cause and no judge call (AC7) (78.692417ms)
+✔ json contract: gate results carry contractVersion and a prelint key separate from judge findings (297.793916ms)
+✔ json contract: doctor, status, and override all emit contractVersion-tagged JSON (513.831ms)
+✔ the duplicate PRD verify completion path is explicitly retired (136.999375ms)
+✔ delegated run: --assume-human-findings converts non-P0 human findings to a recorded ledger and proceeds (141.39875ms)
+✔ delegated run: a stored `gate delegate` record applies without the per-call flag (201.486875ms)
+✔ delegated run: the stored invocation cannot be replaced by a per-call placeholder (136.010833ms)
+✔ delegated run: a P0 human finding still blocks under --assume-human-findings (73.163958ms)
+✔ delegated run: empty --assume-human-findings evidence is refused before any judge call (73.12975ms)
+✔ a dual-backend auth failure's recovery is built from the failure record (741.994834ms)
+✔ only a human amendment reseals the full PRD and refreshes mirrored execution metadata (3721.571792ms)
+✔ the sealed suite survives config weakening and exclusion requires approval while retaining its failed result (1688.207ms)
+✔ routine success never resets the round budget while a distinct blocking risk stays open (3515.5025ms)
+✔ an explicit user grant preserves prior findings and extends the exhausted budget in the same run (1860.918583ms)
+✔ persistent backend errors terminate separately from implementation-fix rounds and permit a blocked receipt (2167.130916ms)
+✔ repeated identical pre-judge errors reach the harness bound and produce an honest blocked receipt (844.914ms)
+✔ high-risk and routine review execute concurrently on the same input with no duplicate suite (1320.321917ms)
+✔ accepted risk can release delivery while historical review failure remains honest and product defects remain blocking (1490.78925ms)
+✔ only a human non-convergence declaration permits early blocked closure and never accepts the risk (1006.819ms)
+✔ a current PASS becomes ineligible after source changes, including a previously finalized run (2681.291167ms)
+✔ a current PASS becomes ineligible after prd changes, including a previously finalized run (1928.054875ms)
+✔ a current PASS becomes ineligible after artifact-changed changes, including a previously finalized run (1459.148917ms)
+✔ a current PASS becomes ineligible after artifact-missing changes, including a previously finalized run (1316.301208ms)
+✔ missing or altered registered evidence stops review, while a replacement preserves history (933.757833ms)
+✖ artifact registration rejects self-referential and escaping symlink evidence (98.229666ms)
+✔ an absent prior disposition cannot silently resolve a defect, and a new unchanged-file omission is retained (1677.57425ms)
+✔ advice is recorded without an acceptance ceremony, while a top-level PASS cannot hide a defect (1330.433709ms)
+✔ review receives recorded conversational admission and exact human-source quotation boundaries (621.572ms)
+✔ post-completion human input remains open, rejection blocks delivery, explicit withdrawal restores it with history (1085.668417ms)
+✔ a prerequisite human judgment cannot be downgraded into deliverable pending-human (885.777125ms)
+✔ a human confirmation cannot refresh a completed result after source has changed (734.751375ms)
+✔ a change to the canonical interview invalidates review even when a prior spec gate selected decisions (766.848542ms)
+✔ a foreign session mutation needs recorded adoption before ownership changes (253.208208ms)
+✔ a confirmed human authority remains visible to the next full review and is not reopened by omission (933.408292ms)
+✔ the source catalog is metadata until one shared run artifact supplies exact unchanged source context (873.586375ms)
+✔ registered record-tree source cannot replace different current source in an isolated worktree (610.405792ms)
+✔ the whole verify lease refuses every domain mutation and merges their refusal history before releasing (6716.599042ms)
+✔ recovery terminates a dead owner's command group before a new verification can run (1112.021416ms)
+✔ two independently recorded reviews overlap on one full contract, evidence snapshot, suite and receipt (3048.703417ms)
+✔ missing Fidelity accounting is an error even when the Code reviewer passes and cannot earn a receipt (1146.825625ms)
+✔ a findings-only summary cannot substitute for either role's recorded grounds (1125.418833ms)
+✔ a settled role persists under the live lease, and its new defect survives a sibling error without closing prior findings (7440.154583ms)
+✔ identical findings share one stable identity, conflicting dispositions keep it open, and agreement after repair earns a receipt (1327.285208ms)
+✔ different defects citing the same requirement remain separate repair obligations (564.638583ms)
+✔ agreement between reviewers cannot close an explicit human prerequisite (860.765959ms)
+✔ a Behavior explicitly reserved for later human judgment retains pending grounds through confirmation (652.422583ms)
+✔ AC33: the solver runs read-only and the run's only write happens after it returns (750.590834ms)
+✔ AC33: what comes back is a diagnosis, and it is recorded as text (628.627ms)
+✔ AC33: a solver that returns anything but the three fields is not accepted (490.901042ms)
+✔ AC34: the replacement briefing carries the three artifacts and no conversation (563.514958ms)
+✔ AC34: with no herdr the reset is reported as the supervisor's to perform, not silently skipped (503.709ms)
+✔ AC35: a summon failure is recorded as a failed escalation and the implementor is not reset (512.895667ms)
+✔ AC35: the run-wide bound refuses the escalation past the constant (881.273875ms)
+✔ AC35: escalate needs a reason and a target that exists (502.017166ms)
+✔ AC35: the implementor may not summon its own replacement (361.6705ms)
+✔ await names which liveness probe it used, and refuses two answers to one question (506.624875ms)
+✔ AC41: once the bound is spent, status names the run's state and the move that is left (750.584ms)
+✔ AC43: the solver's input envelope and its output both hold their declared shape (746.431542ms)
+✔ thirty requirements receive grouped evidence grounds in independent reviews and the receipt (2671.070916ms)
+✔ a valid failed review stays active and repair appends a passing attempt without rewriting history (2542.110583ms)
+✔ a failed mandatory suite is an actual failed attempt and leaves the correction path active (1089.612916ms)
+✔ retired commands and old state schemas fail explicitly instead of replaying legacy proof (884.330792ms)
+✔ an empty source change is recorded as preflight failure rather than a successful review (373.491542ms)
+✔ a qa-log-backed PRD cannot start before both PRD review gates pass (113.415333ms)
+✔ dirty attribution and retire cover refusal, recovery, cross-session evidence, and released occupancy (940.177459ms)
+✔ dirty intake presents one operator question and commit-first produces a committed baseline (336.215959ms)
+✔ isolated starts carry source dirtiness and preserve its selected attribution (504.204333ms)
+✔ an unborn Git repository still requires attribution and keeps its files in the run-owned diff (646.398292ms)
+✔ worktree.enabled isolates the first run too (218.862834ms)
+✔ dirty worktree setup output is attributed before state and a refused provision is rolled back (461.219791ms)
+✔ a failure after worktree setup removes the unrecorded worktree and branch (235.254916ms)
+✔ a failed worktree rollback reports its cleanup failures (458.354292ms)
+✔ per-session pointers keep two sessions' bare commands on their own runs (558.254541ms)
+✔ a successful command that changes product source cannot earn a current review or receipt (617.319833ms)
+✔ a backend without bounded evidence access fails visibly instead of reviewing from unavailable source (601.723875ms)
+✔ question limit is persisted, surfaced at the boundary, and preserves an extra captured turn (924.480791ms)
+✔ a full interview turn syncs from the transcript and the gate prelint accepts the result (964.300417ms)
+✔ interview coherence is advisory: skips when thin, judges when seeded, never writes gate state (724.736458ms)
+✔ usage errors exit 2 and unknown subcommands are rejected (220.096959ms)
+✔ one full-contract review covers thirty requirements without outcomes per AC (640.856083ms)
+✔ actual required command failure prevents any judge call and cannot be skipped (754.779917ms)
+✔ repeated identical command runs once per attempt, and runs again on the next attempt (802.444208ms)
+✔ first defect stays open with stable ID and explicit resolution is required (1106.471292ms)
+✔ an unresolved defect cannot become a passing advisory on the next review (599.170584ms)
+✔ semantic static reruns refuse without spend; source and input changes allow a new review (645.826958ms)
+✔ registered shared evidence is hash-pinned and changed content stales PASS (421.46775ms)
+✔ missing, empty, binary, escaping and oversized evidence blocks before review (1258.596583ms)
+✔ shared captures actually execute and unavailable image access never becomes human PASS (238.050292ms)
+✔ run-wide Human Review remains conservative while every AC reaches review (254.451ms)
+✔ retired per-AC method contract is refused before mechanical execution (142.568ms)
+✔ an overall PASS string cannot conceal a defect in the new review contract (217.8285ms)
+ℹ tests 128
+ℹ suites 0
+ℹ pass 127
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18388.685708
+
+✖ failing tests:
+
+test at test/e2e/implement-defects.test.mjs:47:1
+✖ artifact registration rejects self-referential and escaping symlink evidence (98.229666ms)
+  AssertionError [ERR_ASSERTION]: {
+    "contractVersion": "0.10.0",
+    "ok": false,
+    "action": "start",
+    "exitCode": 2,
+    "message": "(0 , store_1.normalizeProjectPath) is not a function",
+    "detail": {
+      "rejectedCheck": "transition"
+    }
+  }
+  
+  
+  2 !== 0
+  
+      at ok (file:///Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli/test/helpers/implement-fixture.mjs:99:37)
+      at start (file:///Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli/test/helpers/implement-fixture.mjs:101:3)
+      at TestContext.<anonymous> (file:///Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli/test/e2e/implement-defects.test.mjs:49:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

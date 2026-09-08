@@ -1,0 +1,15 @@
+{
+  "judge": {
+    "retryBudget": 2,
+    "profiles": {
+      "routine": {
+        "primary": {
+          "backend": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": "xhigh"
+        },
+        "fallback": null
+      }
+    }
+  }
+}

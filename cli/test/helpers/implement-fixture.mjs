@@ -104,10 +104,45 @@ export function start(root, options = {}) {
   return workRoot;
 }
 
+// Findings-focused test inputs share this envelope, while each CLI role gets
+// explicit grounds against its actual fixture contract. An explicit assessments
+// field is never filled or repaired, so malformed-result tests reach validation.
+export function reviewWithAssessments(root, review = REVIEW_PASS, role = "fidelity") {
+  if (typeof review !== "object" || review === null || "assessments" in review) return review;
+  const state = readState(root);
+  const workRoot = state.worktree?.path ?? root;
+  const evidenceRef = ["implementation.txt", "impl.txt"].find((relative) => fs.existsSync(path.join(workRoot, relative)))
+    ?? state.artifacts[0]?.path ?? "implementation.txt";
+  const blockers = Array.isArray(review.findings) ? review.findings.filter((finding) => finding.kind === "defect" || finding.kind === "human-confirmation" && finding.human?.timing === "prerequisite") : [];
+  const unresolvedRefs = [...new Set(blockers.flatMap((finding) => finding.requirementRefs ?? []))];
+  const pendingHuman = Array.isArray(review.findings) ? review.findings.filter((finding) => finding.kind === "human-confirmation" && finding.human?.timing === "post-completion") : [];
+  const pendingRefs = [...new Set(pendingHuman.flatMap((finding) => finding.requirementRefs ?? []))].filter((ref) => !unresolvedRefs.includes(ref));
+  const satisfiedRefs = state.requirements.map((entry) => entry.id).filter((ref) => !unresolvedRefs.includes(ref) && !pendingRefs.includes(ref));
+  const assessments = [];
+  if (blockers.length > 0) assessments.push({
+    requirementRefs: unresolvedRefs, conclusion: "unresolved",
+    rationale: "The fixture's blocking findings identify the concrete missing behavior or prerequisite.",
+    evidenceRefs: [...new Set(blockers.flatMap((finding) => finding.evidenceRefs ?? [evidenceRef]))],
+  });
+  if (pendingHuman.length > 0) assessments.push({
+    requirementRefs: pendingRefs, conclusion: "pending-human",
+    rationale: "The approved authority explicitly reserves this judgment for human input after completion.",
+    evidenceRefs: [...new Set(pendingHuman.flatMap((finding) => finding.evidenceRefs ?? []))],
+  });
+  if ((role === "fidelity" && satisfiedRefs.length > 0) || (role === "code" && blockers.length === 0 && pendingHuman.length === 0)) assessments.push({
+    requirementRefs: role === "fidelity" ? satisfiedRefs : [], conclusion: "satisfied",
+    rationale: role === "fidelity"
+      ? "The shared fixture source preserves the requested values for these behaviors."
+      : "The fixture's public implementation preserves its input without introducing another storage or dispatch path.",
+    evidenceRefs: [evidenceRef],
+  });
+  return { ...review, assessments };
+}
+
 export function stub(root, review = REVIEW_PASS, risk) {
   const file = path.join(root, "agents/judge.json");
   const capture = path.join(root, "agents/captures");
-  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:fidelity": review, "implement:code": review, ...(risk ? { "implement:risk": risk } : {}) } }));
+  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:fidelity": reviewWithAssessments(root, review, "fidelity"), "implement:code": reviewWithAssessments(root, review, "code"), ...(risk ? { "implement:risk": risk } : {}) } }));
   return { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
 }
 

@@ -5,6 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
+const { isDeepStrictEqual } = require("node:util");
 
 // Current CLI run paths are fixed under agents/runs. Keeping a configurable
 // reader here would select a different completion authority from implement.
@@ -251,13 +252,13 @@ function resolveState(options) {
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
-  assertSchema(state, "sasu.implement.state.v9.parallel-review", "state");
+  assertSchema(state, "sasu.implement.state.v10", "state");
   const stateDir = path.dirname(statePath);
   const receiptPath = path.join(stateDir, "receipt.json");
   const resultPath = path.join(stateDir, "implementation-result.md");
   if (!fs.existsSync(receiptPath)) throw new Error(`Receipt file not found: ${receiptPath}`);
   const receipt = readJson(receiptPath);
-  assertSchema(receipt, "sasu.implement.receipt.v5.parallel-review", "receipt");
+  assertSchema(receipt, "sasu.implement.receipt.v6", "receipt");
   return {
     // Git operations (staging, commit, push) happen in the JUDGED tree: the
     // run's worktree when isolated, else the record tree. Records (state,
@@ -278,10 +279,13 @@ function resolveState(options) {
 
 const SHIPPABLE_RECEIPT_STATUSES = new Set(["complete", "complete-pending-human"]);
 const LAST_SUPPORTED_COMMIT = "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
+const LAST_EXPERIMENTAL_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
-    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${LAST_SUPPORTED_COMMIT}. Start a new run with the current contract.`);
+    const supportCommit = ["sasu.implement.state.v9.parallel-review", "sasu.implement.receipt.v5.parallel-review"].includes(value?.schema)
+      ? LAST_EXPERIMENTAL_COMMIT : LAST_SUPPORTED_COMMIT;
+    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supportCommit}. Start a new run with the current contract.`);
   }
 }
 
@@ -302,6 +306,8 @@ function assertCompleteReceipt(context) {
       throw new Error(`Receipt ${role} review has no completed result. Run implement to completion first.`);
     }
   }
+  const verification = verifyDelivery(context);
+  if (!verification.ok) throw new Error(`Receipt verification failed: ${verification.violations.join("; ")}`);
 }
 
 function projectDeliveryConfig(context) {
@@ -364,6 +370,7 @@ function deliveryConfig(context, options = {}) {
 }
 
 function verifyDelivery(context) {
+  if (context.verifiedDelivery) return context.verifiedDelivery;
   // sasu confines --state to the tree it runs in, and the state lives in the
   // record tree, so status runs there even when the judged tree is a linked
   // worktree; sasu finds that worktree from the state itself.
@@ -388,14 +395,31 @@ function verifyDelivery(context) {
   if (result.status !== 0 || parsed.ok !== true) violations.push(parsed.message || `status exited ${result.status}`);
   if (!SHIPPABLE_RECEIPT_STATUSES.has(detail.status)) violations.push(`implement state is ${detail.status || "unknown"}, not complete or complete-pending-human`);
   if (!detail.verification || detail.verification.verdict !== "PASS") {
-    violations.push(`unified verification is ${detail.verification ? detail.verification.verdict : "missing"}, not PASS`);
+    violations.push(`implementation verification is ${detail.verification ? detail.verification.verdict : "missing"}, not PASS`);
   }
   for (const problem of detail.artifactProblems || []) violations.push(problem);
   if (detail.delivery?.eligible !== true) violations.push(`implement delivery is ineligible: ${(detail.delivery?.reasons || ["missing eligibility"]).join("; ")}`);
   if (!detail.completion || detail.completion.fingerprint !== context.receipt.completionFingerprint) {
     violations.push("receipt completion fingerprint does not match sasu implement status");
   }
-  return { ok: violations.length === 0, violations, status: detail };
+  // The installed ship script cannot import a checkout-specific validator.
+  // The current CLI owns validation; bind the derived receipt to its exact
+  // settled judgments so an edited receipt cannot invent coverage or grounds.
+  const latest = detail.verification?.latest;
+  if (!latest || context.receipt.verificationAttemptId !== latest.id
+      || context.receipt.prdSha256 !== latest.prdSha256
+      || context.receipt.inputFingerprint !== latest.inputFingerprint
+      || context.receipt.sourceFingerprint !== latest.sourceFingerprint
+      || !isDeepStrictEqual(context.receipt.reviewContext, latest.reviewContext)) {
+    violations.push("receipt review input identity does not match sasu implement status");
+  }
+  for (const role of ["fidelity", "code"]) {
+    if (!isDeepStrictEqual(context.receipt.reviews?.[role], latest?.reviews?.[role])) {
+      violations.push(`receipt ${role} review does not match the CLI's settled judgment`);
+    }
+  }
+  context.verifiedDelivery = { ok: violations.length === 0, violations, status: detail };
+  return context.verifiedDelivery;
 }
 
 function requireReason(options, flag) {

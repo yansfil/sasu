@@ -49,8 +49,12 @@ The report uses `run.startingTree.headSha` and `sourceFingerprint`; comparison c
 The deterministic reporter rejects receipts that do not match the binding.
 
 Allowed stage names are `start`, `verification`, `mechanical`, `review`, `risk`, and `finalize`.
-In this candidate, `review` comprises separate concurrent Fidelity and Code records in `reviews.fidelity` and `reviews.code`; both use the same routine profile.
-The candidate consumes `sasu.implement.state.v9.parallel-review` and `sasu.implement.receipt.v5.parallel-review` without an old-state reader.
+`review` comprises separate concurrent Fidelity and Code records in `reviews.fidelity` and `reviews.code`; both use the same routine profile and fixed original inputs without the current peer verdict.
+The reporter consumes `sasu.implement.state.v10` and `sasu.implement.receipt.v6` without an old-state reader.
+Retired unified v9/v5 runs require support commit `3f549dcfff71fe1f7fa974a383f6e8a055ce8463`; experimental parallel v9/v5 runs require `2b1f638dd587261be7e7b0e600db16657421971d`.
+Each role retains its `result.assessments` grounds in the existing verification history.
+Fidelity's complete grouped Bn accounting is structural coverage; Code records its own substantive grounds without duplicate all-Bn accounting.
+Neither assessment counts nor valid references prove semantic correctness or separate runtime execution for every requirement.
 `terminalStatuses` may contain `complete`, `complete-pending-human`, or `blocked` according to the scenario.
 A declared-blocker case should expect `blocked`; treating only completion as success rewards dishonest claims.
 Only these current schemas are readable; old case/report/comparison formats fail explicitly without normalization or migration.
@@ -94,7 +98,7 @@ Every non-null score needs at least one stable evidence reference.
     "reviewEfficiency": {
       "score": 4,
       "reason": "Only the profile-required Fidelity and Code reviews ran.",
-      "evidence": ["receipt:/reviews/fidelity", "receipt:/reviews/code", "state:/attempts"]
+      "evidence": ["receipt:/reviews/fidelity", "receipt:/reviews/code", "state:/verificationAttempts"]
     },
     "evidenceHonesty": {
       "score": 4,
@@ -142,11 +146,13 @@ Implementation timing and post-receipt evaluation timing stay separate inside `t
 Actual execution metrics distinguish `wallClockSeconds`, `verificationUnionSeconds` from `verificationSumSeconds`, `commandUnionSeconds` from `verificationCommandSeconds`, and `judgeUnionSeconds` from `judgeSeconds`.
 `verificationCommandRuns`, `judgeCalls`, and `judgeInvocations` count actual executions, not synthetic per-requirement outcomes.
 Count Fidelity and Code as separate content review executions; concurrent overlap does not turn them into one provider call.
+Keep verification attempts and correction rounds distinct from role invocations, provider answering attempts, and preflights.
 Preserve each role's failures and findings so duplicate or unrelated findings can be evaluated.
-Efficiency records `reviewInvocations`, `riskInvocations`, `repeatedIdenticalInputReviews`, `executionErrorsByStage`, `escalationAttempts`, `diagnosedRecoveries`, and `registeredObservations`.
+Efficiency records `reviewInvocations`, `reviewInvocationsByRole`, `riskInvocations`, `repeatedIdenticalInputReviews`, `executionErrorsByStage`, `escalationAttempts`, `diagnosedRecoveries`, and `registeredObservations`.
 Registered observations count artifacts, not separate QA executions.
 `answeringUsage` contains only provider-reported answering-attempt tokens and `reportedInvocations`; `usageScope` identifies missing/retry usage rather than estimating it.
 The report uses current receipt/state facts, actual call/execution records, open issues, source identity, and human delivery conditions.
+Later corrections append attempts without rewriting settled role judgments or their fixed input identity.
 The process score is present only when all five rubric dimensions are scored.
 It is not a product-quality score.
 

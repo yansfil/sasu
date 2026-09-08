@@ -17,6 +17,8 @@ every review:
 Items 1 and 2 are read together: every requirement remains in scope while evidence and review avoid redundant procedure.
 The approved 2026-09-08 workflow plan explicitly changes the earlier per-AC proof and per-AC judge policies in items 1 and 6.
 See [the approved direction](docs/plans/2026-09-08-workflow-simplification.md); this is a policy change, not a reinterpretation.
+The subsequent approved production change uses parallel Fidelity and Code reviews with CLI-validated grouped assessment records.
+It changes the routine review and record shape without restoring per-AC execution, separate evidence obligations, or requirement lifecycles.
 
 ## 1. Preserve every requirement and review the complete contract
 
@@ -26,9 +28,14 @@ A build or function definition alone does not establish working user behavior.
 An absent observation stays unverified until evidence supports it.
 
 There is no requirement-by-requirement proof record, lifecycle, mandatory separate evidence, PASS array, or judge call.
-One coherent observation can support multiple requirements, and one independent comprehensive review compares every requirement with the complete result.
-The CLI guarantees execution facts, evidence integrity, current-input identity, ownership, authority, and an honest record.
-Whether the implementation satisfies the contract is semantic judgment by the independent reviewer, not a mechanical guarantee of zero omissions.
+One coherent observation can support multiple requirements.
+Independent Fidelity and Code reviews receive the same complete original inputs without the current peer verdict.
+Fidelity accounts for every Bn exactly once in grouped assessments with concrete rationale and actual evidence references.
+Code records its own substantive implementation and error-path grounds without a duplicate all-Bn accounting form.
+Satisfied assessments require actual supplied source, execution logs, or artifacts; PRD-only citations and source catalog metadata are insufficient.
+Pending-human assessments preserve permitted after-the-fact judgment only through corresponding validated post-completion human findings, without asserting satisfaction or waiving prerequisites.
+The CLI guarantees structural coverage, execution facts, evidence integrity, current-input identity, ownership, authority, and an honest record.
+Whether the implementation satisfies the contract is semantic judgment by the independent reviewers, not a mechanical guarantee of correct conclusions or zero omissions.
 Evaluate that judgment by planting realistic omissions and observing whether the review finds them.
 
 ## 2. Verification must not outweigh implementation
@@ -50,8 +57,11 @@ impossible over the change that handles today's instance. When a proposal is
 
 ## 4. Every stage must earn its place, and every addition names its deletion
 
-For each gate, review, or pass, name the failure it uniquely catches. Two
-stages that catch the same failure get merged or one gets deleted (the comprehensive review replacing separate acceptance, fidelity, and standard design is the current example).
+For each gate, review, or pass, name the failure it uniquely catches.
+Fidelity owns complete intent and observable behavior fulfillment; Code owns concrete implementation, integration, error-path defects, and consequential design problems.
+These roles replace the comprehensive review without adding a third general judge, a user command, or an extra agent workflow step.
+Grouped assessment validation replaces unaccounted review summaries, not implementation or actual evidence.
+The distinct high-risk check retains its safety question rather than repeating either routine role.
 Default posture toward the review stack is suspicion of weight: when in doubt,
 put it on a diet.
 
@@ -87,19 +97,22 @@ Fan out freely; before skipping, prove purity.
 
 The natural unit of actual observation is a coherent product flow or risk boundary.
 The natural unit of requirement judgment is the complete contract compared with implementation and shared evidence.
-Requirement identifiers let a finding point precisely to unmet behavior or a decision; they do not become progress states or a coverage graph.
+Requirement identifiers let findings and assessments point precisely to behavior or decisions; they do not become progress states or a coverage graph.
 Grouping observations never permits grouping distinct requirements merely to reduce their count.
-Every requirement still reaches the independent reviewer.
+Every requirement still reaches both independent reviewers.
+Grouped assessments may share evidence without merging or dropping the underlying requirements.
 
 ## 7. The harness absorbs complexity - never the workflow user, never a doc
 
-The CLI enforces structure, execution facts, input identity, evidence integrity, ownership, human authority, concurrency, and bounded retries in code.
-The reviewer decides meaning, contract satisfaction, and observation sufficiency.
+The CLI enforces structure, complete Fidelity accounting, valid assessment grounds, execution facts, input identity, evidence integrity, ownership, human authority, concurrency, and bounded retries in code.
+Missing or duplicate Bn coverage, unknown references, empty rationale, invalid evidence, and unresolved coverage cannot silently pass.
+The reviewers decide meaning, contract satisfaction, and observation sufficiency.
 A field belongs in a document only when the harness executes or compares it; do not pattern-match natural-language requirements into mandatory evidence kinds.
 
 Do not replace deleted commands with a required Markdown PASS checklist, flow-ID table, user mode, or manual coverage ledger.
 Reuse the existing command runner, snapshot, evidence registration, review sandbox, and receipt path.
-One new whole-run review and its issue history replace row acceptance, separate fidelity, and standard design reviews; the distinct high-risk check must retain a unique safety question.
+Parallel Fidelity and Code reviews share one attempt, lease, correction budget, and issue history; the distinct high-risk check retains a unique safety question.
+Review assessments live in the existing CLI-owned state history, not a second ledger or mandatory user document.
 
 ## 8. The whole flow must stay explainable
 
@@ -125,6 +138,8 @@ test, and its findings outrank any reasoning about how it ought to behave.
 
 `state.json` is the only completion authority; portable receipts and Markdown results derive from it.
 A result names the current source and input identity on which it was earned.
+Settled role judgments retain their attempt, source, PRD, and input identity in `verificationAttempts`.
+Later corrections append a new attempt; CLI mutations cannot rewrite or delete settled historical judgments.
 Unrun means unrun, unavailable means unverified, and an old PASS never becomes current merely because the agent says so.
 No configured tests is reported separately from successful test execution.
 
@@ -163,6 +178,7 @@ Optional advice beyond a satisfied contract stays advisory.
 A real omission discovered later in an unchanged file still counts as a defect when it names approved contract content and actual counterevidence.
 Changed-path-only validation cannot discard that omission merely to shrink the issue list.
 A prior open issue does not disappear because a later review omitted it.
+Both routine roles must explicitly resolve a prior issue with evidence before it closes; disagreement or a missing role result keeps it open.
 Open blocking risk keeps the entire run incomplete and cannot reset the budget just because routine review passed.
 Backend errors and pre-review input failures remain distinct from implementation correction rounds.
 

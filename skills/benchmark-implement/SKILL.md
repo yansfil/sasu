@@ -159,7 +159,9 @@ It then calculates statuses, stages, timing, retry counts, repeated identical-in
 The evaluator judges only process behavior such as flow adherence, recovery, review efficiency, evidence honesty, and session efficiency.
 
 Do not score UI taste, entertainment value, code elegance, visual polish, or general product quality.
-The candidate harness records both Fidelity and Code reviewers' semantic contract judgments and their separate actual executions; it does not mechanically guarantee zero omissions.
+The harness records both Fidelity and Code reviewers' semantic judgments, assessment grounds, and separate actual executions.
+Fidelity's complete Bn accounting is structural coverage, not a count of runtime executions or a mechanical guarantee of correct conclusions or zero omissions.
+Preserve settled attempts when later corrections append new judgments; measure repair through the current receipt without replacing historical failures.
 For workflow-quality pilots, separately evaluate planted middle/end omissions, disconnected entry points, and missing data-failure handling against fixed expectations with a real backend.
 Do not claim fixture success proves that omission detection worked live.
 This pilot is evaluation work, not an extra mandatory workflow stage for users.

@@ -14,6 +14,10 @@ Evidence under `agents/**` may be explicitly registered, while bookkeeping and c
 The CLI pins registered bytes and rejects missing, empty, invalid, or changed files.
 It does not infer sufficiency from keywords in the PRD or require an artifact for every requirement.
 The independent review decides whether the actual implementation and observations support the complete contract.
+Fidelity's grouped assessments account for every Bn, but one shared source file or observation may support many requirements without separate execution or artifact obligations.
+Code records its own substantive evidence grounds without another all-Bn accounting form.
+Satisfied assessments must cite actual supplied source, execution logs, or artifacts; PRD-only references and catalog metadata do not establish implementation satisfaction.
+Structural coverage and valid references make the grounds inspectable, not mechanically correct.
 
 Capture final material evidence after implementation is coherent.
 Earlier observations retain their original time and target.
@@ -29,6 +33,8 @@ Suite exclusions require human authorization and preserve their prior results.
 
 After mechanical success, independent Fidelity and Code reviews run concurrently with the same entire sealed PRD and decision/intent sources, owned change, permitted surrounding source, suite execution facts, registered observations, and prior findings.
 They use the same routine model profile and preserve separate actual results and call records within one verification attempt and lease.
+Neither receives the current peer verdict.
+Settled judgments and their input identity remain unchanged in state history when a later attempt records a correction.
 A distinct high-risk check uses the same fixed inputs when the profile requires it.
 The reviewer may cite any concrete approved requirement and actual counterevidence, including newly discovered omissions in unchanged files.
 Both roles must disposition every prior open issue; it closes only when both resolve it with evidence.

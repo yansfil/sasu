@@ -3,13 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { PRD_PATH, REVIEW_PASS, defect, makeProject, ok, readState, registerEvidence, run, runAsync, start, stub } from "../helpers/implement-fixture.mjs";
+import { PRD_PATH, REVIEW_PASS, defect, makeProject, ok, readState, registerEvidence, run, runAsync, start, stub, reviewWithAssessments } from "../helpers/implement-fixture.mjs";
 
 // These tests exercise the public CLI and actual suite process. Only the
 // external reviewers are stubbed; their answers are not omission-detection proof.
 function roleOutputs(root, fidelity, code) {
   const env = stub(root);
-  fs.writeFileSync(env.SASU_JUDGE_STUB_FILE, JSON.stringify({ byPurpose: { "implement:fidelity": fidelity, "implement:code": code } }));
+  fs.writeFileSync(env.SASU_JUDGE_STUB_FILE, JSON.stringify({ byPurpose: { "implement:fidelity": reviewWithAssessments(root, fidelity, "fidelity"), "implement:code": reviewWithAssessments(root, code, "code") } }));
   return env;
 }
 
@@ -45,10 +45,13 @@ test("two independently recorded reviews overlap on one full contract, evidence 
   const env = { ...stub(root), SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:fidelity": 800, "implement:code": 800 }) };
   ok(run(root, ["implement", "verify"], { env }));
   const state = readState(root);
-  assert.equal(state.schema, "sasu.implement.state.v9.parallel-review");
+  assert.equal(state.schema, "sasu.implement.state.v10");
   assert.equal(state.verificationAttempts.length, 1);
   const attempt = state.verificationAttempts[0];
   assert.equal(attempt.review, undefined);
+  assert.equal(attempt.prdSha256, state.prd.sha256);
+  assert.deepEqual(attempt.reviewContext.requiredRequirementRefs, state.requirements.map((entry) => entry.id));
+  assert.ok(attempt.reviewContext.actualEvidenceRefs.includes("implementation.txt"));
   assert.equal(attempt.risk, null);
   assert.deepEqual(Object.keys(attempt.reviews).sort(), ["code", "fidelity"]);
   const lanes = [attempt.reviews.fidelity, attempt.reviews.code];
@@ -56,7 +59,7 @@ test("two independently recorded reviews overlap on one full contract, evidence 
   assert.deepEqual(lanes.map((lane) => lane.judge.purpose).sort(), ["implement:code", "implement:fidelity"]);
   for (const lane of lanes) {
     assert.equal(lane.verdict, "PASS");
-    assert.deepEqual(lane.result, REVIEW_PASS);
+    assert.deepEqual(lane.result, reviewWithAssessments(root, REVIEW_PASS, lane.judge.purpose === "implement:fidelity" ? "fidelity" : "code"));
     assert.equal(lane.judge.attempts, 1);
     assert.equal(lane.judge.outcome, "ok");
     assert.ok(lane.durationMs >= 0 && lane.judge.durationMs >= 0);
@@ -75,13 +78,57 @@ test("two independently recorded reviews overlap on one full contract, evidence 
   ok(run(root, ["implement", "finalize"]));
   const closed = readState(root);
   const receipt = JSON.parse(fs.readFileSync(path.join(root, closed.completion.receiptPath), "utf8"));
-  assert.equal(receipt.schema, "sasu.implement.receipt.v5.parallel-review");
+  assert.equal(receipt.schema, "sasu.implement.receipt.v6");
   assert.equal(receipt.status, "complete");
   assert.equal(receipt.delivery.eligible, true);
   assert.equal(receipt.verificationAttemptId, attempt.id);
   assert.equal(receipt.inputFingerprint, attempt.inputFingerprint);
+  assert.equal(receipt.prdSha256, attempt.prdSha256);
+  assert.deepEqual(receipt.reviewContext, attempt.reviewContext);
   for (const role of ["fidelity", "code"]) assert.equal(receipt.reviews[role].invocationId, attempt.reviews[role].invocationId);
   assert.equal(suiteCount(root), "ran\n", "finalize must not repeat either reviewer or the suite");
+});
+
+test("missing Fidelity accounting is an error even when the Code reviewer passes and cannot earn a receipt", () => {
+  const root = makeProject({ count: 3 });
+  start(root);
+  const fidelity = reviewWithAssessments(root);
+  fidelity.assessments[0].requirementRefs = ["B1", "B3"];
+  const env = roleOutputs(root, fidelity, REVIEW_PASS);
+  assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
+  const state = readState(root);
+  const attempt = state.verificationAttempts[0];
+  assert.deepEqual(attempt.reviewContext.requiredRequirementRefs, ["B1", "B2", "B3"]);
+  assert.equal(attempt.prdSha256, state.prd.sha256);
+  assert.equal(attempt.verdict, "ERROR");
+  assert.equal(attempt.reviews.fidelity.verdict, "ERROR");
+  assert.equal(attempt.reviews.fidelity.result, null);
+  assert.match(attempt.reviews.fidelity.error.message, /missing required references: B2/);
+  assert.ok(attempt.reviews.fidelity.judge, "invalid output remains a recorded reviewer invocation");
+  assert.equal(attempt.reviews.code.verdict, "PASS", "the valid peer retains its original result");
+  assert.deepEqual(attempt.reviews.code.result, reviewWithAssessments(root, REVIEW_PASS, "code"));
+  assert.equal(state.status, "active");
+  assert.notEqual(run(root, ["implement", "finalize"]).status, 0);
+  assert.equal(readState(root).completion, null);
+  assert.equal(suiteCount(root), "ran\n");
+});
+
+test("a findings-only summary cannot substitute for either role's recorded grounds", () => {
+  const root = makeProject();
+  start(root);
+  const env = stub(root);
+  // Bypass the fixture's valid-result constructor deliberately: old responses
+  // without assessments must reach and fail the production role validator.
+  fs.writeFileSync(env.SASU_JUDGE_STUB_FILE, JSON.stringify({ byPurpose: { "implement:fidelity": REVIEW_PASS, "implement:code": REVIEW_PASS } }));
+  assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
+  const attempt = readState(root).verificationAttempts[0];
+  for (const role of ["fidelity", "code"]) {
+    assert.equal(attempt.reviews[role].verdict, "ERROR");
+    assert.equal(attempt.reviews[role].result, null);
+    assert.match(attempt.reviews[role].error.message, /assessments must be a non-empty array/);
+  }
+  assert.notEqual(run(root, ["implement", "finalize"]).status, 0);
+  assert.equal(readState(root).completion, null);
 });
 
 test("a settled role persists under the live lease, and its new defect survives a sibling error without closing prior findings", { timeout: 90_000 }, async (t) => {
@@ -98,7 +145,7 @@ test("a settled role persists under the live lease, and its new defect survives 
   await until(() => readState(root).verificationAttempts.at(-1)?.reviews.fidelity !== null && readState(root).verificationAttempts.length === 2, "the first role never persisted its settled result");
   const partial = readState(root);
   const pending = partial.verificationAttempts.at(-1);
-  assert.deepEqual(pending.reviews.fidelity.result, fidelity);
+  assert.deepEqual(pending.reviews.fidelity.result, reviewWithAssessments(root, fidelity, "fidelity"));
   assert.equal(pending.reviews.code, null);
   assert.equal(partial.activeVerification.attemptId, pending.id);
   assert.equal(partial.status, "active");
@@ -193,4 +240,30 @@ test("agreement between reviewers cannot close an explicit human prerequisite", 
   assert.deepEqual(state.findings[0].responses, []);
   for (const role of ["fidelity", "code"]) assert.equal(state.verificationAttempts.at(-1).reviews[role].verdict, "ERROR");
   assert.notEqual(run(root, ["implement", "finalize"]).status, 0);
+});
+
+test("a Behavior explicitly reserved for later human judgment retains pending grounds through confirmation", () => {
+  const quote = "The user confirms the finished visual result after implementation; this judgment may remain pending at delivery.";
+  const root = makeProject({ count: 0, extraRows: ["| B1 | The finished visual result awaits the user's post-completion judgment. | D-02 |"], decisions: `| D-01 | Deliver the finished visual result. | The user requested the visual result. |\n| D-02 | ${quote} | The person owns the final visual judgment. |` });
+  start(root);
+  const finding = { kind: "human-confirmation", requirementRefs: ["B1"], problem: "The finished visual result awaits the user's judgment.", evidenceRefs: ["D-02"], nextAction: "Ask the user to confirm the delivered visual result.", human: { sourceRef: "D-02", quote, timing: "post-completion" } };
+  ok(run(root, ["implement", "verify"], { env: stub(root, { ...REVIEW_PASS, findings: [finding] }) }));
+  const attempt = readState(root).verificationAttempts[0];
+  assert.equal(attempt.verdict, "PASS");
+  for (const role of ["fidelity", "code"]) {
+    assert.deepEqual(attempt.reviews[role].result.assessments.map((entry) => [entry.requirementRefs, entry.conclusion]), [[["B1"], "pending-human"]]);
+  }
+  const originalAttemptJson = JSON.stringify(attempt);
+  ok(run(root, ["implement", "finalize"]));
+  let state = readState(root);
+  assert.equal(state.status, "complete-pending-human");
+  const pendingReceipt = JSON.parse(fs.readFileSync(path.join(root, state.completion.receiptPath), "utf8"));
+  assert.equal(pendingReceipt.status, "complete-pending-human");
+  assert.equal(pendingReceipt.reviews.fidelity.result.assessments[0].conclusion, "pending-human");
+  assert.equal(state.findings[0].status, "open");
+  ok(run(root, ["implement", "confirm", "--issuer", "human", "--id", state.findings[0].id, "--evidence", "I approve the delivered visual result."]));
+  state = readState(root);
+  assert.equal(state.status, "complete");
+  assert.equal(state.findings[0].status, "confirmed");
+  assert.equal(JSON.stringify(state.verificationAttempts[0]), originalAttemptJson, "a later human response must not rewrite the original review grounds");
 });

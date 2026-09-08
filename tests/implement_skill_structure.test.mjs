@@ -95,7 +95,7 @@ test("gen-prd and implement preserve all requirements without per-requirement ce
   assert.match(genPrd, /\| D-n \| 결정 \| 근거 \|/);
   assert.match(genPrd, /\| # \| 사용자가 관찰하는 행동 \| 결정 \|/);
   assert.match(implement, /complete-pending-human/);
-  assert.match(implement, /Markdown checkboxes or a coverage ledger/);
+  assert.match(implement, /Markdown checkboxes or a manually maintained coverage ledger/);
   const activeDocuments = [
     genPrd, implement,
     ...expectedReferences.map((name) => fs.readFileSync(path.join(referencesDir, name), "utf8")),

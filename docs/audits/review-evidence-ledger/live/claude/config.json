@@ -1,0 +1,15 @@
+{
+  "judge": {
+    "retryBudget": 2,
+    "profiles": {
+      "routine": {
+        "primary": {
+          "backend": "claude",
+          "model": "claude-sonnet-5",
+          "effort": "xhigh"
+        },
+        "fallback": null
+      }
+    }
+  }
+}

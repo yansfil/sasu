@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { reviewPrompt, renderDecisions } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
-import { validateReviewResult } from "../../dist/judge/types.js";
+import { validateImplementationReviewResult } from "../../dist/implement/review-contract.js";
 import { runJudge, judgeCallRecordFrom } from "../../dist/judge/runner.js";
 import { loadConfig } from "../../dist/config.js";
 import { prd } from "./implement-fixture.mjs";
@@ -41,10 +41,11 @@ function diagnosticValidator(t, variant, role, referenceContext) {
   let attempt = 0;
   const refs = (value) => Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : null;
   return (value) => {
-    const validated = validateReviewResult(value, referenceContext);
+    const validated = validateImplementationReviewResult(value, referenceContext, role);
     // Keep schema failures visible even when the runner retries successfully.
     // Record bounded references only, never the provider envelope or narrative.
     const references = JSON.stringify({
+      assessments: Array.isArray(value?.assessments) ? value.assessments.map((entry) => ({ conclusion: typeof entry?.conclusion === "string" ? entry.conclusion : null, requirementRefs: refs(entry?.requirementRefs), evidenceRefs: refs(entry?.evidenceRefs) })) : null,
       findings: Array.isArray(value?.findings) ? value.findings.map((finding) => ({ kind: typeof finding?.kind === "string" ? finding.kind : null, requirementRefs: refs(finding?.requirementRefs), evidenceRefs: refs(finding?.evidenceRefs) })) : null,
       priorDispositions: Array.isArray(value?.priorDispositions) ? value.priorDispositions.map((entry) => ({ findingId: typeof entry?.findingId === "string" ? entry.findingId : null, status: typeof entry?.status === "string" ? entry.status : null, evidenceRefs: refs(entry?.evidenceRefs) })) : null,
     });
@@ -115,7 +116,7 @@ export async function evaluateLiveReview(backend, t) {
     assert.equal(observed.status, 0, observed.stderr);
     fs.writeFileSync(path.join(root, "smoke.log"), observed.stdout);
     const requirementRefs = [...contract.rows.map((row) => row.id), ...contract.decisions.map((decision) => decision.id)];
-    const referenceContext = { requirementRefs, evidenceRefs: ["PRD", "Goal", "Non-goals", "Decisions", "Behaviors", "Technical structure", "Risks", "intent", ...requirementRefs, "src/public.mjs", "smoke.log"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
+    const referenceContext = { requiredRequirementRefs: contract.rows.map((row) => row.id), actualEvidenceRefs: ["src/public.mjs", "smoke.log"], requirementRefs, evidenceRefs: ["PRD", "Goal", "Non-goals", "Decisions", "Behaviors", "Technical structure", "Risks", "intent", ...requirementRefs, "src/public.mjs", "smoke.log"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
     const material = {
       prdText: contractText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed approved evaluation contract" },
       changeMaterial: [], runOwnedDiff: "", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, tail: observed.stdout }], evidence: [], artifacts: [],
@@ -156,7 +157,7 @@ export async function evaluateLiveVisual(t) {
   const approval = { source: "frontmatter", evidence: "human_approval: approved" };
   const intentContent = renderDecisions(contract);
   const artifact = { path: "visual.png", kind: "image", description: "Delivered character illustration", sha256, bytes: bytes.length, registeredAt: new Date().toISOString(), observedAt: new Date().toISOString(), provenance: "fixed visual fixture", target: "visual.png" };
-  const referenceContext = { requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
+  const referenceContext = { requiredRequirementRefs: ["B1", "B2"], actualEvidenceRefs: ["visual.png"], requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
   const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [{ ...artifact, attachedImage: true }], artifacts: [artifact], readablePaths: ["visual.png"], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
   const config = loadConfig(root);
   config.judge.profiles.routine = { primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" }, fallback: null };

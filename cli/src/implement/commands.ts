@@ -1,3 +1,5 @@
+import { validateImplementationReviewResult } from "./review-contract";
+import type { ImplementationReviewResult } from "./types";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,7 +9,7 @@ import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
 import type { CheckResult, EvidenceMaterial } from "../gates/prompts";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
-import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judgeFailureCause, validateReviewResult, type JudgeFailureCause, type ReviewResult } from "../judge/types";
+import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judgeFailureCause, type JudgeFailureCause } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 import { reconcileReviewFindings, reconcileParallelReviewFindings, reconcileRiskFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
@@ -1034,7 +1036,7 @@ function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unk
     invocationId: lane.invocationId, verdict: lane.verdict, result: lane.result,
     startedAt: lane.startedAt, finishedAt: lane.finishedAt, durationMs: lane.durationMs, error: lane.error,
   };
-  return { id: attempt.id, verdict: attempt.verdict, phase: attempt.phase, inputFingerprint: attempt.inputFingerprint,
+  return { id: attempt.id, prdSha256: attempt.prdSha256, reviewContext: attempt.reviewContext, verdict: attempt.verdict, phase: attempt.phase, inputFingerprint: attempt.inputFingerprint,
     sourceFingerprint: attempt.sourceFingerprint, startedAt: attempt.startedAt, finishedAt: attempt.finishedAt,
     durationMs: attempt.durationMs, prelint: attempt.prelint, mechanical: attempt.mechanical,
     reviews: { fidelity: slim(attempt.reviews.fidelity), code: slim(attempt.reviews.code) }, risk: slim(attempt.risk), error: attempt.error };
@@ -1107,6 +1109,7 @@ function effectiveVerdict(state: ImplementState, attempt: UnifiedVerificationAtt
   if (attempt.verdict !== "FAIL") return attempt.verdict;
   if (attempt.error !== null || ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result == null) || attempt.mechanical.some((entry) => entry.status !== "PASS")) return attempt.verdict;
   if (state.prd.reviewProfile === "high-risk" && attempt.risk?.result == null) return attempt.verdict;
+  if (ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result?.assessments.some((entry) => entry.conclusion === "unresolved"))) return "FAIL";
   if (openFindings(state).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion"))) return "FAIL";
   if (openRiskFindings(state).some((entry) => entry.severity === "blocking")) return "FAIL";
   return "PASS";
@@ -1262,7 +1265,9 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
     changeMaterial: changeMaterial(workRoot, state, inputs.source), runOwnedDiff: runOwnedDiff(workRoot, state, changed), checks, evidence,
     artifacts: state.artifacts, sourceCatalog, readablePaths: [...paths],
-    referenceContext: { requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
+    referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
+      actualEvidenceRefs: [...paths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
+      requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
       // Preserve the existing quote boundaries and expose those same bytes to the reviewer.
       humanSources: { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) } },
     priorFindings: state.findings, priorRiskResult: priorRisk,
@@ -1287,7 +1292,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const source = inputs?.source ?? state.initialSource;
   const manifest = verificationInputManifest(state.initialSource, source, state.artifacts);
   const attempt: UnifiedVerificationAttempt = { id: crypto.randomUUID(), inputFingerprint: inputs?.fingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, source: source.digest, invalid: true })),
-    sourceFingerprint: source.digest, inputManifest: manifest, roundContext: verificationRoundContext(manifest, state.verificationAttempts.at(-1) ?? null),
+    prdSha256: state.prd.sha256, reviewContext: null, sourceFingerprint: source.digest, inputManifest: manifest, roundContext: verificationRoundContext(manifest, state.verificationAttempts.at(-1) ?? null),
     intentInput: inputs?.intentInput ?? { routing: "full-qa-log", contentSha256: sha256("") }, startedAt: nowIso(), finishedAt: nowIso(), durationMs: 0,
     phase: "preflight", verdict: "NOT_RUN", prelint: { ok: false, findings: [] }, mechanical: [], reviews: { fidelity: null, code: null }, risk: null, error: null };
   const started = Date.now();
@@ -1340,10 +1345,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       const reviewTexts = { fidelity: reviewPrompt(prepared.material, "fidelity"), code: reviewPrompt(prepared.material, "code") };
       const priorFindings = structuredClone(state.findings);
       const riskText = state.prd.reviewProfile === "high-risk" ? riskPrompt(prepared.material) : null;
-      phase = "review"; update((_fresh, held) => { held.phase = phase; held.roundContext = active.roundContext; });
+      phase = "review"; update((_fresh, held) => { held.phase = phase; held.roundContext = active.roundContext; held.reviewContext = structuredClone(referenceContext); });
       const options = { cwd: prepared.cwd, agentic: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
-      const validate = (value: unknown): ReviewResult | string => {
-        const parsed = validateReviewResult(value, referenceContext);
+      const validate = (role: RoutineReviewRole) => (value: unknown): ImplementationReviewResult | string => {
+        const parsed = validateImplementationReviewResult(value, referenceContext, role);
         if (typeof parsed === "string") return parsed;
         try { reconcileReviewFindings(priorFindings, parsed, attempt.id, nowIso()); }
         catch (error) { return error instanceof Error ? error.message : String(error); }
@@ -1352,7 +1357,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       // Two real executions replace the general review, under one lease and
       // budget. Persist each settlement even if its sibling is still running.
       const routine = async (role: RoutineReviewRole) => {
-        const lane = await judgeLane(crypto.randomUUID(), () => runJudge(config, `implement:${role}`, "routine", reviewTexts[role], validate,
+        const lane = await judgeLane(crypto.randomUUID(), () => runJudge(config, `implement:${role}`, "routine", reviewTexts[role], validate(role),
           { ...options, execution: executionHooks() }), (value) => value.findings.some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) ? "FAIL" : "PASS");
         update((_fresh, held) => { held.reviews[role] = lane; });
         return lane;
@@ -1370,7 +1375,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       const [fidelity, code, riskResult] = settled.map((entry) => {
         if (entry.status === "rejected") throw entry.reason;
         return entry.value;
-      }) as [LaneRecord<ReviewResult>, LaneRecord<ReviewResult>, LaneRecord<RiskLaneResult> | null];
+      }) as [LaneRecord<ImplementationReviewResult>, LaneRecord<ImplementationReviewResult>, LaneRecord<RiskLaneResult> | null];
       update((fresh, held) => {
         fresh.findings = reconcileParallelReviewFindings(priorFindings, { fidelity: fidelity.result, code: code.result }, attempt.id, nowIso());
         if (riskResult?.result) fresh.riskFindings = reconcileRiskFindings(fresh.riskFindings, riskResult.result, attempt.id, nowIso());
@@ -1401,7 +1406,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   return result("verify", final.verdict === "PASS", `verification ${final.verdict}; ${state.status} run retained${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget)) ? `; ${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget))}` : ""}`, { attempt: attemptSummary(final), findings: openFindings(state), riskFindings: openRiskFindings(state), verificationBudget: verificationBudget(state, config.judge.retryBudget) });
 }
 
-const RECEIPT_SCHEMA = "sasu.implement.receipt.v5.parallel-review";
+const RECEIPT_SCHEMA = "sasu.implement.receipt.v6";
 function completionFingerprint(state: ImplementState, sourceDigest: string | null, attempt: UnifiedVerificationAttempt): string {
   return sha256(JSON.stringify({ schema: RECEIPT_SCHEMA, input: attempt.inputFingerprint, sourceDigest, attempt: attempt.id }));
 }
@@ -1421,7 +1426,16 @@ function completionProblems(state: ImplementState): string[] {
   if (effectiveVerdict(state, latest) !== "PASS") problems.push(`verification is ${latest.verdict}${latest.error ? ` at ${latest.error.stage}: ${latest.error.message}` : ""}`);
   const executed = new Set(latest.mechanical.filter((run) => run.status === "PASS").map((run) => `${run.cwd}\0${run.command}`));
   for (const unit of planRunUnits(state)) if (!executed.has(`${unit.cwd}\0${unit.command}`)) problems.push(`required suite was not passed in the current attempt: ${unit.command} (cwd ${unit.cwd})`);
-  for (const role of ROUTINE_REVIEW_ROLES) if (latest.reviews[role]?.result == null) problems.push(`independent ${role} review did not complete`);
+  for (const role of ROUTINE_REVIEW_ROLES) {
+    const reviewed = latest.reviews[role]?.result;
+    if (reviewed == null) problems.push(`independent ${role} review did not complete`);
+    else if (latest.reviewContext === null) problems.push(`independent ${role} review has no pinned context`);
+    else {
+      const validated = validateImplementationReviewResult(reviewed, latest.reviewContext, role);
+      if (typeof validated === "string") problems.push(`${role}: ${validated}`);
+      else if (validated.assessments.some((entry) => entry.conclusion === "unresolved")) problems.push(`${role} requirement/evidence assessment is unresolved`);
+    }
+  }
   if (state.prd.reviewProfile === "high-risk" && latest.risk?.result == null) problems.push("required high-risk review did not complete");
   for (const entry of openFindings(state)) {
     if (entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion")) problems.push(`${entry.id}: ${entry.problem}`);
@@ -1436,7 +1450,7 @@ function receiptData(state: ImplementState, source: ReturnType<typeof captureSou
   return { schema: RECEIPT_SCHEMA, status: state.status, topicSlug: state.topicSlug, prdPath: state.prdPath, prdSnapshotPath: state.prd.snapshotPath,
     prdJudge: state.prd.judge, baselineAttribution: state.baselineAttribution, completedAt: completion.completedAt,
     completionFingerprint: completion.fingerprint, sourceFingerprint: source?.digest ?? null, sourceAvailability: source === null ? "unavailable" : "captured", inputFingerprint: latest.inputFingerprint,
-    verificationAttemptId: latest.id, unifiedVerdict: latest.verdict, phase: latest.phase, error: latest.error,
+    verificationAttemptId: latest.id, prdSha256: latest.prdSha256, reviewContext: latest.reviewContext, unifiedVerdict: latest.verdict, phase: latest.phase, error: latest.error,
     reviews: attemptSummary(latest).reviews, risk: attemptSummary(latest).risk,
     mechanical: latest.mechanical, artifacts: state.artifacts, findings: state.findings, humanConfirmations: humanConfirmations(state), riskFindings: state.riskFindings,
     suite: state.suite, ownedFiles: source ? changedPathsSince(state.initialSource, source) : [], requirementCount: state.requirements.length,

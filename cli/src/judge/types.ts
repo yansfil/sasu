@@ -186,7 +186,7 @@ export interface ReviewValidationContext {
 }
 
 /** Keep the first faulty reference actionable within the existing 300-char retry record. */
-function reviewReferences(value: unknown, allowed: readonly string[], field: string): string[] | string {
+export function reviewReferences(value: unknown, allowed: readonly string[], field: string): string[] | string {
   if (!Array.isArray(value)) return `${field} must be an array of exact reference strings`;
   const seen = new Set<string>();
   for (const [index, ref] of value.entries()) {

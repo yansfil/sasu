@@ -53,30 +53,41 @@ function initMergeFixture({ includeDelivery = true } = {}) {
 
   const stateDir = path.join(root, "agents", "runs", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
+  const reviewContext = {
+    requiredRequirementRefs: ["B1"], actualEvidenceRefs: ["src/feature.js"],
+    requirementRefs: ["B1"], evidenceRefs: ["PRD", "B1", "src/feature.js"], priorFindingIds: [], humanSources: {},
+  };
+  const assessment = { requirementRefs: ["B1"], conclusion: "satisfied", rationale: "The supplied feature source implements the requested behavior.", evidenceRefs: ["src/feature.js"] };
+  const reviews = {
+    fidelity: { verdict: "PASS", result: { summary: "The complete contract matches the implementation.", findings: [], priorDispositions: [], assessments: [assessment] } },
+    code: { verdict: "PASS", result: { summary: "Implementation and integration paths have no concrete defects.", findings: [], priorDispositions: [], assessments: [{ ...assessment, requirementRefs: [] }] } },
+  };
+  const verification = { id: "verify-1", prdSha256: "a".repeat(64), inputFingerprint: "fixture-input", sourceFingerprint: "fixture-source", reviewContext, reviews };
   const state = {
-    schema: "sasu.implement.state.v9.parallel-review",
+    schema: "sasu.implement.state.v10",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
     runDir: "agents/runs/merge-flow",
     completion: { fingerprint: "fixture-completion" },
+    verificationAttempts: [verification],
   };
   if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };
   write(statePath, JSON.stringify(state, null, 2));
   write(path.join(stateDir, "receipt.json"), JSON.stringify({
-    schema: "sasu.implement.receipt.v5.parallel-review",
+    schema: "sasu.implement.receipt.v6",
     status: "complete",
     completionFingerprint: "fixture-completion",
     ownedFiles: ["src/feature.js"],
     sourceFingerprint: "fixture-source",
     verificationAttemptId: "verify-1",
+    prdSha256: verification.prdSha256,
+    inputFingerprint: verification.inputFingerprint,
+    reviewContext,
     delivery: { eligible: true, reasons: [] },
     artifacts: [],
     mechanical: [{ command: "node src/check.js", cwd: root, exitCode: 0, finishedAt: "2026-07-14T11:00:00Z" }],
-    reviews: {
-      fidelity: { verdict: "PASS", result: { summary: "The complete contract matches the implementation.", findings: [] } },
-      code: { verdict: "PASS", result: { summary: "Implementation and integration paths have no concrete defects.", findings: [] } },
-    },
+    reviews,
     findings: [],
     humanConfirmations: [],
     riskFindings: [],
@@ -110,11 +121,14 @@ const args = process.argv.slice(2).join(" ");
 if (args.startsWith("rules check")) {
   process.stdout.write(JSON.stringify({ ok: true, results: [], failures: [], manualConfirmations: [], pending: { count: 0, items: [] } }) + "\\n");
 } else if (args.startsWith("implement status")) {
+  const values = process.argv.slice(2);
+  const state = JSON.parse(require("node:fs").readFileSync(values[values.indexOf("--state") + 1], "utf8"));
+  const latest = state.verificationAttempts.at(-1);
   process.stdout.write(JSON.stringify({
     ok: true,
     detail: {
       status: "complete",
-      verification: { verdict: "PASS" },
+      verification: { verdict: "PASS", latest },
       delivery: { eligible: true, reasons: [] },
       artifactProblems: [],
       completion: { fingerprint: "fixture-completion" }
@@ -356,8 +370,37 @@ test("receipt schema is checked before completed status is consumed", () => {
   write(path.join(fixture.stateDir, "receipt.json"), JSON.stringify({ schema: "sasu.implement.receipt.v4", status: "complete" }));
   const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /received schema sasu.implement.receipt.v4; expected sasu.implement.receipt.v5.parallel-review; last supported commit 3f549dc/);
+  assert.match(result.stderr, /received schema sasu.implement.receipt.v4; expected sasu.implement.receipt.v6; last supported commit 3f549dc/);
   assert.equal(fs.existsSync(fixture.ghLog), false);
+});
+
+test("experimental receipt schema names its actual last supporting commit", () => {
+  const fixture = initLocalFixture();
+  write(path.join(fixture.stateDir, "receipt.json"), JSON.stringify({ schema: "sasu.implement.receipt.v5.parallel-review", status: "complete" }));
+  const result = run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /expected sasu.implement.receipt.v6; last supported commit 2b1f638/);
+});
+
+test("delivery refuses receipt-only edits to coverage grounds and pinned input identity", () => {
+  for (const mutation of [
+    receipt => { receipt.reviews.fidelity.result.assessments = []; },
+    receipt => { receipt.reviews.code.result.assessments[0].rationale = "Invented replacement grounds."; },
+    receipt => { receipt.reviewContext.actualEvidenceRefs = ["unprovided.js"]; },
+    receipt => { receipt.prdSha256 = "b".repeat(64); },
+  ]) {
+    const fixture = initLocalFixture();
+    const receiptPath = path.join(fixture.stateDir, "receipt.json");
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+    mutation(receipt);
+    write(receiptPath, JSON.stringify(receipt, null, 2));
+    const head = gitHead(fixture.root);
+    const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /does not match/);
+    assert.equal(gitHead(fixture.root), head);
+    assert.equal(fs.existsSync(fixture.ghLog), false);
+  }
 });
 
 test("delivery requires both completed role results even when eligibility is recorded", () => {
@@ -386,7 +429,7 @@ test("delivery preserves historical role FAIL after the CLI settles human author
   const receiptPath = path.join(fixture.stateDir, "receipt.json");
   const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
   receipt.reviews.fidelity = {
-    verdict: "FAIL", result: { summary: "Prerequisite approval was pending during review.", findings: [] },
+    verdict: "FAIL", result: { ...receipt.reviews.fidelity.result, summary: "Prerequisite approval was pending during review." },
   };
   receipt.humanConfirmations = [{
     id: "F1", kind: "human-confirmation", status: "resolved", problem: "Prerequisite approval.",
@@ -394,6 +437,9 @@ test("delivery preserves historical role FAIL after the CLI settles human author
   }];
   receipt.risk = { verdict: "FAIL", result: { summary: "Declared risk needs acceptance." } };
   receipt.riskFindings = [{ id: "RF1", severity: "blocking", status: "accepted", text: "Declared risk.", resolution: { evidence: "Accept this risk." } }];
+  const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
+  state.verificationAttempts[0].reviews = receipt.reviews;
+  write(fixture.statePath, JSON.stringify(state, null, 2));
   write(receiptPath, JSON.stringify(receipt, null, 2));
   const body = JSON.parse(run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
   const draft = fs.readFileSync(path.join(fixture.root, body.bodyPath), "utf8");
@@ -428,7 +474,7 @@ test("a blocked receipt does not ship", () => {
 
 test("stale verification and mismatched completion identities refuse local delivery", () => {
   for (const [from, to, expected] of [
-    ['verification: { verdict: "PASS" }', 'verification: { verdict: "STALE" }', /not PASS/],
+    ['verification: { verdict: "PASS", latest }', 'verification: { verdict: "STALE", latest }', /not PASS/],
     ['completion: { fingerprint: "fixture-completion" }', 'completion: { fingerprint: "changed-completion" }', /completion fingerprint does not match/],
   ]) {
     const fixture = initLocalFixture();

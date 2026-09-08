@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { PRD_PATH, STATE_PATH, REVIEW_PASS, makeProject, prd, readState, run, start, stub, ok, registerEvidence, defect } from "../helpers/implement-fixture.mjs";
+import { PRD_PATH, STATE_PATH, REVIEW_PASS, makeProject, prd, readState, run, start, stub, ok, registerEvidence, defect, reviewWithAssessments } from "../helpers/implement-fixture.mjs";
 
 const QA_FIXTURE = fs.readFileSync(path.resolve(import.meta.dirname, "../fixtures/prelint/qa-clean.md"), "utf8");
 
-test("thirty requirements and all decisions reach both independent reviews with no requirement PASS ledger", () => {
+test("thirty requirements receive grouped evidence grounds in independent reviews and the receipt", () => {
   const root = makeProject({ count: 30 });
   start(root);
   const env = stub(root);
@@ -16,7 +16,7 @@ test("thirty requirements and all decisions reach both independent reviews with 
   const verified = run(root, ["implement", "verify"], { env });
   ok(verified);
   const state = readState(root);
-  assert.equal(state.schema, "sasu.implement.state.v9.parallel-review");
+  assert.equal(state.schema, "sasu.implement.state.v10");
   assert.equal(state.requirements.length, 30);
   assert.equal(state.rows, undefined);
   for (const requirement of state.requirements) assert.deepEqual(Object.keys(requirement).sort(), ["behavior", "decisionIds", "id"]);
@@ -31,14 +31,23 @@ test("thirty requirements and all decisions reach both independent reviews with 
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
   const attempt = state.verificationAttempts.at(-1);
   assert.equal(attempt.verdict, "PASS");
+  assert.equal(attempt.prdSha256, state.prd.sha256);
+  assert.deepEqual(attempt.reviewContext.requiredRequirementRefs, state.requirements.map((entry) => entry.id));
+  assert.ok(attempt.reviewContext.actualEvidenceRefs.includes("implementation.txt"));
+  assert.equal(attempt.reviews.fidelity.result.assessments.length, 1, "one shared source can ground the complete contract");
+  assert.equal(attempt.reviews.fidelity.result.assessments[0].requirementRefs.length, 30);
+  assert.deepEqual(attempt.reviews.code.result.assessments[0].requirementRefs, [], "code-wide grounds do not repeat Fidelity accounting");
   assert.equal(attempt.mechanical.length, 1);
   assert.equal(attempt.mechanical[0].exitCode, 0);
   assert.ok(fs.readFileSync(path.join(root, attempt.mechanical[0].logPath), "utf8").includes("REAL-SUITE-OUTPUT"));
-  for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result, REVIEW_PASS);
+  for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result, reviewWithAssessments(root, REVIEW_PASS, role));
   const finalized = ok(run(root, ["implement", "finalize"]));
   const receipt = JSON.parse(fs.readFileSync(path.join(root, finalized.detail.completion.receiptPath), "utf8"));
-  assert.equal(receipt.schema, "sasu.implement.receipt.v5.parallel-review");
+  assert.equal(receipt.schema, "sasu.implement.receipt.v6");
   assert.equal(readState(root).status, "complete");
+  assert.equal(receipt.prdSha256, attempt.prdSha256);
+  assert.deepEqual(receipt.reviewContext, attempt.reviewContext);
+  for (const role of ["fidelity", "code"]) assert.deepEqual(receipt.reviews[role].result, attempt.reviews[role].result);
   assert.equal(receipt.rows, undefined);
   assert.equal(receipt.score, undefined);
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n", "finalize runs neither tests nor review");
@@ -46,7 +55,7 @@ test("thirty requirements and all decisions reach both independent reviews with 
   assert.equal(readState(root).verificationAttempts.length, 1);
 });
 
-test("a first review defect leaves the run active with open findings and cannot close prematurely", () => {
+test("a valid failed review stays active and repair appends a passing attempt without rewriting history", () => {
   const root = makeProject();
   start(root);
   const env = stub(root, { ...REVIEW_PASS, findings: [defect()] });
@@ -59,6 +68,32 @@ test("a first review defect leaves the run active with open findings and cannot 
   assert.equal(readState(root).status, "active");
   assert.equal(readState(root).findings[0].status, "open");
   assert.equal(readState(root).completion, null);
+  const failedState = readState(root);
+  const first = failedState.verificationAttempts[0];
+  assert.equal(first.verdict, "FAIL", "this is a validated defect, not malformed reviewer output");
+  for (const role of ["fidelity", "code"]) {
+    assert.equal(first.reviews[role].verdict, "FAIL");
+    assert.ok(first.reviews[role].result.assessments.some((entry) => entry.conclusion === "unresolved" && entry.requirementRefs.includes("B1")));
+  }
+  const originalAttemptJson = JSON.stringify(first);
+  fs.appendFileSync(path.join(root, "implementation.txt"), "The missing public value is now preserved.\n");
+  const repaired = { ...REVIEW_PASS, priorDispositions: [{ findingId: failedState.findings[0].id, status: "resolved", reason: "The public implementation now preserves the missing value.", evidenceRefs: ["implementation.txt"] }] };
+  ok(run(root, ["implement", "verify"], { env: stub(root, repaired) }));
+  const corrected = readState(root);
+  assert.equal(corrected.verificationAttempts.length, 2);
+  assert.equal(JSON.stringify(corrected.verificationAttempts[0]), originalAttemptJson, "settled results and their pinned inputs remain byte-identical");
+  const latest = corrected.verificationAttempts[1];
+  assert.equal(latest.verdict, "PASS");
+  assert.equal(latest.prdSha256, first.prdSha256);
+  assert.notEqual(latest.inputFingerprint, first.inputFingerprint);
+  assert.notEqual(latest.sourceFingerprint, first.sourceFingerprint);
+  assert.equal(corrected.findings[0].status, "resolved");
+  const closed = ok(run(root, ["implement", "finalize"]));
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, closed.detail.completion.receiptPath), "utf8"));
+  assert.equal(receipt.verificationAttemptId, latest.id);
+  assert.equal(receipt.delivery.eligible, true);
+  for (const role of ["fidelity", "code"]) assert.deepEqual(receipt.reviews[role].result, latest.reviews[role].result);
+  assert.equal(JSON.stringify(readState(root).verificationAttempts[0]), originalAttemptJson, "finalize must preserve failed-attempt evidence too");
 });
 
 test("a failed mandatory suite is an actual failed attempt and leaves the correction path active", () => {
@@ -91,7 +126,7 @@ test("retired commands and old state schemas fail explicitly instead of replayin
   const refused = run(root, ["implement", "status"]);
   assert.notEqual(refused.status, 0);
   assert.match(refused.json.message, /v8/);
-  assert.match(refused.json.message, /v9/);
+  assert.match(refused.json.message, /v10/);
   assert.match(refused.json.message, /3f549dc/);
 });
 

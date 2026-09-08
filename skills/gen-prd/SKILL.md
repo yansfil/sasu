@@ -97,7 +97,8 @@ The six sections preserve all product requirements and decision provenance.
 Behaviors use exactly three columns: reference, observable behavior, and cited decisions.
 There is no required verification section, task list, method column, evidence matrix, or replacement checkbox ceremony.
 Do not compress distinct requirements to reduce review calls or split implementation details into artificial harness tasks.
-The harness reviews the complete contract once and records only discovered issues and the run outcome.
+The harness sends the complete contract to independent parallel Fidelity and Code reviews and records their assessment grounds, discovered issues, and the run outcome.
+Fidelity accounts for every Bn in grouped review assessments; that CLI-owned result does not add an author-maintained field, proof method, or evidence matrix to the PRD.
 Retired document shapes fail explicitly with current-format guidance.
 
 ## Section Intent
@@ -192,17 +193,16 @@ Treat a short affirmative response as acceptance of a recommendation only when i
 Silence, lack of objection, a topic change, or continued participation is not approval.
 If that distinction would materially change scope or behavior, ask one contract-breaking question instead of inventing consent.
 
-This table is what the independent comprehensive reviewer compares the implementation against at
-the end of `implement`, and for a conversation-only PRD it is the only record
-of the conversation the harness can read. Preserve the essential user decision
-text here rather than relying on chat history.
+This table is what both independent Fidelity and Code reviewers compare the implementation against at the end of `implement`.
+For a conversation-only PRD it is the only record of the conversation the harness can read.
+Preserve the essential user decision text here rather than relying on chat history.
 
 ### Behaviors
 
 Use `| # | 사용자가 관찰하는 행동 | 결정 |`.
 
 - `#` is a unique `B<n>` reference in reading order.
-  It names requirements in review findings; it has no status, proof lifecycle, or outcome column.
+  It names requirements in review findings and grouped assessments; it has no status, proof lifecycle, or outcome column.
 - `사용자가 관찰하는 행동` describes a specific user-visible state, message, bound, refusal, or recovery.
   Preserve the complete intended behavior, including meaningful failure and recovery boundaries.
   Write the product outcome rather than a harness procedure or an implementation task.
@@ -212,6 +212,8 @@ The content decides the number of requirements.
 Every requirement stays in the PRD and the independent full-contract review input.
 Do not assign a proof method, evidence file, reviewer, separate judge call, or PASS object to each requirement.
 The implementor chooses suitable focused checks and shared actual user-flow observations; the CLI executes the required project suites and pins evidence identity.
+The same actual source, test result, or observation may support many requirements, while Fidelity's review records every Bn exactly once with concrete grounds.
+Structural accounting does not certify the correctness of the review's conclusions.
 A material actual human judgment belongs in Decisions or Risks with its source, not a type applied to every behavior.
 Distinguish permitted after-the-fact taste review from prerequisite authority such as payment, deployment, access, or destructive data actions.
 Live external/API/database observations preserve the approved non-production and side-effect boundary in Risks.

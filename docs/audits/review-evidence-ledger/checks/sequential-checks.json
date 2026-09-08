@@ -1,0 +1,83 @@
+[
+  {
+    "name": "build",
+    "argv": [
+      "npm",
+      "run",
+      "build"
+    ],
+    "cwd": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli",
+    "startedAt": "2026-09-08T13:21:55.481214+00:00",
+    "durationSeconds": 1.066,
+    "exitCode": 0,
+    "log": "/private/tmp/sasu-review-ledger-checks/final-build.log"
+  },
+  {
+    "name": "noemit",
+    "argv": [
+      "./node_modules/.bin/tsc",
+      "--noEmit"
+    ],
+    "cwd": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli",
+    "startedAt": "2026-09-08T13:21:56.547515+00:00",
+    "durationSeconds": 0.657,
+    "exitCode": 0,
+    "log": "/private/tmp/sasu-review-ledger-checks/final-noemit.log"
+  },
+  {
+    "name": "root",
+    "argv": [
+      "node",
+      "--test",
+      "tests/benchmark_case_contract.test.mjs",
+      "tests/benchmark_report.test.mjs",
+      "tests/challenge_trigger.test.mjs",
+      "tests/gate_loop_static.test.mjs",
+      "tests/implement_command_contract.test.mjs",
+      "tests/implement_hook_account.test.mjs",
+      "tests/implement_skill_structure.test.mjs",
+      "tests/install_local_skills.test.mjs",
+      "tests/interview_me_docs.test.mjs",
+      "tests/prd_parser_unit.test.mjs",
+      "tests/prd_ship.test.mjs",
+      "tests/rules_engine.test.mjs",
+      "tests/sasu_gate_wiring.test.mjs",
+      "tests/sasu_judge_api_backend_wiring.test.mjs",
+      "tests/sasu_judge_backend_health.test.mjs",
+      "tests/sasu_judge_command_audit_abort.test.mjs",
+      "tests/sasu_judge_lane_effort.test.mjs",
+      "tests/sasu_judge_record_telemetry.test.mjs",
+      "tests/sasu_judge_timeout.test.mjs"
+    ],
+    "cwd": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger",
+    "startedAt": "2026-09-08T13:21:57.204828+00:00",
+    "durationSeconds": 13.249,
+    "exitCode": 0,
+    "log": "/private/tmp/sasu-review-ledger-checks/final-root.log"
+  },
+  {
+    "name": "unit",
+    "argv": [
+      "npm",
+      "test"
+    ],
+    "cwd": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli",
+    "startedAt": "2026-09-08T13:22:10.454219+00:00",
+    "durationSeconds": 10.828,
+    "exitCode": 0,
+    "log": "/private/tmp/sasu-review-ledger-checks/final-unit.log"
+  },
+  {
+    "name": "e2e",
+    "argv": [
+      "npm",
+      "run",
+      "test:e2e"
+    ],
+    "cwd": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger/cli",
+    "startedAt": "2026-09-08T13:22:21.282022+00:00",
+    "durationSeconds": 15.451,
+    "exitCode": 0,
+    "log": "/private/tmp/sasu-review-ledger-checks/final-e2e.log"
+  }
+]

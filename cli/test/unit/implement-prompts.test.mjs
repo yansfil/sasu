@@ -12,11 +12,11 @@ export function material(overrides = {}) {
   const prdText = prd({ count: 30 });
   const contract = parseImplementContract(prdText);
   const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changeMaterial: [{ path: "implementation.txt", body: "complete source" }], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], evidence: [], artifacts: [], readablePaths: ["implementation.txt"], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
-  return { ...value, referenceContext: overrides.referenceContext ?? { requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", ...value.readablePaths], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
+  return { ...value, referenceContext: overrides.referenceContext ?? { requiredRequirementRefs: value.contract.rows.map((entry) => entry.id), actualEvidenceRefs: value.readablePaths, requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", ...value.readablePaths], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
 }
 
 test("review prompts advertise the exact validator vocabulary, including whole-contract findings without invented requirement IDs", () => {
-  const referenceContext = { requirementRefs: ["B1", "D-01"], evidenceRefs: ["PRD", "src/public.mjs"], priorFindingIds: [], humanSources: {} };
+  const referenceContext = { requiredRequirementRefs: ["B1"], actualEvidenceRefs: ["src/public.mjs"], requirementRefs: ["B1", "D-01"], evidenceRefs: ["PRD", "src/public.mjs"], priorFindingIds: [], humanSources: {} };
   for (const prompt of [reviewPrompt(material({ referenceContext }), "fidelity"), reviewPrompt(material({ referenceContext }), "code"), riskPrompt(material({ referenceContext }))]) {
     const advertised = prompt.split("\nVALID CONTRACT REFERENCES")[1].split("\nVALID EVIDENCE REFERENCES")[0]
       .split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));

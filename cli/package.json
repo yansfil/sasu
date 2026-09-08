@@ -1,8 +1,8 @@
 {
   "name": "sasu-cli",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
-  "description": "sasu CLI: document gates, unified implementation verification, and receipts",
+  "description": "sasu CLI: document gates, parallel implementation reviews, and evidence-backed receipts",
   "type": "commonjs",
   "bin": {
     "sasu": "dist/cli.js"

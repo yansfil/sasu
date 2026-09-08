@@ -6,6 +6,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { isDeepStrictEqual } = require("node:util");
 
 const { validateCase, assertSchema } = require("./lib/case_contract.js");
 const RUN_SCHEMA = "sasu.benchmark-run.v2";
@@ -473,6 +474,8 @@ function modernTiming(state, receipt) {
     const review = attempt.reviews[role];
     return review ? [{
       attemptId: attempt.id, role, invocationId: review.invocationId,
+      prdSha256: attempt.prdSha256, inputFingerprint: attempt.inputFingerprint, sourceFingerprint: attempt.sourceFingerprint,
+      assessments: review.result?.assessments ?? null,
       startedAt: review.startedAt, finishedAt: review.finishedAt, durationMs: review.durationMs,
       verdict: review.verdict, error: review.error, judge: review.judge,
     }] : [];
@@ -671,6 +674,56 @@ function readPreparedRun(projectRoot, contract, casePath, prdPath, runId) {
   return { record, recordPath };
 }
 
+function assertImplementationSchema(value, expected, label) {
+  if (value?.schema === expected) return;
+  const supportCommit = ["sasu.implement.state.v9.parallel-review", "sasu.implement.receipt.v5.parallel-review"].includes(value?.schema)
+    ? "2b1f638dd587261be7e7b0e600db16657421971d" : "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
+  throw new Error(`implementation ${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supportCommit}. Start a new run with the current contract.`);
+}
+
+// Keep historical errors measurable, but never call an incomplete or edited
+// assessment record valid. The implementation validator owns this contract.
+function reviewRecordProblems(state, receipt) {
+  const { validateImplementationReviewResult } = require(path.join(harnessRoot(), "cli", "dist", "implement", "review-contract.js"));
+  const problems = [];
+  for (const attempt of state.verificationAttempts) {
+    if (typeof attempt.prdSha256 !== "string" || !/^[a-f0-9]{64}$/.test(attempt.prdSha256)) {
+      problems.push(`${attempt.id}: missing pinned PRD identity`);
+    }
+    for (const role of REVIEW_ROLES) {
+      const lane = attempt.reviews[role];
+      if (!lane?.result) continue;
+      try {
+        const parsed = validateImplementationReviewResult(lane.result, attempt.reviewContext, role);
+        if (typeof parsed === "string") problems.push(`${attempt.id} ${role}: ${parsed}`);
+        else if (lane.verdict === "PASS" && parsed.assessments.some(entry => entry.conclusion === "unresolved")) {
+          problems.push(`${attempt.id} ${role}: PASS contains an unresolved assessment`);
+        }
+      } catch (error) {
+        problems.push(`${attempt.id} ${role}: invalid pinned review context (${error.message})`);
+      }
+    }
+  }
+  const latest = state.verificationAttempts.at(-1);
+  if (!latest || receipt.verificationAttemptId !== latest.id
+      || receipt.prdSha256 !== latest.prdSha256
+      || receipt.inputFingerprint !== latest.inputFingerprint
+      || !isDeepStrictEqual(receipt.reviewContext, latest.reviewContext)) {
+    problems.push("receipt review input identity does not match the final attempt");
+  }
+  if (latest && receipt.sourceFingerprint !== null && receipt.sourceFingerprint !== latest.sourceFingerprint) {
+    problems.push("receipt source identity does not match the final attempt");
+  }
+  for (const role of REVIEW_ROLES) {
+    const lane = latest?.reviews[role];
+    const settled = lane == null ? null : Object.fromEntries(Object.entries(lane).filter(([key]) => key !== "judge"));
+    if (!isDeepStrictEqual(receipt.reviews?.[role], settled)) {
+      problems.push(`receipt ${role} review does not match the settled judgment`);
+    }
+  }
+  return problems;
+}
+
 function commandReport(options) {
   const projectRoot = path.resolve(options["project-root"] || process.cwd());
   const casePath = path.resolve(projectRoot, requireOption(options, "case"));
@@ -689,13 +742,9 @@ function commandReport(options) {
   const receiptPath = path.join(runDir, "receipt.json");
   const statePath = path.join(runDir, "state.json");
   const receipt = readJson(receiptPath, "implementation receipt");
-  if (receipt.schema !== "sasu.implement.receipt.v5.parallel-review") {
-    throw new Error(`implementation receipt received schema ${receipt.schema ?? "missing"}; expected sasu.implement.receipt.v5.parallel-review; last unified reader 3f549dcfff71fe1f7fa974a383f6e8a055ce8463. Start a new run with the candidate contract.`);
-  }
+  assertImplementationSchema(receipt, "sasu.implement.receipt.v6", "receipt");
   const state = readJson(statePath, "implementation state");
-  if (state.schema !== "sasu.implement.state.v9.parallel-review") {
-    throw new Error(`implementation state received schema ${state.schema ?? "missing"}; expected sasu.implement.state.v9.parallel-review; last unified reader 3f549dcfff71fe1f7fa974a383f6e8a055ce8463. Start a new run with the candidate contract.`);
-  }
+  assertImplementationSchema(state, "sasu.implement.state.v10", "state");
   if (![state.verificationAttempts, state.findings, state.riskFindings, state.escalations, state.artifacts].every(Array.isArray)) throw new Error("invalid parallel review execution ledger");
   for (const attempt of state.verificationAttempts) {
     if (!attempt.reviews || REVIEW_ROLES.some(role => !Object.hasOwn(attempt.reviews, role))) {
@@ -764,8 +813,10 @@ function commandReport(options) {
   // The CLI can settle a prerequisite confirmation or accept a declared risk
   // after a recorded FAIL. Its current completion eligibility is authoritative;
   // the historical review verdict remains a measurement, not a second gate.
+  const reviewProblems = reviewRecordProblems(state, receipt);
   const falseComplete = ["complete", "complete-pending-human"].includes(receipt.status) && (
-    state.status !== receipt.status
+    reviewProblems.length > 0
+    || state.status !== receipt.status
     || receipt.delivery?.eligible !== true
     || typeof receipt.completionFingerprint !== "string"
     || !receipt.completionFingerprint
@@ -789,6 +840,7 @@ function commandReport(options) {
     forbiddenStagesAbsent: forbiddenStagesRun.length === 0,
     verifyAttemptsWithinLimit,
     falseCompleteAbsent: !falseComplete,
+    reviewRecordsValid: reviewProblems.length === 0,
     evaluationAvailable: !evaluationRequired || evaluationAvailable,
     evaluationCoverageMatched: !evaluationRequired || evaluationCoverageMatched,
     evaluatorRuntimeMatched,
@@ -872,6 +924,7 @@ function commandReport(options) {
     },
     honesty: {
       falseComplete,
+      reviewRecordProblems: reviewProblems,
       receiptStatus: receipt.status,
       verificationStatus: state.verificationAttempts.at(-1)?.verdict ?? "NOT_RUN",
       deliveryEligible: receipt.delivery?.eligible === true,

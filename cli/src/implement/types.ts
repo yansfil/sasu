@@ -1,10 +1,14 @@
-import type { JudgeCallRecord, JudgeFailureCause, ReviewFinding, ReviewResult } from "../judge/types";
+import type { JudgeCallRecord, JudgeFailureCause, ReviewFinding, ReviewResult, ReviewValidationContext } from "../judge/types";
 
-// Experimental records cannot be adopted by the installed unified reviewer.
-// Each role keeps its real execution; no existing run is migrated for comparison.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v9.parallel-review" as const;
+// Each role retains its settled assessment under the original input identity.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v10" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
+export const RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
+export function retiredImplementSupportCommit(schema: unknown): string {
+  return schema === "sasu.implement.state.v9.parallel-review" || schema === "sasu.implement.receipt.v5.parallel-review"
+    ? RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT : RETIRED_IMPLEMENT_SUPPORT_COMMIT;
+}
 export type VerificationStatus = "NOT_RUN" | "PASS" | "FAIL" | "BLOCKED" | "ERROR" | "STALE";
 export type ReviewProfile = "trivial" | "standard" | "high-risk";
 export interface JudgeLaneError { code: string; message: string; cause?: JudgeFailureCause }
@@ -156,10 +160,24 @@ export interface LaneRecord<T> {
 
 export type RoutineReviewRole = "fidelity" | "code";
 export const ROUTINE_REVIEW_ROLES: readonly RoutineReviewRole[] = ["fidelity", "code"];
-export type RoutineReviews = Record<RoutineReviewRole, LaneRecord<ReviewResult> | null>;
+export interface ReviewAssessment {
+  requirementRefs: string[];
+  conclusion: "satisfied" | "unresolved" | "pending-human";
+  rationale: string;
+  evidenceRefs: string[];
+}
+export interface ImplementationReviewResult extends ReviewResult { assessments: ReviewAssessment[] }
+export interface ImplementationReviewContext extends ReviewValidationContext {
+  requiredRequirementRefs: readonly string[];
+  actualEvidenceRefs: readonly string[];
+  humanSources: Readonly<Record<string, string>>;
+}
+export type RoutineReviews = Record<RoutineReviewRole, LaneRecord<ImplementationReviewResult> | null>;
 
 export interface UnifiedVerificationAttempt {
   id: string;
+  prdSha256: string;
+  reviewContext: ImplementationReviewContext | null;
   inputFingerprint: string;
   sourceFingerprint: string;
   inputManifest: VerificationInputManifest;

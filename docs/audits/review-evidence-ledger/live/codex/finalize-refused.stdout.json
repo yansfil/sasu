@@ -1,0 +1,10 @@
+{
+  "contractVersion": "0.10.0",
+  "ok": false,
+  "action": "finalize",
+  "exitCode": 2,
+  "message": "finalize refused:\n- verification is FAIL\n- fidelity requirement/evidence assessment is unresolved\n- code requirement/evidence assessment is unresolved\n- F1: command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.\n- F2: command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+  "detail": {
+    "rejectedCheck": "transition"
+  }
+}

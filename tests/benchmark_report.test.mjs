@@ -79,13 +79,27 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   const evaluationPath = path.join(root, prepared.resultDir, "qualitative.json");
   const preparedRecord = JSON.parse(fs.readFileSync(path.join(root, prepared.resultDir, "run.json"), "utf8"));
   const at = seconds => new Date(Date.parse("2026-08-12T00:00:00Z") + seconds * 1000).toISOString();
+  const requiredRequirementRefs = Array.from({ length: 30 }, (_, index) => `B${index + 1}`);
+  const reviewContext = {
+    requiredRequirementRefs, actualEvidenceRefs: ["demo-app/main.js"], requirementRefs: requiredRequirementRefs,
+    evidenceRefs: ["PRD", ...requiredRequirementRefs, "demo-app/main.js"], priorFindingIds: [], humanSources: {},
+  };
+  const receiptReview = lane => lane === null ? null : Object.fromEntries(Object.entries(lane).filter(([key]) => key !== "judge"));
+  const receiptVerification = attempt => ({
+    verificationAttemptId: attempt.id, prdSha256: attempt.prdSha256, inputFingerprint: attempt.inputFingerprint,
+    sourceFingerprint: attempt.sourceFingerprint, reviewContext: attempt.reviewContext,
+    reviews: Object.fromEntries(Object.entries(attempt.reviews).map(([role, lane]) => [role, receiptReview(lane)])),
+  });
   const review = (seconds, duration, attempts = 1) => ({
     invocationId: `review-${seconds}`, startedAt: at(seconds), finishedAt: at(seconds + duration), durationMs: duration * 1000,
-    verdict: "FAIL", result: { summary: "A required flow is not connected.", findings: [] },
+    verdict: "FAIL", result: {
+      summary: "The supplied source grounds the complete behavior assessment.", findings: [], priorDispositions: [],
+      assessments: [{ requirementRefs: requiredRequirementRefs, conclusion: "satisfied", rationale: "The complete source contains the deterministic behavior implementation.", evidenceRefs: ["demo-app/main.js"] }],
+    },
     judge: { at: at(seconds), durationMs: duration * 1000, attempts, outcome: "ok" },
   });
   const attempt = (id, seconds) => ({
-    id, phase: "complete", inputFingerprint: "same", verdict: "FAIL", startedAt: at(seconds), finishedAt: at(seconds + 30), durationMs: 30000,
+    id, phase: "complete", prdSha256: preparedRecord.prdHash, reviewContext, sourceFingerprint: "fixture-source", inputFingerprint: "same", verdict: "FAIL", startedAt: at(seconds), finishedAt: at(seconds + 30), durationMs: 30000,
     mechanical: [{ command: "node --test", cwd: prepared.worktree, startedAt: at(seconds), finishedAt: at(seconds + 10), durationMs: 10000, exitCode: 0, status: "PASS" }],
     reviews: {
       fidelity: { ...review(seconds + 10, 20), invocationId: `${id}-fidelity` },
@@ -104,7 +118,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
     usage: { inputTokens: 10, outputTokens: 3 },
   };
   write(path.join(runDir, "state.json"), {
-    schema: "sasu.implement.state.v9.parallel-review", status: "blocked", createdAt: at(0),
+    schema: "sasu.implement.state.v10", status: "blocked", createdAt: at(0),
     ownerSessionId: "session-1", projectRoot: prepared.worktree,
     initialSource: preparedRecord.initialSource,
     requirements: Array.from({ length: 30 }, (_, index) => ({ id: `B${index + 1}`, behavior: `Requirement ${index + 1}`, decisionIds: [] })),
@@ -117,8 +131,8 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
     ],
   });
   write(path.join(runDir, "receipt.json"), {
-    schema: "sasu.implement.receipt.v5.parallel-review", status: "blocked", completedAt: at(1000),
-    delivery: { eligible: false, reasons: ["F1 remains open"] }, reviews: secondAttempt.reviews,
+    schema: "sasu.implement.receipt.v6", status: "blocked", completedAt: at(1000),
+    delivery: { eligible: false, reasons: ["F1 remains open"] }, ...receiptVerification(secondAttempt),
   });
   write(path.join(gatesDir, "gates.json"), {
     gates: {
@@ -214,6 +228,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.equal(report.efficiency.escalationAttempts, 2);
   assert.equal(report.efficiency.diagnosedRecoveries, 1);
   assert.equal(report.honesty.falseComplete, false, "an honest blocked result is not a false complete");
+  assert.deepEqual(report.honesty.reviewRecordProblems, [], "one supplied complete source can ground all 30 requirement references");
   assert.equal(report.qualitative.processScore.score, 85);
   assert.equal(report.qualitative.evaluatorRuntimeMatched, true);
   assert.equal(Object.prototype.hasOwnProperty.call(report.qualitative, "productQuality"), false);
@@ -330,6 +345,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
     })),
   };
   write(statePath, partialState);
+  write(receiptPath, { ...originalReceipt, ...receiptVerification(partialState.verificationAttempts.at(-1)) });
   const partialOutput = run(root, reportArgs);
   const partialReport = JSON.parse(fs.readFileSync(path.join(root, partialOutput.output), "utf8"));
   assert.deepEqual(partialReport.flow.requiredStagesMissing, [], "actual Fidelity review remains in the stage footprint when Code preflight refuses");
@@ -354,6 +370,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   };
   partialState.verificationAttempts[1].reviews.code = failedCode;
   write(statePath, partialState);
+  write(receiptPath, { ...originalReceipt, ...receiptVerification(partialState.verificationAttempts.at(-1)) });
   const failedRoleOutput = run(root, reportArgs);
   const failedRoleReport = JSON.parse(fs.readFileSync(path.join(root, failedRoleOutput.output), "utf8"));
   assert.equal(failedRoleReport.timing.judgeCalls, 9, "a rejected actual Code execution remains counted");
@@ -365,11 +382,12 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
 
   const executionState = JSON.parse(fs.readFileSync(statePath, "utf8"));
   executionState.verificationAttempts.push({
-    id: "verify-3", phase: "preflight", inputFingerprint: "same", verdict: "ERROR",
+    id: "verify-3", phase: "preflight", prdSha256: preparedRecord.prdHash, reviewContext: null, sourceFingerprint: "fixture-source", inputFingerprint: "same", verdict: "ERROR",
     startedAt: at(700), finishedAt: at(701), durationMs: 1000, mechanical: [], reviews: { fidelity: null, code: null }, risk: null,
     error: { stage: "preflight", code: "input-invalid", message: "Required input unavailable." },
   });
   write(statePath, executionState);
+  write(receiptPath, { ...originalReceipt, ...receiptVerification(executionState.verificationAttempts.at(-1)) });
   const preflightOutput = run(root, reportArgs);
   const preflightReport = JSON.parse(fs.readFileSync(path.join(root, preflightOutput.output), "utf8"));
   assert.equal(preflightReport.timing.judgeCalls, 10, "a preflight failure did not execute a judge");
@@ -377,6 +395,25 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.equal(preflightReport.efficiency.verifyAttempts, 3);
   assert.deepEqual(preflightReport.efficiency.executionErrorsByStage, { preflight: 1 });
   assert.equal(preflightReport.honesty.falseComplete, false);
+
+  for (const schema of ["sasu.implement.receipt.v5", "sasu.implement.receipt.v5.parallel-review"]) {
+    write(receiptPath, { ...originalReceipt, schema });
+    const retired = spawnSync(process.execPath, [reporter, ...reportArgs], { cwd: root, encoding: "utf8" });
+    assert.notEqual(retired.status, 0);
+    assert.match(retired.stderr, /expected sasu.implement.receipt.v6/);
+    assert.match(retired.stderr, new RegExp(schema.endsWith("parallel-review") ? "2b1f638" : "3f549dc"));
+  }
+  const missingCoverageState = structuredClone(settledState);
+  missingCoverageState.verificationAttempts[1].reviews.fidelity.result.assessments[0].requirementRefs.pop();
+  write(statePath, missingCoverageState);
+  write(receiptPath, { ...settledReceipt, ...receiptVerification(missingCoverageState.verificationAttempts.at(-1)) });
+  const missingCoverageOutput = run(root, reportArgs);
+  const missingCoverageReport = JSON.parse(fs.readFileSync(path.join(root, missingCoverageOutput.output), "utf8"));
+  assert.equal(missingCoverageReport.outcome.validRun, false);
+  assert.equal(missingCoverageReport.honesty.falseComplete, true);
+  assert.match(missingCoverageReport.honesty.reviewRecordProblems.join("; "), /missing required references: B30/);
+  write(statePath, originalState);
+  write(receiptPath, originalReceipt);
 
   const badEvaluationPath = path.join(root, "bad-qualitative.json");
   const badEvaluation = JSON.parse(fs.readFileSync(evaluationPath, "utf8"));

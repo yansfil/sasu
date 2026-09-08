@@ -137,7 +137,7 @@ sasu gate verify      --contract quick path: required checks and one comprehensi
 sasu implement intake inspect dirty judged paths and return the one Spec Owner disposition question
 sasu implement start  initialize one approved-PRD state with explicit dirty-source attribution
 sasu implement artifact  register shared actual observations with hashes and provenance
-sasu implement verify execute required suites and comprehensive review on fixed inputs
+sasu implement verify execute required suites and parallel Fidelity and Code reviews on fixed inputs
 sasu implement amend  human-authorized contract or required-suite amendment
 sasu implement confirm record the person's response to an actual confirmation ID
 sasu implement retire release an unfinished run's occupancy when no verify lease is live
@@ -183,7 +183,7 @@ Open blocking high-risk findings keep the run incomplete even when routine revie
 Prior issues require explicit dispositions, and a concrete contract omission discovered in an unchanged file still counts.
 A PASS is pinned to the content hash of its input documents; editing the qa-log or PRD afterwards turns the gate `STALE` in `gate status` and requires restoring the sealed input or an explicit reopen, so a gate can never silently re-judge changed requirements.
 The CLI never executes implementation work: coding stays in the host agent session.
-`cli/src/implement` owns implement state, evidence registration, unified verification, and finalization.
+`cli/src/implement` owns implement state, evidence registration, verification, and finalization.
 
 Project-specific judge models and fallbacks are configured in `agents/config.json`.
 Omitted fields inherit the defaults above.
@@ -219,14 +219,25 @@ The Behaviors table has three columns:
 | B3 | Storage failure reports the error and preserves the draft. | D-03 |
 
 The implementor can observe save, reopen, search, and empty results in one actual flow, then inject a storage failure separately.
-It registers useful shared observations and runs verify, which executes the sealed required suites and sends every requirement and decision to one independent comprehensive reviewer.
-The review records concrete defects and optional advice, such as an unwired save button or missing failure handling.
+It registers useful shared observations and runs verify, which executes the sealed required suites and sends every requirement and decision to independent Fidelity and Code reviewers concurrently.
+Both use the same fixed original inputs and routine model profile, without receiving the current peer verdict.
+Fidelity checks complete intent and observable behavior fulfillment; Code checks concrete implementation, integration, error paths, and consequential design problems.
+Both record their evidence grounds and concrete findings, such as an unwired save button or missing failure handling; cosmetic preferences remain advisory.
 A high-risk run additionally checks distinct data-loss, permission, or destructive-action concerns using the same fixed inputs.
 There is no per-requirement PASS array, mandatory separate evidence, progress lifecycle, or replacement Markdown checklist.
 
-The CLI mechanically guarantees actual required-suite execution, evidence integrity, current-input identity, ownership, human authority, concurrency safety, and honest state-derived receipts.
-The reviewer semantically decides whether the implementation and observations satisfy the full contract.
-Sending every requirement is not a guarantee that a model detects every omission; real planted-omission evaluations measure that quality separately from fixture and schema tests.
+Fidelity records every Bn exactly once across grouped `assessments`, each with requirement references, a `satisfied`, `unresolved`, or `pending-human` conclusion, a short concrete rationale, and evidence references.
+Code records its own substantive grounds without repeating an all-Bn accounting form.
+One complete source file, test result, or observation can support many requirements; a satisfied assessment cannot cite only PRD text or source-catalog metadata.
+Pending-human assessments require corresponding validated after-the-fact human confirmations and do not assert satisfaction or waive prerequisite authority.
+The CLI refuses missing or duplicate Fidelity coverage, unknown references, empty grounds, invalid evidence, and unresolved coverage.
+This establishes inspectable structural coverage alongside actual required-suite execution, evidence integrity, current-input identity, ownership, human authority, concurrency safety, and honest state-derived receipts.
+The reviewers still decide whether the implementation and observations satisfy the full contract.
+Valid coverage records do not prove the conclusions correct or guarantee that a model detects every omission; real planted-omission evaluations measure that quality separately from fixture and schema tests.
+
+Each actual role result, timing, and provider trace remains separate in the existing `verificationAttempts[].reviews` history.
+CLI mutations cannot rewrite or delete settled judgments; corrections append a new attempt with its own source, PRD, and input identity.
+One shared finding history preserves prior issues until both roles resolve them with evidence, and distinct defects remain distinct even when they cite the same Bn.
 
 A whole-verify execution lease pins inputs from required-suite execution through judge completion and CAS persistence.
 While it is live, other domain mutations including amend, retire, risk, confirm, ownership changes, and escalation are refused.
@@ -243,14 +254,17 @@ Finalize itself runs no tests or judges and persists state before generating the
 An explicit open rejection makes delivery ineligible; responses remain in history and only the person's own words can resolve them.
 Source fixes after closure use a new run.
 
-Ship consumes the current v5 receipt derived from v9 state, and refuses stale results, open rejections, blocked runs, stale bases, out-of-allowlist staging, leftover placeholders, or prohibited attribution.
+Ship consumes the current v6 receipt derived from v10 state, and refuses incomplete review accounting, stale results, open rejections, blocked runs, stale bases, out-of-allowlist staging, leftover placeholders, or prohibited attribution.
 It preserves learned rules, CI checks, explicit merge approval, and the reviewed PR-head pin.
 Required delivery rules do not create a second implementation completion engine.
 
 ## Contract Transition
 
-CLI contract `0.9.0` reads only the new state, receipt, and document shapes.
-The last pre-refactor support commit is `488d3cc`; finish or retire older runs with that pinned version before transitioning both runtimes.
+CLI contract `0.10.0` reads `sasu.implement.state.v10`, `sasu.implement.receipt.v6`, and the current document shapes.
+The last unified v9/v5 support commit is `3f549dcfff71fe1f7fa974a383f6e8a055ce8463`.
+The last experimental parallel v9/v5 support commit is `2b1f638dd587261be7e7b0e600db16657421971d`.
+Pre-refactor runs require `488d3cc`.
+Finish or retire an older run with its supporting pinned version before transitioning both runtimes; retired shapes fail explicitly in the production reader.
 Old results are historical artifacts, never normalized into new successful reviews.
 There are no legacy namespace readers or migration shims.
 The retired dispatcher tombstone and old hook markers remain only to explain unsupported entrypoints and safely retract prior installation traces.

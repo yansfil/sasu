@@ -219,6 +219,9 @@ Rules:
 - Require the Risks section's human-owned prerequisites to have been resolved by the main session before dispatch.
   If a human-owned blocker remains, emit `OBSERVER_BLOCK`; do not ask from the Implementor pane.
 - Register useful observations at run level with provenance, execute required suites and concurrent independent Fidelity and Code reviews through verify, and use state-only finalize.
+  Both reviews receive the same fixed original inputs without the current peer verdict.
+  Fidelity records every Bn in grouped assessments with actual evidence grounds; Code records its substantive grounds without another all-Bn form.
+  The CLI checks coverage and references and preserves settled role history when corrections append new attempts; the agent does not maintain a parallel ledger.
   A high-risk run retains a distinct safety check; open risks count toward the correction bound.
   A first failed verify remains active, and an exhausted or persistently failed attempt closes honestly with `finalize --status blocked`.
   Pending permitted human judgment may travel with delivery, but explicit open rejection blocks it.
@@ -296,6 +299,6 @@ The Observer combines it with the PRD-stage results it already owns, checks comp
 - Status: `Done`, `Partially Done`, or `Blocked`.
 - PRD path and the approval-deviation note (invocation recorded via `--allow-unapproved-prd`).
 - The assumptions made under the Ambiguity Policy, so the user can veto any of them after the fact.
-- Everything the `implement` Implementation Result Report Contract requires: user-visible changes, structure conformance, AC status, verification evidence by mode, review verdicts, deviations, remaining human review.
+- Everything the `implement` Final Report requires: user-visible changes, full PRD, actual verification evidence, Fidelity and Code results with their grounds and limitations, current receipt status, deviations, and remaining human review.
 - When shipped: PR URL, branch, CI verdict per the `ship` final report.
 - When config was absent: a one-line `$sasu-setup` suggestion.

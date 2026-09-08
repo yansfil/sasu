@@ -1,0 +1,247 @@
+[
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/live-release.mjs",
+    "archive": "live/live-release.mjs",
+    "sha256": "ab37d32ece17672d4035643c9181723216eacdc39b85dbdb53b320f01b241a55"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/frozen-before.json",
+    "archive": "live/frozen-before.json",
+    "sha256": "e4aa394d0d4d2489adc943bcf872398a296cf1b6099b44e3878dab0af6379280"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/frozen-after-live.json",
+    "archive": "live/frozen-after-live.json",
+    "sha256": "992525d403aeb642b364368335faa131ac17a75dc82c15fc80dccc8eba8097b4"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/frozen-comparison.json",
+    "archive": "live/frozen-comparison.json",
+    "sha256": "309bec199f8bb011cbb87d28cacefdc101f1016c15c4b440f0b6712fe6136552"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/verify-missing-final.stderr.log",
+    "archive": "live/codex/verify-missing-final.stderr.log",
+    "sha256": "584221e09a6814e3f7048ab8f3a2dc9405b071a3251d1903b0865c9b471016ab"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/release-summary.json",
+    "archive": "live/codex/release-summary.json",
+    "sha256": "ea2f1091cef0107932b31227a40798b029bb0661977ab86cb87ea0d5acb4c573"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/finalize.stderr.log",
+    "archive": "live/codex/finalize.stderr.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/missing-final.attempt.json",
+    "archive": "live/codex/missing-final.attempt.json",
+    "sha256": "1fd771de099b4de8f5ee99f3ec0368d4ca02f483f7b853292f647fd58fee93a6"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/start.stderr.log",
+    "archive": "live/codex/start.stderr.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/suite.mjs",
+    "archive": "live/codex/suite.mjs",
+    "sha256": "42e34804a31fbaa7381719d75149a7d416c8654c70b26fa473cec7f1e8a91b1f"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/finalize-refused.stdout.json",
+    "archive": "live/codex/finalize-refused.stdout.json",
+    "sha256": "737d8b447f44e9cf79219badcd8c7191a4737f92982ce44a2cc9095951b4a3e9"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/verify-complete.stderr.log",
+    "archive": "live/codex/verify-complete.stderr.log",
+    "sha256": "411dae2ff67799ca32ffb8991a67b2adc4763411e3a18e44af6d5cce50bc0f1c"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/verify-complete.stdout.json",
+    "archive": "live/codex/verify-complete.stdout.json",
+    "sha256": "3c9e1d6587609244e798bf0fb9734820056508adfa27f99b1a40c3823df0d17b"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/finalize-refused.stderr.log",
+    "archive": "live/codex/finalize-refused.stderr.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/start.stdout.json",
+    "archive": "live/codex/start.stdout.json",
+    "sha256": "7dcefa3670ce53a216ff7eda4232d00001f0be2aa6a16c2748345ecb036db8c0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/finalize.stdout.json",
+    "archive": "live/codex/finalize.stdout.json",
+    "sha256": "dbbe472b8e7177a2d7bf8c93622785434b47092e33461ba48e7ccc57f521127d"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/complete.attempt.json",
+    "archive": "live/codex/complete.attempt.json",
+    "sha256": "4072f2b1fbf6bbd437cfdf24cad90e7e4e6e896a6043f6d7a924d87a612f1dde"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/package.json",
+    "archive": "live/codex/package.json",
+    "sha256": "e79face87dcf2dbd00ec9719c8a469107021f84fe34826f665fd66012eacd5d0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/verify-missing-final.stdout.json",
+    "archive": "live/codex/verify-missing-final.stdout.json",
+    "sha256": "79a4ca4a7c0638f9596763aaacea2928a8794f45aed835e1951376ec0e68f4f2"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/state.json",
+    "archive": "live/codex/state.json",
+    "sha256": "49bc570e1a0459aa080ed27a53033cfc4062437c0d5cab26b50ae15eba4e53dd"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/receipt.json",
+    "archive": "live/codex/receipt.json",
+    "sha256": "d71d8f228f2fc01f1ca45248499a0c9ae2569ff132081061f6bfdce9c50e8b7e"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/prd.md",
+    "archive": "live/codex/run-prd.md",
+    "sha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/implementation-result.md",
+    "archive": "live/codex/implementation-result.md",
+    "sha256": "ee2c0b7513e0a19a1ea78541f1eef9cd7ea57006278e86e5c0c8ec6e6575c712"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/prd/fixture/prd.md",
+    "archive": "live/codex/case-prd.md",
+    "sha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/config.json",
+    "archive": "live/codex/config.json",
+    "sha256": "3245926843b1acfe0f2a0b5f57bc45cc798a06476de31b697a9662cd2731c763"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/src/public.mjs",
+    "archive": "live/codex/src/public.mjs",
+    "sha256": "b170d68c824ab87596160d7a2b2583c6f95146044fdf84ed3787cfde145f90b0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log",
+    "archive": "live/codex/suite-logs/mechanical-ff00bc6fcc3c2938.log",
+    "sha256": "d76e3e3f06b4c94133bd0a9a5d9640f1c8dc3a9518faaedfa457bc2d1407d33e"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/artifacts/logs/mechanical-49784ab221112753.log",
+    "archive": "live/codex/suite-logs/mechanical-49784ab221112753.log",
+    "sha256": "7d987a9c6b9de0b5729aa559c4364ed2995622cadb2beba353f8612a90e40245"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/review-inputs/9a094a15-5a5d-4a6b-8a53-19f93a805faa/src/public.mjs",
+    "archive": "live/codex/reviewed-inputs/9a094a15-5a5d-4a6b-8a53-19f93a805faa/src/public.mjs",
+    "sha256": "ddd6b2102f31a6f5b77595e84e0e0706ab2eb05ef4ab9647eb1dc3215ebd87c2"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/codex/agents/runs/fixture/review-inputs/adfb1c8c-a96b-4f51-b457-56451a0a32fe/src/public.mjs",
+    "archive": "live/codex/reviewed-inputs/adfb1c8c-a96b-4f51-b457-56451a0a32fe/src/public.mjs",
+    "sha256": "b170d68c824ab87596160d7a2b2583c6f95146044fdf84ed3787cfde145f90b0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/release-summary.json",
+    "archive": "live/claude/release-summary.json",
+    "sha256": "cb44926ea45c3ccae478b8efe1dad84f0a60d5fd245d34ce9f1531519dcc7fc7"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/finalize.stderr.log",
+    "archive": "live/claude/finalize.stderr.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/start.stderr.log",
+    "archive": "live/claude/start.stderr.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/suite.mjs",
+    "archive": "live/claude/suite.mjs",
+    "sha256": "42e34804a31fbaa7381719d75149a7d416c8654c70b26fa473cec7f1e8a91b1f"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/verify-complete.stderr.log",
+    "archive": "live/claude/verify-complete.stderr.log",
+    "sha256": "5c942ef70c16e6957e4dd6dbc0a4c52b1f249a041dd13f6d86484a6454d39ad2"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/verify-complete.stdout.json",
+    "archive": "live/claude/verify-complete.stdout.json",
+    "sha256": "7f2fb5ce6fcb601b6f3defc88e92ba8c35e87059f19ea672200a9563ff3cc77a"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/start.stdout.json",
+    "archive": "live/claude/start.stdout.json",
+    "sha256": "9571674ab4ec47981962ff9ac6483fae6ec7957acf06a64d23cdcff1b3c2ff83"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/finalize.stdout.json",
+    "archive": "live/claude/finalize.stdout.json",
+    "sha256": "caf156b68916705c8d1e98b78194ae80ae839429d22aaf7adba31ca2de7a1a5e"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/complete.attempt.json",
+    "archive": "live/claude/complete.attempt.json",
+    "sha256": "d672208ea0ac28bd8e1a3bad67ce51f12517a26ecd07d20c8b4d5385e12917fe"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/package.json",
+    "archive": "live/claude/package.json",
+    "sha256": "e79face87dcf2dbd00ec9719c8a469107021f84fe34826f665fd66012eacd5d0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/runs/fixture/state.json",
+    "archive": "live/claude/state.json",
+    "sha256": "4c9d261b69598ba500adb7090d3ee06166418629bf7aece6e0de0575bbd765d6"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/runs/fixture/receipt.json",
+    "archive": "live/claude/receipt.json",
+    "sha256": "e651f2f1efdd86fdb56659aa6b388cbbfd20634af2b13d8f9308686f645a0890"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/runs/fixture/prd.md",
+    "archive": "live/claude/run-prd.md",
+    "sha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/runs/fixture/implementation-result.md",
+    "archive": "live/claude/implementation-result.md",
+    "sha256": "7f99bec7d5890087f16e37e5ed70dd1d02cecfdb0921fb065a295b84fecb7bb0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/prd/fixture/prd.md",
+    "archive": "live/claude/case-prd.md",
+    "sha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/config.json",
+    "archive": "live/claude/config.json",
+    "sha256": "ca28a6559cc901a20b76bbf0a0221701ed8b8b3263eac7d441fbccb9b452efea"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/src/public.mjs",
+    "archive": "live/claude/src/public.mjs",
+    "sha256": "b170d68c824ab87596160d7a2b2583c6f95146044fdf84ed3787cfde145f90b0"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log",
+    "archive": "live/claude/suite-logs/mechanical-ff00bc6fcc3c2938.log",
+    "sha256": "bd2def5cdfc26dc41b550da53a467baa9ade3d31896b49010c9919e5166b37fd"
+  },
+  {
+    "original": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude/agents/runs/fixture/review-inputs/d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8/src/public.mjs",
+    "archive": "live/claude/reviewed-inputs/d10f08ed-6c45-4bb9-8e2d-296e6bc61ce8/src/public.mjs",
+    "sha256": "b170d68c824ab87596160d7a2b2583c6f95146044fdf84ed3787cfde145f90b0"
+  }
+]

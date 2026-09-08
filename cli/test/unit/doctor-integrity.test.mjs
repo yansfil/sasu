@@ -31,6 +31,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   writeState("missing-snapshot", { prd: { ...stateFixture(root).prd, snapshotPath: undefined } });
   writeState("retired-schema-active", { schema: "sasu.implement.state.v8", status: "active", worktree: null });
   writeState("future-active", { schema: "sasu.implement.state.v99", status: "active", worktree: null });
+  writeState("experimental-active", { schema: "sasu.implement.state.v9.parallel-review", status: "active", worktree: null });
 
   const section = runIntegritySection(root, null);
   assert.equal(section.ok, false);
@@ -38,9 +39,13 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   assert.ok(section.lines.includes(`orphan worktree: ended-run status=retired path=${worktree} branch=sasu/ended-run`));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be one of active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
-  for (const [slug, schema] of [["retired-schema-active", "v8"], ["future-active", "v99"]]) {
+  for (const [slug, schema, support] of [
+    ["retired-schema-active", "v8", "3f549dcfff71fe1f7fa974a383f6e8a055ce8463"],
+    ["future-active", "v99", "3f549dcfff71fe1f7fa974a383f6e8a055ce8463"],
+    ["experimental-active", "v9.parallel-review", "2b1f638dd587261be7e7b0e600db16657421971d"],
+  ]) {
     assert.ok(section.lines.includes(
-      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v9.parallel-review; last supported commit: 3f549dcfff71fe1f7fa974a383f6e8a055ce8463; use that matching CLI to inspect or retire the old run, or start a new slug`,
+      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v10; last supported commit: ${support}; use that matching CLI to inspect or retire the old run, or start a new slug`,
     ));
     assert.ok(!section.lines.some((line) => line.startsWith(`retire candidate: ${slug} `)));
   }

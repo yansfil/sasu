@@ -1,0 +1,69 @@
+{
+  "contractVersion": "0.10.0",
+  "ok": true,
+  "action": "start",
+  "exitCode": 0,
+  "message": "implement run started: fixture",
+  "detail": {
+    "schema": "sasu.implement.state.v10",
+    "status": "active",
+    "topicSlug": "fixture",
+    "prdPath": "agents/prd/fixture/prd.md",
+    "prdSnapshotPath": "agents/runs/fixture/prd.md",
+    "baselineAttribution": {
+      "disposition": "clean",
+      "paths": [],
+      "baselineDigest": "630a90db94f949c5752397db3a718d5c5324fdb1ee193fcfce2b73203a41cc48",
+      "head": "5ec7f5cf7dc66beddee55034e2abfc825c337f42"
+    },
+    "workingRoot": "/private/tmp/sasu-review-ledger-release.EK7yt8/claude",
+    "worktree": null,
+    "reviewProfile": "standard",
+    "escalations": {
+      "used": 0,
+      "limit": 3,
+      "remaining": 3
+    },
+    "requirementCount": 30,
+    "suite": {
+      "green": 0,
+      "total": 1,
+      "red": []
+    },
+    "findings": [],
+    "humanConfirmations": [],
+    "riskFindings": {
+      "open": [],
+      "openCount": 0
+    },
+    "verification": {
+      "verdict": "NOT_RUN",
+      "attempts": 0,
+      "budget": {
+        "fixAttempts": 0,
+        "totalAttempts": 0,
+        "budget": 2,
+        "budgetExhausted": false,
+        "consecutiveErrors": 0,
+        "judgeErrorThreshold": 3,
+        "judgeErrorCause": null,
+        "judgeErrorLoop": false,
+        "prejudgeFailures": 0,
+        "prejudgeFailureLimit": 3,
+        "prejudgeFailureLoop": false,
+        "grants": 0
+      },
+      "latest": null
+    },
+    "activeVerification": null,
+    "artifacts": [],
+    "retirement": null,
+    "completion": null,
+    "delivery": {
+      "eligible": false,
+      "reasons": [
+        "run is active"
+      ]
+    }
+  }
+}

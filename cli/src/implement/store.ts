@@ -6,6 +6,7 @@ import {
   IMPLEMENT_ACTIVE_SCHEMA,
   IMPLEMENT_SCHEMA,
   RETIRED_IMPLEMENT_SUPPORT_COMMIT,
+  retiredImplementSupportCommit,
   type ImplementActivePointer,
   type ImplementState,
   type DirtyAttribution,
@@ -13,6 +14,7 @@ import {
   type SourceSnapshot,
 } from "./types";
 import { ISSUED_COMMANDS } from "./verbs";
+import { validateImplementationReviewResult } from "./review-contract";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 
@@ -194,13 +196,32 @@ function assertInputManifest(value: unknown, label: string): void {
   if ("checkLedger" in value) throw new Error(`retired implement input field: ${label}.checkLedger`);
 }
 
+function assertReviewContext(value: unknown): void {
+  const label = "verificationAttempts[].reviewContext";
+  assertRecord(value, label);
+  for (const field of ["requirementRefs", "requiredRequirementRefs", "evidenceRefs", "actualEvidenceRefs", "priorFindingIds"] as const) {
+    assertStringArray(value[field], `${label}.${field}`);
+    if (new Set(value[field]).size !== value[field].length) throw new Error(`malformed implement state: ${label}.${field} contains duplicate references`);
+  }
+  const requirements = value["requirementRefs"] as string[];
+  const required = value["requiredRequirementRefs"] as string[];
+  const evidence = value["evidenceRefs"] as string[];
+  if (required.length === 0 || required.some((ref) => !/^B[1-9]\d*$/.test(ref) || !requirements.includes(ref))
+    || requirements.some((ref) => /^B[1-9]\d*$/.test(ref) && !required.includes(ref))) throw new Error(`malformed implement state: ${label}.requiredRequirementRefs must name every reviewed Behavior`);
+  if ((value["actualEvidenceRefs"] as string[]).some((ref) => !evidence.includes(ref))) throw new Error(`malformed implement state: ${label}.actualEvidenceRefs must belong to evidenceRefs`);
+  assertRecord(value["humanSources"], `${label}.humanSources`);
+  for (const [ref, source] of Object.entries(value["humanSources"])) {
+    if (ref.trim() === "" || typeof source !== "string") throw new Error(`malformed implement state: ${label}.humanSources must map exact references to source text`);
+  }
+}
+
 export function parseImplementState(text: string): ImplementState {
   let parsed: unknown;
   try { parsed = JSON.parse(text); }
   catch (error) { throw new Error(`malformed implement state JSON: ${error instanceof Error ? error.message : String(error)}`); }
   assertRecord(parsed, "root");
   if (parsed["schema"] !== IMPLEMENT_SCHEMA) {
-    throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Retired contracts were last supported by ${RETIRED_IMPLEMENT_SUPPORT_COMMIT}; start a new run, no migration is available`);
+    throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Retired contracts were last supported by ${retiredImplementSupportCommit(parsed["schema"])}; start a new run, no migration is available`);
   }
   for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks"]) {
     if (field in parsed) throw new Error(`retired implement state field: ${field}; last support ${RETIRED_IMPLEMENT_SUPPORT_COMMIT}`);
@@ -379,6 +400,9 @@ export function parseImplementState(text: string): ImplementState {
     attemptIds.add(attempt.id);
     assertSha256(attempt.inputFingerprint, "verificationAttempts[].inputFingerprint");
     assertSha256(attempt.sourceFingerprint, "verificationAttempts[].sourceFingerprint");
+    assertSha256(attempt.prdSha256, "verificationAttempts[].prdSha256");
+    if (attempt.reviewContext === undefined) throw new Error("malformed implement state: verificationAttempts[].reviewContext must be null or an object");
+    if (attempt.reviewContext !== null) assertReviewContext(attempt.reviewContext);
     assertInputManifest(attempt.inputManifest, "verificationAttempts[].inputManifest");
     assertRecord(attempt.roundContext, "verificationAttempts[].roundContext");
     assertNullableString(attempt.roundContext.priorAttemptId, "verificationAttempts[].roundContext.priorAttemptId");
@@ -401,11 +425,11 @@ export function parseImplementState(text: string): ImplementState {
         enumValue(result.verdict, ["NOT_RUN", "PASS", "FAIL", "BLOCKED", "ERROR", "STALE"], `verificationAttempts[].${field}.verdict`);
         if (field !== "risk" && result.result === undefined) throw new Error(`malformed implement state: ${field}.result must be null or an object`);
         if (result.result !== null && field !== "risk") {
-          const review = result.result as import("../judge/types").ReviewResult;
-          assertString(review.summary, `verificationAttempts[].${field}.result.summary`);
-          array(review.findings, `verificationAttempts[].${field}.result.findings`);
-          array(review.priorDispositions, `verificationAttempts[].${field}.result.priorDispositions`);
+          if (attempt.reviewContext === null) throw new Error(`malformed implement state: ${field}.result requires its pinned reviewContext`);
+          const review = validateImplementationReviewResult(result.result, attempt.reviewContext, field === "reviews.fidelity" ? "fidelity" : "code");
+          if (typeof review === "string") throw new Error(`malformed implement state: verificationAttempts[].${field}.result: ${review}`);
           if (result.verdict === "PASS" && review.findings.some((finding) => finding.kind === "defect")) throw new Error("malformed implement state: review PASS carries a defect");
+          if (result.verdict === "PASS" && review.assessments.some((assessment) => assessment.conclusion === "unresolved")) throw new Error("malformed implement state: review PASS contradicts unresolved assessments");
         }
       }
     }
@@ -422,6 +446,9 @@ export function parseImplementState(text: string): ImplementState {
     array(active.executionPids, "activeVerification.executionPids").forEach((pid) => positiveInteger(pid, "activeVerification.executionPids[]"));
     assertIsoTimestamp(active.startedAt, "activeVerification.startedAt");
     if (!attemptIds.has(active.attemptId)) throw new Error("malformed implement state: active verification attempt missing");
+    const attempt = candidate.verificationAttempts.at(-1)!;
+    if (attempt.id !== active.attemptId || attempt.inputFingerprint !== active.inputFingerprint || attempt.prdSha256 !== active.prdSha256
+      || attempt.startedAt !== active.startedAt || candidate.prd.sha256 !== active.prdSha256) throw new Error("malformed implement state: active verification contradicts its pinned attempt identity");
     if (candidate.status !== "active") throw new Error("malformed implement state: active verification on a closed run");
   }
   for (const field of ["retirement", "completion"] as const) {
@@ -434,6 +461,20 @@ export function parseImplementState(text: string): ImplementState {
   if (candidate.status === "complete" || candidate.status === "complete-pending-human") {
     const latest = candidate.verificationAttempts.at(-1);
     if (candidate.completion === null || latest === undefined || [latest.reviews.fidelity, latest.reviews.code].some((review) => review?.result == null || review.error !== null || !["PASS", "FAIL"].includes(review.verdict)) || latest.error !== null || latest.mechanical.some((run) => run.status !== "PASS")) throw new Error("malformed implement state: completed run requires both completed reviews, successful execution and receipt identity");
+    if ([latest.reviews.fidelity, latest.reviews.code].some((review) => review!.result!.assessments.some((assessment) => assessment.conclusion === "unresolved"))) throw new Error("malformed implement state: completed run contradicts unresolved assessments");
+    for (const lane of [latest.reviews.fidelity, latest.reviews.code]) {
+      const review = lane!.result!;
+      for (const assessment of review.assessments.filter((entry) => entry.conclusion === "pending-human")) {
+        for (const ref of assessment.requirementRefs.length > 0 ? assessment.requirementRefs : [null]) {
+          const recorded = review.findings.some((finding) => finding.kind === "human-confirmation" && finding.human?.timing === "post-completion"
+            && (ref === null || finding.requirementRefs.includes(ref)) && candidate.findings.some((tracked) => tracked.kind === "human-confirmation"
+              && ["open", "confirmed"].includes(tracked.status) && (ref === null || tracked.requirementRefs.includes(ref))
+              && (finding.priorFindingId ? tracked.id === finding.priorFindingId : tracked.originAttemptId === latest.id)
+              && tracked.human?.timing === finding.human?.timing && tracked.human?.sourceRef === finding.human?.sourceRef && tracked.human?.quote === finding.human?.quote));
+          if (!recorded) throw new Error("malformed implement state: completed pending-human assessment requires its recorded human finding");
+        }
+      }
+    }
     const excluded = new Set(candidate.suite.exclusions.map((entry) => entry.commandId));
     for (const command of candidate.suite.commands.filter((entry) => !excluded.has(entry.id))) {
       const execution = candidate.suite.results.find((entry) => entry.commandId === command.id);
@@ -499,6 +540,26 @@ export class StateConflictError extends Error {}
 
 export interface StateWriteOptions { verificationToken?: string; refusalOnly?: boolean }
 
+function assertVerificationHistory(held: ImplementState, next: ImplementState): void {
+  // A later correction or amendment changes the live contract and findings,
+  // never what a reviewer actually returned. Compare with the held disk state,
+  // not the mutable caller object, including partial results before lease close.
+  if (next.verificationAttempts.length < held.verificationAttempts.length) throw new Error("verification history is append-only; attempts cannot be removed");
+  if (held.activeVerification !== undefined && next.verificationAttempts.length !== held.verificationAttempts.length) throw new Error("verification history cannot append an attempt while its execution lease is active");
+  for (const [index, previous] of held.verificationAttempts.entries()) {
+    const current = next.verificationAttempts[index]!;
+    if (previous.id !== current.id) throw new Error("verification history is append-only; attempts cannot be reordered or replaced");
+    for (const field of ["id", "inputFingerprint", "sourceFingerprint", "prdSha256", "inputManifest", "intentInput", "startedAt"] as const) {
+      if (JSON.stringify(previous[field]) !== JSON.stringify(current[field])) throw new Error(`verification attempt ${previous.id} pinned ${field} is immutable`);
+    }
+    if (previous.reviewContext !== null && JSON.stringify(previous.reviewContext) !== JSON.stringify(current.reviewContext)) throw new Error(`verification attempt ${previous.id} pinned reviewContext is immutable`);
+    for (const [role, before, after] of [["fidelity", previous.reviews.fidelity, current.reviews?.fidelity], ["code", previous.reviews.code, current.reviews?.code], ["risk", previous.risk, current.risk]] as const) {
+      if (before !== null && JSON.stringify(before) !== JSON.stringify(after)) throw new Error(`verification attempt ${previous.id} settled ${role} record is immutable`);
+    }
+    if (held.activeVerification?.attemptId !== previous.id && JSON.stringify(previous) !== JSON.stringify(current)) throw new Error(`verification attempt ${previous.id} completed record is immutable; append a correction attempt`);
+  }
+}
+
 export function persistState(statePath: string, state: ImplementState, options: StateWriteOptions = {}): void {
   const baseline = stateBaseline.get(state);
   const onDisk = stateFileDigest(statePath);
@@ -534,6 +595,7 @@ export function persistState(statePath: string, state: ImplementState, options: 
         && appended.length > 0 && appended.every((verb) => verb.outcome === "rejected");
       if (!safeRefusal) throw new Error(`verification still active: ${lease.attemptId}; other domain mutations are refused until its execution lease closes`);
     }
+    assertVerificationHistory(held, state);
   }
   state.updatedAt = nowIso();
   // Serialized once and written, so the baseline is the exact bytes on disk

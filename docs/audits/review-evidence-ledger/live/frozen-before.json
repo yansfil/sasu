@@ -1,0 +1,3390 @@
+{
+  "files": 846,
+  "sha256": "c8b922432992dd66b5fc3fb61aae5d2083aa4d3f304ddfe8740be83d08f411d3",
+  "records": [
+    {
+      "path": ".gitignore",
+      "sha256": "9694141f98d16862d9993c8af51be0ba4755993bbad9798dc8032349b5e1185b"
+    },
+    {
+      "path": ".research/20260826-agent-memory/REPORT.md",
+      "sha256": "8cc68aee3db9bca4191564ebef6011631bad11142b58299c92a80d85ebe4968d"
+    },
+    {
+      "path": ".research/20260826-agent-memory/journal.md",
+      "sha256": "5b731893049dd58e97ab403f8d3d7a2b5a5ddc22f4ce69f9d5b7f196894646cd"
+    },
+    {
+      "path": ".research/20260826-agent-memory/leads.md",
+      "sha256": "6449961c166028e125daf5fdd0d4603e35ea8ae7eb8bfa2abf38ce88cd14ba4a"
+    },
+    {
+      "path": ".research/20260830-170420/REPORT.md",
+      "sha256": "c3ad967de722ff34ac2e3de14cee79bd8b3f166c0b4185193a992c310da6ee51"
+    },
+    {
+      "path": ".research/20260830-170420/journal.md",
+      "sha256": "d7423a1c65ae672f97265c9f0f798d08955b154b7eb3a1473d688883e832c005"
+    },
+    {
+      "path": ".research/20260830-170420/leads.md",
+      "sha256": "0740c28a292e953ffdf15ede457eceaf7c6b23094cbc5cb03748fa41bf335c7d"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "9cf00eec60b1759c57e413391cffb5681625671e82bba226ae687a0050a62057"
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "9cf00eec60b1759c57e413391cffb5681625671e82bba226ae687a0050a62057"
+    },
+    {
+      "path": "PRINCIPLES.md",
+      "sha256": "19478ed509ed45d39986b968851c116c7445aa9e96022e8f1576bdb24ed69822"
+    },
+    {
+      "path": "README.md",
+      "sha256": "3132ed61e09b90296c47cd6945662540bb5b211537ffd285eafba5cf20604654"
+    },
+    {
+      "path": "REVIEW-state-corruption.md",
+      "sha256": "61f06cbce9b208df7f7721bbc6b03af4c282bea72c8ff8f3dbc47e0c0bc7cab0"
+    },
+    {
+      "path": "assets/implement-workflow.excalidraw",
+      "sha256": "66dab5597ff4273a573fb705eb7f5924c003e1074fdfce7fd13661678d3460a6"
+    },
+    {
+      "path": "assets/mascot.png",
+      "sha256": "9d60ca3491a82c7058d384edfbb7905b9ee7318705437ed9cffe92a5675ca23b"
+    },
+    {
+      "path": "benchmarks/logscan/prd.md",
+      "sha256": "5040b4e0dc52476b623409750310218f6cc7a06b3bb039cfd4f555e786f2d256"
+    },
+    {
+      "path": "benchmarks/pokemon-rpg/benchmark.json",
+      "sha256": "6422b6d782688406413c1a88fffb44c8796a97665156c8ffcde90ef652959b38"
+    },
+    {
+      "path": "benchmarks/pokemon-rpg/prd.md",
+      "sha256": "a2149fa5dd7dc15a57f2358d05937ac0ec2774ec720aed4a6e8a4fd947d32072"
+    },
+    {
+      "path": "cli/dist/cli.js",
+      "sha256": "8715b0e29363a590314643dd5934af087e9e44ce0e5e29c329920ca384128e51"
+    },
+    {
+      "path": "cli/dist/config.js",
+      "sha256": "22666a81689e262d48715a06a7593e1e7177f83530f0106925b37c524e856849"
+    },
+    {
+      "path": "cli/dist/doctor.js",
+      "sha256": "314edc74b826644b62717d19c06ae334758267cf094374ac29d7d013e962bbc0"
+    },
+    {
+      "path": "cli/dist/gates/commands.js",
+      "sha256": "e61a4075b2a090b42c48bdd79b5a5fc49c560d6125d6370cf5f26c65d58e02d8"
+    },
+    {
+      "path": "cli/dist/gates/contract.js",
+      "sha256": "e9bbad6f00aed867faa7a259692a6dc5fbbb1d5631b3b824286ca2bb320c5f0d"
+    },
+    {
+      "path": "cli/dist/gates/prelint.js",
+      "sha256": "9c7c88d30cc378d4fc51a507c874609a23ecfcaf7f0e90c8ac8300beb911b142"
+    },
+    {
+      "path": "cli/dist/gates/prompts.js",
+      "sha256": "6ccb717a643e2d8ff72153153183a6cb1f79036e0ebd3b42777389e75a72606c"
+    },
+    {
+      "path": "cli/dist/gates/store.js",
+      "sha256": "bdbdc3f11d35324c33aa6ca8e382ef390a7fdd2db94da6b8ef9beac4ce9e199d"
+    },
+    {
+      "path": "cli/dist/implement/amend.js",
+      "sha256": "a8239554528102cfb905ccee554d5f03d86935dd3d061261e2a9ca25d5059e3a"
+    },
+    {
+      "path": "cli/dist/implement/commands.js",
+      "sha256": "b53d34676b0103433026427eca80fbc9627ef469f927ffda1f9f6a678bdf3b80"
+    },
+    {
+      "path": "cli/dist/implement/contract.js",
+      "sha256": "e50facb228797195b70b9e95163149acc59a75a89675aeaf71718d555f225b13"
+    },
+    {
+      "path": "cli/dist/implement/convergence.js",
+      "sha256": "abe6ef877a025646026fac90508aa8638bb6d2b307e87f874ccdd255f4eac1ef"
+    },
+    {
+      "path": "cli/dist/implement/dispatch.js",
+      "sha256": "2a20d2596d31449a407ebc1d02bcc6b5ac7f4196173479a1f6ce0cfdeb19156e"
+    },
+    {
+      "path": "cli/dist/implement/events.js",
+      "sha256": "17a257d4c7c3bc4a872d21a8f651f43291660ff05687ef67f340a79c46bb9728"
+    },
+    {
+      "path": "cli/dist/implement/herdr.js",
+      "sha256": "9c9e2a8d986cbfee477e58e8e8de03d3090e21f31cb1576afcb5fd5cef2125c8"
+    },
+    {
+      "path": "cli/dist/implement/prd-snapshot.js",
+      "sha256": "9a4f5f69cef1c2dc05ef14b01e83bf28c536fdad79046648dac64cb94557e2e0"
+    },
+    {
+      "path": "cli/dist/implement/prompts.js",
+      "sha256": "572654ca60214b28c6d483fa6a95476ef7633ad57bd20409813b2dc2216ec5d7"
+    },
+    {
+      "path": "cli/dist/implement/review-contract.js",
+      "sha256": "59c4d68e1dbc7b9a40ca6c11a9dfb30cbded683347137d1ef798f2fe563612a2"
+    },
+    {
+      "path": "cli/dist/implement/runner.js",
+      "sha256": "3fcc30761ea1b70e7c7e0835bd32e633aa6cdd032a232aa377b7876843246774"
+    },
+    {
+      "path": "cli/dist/implement/solver.js",
+      "sha256": "2ebbddb26122fd775dbd778399ff1cd3091698d02e84c8ac246a02efbf9eec0b"
+    },
+    {
+      "path": "cli/dist/implement/store.js",
+      "sha256": "646ec8ae0aaa92d48b5832712061007d9642b19775602cc3ff16b9993f9ef310"
+    },
+    {
+      "path": "cli/dist/implement/suite.js",
+      "sha256": "e51c20eaea47f898e02c45644e4f56045e58bfa5cdfab562481d47745b027bf1"
+    },
+    {
+      "path": "cli/dist/implement/types.js",
+      "sha256": "530f57344d29adb08cd2faabcac831d21bed9c13c0cad30118d8cdfdfdb28b29"
+    },
+    {
+      "path": "cli/dist/implement/verbs.js",
+      "sha256": "49012765be4ef5e5222b26458c36954df5fb29678bf40373b9f023f6cc45fb0a"
+    },
+    {
+      "path": "cli/dist/implement/verdict.js",
+      "sha256": "8063fbe35b828c5c9af43b435e70b5df85fe41853093805cd212f5de661c2087"
+    },
+    {
+      "path": "cli/dist/implement/verification-activity.js",
+      "sha256": "00d4d7128d3ab7841c96031e953e8503a2fe229bb62448dd76167956c93505ad"
+    },
+    {
+      "path": "cli/dist/implement/waiter.js",
+      "sha256": "2e1235c9716a80ebc890f8c68c274c081bad88d1c59f68542ee0bb940c73ecf8"
+    },
+    {
+      "path": "cli/dist/implement/worktree.js",
+      "sha256": "4381598fb2cb4e8107c18edab121275633cdf0d0ce167ee9c52ae471338af66d"
+    },
+    {
+      "path": "cli/dist/interview/cadence.js",
+      "sha256": "8a9acb67b957b4f68c06ffc5caa51eb1ff41ee0711b49ff76f024b8faa4d8b45"
+    },
+    {
+      "path": "cli/dist/interview/coherence.js",
+      "sha256": "dc96d50eeeebb3b28da28375ba1c5269ab0f79e192d938d0d0f22d84ef91b1e9"
+    },
+    {
+      "path": "cli/dist/interview/commands.js",
+      "sha256": "766781bf915ff143ed75cb06dab772f78f97e775a6af4f5bb2f72a32f1f98f1e"
+    },
+    {
+      "path": "cli/dist/interview/qalog.js",
+      "sha256": "086fa911d7f2ae9cf6ace35e65197996be46aaaff54d847fcb91560591bf0d6c"
+    },
+    {
+      "path": "cli/dist/interview/transcript.js",
+      "sha256": "4945ecb3e8dfdbf6dea10dc9148b24e892bf79061329f9181c1a7710bbad0e98"
+    },
+    {
+      "path": "cli/dist/judge/api-backend.js",
+      "sha256": "dacf0019ba5ecd1aaaa88a05216ab3b95863c763d7242bd7735b1fb94903bb90"
+    },
+    {
+      "path": "cli/dist/judge/backends.js",
+      "sha256": "98da4db642a1b1f1620312c84e91cbdd298f6c4fe4c06c1b9c42502532ef056e"
+    },
+    {
+      "path": "cli/dist/judge/fanout.js",
+      "sha256": "563e1189af67aea696cd0bc97ade3359f7048eb75c86456b65c5a3b4c08c8756"
+    },
+    {
+      "path": "cli/dist/judge/runner.js",
+      "sha256": "fcbf41a718e4f7592526963649d4d6f6513ac50f98163f000582aa8ea83a47c8"
+    },
+    {
+      "path": "cli/dist/judge/types.js",
+      "sha256": "33f53fdffb20956836ab34f67d6ed335b1ff1bc2104f0ac95c9078d31b813940"
+    },
+    {
+      "path": "cli/dist/mechanical.js",
+      "sha256": "7edfbe5095578d57d1f3be123f47eec31d279f9bd77ca9da577767b1b417bc6e"
+    },
+    {
+      "path": "cli/dist/prd/commands.js",
+      "sha256": "4018c1405d125670d3286889bd1c8bada21a94a1752d803a8c028335bf9ada3b"
+    },
+    {
+      "path": "cli/dist/principles/commands.js",
+      "sha256": "64d479cc6d6597c800b13ce252083ce75567a1d4e7d7f1ed5217d2c52fba75bc"
+    },
+    {
+      "path": "cli/dist/runs/paths.js",
+      "sha256": "74668216b469df99802d3d8b16f7693637d74b04a99fab13b534f306aaf64f41"
+    },
+    {
+      "path": "cli/dist/runs/session.js",
+      "sha256": "fbdca381ea74edafcc5d505bf1fba0ca735dc307d1dbb6f785546dfa53a74228"
+    },
+    {
+      "path": "cli/dist/support/commands.js",
+      "sha256": "a6dc680d36de22c3c932bdfa0782259990bc9d438831e07aed8b30e238619944"
+    },
+    {
+      "path": "cli/dist/support/ensure-setup.js",
+      "sha256": "6657c3037b8528b61ba05136a3ce6d796afdd97d37a0fd6335fedb5cc095f823"
+    },
+    {
+      "path": "cli/dist/version.js",
+      "sha256": "4efe2d992ed8b7df651853874e70b2e5768e94449307f1d43b10de0e99096091"
+    },
+    {
+      "path": "cli/lib/commands/rules.js",
+      "sha256": "4ce6e0751cc2b92463197813f2fd4eb56c7a62638173d01cd973493d10bf000c"
+    },
+    {
+      "path": "cli/lib/commands/setup.js",
+      "sha256": "11e55c1978c1a1eb017d818b8205633ad5234d9b072ddd479b9811d2fa1ab61b"
+    },
+    {
+      "path": "cli/lib/gate_freshness.js",
+      "sha256": "3956e0343373a2d06674815aca660ad947c49b522801eee1bf72d33676d9976b"
+    },
+    {
+      "path": "cli/lib/git.js",
+      "sha256": "9d1fe60693c4f2868e6173e8000460c08722605c372550876051abc9558a218f"
+    },
+    {
+      "path": "cli/lib/prd_parser.js",
+      "sha256": "6d184ddf36421cfa28c8bd6f516b14c9ea02991b336b8733a3770546bec80f69"
+    },
+    {
+      "path": "cli/lib/qa_register.js",
+      "sha256": "b275b4b0d82e64337004016ae15b8357e3c932aa48a9843841dbd2feff1b2870"
+    },
+    {
+      "path": "cli/lib/rules.js",
+      "sha256": "a699dd8015727fd32f15d293cd19376ce23f279122ac8b9e74eb6d9c7b5be2df"
+    },
+    {
+      "path": "cli/lib/skill-contract.js",
+      "sha256": "7edcd223f0a58452b61447a50a4ceff9f47bc93a4d8861dda52f1687d0b48be5"
+    },
+    {
+      "path": "cli/lib/util.js",
+      "sha256": "3bcc8ed987778e483eb428a898628aae2c423d3ff11af79cdd472d9462443f81"
+    },
+    {
+      "path": "cli/package-lock.json",
+      "sha256": "1eb29e586913ffd28a4b74c86fb29821af90e059f94d294f3638be5f1c22bcf1"
+    },
+    {
+      "path": "cli/package.json",
+      "sha256": "42ad4d544f6d84a329d8d0e01351ce88fc7f1fb8b1ac58b674f71bbfdbb05e59"
+    },
+    {
+      "path": "cli/pnpm-lock.yaml",
+      "sha256": "7e66d2b4884c31dbf06a097c55aaeac4f532a907d4e521703e7658bc5a320878"
+    },
+    {
+      "path": "cli/scripts/effort_sweep.mjs",
+      "sha256": "0e17bd3d739419d925edbb3d4f91cb01f7c6d8adc9b5f8c668a4073da5a30cb9"
+    },
+    {
+      "path": "cli/scripts/fanout_ab_calibration.mjs",
+      "sha256": "875c5f6dc435735131ffd003893cf89304d560316f035b75185778e60ed99f71"
+    },
+    {
+      "path": "cli/scripts/gate_loop_ac13.mjs",
+      "sha256": "a16e7836b781c1e9e6ed57de77a7bac8a2590e4efef808755bb485be8afebad3"
+    },
+    {
+      "path": "cli/scripts/gate_loop_baseline.mjs",
+      "sha256": "8b56c289629c0c87c1b527318d0d8d55c8574c9e944edb9681c310efc2543f6f"
+    },
+    {
+      "path": "cli/scripts/gate_loop_replay.mjs",
+      "sha256": "515165658dfd386a4278fe5bdc971598874766015c7644f104b63d86671c6140"
+    },
+    {
+      "path": "cli/src/cli.ts",
+      "sha256": "8f925cf8021fb06b51dc8a49d3ed7546783906ed0977d66da90aa5fa6e1ac5a9"
+    },
+    {
+      "path": "cli/src/config.ts",
+      "sha256": "3c2182a8bada65718f627c2ea7d1c7ef3205358e9aaf4a62dfc0c47ec9428cdd"
+    },
+    {
+      "path": "cli/src/doctor.ts",
+      "sha256": "a49620d60d8708e600f04e7540bd3991a1d5964c71aaab8ba53b6570e25dd09e"
+    },
+    {
+      "path": "cli/src/gates/commands.ts",
+      "sha256": "e9decd7c3b4688e5e44df8b6b026c3724e42a7fc251b0e797784007db5918159"
+    },
+    {
+      "path": "cli/src/gates/contract.ts",
+      "sha256": "5c8b1b27cef315c742b33bfee4cd308acea5c7df58ad032ef427f674bd10577f"
+    },
+    {
+      "path": "cli/src/gates/prelint.ts",
+      "sha256": "8b3b1aa0b5305b95c3826fe82978de1a35be56bb8fa166a345b5055baec79994"
+    },
+    {
+      "path": "cli/src/gates/prompts.ts",
+      "sha256": "75ca4b26a87328ffbd2ab7a9f2d70ef0ec6f1605a5d633d5497e28b0375a1b8c"
+    },
+    {
+      "path": "cli/src/gates/store.ts",
+      "sha256": "3b7e34de8316a9a583621785651b17e291382524766b1f49522566360540370f"
+    },
+    {
+      "path": "cli/src/implement/amend.ts",
+      "sha256": "a14588a890b39e6e082da29cbfecb1c52bacfad69deac55120b735d3d0a6ea4e"
+    },
+    {
+      "path": "cli/src/implement/commands.ts",
+      "sha256": "b92192a70e0277f1ecf0ba7dd660100db004a3f857bf6e204259f6e0536defb5"
+    },
+    {
+      "path": "cli/src/implement/contract.ts",
+      "sha256": "318c7541c963a80314e9c9007ef03509ea10f34a75160d985233e18990248607"
+    },
+    {
+      "path": "cli/src/implement/convergence.ts",
+      "sha256": "f23729ffad7d4936784da9a478d7c1f8ea92bab129a3ad7e5a80b922530d0423"
+    },
+    {
+      "path": "cli/src/implement/dispatch.ts",
+      "sha256": "ee4fc9fe8d65e1fd1bdc774cb14e4d3360ce1d084ae7efeac596f4960aa7e1f6"
+    },
+    {
+      "path": "cli/src/implement/events.ts",
+      "sha256": "a06864889636257ea523b3539cd0f50226f4d0e33666fd324cc257385d33eaea"
+    },
+    {
+      "path": "cli/src/implement/herdr.ts",
+      "sha256": "d3cf55d808314cdd42bdacbaf12cbbd8e8fe84f1583aa92f52e3e9f9efdb60a7"
+    },
+    {
+      "path": "cli/src/implement/prd-snapshot.ts",
+      "sha256": "ff80b368e7f5d91138c63d3ce2b3efa1df38964e8dbbfc06c16192301a164a7a"
+    },
+    {
+      "path": "cli/src/implement/prompts.ts",
+      "sha256": "5ab061c79e0249d43f2385f1f57f504081aa659a720b7cd81ac927975c8efdd4"
+    },
+    {
+      "path": "cli/src/implement/review-contract.ts",
+      "sha256": "d55296f5c9aa45bfe9f673551bc771183b011ec86bc6d92cf65fc25ffa851827"
+    },
+    {
+      "path": "cli/src/implement/runner.ts",
+      "sha256": "b4a27b72935be514fcbd1730266016f26bba1d544995f0a74768794fd1f1a203"
+    },
+    {
+      "path": "cli/src/implement/solver.ts",
+      "sha256": "6afa22b4a58002ad2060e86b21f022c893222e6c959132b2cb4f218d77fc53d1"
+    },
+    {
+      "path": "cli/src/implement/store.ts",
+      "sha256": "4cd428298b3d9981ec83339f2d4220733f80616cbb8cf7a062fb09193f5c87ba"
+    },
+    {
+      "path": "cli/src/implement/suite.ts",
+      "sha256": "6eac8f7c09e2f965ccef8b02f8cf28cabdae2dd85df549b818c23895b3f9fe86"
+    },
+    {
+      "path": "cli/src/implement/types.ts",
+      "sha256": "c19d38f96f8ece9532e718dcbee2e9ab435fa0b34e362f1ab8b56a829a099ece"
+    },
+    {
+      "path": "cli/src/implement/verbs.ts",
+      "sha256": "4b1bd83c5d84c4f3d9d423f8b7202d7cc1b54e0d788109f0f24f6391d4394753"
+    },
+    {
+      "path": "cli/src/implement/verdict.ts",
+      "sha256": "ceeb61f74f057124c200b4dffb3077d316a0ea6e8e0cbe39b1028798cfcd0d3b"
+    },
+    {
+      "path": "cli/src/implement/verification-activity.ts",
+      "sha256": "015f6c132c2103380b09e337a421c7b93b6b6b373819a39ca47b3818a3b6835d"
+    },
+    {
+      "path": "cli/src/implement/waiter.ts",
+      "sha256": "7144cece56793b75824111a3d43da9db3e7b5b74f121a7f77c60a47dfbb8bfb5"
+    },
+    {
+      "path": "cli/src/implement/worktree.ts",
+      "sha256": "4f5fe0e2dc30a7c83b6386020942d6a9580a4fe9b7c75c2673351ad572ea76fa"
+    },
+    {
+      "path": "cli/src/interview/cadence.ts",
+      "sha256": "d8fd40be1d9bf7fddeb6ef2e8c819203a942e89ee4ddcd87bf0d44609e592345"
+    },
+    {
+      "path": "cli/src/interview/coherence.ts",
+      "sha256": "357a73cdb2d8bbdc41148f3d1b4f208345c23f2ff80bad1406ca1127b8a805b7"
+    },
+    {
+      "path": "cli/src/interview/commands.ts",
+      "sha256": "5f18a343417ac15fd54a9109e3d5bc9f46e7992f6962b23254ec89cb1e5edb1e"
+    },
+    {
+      "path": "cli/src/interview/qalog.ts",
+      "sha256": "1c661000bfb74a0df7a8b1a1b3e3af795426afb18b1a9954132170776a8fec7a"
+    },
+    {
+      "path": "cli/src/interview/transcript.ts",
+      "sha256": "5366e489c40bbf6f01a0565a907d1538d76a98607c847ea29684bb1a3448d47c"
+    },
+    {
+      "path": "cli/src/judge/api-backend.ts",
+      "sha256": "951ae9679d1148b3e9562b3c7fc203ff90f9654549667440c0f3ae7f45aca91b"
+    },
+    {
+      "path": "cli/src/judge/backends.ts",
+      "sha256": "4d4435b71caeb7b540052b4a4eb312706536526f4e232c4361add3b7711a132a"
+    },
+    {
+      "path": "cli/src/judge/fanout.ts",
+      "sha256": "d1af63408f8c310dbe1c03f7be19bbebe0a3ba03b87be0317338e794d8531d08"
+    },
+    {
+      "path": "cli/src/judge/runner.ts",
+      "sha256": "23442cef331185d1a2c9a208e14c84a3d4aca1efd8a8a0a5827d7c76ce600b32"
+    },
+    {
+      "path": "cli/src/judge/types.ts",
+      "sha256": "0b92a332330772cf782b9d2126768af027db6077b403e34ed80e025d818c74a9"
+    },
+    {
+      "path": "cli/src/mechanical.ts",
+      "sha256": "134714878da5a445c88b7d1bbe487b7a42835ac75c799555eceeb935a27deb5b"
+    },
+    {
+      "path": "cli/src/prd/commands.ts",
+      "sha256": "0736d95652b72e0dc3056729b854177f93eb7e6ebbfa8fec3b4e324967d15661"
+    },
+    {
+      "path": "cli/src/principles/commands.ts",
+      "sha256": "a44c6ebbe6f8c89e08060cf68df0016a69b09191357447b48e4b8ce63d6ae8ce"
+    },
+    {
+      "path": "cli/src/runs/paths.ts",
+      "sha256": "987bbea76ca3098e71559a17658e0d16da7992247a509b00e15a969c711df2bc"
+    },
+    {
+      "path": "cli/src/runs/session.ts",
+      "sha256": "2bac97727585d6414c4e2dfb66d607287b88273dbaedfeb9882a51bb664f0ec2"
+    },
+    {
+      "path": "cli/src/support/commands.ts",
+      "sha256": "be768b2450a1637b8997365080f3e82135c31b1c1e5746582c242f1132bd642b"
+    },
+    {
+      "path": "cli/src/support/ensure-setup.ts",
+      "sha256": "953afca565f0c65e3d6f7ebf9230386adf6c6d54f82a39cfb040693874dbde3c"
+    },
+    {
+      "path": "cli/src/version.ts",
+      "sha256": "ccc1f91cc84df3670944d91dfb8ccf2746212e34215b2cb8b39132fd7450d1f3"
+    },
+    {
+      "path": "cli/test/e2e/gate-loop.test.mjs",
+      "sha256": "ffe6ed016cd99915868dd4f688fa51aec87e25e91830adc5bde90606b5957062"
+    },
+    {
+      "path": "cli/test/e2e/gates.test.mjs",
+      "sha256": "f124949fb5c788df30733d04bbfd1c7a13523b1d4211287e6bbe5d39007679f7"
+    },
+    {
+      "path": "cli/test/e2e/implement-amend.test.mjs",
+      "sha256": "433ec8d185c5c0cd3ef8dd5f87e7fbd1acf472f6ca623b97c9fb2278534bd5c2"
+    },
+    {
+      "path": "cli/test/e2e/implement-calibrated.test.mjs",
+      "sha256": "5fcb55b957fd3a7a25a417fd36dfef2a73f8ccba60cbf6957c593924816fe6ca"
+    },
+    {
+      "path": "cli/test/e2e/implement-defects.test.mjs",
+      "sha256": "bce6fe734e9a29778387ca65845c458bba4889759d6d61b3cfc9e77d1d670cd0"
+    },
+    {
+      "path": "cli/test/e2e/implement-envelope.test.mjs",
+      "sha256": "038b84f590dc12ef9e5c80f401a5c8db5591ca4cee6188b1bc1b8e8ca815dfe2"
+    },
+    {
+      "path": "cli/test/e2e/implement-parallel-review.test.mjs",
+      "sha256": "9aee642f8d86d549eb66c37c94ae21183c530bdd08799023d6535d37abff78a1"
+    },
+    {
+      "path": "cli/test/e2e/implement-solver.test.mjs",
+      "sha256": "93b206f5bb03ad8d9dde5d8b0ce34c3f8d5336c23152aa58afc9274c6f51ee82"
+    },
+    {
+      "path": "cli/test/e2e/implement.test.mjs",
+      "sha256": "0cca797338a9b0db8d9bd1552e6999d001c8439d9a8070bd962c8a5bd38c2b44"
+    },
+    {
+      "path": "cli/test/e2e/interview.test.mjs",
+      "sha256": "e020acb18ae61c2215df514a9cadb10e036029f0bab35a21c8f7ca412e1c185d"
+    },
+    {
+      "path": "cli/test/e2e/quick.test.mjs",
+      "sha256": "650b330028505af1552b0feab00ace385241dc93fed8fc8f3d3ad1986de476ef"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/mines-prd.json",
+      "sha256": "4062220a1cd84859b62fda59a165885aa269057eaa2c3efb3a4c9e0aad78d2b2"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/mines-qa.json",
+      "sha256": "81a71e8db8bc0cc34f6716b12329213610cbb36b9ff274a3d9243f4c2b64e7d5"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/prd-mined.md",
+      "sha256": "c3586cde551a485cd79b5c42ff3fd277e0da9618648acd48d7a4c647aa4d19ef"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/qa-log-complete.md",
+      "sha256": "c467593d95c05d6f1e7f00bb0d201a8a949af4c5c1f30ef5e176e031c535abb6"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/qa-log-mined.md",
+      "sha256": "d028a297d793b845da2a839cda003e27ea62355c0e20e02e28b41ff17426cc93"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/calibration-gap-audit.json",
+      "sha256": "9c8c9eb7a12feb8a931452aa5d7f9a7a90a87022b65b8e72e858df5c43f7b43a"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/calibration-spec.json",
+      "sha256": "c59c768c0a92a4d1785fcc0edcf96ddf1e618f1d69c91571689ac66eb4aa90b5"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/effort-sweep-2026-08-28.json",
+      "sha256": "65d992555eb4317ef0c151d50ad6adb9dbee8e4c4a1e38af04110687573c2d92"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/judge-arms-2026-08-29.json",
+      "sha256": "3cd623b87fff14f893a469123ecdd458c0917a44f30d9e02ffa1aa58c1efbdec"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/judge-backend-ab-2026-08-29.json",
+      "sha256": "2e7ccc71986a29e664dfd68452a0d14688fae846e2f889517af9fdd68bdd9bcf"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/spec-gate-sweep-2026-08-29.json",
+      "sha256": "8d76ca6b82003150418b27c0431f50fdf48ecce313c7e8f421be8becae520532"
+    },
+    {
+      "path": "cli/test/fixtures/calibration/results/verify-gate-2026-08-29.json",
+      "sha256": "ec431b4514a7a7102d28660c4c334a3e37636062c387ffa81d9578274b31741c"
+    },
+    {
+      "path": "cli/test/fixtures/gate-loop/ac13/prd.md",
+      "sha256": "c7627890582d55f41dacecbff61ba5cc12d181bbaaeb3b86368a4c686e6f2f8e"
+    },
+    {
+      "path": "cli/test/fixtures/gate-loop/ac13/qa-log.md",
+      "sha256": "d2e6907f902a579e112625a52246ba03b7df97ff8b874c6196036d1109d7b8a4"
+    },
+    {
+      "path": "cli/test/fixtures/gate-loop/qa-log.md",
+      "sha256": "c46da5d3f0e9a005637d4678b6abf2b6f15719fa120eaa4e8d773f2267e29c3c"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/prd-behavior-row.md",
+      "sha256": "b74b19669755a4d7d6f8048ba61b3f8ecbe0301c418ae113a86ee3fb32cc8252"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/prd-clean.md",
+      "sha256": "63729355cdcfc946ac6b0bf0e44a2fc721a35c6e176813f8a41d575e7218e0ae"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/prd-frontmatter-enum.md",
+      "sha256": "389c6bcf366e6fd8c915f67485c44bf683fbd84058dd84639909cd479b3c7dcc"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/prd-frontmatter-missing.md",
+      "sha256": "644a936900744785a2f978606674467c64476b628901441fe442d43c029d41ce"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/prd-section-missing.md",
+      "sha256": "7cf1c2637dd70e8f700dd23ab865b9c5b0b89981e4b95a6f1fe944013de51953"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/prd-table-span-collision.md",
+      "sha256": "a6661f67cd791e95947002daab7078113c96a08f8f73c71ed4487cba58afc363"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-clean.md",
+      "sha256": "e3228cfeae868404fa67be6c3dbcc6826c5a6929ee82ebd6710583ab5efbe264"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-dangling-decision-id.md",
+      "sha256": "1195fc05978fcd6280d51db91aa1532ecbc7c43e46f34d3c8309a2640c41000f"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-dangling-q-reference.md",
+      "sha256": "9c5fed82b7ef24b1de20ae69eff232a5c6529c420708149edcdfc69501d9b06b"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-frontmatter-enum.md",
+      "sha256": "9cc6fde05b08b311570a9858b22f39d90307bb8172bd49d72b9cd237e82f943d"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-frontmatter-missing.md",
+      "sha256": "52d535343f06cfbc8127ea1c2cb489544509dcc20c1e98bd0d8dd32cf469e80a"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-register-columns.md",
+      "sha256": "38d2036a896bc55ee8a96d2a1974ab890dc7343176575eb85cff5e8aca25c30f"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-register-open.md",
+      "sha256": "b74892e4d9683370bc689e3b854178befa92ec112678a43ba5aca78ba69ff49f"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-register-row.md",
+      "sha256": "48b5e25b4055f5d4e067051f9e96dc548cccf5679395b74216a67a21b9372a09"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-resolved-material-assumption.md",
+      "sha256": "dc89ddc78b215f2f292a4089e2b14cc60145364eee2d1e452555ff274b0ec596"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-section-missing.md",
+      "sha256": "4bcb39d403b1ee6e5ca0154c06c5817504c7bea6055443b47be1af9aa8193fe0"
+    },
+    {
+      "path": "cli/test/fixtures/prelint/qa-unanchored-user-decision.md",
+      "sha256": "ecd639fea9ec8aa36ce7ee1cf19d6b6f637538df24ff165354d4fb09ecac8a3e"
+    },
+    {
+      "path": "cli/test/helpers/implement-fixture.mjs",
+      "sha256": "64548741d568d4a179d8b100601fbf5d6bf6f3b094a424559e62390aae0e3c60"
+    },
+    {
+      "path": "cli/test/helpers/implement-live-review.mjs",
+      "sha256": "2d3059417edba3446009147029e76e66512ca1e4db052ce6a7d342a94c33b6d9"
+    },
+    {
+      "path": "cli/test/helpers/implement-state.mjs",
+      "sha256": "3bc10ace584c3c572d47620337d3f1da8c6cca0694caf3d47caed52aa0c67237"
+    },
+    {
+      "path": "cli/test/scratch.mjs",
+      "sha256": "a75305ae5ee87a0d1a81bbefa9205cd54df8e8c169d442cc2ced3558782a5016"
+    },
+    {
+      "path": "cli/test/smoke/implement-acceptance-agentic.test.mjs",
+      "sha256": "faf4b1dbf2fc199180dc54ec052573913c662b198165755d298cfba54309db24"
+    },
+    {
+      "path": "cli/test/smoke/implement-acceptance-codex-agentic.test.mjs",
+      "sha256": "7b6bdd6fcf88471f0ccc1ce8468f736cfba6620ed98f7bdd457ae9dadf159b7e"
+    },
+    {
+      "path": "cli/test/smoke/live-judge.test.mjs",
+      "sha256": "834cfc69f5e36c08ee94d351ac5f5ace01f54eb2140131a2cf760e6950ce41ea"
+    },
+    {
+      "path": "cli/test/unit/anchor-backfill.test.mjs",
+      "sha256": "f1169724c88829a00f0ec774cc5f45c85143cc2dad4ca7c10269eb8dbc08db95"
+    },
+    {
+      "path": "cli/test/unit/api-backend.test.mjs",
+      "sha256": "4106cc679dd258991bc3c2b42d61f2ec2721b6f9787591bc48fafa65351e2319"
+    },
+    {
+      "path": "cli/test/unit/assume-human.test.mjs",
+      "sha256": "ceb6d1712a03763698cd7f375f76c3020b03a0270cff28c1c5e725d8f22273e5"
+    },
+    {
+      "path": "cli/test/unit/backends.test.mjs",
+      "sha256": "afb6fc22bd3ab1be562f2e4e0aae09d6cad26f70949b114f594bb08a28bb8184"
+    },
+    {
+      "path": "cli/test/unit/coherence.test.mjs",
+      "sha256": "ce7193bc4691499d3819d291e4371e6982525a8154c3f4cbb25dca84266db352"
+    },
+    {
+      "path": "cli/test/unit/config.test.mjs",
+      "sha256": "d37285cccbf87513757123549df9977016066c2a47fd14ba05ae6732404fdc83"
+    },
+    {
+      "path": "cli/test/unit/contract.test.mjs",
+      "sha256": "cd10a390f26ca98018fc575633591d6595596b0aac2490d51f41d4375da0760d"
+    },
+    {
+      "path": "cli/test/unit/delegation-cycle.test.mjs",
+      "sha256": "66af60694c33b7eb9b0082d6ed00d925228ee5c5d4cb3774f20371d9a144cab8"
+    },
+    {
+      "path": "cli/test/unit/doctor-integrity.test.mjs",
+      "sha256": "8f6a4cc2d01038822f9862e7af243591d4ba002d87a866f5c8e2db20432bd4a2"
+    },
+    {
+      "path": "cli/test/unit/doctor.test.mjs",
+      "sha256": "33248026f082fee515e8f1730f7f0f3b007322082cb621cca68780fe0960d448"
+    },
+    {
+      "path": "cli/test/unit/ensure-setup.test.mjs",
+      "sha256": "b5bd3094cc7e967c898041519fe507d9f43ed3cc00d648d5edfcde971168f336"
+    },
+    {
+      "path": "cli/test/unit/fanout.test.mjs",
+      "sha256": "c0c020660b6401c09fdd7216f81c2499f1e72750a45831233017af421cd7bf31"
+    },
+    {
+      "path": "cli/test/unit/gate-budget.test.mjs",
+      "sha256": "ee51d9bcc2e435fbad4280aabc6a36919f5c5df9df1dd62342a8f945c2e453bd"
+    },
+    {
+      "path": "cli/test/unit/gate-concurrency.test.mjs",
+      "sha256": "ef95e1cb15d5cb4957f48f125d986a611099887de1c461e40579b1d5631cfcb8"
+    },
+    {
+      "path": "cli/test/unit/implement-amend.test.mjs",
+      "sha256": "91f5e276642d1f02a3bf679183760014736b3d785ad9a4cc3931b975b762fb5f"
+    },
+    {
+      "path": "cli/test/unit/implement-authority.test.mjs",
+      "sha256": "b21e1f84984e50976f92ab97e25a23aac3c34d2248df479d92091a7c5a466236"
+    },
+    {
+      "path": "cli/test/unit/implement-contract.test.mjs",
+      "sha256": "0d9b53b8de6dbabe7ecd7e191ab1494596247bf33ac2be304fe46b665173e5b6"
+    },
+    {
+      "path": "cli/test/unit/implement-convergence.test.mjs",
+      "sha256": "167b2077aef5e7da609d8a71e5e38e7b076e91162580e661e125df07b8c337e2"
+    },
+    {
+      "path": "cli/test/unit/implement-envelope.test.mjs",
+      "sha256": "54cda7b485e99079a0d2ec82acbef81b66a3424f9aaa50b38150327bd4add2bd"
+    },
+    {
+      "path": "cli/test/unit/implement-herdr.test.mjs",
+      "sha256": "896550b27e6ad8dde6dd7cc3003c2bc095e0dddc7824c34dc915ec98bcfc28c7"
+    },
+    {
+      "path": "cli/test/unit/implement-prompts.test.mjs",
+      "sha256": "03e55c93b01104cf849df16087c63619f9b5a11194ae1919aefb14b349e1d5fa"
+    },
+    {
+      "path": "cli/test/unit/implement-review-contract.test.mjs",
+      "sha256": "d326f229d3afb4f796f66e8344669a3ed5f3b5cd56ca3aa8c341841bd29eceee"
+    },
+    {
+      "path": "cli/test/unit/implement-runner.test.mjs",
+      "sha256": "75eea083ef7f495f2a229088ef6e1663f789f9525f656f88f90c7c4a36d9dabc"
+    },
+    {
+      "path": "cli/test/unit/implement-smoke-oracle.test.mjs",
+      "sha256": "f590728212e47f4a0ce39b48370ae382da16407d63afbf178706937b6309aa77"
+    },
+    {
+      "path": "cli/test/unit/implement-solver.test.mjs",
+      "sha256": "315157acff62cd9a07a5282aec2157ebb82ab70d8cc04dd1da972e272ce2b346"
+    },
+    {
+      "path": "cli/test/unit/implement-store.test.mjs",
+      "sha256": "661d22cc0c164a1c9b5ce059ab5e0f6eedafb6e509131977e0a3f6bc07d6793c"
+    },
+    {
+      "path": "cli/test/unit/implement-suite.test.mjs",
+      "sha256": "41cc8c5919d4ab9fd16f27b4686fbfd2adc48880d1abe3ba675c93afa69103a6"
+    },
+    {
+      "path": "cli/test/unit/implement-verification-activity.test.mjs",
+      "sha256": "0b6b6a6d11fc2a4417d01e0c33399b7e1f3a9923fb376ba2fe4962fd58b47546"
+    },
+    {
+      "path": "cli/test/unit/implement-waiter.test.mjs",
+      "sha256": "c825b976484a42a63c5105b33c1207e8fc29d3cd6e54d9084a4d7fba0588c877"
+    },
+    {
+      "path": "cli/test/unit/interview.test.mjs",
+      "sha256": "fb8cb88b63789bf0c79d9f5ab5e642a3e16f3ef3e643c948bf148f22dec0eb4c"
+    },
+    {
+      "path": "cli/test/unit/judge-concurrency.test.mjs",
+      "sha256": "05a457fe65685f4e61200df4b6cd03c89bb28ddea9945272bd547c34804a4d02"
+    },
+    {
+      "path": "cli/test/unit/judge-execution.test.mjs",
+      "sha256": "e4448f2a645453bfe541119e2d0d922f1fd79909d07cbc24daebc37f19c90451"
+    },
+    {
+      "path": "cli/test/unit/judge-types.test.mjs",
+      "sha256": "6105eed7c5015c033412ca534da741f9ad7909a5bf7eac5ebbb7dbeb5271c4bc"
+    },
+    {
+      "path": "cli/test/unit/mechanical.test.mjs",
+      "sha256": "88a521529396aae8d072b29f163b9f89a60f6a79c774e79af56e10a38df6a9a8"
+    },
+    {
+      "path": "cli/test/unit/prd-commands.test.mjs",
+      "sha256": "582616b45532c59c73e37df4dda273b115790c5ecdaf0c41039c05e1a74ebd56"
+    },
+    {
+      "path": "cli/test/unit/prd-parser.test.mjs",
+      "sha256": "3f4feebe35b46824e8f084818bfcacc8a030d9396e52265ee877115cf1025429"
+    },
+    {
+      "path": "cli/test/unit/prelint.test.mjs",
+      "sha256": "647b8547fbb542796689e6b213d9d7ab15c0ffcea3b8b4e833411dd16f3d324d"
+    },
+    {
+      "path": "cli/test/unit/principles.test.mjs",
+      "sha256": "8cf72a262480a4b6e2b9fc2c02995e35bf8ef27f0525fc1d64a183405ccaa3ee"
+    },
+    {
+      "path": "cli/test/unit/prompts.test.mjs",
+      "sha256": "2a3b5cc8d6c3b6f3b4f4b7e96cdeab2da2a4026594342f09fd37160f343d4faa"
+    },
+    {
+      "path": "cli/test/unit/runner.test.mjs",
+      "sha256": "d5b6a173d0fbe39d9b9ed5d5cc749fb53db64016572766a1c2315d99cee3004c"
+    },
+    {
+      "path": "cli/test/unit/store.test.mjs",
+      "sha256": "83e50854f2e8ad74336cfaad59c3432ff78088de6a27a9d35cc8e7bae19f5c56"
+    },
+    {
+      "path": "cli/test/unit/transcript.test.mjs",
+      "sha256": "e27a956d1e1cbe4f09a79e7ec490e0c0fe1dbdd5935cd6a9840b002273d5172b"
+    },
+    {
+      "path": "cli/test/unit/verify-fanout.test.mjs",
+      "sha256": "5fa70231871f91606bd8388b194937315fd06867e61c07ad6f4dfaa2314be013"
+    },
+    {
+      "path": "cli/test/unit/vouched-fingerprint.test.mjs",
+      "sha256": "375a0aeb91165cfce19eefe0be7679f550511ad2e1542512cdf6be2167e3baee"
+    },
+    {
+      "path": "cli/tsconfig.json",
+      "sha256": "21602d78f74f3eee706ac7d757e36beff8c18d4eb814a91ebbf3d469497f6d4d"
+    },
+    {
+      "path": "docs/audits/2026-09-08-run-inventory.json",
+      "sha256": "3c760bfa24bc2bfa3f229d7521db1ba3389bf158f93db26b7bdf0fc5014f009d"
+    },
+    {
+      "path": "docs/audits/2026-09-08-verification-overhead.md",
+      "sha256": "acaab8e1ea4a3636423af63b250705b7dc99ef3ca2889379127adbf3690f30de"
+    },
+    {
+      "path": "docs/audits/2026-09-08-workflow-simplification-pilot.md",
+      "sha256": "afe9314edddc57615da6209e095ddf0eb7126dd7920be36476c8c566f0304965"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/SHA256SUMS",
+      "sha256": "0ec5d133fbc762fb631646e6cb9bed4f7e0db3e011963cd8f8d452aedac0e574"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/artifact-whitespace-check.txt",
+      "sha256": "699436071b85a07338f8d83f46dff6d0c2d8ab560160fcb0ae2461f91322650a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/case/benchmark.json",
+      "sha256": "0239d760d068afd956679a19fc515b0922fdfefa83d4ade1c71519f2299b9dd4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/case/config.json",
+      "sha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/case/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/case/prd.md",
+      "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/case/task-list.test.mjs",
+      "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/comparison.json",
+      "sha256": "462040e689f5c0bccefb676beb84c36b513b07c2b1169024f4628eae34b2e578"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/execution.json",
+      "sha256": "b5385a59b421df0d3f41a309dcda9d1f8adff5116724778f324d7a0dbc19325b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/frozen-source-check.json",
+      "sha256": "2d381b12ecf8a8d7a4bc3a70a3333b9e794c08394863e548406c5c5184bd24dd"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/phase-measurements.json",
+      "sha256": "d05aa68fe25f3dd90851fe3590fd0ec07b0e50f0202163e5ac7f10462b760f7a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/RUNBOOK.before-products.md",
+      "sha256": "dfcbd405f227e75e7078de63092f1cf9de228c483786f72359650d0d71ec68a9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/RUNBOOK.md",
+      "sha256": "9ad4219d4b0721c1917cf433206b9071433823627b706e4a5fdbe0c778062b5d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/comparison-invocation.json",
+      "sha256": "c687326dfc7c0137c3c9579951dc88c60d4b87cfd8813dd69011eaa0152d95e3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/comparison.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/comparison.stdout.log",
+      "sha256": "cb484925a4c0174d19e8dc5aaaa0bc2a2c9d4e9af5a6209e8b2c2b2beb7a3855"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/evaluation-finished.json",
+      "sha256": "bfc1c58abe9c57755cbb17344e5cfa7819b74f63f69754f119dec2a179473572"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/evaluation-split.json",
+      "sha256": "4d1507bea8bd1c0b9795e8c88bff84e12aef4d1a8e56fd3d6487a1522aa61f11"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/evaluation-starts.json",
+      "sha256": "ff6f45facb034829096f2cf413a12081d3fbe27ca89d2019588e86001e4690d8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/evaluation-unified.json",
+      "sha256": "c6efbffbed498a798449c7a44ad5f8922dec67a076554f2d9e00a2a1cf2fafee"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/execution.json",
+      "sha256": "b5385a59b421df0d3f41a309dcda9d1f8adff5116724778f324d7a0dbc19325b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/after-validation.json",
+      "sha256": "06e56d5c8fa6cbbd8cf57774f4e4a87b1c63a3768acb53e8ab041205ca34de5f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/before-validation.json",
+      "sha256": "e64be973cfed2fed1dbbe0d25741d0ece7effbbcaa7bb7bcc9ea5e97fd637f27"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/correction.json",
+      "sha256": "b4eb6ef840fb0f0c03a6abce94899e41089a346e973d356ef0d2da89efe92347"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/refrozen-inputs.json",
+      "sha256": "bf2ac060a1eb9fa7d1fbdeec97c1fe114dced95118a0682e161b649a8114ee10"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/split.after.md",
+      "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/split.before.md",
+      "sha256": "675011a030d65022950d055fdc047f09fc58374797326c62723c171f348749d6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/unified.after.md",
+      "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/input-corrections/source-intake/unified.before.md",
+      "sha256": "675011a030d65022950d055fdc047f09fc58374797326c62723c171f348749d6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/launch-native.py",
+      "sha256": "77067ca1422675684f0cb5d1afaa71c26c58bf82afeb80a7b3339a7bba167fa7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/manifest.before-execution.json",
+      "sha256": "e706bab142a455d3eac59f124e06436645793c35bfc486d4b4d9b390e2a1441f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/manifest.json",
+      "sha256": "31878509c029c98c39f2502fdf088fd03ef16b49932bf23e106ffdae396f19df"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/measure-phases.py",
+      "sha256": "d23394583b8c13b7033d8f47a055371d54a58c7eff7175068eeb4ddee3bcd334"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/prompt-split.txt",
+      "sha256": "f59202e583482ea635051b9105f688a26f255116efbf78455a4260541b6d0678"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/prompt-unified.txt",
+      "sha256": "615041744f89521d1eb4a7ebca5c1eb6ddf353f148c7f67b2b021b455ced80db"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/report-invocations.json",
+      "sha256": "1c2e24e20606fd5b7ef8940f1df924890206c847787bdad5226c9b759efb25f3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/report-split.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/report-split.stdout.log",
+      "sha256": "917447403bda95c0bee93cbad8399d1d973024c422a1af24fc8f39d704e4f696"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/report-unified.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/report-unified.stdout.log",
+      "sha256": "917447403bda95c0bee93cbad8399d1d973024c422a1af24fc8f39d704e4f696"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/skill-staging-split.json",
+      "sha256": "7e04b223b7aa974eb7c12d675405c406723993deb047c68932013f98edffefcf"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/skill-staging-unified.json",
+      "sha256": "36e325564a6b6d2f8bd5a219182857f35794d07c5355b719783de72b4218a819"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/preparation/stage-native-skills.mjs",
+      "sha256": "9be75183f11b2f457b956de461fecc755b38efd4403bbc82e97190ffa2c2bb86"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/fixed-input-hashes.json",
+      "sha256": "8b57ffdbe94cca354ef41cc704bab8249272db8be05534119567191f6fcdcec1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/native-end.json",
+      "sha256": "cd0ecd0028cd39ca20e647898a01b1c9c66a7e5558b63015ad794587b55c4b78"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/native-last-message.txt",
+      "sha256": "b9f2e171ba6b7aed93ac46c778df13f9351503451c45a27bf1d1a8e575f61d7e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/native-start.json",
+      "sha256": "b661ddcb5ff65c252d48332ad7b0e21d4eae55df3e959b9d4494cb569d564091"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/native-transcript-identity.json",
+      "sha256": "384611d50862ca826bffaeb0952a7766ed84833067419a331c3b027f7aaa1aa9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/product-source/task-list.mjs",
+      "sha256": "3a2d053d08365abca55edca754af553b9bb5c10310e6bf087f502f0fa6e8d1a3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/qualitative.json",
+      "sha256": "8e37dae9d836e1a200989e1eeefa41db56a568c1b706681285d6626b1db59167"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/report.json",
+      "sha256": "ee7578780d6c087977482bf962f6ac4d1b476ee482aab3cbc444ba7abb3b112d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run-binding.json",
+      "sha256": "d243031310227cd2387b86a4717fe756d96913d72115111f46a4347ac6162cf9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/artifacts/logs/mechanical-fc8169cbf6b86a79.log",
+      "sha256": "9afc65820129ebbeda58625a32657f99334ee4b3b6aceb2b1c38aec1985a5818"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/implementation-result.md",
+      "sha256": "7ff339413266accdf19cbad1247777a52fade5cfcbb917c904fa59f6ea3509f1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/prd.md",
+      "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/receipt.json",
+      "sha256": "e1fab2580ee8adb2b07ec97acdac145d177d8005184a1f21f0099ac5a9b24406"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/review-inputs/61cf8cea-474b-4cbe-8e90-d15e5d479c7e/agents/runs/task-list-review-comparison/artifacts/logs/mechanical-fc8169cbf6b86a79.log",
+      "sha256": "9afc65820129ebbeda58625a32657f99334ee4b3b6aceb2b1c38aec1985a5818"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/review-inputs/61cf8cea-474b-4cbe-8e90-d15e5d479c7e/src/task-list.mjs",
+      "sha256": "3a2d053d08365abca55edca754af553b9bb5c10310e6bf087f502f0fa6e8d1a3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/state.json",
+      "sha256": "7f0301a33606f8c4ea8e697e6a5f3c5875282b7a220beaa2ab6a31f18beb8812"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/cache/npm/_logs/2026-09-08T12_17_55_944Z-debug-0.log",
+      "sha256": "6cfe1ab877311219df1954dcc1779861a9a0d89752a592bb04c6b17b81860104"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/0655ecda",
+      "sha256": "dcbd6a7d260e1d46a5f21474f164d1932acdbecc122fe343222f1dff8ccb1ae1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/077122c4",
+      "sha256": "3ae73a41a593fa919cf0e8e10f60822417c4fe5ec26ba14adc671143ecfc2c56"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/0dfc1d4d",
+      "sha256": "49d89f658ada8735fc3f8246fe1c111aa7dea4cbd43c78c89197ffa61c5c553b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/0f88073a",
+      "sha256": "97f13e6f8afc71c7a6d6c29bed48765fe036a86fca8114262293e130586e08c6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/150f4755",
+      "sha256": "a1a53026e3594a251a454be3faa9c712251a2d1a3d5666ec7238715207354f88"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1640165a",
+      "sha256": "d3fa0c93ef2dfa1541b3b0e35c928c423111c87dd802325b2762098e9c99b3d5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/166d9515",
+      "sha256": "778f971d641cd42320b73cb742c7fc6753caa5f9c05f21e7bc70e22510f651d7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/19f11bee",
+      "sha256": "99b407fbfeb87971f11bd4f5f3ac4e3319d622c960209519ac9041e30ca3299b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1b6c267b",
+      "sha256": "2d9fd896e1df5bf55099c40c464542063474372bd6933a0c11180eb569745776"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1b6cfceb",
+      "sha256": "3508b620169d6ba7c00a11ba679da72c952019155d685e63513e9658d3f6d587"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1c192005",
+      "sha256": "439b776c3a3fc71e6045cdbe9bc3d26447161cd2af7fdd47391256969c74af3d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1cf2efb3",
+      "sha256": "93ce999a1397c0f7436257a48196dc4c817430d6123983b489d1909916f371c2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/223fc457",
+      "sha256": "c6fb1507409589fa48861bca1695f44ead7075607573adb35f7d346ee7dcb0f8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/2411af24",
+      "sha256": "9ee058dc23a560c30a8c7228d4ebec949e45f93cada14ea24189d68e7939e06f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/246a8652",
+      "sha256": "832681f6d58def0f4562d985dc2a00de685cfe9c96ec50d78bee04c8702439e0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/248ff18b",
+      "sha256": "1c82534952519798352e9b91d72dd7c161f8e187720685510e445622c995ca6d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/26d7b246",
+      "sha256": "8632dbb9d5277170ae7099273814b0ad0c5eeded9a4451cd157d5d61ae08e1aa"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/29598173",
+      "sha256": "002e9aecfad82ea27b8d6390b9c505a1953120aa03c915d1530915e34be936b5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/2baa6322",
+      "sha256": "ba95e7e38dbcf336dd234ea72587b3c347618ddd05dcc92636820aeb47d96e72"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/2c943337",
+      "sha256": "ab6a1271b31c1c3c6b588f511affa45e516e7d3159d54627d3aa90c7fb4ac9f3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/306554cb",
+      "sha256": "45b5d27156a135f8cca7fe79a59b8beec3c69cea706ba879efa3f9aabe67e85a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/31bc4b51",
+      "sha256": "425a060d229ae056aee4806a3f328cae69532f2d6bda909acff2ba82c7876297"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/36a5744b",
+      "sha256": "4c5525ee6eead7229e40613864a0bac076aeef9ba31909ecc2a1e855c4ba1614"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/37dbed22",
+      "sha256": "ce169f2944bc4dd9e94262a670d04544dd5435650144f81ec16bf9f63d00e99b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/398eb1ef",
+      "sha256": "233ecf1feceff37e581db7d6a2bb05cde2f670da8545380c4669a98203ab9e60"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/3998ea18",
+      "sha256": "22fd2395a74ea3407376ee2a4e19dd3f66e85114df0c2c91b65f5e068a3891a3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/3eecffc1",
+      "sha256": "12006bbf1f2cfd33b78a3ca044db96a83c98bfc34a4a193a54f81056010685d3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/454c08be",
+      "sha256": "c116bb6a2cf6a30bcb93198cac59f3f8f7edc218ed054b48ed064b9efdafd57e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/47041e08",
+      "sha256": "f44dfa0af29b54c0b8dfa21ea709723959ed0eae6b59a71935107a17c70851b6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/487752f8",
+      "sha256": "88619ba86c4e98d1a9d3835ee5f02a8c39a2624dd4bbe7f85aa35c46c451cae5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/48b9a2e3",
+      "sha256": "e28b0d226aebf125977903f29b28985d2a764b85d87b59eaba03dc27548c9b15"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/49a62087",
+      "sha256": "4c846966d9267b2c8251994324c364f7c5e31df3f6dde6ac51f33b4f49cee7fd"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/4dbcb496",
+      "sha256": "edeffc2d6474eea7c4e30993abc40eb91972d21b414d56a5364f10f06b43ce4b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/4de8c1bf",
+      "sha256": "31eb5a3bdfced8a7ecc3fe40750fc58a91efe75193468074903a5c71ce474444"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/4ed65fe7",
+      "sha256": "f7d03866c160caf0cd2341e060e54b74d66cd97edb3da429dd250f51d7f87c6d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/51078357",
+      "sha256": "ea432ba86c56ba416674c3544ccde0ea3a6bccb630b17fff6ea8084c5a668d08"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/55cce99e",
+      "sha256": "78a237c16e7713ed918660918c21d01c9f3a197a0f5173bb177d826a6295fb80"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/5c9623a4",
+      "sha256": "787e134327e182484afb8b23bbfacd26a3a1900727afba6f7505a0093e761d32"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/5ce3c97b",
+      "sha256": "98953910735f20b7bce265f40f556c9808e1fdb1e981bf0cca7aa08f7edf3145"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/5db4d748",
+      "sha256": "8f11cc72b967903292975bc85c5a62704a28627005617783720f9afbf02efd45"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/60a7eab6",
+      "sha256": "efd00749b708163ba3293b10060b28d618640d9cd71d7643eb4726c67919939d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/6ce020bb",
+      "sha256": "40ea6c0b94c18090b023b748a604f99b0d88d18c7cb38fb35b1573ff0640e8dd"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/718e1354",
+      "sha256": "7928c5f910d66537eb4866f83bc2de7dca20eb5e36931d9bbd284221f8142891"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/7492db49",
+      "sha256": "63bbec20aabdde2abb22b486b26c249a7e2eb5aa0d733743a3fb5b35dbfa0d32"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/75407596",
+      "sha256": "074f2572cf8e7dc5de4c658261d473a8fd6fd26421b24f4bf8511dca55f89fbc"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/79bc75c8",
+      "sha256": "bb709cae89cec63a9d10d27e050e5d5e7bea6d99dd50b415e1e3347d8f4f86a0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/7a03d2a1",
+      "sha256": "aa3ee719cfef9606ee560603defb4089a56ff12c7b41e2d204eb1b2d8164df72"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/7f6cca1d",
+      "sha256": "a97bb3e827e3c240c6db1103f9b4d25b3ed5d38f4157bc7c53540e03359dbc46"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/83c7e61f",
+      "sha256": "9065c717bd78f26c8f6e32f79c13033dfae27751c00b06f0cbf854496ce9e6e7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/847afa15",
+      "sha256": "bb36da5573a62e4cb21832058e942c30fe283c2a3c65bfdd6c26c7b31402cafe"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/84d4083b",
+      "sha256": "4701cb5e5bb60dbf4c6e84c40d4fbabc5f4ad2ff08d5a0c33ef3e2040124c3ec"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8809960f",
+      "sha256": "210ca41bd0b5923704ac2729cd13323a75b5584a36b802742830f97150bac836"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8b37215e",
+      "sha256": "9f6866e957a3fbec2ee09b6d15c37305077d45e32e299a16e3c818b325816642"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8b39ebf7",
+      "sha256": "fe9b3f385eb4dad962cf7fa556f3e7555a605247ffe1bd25f5448621c3b5e120"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8e31f510",
+      "sha256": "7c03f9ff798986d1ba2f330ba45a81f3e9b70d9dbf23ba33cf0cd0d2dc4bba11"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8fe23731",
+      "sha256": "5a0a1828b3d0b1da1d35453994a60df30ae36efad7723d2c2d0ba1d37d8d4bb4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/920a4535",
+      "sha256": "afd8be7b9f23c5f2c1351220afef99814f1adfa4c9a7249cb5ca1ae0499caf99"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/949b5c94",
+      "sha256": "694ac4b38186a923a6faf1ef38153c1a40805d2f31ecbc7f829bf735d28cde74"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/959a3c83",
+      "sha256": "22bef74717a8e51710c352b913e746440946287135969634c70139485918ac35"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/980f2fcd",
+      "sha256": "f7f9b5c4ad3a412341cdc8e975a1167736fc10f4695df815d672129f2eb8a834"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9addeb73",
+      "sha256": "bd5443b65a9fb3d257ff54de98303fa05ee95e932b1f799160a2f9faf5607895"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9cf1fb69",
+      "sha256": "c0dbc52e70545cae1b783dba3e07e7ae0d9a3c4a6bceef872f3badf586effbaf"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9dbc92c2",
+      "sha256": "7e422584256d02a6fb59f0a4f87ca4770eff74050d95153b2722306d6c8edd5c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9edc30e0",
+      "sha256": "bcb8f47f449fb7f0bf3f2fb601224fac87564c42b7c6866711cc9dd1211625d7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a0277bba",
+      "sha256": "aa2ddf0a96b7c24be2de4fc8c3acb4f94e6429f6b24fe40979c2f084ead5c266"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a1fd7dcb",
+      "sha256": "702e63e8b9745520f3837e4da7389543fa9c4d49058b8fb9525e1e6bcfe834b8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a39eb04b",
+      "sha256": "70fe8f6d73e3363934ac47c6620fc2e0bac4270e1703f879d002f764e1f1741c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a967a5bb",
+      "sha256": "b490bc8922a222635963931889af1ca8193ad8d80f2b1a1751c225b446fb550f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/aae01ffb",
+      "sha256": "2700afadcf46746811ad1699d0d8eb89d8fd693a10f50bf7093558924edae180"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/ab6c4841",
+      "sha256": "33a3d69b27d62f8f643c2b2d084ca296696aceb8e86f511e46a2c42b9a68a8eb"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/afc3f028",
+      "sha256": "bc927cba76a1040cdf1ce0ad226b14ecf9e70fe9d3e42e20364c2fecf356c595"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b49b5c7f",
+      "sha256": "d81db11fceb2bfbe490c5f34f610ed58d625e6b4a413b18e7cde15f570e004e3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b624a7b7",
+      "sha256": "20984b36fb7538816a99a431c3cf28c347f3a355123e8a229dc9bb5aecd68538"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b6b1b90b",
+      "sha256": "ecd2fc89658d88b487258e9b8a77aa9fdc926063fe78c74b4edf52a56bebf14a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b6d0e37a",
+      "sha256": "9302b1eebb2f7bafe4f6dd45ef222cb0423f8dc62f39c90aac6b802e35e430d1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/c3891229",
+      "sha256": "8219690f9ea62df67501df82e63dbad291e44f6e9833450d03164969f832df3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/c889005c",
+      "sha256": "09e999bd15bc2116057edc11967e751030f5b6777380c00ec0c1e4d9bd9c932d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/ceefbcb8",
+      "sha256": "4be1acf3a1e10b16e63d948c17db3938ebba9a8d3ece9ae6bcee9dd7fa9855df"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d1367827",
+      "sha256": "2b035387b440c6b54abe3269273291d52e837ec591a1616eee9d95835239a1b6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d381c602",
+      "sha256": "2b884e31cb55601ec13327c99f248083d0aca562c84fd500b9b337482944a152"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d68d97f0",
+      "sha256": "12a4a746815b8e37f41a4972aee80fe7ecb5e8fe94a5615ec182406b99821c8d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d7988491",
+      "sha256": "a9161a75d316fbe24f2b3a51e86e637b633706fe5a00d3cf9777036c23451cc2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/dea5df01",
+      "sha256": "659f1b801bf294507851daca76dd03e23da10595f71fd653bf134aac28e6acd6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/df704faf",
+      "sha256": "c4865bff1b0621d4978abf4ede6973a179059ca7bacdd4166f6d1842dee27809"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/e21e283a",
+      "sha256": "2672d2c31a89f84ec48ff18b970cc7c9ffd108378e828df4a53817159adc49c7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/e71300ea",
+      "sha256": "cf16d3d69bd6a1e84a9d1e7a748950c6c1f23aa8321eb2d6689a97847534acc6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/e82805fc",
+      "sha256": "73d93250831ba7459d0c7eaaa6a97ecddb134973f0218890987b64c291189bc3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/eb2270d5",
+      "sha256": "cdaf500e786b091c7a1ece46625c623110bbaeef0eac95bd8dcefd9bf8edf8b0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/eea756eb",
+      "sha256": "35d3cf29051d2c91a5b558e7495348153e8ca989d496f9cac1f3317184b448ab"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/eec35fdd",
+      "sha256": "2ac0ea148c3d806635707856c9ebb5e9ea463c0764b10467c15bff74fac4feb6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f015c2c7",
+      "sha256": "e999e07182d80a6aa4919796f9d1377fdfc4f3814d3b19a7fad417174bfa7bf2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f207c936",
+      "sha256": "194944eb81a9c7d6de758c3b170c2fee3a3611b860883ee89c7005abfd090287"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f3e92294",
+      "sha256": "a00ce79ada8e63d675e821e8657cb0605b1575f331b4a9967ea3e00fd9b29ebe"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f7b19e10",
+      "sha256": "eba5597df7c79595c2ebf5cfeda2080b2c449fe51909b6147227e93ce37561cc"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/split/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/fa64bb03",
+      "sha256": "43abed0b185db5414baf0afa5f3ffcab14297c146111c258257830b956fe9b0f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/fixed-input-hashes.json",
+      "sha256": "8b57ffdbe94cca354ef41cc704bab8249272db8be05534119567191f6fcdcec1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/native-end.json",
+      "sha256": "fc03534e822e48bd16a575e5d0a3a574e0a2ecca80f87f18683f8e150c43247e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/native-last-message.txt",
+      "sha256": "1dc0198a964bf879ffb647dc281198372dc61a78e8c35eacceaca849a14f258e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/native-start.json",
+      "sha256": "4bcef40eacf59fc12f29faa872692df2c060f86d99433359082faaefdb2eb742"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/native-transcript-identity.json",
+      "sha256": "f7a8b597f4c7746b029383f2d8169332b9c6bcff3eab7b92b193745d0eae9730"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/product-source/task-list.mjs",
+      "sha256": "939544cdc28cc1de46e3cda598b6723a5d700bf89af941aa0928456caafb3bad"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/qualitative.json",
+      "sha256": "eeb8781279e27f85851e3830961256e1a509ec7f29f750c42dd0c679315ca550"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/report.json",
+      "sha256": "3a3b2b1e177955d55062b45453cd1e30d56f5c181bd55fe0f25576bf09887f20"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run-binding.json",
+      "sha256": "eeeea655296e566f0ccbfe7d3821a88b3857682331c27ec2f95d0cd67dbda01d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/artifacts/logs/mechanical-3fce8bf413e04079.log",
+      "sha256": "3716cea730205d6b985fe0c461151cdcc72d87b8108fc7fc524c7e5657fc3ca8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/implementation-result.md",
+      "sha256": "a41d3a4b39837da62c4e83e50958fee4cc152062e8a5facd46031c6c5bfd472a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/prd.md",
+      "sha256": "44238bd5792dc5103f0ead8690f49fe540c231bd7c07e41d79157f757ce6bb3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/receipt.json",
+      "sha256": "3d10062f6b89d0cb5a0945b0f38b4fa27a14e7cf3748fa00ad361ad6b15c94c1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/review-inputs/e7ccd269-a4e8-481d-9007-2d7515d7b2d1/agents/runs/task-list-review-comparison/artifacts/logs/mechanical-3fce8bf413e04079.log",
+      "sha256": "3716cea730205d6b985fe0c461151cdcc72d87b8108fc7fc524c7e5657fc3ca8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/review-inputs/e7ccd269-a4e8-481d-9007-2d7515d7b2d1/src/task-list.mjs",
+      "sha256": "939544cdc28cc1de46e3cda598b6723a5d700bf89af941aa0928456caafb3bad"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/state.json",
+      "sha256": "e80e435063d1603dcaa977d006835c1dd2adbc813bb8b88fff6b4210206e731a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/cache/npm/_logs/2026-09-08T12_13_43_407Z-debug-0.log",
+      "sha256": "a17cbcc8b46ac570b6fc686e7a1dc65c8d3f8782dec2688e34a8e8631c72cbad"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/0655ecda",
+      "sha256": "179053bf5236851920afb04fe24e6529e776aad75be9332fb0b8de320704f4ab"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/077122c4",
+      "sha256": "f94f998529c090ed43da01af250e8e2f320c4457d74819ebe3e5a0ba5166603c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/0dfc1d4d",
+      "sha256": "8be66b35fed1adb06eeb9957cd8331992d9ed2b7e191a65073002896dd6b63ea"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/0f88073a",
+      "sha256": "62b6df8ec918090806390527cfa942597c541d4d43cfb1c73270506bef50b2de"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/150f4755",
+      "sha256": "8a77e36e86f8284bc904beadb50fa9c0dafdc97d43d263e6fc2a3b0fee38d54b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1640165a",
+      "sha256": "84914699697e02e962b0fac220c9561cbc953fb0072e09c81188d5fb38e44d91"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/166d9515",
+      "sha256": "9bbac3e9450c5a53ec0fa8d307611ab26cf9adbda3faed7cd7b0620d040dbe4e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/19f11bee",
+      "sha256": "9a49f489ce273e7e6443473ede9088f0da28df2495823538d2fb03314c2887e5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1b6c267b",
+      "sha256": "c873c2fcad1d67c34545e0f8e2550774ae1d2d6efe4282300f64273cb6f36bf9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1b6cfceb",
+      "sha256": "fec30566f0d5a222c49d60a7bb1e6e1100dfb18f7afa3d642bd0bf23b1bb18fd"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1c192005",
+      "sha256": "69b5d2c388768a9e2c8c514f66d049633b65d1ad425b2aba989cac36d15e6604"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/1cf2efb3",
+      "sha256": "16d0ba242fc4ab3b3b6c7ef86e8a16350d101703327d6338584af1f798b85688"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/223fc457",
+      "sha256": "f6d294ed0991a0452f2f7ed3bf7c0b9ddd30ef623e8c71d8a91778a5894a512f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/2411af24",
+      "sha256": "adb47aacd20df2613ca28d4750eb20317152ce7f6c646aa4d579a5dfe18af1c8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/246a8652",
+      "sha256": "96553aa80e1eb53ce2f0a94f1d17973e7ff14d4a7915602e3f525a4f6c4ce737"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/248ff18b",
+      "sha256": "e6bbd2842a11e093d9b23b3338aa33614d3c349d35acbead9e260d7d34da8f01"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/26d7b246",
+      "sha256": "20e0d93cb232e4d2296d2e8034125e4c30281c1ee8b28df3480767ae5f90f93a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/29598173",
+      "sha256": "d95a855986999875b791ff34fd34a4f8b8ba53d3823a48fd73e13ad7134949d8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/2baa6322",
+      "sha256": "b249985924e15c3f6099821effa357d72b48d54b2eae078801897881c06ff282"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/2c943337",
+      "sha256": "f689bf9022d8e599c50b53919e90c38498d38d339d062b14eea32271d66a8127"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/306554cb",
+      "sha256": "ee5c1fc047b97469b950d66e9d57442da6571f68ae753e3770387a16bf39ca0f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/31bc4b51",
+      "sha256": "7686f22dca2f8877412e9de7a4f642959f10e713cf0a6eedc94cc38f5e03f726"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/36a5744b",
+      "sha256": "2073a835547f6b9d172e088e7c7e6cd454a10237c841a4dfa702b38ae449b0b8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/37dbed22",
+      "sha256": "eee895073756d8c0e291f9ae40cea2f2e41de5f65b4e20c3511206bc875b2c3f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/398eb1ef",
+      "sha256": "a6ffe91c646bde9bae306e558f6ff34faa937033d2cc12ba1d10433e913b0869"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/3998ea18",
+      "sha256": "9c1d339b0d521000cca247789580a9345bdc4fe59e1e92fb4b0debd81674d9eb"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/3eecffc1",
+      "sha256": "579caecbd0f857118e4fd35cfafce6a9e5f6dd5856a90663705b5786af514f3d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/454c08be",
+      "sha256": "164d356a705f3e83e456abe4585ad3e143ea5061513291d9aa1e49b6c9e0e5af"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/47041e08",
+      "sha256": "d9bb3389d28b4aaab0bbca395d15aeedce12de42040ded21cfdbc7209e1c6778"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/487752f8",
+      "sha256": "fe61a877d844ab69dd3f3d9c974c39314a4ecdc18af1359514ca2399086d0320"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/48b9a2e3",
+      "sha256": "032ae41594a892405d7a7feee82a34c84a8640e9e55eac0392a835dd3ac1dc06"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/49a62087",
+      "sha256": "02aee5e1d3270427d5792f07358363be158e6b83e00ab91c1bfacfecb55fdc91"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/4dbcb496",
+      "sha256": "b35ac5ebad58aeb7ae3acaa002e499b4270ecb850bb0efcfbae84adf75b94cdb"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/4de8c1bf",
+      "sha256": "651bfd4fcacb877fe2690803922c26275434a2dbf6d066cf738af363ad913742"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/4ed65fe7",
+      "sha256": "404344f54f527077d80c222397f2218ff268752f91521b95d38f4aa61e9409e5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/51078357",
+      "sha256": "2425587264e552d7e251442e5e52119171f3e43743c8412201c445fe2d653886"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/55cce99e",
+      "sha256": "e15fd8754ff21e4f2bfb808e3e824d45b52bd9c5288a854284a856f01fa04df6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/5c9623a4",
+      "sha256": "12ec3584ed0bbf7238c6ed9d89bd5156ad1a48234f870e609ef47c5ef0e1fc8e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/5ce3c97b",
+      "sha256": "f58eb7df7d810368853c27662409a29d1a2dcc85cccfb9b87ba282e4d2f1c3e4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/5db4d748",
+      "sha256": "0f21247e71b7cf22c7041c8acba968959d4d9f0f3c10f3e439b719267507ba94"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/60a7eab6",
+      "sha256": "952b1a90a10862087c7db4000ac988aaa32c5995a16bc36efd2513d5b70533c8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/6ce020bb",
+      "sha256": "d0dd9e7dc6af19ff71c2ada244bd44f181e735d976d576067f5de164f9ca52b4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/718e1354",
+      "sha256": "dfdc5e16ffda5db0dc612e611f35b2811ae222dac209d51ce77164e5a13b237b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/7492db49",
+      "sha256": "57042244c26ccb11cb62e8481b09cb7ff7133fea4bce802ffef5dc265ec87875"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/75407596",
+      "sha256": "b4e5eb92fcb01ccccbfe5126301b4d1974be41afc6f7f6734044a52d0ebb49f9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/79bc75c8",
+      "sha256": "ce42b88defa1cf2cc71f2ecd204f95d077e4c32d2c409525d30b22109a563645"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/7a03d2a1",
+      "sha256": "ac5ba033defaa57d492093e1ef9e6fcecbfd8974b77fceda58f275e8694bd0f6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/7f6cca1d",
+      "sha256": "4ea4dd091530125f06267692b7253d64580d805a22d608e9fbed07158d4522d3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/83c7e61f",
+      "sha256": "0560ae3ae910da325cd9174783e811b62a9e4b992090ed1b9db07130eb4ef546"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/847afa15",
+      "sha256": "bb567e73e66375e6b70eec86db31560007eead7dfc5e759d73c7f1660fede61e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/84d4083b",
+      "sha256": "9459049c45aa53176ebdf0b3744104152dc50ce6f450656e88b1cbdf81be0750"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8809960f",
+      "sha256": "0151b575db86ff9d1416aada7c025727a22e78ab9eff77abb6109cc548706caf"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8b37215e",
+      "sha256": "ad86e52b1947e412c0dd409352c8bdbd88bfb4997a811aa72086def4954cd594"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8b39ebf7",
+      "sha256": "a4f97d74ceaf7873a8111fdfd4a9f6960852d6968d172d1b60a363b4b7e48b9b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8e31f510",
+      "sha256": "688339b7b219e5d8e8d2650392c07daf5229d2a151d52f5f2db647b0f912d770"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/8fe23731",
+      "sha256": "f8682fb46dfd4fe456213979af4f172b1bfe2cbc445c50cb584290db176b6594"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/920a4535",
+      "sha256": "d3afc1fd9d9014ca3728c6a09e48d31bbf5f0c5072f659eadeca5d1a9be2dfd7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/949b5c94",
+      "sha256": "a2db3609dd0d5efb5ab0bfa49647df506a11fd10a3242d3fafebb3a2aa670054"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/959a3c83",
+      "sha256": "6850fb1b9002c59ce410193c9714a8cfdd56194461ecf8c503353494ec4fe166"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/980f2fcd",
+      "sha256": "3654e6602cec6863ab5204846f68979d2180be911257a0a93d6e65aa9777b532"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9addeb73",
+      "sha256": "f93a7270913d9e55dc2f43efe439ed5a950621862f163108a62001cc2ebeab8d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9cf1fb69",
+      "sha256": "8a462d1c70dfea3dafae5a894b93f0c82b4727ea971599b1ec2a802a9c86cccc"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9dbc92c2",
+      "sha256": "e8c88b7ad7f1b9cbf9082f204da66b567d178d9383d49b505ace277bd17edb6b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/9edc30e0",
+      "sha256": "37200ab5f795f6ea4b57bc2924536a8b634b9c8b1b10ea332b60749bd107e0b6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a0277bba",
+      "sha256": "3ca0d0fc173506bcbb55f8d778514205954ad35f265bf6ade40a37b061ea5e9a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a1fd7dcb",
+      "sha256": "5f04380783f15371eee7de6db09fdf7d821214e3aad98a0103fb715e870f895e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a39eb04b",
+      "sha256": "aa5c0e8963cb5efcef0abc03ee344737ed23f952a7eeea8aebe8a95f748f2167"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/a967a5bb",
+      "sha256": "4b9f97c1aebc25a55b37e18dddeeaa23e57d8eb00a624b8c9bfdfee526e563f8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/aae01ffb",
+      "sha256": "451ec0052e8bd16a160e10e2bda6dd5d33e293458edba6d55774a82fe55c2aff"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/ab6c4841",
+      "sha256": "f105a0d08683b7f21a7c28690288600cdab0d89ca6cd5802e4b3930f02f46e01"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/afc3f028",
+      "sha256": "b2313923ffa435c6e8d30d1410300b76af834d830fff97546b09c0b40a0d09c5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b49b5c7f",
+      "sha256": "b930993ac27d9816c7651e6d29ea5f5a104a388ebd42a6b84649db6854dae324"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b624a7b7",
+      "sha256": "b3fda53e55012e68bfcc9ca38e67511f3975a6e5dd0157b5df046dbbab8897c6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b6b1b90b",
+      "sha256": "7b855755cfeedd0071f39c67c51fdf984703580ed79962abbbeb350c15adb9ff"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/b6d0e37a",
+      "sha256": "7734d1d148ba6d93a8869b21ee3aef26e34dde8a7c260364e02fad09c4b3d370"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/c3891229",
+      "sha256": "b289d2bc802bf08aa57e34c406299224e5883439f02dbc7472ed60c045f52280"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/c889005c",
+      "sha256": "e6437ddc818bad8f70d8bcd4bde7cf0b7573e9f0ad92f835479c84c9fe80dd46"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/ceefbcb8",
+      "sha256": "9f56d7c50a2e99b74f352fae7f7f25723f842a985bb05b28a1c2da9c079a6603"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d1367827",
+      "sha256": "2329e1b4adf8ba3c3d59e20ddee91464aef72aa7ced0c515c45112a630f4710b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d381c602",
+      "sha256": "e80fe2213f3ef01dcaf83fa00b62a02abfc333312bc897efc24637582f02b4c9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d68d97f0",
+      "sha256": "fa2211fcff39ad26c40c63cd6d60b338c1d3bbe1e04eb1e776e710aa171b4997"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/d7988491",
+      "sha256": "db20d0a3f94810c20a6161cef8ecdbbf4e7dc0227f04a8eb0a112a8975d0e6fb"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/dea5df01",
+      "sha256": "4a8ac17dcca1657d02566ef539f9682bef54e3053c8d892cb7deb3a3ddef38eb"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/df704faf",
+      "sha256": "b81ef5992c5749085d7f97fc3733b9cf91c7773dd20b25c4fb1f16573b69728b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/e21e283a",
+      "sha256": "34df26d32ea7f3f1bdbe2c36a73abf6850e7a8a5bbb8cb99016fba78492155a5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/e71300ea",
+      "sha256": "c31c5778a1e6414b6c140f5971ad7da7b93b822d5bf330d800cf53ae8c9ba7c9"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/e82805fc",
+      "sha256": "72df7d44bade6ffa5a3505b16cbbe920dd0bb2772a95452bdbf93c9190dc850a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/eb2270d5",
+      "sha256": "695aa3be7d05ff961055f96c48809f3944008eac2cd90ca70e437c2ca463c44e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/eea756eb",
+      "sha256": "7a6fa03b9c4f321a75cb8173a5af3b32f9ec929f0733b52276a7f54d75fbecbf"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/eec35fdd",
+      "sha256": "a3e1e77d3411baeb7a8320cae20dab8832c47c5241908ebc0c658c8f968749fa"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f015c2c7",
+      "sha256": "f4917273b4390a436cabef358219b540f9526af0dd0c1902104ea1747a6c9694"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f207c936",
+      "sha256": "7aeaa128bc2102508c373c605b48aaeaf9ffb673694c91c4750607f31a26a69f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f3e92294",
+      "sha256": "954563b73c812776a4d8fae7f1d209151c8ef7155f24e33c5021818b8c1e8ad8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/f7b19e10",
+      "sha256": "a8b42514e3b901dcd849de2e086f0bfd60f4a66ada21322c6a1455363e56ca35"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/products/unified/run/suite-runtime/tmp/node-compile-cache/v26.5.0-arm64-8d7ad2ee-501/fa64bb03",
+      "sha256": "ebe5f73993642ce89e6652b42eeb6f99d33c32ddedc1e0968d2820af31dc3a4c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/authorized-assumptions-split-code.json",
+      "sha256": "b1732ce5e8e46d9a594240f73b0e9e4a2f61b558ffb6730a56a176baf28f5e73"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/authorized-assumptions-split-fidelity.json",
+      "sha256": "b643de770b0820270f40fbef5d08e730e13d99618b7654a855be4a738844095d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/authorized-assumptions-unified-unified.json",
+      "sha256": "4d17c5e83df548461712079dd2168a419a2260ac8e5d5a6fb16e0c3449ad3247"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/bin/codex",
+      "sha256": "b869aeedaeff591a4f3b93de7a2ae394e7d6940c127b59f5529335a5105f6af1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/complete-split-code.json",
+      "sha256": "561019bce69a2a225d6e731e937822ba9a60871090c6e3ca7da141afccbc8cb1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/complete-split-fidelity.json",
+      "sha256": "c60695498ea332681392bd483d81dd5b8f93b0f4ccfe30bee3c0ff91cc5bb9c5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/complete-unified-unified.json",
+      "sha256": "fa910b18719673d1d994d14157c573cdecfaad056a5fec5f2cbf299e5f68d9cd"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/events.jsonl",
+      "sha256": "0a90ca62276d586cdd61f7c39752ffbde9a4e9bbf126733400a26ea528afba6e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/execution-finished.json",
+      "sha256": "0b7be9b103da9017b59ef61f89ba6968c3bcd0ea55ea8e28fc74168d7ecff1d3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/execution-started.json",
+      "sha256": "f983fff5941ac3a540f2194f89af58add00f26f3a09abe94e16a8b2e8035ec05"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/final-omission-split-code.json",
+      "sha256": "996c61b38df5d3e65182ebb10399ca02768d6ddbf3fcecdc9b875a960d3dacea"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/final-omission-split-fidelity.json",
+      "sha256": "ab4c733c44b9cc9c6385693ec180bbff2a5e79b1e63056e250aa2b325316dd6c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/final-omission-unified-unified.json",
+      "sha256": "ef34bb71d05e36a0c89ffbd9169cf2d1c571e52c5efe708de14a028611a6319e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/authorized-assumptions/material.json",
+      "sha256": "c80cc1d63bdbfccdb2a4468d9e06344276bd4c890eb20eaec4a1cf85c49fbbf7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/authorized-assumptions/private/decoy.txt",
+      "sha256": "270ceb26318e1a45edd7517b50b8d3e0a85e007c7ce51b9180ba1b89d8ee2a1e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/authorized-assumptions/smoke.log",
+      "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/authorized-assumptions/src/public.mjs",
+      "sha256": "29e70467e4d1ee17dbf9637e1cee5ac49962b8e6eeb1c0dba91e64778581345e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/complete/material.json",
+      "sha256": "57b9c5a45fdb3854c4db1723e14e950ffcf1428d3450dab86a3060325349f4c0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/complete/private/decoy.txt",
+      "sha256": "270ceb26318e1a45edd7517b50b8d3e0a85e007c7ce51b9180ba1b89d8ee2a1e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/complete/smoke.log",
+      "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/complete/src/public.mjs",
+      "sha256": "29e70467e4d1ee17dbf9637e1cee5ac49962b8e6eeb1c0dba91e64778581345e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/final-omission/material.json",
+      "sha256": "57b9c5a45fdb3854c4db1723e14e950ffcf1428d3450dab86a3060325349f4c0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/final-omission/private/decoy.txt",
+      "sha256": "270ceb26318e1a45edd7517b50b8d3e0a85e007c7ce51b9180ba1b89d8ee2a1e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/final-omission/smoke.log",
+      "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/final-omission/src/public.mjs",
+      "sha256": "027fbff8ab3fbb4d0b165b3144f315770ea04543d1f179e1afe17ce1110999f7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/middle-omission/material.json",
+      "sha256": "57b9c5a45fdb3854c4db1723e14e950ffcf1428d3450dab86a3060325349f4c0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/middle-omission/private/decoy.txt",
+      "sha256": "270ceb26318e1a45edd7517b50b8d3e0a85e007c7ce51b9180ba1b89d8ee2a1e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/middle-omission/smoke.log",
+      "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/middle-omission/src/public.mjs",
+      "sha256": "06d5f36072d46210d0374c11c003f83c69e89bfca7fbeda48b4b280e4aa5f7c2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/storage-failure/material.json",
+      "sha256": "57b9c5a45fdb3854c4db1723e14e950ffcf1428d3450dab86a3060325349f4c0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/storage-failure/private/decoy.txt",
+      "sha256": "270ceb26318e1a45edd7517b50b8d3e0a85e007c7ce51b9180ba1b89d8ee2a1e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/storage-failure/smoke.log",
+      "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/storage-failure/src/public.mjs",
+      "sha256": "80379d2d2eff97c87f67a515e68dedafc7b0fa3f6381e878b674ab98c42fd667"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/unwired/material.json",
+      "sha256": "57b9c5a45fdb3854c4db1723e14e950ffcf1428d3450dab86a3060325349f4c0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/unwired/private/decoy.txt",
+      "sha256": "270ceb26318e1a45edd7517b50b8d3e0a85e007c7ce51b9180ba1b89d8ee2a1e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/unwired/smoke.log",
+      "sha256": "2577c868856b60d56aa51049de7c7d0070f13bed00554868e30704fae5566c75"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/unwired/src/public.mjs",
+      "sha256": "0f2f3338f37ef6e825e02d0abd0bfb2b7d86096e812cb0650b3cf1e823c2729a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/visual/material.json",
+      "sha256": "9c82e01308850fc06f0a7e4bda21d2700aaa9944ca7156fdf744a40f6c2866b8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/fixtures/visual/visual.png",
+      "sha256": "9d60ca3491a82c7058d384edfbb7905b9ee7318705437ed9cffe92a5675ca23b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/frozen-fixtures.mjs",
+      "sha256": "a39b13661dedda75da610c75020ada9e6a1b0583b4819ac40fc0a2a2ff9c72ba"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/middle-omission-split-code.json",
+      "sha256": "1530eb57a9e926bb34d914a9fce01e2dd26027935cd6f288d4aceeee61e2fe90"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/middle-omission-split-fidelity.json",
+      "sha256": "3b56cfbcc94462168733ad02a9f1fd268f63dead9b2390a33c95d436e03a2efe"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/middle-omission-unified-unified.json",
+      "sha256": "61a0d312e60a0bea5a6dbd3b05442d0c991b0923f67c5bc4b7809005aa0fac91"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/preparation-errors.txt",
+      "sha256": "9d9518ed59d6d231eba4ee5c3737361967e3bf4bf9bb6421f419ccf5cf8954e3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/process-measurements.json",
+      "sha256": "3118d2ec2155be5f9ec0e99a90fdedece777e53e86e65e3a1354df99aa2a7a53"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/authorized-assumptions-split-code.txt",
+      "sha256": "50a7e65e67f187e6b251bb91e8ee65ac453aa8f2949b38b83e3d1895fbd1a355"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/authorized-assumptions-split-fidelity.txt",
+      "sha256": "3b39323786590ef4a6a32538d0da9ca65cda6f1982362058ec78df0d3c224db8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/authorized-assumptions-unified-unified.txt",
+      "sha256": "7ac6b35ae19d566f2ceac47b2a33982bb5d040b259205bf8c8a7b90f94628a7d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/complete-split-code.txt",
+      "sha256": "9a51eeeb038916440415b6a4ab25672396607430bb0dd2bc34b32a0a2d8ebcc4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/complete-split-fidelity.txt",
+      "sha256": "211ab8264c2b5690fd5c96e6ad9c5e58746ca3b98fb5545a0a1503de64ad2ae2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/complete-unified-unified.txt",
+      "sha256": "c9144d5b9b5de4b66cca4883ca795ab826594ba49c02efa0885529c15d51af89"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/final-omission-split-code.txt",
+      "sha256": "9a51eeeb038916440415b6a4ab25672396607430bb0dd2bc34b32a0a2d8ebcc4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/final-omission-split-fidelity.txt",
+      "sha256": "211ab8264c2b5690fd5c96e6ad9c5e58746ca3b98fb5545a0a1503de64ad2ae2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/final-omission-unified-unified.txt",
+      "sha256": "c9144d5b9b5de4b66cca4883ca795ab826594ba49c02efa0885529c15d51af89"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/middle-omission-split-code.txt",
+      "sha256": "9a51eeeb038916440415b6a4ab25672396607430bb0dd2bc34b32a0a2d8ebcc4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/middle-omission-split-fidelity.txt",
+      "sha256": "211ab8264c2b5690fd5c96e6ad9c5e58746ca3b98fb5545a0a1503de64ad2ae2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/middle-omission-unified-unified.txt",
+      "sha256": "c9144d5b9b5de4b66cca4883ca795ab826594ba49c02efa0885529c15d51af89"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/storage-failure-split-code.txt",
+      "sha256": "9a51eeeb038916440415b6a4ab25672396607430bb0dd2bc34b32a0a2d8ebcc4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/storage-failure-split-fidelity.txt",
+      "sha256": "211ab8264c2b5690fd5c96e6ad9c5e58746ca3b98fb5545a0a1503de64ad2ae2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/storage-failure-unified-unified.txt",
+      "sha256": "c9144d5b9b5de4b66cca4883ca795ab826594ba49c02efa0885529c15d51af89"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/unwired-split-code.txt",
+      "sha256": "9a51eeeb038916440415b6a4ab25672396607430bb0dd2bc34b32a0a2d8ebcc4"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/unwired-split-fidelity.txt",
+      "sha256": "211ab8264c2b5690fd5c96e6ad9c5e58746ca3b98fb5545a0a1503de64ad2ae2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/unwired-unified-unified.txt",
+      "sha256": "c9144d5b9b5de4b66cca4883ca795ab826594ba49c02efa0885529c15d51af89"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/visual-split-code.txt",
+      "sha256": "a5f11d7d31eb25a4cdfcfd039c25a8c8b6c748757208fb3e22eb44eab75f8cf2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/visual-split-fidelity.txt",
+      "sha256": "2a4511e1e700e4e5711a52cdda079a8be353befd66ed7a6ee2776131ecee8d6a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/prompts/visual-unified-unified.txt",
+      "sha256": "13d5f519bc2a4552078251e8e73a04a2171d805fa84e7ba6fe5eb74f318a0942"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868674903509000-95239.json",
+      "sha256": "ffb020ca5b0b9b851a091b1cd5a4f68dc5ead619c7c01b273113caa9532ef7ae"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868674903509000-95239.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868674903509000-95239.stdout.jsonl",
+      "sha256": "6439949d25d24feb07797faadd183690fdbc37e15e3b4d9532e10f6609d43b49"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868679927644000-95410.json",
+      "sha256": "344b025f549f08a5bd8926ba1f21f4ee11b46bb921302d37acd28f95ddc8c37c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868679927644000-95410.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868679927644000-95410.stdout.jsonl",
+      "sha256": "b5396bef04339dbb6a7be6cbfc34f2d82fbaacf8e4a0566845f913885255a199"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868700393781000-95916.json",
+      "sha256": "38ebe18674446c0da6fc207d6ef6f34bce8190f4e319755658246fb5cc331492"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868700393781000-95916.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868700393781000-95916.stdout.jsonl",
+      "sha256": "5b182ab756017a240c8885bfada2b4e089de7210f81d03949439316abb83bafc"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868705137817000-96053.json",
+      "sha256": "544c73b5de73e1f4e7ef45c0207af45d7cdbea6697f75930e8bf35f4cd9d45ae"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868705137817000-96053.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868705137817000-96053.stdout.jsonl",
+      "sha256": "a2515a443c64c5f9e8015fb60e190f72fbf06e8b9ec008eba28d8f8975f92cac"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868705140873000-96061.json",
+      "sha256": "8e4e18bb98d59afb9ca351f0ca6507fd3b569eb427ae716fa675f38c69f4b1f5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868705140873000-96061.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868705140873000-96061.stdout.jsonl",
+      "sha256": "3b94463d2266ba0f17f14ee2e9cc959d9aa7e98bbcb44817d0328d7d44d04f9a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868727508925000-96758.json",
+      "sha256": "fdc3189989bcec7d0e15d23bc256a36bcd010068f5fa3ca99b54631b87ee63b8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868727508925000-96758.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868727508925000-96758.stdout.jsonl",
+      "sha256": "71da3400887f6dac1e60a2ef4dd734142fd44ba5fd46d5a77fbf0a418f056441"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868756686555000-97664.json",
+      "sha256": "86b0ed8ec1119326b0d2d363ac347d0561ec4dc60d60e0b95658e026b329de41"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868756686555000-97664.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868756686555000-97664.stdout.jsonl",
+      "sha256": "addd20d2f1e24a95353f06ebea6a45d2df09e98b7d426b81b8a2a0a0f1f5f0bf"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868756686557000-97656.json",
+      "sha256": "4dba5f86a74cc7b5b2921cc3d474ac5e2c3752d4e980f93e72bca3f237d07b02"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868756686557000-97656.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868756686557000-97656.stdout.jsonl",
+      "sha256": "71aadb218eab91eb02d6d144d26b42724d4e21f085fb163c37fca8f7a56fef1a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868779775282000-98831.json",
+      "sha256": "5a112cc936fda4c0961d73f872eef36b6ec8255a6f6c0c8d14e7efad85110682"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868779775282000-98831.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868779775282000-98831.stdout.jsonl",
+      "sha256": "135d8c8f8c6aed3d85978b86188c9aa4545f2bf1de0ef3600ca1027007dd4d3e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868799107413000-618.json",
+      "sha256": "b6b5724af894093b317cc7143def9203df54ebc95942f2040385fd5624366f5c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868799107413000-618.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868799107413000-618.stdout.jsonl",
+      "sha256": "e320674d24144ef81b553487fb1d064156852c0a87bf4fd7d9706233abd04d69"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868799108042000-626.json",
+      "sha256": "1fb03506b75319e334a25375114eb3fa6ebec512f36b5e451c94dea543ba8e60"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868799108042000-626.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868799108042000-626.stdout.jsonl",
+      "sha256": "74a22662282f869b7536a7790592d86891e5536eba8bcd0881cf926eea37421c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868820395669000-1338.json",
+      "sha256": "0032a9c6afb5ca2461fae33dc2dad3b38a7d0a19cb42be8cfa2f2867bff147a5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868820395669000-1338.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868820395669000-1338.stdout.jsonl",
+      "sha256": "fe627998e9364b70d4e276f28230b7c39b25e567b20a5d2d95431a80902e5844"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868843685882000-2294.json",
+      "sha256": "0ae90f671012637f4ce8bef17b2c96000b7357ca20789176c3f16ab562e08780"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868843685882000-2294.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868843685882000-2294.stdout.jsonl",
+      "sha256": "31c21b6878916b4461f738e86a3a1746919b6e8dd74e232c004b9a72f4df74a2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868843685882000-2302.json",
+      "sha256": "a6b2a728c3dbbae814f88f99cdafcf33151049a1d0060ef6142c809b58b30822"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868843685882000-2302.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868843685882000-2302.stdout.jsonl",
+      "sha256": "226223b76c9e16803aeb87c2dd6ffd76f05f4d72a136402afb094f15b939f6e5"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868866393918000-3077.json",
+      "sha256": "59c360c4adbd73e04e507664dd0635db279926f8f00bd896b6c257b3f1810c0c"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868866393918000-3077.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868866393918000-3077.stdout.jsonl",
+      "sha256": "41f3059b8e6d351ad7fcb6ba1170f0394edcff7cf413a0cc8a120ea02e86e831"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868902305678000-4094.json",
+      "sha256": "0020e79cc19115ca71ff168af119ed6aac6d2ae3702638fcfbd5daef44f3e3c1"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868902305678000-4094.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868902305678000-4094.stdout.jsonl",
+      "sha256": "b5e56f70509a7729321394a9c5c30e4156a0ec936c727c9764df7c418a48440a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868902307909000-4102.json",
+      "sha256": "52d7b734c8c8d4ea05ee14597da18babd7e47ded94051cdc59bc4b50f2e6c0bd"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868902307909000-4102.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868902307909000-4102.stdout.jsonl",
+      "sha256": "705912962e3fd9ce61034527447979cc12285076b1476b5db636198c3abe4cc8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868929574229000-4946.json",
+      "sha256": "99dd3516355d59f265aa2170f7596d1ecda4b7f540aff53c132556eb178f8055"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868929574229000-4946.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868929574229000-4946.stdout.jsonl",
+      "sha256": "81ee9eb8234442a5f73c6216977e1efee8692dc3743b2a90b381168ae46f57b2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868954837402000-6087.json",
+      "sha256": "8bfac8bda95c4554a9fe906451af74d49efe7e8f26447314475c53fdd870ada7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868954837402000-6087.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868954837402000-6087.stdout.jsonl",
+      "sha256": "3e9ae7b525be7d2b7dc76254bd8033127397723b1219d58fa51c0938816d9527"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868954837403000-6095.json",
+      "sha256": "f70ba7ce8883f3e0aaa2c6c841b783c6f66c50b13739dfd8170f22152dea0503"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868954837403000-6095.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868954837403000-6095.stdout.jsonl",
+      "sha256": "9fa566743206e746a8b46ed7f605d6c846b9087668966646ded9360be0c10238"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868978716845000-7089.json",
+      "sha256": "6c078c9ebf6c45d52a926a46add1cf01957e17c9467bda7edfa3e38e11a145a8"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868978716845000-7089.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868978716845000-7089.stdout.jsonl",
+      "sha256": "16d1083ff7bcc0b555496e83f32a5c320f4cdaa033ebb90a8b1628d9ea327c6a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868989496826000-7403.json",
+      "sha256": "01923aaa054c5fad76696445ff7274817e430a9470b86187a01275dfaca757b0"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868989496826000-7403.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868989496826000-7403.stdout.jsonl",
+      "sha256": "cf4529e95dc643ee8c831e45fa68ba9597eef40ef93dd164548b997fcc616db2"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868989496837000-7411.json",
+      "sha256": "5f5bb6d9fdcd23ffbb5fc9866f86a8a6a3bb25a5683cca9975b6c85ccb40af54"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868989496837000-7411.stderr.txt",
+      "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/provider-traces/1788868989496837000-7411.stdout.jsonl",
+      "sha256": "52d97816522c91f046680f328d8ccd83c93afe90c0356a67d1c7ba20a2ca120e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/results.json",
+      "sha256": "8010532b3353c05c32821ed43f935e3163cd54a54a19365c7ead442574577e4d"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/roster.json",
+      "sha256": "c597469181f3dbb208791b45a43bae3f836cb89da3828417d02dd72f17fff518"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/run-quality.mjs",
+      "sha256": "dd98c5e0f9aff506b25ed6514c13bd679521f61231bf5d9cb26bd7a9408e77ee"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/run.log",
+      "sha256": "0a90ca62276d586cdd61f7c39752ffbde9a4e9bbf126733400a26ea528afba6e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/storage-failure-split-code.json",
+      "sha256": "a554dff61dec148cdd587c913622f0ac91b0951aeb2acc09fbdd9a90c0a30409"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/storage-failure-split-fidelity.json",
+      "sha256": "0a50c0cc038b091c9737c0ef190140effebd0604d7565288ea83cfd628d29ca6"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/storage-failure-unified-unified.json",
+      "sha256": "ba8d15bb1457adae0bd0035fa3d825531daf4a7a2d93471bdd2a19505f646f0a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/summary.json",
+      "sha256": "9d30443f55a3b100d1aad6218d2f80dc2e68db5986b5b6e0fbee69c0ccff8f7b"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/unwired-split-code.json",
+      "sha256": "4f543acd0a1e16bd1b3581509339d23b033eace4192a36f0edcb00a8b43d2b5e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/unwired-split-fidelity.json",
+      "sha256": "12559534366c333df7adbaac715e8313c65aff55610f103c635ba4d0bf651b14"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/unwired-unified-unified.json",
+      "sha256": "3bf381c1fce875b384d786ca9df8ab09cf0d20b3072ecc8a41f6a602f94bacfc"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/visual-split-code.json",
+      "sha256": "987934a3b3a6003e63a559d82b4b078ba3f90b9f129cfca0c59c970ef8db1728"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/visual-split-fidelity.json",
+      "sha256": "21f133c9553231b6a5f14ffe39e7ea925b0517284a8c307a096970645232e6c3"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/quality/visual-unified-unified.json",
+      "sha256": "0897698b682e93e8a93ed11388ede7adeadb5adcf946278900cf84383ffc38c7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/build-final.log",
+      "sha256": "15aa7f084109be7b4566b23235b8879183737baaa5168db1533e471cad71c47e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/candidate-manifest.json",
+      "sha256": "5b644acafebf55c4c4c2c29f424c5ea402ab45a0a52067e600c73bfb932b35d7"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/changed-files.txt",
+      "sha256": "32ac11c8d5c0b0f09d7f4e613bf2c30c96bff7ffdbf68b79c208e51e71c04e42"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/e2e-final.log",
+      "sha256": "fdca841330dea7e2f2fb896de2ba09ebda97bdc48d2570a38717ec452cc68bfb"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/focused.log",
+      "sha256": "c1fcb3879aaaabd350e4abbc8a58ae76ddb9656dd155095efe69e9f39830b17a"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/handoff.md",
+      "sha256": "f5b75effa5c1151cfb04523bba4c0e4afaf91d74944c5c4e9cf29f61ceac3529"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/noemit.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/pnpm-install.log",
+      "sha256": "40f48dbf7c52f8c6eacf6a731d092948c1f34721c6334d6cba605009e01c0b0f"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/root-final.log",
+      "sha256": "95cea9dc54058cb61ab5588c3c721a07663010510adbca01179500b4e50768ec"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/typecheck-final.log",
+      "sha256": "ebba79acf5485a3a8ee248b61385e953d2c936c3d423bb0454980d1b8ea46c20"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/evidence/source-checks/unit-final.log",
+      "sha256": "2f6755576652b2a1913711e4edcb53320d2562105473ce99d2a7aa670655b189"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/protocol.md",
+      "sha256": "a570db42dd24e37ef95b43324adca17de24d8c960f20040fdb5b4b2e40e1606e"
+    },
+    {
+      "path": "docs/audits/parallel-review-comparison/results.ko.md",
+      "sha256": "3fd1c246cb91f936f55e40cf53b36c8b06f5ee791d086dfda2bce97394d0c54a"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/frozen-prd.md",
+      "sha256": "916b23f4663f087c42685bc4715301dad4fa97b2049d64ac4e0f2180a7eb3cf4"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/README.md",
+      "sha256": "c4509f20a5ba9b0fd10884287d6fe8c7ab977fec18a52139d393f6f13da4b24f"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/README.md",
+      "sha256": "8709d7da507bee00b61e2256e94a2e80a357f57ca3cb101717323e7daf1fb20c"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/extract-process.mjs",
+      "sha256": "0686489ba14dd5614eb0be2ddff3ee4d46951de7827213d1e0512d6bd792d543"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/inputs.example.json",
+      "sha256": "d29300bc4377ec4fa2118de6f3c87f9374db9c1daa225ad267599b48b3e1403b"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/inputs.final.json",
+      "sha256": "233b871bc475db21421f7591cae497fea00dd754c472780f0b17469b7baf14a9"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/new-observable-excerpts.json",
+      "sha256": "012af7685c96bae67f281eac5ee30ce974d4edca022bca6b59426b9a7faf8932"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/process-metrics.json",
+      "sha256": "045ec647a7d870f7f5349ca382e6392073dd34e56516c18f03f302a893239374"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/qualitative-new.json",
+      "sha256": "248ace0cffcb3971d7d3544f55b77f707b66ff525f75138604e33606f3fadb3c"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/qualitative-old.json",
+      "sha256": "0e188ec98996ee72793fabfa42e3d49b33e8d7e1c9f1a5af0a465e1b476f1e47"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/render-summary.mjs",
+      "sha256": "8641affaad35aaf62780d4c0425cc7610ff829cc2d3f53dbd71ef319d6f459ef"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/analysis/report.md",
+      "sha256": "c14794440252310d1f7871ada9e5b9b5c04c09c2412ea1d776c16c44f0a4a15b"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/evidence-manifest.json",
+      "sha256": "f707ae06f7ac8de965538795a64f27e00d914ecdbbfc93ee3471a395444d622e"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/native-report-attempts/new.json",
+      "sha256": "dcc505d141208651d4351bd4876e408b0205e1aa776364d48514067aeb4e8231"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/native-report-attempts/old.json",
+      "sha256": "320bf710bd758842d4567236a3caf6c7f89c936f58f3554438e4c6f51ec9eadc"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/case/benchmark.json",
+      "sha256": "f45bb03dc37d079c07b54fb23a27f321c92bea7186ff47f83f80d5967f7b7f99"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/case/prd.md",
+      "sha256": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/prepared-run.json",
+      "sha256": "99b5075acc76c73a40f9adf13567eba801f15c0f518749bf4bd50404e08d5d54"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/product/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/product/src/task-list.mjs",
+      "sha256": "8e7bb99c244fe20910da120027e11b28ff728ecf550eba6311ce8100c45058a6"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/product/test/task-list.test.mjs",
+      "sha256": "d08838ea6ffb14250c45c6bf3a6e6fa628e6c17373bdf6db813570eadaed6ca6"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/run/artifacts/logs/mechanical-5eec2fe4f3cbeff8.log",
+      "sha256": "a191d305fa5a555c127cca882d6d6c03bf58b75ddba9275e68a78c40f60edd88"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/run/artifacts/logs/mechanical-8d1aa8b8282cc84c.log",
+      "sha256": "407e4dd0b70617b0671f289673c7a818c6b588c7e699af0354efac1ac7d1cc5a"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/run/implementation-result.md",
+      "sha256": "43757e7ca41a9235474dbce4bfe349373ed2eded7d8fdf201a5d447347520801"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/run/prd.md",
+      "sha256": "d2722b6be00e64b6d032ddc9572fc2e5ce064fe46736a0ac430b08daf0f9a00f"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/run/receipt.json",
+      "sha256": "5761366d0d8f713ec939b156908f6840b2fc9a40832552d9c45ab4cf56cbb632"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/new/run/state.json",
+      "sha256": "5bde77798333081ef86ebd4e7b941f18edcef85157ba01c114fc573b184d99bf"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/case/benchmark.json",
+      "sha256": "4d007500af0687e15df22cff91c09dfed3667f0a983773663205cfdbbdeca733"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/case/prd.md",
+      "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/prepared-run.json",
+      "sha256": "edeb25361099061bac1b9df0a0ca951d67bba0d55770adf4c6dc9db940e7541a"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/product/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/product/src/task-list.mjs",
+      "sha256": "eb528006ac5f59b48afdef1f6e61977d0b785f5338f9587ffe9eaa25a23f3ce3"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/product/test/task-list.test.mjs",
+      "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/run/artifacts/logs/mechanical-e8945441dac89ab2.log",
+      "sha256": "18058aa7eba71c2cfd767a48ba781b1a3d45bef1a2f14f4ae808b10682bfcd65"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/run/artifacts/task-list-test.tap",
+      "sha256": "f1c3758430127f1fa9219b0a79aa8282f48dc8d7f0a4a3de6876fdfb80b548c9"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/run/implementation-result.md",
+      "sha256": "2e0b4ac122b034a41a5275faaa4304599fa9be81a654a76dcddbfbeda58e6df4"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/run/prd.md",
+      "sha256": "72ba60603bc0f81c833ab18a010a2be9153b91a3bb293faf6bc2409111897999"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/run/receipt.json",
+      "sha256": "2a4cbbd82a73440408109d804bc8e670eff46234f6d38bdf649868bcbcf74bcb"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/old/run/state.json",
+      "sha256": "015fffc07c36db5851156f0460fcefa779c35baccd2dde265f9e0c38604a49cc"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/new-discovery.json",
+      "sha256": "9d101ad38d652ed38595e9971dfcf80ce89a53983556690c3b69e2e5513d79da"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/new-handoff.txt",
+      "sha256": "86d380688e8968f74fc2b0b02e13eebfb307b4309a9ed9bc6ec3aec1aab70c50"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/new-prd-before-topic-fix.md",
+      "sha256": "3b6385d87f190c28d44fb8414aea05f5beba98cc3d2e701de510fbb959d72150"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/new-stage.json",
+      "sha256": "a2c2e43c4a9e2a696835c10c100a3b81e906d9a6db6a6de60edea8ed606cb7e7"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/old-discovery.json",
+      "sha256": "1959a577ed2fc44c5f47adfb55e93b75361298b90183a841092f996f1b2e5f97"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/old-handoff.txt",
+      "sha256": "8af8e954bc7382212dc73c06b1279c2022b527efd5f829d74fd11af98afac94d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/old-prd-before-topic-fix.md",
+      "sha256": "b237aa51aed5d50f470e9bda9c4e16c2860ef1203cf2798f0fae00adc1f9e7a1"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/old-stage.json",
+      "sha256": "7d1e2cf075aa753b2aeb4705809783c9407db36ca0524c0889598a346cbb64dc"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/preparation-correction.json",
+      "sha256": "b548a8b265ecef691ce361c5e2ee82e7e100722987c35f7b5705fd0d1b81d017"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/preparation/protocol.json",
+      "sha256": "fb054c6a84c2b6943b52fd09476c65926e889ecc4f507593fa570f37b2f996ae"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/starter/.gitignore",
+      "sha256": "e680a685728b8eed63672db695fb73d998c6f92c5c425347edfc2985aab8dba5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/starter/agents/config.json",
+      "sha256": "6e61057a21be9bd6bc74b60924a7f23043aa090a5335ddaccc95e02f81653460"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/starter/package.json",
+      "sha256": "e955fe7d228e698740c6b8bed15b223543f90a8f7b2a648b34a0577de42fd764"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/starter/test/task-list.test.mjs",
+      "sha256": "cb56d659ed791771119f9a07e1c106a7c2ba239d55378a61cfad6af76fc0e4e5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/full-implementation-comparison/validation-summary.json",
+      "sha256": "9d48c06349b7c2a915848db0803cc8be480cf3ec694b8b6d3e0030bfa8778b28"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/claude-discovery.json",
+      "sha256": "f858eaed38ddbf3bbfae9ee98ecab4c1b93ec84ff54b6f38bffb4b952ac0b633"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/claude-existing-consumer.json",
+      "sha256": "0988552c302204fe42d23497d6b2b4a7026cac068a34eb14a74996a9fa0037a3"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/codex-discovery.json",
+      "sha256": "e23fcffcb1a3c9acdb45d8f72ab41b9d69cb688e1dd1cc0926b66bb8cc94eb15"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/codex-existing-consumer.json",
+      "sha256": "0988552c302204fe42d23497d6b2b4a7026cac068a34eb14a74996a9fa0037a3"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/install-report.json",
+      "sha256": "7ef62f0a80d7640349399183896d4b040814101abdfe9690af0143cb3b25e3a1"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/installed-integrity.json",
+      "sha256": "500e22e72961e13afaf2f887ff8d71f2bd1c96b82b3273cfd163a4a575ddc5a5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/integrated-source.json",
+      "sha256": "e591b661de692232ddb4869b7e216fdc39f59514320320091ebb69251218c490"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/originals-preserved.json",
+      "sha256": "302ea2876dd1a473e9f72b6b55bc5b8fa879bcce970d8fb5c8725bc46112e4a3"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-amend.json",
+      "sha256": "acd61565d4123faed57d303d8cc00ffb76edc2371e6b00cb4c6c253773b5deb9"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-artifact-callers.json",
+      "sha256": "99373c3b06a3145d58e2c8857cb8b264fd094554c6698d1237fb91a2382a5205"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-contract-scope-correction.json",
+      "sha256": "c5af66f924f5ed006bc4982fb45bf710f611a226e5b2e553d32ab9b29fcca75d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-dispatch.json",
+      "sha256": "6802b91c80a25130a81c552007aa78de5f174d3ed3c06b6ddab0b4b8660dafb0"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-prd-after-amendment.md",
+      "sha256": "ccff9aec5e3555c4938a676dd7c2661e70bba092786f2ebd4273c6ef9f3a2592"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-prd-before-amendment.md",
+      "sha256": "366e071b436ec5cef2f2e4b0b6ce32dc9a087ff7c485737032e2cc2898ee8b5a"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-start.json",
+      "sha256": "a844571b877c2787c2f870b91d2e85d57c3643814b4e9150c776b0be742e1a3d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-status-after-verify-2.json",
+      "sha256": "3369d2405ae35fdd74e393bd8c27080fc9fea11183e64ccbbac290a35194c722"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-status-after-verify-3.json",
+      "sha256": "23502d0d3296702f8174fbb6701f0f0de3fde0cb5b77aa14ff4b744ac139c605"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-verify-2.json",
+      "sha256": "dd1f08815fd9fca8b6ba71858fb9517a96964274af5c014924ebed234f0288b0"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-verify-3.json",
+      "sha256": "b97890624f14e9d25d3638ee410e5c38403f438ea5f2e0d6e556dade57c25050"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/smoke-verify.json",
+      "sha256": "216d0b4b6f4f2eb04537a1be146e1641e88e363d5dbef64d5b4055c67a2ff491"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/installation/summary.json",
+      "sha256": "4c054289e345ff79eb97943ae487c6fe2e6ec4b53c99434e2140355688622fd0"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/metrics-report.md",
+      "sha256": "e0ba0751a78eb247dc1b240cd95dfe5d9685ab035f2254dbc3433a5183d1d0a0"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/metrics.json",
+      "sha256": "236017c07ac0db255dbc70d72e9b3d1aa312f261bdc2f0e2a37a31f85f29c3d2"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/summary.json",
+      "sha256": "7f6fe69852d9e9278be7f6539bc6e5e81b6a57e82e8aff9b9782dc1a1c1bdf81"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v1/config-delta.txt",
+      "sha256": "b75fbb9448d5a5a41e76e566dd3e4f9e87393e036d2c29fa172e6b8d2c033ef6"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v1/mutation.diff.json",
+      "sha256": "22854405c1c86310cc1ce3a71a10685195a5d113d59fe6da660cb52b2180b7c2"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v1/status.json",
+      "sha256": "f22f91bb426137e20f3a4b6656358ab4779e0ccaa84b2bf8e47b1b949adafd2a"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v1/suite.log.json",
+      "sha256": "f7e85ff0507d7fbf7c9e40ac9b61e14dc676cc76848dac55928025f3ea5ecaeb"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v1/trial.meta",
+      "sha256": "5a221d6f368818e5563069f6b19a20bb5b10b6b458aed76fe85bacbbddba7010"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v1/verify.json",
+      "sha256": "9e1c91c902d0ac7402a1f6b961e8c70607b132ca9b1beee7e857f7d143231df5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v2/config-delta.txt",
+      "sha256": "8a12113ec331e080729ab153d084e5ee833e2b95cf50c18d39c93fbdbcc38e47"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v2/mutation.diff.json",
+      "sha256": "57778253d09973b8de0ad30c99f93caa0c120799e2b82514ec2ef4e15efd63ca"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v2/status.json",
+      "sha256": "0577241362ade2c1ad80e0ce2b9c736502e78bda320c7131fe5bbe7875dbc481"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v2/suite.log.json",
+      "sha256": "2169d6ea8c310a6a7650964b12bb3cf5a52b300a2171d67de167445275e922cd"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v2/trial.meta",
+      "sha256": "91d22382cd9d6ca51ba6b647714136d3379683f9b2d8395c463648dfe079df0e"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v2/verify.json",
+      "sha256": "5dda043c3c7c876b6a8a8b2888ac3d1773e23423b881bfdf6fbcf9cfb1e15004"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v3/config-delta.txt",
+      "sha256": "4314b4a627b66adcf7817de3f1af2381c26eaddb2a4f76bf99192b953eb35328"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v3/mutation.diff.json",
+      "sha256": "15c0b4bdb9f1aacc45132c34d47d8a4051429e5271b2da14c75d1ec0cb5a34e5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v3/status.json",
+      "sha256": "f1865d1e0ea8fd30aecbccfc9b81513f6694b106f90c18f22415371d9dd4f235"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v3/suite.log.json",
+      "sha256": "5828c2fd7baf94029c0b50287c46fc99503388d33fd4d8f3054f2823c0cd624b"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v3/trial.meta",
+      "sha256": "0d33bbf1eb87621aa64d51f0cc3863a892d49599764605ea4e55aabf1cadf04c"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/mutations/v3/verify.json",
+      "sha256": "9375d639b88727b673b7b54cd7135faddefadb3126495064c75dd4670c1c985f"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/pilot-cli-cutover.json",
+      "sha256": "4b0e336ea2da0d57f29bdff12218ff59bce53d6bede97bc73d925b05724c086d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/browser-connect.json",
+      "sha256": "dee5c53ee67d4e4fafc577844cc3ff83b5129864c4d4d2bb22f409c4101116ec"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/current-desktop-empty.png",
+      "sha256": "84541832e719959bc06fd2e157178afe6500a4b6ce680e7d5e6472ec5b64b226"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/current-loading-frames.json",
+      "sha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/current-malformed.png",
+      "sha256": "614914d6dde54be18d3f7ede97661df16ae4c08e59a6f40a50055f3e16dc527d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/current-mobile-long-tag.png",
+      "sha256": "3ed675e6a5b8679af288a36e0dde074aaa0b001e1d293fbb1799cd3f7b509e80"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/current-mobile-selected-long-tag.png",
+      "sha256": "7229803b400be69302b7c2bf6566616b7ba75aa90dbc14faa14ce0d19b420e02"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/desktop-empty.png",
+      "sha256": "3994d232390667defbf79a014782e68e073f9715f661ffc65cb3d1ffe6ede92e"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/desktop-viewport.json",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/report.md",
+      "sha256": "75c9df91cdf7a01c28ea790227f9db5eb46cafc7d01a911170cfa90a493784b5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/source-after.json",
+      "sha256": "845d4fc18baef22b950e419d52119f2ee518b6c773d5728594503126995c1b1b"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/a/source-before.json",
+      "sha256": "01042368faee92c70967dc5e4f63fb2b7870643a378cada12b3c01cb8613a444"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/browser-connect.json",
+      "sha256": "ff77e49dfd1a75cdae51d7dce2408fa7d4760f9d002c34426b42facdd7003cd6"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/desktop-empty.png",
+      "sha256": "6ac23b9c49692e563a2887b7853db76caa077ed1d27a1b674c26a7cd5c43cfdc"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/malformed.png",
+      "sha256": "18313873fb40f640c2f8d49472dd0b1d241b3dee94d08dc58752ef1da8ad9e6a"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/mobile-360-empty.png",
+      "sha256": "fde1ba3c27b1ffc16767f0b92777ee45947996a821f087b37c257e3817c59a97"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/mobile-360-long-content.png",
+      "sha256": "c4aa22d4b0f60cffeab94c1fe9df27281b1dcda69dcd571de12a70e8d4aa18b5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/mobile-360-modal.png",
+      "sha256": "8e7fd9280b2175d71c09690281f386bbb263f0e3af54d71c331a92f6a49ce973"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/report.md",
+      "sha256": "af1022ffe5a9bf410cfb7adce9950a1f0b4da02fad2b558e0d22789ce6d130b2"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/resources.json",
+      "sha256": "17c3f92f8a852e8f1b6a9caf52c2f68905a47c46803032585ec90e258e36ee61"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/save-failure.png",
+      "sha256": "3358114dc19a3ee6eb73014434f2b349fe25a9b28b9d9f66a5e76f717de72b91"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/source-after.json",
+      "sha256": "6734fb4b3e41744f4620885a7678ef59ee643eeafa406d52c112937d61fe81b0"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/qa/b/source-before.json",
+      "sha256": "99e3e513d9ac55234e3bd2572e2b8ad3466202751b4409be682eb0e6b07b4833"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/source-verification.json",
+      "sha256": "515b1e038b1f66b182b6989edfa8ab1e77d1299c2585cbda4f848dd9fbde1b6f"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/staging-module-scope-correction.json",
+      "sha256": "a95a6a5360c808827685110a38f55f3d9b7e3c6f2337a4ba8b897f9b32a0bb16"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/baseline-build.json",
+      "sha256": "4c844f75186fc5123f8723b956a6691cda9773d9be516389f6d2b78646781ec0"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/comparison.json",
+      "sha256": "7588405a3b38aef01c8b17f623c73aa36c162079b110a67b29cbd3ddcda8dbed"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/contract.json",
+      "sha256": "d81f36657d1fd3008c4e465f662552666a6c34c571559d6e32cb4027b882ff19"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/fixture-manifest.json",
+      "sha256": "d1e0b75251a06e39633791224aca020c70f28a41cb80bc5fad81b3882c6f2330"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/fixture-validation.json",
+      "sha256": "e106de8061e649b40040a00da181b6ad334ead9dd70fe371b5a175b332a6b21b"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/new-healthy/prd.md",
+      "sha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/new-healthy/process.json",
+      "sha256": "6377575cf4ed77570423841b22127551aeca1a917674076b39ce9ef9723e6bd2"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/new-omission/prd.md",
+      "sha256": "1f7d2fe49a5549d79f9547f781fed0d66d3ac05ccd463e428f85d82773945bf5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/new-omission/process.json",
+      "sha256": "fa9c1ba3ec5708a168676e446caf6d11c28e964e5cff45059a7baeadacf3d8ba"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/old-healthy/prd.md",
+      "sha256": "959467d9c309bc5081e210745b0328aeda3830240b24d4f42b650c396045a566"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/old-healthy/process.json",
+      "sha256": "f0273f0aa40cbcc3e1460876f930bd34ca9c85904e9ca463c2aee76a8dceb5a5"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/old-omission/prd.md",
+      "sha256": "959467d9c309bc5081e210745b0328aeda3830240b24d4f42b650c396045a566"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/old-omission/process.json",
+      "sha256": "355bf3b465a5efa505c5a3210107c648a1451b59044e1a60350c26c2afb1573d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/report.md",
+      "sha256": "3e1cad0938a5f208e10746eb4f278401df26b35d351df13090165e172afb809d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/sources/healthy.mjs",
+      "sha256": "e16af1cd79f20600ed082b3116f61df5c37c5a1a9253557005f77a590c8e743d"
+    },
+    {
+      "path": "docs/audits/workflow-simplification-pilot/version-comparison/sources/omission.mjs",
+      "sha256": "0bb3dd3551e0f4ce2390e71d957b6c00877c9ca369b3a3125f07e8f42b3c5b82"
+    },
+    {
+      "path": "docs/concurrent-handoff.md",
+      "sha256": "ef8148d72a2f639c539a7757d9b3181548c7cd333a39b856c63f40b79728ebc2"
+    },
+    {
+      "path": "docs/plans/2026-09-08-workflow-simplification.md",
+      "sha256": "e576dd27f5c4053aa1a7e66bed4d3c0f391152d9fa2307412403ad2fc47cfc90"
+    },
+    {
+      "path": "docs/shared-worktree-verification.md",
+      "sha256": "d43a7704e8fd5d36f094921186aea137141eeef83f210cc51bacaa81fa97425e"
+    },
+    {
+      "path": "scripts/challenge_trigger.mjs",
+      "sha256": "bf543b2fb712419b51c4f01b9d1cd3bde3ac0735531c57419bc3827b1624591f"
+    },
+    {
+      "path": "scripts/hooks/git-checkpoint.sh",
+      "sha256": "b26d7a00de704e12183f8d397a33f644551363313f4fbcf7bcccb9e29b5a4343"
+    },
+    {
+      "path": "scripts/hooks/install.mjs",
+      "sha256": "3480f2f78beaafc7c3c4680d86b34c09d6ca288707f75326dea61cff4eb16706"
+    },
+    {
+      "path": "scripts/hooks/worktree-create.sh",
+      "sha256": "a8fc6473f443af1e49ba69be0186f15db96232a327559932a9d3e2070bb0e517"
+    },
+    {
+      "path": "scripts/install-local-skills.mjs",
+      "sha256": "9f6b505f4fe487f89086230d00ac675046c94d1279544f2e2bf3c1761578e0cc"
+    },
+    {
+      "path": "skills/benchmark-implement/SKILL.md",
+      "sha256": "3de70dcc110e5413f3ed0970aca40d31f0b6bafa0a1a5cf336ed744105c3079b"
+    },
+    {
+      "path": "skills/benchmark-implement/agents/openai.yaml",
+      "sha256": "7fec8bc7134c3b594a10328c813f77c4703c54385c6d234a93efd328d3d95586"
+    },
+    {
+      "path": "skills/benchmark-implement/references/contracts.md",
+      "sha256": "b85a1c6902533f5336fa6b5b6cdc8b2cc6bcf0e3a3e0364a375cf44168e46061"
+    },
+    {
+      "path": "skills/benchmark-implement/references/evaluator-rubric.md",
+      "sha256": "0513b818fc251e0735bfdb6f126f57e1a97331fe60707cb89d956e42fed36c8b"
+    },
+    {
+      "path": "skills/benchmark-implement/scripts/benchmark_report.js",
+      "sha256": "c6922e31c3d372e36eebf31b55cf64b96a9ff334dcf6e4fbbc12cf398a323596"
+    },
+    {
+      "path": "skills/benchmark-implement/scripts/lib/case_contract.js",
+      "sha256": "d3fd5833a74b8967959912e8e1ffb835ef3c9b0564cead4c22866d1a6114e98d"
+    },
+    {
+      "path": "skills/challenge/SKILL.md",
+      "sha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323"
+    },
+    {
+      "path": "skills/gen-prd/SKILL.md",
+      "sha256": "beffccdfe9df10d6a67903c254979431c7a77bd3d42d23220284599fad833587"
+    },
+    {
+      "path": "skills/gen-prd/agents/openai.yaml",
+      "sha256": "8906705acf6622efc9e5654b4ba26898f939543205dee7c8d71866b7f2b2fa6c"
+    },
+    {
+      "path": "skills/implement/SKILL.md",
+      "sha256": "8d4eda717ac4c1a4844f13918611f683e135413fcf60caf9d6027956b3d6ca30"
+    },
+    {
+      "path": "skills/implement/agents/openai.yaml",
+      "sha256": "658f1dd3c5ef62e5aee9775f37669d77c210a76a0dad219828fae7e85865faf2"
+    },
+    {
+      "path": "skills/implement/references/execution-planning.md",
+      "sha256": "6e0dd947268830eb727ddf9415fdd2beca84eab1fb00e5cbaf1fcd7895b01d77"
+    },
+    {
+      "path": "skills/implement/references/observer-and-herdr.md",
+      "sha256": "d4f103fbf8e0a3b81d477a654a55c0f2f010921ff500a86cf3f5f3b24dde7bd5"
+    },
+    {
+      "path": "skills/implement/references/reviews-and-finalization.md",
+      "sha256": "50e026f355d0d435ba236e4b26cd43e470bc00283d1e365bb68be6c393f9a892"
+    },
+    {
+      "path": "skills/implement/references/verification-and-evidence.md",
+      "sha256": "7dcf80b8a579a7048a0a08267761a65a84da1a1a8665d63191fa84a129220b01"
+    },
+    {
+      "path": "skills/implement/references/verification-environments.md",
+      "sha256": "5d60fe92fdc861747deb37b68922c8a7c5271b987256cc58ce10d0820e10d542"
+    },
+    {
+      "path": "skills/implement/references/worktrees-and-delivery.md",
+      "sha256": "8822872eb75dc34c67e6ae8e21b945f6243ab5859527064d741afe5998d27675"
+    },
+    {
+      "path": "skills/implement/scripts/prd_state_harness.js",
+      "sha256": "1cb9259e43cc2645a58a28c8262c0685ca21e368ae13c36d6df9b84ec2fb6a95"
+    },
+    {
+      "path": "skills/interview-me/SKILL.md",
+      "sha256": "928dfcbc569d7267540cd258e9015bf28e923c72696661eea2237b439d927cc5"
+    },
+    {
+      "path": "skills/interview-me/agents/openai.yaml",
+      "sha256": "0449d3324ca0c490c115d838dfee1d11bf89e1c11874525d454f3257328b5cf8"
+    },
+    {
+      "path": "skills/please/SKILL.md",
+      "sha256": "6fe6c0111332d7ca9b054551b553e3cb695f3dcf7dcd8df53ef43094cd3cc7be"
+    },
+    {
+      "path": "skills/quick/SKILL.md",
+      "sha256": "36493ecff9d65551c4feec522382f4cd78fba539414ad771ecd7458ed11eeb7f"
+    },
+    {
+      "path": "skills/remember/SKILL.md",
+      "sha256": "6f25761d2cee7d208a1d5bbeec102df228026f7caa922161b39f3aff2414fc93"
+    },
+    {
+      "path": "skills/sasu-setup/SKILL.md",
+      "sha256": "ebb295855b5645f12d201340c596486de2daca54aa49ac3154a28c292a46ad63"
+    },
+    {
+      "path": "skills/ship/SKILL.md",
+      "sha256": "8e0a822e6e2f5cf20109386c1240982c8f01c72969259936e45c20b40247683d"
+    },
+    {
+      "path": "skills/ship/agents/openai.yaml",
+      "sha256": "48db66589132f99bec775e50deed99ff36afcb326a037807cad99b39bec745d1"
+    },
+    {
+      "path": "skills/ship/scripts/prd_ship.js",
+      "sha256": "15f6db9e2bd80cbcfc58c17a6ed4ad7b22f5b5fad65737c34681856159550afe"
+    },
+    {
+      "path": "tests/benchmark_case_contract.test.mjs",
+      "sha256": "8c4830abb853096c90fb41a4f7558c53fbf983bf85207406ad993e8bcd0e0f9a"
+    },
+    {
+      "path": "tests/benchmark_report.test.mjs",
+      "sha256": "f9dd7683eca2fa486652ff83254be710c033ac260429bc9f1aafc98e83574336"
+    },
+    {
+      "path": "tests/challenge_trigger.test.mjs",
+      "sha256": "970a33859e28f29ed2ebb80e91fbfcf5f1808f0afdc4b7ba407ab756b18b12d7"
+    },
+    {
+      "path": "tests/gate_loop_static.test.mjs",
+      "sha256": "09b8d86c4df3cdaec0891b2710712474d06f4d75cef8fbc3f2201679f7e49171"
+    },
+    {
+      "path": "tests/golden/prd-state-standard-flow/implementation-result.md",
+      "sha256": "78a5c7b32c9d063852a9623a64c40346e6b2f52e61a3ead3a9065160766881f9"
+    },
+    {
+      "path": "tests/helpers/session_env.mjs",
+      "sha256": "5c17093add21bd11ffb04fa58f387910ae3f0106c728e11c4301e2ce70d95fa8"
+    },
+    {
+      "path": "tests/implement_command_contract.test.mjs",
+      "sha256": "aee3218b369228860edfb88250d9c3da6afda2498c9a72e3e9c27837279b2c22"
+    },
+    {
+      "path": "tests/implement_hook_account.test.mjs",
+      "sha256": "4ecb3bcd0236c4545858d3005b30834effeba3c83fde0526e67675e745fd7dcf"
+    },
+    {
+      "path": "tests/implement_skill_structure.test.mjs",
+      "sha256": "f3721c9d768417ffab29042daa83985f27fbe48ae6d0cc08f7d9f870c029a367"
+    },
+    {
+      "path": "tests/install_local_skills.test.mjs",
+      "sha256": "25d8d08128b4c41e3c8484c1427c34bf7c83d423069c9e03a30871c01be998a4"
+    },
+    {
+      "path": "tests/interview_me_docs.test.mjs",
+      "sha256": "ef6561b443213ca4f99232e439f2ccb4292b35682b1c39daad4f02a007a8eb52"
+    },
+    {
+      "path": "tests/prd_parser_unit.test.mjs",
+      "sha256": "a710c91e6b3316f5343f44408968edc963c958602ca870beb29e5877de657a53"
+    },
+    {
+      "path": "tests/prd_ship.test.mjs",
+      "sha256": "de407352f018a15f3a39aebf2878a83cb07eff69bd6bbbf468af4fce08fadb58"
+    },
+    {
+      "path": "tests/rules_engine.test.mjs",
+      "sha256": "8bfc9c434d0c3851a322e3c08ce674dd7705397382dff1da0b08c95d04c7100a"
+    },
+    {
+      "path": "tests/sasu_gate_wiring.test.mjs",
+      "sha256": "f87f69053b4ef09c173f9b235fe9c98c6f969b44283b3775a1dcddce868470f1"
+    },
+    {
+      "path": "tests/sasu_judge_api_backend_wiring.test.mjs",
+      "sha256": "addbceadf077d35afb4e6c7bc0f2caffaa1351f25bb58ac7e7cf3efaad566fed"
+    },
+    {
+      "path": "tests/sasu_judge_backend_health.test.mjs",
+      "sha256": "d5777901b0aa15419fc4bb1286002aa3b097fc884cd4e34e81aa4e3e4ffb3d8b"
+    },
+    {
+      "path": "tests/sasu_judge_command_audit_abort.test.mjs",
+      "sha256": "d6669632a70de753314d6bf434ea1f4c842a19d1e38cd382afcda5e2620ac700"
+    },
+    {
+      "path": "tests/sasu_judge_lane_effort.test.mjs",
+      "sha256": "e672f4dfc30d9bca9cb3ef91a4c2fe2cc8b4809c011e2ee6c0d8c8e50e5e5187"
+    },
+    {
+      "path": "tests/sasu_judge_record_telemetry.test.mjs",
+      "sha256": "cc3425f4b9d33adf1846dd83cb2b4bcb4968bb036b66e9ac58aa30b0e14a2ed8"
+    },
+    {
+      "path": "tests/sasu_judge_timeout.test.mjs",
+      "sha256": "328e58e5037b93c8a1540d98677b2453d4bc07fe3314b1bfab41954c7755f7bd"
+    }
+  ]
+}

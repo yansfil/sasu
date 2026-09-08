@@ -7,7 +7,7 @@ import { prd } from "../helpers/implement-fixture.mjs";
 function material(overrides = {}) {
   const prdText = prd();
   const contract = parseImplementContract(prdText);
-  return { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, referenceContext: { requirementRefs: [...contract.rows.map((entry) => entry.id), ...contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD"], priorFindingIds: [], humanSources: {} }, intentSource: { routing: "decisions", content: "User decisions", explanation: "approved" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [], artifacts: [], readablePaths: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  return { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, referenceContext: { requiredRequirementRefs: contract.rows.map((entry) => entry.id), actualEvidenceRefs: [], requirementRefs: [...contract.rows.map((entry) => entry.id), ...contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD"], priorFindingIds: [], humanSources: {} }, intentSource: { routing: "decisions", content: "User decisions", explanation: "approved" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [], artifacts: [], readablePaths: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
 }
 
 test("the whole-review input distinguishes real execution from collection metadata and attributed claims", () => {

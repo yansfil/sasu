@@ -11,7 +11,7 @@ import { executeMechanicalArgv } from "../../dist/mechanical.js";
 const suiteCommand = (id, command, cwd) => ({ id, command, argv: command.split(" "), cwd });
 
 const stateWith = (root, commands) => ({
-  schema: "sasu.implement.state.v9.parallel-review",
+  schema: "sasu.implement.state.v10",
   status: "active",
   topicSlug: "fixture",
   projectRoot: root,

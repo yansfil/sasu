@@ -12,7 +12,7 @@ description: |
 
 Implement the complete approved PRD and finish with an honest current receipt.
 Match the user's language.
-This experimental candidate replaces the comprehensive routine review with concurrent Fidelity and Code reviews.
+The routine path runs independent Fidelity and Code reviews concurrently.
 The Observer and Implementor responsibilities and user-facing commands remain the same.
 Before any repository write or mutating command, resolve the structural session role using the Observer reference below.
 In Herdr, the user-facing session observes and one marked Implementor executes; `$please` keeps specification in the main session until the PRD is ready.
@@ -30,7 +30,8 @@ approved PRD -> autonomous implementation and actual QA
 `receipt.json` and `implementation-result.md` are derived outputs.
 Every requirement remains in the sealed PRD and independent review input.
 No requirement has its own lifecycle, mandatory evidence file, judge call, or PASS object.
-Do not replace removed CLI bookkeeping with Markdown checkboxes or a coverage ledger.
+Fidelity records grouped requirement assessments and shared evidence references in the CLI-owned review result.
+Do not add Markdown checkboxes or a manually maintained coverage ledger.
 
 ## Reference Routing
 
@@ -52,12 +53,14 @@ Read each directly linked reference completely when its condition applies.
   Preserve all requirements and decision provenance without inventing scope.
 - The CLI executes the sealed required suites before independent review, records actual execution, validates evidence integrity, and pins the current inputs.
 - Both independent reviewers compare the complete contract with implementation, permitted surrounding source, actual test results, shared observations, and prior findings.
+  Neither receives the current peer verdict.
   A high-risk run retains a distinct safety review with the same fixed inputs.
 - The implementor may collect and register its own QA evidence with honest provenance.
   The independent review decides whether those observations are sufficient.
 - `sasu implement finalize` never runs tests, judges, capture tools, or external commands.
 - `state.json` is the completion authority; receipt files are its portable derived result.
   Never hand-edit the state, hashes, execution history, review findings, or counters.
+  Settled role judgments remain unchanged in `verificationAttempts`; corrections append a new attempt with its own input identity.
 - The whole verify execution holds one lease through suite execution, judge completion, and state persistence.
   Other domain mutations are refused while it is live; status and event waiting remain available.
 - A first failed verify leaves the run active with the failed attempt and open findings.
@@ -166,10 +169,18 @@ The routine path uses two independent reviews, regardless of the number of requi
 Fidelity owns complete intent and observable behavior fulfillment.
 Code review owns concrete implementation, integration, error-path and consequential design problems; cosmetic preferences remain advisory.
 Both use the same routine model profile and record separate results, timing, traces and actual provider calls in `reviews.fidelity` and `reviews.code`.
-Their results contain defects, optional advisories, and genuine human confirmations with concrete contract and evidence references.
+Both receive the same fixed original inputs without the current peer verdict.
+Their results contain `assessments`, exception findings, and explicit prior dispositions.
+Fidelity accounts for every Bn exactly once across grouped assessments containing requirement references, a `satisfied`, `unresolved`, or `pending-human` conclusion, a short concrete rationale, and evidence references.
+Code records its own substantive review grounds without repeating an all-Bn accounting form.
+One complete source file, test result, or observation may support many requirements; no separate execution or artifact is required for each Bn.
+A `satisfied` assessment needs at least one supplied actual source, execution-log, or artifact reference; PRD-only citations and source-catalog metadata are insufficient.
+`pending-human` preserves only an existing permitted after-the-fact confirmation, with a corresponding validated post-completion human finding for every cited requirement; it never asserts satisfaction or waives prerequisite authority.
+Missing, duplicate, unknown, empty, invalid, or unresolved assessment coverage cannot silently pass.
+Exception findings include defects, optional advisories, and genuine human confirmations with concrete contract and evidence references.
 They replace the comprehensive reviewer; there is no third general judge or extra agent workflow step.
 One successful role cannot hide the other role's error or missing result.
-The harness validates structure and references; requirement satisfaction is independent semantic judgment, not a mechanical guarantee of zero omissions.
+The harness validates structural coverage, references, and inspectable grounds; requirement satisfaction remains independent semantic judgment, not a mechanical guarantee of zero omissions.
 A claimed PASS cannot override an accompanying open defect.
 
 Fix concrete defects and supply missing observations, then explicitly verify again.
@@ -194,8 +205,8 @@ After current required suites and review satisfy the completion rules:
 sasu implement finalize
 ```
 
-Finalize reads state and hashes and refuses stale inputs, evidence corruption, unresolved defects, blocking risk, or unmet prerequisite authority.
-Successful finalization writes a `v5.parallel-review` receipt and implementation result from `v9.parallel-review` state, retaining both actual routine review records.
+Finalize reads state and hashes and refuses stale inputs, evidence corruption, incomplete or unresolved review assessments, unresolved defects, blocking risk, or unmet prerequisite authority.
+Successful finalization writes a `sasu.implement.receipt.v6` receipt and implementation result from `sasu.implement.state.v10`, retaining both actual routine review records and their assessment grounds.
 Repeated finalize with unchanged inputs is idempotent.
 A permitted after-the-fact human confirmation may leave `complete-pending-human`; that status does not excuse an explicit open rejection.
 

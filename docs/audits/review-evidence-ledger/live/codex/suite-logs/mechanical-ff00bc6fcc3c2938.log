@@ -1,0 +1,17 @@
+command: npm test
+cwd: .
+startedAt: 2026-09-08T13:24:10.522Z
+finishedAt: 2026-09-08T13:24:11.493Z
+durationMs: 971
+exitCode: 0
+
+--- stdout ---
+
+> test
+> node suite.mjs
+
+Actual required suite: command(1) returned 1. This suite did not execute the other requirements.
+
+
+--- stderr ---
+

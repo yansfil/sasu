@@ -1,0 +1,383 @@
+{
+  "contractVersion": "0.10.0",
+  "ok": false,
+  "action": "verify",
+  "exitCode": 1,
+  "message": "verification FAIL; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+      "prdSha256": "e42b74972b803ebe3e4471c1c430207e88fa4de829deb5259ed7a60cf5e50811",
+      "reviewContext": {
+        "requiredRequirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30"
+        ],
+        "actualEvidenceRefs": [
+          "src/public.mjs",
+          "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        ],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01",
+          ".gitignore",
+          "package.json",
+          "src/public.mjs",
+          "suite.mjs",
+          "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        ],
+        "priorFindingIds": [],
+        "humanSources": {
+          "Decisions": "Preserve every value in the approved request.\nThe user requested all values.",
+          "Risks": "None.",
+          "instruction": "- D-01: Preserve every value in the approved request. (근거: The user requested all values.)",
+          "D-01": "Preserve every value in the approved request."
+        }
+      },
+      "verdict": "FAIL",
+      "phase": "complete",
+      "inputFingerprint": "d8b457e4b1a2e959b3224012908746f8a6af9bd2022acfba7adda7bfa34d64c9",
+      "sourceFingerprint": "f907b1ec7c82659f01b447fcf9ad25dce3ab77811c9387684d3072280c4f5887",
+      "startedAt": "2026-09-08T13:24:10.317Z",
+      "finishedAt": "2026-09-08T13:24:49.410Z",
+      "durationMs": 39093,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-08T13:24:10.522Z",
+          "finishedAt": "2026-09-08T13:24:11.493Z",
+          "durationMs": 971,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/fixture/artifacts/logs/mechanical-ff00bc6fcc3c2938.log"
+        }
+      ],
+      "reviews": {
+        "fidelity": {
+          "invocationId": "4ecb9d9f-54b2-47b3-99b7-7bee4b81f0ad",
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The implementation satisfies B1-B29 but fails B30: command(30) returns undefined because the guard excludes 30.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30"
+                ],
+                "problem": "command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change the upper bound to allow 30, then rerun the required suite."
+              }
+            ],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The exported command returns its integer input for every integer from 1 through 29.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B30"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "The implementation excludes input 30 with n < 30, causing command(30) to return undefined.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "startedAt": "2026-09-08T13:24:11.850Z",
+          "finishedAt": "2026-09-08T13:24:38.771Z",
+          "durationMs": 26921,
+          "error": null
+        },
+        "code": {
+          "invocationId": "504c1945-e311-4705-a539-8d2b9466cc58",
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The implementation satisfies commands 1-29 but fails command 30, so the approved contract is incomplete.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B30",
+                  "D-01"
+                ],
+                "problem": "command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ],
+                "nextAction": "Change the upper-bound condition to include 30, such as n <= 30."
+              }
+            ],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The exported command returns n for every integer n from 1 through 29 because the implementation checks n >= 1 and n < 30 before returning n.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B30",
+                  "D-01"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "The upper bound excludes the approved value 30, violating preservation of every requested value.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "startedAt": "2026-09-08T13:24:11.899Z",
+          "finishedAt": "2026-09-08T13:24:49.233Z",
+          "durationMs": 37334,
+          "error": null
+        }
+      },
+      "risk": null,
+      "error": null
+    },
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B30"
+        ],
+        "problem": "command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.",
+        "evidenceRefs": [
+          "src/public.mjs"
+        ],
+        "nextAction": "Change the upper bound to allow 30, then rerun the required suite.",
+        "id": "F1",
+        "originAttemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-08T13:24:49.234Z",
+            "attemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+            "status": "open",
+            "reason": "command(30) does not return 30. In src/public.mjs, the condition requires n < 30, so input 30 fails and the function returns undefined.",
+            "evidenceRefs": [
+              "src/public.mjs"
+            ]
+          }
+        ],
+        "responses": []
+      },
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B30",
+          "D-01"
+        ],
+        "problem": "command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+        "evidenceRefs": [
+          "src/public.mjs"
+        ],
+        "nextAction": "Change the upper-bound condition to include 30, such as n <= 30.",
+        "id": "F2",
+        "originAttemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-08T13:24:49.234Z",
+            "attemptId": "9a094a15-5a5d-4a6b-8a53-19f93a805faa",
+            "status": "open",
+            "reason": "command(30) returns undefined: 30 is an integer and at least 1, but fails the condition n < 30, so the function reaches the end without returning 30.",
+            "evidenceRefs": [
+              "src/public.mjs"
+            ]
+          }
+        ],
+        "responses": []
+      }
+    ],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 1,
+      "totalAttempts": 1,
+      "budget": 2,
+      "budgetExhausted": false,
+      "consecutiveErrors": 0,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": null,
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 0,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    }
+  }
+}

@@ -1,0 +1,572 @@
+{
+  "frozenAt": "2026-09-08T13:23:07.883575+00:00",
+  "root": "/Users/hoyeonlee/projects/sasu.worktrees/review-evidence-ledger",
+  "head": "2b1f638dd587261be7e7b0e600db16657421971d",
+  "version": "0.10.0",
+  "stateSchema": "sasu.implement.state.v10",
+  "receiptSchema": "sasu.implement.receipt.v6",
+  "entries": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "9cf00eec60b1759c57e413391cffb5681625671e82bba226ae687a0050a62057"
+    },
+    {
+      "path": "PRINCIPLES.md",
+      "sha256": "19478ed509ed45d39986b968851c116c7445aa9e96022e8f1576bdb24ed69822"
+    },
+    {
+      "path": "README.md",
+      "sha256": "3132ed61e09b90296c47cd6945662540bb5b211537ffd285eafba5cf20604654"
+    },
+    {
+      "path": "cli/dist/cli.js",
+      "sha256": "8715b0e29363a590314643dd5934af087e9e44ce0e5e29c329920ca384128e51"
+    },
+    {
+      "path": "cli/dist/config.js",
+      "sha256": "22666a81689e262d48715a06a7593e1e7177f83530f0106925b37c524e856849"
+    },
+    {
+      "path": "cli/dist/doctor.js",
+      "sha256": "314edc74b826644b62717d19c06ae334758267cf094374ac29d7d013e962bbc0"
+    },
+    {
+      "path": "cli/dist/gates/commands.js",
+      "sha256": "e61a4075b2a090b42c48bdd79b5a5fc49c560d6125d6370cf5f26c65d58e02d8"
+    },
+    {
+      "path": "cli/dist/gates/contract.js",
+      "sha256": "e9bbad6f00aed867faa7a259692a6dc5fbbb1d5631b3b824286ca2bb320c5f0d"
+    },
+    {
+      "path": "cli/dist/gates/prelint.js",
+      "sha256": "9c7c88d30cc378d4fc51a507c874609a23ecfcaf7f0e90c8ac8300beb911b142"
+    },
+    {
+      "path": "cli/dist/gates/prompts.js",
+      "sha256": "6ccb717a643e2d8ff72153153183a6cb1f79036e0ebd3b42777389e75a72606c"
+    },
+    {
+      "path": "cli/dist/gates/store.js",
+      "sha256": "bdbdc3f11d35324c33aa6ca8e382ef390a7fdd2db94da6b8ef9beac4ce9e199d"
+    },
+    {
+      "path": "cli/dist/implement/amend.js",
+      "sha256": "a8239554528102cfb905ccee554d5f03d86935dd3d061261e2a9ca25d5059e3a"
+    },
+    {
+      "path": "cli/dist/implement/commands.js",
+      "sha256": "b53d34676b0103433026427eca80fbc9627ef469f927ffda1f9f6a678bdf3b80"
+    },
+    {
+      "path": "cli/dist/implement/contract.js",
+      "sha256": "e50facb228797195b70b9e95163149acc59a75a89675aeaf71718d555f225b13"
+    },
+    {
+      "path": "cli/dist/implement/convergence.js",
+      "sha256": "abe6ef877a025646026fac90508aa8638bb6d2b307e87f874ccdd255f4eac1ef"
+    },
+    {
+      "path": "cli/dist/implement/dispatch.js",
+      "sha256": "2a20d2596d31449a407ebc1d02bcc6b5ac7f4196173479a1f6ce0cfdeb19156e"
+    },
+    {
+      "path": "cli/dist/implement/events.js",
+      "sha256": "17a257d4c7c3bc4a872d21a8f651f43291660ff05687ef67f340a79c46bb9728"
+    },
+    {
+      "path": "cli/dist/implement/herdr.js",
+      "sha256": "9c9e2a8d986cbfee477e58e8e8de03d3090e21f31cb1576afcb5fd5cef2125c8"
+    },
+    {
+      "path": "cli/dist/implement/prd-snapshot.js",
+      "sha256": "9a4f5f69cef1c2dc05ef14b01e83bf28c536fdad79046648dac64cb94557e2e0"
+    },
+    {
+      "path": "cli/dist/implement/prompts.js",
+      "sha256": "572654ca60214b28c6d483fa6a95476ef7633ad57bd20409813b2dc2216ec5d7"
+    },
+    {
+      "path": "cli/dist/implement/review-contract.js",
+      "sha256": "59c4d68e1dbc7b9a40ca6c11a9dfb30cbded683347137d1ef798f2fe563612a2"
+    },
+    {
+      "path": "cli/dist/implement/runner.js",
+      "sha256": "3fcc30761ea1b70e7c7e0835bd32e633aa6cdd032a232aa377b7876843246774"
+    },
+    {
+      "path": "cli/dist/implement/solver.js",
+      "sha256": "2ebbddb26122fd775dbd778399ff1cd3091698d02e84c8ac246a02efbf9eec0b"
+    },
+    {
+      "path": "cli/dist/implement/store.js",
+      "sha256": "646ec8ae0aaa92d48b5832712061007d9642b19775602cc3ff16b9993f9ef310"
+    },
+    {
+      "path": "cli/dist/implement/suite.js",
+      "sha256": "e51c20eaea47f898e02c45644e4f56045e58bfa5cdfab562481d47745b027bf1"
+    },
+    {
+      "path": "cli/dist/implement/types.js",
+      "sha256": "530f57344d29adb08cd2faabcac831d21bed9c13c0cad30118d8cdfdfdb28b29"
+    },
+    {
+      "path": "cli/dist/implement/verbs.js",
+      "sha256": "49012765be4ef5e5222b26458c36954df5fb29678bf40373b9f023f6cc45fb0a"
+    },
+    {
+      "path": "cli/dist/implement/verdict.js",
+      "sha256": "8063fbe35b828c5c9af43b435e70b5df85fe41853093805cd212f5de661c2087"
+    },
+    {
+      "path": "cli/dist/implement/verification-activity.js",
+      "sha256": "00d4d7128d3ab7841c96031e953e8503a2fe229bb62448dd76167956c93505ad"
+    },
+    {
+      "path": "cli/dist/implement/waiter.js",
+      "sha256": "2e1235c9716a80ebc890f8c68c274c081bad88d1c59f68542ee0bb940c73ecf8"
+    },
+    {
+      "path": "cli/dist/implement/worktree.js",
+      "sha256": "4381598fb2cb4e8107c18edab121275633cdf0d0ce167ee9c52ae471338af66d"
+    },
+    {
+      "path": "cli/dist/interview/cadence.js",
+      "sha256": "8a9acb67b957b4f68c06ffc5caa51eb1ff41ee0711b49ff76f024b8faa4d8b45"
+    },
+    {
+      "path": "cli/dist/interview/coherence.js",
+      "sha256": "dc96d50eeeebb3b28da28375ba1c5269ab0f79e192d938d0d0f22d84ef91b1e9"
+    },
+    {
+      "path": "cli/dist/interview/commands.js",
+      "sha256": "766781bf915ff143ed75cb06dab772f78f97e775a6af4f5bb2f72a32f1f98f1e"
+    },
+    {
+      "path": "cli/dist/interview/qalog.js",
+      "sha256": "086fa911d7f2ae9cf6ace35e65197996be46aaaff54d847fcb91560591bf0d6c"
+    },
+    {
+      "path": "cli/dist/interview/transcript.js",
+      "sha256": "4945ecb3e8dfdbf6dea10dc9148b24e892bf79061329f9181c1a7710bbad0e98"
+    },
+    {
+      "path": "cli/dist/judge/api-backend.js",
+      "sha256": "dacf0019ba5ecd1aaaa88a05216ab3b95863c763d7242bd7735b1fb94903bb90"
+    },
+    {
+      "path": "cli/dist/judge/backends.js",
+      "sha256": "98da4db642a1b1f1620312c84e91cbdd298f6c4fe4c06c1b9c42502532ef056e"
+    },
+    {
+      "path": "cli/dist/judge/fanout.js",
+      "sha256": "563e1189af67aea696cd0bc97ade3359f7048eb75c86456b65c5a3b4c08c8756"
+    },
+    {
+      "path": "cli/dist/judge/runner.js",
+      "sha256": "fcbf41a718e4f7592526963649d4d6f6513ac50f98163f000582aa8ea83a47c8"
+    },
+    {
+      "path": "cli/dist/judge/types.js",
+      "sha256": "33f53fdffb20956836ab34f67d6ed335b1ff1bc2104f0ac95c9078d31b813940"
+    },
+    {
+      "path": "cli/dist/mechanical.js",
+      "sha256": "7edfbe5095578d57d1f3be123f47eec31d279f9bd77ca9da577767b1b417bc6e"
+    },
+    {
+      "path": "cli/dist/prd/commands.js",
+      "sha256": "4018c1405d125670d3286889bd1c8bada21a94a1752d803a8c028335bf9ada3b"
+    },
+    {
+      "path": "cli/dist/principles/commands.js",
+      "sha256": "64d479cc6d6597c800b13ce252083ce75567a1d4e7d7f1ed5217d2c52fba75bc"
+    },
+    {
+      "path": "cli/dist/runs/paths.js",
+      "sha256": "74668216b469df99802d3d8b16f7693637d74b04a99fab13b534f306aaf64f41"
+    },
+    {
+      "path": "cli/dist/runs/session.js",
+      "sha256": "fbdca381ea74edafcc5d505bf1fba0ca735dc307d1dbb6f785546dfa53a74228"
+    },
+    {
+      "path": "cli/dist/support/commands.js",
+      "sha256": "a6dc680d36de22c3c932bdfa0782259990bc9d438831e07aed8b30e238619944"
+    },
+    {
+      "path": "cli/dist/support/ensure-setup.js",
+      "sha256": "6657c3037b8528b61ba05136a3ce6d796afdd97d37a0fd6335fedb5cc095f823"
+    },
+    {
+      "path": "cli/dist/version.js",
+      "sha256": "4efe2d992ed8b7df651853874e70b2e5768e94449307f1d43b10de0e99096091"
+    },
+    {
+      "path": "cli/lib/commands/rules.js",
+      "sha256": "4ce6e0751cc2b92463197813f2fd4eb56c7a62638173d01cd973493d10bf000c"
+    },
+    {
+      "path": "cli/lib/commands/setup.js",
+      "sha256": "11e55c1978c1a1eb017d818b8205633ad5234d9b072ddd479b9811d2fa1ab61b"
+    },
+    {
+      "path": "cli/lib/gate_freshness.js",
+      "sha256": "3956e0343373a2d06674815aca660ad947c49b522801eee1bf72d33676d9976b"
+    },
+    {
+      "path": "cli/lib/git.js",
+      "sha256": "9d1fe60693c4f2868e6173e8000460c08722605c372550876051abc9558a218f"
+    },
+    {
+      "path": "cli/lib/prd_parser.js",
+      "sha256": "6d184ddf36421cfa28c8bd6f516b14c9ea02991b336b8733a3770546bec80f69"
+    },
+    {
+      "path": "cli/lib/qa_register.js",
+      "sha256": "b275b4b0d82e64337004016ae15b8357e3c932aa48a9843841dbd2feff1b2870"
+    },
+    {
+      "path": "cli/lib/rules.js",
+      "sha256": "a699dd8015727fd32f15d293cd19376ce23f279122ac8b9e74eb6d9c7b5be2df"
+    },
+    {
+      "path": "cli/lib/skill-contract.js",
+      "sha256": "7edcd223f0a58452b61447a50a4ceff9f47bc93a4d8861dda52f1687d0b48be5"
+    },
+    {
+      "path": "cli/lib/util.js",
+      "sha256": "3bcc8ed987778e483eb428a898628aae2c423d3ff11af79cdd472d9462443f81"
+    },
+    {
+      "path": "cli/package-lock.json",
+      "sha256": "1eb29e586913ffd28a4b74c86fb29821af90e059f94d294f3638be5f1c22bcf1"
+    },
+    {
+      "path": "cli/package.json",
+      "sha256": "42ad4d544f6d84a329d8d0e01351ce88fc7f1fb8b1ac58b674f71bbfdbb05e59"
+    },
+    {
+      "path": "cli/pnpm-lock.yaml",
+      "sha256": "7e66d2b4884c31dbf06a097c55aaeac4f532a907d4e521703e7658bc5a320878"
+    },
+    {
+      "path": "cli/src/cli.ts",
+      "sha256": "8f925cf8021fb06b51dc8a49d3ed7546783906ed0977d66da90aa5fa6e1ac5a9"
+    },
+    {
+      "path": "cli/src/config.ts",
+      "sha256": "3c2182a8bada65718f627c2ea7d1c7ef3205358e9aaf4a62dfc0c47ec9428cdd"
+    },
+    {
+      "path": "cli/src/doctor.ts",
+      "sha256": "a49620d60d8708e600f04e7540bd3991a1d5964c71aaab8ba53b6570e25dd09e"
+    },
+    {
+      "path": "cli/src/gates/commands.ts",
+      "sha256": "e9decd7c3b4688e5e44df8b6b026c3724e42a7fc251b0e797784007db5918159"
+    },
+    {
+      "path": "cli/src/gates/contract.ts",
+      "sha256": "5c8b1b27cef315c742b33bfee4cd308acea5c7df58ad032ef427f674bd10577f"
+    },
+    {
+      "path": "cli/src/gates/prelint.ts",
+      "sha256": "8b3b1aa0b5305b95c3826fe82978de1a35be56bb8fa166a345b5055baec79994"
+    },
+    {
+      "path": "cli/src/gates/prompts.ts",
+      "sha256": "75ca4b26a87328ffbd2ab7a9f2d70ef0ec6f1605a5d633d5497e28b0375a1b8c"
+    },
+    {
+      "path": "cli/src/gates/store.ts",
+      "sha256": "3b7e34de8316a9a583621785651b17e291382524766b1f49522566360540370f"
+    },
+    {
+      "path": "cli/src/implement/amend.ts",
+      "sha256": "a14588a890b39e6e082da29cbfecb1c52bacfad69deac55120b735d3d0a6ea4e"
+    },
+    {
+      "path": "cli/src/implement/commands.ts",
+      "sha256": "b92192a70e0277f1ecf0ba7dd660100db004a3f857bf6e204259f6e0536defb5"
+    },
+    {
+      "path": "cli/src/implement/contract.ts",
+      "sha256": "318c7541c963a80314e9c9007ef03509ea10f34a75160d985233e18990248607"
+    },
+    {
+      "path": "cli/src/implement/convergence.ts",
+      "sha256": "f23729ffad7d4936784da9a478d7c1f8ea92bab129a3ad7e5a80b922530d0423"
+    },
+    {
+      "path": "cli/src/implement/dispatch.ts",
+      "sha256": "ee4fc9fe8d65e1fd1bdc774cb14e4d3360ce1d084ae7efeac596f4960aa7e1f6"
+    },
+    {
+      "path": "cli/src/implement/events.ts",
+      "sha256": "a06864889636257ea523b3539cd0f50226f4d0e33666fd324cc257385d33eaea"
+    },
+    {
+      "path": "cli/src/implement/herdr.ts",
+      "sha256": "d3cf55d808314cdd42bdacbaf12cbbd8e8fe84f1583aa92f52e3e9f9efdb60a7"
+    },
+    {
+      "path": "cli/src/implement/prd-snapshot.ts",
+      "sha256": "ff80b368e7f5d91138c63d3ce2b3efa1df38964e8dbbfc06c16192301a164a7a"
+    },
+    {
+      "path": "cli/src/implement/prompts.ts",
+      "sha256": "5ab061c79e0249d43f2385f1f57f504081aa659a720b7cd81ac927975c8efdd4"
+    },
+    {
+      "path": "cli/src/implement/review-contract.ts",
+      "sha256": "d55296f5c9aa45bfe9f673551bc771183b011ec86bc6d92cf65fc25ffa851827"
+    },
+    {
+      "path": "cli/src/implement/runner.ts",
+      "sha256": "b4a27b72935be514fcbd1730266016f26bba1d544995f0a74768794fd1f1a203"
+    },
+    {
+      "path": "cli/src/implement/solver.ts",
+      "sha256": "6afa22b4a58002ad2060e86b21f022c893222e6c959132b2cb4f218d77fc53d1"
+    },
+    {
+      "path": "cli/src/implement/store.ts",
+      "sha256": "4cd428298b3d9981ec83339f2d4220733f80616cbb8cf7a062fb09193f5c87ba"
+    },
+    {
+      "path": "cli/src/implement/suite.ts",
+      "sha256": "6eac8f7c09e2f965ccef8b02f8cf28cabdae2dd85df549b818c23895b3f9fe86"
+    },
+    {
+      "path": "cli/src/implement/types.ts",
+      "sha256": "c19d38f96f8ece9532e718dcbee2e9ab435fa0b34e362f1ab8b56a829a099ece"
+    },
+    {
+      "path": "cli/src/implement/verbs.ts",
+      "sha256": "4b1bd83c5d84c4f3d9d423f8b7202d7cc1b54e0d788109f0f24f6391d4394753"
+    },
+    {
+      "path": "cli/src/implement/verdict.ts",
+      "sha256": "ceeb61f74f057124c200b4dffb3077d316a0ea6e8e0cbe39b1028798cfcd0d3b"
+    },
+    {
+      "path": "cli/src/implement/verification-activity.ts",
+      "sha256": "015f6c132c2103380b09e337a421c7b93b6b6b373819a39ca47b3818a3b6835d"
+    },
+    {
+      "path": "cli/src/implement/waiter.ts",
+      "sha256": "7144cece56793b75824111a3d43da9db3e7b5b74f121a7f77c60a47dfbb8bfb5"
+    },
+    {
+      "path": "cli/src/implement/worktree.ts",
+      "sha256": "4f5fe0e2dc30a7c83b6386020942d6a9580a4fe9b7c75c2673351ad572ea76fa"
+    },
+    {
+      "path": "cli/src/interview/cadence.ts",
+      "sha256": "d8fd40be1d9bf7fddeb6ef2e8c819203a942e89ee4ddcd87bf0d44609e592345"
+    },
+    {
+      "path": "cli/src/interview/coherence.ts",
+      "sha256": "357a73cdb2d8bbdc41148f3d1b4f208345c23f2ff80bad1406ca1127b8a805b7"
+    },
+    {
+      "path": "cli/src/interview/commands.ts",
+      "sha256": "5f18a343417ac15fd54a9109e3d5bc9f46e7992f6962b23254ec89cb1e5edb1e"
+    },
+    {
+      "path": "cli/src/interview/qalog.ts",
+      "sha256": "1c661000bfb74a0df7a8b1a1b3e3af795426afb18b1a9954132170776a8fec7a"
+    },
+    {
+      "path": "cli/src/interview/transcript.ts",
+      "sha256": "5366e489c40bbf6f01a0565a907d1538d76a98607c847ea29684bb1a3448d47c"
+    },
+    {
+      "path": "cli/src/judge/api-backend.ts",
+      "sha256": "951ae9679d1148b3e9562b3c7fc203ff90f9654549667440c0f3ae7f45aca91b"
+    },
+    {
+      "path": "cli/src/judge/backends.ts",
+      "sha256": "4d4435b71caeb7b540052b4a4eb312706536526f4e232c4361add3b7711a132a"
+    },
+    {
+      "path": "cli/src/judge/fanout.ts",
+      "sha256": "d1af63408f8c310dbe1c03f7be19bbebe0a3ba03b87be0317338e794d8531d08"
+    },
+    {
+      "path": "cli/src/judge/runner.ts",
+      "sha256": "23442cef331185d1a2c9a208e14c84a3d4aca1efd8a8a0a5827d7c76ce600b32"
+    },
+    {
+      "path": "cli/src/judge/types.ts",
+      "sha256": "0b92a332330772cf782b9d2126768af027db6077b403e34ed80e025d818c74a9"
+    },
+    {
+      "path": "cli/src/mechanical.ts",
+      "sha256": "134714878da5a445c88b7d1bbe487b7a42835ac75c799555eceeb935a27deb5b"
+    },
+    {
+      "path": "cli/src/prd/commands.ts",
+      "sha256": "0736d95652b72e0dc3056729b854177f93eb7e6ebbfa8fec3b4e324967d15661"
+    },
+    {
+      "path": "cli/src/principles/commands.ts",
+      "sha256": "a44c6ebbe6f8c89e08060cf68df0016a69b09191357447b48e4b8ce63d6ae8ce"
+    },
+    {
+      "path": "cli/src/runs/paths.ts",
+      "sha256": "987bbea76ca3098e71559a17658e0d16da7992247a509b00e15a969c711df2bc"
+    },
+    {
+      "path": "cli/src/runs/session.ts",
+      "sha256": "2bac97727585d6414c4e2dfb66d607287b88273dbaedfeb9882a51bb664f0ec2"
+    },
+    {
+      "path": "cli/src/support/commands.ts",
+      "sha256": "be768b2450a1637b8997365080f3e82135c31b1c1e5746582c242f1132bd642b"
+    },
+    {
+      "path": "cli/src/support/ensure-setup.ts",
+      "sha256": "953afca565f0c65e3d6f7ebf9230386adf6c6d54f82a39cfb040693874dbde3c"
+    },
+    {
+      "path": "cli/src/version.ts",
+      "sha256": "ccc1f91cc84df3670944d91dfb8ccf2746212e34215b2cb8b39132fd7450d1f3"
+    },
+    {
+      "path": "scripts/challenge_trigger.mjs",
+      "sha256": "bf543b2fb712419b51c4f01b9d1cd3bde3ac0735531c57419bc3827b1624591f"
+    },
+    {
+      "path": "scripts/hooks/git-checkpoint.sh",
+      "sha256": "b26d7a00de704e12183f8d397a33f644551363313f4fbcf7bcccb9e29b5a4343"
+    },
+    {
+      "path": "scripts/hooks/install.mjs",
+      "sha256": "3480f2f78beaafc7c3c4680d86b34c09d6ca288707f75326dea61cff4eb16706"
+    },
+    {
+      "path": "scripts/hooks/worktree-create.sh",
+      "sha256": "a8fc6473f443af1e49ba69be0186f15db96232a327559932a9d3e2070bb0e517"
+    },
+    {
+      "path": "scripts/install-local-skills.mjs",
+      "sha256": "9f6b505f4fe487f89086230d00ac675046c94d1279544f2e2bf3c1761578e0cc"
+    },
+    {
+      "path": "skills/benchmark-implement/SKILL.md",
+      "sha256": "3de70dcc110e5413f3ed0970aca40d31f0b6bafa0a1a5cf336ed744105c3079b"
+    },
+    {
+      "path": "skills/benchmark-implement/agents/openai.yaml",
+      "sha256": "7fec8bc7134c3b594a10328c813f77c4703c54385c6d234a93efd328d3d95586"
+    },
+    {
+      "path": "skills/benchmark-implement/references/contracts.md",
+      "sha256": "b85a1c6902533f5336fa6b5b6cdc8b2cc6bcf0e3a3e0364a375cf44168e46061"
+    },
+    {
+      "path": "skills/benchmark-implement/references/evaluator-rubric.md",
+      "sha256": "0513b818fc251e0735bfdb6f126f57e1a97331fe60707cb89d956e42fed36c8b"
+    },
+    {
+      "path": "skills/benchmark-implement/scripts/benchmark_report.js",
+      "sha256": "c6922e31c3d372e36eebf31b55cf64b96a9ff334dcf6e4fbbc12cf398a323596"
+    },
+    {
+      "path": "skills/benchmark-implement/scripts/lib/case_contract.js",
+      "sha256": "d3fd5833a74b8967959912e8e1ffb835ef3c9b0564cead4c22866d1a6114e98d"
+    },
+    {
+      "path": "skills/challenge/SKILL.md",
+      "sha256": "c2e53f41be19df2d4cd81310287e37994c1765dc82e6f112936638c52bfc8323"
+    },
+    {
+      "path": "skills/gen-prd/SKILL.md",
+      "sha256": "beffccdfe9df10d6a67903c254979431c7a77bd3d42d23220284599fad833587"
+    },
+    {
+      "path": "skills/gen-prd/agents/openai.yaml",
+      "sha256": "8906705acf6622efc9e5654b4ba26898f939543205dee7c8d71866b7f2b2fa6c"
+    },
+    {
+      "path": "skills/implement/SKILL.md",
+      "sha256": "8d4eda717ac4c1a4844f13918611f683e135413fcf60caf9d6027956b3d6ca30"
+    },
+    {
+      "path": "skills/implement/agents/openai.yaml",
+      "sha256": "658f1dd3c5ef62e5aee9775f37669d77c210a76a0dad219828fae7e85865faf2"
+    },
+    {
+      "path": "skills/implement/references/execution-planning.md",
+      "sha256": "6e0dd947268830eb727ddf9415fdd2beca84eab1fb00e5cbaf1fcd7895b01d77"
+    },
+    {
+      "path": "skills/implement/references/observer-and-herdr.md",
+      "sha256": "d4f103fbf8e0a3b81d477a654a55c0f2f010921ff500a86cf3f5f3b24dde7bd5"
+    },
+    {
+      "path": "skills/implement/references/reviews-and-finalization.md",
+      "sha256": "50e026f355d0d435ba236e4b26cd43e470bc00283d1e365bb68be6c393f9a892"
+    },
+    {
+      "path": "skills/implement/references/verification-and-evidence.md",
+      "sha256": "7dcf80b8a579a7048a0a08267761a65a84da1a1a8665d63191fa84a129220b01"
+    },
+    {
+      "path": "skills/implement/references/verification-environments.md",
+      "sha256": "5d60fe92fdc861747deb37b68922c8a7c5271b987256cc58ce10d0820e10d542"
+    },
+    {
+      "path": "skills/implement/references/worktrees-and-delivery.md",
+      "sha256": "8822872eb75dc34c67e6ae8e21b945f6243ab5859527064d741afe5998d27675"
+    },
+    {
+      "path": "skills/implement/scripts/prd_state_harness.js",
+      "sha256": "1cb9259e43cc2645a58a28c8262c0685ca21e368ae13c36d6df9b84ec2fb6a95"
+    },
+    {
+      "path": "skills/interview-me/SKILL.md",
+      "sha256": "928dfcbc569d7267540cd258e9015bf28e923c72696661eea2237b439d927cc5"
+    },
+    {
+      "path": "skills/interview-me/agents/openai.yaml",
+      "sha256": "0449d3324ca0c490c115d838dfee1d11bf89e1c11874525d454f3257328b5cf8"
+    },
+    {
+      "path": "skills/please/SKILL.md",
+      "sha256": "6fe6c0111332d7ca9b054551b553e3cb695f3dcf7dcd8df53ef43094cd3cc7be"
+    },
+    {
+      "path": "skills/quick/SKILL.md",
+      "sha256": "36493ecff9d65551c4feec522382f4cd78fba539414ad771ecd7458ed11eeb7f"
+    },
+    {
+      "path": "skills/remember/SKILL.md",
+      "sha256": "6f25761d2cee7d208a1d5bbeec102df228026f7caa922161b39f3aff2414fc93"
+    },
+    {
+      "path": "skills/sasu-setup/SKILL.md",
+      "sha256": "ebb295855b5645f12d201340c596486de2daca54aa49ac3154a28c292a46ad63"
+    },
+    {
+      "path": "skills/ship/SKILL.md",
+      "sha256": "8e0a822e6e2f5cf20109386c1240982c8f01c72969259936e45c20b40247683d"
+    },
+    {
+      "path": "skills/ship/agents/openai.yaml",
+      "sha256": "48db66589132f99bec775e50deed99ff36afcb326a037807cad99b39bec745d1"
+    },
+    {
+      "path": "skills/ship/scripts/prd_ship.js",
+      "sha256": "15f6db9e2bd80cbcfc58c17a6ed4ad7b22f5b5fad65737c34681856159550afe"
+    }
+  ],
+  "status": "settled-after-sequential-build-root-unit-e2e",
+  "withdrawnEarlierManifest": "frozen-manifest.json",
+  "changedSinceEarlierManifest": [
+    "skills/implement/references/reviews-and-finalization.md"
+  ],
+  "checks": "sequential-checks.json"
+}

@@ -10,7 +10,14 @@ import { stateFixture, attemptFixture, AT } from "../helpers/implement-state.mjs
 import { assertNoActiveVerification, beginVerification, finishVerification, completeVerificationExecution, prepareVerificationExecution, recordVerificationExecution, recoverVerification, progressVerification } from "../../dist/implement/verification-activity.js";
 import { loadState, persistState } from "../../dist/implement/store.js";
 import { reconcileReviewFindings } from "../../dist/implement/convergence.js";
-import { REVIEW_PASS, defect } from "../helpers/implement-fixture.mjs";
+import { defect } from "../helpers/implement-fixture.mjs";
+
+const REVIEW_CONTEXT = {
+  requirementRefs: ["B1"], requiredRequirementRefs: ["B1"],
+  evidenceRefs: ["B1", "implementation.txt"], actualEvidenceRefs: ["implementation.txt"], priorFindingIds: [], humanSources: {},
+};
+const REVIEW_FAIL = { summary: "The implementation omits the approved value.", findings: [defect()], priorDispositions: [],
+  assessments: [{ requirementRefs: ["B1"], conclusion: "unresolved", rationale: "The implementation contains no return of the approved value.", evidenceRefs: ["implementation.txt"] }] };
 
 function fixture(t) {
   const root = scratchDir("sasu-verification-activity-");
@@ -78,6 +85,45 @@ test("verification progress merges concurrent refusal history and rejects a stol
   finishVerification(f.statePath, f.state);
 });
 
+test("partial review results and pinned inputs survive progress, refusal merging and correction", (t) => {
+  const f = fixture(t);
+  assert.throws(() => beginVerification(f.statePath, f.state, attemptFixture({ prdSha256: "b".repeat(64) })), /PRD identity/);
+  beginVerification(f.statePath, f.state, attemptFixture());
+  progressVerification(f.statePath, f.state, fresh => {
+    fresh.verificationAttempts[0].reviewContext = structuredClone(REVIEW_CONTEXT);
+    fresh.verificationAttempts[0].phase = "review";
+  });
+  const lane = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0, verdict: "FAIL", result: REVIEW_FAIL, judge: null, error: null };
+  progressVerification(f.statePath, f.state, fresh => { fresh.verificationAttempts[0].reviews.fidelity = structuredClone(lane); });
+  const before = fs.readFileSync(f.statePath, "utf8");
+  for (const mutate of [
+    s => s.verificationAttempts[0].reviews.fidelity = null,
+    s => s.verificationAttempts[0].reviews.fidelity.result = null,
+    s => s.verificationAttempts[0].reviews.fidelity.verdict = "PASS",
+    s => s.verificationAttempts[0].reviews.fidelity.error = { code: "replacement", message: "rewritten" },
+    s => s.verificationAttempts[0].reviews.fidelity.judge = { backend: "rewritten" },
+    s => s.verificationAttempts[0].reviewContext = null,
+    s => s.verificationAttempts[0].inputFingerprint = "b".repeat(64),
+    s => s.verificationAttempts.push(attemptFixture({ id: "V2" })),
+  ]) {
+    assert.throws(() => progressVerification(f.statePath, f.state, mutate), /immutable|cannot append/);
+    assert.equal(fs.readFileSync(f.statePath, "utf8"), before);
+  }
+  const refused = f.reload(); refused.verbs.push(refusal());
+  persistState(f.statePath, refused, { refusalOnly: true });
+  const finished = finishVerification(f.statePath, f.state, fresh => {
+    const attempt = fresh.verificationAttempts[0];
+    attempt.phase = "complete"; attempt.verdict = "ERROR";
+    attempt.error = { stage: "review", code: "interrupted", message: "The sibling review did not settle." };
+  });
+  const historical = structuredClone(finished.verificationAttempts[0]);
+  assert.deepEqual(historical.reviews.fidelity, lane);
+  assert.equal(finished.verbs.length, 1);
+  beginVerification(f.statePath, finished, attemptFixture({ id: "V2" }));
+  finishVerification(f.statePath, finished, fresh => { fresh.verificationAttempts[1].verdict = "ERROR"; });
+  assert.deepEqual(f.reload().verificationAttempts[0], historical);
+});
+
 test("settled groups leave the live lease only after process absence is proved", { skip: process.platform === "win32" }, async (t) => {
   const f = fixture(t);
   beginVerification(f.statePath, f.state, attemptFixture());
@@ -97,8 +143,8 @@ test("interrupted review preserves settled findings for repair without applying 
   for (const alreadyRecorded of [false, true]) {
     const f = fixture(t);
     const review = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0,
-      verdict: "FAIL", result: { ...REVIEW_PASS, findings: [defect()] }, judge: null, error: null };
-    const attempt = attemptFixture({ phase: "review", reviews: { fidelity: review, code: null }, verdict: alreadyRecorded ? "ERROR" : "NOT_RUN" });
+      verdict: "FAIL", result: structuredClone(REVIEW_FAIL), judge: null, error: null };
+    const attempt = attemptFixture({ phase: "review", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: review, code: null }, verdict: alreadyRecorded ? "ERROR" : "NOT_RUN" });
     if (alreadyRecorded) f.state.findings = reconcileReviewFindings([], review.result, attempt.id, AT);
     beginVerification(f.statePath, f.state, attempt);
     const dead = spawnSync(process.execPath, ["-e", ""]);
