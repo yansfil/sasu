@@ -49,7 +49,7 @@ test("implement routes changed-code tasks through unified implement verify", () 
   assert.match(skill, /sasu implement verify/);
   assert.match(skill, /mechanical/i);
   assert.match(skill, /Do not use user-only overrides/);
-  assert.match(skill, /one comprehensive review/);
+  assert.match(skill, /concurrent Fidelity and Code reviews/);
   assert.match(skill, /required suites/);
   assert.match(skill, /finalize --status blocked/);
   assert.match(skill, /open explicit rejection makes delivery ineligible/);

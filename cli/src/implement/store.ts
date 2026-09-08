@@ -393,23 +393,24 @@ export function parseImplementState(text: string): ImplementState {
     enumValue(attempt.verdict, ["NOT_RUN", "PASS", "FAIL", "BLOCKED", "ERROR", "STALE"], "verificationAttempts[].verdict");
     assertRecord(attempt.prelint, "verificationAttempts[].prelint");
     array(attempt.mechanical, "verificationAttempts[].mechanical");
-    for (const field of ["review", "risk"] as const) {
-      const result = attempt[field];
+    assertRecord(attempt.reviews, "verificationAttempts[].reviews");
+    for (const [field, result] of [["reviews.fidelity", attempt.reviews.fidelity], ["reviews.code", attempt.reviews.code], ["risk", attempt.risk]] as const) {
       if (result === undefined) throw new Error(`malformed implement state: verificationAttempts[].${field} must be null or an object`);
       if (result !== null) {
         assertRecord(result, `verificationAttempts[].${field}`);
         enumValue(result.verdict, ["NOT_RUN", "PASS", "FAIL", "BLOCKED", "ERROR", "STALE"], `verificationAttempts[].${field}.verdict`);
-        if (result.result !== null && field === "review") {
+        if (field !== "risk" && result.result === undefined) throw new Error(`malformed implement state: ${field}.result must be null or an object`);
+        if (result.result !== null && field !== "risk") {
           const review = result.result as import("../judge/types").ReviewResult;
-          assertString(review.summary, "verificationAttempts[].review.result.summary");
-          array(review.findings, "verificationAttempts[].review.result.findings");
-          array(review.priorDispositions, "verificationAttempts[].review.result.priorDispositions");
+          assertString(review.summary, `verificationAttempts[].${field}.result.summary`);
+          array(review.findings, `verificationAttempts[].${field}.result.findings`);
+          array(review.priorDispositions, `verificationAttempts[].${field}.result.priorDispositions`);
           if (result.verdict === "PASS" && review.findings.some((finding) => finding.kind === "defect")) throw new Error("malformed implement state: review PASS carries a defect");
         }
       }
     }
-    if (attempt.verdict === "PASS" && (attempt.review?.verdict !== "PASS" || attempt.error !== null || attempt.mechanical.some((run) => run.status !== "PASS"))) throw new Error("malformed implement state: verification PASS contradicts its actual result");
-    for (const field of ["lanes", "parkedRows", "fidelityInput", "roundContexts"]) if (field in attempt) throw new Error(`retired verification field: ${field}`);
+    if (attempt.verdict === "PASS" && ([attempt.reviews.fidelity, attempt.reviews.code].some((review) => review?.verdict !== "PASS" || review.result == null || review.error !== null) || attempt.error !== null || attempt.mechanical.some((run) => run.status !== "PASS"))) throw new Error("malformed implement state: verification PASS contradicts its actual result");
+    for (const field of ["review", "lanes", "parkedRows", "fidelityInput", "roundContexts"]) if (field in attempt) throw new Error(`retired verification field: ${field}`);
   }
   if (candidate.activeVerification !== undefined) {
     const active = candidate.activeVerification;
@@ -432,7 +433,7 @@ export function parseImplementState(text: string): ImplementState {
   }
   if (candidate.status === "complete" || candidate.status === "complete-pending-human") {
     const latest = candidate.verificationAttempts.at(-1);
-    if (candidate.completion === null || latest?.review?.result == null || latest.error !== null || latest.mechanical.some((run) => run.status !== "PASS")) throw new Error("malformed implement state: completed run requires its completed review, successful execution and receipt identity");
+    if (candidate.completion === null || latest === undefined || [latest.reviews.fidelity, latest.reviews.code].some((review) => review?.result == null || review.error !== null || !["PASS", "FAIL"].includes(review.verdict)) || latest.error !== null || latest.mechanical.some((run) => run.status !== "PASS")) throw new Error("malformed implement state: completed run requires both completed reviews, successful execution and receipt identity");
     const excluded = new Set(candidate.suite.exclusions.map((entry) => entry.commandId));
     for (const command of candidate.suite.commands.filter((entry) => !excluded.has(entry.id))) {
       const execution = candidate.suite.results.find((entry) => entry.commandId === command.id);

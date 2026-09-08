@@ -10,8 +10,8 @@ import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapsh
 import { stateFixture, attemptFixture, humanFinding, AT } from "../helpers/implement-state.mjs";
 
 test("retired states are refused before reading their fields with the last supporting commit", () => {
-  for (const version of ["v5", "v6", "v7", "v8"]) {
-    assert.throws(() => parseImplementState(JSON.stringify({ schema: `sasu.implement.state.${version}` })), /unsupported implement state schema.*sasu.implement.state.v9.*488d3cc/);
+  for (const version of ["v5", "v6", "v7", "v8", "v9"]) {
+    assert.throws(() => parseImplementState(JSON.stringify({ schema: `sasu.implement.state.${version}` })), /unsupported implement state schema.*sasu.implement.state.v9.*3f549dc/);
   }
 });
 
@@ -157,13 +157,24 @@ test("a PASS must agree with the whole-review and mechanical results", () => {
   assert.doesNotThrow(() => parseImplementState(JSON.stringify(state)), "a pre-judge error is honest history");
 });
 
+test("candidate PASS requires both completed records and rejects the replaced review field", () => {
+  const lane = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0, verdict: "PASS",
+    result: { summary: "Full approved contract reviewed.", findings: [], priorDispositions: [] }, judge: null, error: null };
+  const state = stateFixture(undefined, { verificationAttempts: [attemptFixture({ phase: "complete", verdict: "PASS", reviews: { fidelity: lane, code: null } })] });
+  assert.throws(() => parseImplementState(JSON.stringify(state)), /PASS contradicts/);
+  state.verificationAttempts[0].reviews.code = { ...lane, invocationId: "J2" };
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(state)));
+  state.verificationAttempts[0].review = lane;
+  assert.throws(() => parseImplementState(JSON.stringify(state)), /retired verification field: review/);
+});
+
 test("human confirmations and rejections cannot be promoted by review", () => {
   for (const status of ["resolved", "confirmed"]) {
     assert.throws(() => parseImplementState(JSON.stringify(stateFixture(undefined, { findings: [humanFinding({ status })] }))), /human/);
   }
   const finding = humanFinding({ responses: [{ at: AT, response: "rejected", evidence: "TEST-FIXTURE: reject this result" }] });
   const review = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0, verdict: "PASS", result: { summary: "Full review complete", findings: [], priorDispositions: [] }, judge: null, error: null };
-  const completed = { findings: [finding], verificationAttempts: [attemptFixture({ verdict: "PASS", review })], completion: { fingerprint: "a".repeat(64), completedAt: AT, receiptPath: "agents/receipt.json", implementationResultPath: "agents/result.md" } };
+  const completed = { findings: [finding], verificationAttempts: [attemptFixture({ verdict: "PASS", reviews: { fidelity: review, code: structuredClone(review) } })], completion: { fingerprint: "a".repeat(64), completedAt: AT, receiptPath: "agents/receipt.json", implementationResultPath: "agents/result.md" } };
   assert.doesNotThrow(() => parseImplementState(JSON.stringify(stateFixture(undefined, { ...completed, status: "complete-pending-human" }))));
   assert.throws(() => parseImplementState(JSON.stringify(stateFixture(undefined, { ...completed, status: "complete" }))), /contradicts human findings/);
 });

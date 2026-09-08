@@ -113,7 +113,7 @@ Do not move judgment into the script, and do not bypass guardrails with ad-hoc g
 
 Script-enforced guardrails (fail closed):
 
-- receipt schema must be v5 and state schema v9 before any result is consumed; retired formats fail explicitly with the last supported commit.
+- receipt schema must be `v5.parallel-review` and state schema `v9.parallel-review` before any result is consumed; retired formats fail explicitly with the last supported commit.
 - receipt must be `complete` or `complete-pending-human` and currently delivery-eligible.
   Permitted pending human confirmation travels in the PR body; an open explicit rejection blocks delivery.
 - `local` accepts only local mode; it never pushes, invokes GitHub, creates a PR,
@@ -161,7 +161,7 @@ node ~/.codex/skills/ship/scripts/prd_ship.js status --state agents/runs/<topic-
 ```
 
 `body` writes a draft to `agents/runs/<topic-slug>/delivery/pr-body.md`.
-The draft contains deterministic evidence sections derived from the current receipt (actual tests, shared QA observations, comprehensive review, open issues and human responses, staging, changed paths) plus `AGENT-FILL` placeholders for the prose sections.
+The draft contains deterministic evidence sections derived from the current receipt (actual tests, shared QA observations, separate Fidelity and Code review results, open issues and human responses, staging, changed paths) plus `AGENT-FILL` placeholders for the prose sections.
 Fill every placeholder with prose grounded in `implementation-result.md` and the recorded reviews,
 following the repository PR template rules, then run `ship`.
 `body` refuses to overwrite an existing body file without `--force`, so agent-written prose is not
@@ -232,7 +232,7 @@ When checks fail (exit `2`):
 2. Diagnose and fix the underlying issue in the same branch or worktree.
 3. Run the closest local verification first.
 4. Source fixes make the recorded reviews stale.
-   A closed run is not reopened: start an authorized new run for the source fix, execute its required suites and full-contract review, and finalize a current receipt before shipping again.
+   A closed run is not reopened: start an authorized new run for the source fix, execute its required suites and both full-contract reviews, and finalize a current receipt before shipping again.
    `ship` re-checks freshness and will refuse a stale re-ship.
 5. Rerun `ship` to commit, push, and refresh the PR body if the fix changed anything the body
    describes.
@@ -257,7 +257,7 @@ Include:
 - implementation receipt path and status.
 - user-visible or developer-visible changes.
 - actual required tests and shared QA observations, including limitations.
-- comprehensive independent review and any distinct high-risk result.
+- independent Fidelity and Code review results and any distinct high-risk result.
 - deviations or remaining human review.
 
 For visual PRs, include reviewer-visible screenshots in `Screenshots / Demo`.

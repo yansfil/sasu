@@ -251,13 +251,13 @@ function resolveState(options) {
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
-  assertSchema(state, "sasu.implement.state.v9", "state");
+  assertSchema(state, "sasu.implement.state.v9.parallel-review", "state");
   const stateDir = path.dirname(statePath);
   const receiptPath = path.join(stateDir, "receipt.json");
   const resultPath = path.join(stateDir, "implementation-result.md");
   if (!fs.existsSync(receiptPath)) throw new Error(`Receipt file not found: ${receiptPath}`);
   const receipt = readJson(receiptPath);
-  assertSchema(receipt, "sasu.implement.receipt.v5", "receipt");
+  assertSchema(receipt, "sasu.implement.receipt.v5.parallel-review", "receipt");
   return {
     // Git operations (staging, commit, push) happen in the JUDGED tree: the
     // run's worktree when isolated, else the record tree. Records (state,
@@ -277,7 +277,7 @@ function resolveState(options) {
 }
 
 const SHIPPABLE_RECEIPT_STATUSES = new Set(["complete", "complete-pending-human"]);
-const LAST_SUPPORTED_COMMIT = "488d3cc7d6e99742e7f68a1680fcb101710c8e20";
+const LAST_SUPPORTED_COMMIT = "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
@@ -293,6 +293,14 @@ function assertCompleteReceipt(context) {
   // blockers. Status alone cannot distinguish pending consent from rejection.
   if (context.receipt.delivery?.eligible !== true) {
     throw new Error(`Receipt is not delivery-eligible: ${(context.receipt.delivery?.reasons || ["missing eligibility"]).join("; ")}`);
+  }
+  for (const role of ["fidelity", "code"]) {
+    const review = context.receipt.reviews?.[role];
+    // Human confirmation and accepted risk can settle a historical FAIL.
+    // Require both actual results without replacing the CLI's eligibility gate.
+    if (!review?.result || !["PASS", "FAIL"].includes(review.verdict)) {
+      throw new Error(`Receipt ${role} review has no completed result. Run implement to completion first.`);
+    }
   }
 }
 
@@ -415,10 +423,14 @@ function summarizeHumanConfirmations(receipt) {
 }
 
 function summarizeVerification(receipt) {
-  const review = receipt.review;
   return [
-    `- Comprehensive review: ${review?.verdict || "NOT_RUN"}`,
-    review?.result?.summary ? `- Review summary: ${review.result.summary}` : "- No review summary recorded.",
+    ...[["fidelity", "Fidelity"], ["code", "Code"]].flatMap(([role, label]) => {
+      const review = receipt.reviews?.[role];
+      return [
+        `- ${label} review: ${review?.verdict || "NOT_RUN"}`,
+        review?.result?.summary ? `- ${label} summary: ${review.result.summary}` : `- No ${label} review summary recorded.`,
+      ];
+    }),
     `- Reviewed source: ${receipt.sourceFingerprint} (attempt ${receipt.verificationAttemptId})`,
     `- Completion fingerprint: ${receipt.completionFingerprint}`,
     `- Distinct risk review: ${receipt.risk?.verdict || "NOT_REQUIRED"}`,
@@ -1349,7 +1361,7 @@ function cmdMerge(options) {
     throw new Error([
       "Implementation state is not merge-fresh:",
       ...(freshness.violations || []).map(item => `- ${item}`),
-      "Return to implement, rerun affected verification and comprehensive review, finalize a fresh receipt, then ship again.",
+      "Return to implement, rerun verification with Fidelity and Code review, finalize a fresh receipt, then ship again.",
     ].join("\n"));
   }
   const base = baseFreshness(context.repoRoot, config.baseBranch);

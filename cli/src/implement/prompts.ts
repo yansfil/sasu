@@ -3,7 +3,7 @@ import path from "node:path";
 import { CHECK_TAIL_RENDER_MAX_CHARS, EVIDENCE_RENDER_MAX_CHARS, type CheckResult, type EvidenceMaterial } from "../gates/prompts";
 import { reviewResultSchema, type ReviewValidationContext } from "../judge/types";
 import type { ImplementContract } from "./contract";
-import type { ImplementState, RegisteredArtifact, RiskLaneResult, TrackedReviewFinding, VerificationRoundContext } from "./types";
+import type { ImplementState, RegisteredArtifact, RiskLaneResult, RoutineReviewRole, TrackedReviewFinding, VerificationRoundContext } from "./types";
 
 const JSON_RULE = "Reply with ONLY the requested JSON object. Do not use prose or code fences.";
 export const IMPLEMENT_REVIEW_DIFF_MAX_CHARS = 120_000;
@@ -267,8 +267,15 @@ ${pathList(material.referenceContext.evidenceRefs)}
 ${roundSection(material, comprehensive)}`;
 }
 
-export function reviewPrompt(material: ReviewPromptMaterial): string {
-  return `You are the independent reviewer of this implementation against its entire approved contract.
+export function reviewPrompt(material: ReviewPromptMaterial, role: RoutineReviewRole): string {
+  if (role !== "fidelity" && role !== "code") throw new Error("routine review requires an explicit fidelity or code role");
+  const responsibility = role === "fidelity"
+    ? `You are the independent Fidelity reviewer of this implementation against its entire approved contract.
+Own complete intent and observable behavior fulfillment. Compare canonical user intent, accepted decisions, boundaries and every requirement with the actual delivered result; detect omissions, partial implementations and unmet explicit human prerequisites.`
+    : `You are the independent Code reviewer of this implementation against its entire approved contract.
+Own concrete implementation, integration and error-path defects, including consequential design or maintainability problems with an identified failure or material impact on the approved result. Trace public callers through the relevant implementation. Cosmetic preferences, speculative improvements and optional restructuring are advisory, not blocking defects.`;
+  return `${responsibility}
+Fidelity and Code review run independently on the same fixed contract, source and evidence. Do not assume the other role passed or delegate an unresolved concern to it. Your role changes emphasis, never the approved scope, evidence access or authority boundary.
 Read every requirement and accepted decision in the complete PRD and compare them with actual source, execution and observations. Return a whole-contract assessment and only the exceptions; never produce a per-requirement PASS array.
 
 REVIEW RESPONSIBILITY:
@@ -292,7 +299,7 @@ ${sharedInput(material)}`;
 
 export function riskPrompt(material: ReviewPromptMaterial): string {
   return `You are the independent high-risk reviewer of this implementation.
-This check is distinct from the comprehensive contract review and may run concurrently with it on the same fixed inputs. Do not assume another reviewer has passed the work.
+This check is distinct from the Fidelity and Code contract reviews and may run concurrently with them on the same fixed inputs. Do not assume another reviewer has passed the work.
 Inspect concrete data-loss, authorization, credential or sensitive-data exposure, destructive or costly side effects, and evidence-integrity failure paths. Do not repeat general requirement coverage, style, or optional architecture advice.
 
 RISK POLICY:

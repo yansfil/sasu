@@ -107,7 +107,7 @@ export function start(root, options = {}) {
 export function stub(root, review = REVIEW_PASS, risk) {
   const file = path.join(root, "agents/judge.json");
   const capture = path.join(root, "agents/captures");
-  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:review": review, ...(risk ? { "implement:risk": risk } : {}) } }));
+  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:fidelity": review, "implement:code": review, ...(risk ? { "implement:risk": risk } : {}) } }));
   return { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
 }
 

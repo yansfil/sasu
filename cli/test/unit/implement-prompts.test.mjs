@@ -17,7 +17,7 @@ export function material(overrides = {}) {
 
 test("review prompts advertise the exact validator vocabulary, including whole-contract findings without invented requirement IDs", () => {
   const referenceContext = { requirementRefs: ["B1", "D-01"], evidenceRefs: ["PRD", "src/public.mjs"], priorFindingIds: [], humanSources: {} };
-  for (const prompt of [reviewPrompt(material({ referenceContext })), riskPrompt(material({ referenceContext }))]) {
+  for (const prompt of [reviewPrompt(material({ referenceContext }), "fidelity"), reviewPrompt(material({ referenceContext }), "code"), riskPrompt(material({ referenceContext }))]) {
     const advertised = prompt.split("\nVALID CONTRACT REFERENCES")[1].split("\nVALID EVIDENCE REFERENCES")[0]
       .split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
     assert.deepEqual(advertised, referenceContext.requirementRefs);
@@ -28,9 +28,9 @@ test("review prompts advertise the exact validator vocabulary, including whole-c
   assert.equal(typeof validateReviewResult({ ...wholeContract, findings: [{ ...wholeContract.findings[0], requirementRefs: ["Goal"] }] }, referenceContext), "string");
 });
 
-test("the comprehensive and distinct risk reviewers receive all thirty requirements, full decisions, and fixed actual inputs", () => {
+test("both routine roles and the distinct risk reviewer receive all thirty requirements, full decisions, and fixed actual inputs", () => {
   const input = material();
-  for (const prompt of [reviewPrompt(input), riskPrompt(input)]) {
+  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
     assert.ok(prompt.includes(input.prdText));
     assert.ok(prompt.includes(input.intentSource.content));
     for (let n = 1; n <= 30; n++) assert.ok(prompt.includes(`Requirement ${n}:`));
@@ -38,12 +38,12 @@ test("the comprehensive and distinct risk reviewers receive all thirty requireme
     assert.match(prompt, /Never execute project code/);
     assert.match(prompt, /state.json.*not product proof/);
   }
-  assert.match(reviewPrompt(input), /never produce a per-requirement PASS array/);
-  assert.match(reviewPrompt(input), /trace a concrete input from its public caller through dispatch to the failing expression/);
-  assert.match(reviewPrompt(input), /Complete readable source can establish deterministic behavior/);
-  assert.match(reviewPrompt(input), /execution count or absent per-requirement test is not itself a defect/);
-  assert.match(reviewPrompt(input), /specific boundary.*rendered UI.*external service.*real persistence/);
-  assert.match(reviewPrompt(input), /source reasoning never substitutes for a configured suite execution/);
+  assert.match(reviewPrompt(input, "fidelity"), /never produce a per-requirement PASS array/);
+  assert.match(reviewPrompt(input, "fidelity"), /trace a concrete input from its public caller through dispatch to the failing expression/);
+  assert.match(reviewPrompt(input, "fidelity"), /Complete readable source can establish deterministic behavior/);
+  assert.match(reviewPrompt(input, "fidelity"), /execution count or absent per-requirement test is not itself a defect/);
+  assert.match(reviewPrompt(input, "fidelity"), /specific boundary.*rendered UI.*external service.*real persistence/);
+  assert.match(reviewPrompt(input, "fidelity"), /source reasoning never substitutes for a configured suite execution/);
   assert.match(riskPrompt(input), /data-loss, authorization/);
   assert.match(riskPrompt(input), /may run concurrently/);
 });
@@ -52,17 +52,17 @@ test("a complete diff is retained at the boundary and excess is explicitly rejec
   const exact = "d".repeat(IMPLEMENT_REVIEW_DIFF_MAX_CHARS);
   assert.equal(reviewDiffMaterial(exact).text, exact);
   assert.throws(() => reviewDiffMaterial(exact + "d"), /input-too-large.*No content was truncated/);
-  assert.throws(() => reviewPrompt(material({ prdText: exact + "d" })), /approved PRD.*No content was truncated/);
-  assert.throws(() => reviewPrompt(material({ intentSource: { routing: "full-qa-log", content: exact + "d", explanation: "full intent" } })), /canonical intent.*No content was truncated/);
+  assert.throws(() => reviewPrompt(material({ prdText: exact + "d" }), "fidelity"), /approved PRD.*No content was truncated/);
+  assert.throws(() => reviewPrompt(material({ intentSource: { routing: "full-qa-log", content: exact + "d", explanation: "full intent" } }), "code"), /canonical intent.*No content was truncated/);
 });
 
 test("large source bodies require an exact readable file instead of disappearing from review", () => {
   const body = "s".repeat(IMPLEMENT_REVIEW_DIFF_MAX_CHARS + 1);
   const input = material({ changeMaterial: [{ path: "large.txt", body }], readablePaths: ["large.txt"] });
-  const prompt = reviewPrompt(input);
+  const prompt = reviewPrompt(input, "fidelity");
   assert.match(prompt, /COMPLETE BODIES AVAILABLE BY ALLOWLISTED READ/);
   assert.ok(prompt.includes("large.txt"));
-  assert.throws(() => reviewPrompt({ ...input, readablePaths: [] }), /large.txt.*not readable/);
+  assert.throws(() => reviewPrompt({ ...input, readablePaths: [] }, "code"), /large.txt.*not readable/);
 });
 
 test("intent routing checks the source even after spec PASS and never substitutes a missing or escaped document", () => {
@@ -83,18 +83,18 @@ test("large execution and QA excerpts retain exact full-file access and cannot s
   const tail = "LOG-START\n" + "l".repeat(9_000) + "\nLOG-END";
   const text = "QA-START\n" + "e".repeat(45_000) + "\nQA-END";
   const input = material({ checks: [{ command: "npm test", exitCode: 0, tail, logPath: "agents/suite.log" }], evidence: [{ path: "agents/qa.log", kind: "log", text, bytes: text.length, sha256: "a".repeat(64) }], readablePaths: ["implementation.txt", "agents/suite.log", "agents/qa.log"] });
-  const prompt = reviewPrompt(input);
+  const prompt = reviewPrompt(input, "fidelity");
   for (const marker of ["LOG-START", "LOG-END", "QA-START", "QA-END", "LABELED INLINE EXCERPT ONLY", "agents/suite.log", "agents/qa.log"]) assert.ok(prompt.includes(marker));
-  assert.throws(() => reviewPrompt({ ...input, readablePaths: ["implementation.txt"] }), /exact full allowlisted logPath|complete allowlisted file/);
+  assert.throws(() => reviewPrompt({ ...input, readablePaths: ["implementation.txt"] }, "code"), /exact full allowlisted logPath|complete allowlisted file/);
   const noLogPath = { ...input, checks: [{ command: "npm test", exitCode: 0, tail }] };
-  assert.throws(() => reviewPrompt(noLogPath), /exact full allowlisted logPath/);
+  assert.throws(() => reviewPrompt(noLogPath, "fidelity"), /exact full allowlisted logPath/);
 });
 
 
 test("the source catalog identifies unavailable context without granting file access or fabricating inspected content", () => {
   const catalog = ["implementation.txt", "src/router.ts", "src/storage.ts"];
   const input = material({ sourceCatalog: catalog });
-  for (const prompt of [reviewPrompt(input), riskPrompt(input)]) {
+  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
     const catalogSection = prompt.split("SOURCE CATALOG (current path metadata only;")[1].split("ALLOWLISTED PATHS")[0];
     const readableSection = prompt.split("ALLOWLISTED PATHS (only these exact files are readable):")[1].split("VALID CONTRACT REFERENCES")[0];
     for (const file of catalog) assert.ok(catalogSection.includes(`- ${file}`));
@@ -106,4 +106,29 @@ test("the source catalog identifies unavailable context without granting file ac
     assert.match(prompt, /insufficient-evidence defect naming the relevant contract, the inaccessible path/);
     assert.match(prompt, /One shared run artifact or bounded source context may support many requirements/);
   }
+});
+
+
+test("Fidelity and Code differ in responsibility while retaining identical complete inputs and strict authority", () => {
+  const input = material({ approval: { source: "conversation", evidence: "Implement the approved assumptions." } });
+  const fidelity = reviewPrompt(input, "fidelity");
+  const code = reviewPrompt(input, "code");
+  assert.match(fidelity, /independent Fidelity reviewer/);
+  assert.match(fidelity, /Own complete intent and observable behavior fulfillment/);
+  assert.match(code, /independent Code reviewer/);
+  assert.match(code, /consequential design or maintainability problems with an identified failure or material impact/);
+  assert.match(code, /Cosmetic preferences.*advisory, not blocking defects/);
+  assert.equal(fidelity.slice(fidelity.indexOf("INPUT SAFETY AND EXPLORATION:")), code.slice(code.indexOf("INPUT SAFETY AND EXPLORATION:")));
+  for (const prompt of [fidelity, code]) {
+    assert.match(prompt, /never produce a per-requirement PASS array/);
+    assert.match(prompt, /Complete readable source can establish deterministic behavior/);
+    assert.match(prompt, /an execution count or absent per-requirement test is not itself a defect/);
+    assert.match(prompt, /source reasoning never substitutes for a configured suite execution/);
+    assert.match(prompt, /contiguous verbatim substring of that key's value/);
+    assert.match(prompt, /Pending frontmatter or agent-owned assumptions alone do not create a human-confirmation finding/);
+    assert.match(prompt, /Disappearance does not resolve it/);
+    assert.match(prompt, /Never resolve one through review, change its authority source, or downgrade prerequisite timing/);
+  }
+  assert.throws(() => reviewPrompt(input), /explicit fidelity or code role/);
+  assert.throws(() => reviewPrompt(input, "comprehensive"), /explicit fidelity or code role/);
 });

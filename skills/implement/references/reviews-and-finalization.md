@@ -2,18 +2,23 @@
 
 ## Full-Contract Review
 
-All profiles use one independent comprehensive review in the routine path.
-The reviewer reads every requirement and decision, actual implementation and permitted surrounding source, executed required-suite results, shared QA observations, and previous findings.
+All profiles use concurrent independent Fidelity and Code reviews in this experimental routine path.
+Both read every requirement and decision, actual implementation and permitted surrounding source, executed required-suite results, shared QA observations, and previous findings.
 The source catalog supplies path metadata only; it is neither content evidence nor permission to read a file outside the allowlist.
 One shared artifact containing current surrounding source can support many Bn references without a per-Bn mapping.
-It checks entry points and event wiring, persistence and recovery, failure behavior, approved boundaries, scope, quality, and honest completion claims together.
-It does not emit a success object for each requirement.
+Fidelity owns complete intent and observable behavior fulfillment, including omitted requirements and explicit human authority.
+Code review owns concrete implementation, integration and error-path defects and consequential design problems.
+Cosmetic preferences and speculative improvements remain advisory.
+Neither emits a success object for each requirement or assumes the other role has passed.
+The two roles replace the comprehensive review; no third general judge combines their judgments.
 
 Results contain a summary, exception findings, and explicit prior dispositions.
 A defect names concrete unmet contract content or insufficient evidence with actual source or observation references and a next action.
 An optional improvement beyond the satisfied contract is advisory and does not block completion.
 A genuine human-confirmation finding cites existing decision/risk/user-instruction provenance.
-The CLI checks shape and references and derives the outcome from open issues; a PASS string cannot override a defect.
+The CLI checks each result's shape and references and derives the outcome from the shared open issues; a PASS string cannot override a defect.
+Each actual review, including its timing, provider calls and trace, remains separate in `reviews.fidelity` and `reviews.code`.
+A missing or failed role keeps the attempt incomplete while preserving the peer's actual result.
 
 The complete review input is a mechanical guarantee; satisfaction of the contract is independent semantic judgment.
 Do not claim that full-input inclusion proves zero omissions.
@@ -21,7 +26,7 @@ Actual planted-omission evaluation tests that judgment separately from JSON and 
 
 ## High-Risk Review
 
-`trivial` and `standard` retain the same routine comprehensive review.
+`trivial` and `standard` use the same concurrent Fidelity and Code reviews and the same routine model profile.
 `high-risk` adds a distinct safety check for data loss, permissions, destructive effects, and delivery risk using the same fixed inputs.
 Independent checks may run concurrently.
 The routine configured default is `gpt-5.6-luna` xhigh with `claude-sonnet-5` xhigh fallback.
@@ -38,7 +43,9 @@ The human-only `risk --non-convergent` declaration allows honest blocked closure
 Source, sealed PRD, linked intent, and registered evidence changes invalidate the current review.
 A new verify executes the sealed suites and reviews the current inputs.
 Old requirement results are never assembled into a new PASS.
-Prior open issues remain open until explicitly resolved with evidence.
+Both roles receive the same prior open issues.
+A prior issue closes only when both explicitly resolve it with evidence; a missing result, error or disputed disposition keeps it open.
+Distinct defects remain distinct even when they cite the same Bn reference.
 A new real omission in an unchanged file must be considered when grounded in concrete contract text and counterevidence.
 Optional unrelated advice does not force another round.
 
@@ -53,10 +60,10 @@ Never replace run state to reset the budget.
 
 ## Finalize
 
-`sasu implement finalize` validates current state and input/evidence identity, required-suite results, full review, open defects, risks, and human authority.
+`sasu implement finalize` validates current state and input/evidence identity, required-suite results, both complete routine reviews, open defects, risks, and human authority.
 It performs no tests, judge calls, captures, or external commands.
-State is persisted before the v5 receipt and implementation Markdown are derived from it.
-Both outputs summarize actual execution and observations, independent review, unresolved issues, approval history, and delivery conditions without requirement PASS tables.
+The `v9.parallel-review` state is persisted before the `v5.parallel-review` receipt and implementation Markdown are derived from it.
+Both outputs summarize actual execution and observations, both independent review results, unresolved issues, approval history, and delivery conditions without requirement PASS tables.
 Repeated finalization of identical inputs is idempotent.
 
 Permitted after-the-fact human judgment can produce `complete-pending-human`.

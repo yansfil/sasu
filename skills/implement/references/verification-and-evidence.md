@@ -27,10 +27,12 @@ A suite failure prevents review and records the actual failed phase and output.
 An empty required suite is reported as no tests configured, never as successful execution.
 Suite exclusions require human authorization and preserve their prior results.
 
-After mechanical success, one independent routine review receives the entire sealed PRD and decision/intent sources, owned change, permitted surrounding source, suite execution facts, registered observations, and prior findings.
+After mechanical success, independent Fidelity and Code reviews run concurrently with the same entire sealed PRD and decision/intent sources, owned change, permitted surrounding source, suite execution facts, registered observations, and prior findings.
+They use the same routine model profile and preserve separate actual results and call records within one verification attempt and lease.
 A distinct high-risk check uses the same fixed inputs when the profile requires it.
 The reviewer may cite any concrete approved requirement and actual counterevidence, including newly discovered omissions in unchanged files.
-Every prior open issue needs an explicit disposition.
+Both roles must disposition every prior open issue; it closes only when both resolve it with evidence.
+A partial failure remains visible and cannot become a complete review.
 
 The judge may read only allowlisted evidence and source in its disposable read-only workspace.
 Its recorded command trace is audited; broad reads, process execution, writes, network access, and repository history invalidate the verdict.

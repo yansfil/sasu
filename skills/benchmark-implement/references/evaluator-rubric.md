@@ -32,7 +32,7 @@ Do not lower a score merely because coverage is unavailable.
 
 ### Flow Adherence
 
-Judge whether start, autonomous implementation/actual observation, required-suite verification, comprehensive review, distinct high-risk review when required, and finalize occurred in the expected order.
+Judge whether start, autonomous implementation/actual observation, required-suite verification, concurrent Fidelity and Code reviews, distinct high-risk review when required, and finalize occurred in the expected order.
 Check for product code edits before start, premature completion claims, missing required stages, forbidden reviews, and unnecessary user pauses.
 
 ### Recovery Discipline
@@ -75,4 +75,4 @@ Do not force a bell curve or compare against another run.
 - `P1`: Material workflow error, retry-budget misuse, required-stage omission, or major repeated waste.
 - `P2`: Localized inefficiency or clarity issue that did not invalidate the run.
 
-Do not report product defects unless they demonstrate a process failure, such as the harness missing an approved requirement despite a comprehensive review.
+Do not report product defects unless they demonstrate a process failure, such as the harness missing an approved requirement despite both full-contract reviews.

@@ -19,7 +19,7 @@ test("the whole verify lease refuses every domain mutation and merges their refu
   const root = makeProject({ suiteSource: heldSuite });
   start(root);
   fs.writeFileSync(path.join(root, "agents/observation.log"), "observation\n");
-  const env = { ...stub(root), SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:review": 3_000 }) };
+  const env = { ...stub(root), SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:fidelity": 3_000 }) };
   const execution = runAsync(root, ["implement", "verify"], env);
   t.after(() => { fs.writeFileSync(path.join(root, "agents/suite-release"), "release\n"); execution.child.kill("SIGTERM"); });
   await until(() => fs.existsSync(path.join(root, "agents/suite-ready")) && readState(root).activeVerification?.executionPids.length > 0, "suite did not enter its recorded execution lease");
@@ -84,7 +84,7 @@ test("recovery terminates a dead owner's command group before a new verification
   ok(await retry.done);
   const state = readState(root);
   assert.equal(state.verificationAttempts[0].error.code, "verification-interrupted");
-  assert.equal(state.verificationAttempts[0].review, null);
+  assert.equal(state.verificationAttempts[0].reviews.fidelity, null);
   assert.equal(state.verificationAttempts.at(-1).verdict, "PASS");
   assert.equal(state.activeVerification, undefined);
 });

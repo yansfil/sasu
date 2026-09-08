@@ -1,5 +1,6 @@
 import { changedPathsSince } from "./store";
-import type { ReviewResult } from "../judge/types";
+import type { ReviewFinding, ReviewResult } from "../judge/types";
+import { ROUTINE_REVIEW_ROLES, type RoutineReviewRole } from "./types";
 import type {
   DeltaBasis,
   RegisteredArtifact,
@@ -165,6 +166,47 @@ export function reconcileReviewFindings(
     byId.set(entry.id, entry);
   }
   return next;
+}
+
+/**
+ * Both roles judge the same prior ledger. A single resolution is not consensus:
+ * retain disputed or unavailable dispositions and both original role records.
+ * Exact finding identity is deliberately narrower than shared requirement IDs.
+ */
+export function reconcileParallelReviewFindings(
+  tracked: readonly TrackedReviewFinding[],
+  results: Record<RoutineReviewRole, ReviewResult | null>,
+  attemptId: string,
+  at: string,
+): TrackedReviewFinding[] {
+  const available = ROUTINE_REVIEW_ROLES.flatMap((role) => results[role] === null ? [] : [{ role, result: results[role]! }]);
+  if (available.length === 0) return structuredClone(tracked) as TrackedReviewFinding[];
+  // Validate each result against the original ledger, never another role's writes.
+  for (const { result } of available) reconcileReviewFindings(tracked, result, attemptId, at);
+  const priorDispositions = tracked.filter((entry) => entry.status === "open").map((entry) => {
+    const dispositions = ROUTINE_REVIEW_ROLES.map((role) => ({ role, disposition: results[role]?.priorDispositions.find((item) => item.findingId === entry.id) }));
+    return {
+      findingId: entry.id,
+      status: dispositions.every(({ disposition }) => disposition?.status === "resolved") ? "resolved" as const : "open" as const,
+      reason: dispositions.map(({ role, disposition }) => {
+        const continuation = results[role]?.findings.find((finding) => finding.priorFindingId === entry.id);
+        return `${role}: ${disposition ? `${disposition.status}: ${disposition.reason}` : "no completed disposition; remains open"}${continuation ? `; ${continuation.problem} ${continuation.nextAction}` : ""}`;
+      }).join("\n"),
+      evidenceRefs: [...new Set(dispositions.flatMap(({ disposition }) => disposition?.evidenceRefs ?? entry.evidenceRefs))],
+    };
+  });
+  // Continuing findings retain their established identity/body. Both current
+  // explanations live in disposition history and unmodified role results.
+  const findings: ReviewFinding[] = [];
+  const seen = new Set<string>();
+  for (const { result } of available) for (const finding of result.findings) {
+    if (finding.priorFindingId !== undefined) continue;
+    const identity = JSON.stringify([finding.kind, [...finding.requirementRefs].sort(), finding.problem,
+      [...finding.evidenceRefs].sort(), finding.nextAction, finding.human?.sourceRef ?? null,
+      finding.human?.quote ?? null, finding.human?.timing ?? null]);
+    if (!seen.has(identity)) { seen.add(identity); findings.push(finding); }
+  }
+  return reconcileReviewFindings(tracked, { summary: "Deterministic reconciliation of recorded role results", findings, priorDispositions }, attemptId, at);
 }
 
 function parseRiskDisposition(

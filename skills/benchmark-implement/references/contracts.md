@@ -49,6 +49,8 @@ The report uses `run.startingTree.headSha` and `sourceFingerprint`; comparison c
 The deterministic reporter rejects receipts that do not match the binding.
 
 Allowed stage names are `start`, `verification`, `mechanical`, `review`, `risk`, and `finalize`.
+In this candidate, `review` comprises separate concurrent Fidelity and Code records in `reviews.fidelity` and `reviews.code`; both use the same routine profile.
+The candidate consumes `sasu.implement.state.v9.parallel-review` and `sasu.implement.receipt.v5.parallel-review` without an old-state reader.
 `terminalStatuses` may contain `complete`, `complete-pending-human`, or `blocked` according to the scenario.
 A declared-blocker case should expect `blocked`; treating only completion as success rewards dishonest claims.
 Only these current schemas are readable; old case/report/comparison formats fail explicitly without normalization or migration.
@@ -91,8 +93,8 @@ Every non-null score needs at least one stable evidence reference.
     },
     "reviewEfficiency": {
       "score": 4,
-      "reason": "Only the profile-required review ran.",
-      "evidence": ["receipt:/review", "state:/attempts"]
+      "reason": "Only the profile-required Fidelity and Code reviews ran.",
+      "evidence": ["receipt:/reviews/fidelity", "receipt:/reviews/code", "state:/attempts"]
     },
     "evidenceHonesty": {
       "score": 4,
@@ -139,6 +141,8 @@ Do not hand-edit either file.
 Implementation timing and post-receipt evaluation timing stay separate inside `timing`.
 Actual execution metrics distinguish `wallClockSeconds`, `verificationUnionSeconds` from `verificationSumSeconds`, `commandUnionSeconds` from `verificationCommandSeconds`, and `judgeUnionSeconds` from `judgeSeconds`.
 `verificationCommandRuns`, `judgeCalls`, and `judgeInvocations` count actual executions, not synthetic per-requirement outcomes.
+Count Fidelity and Code as separate content review executions; concurrent overlap does not turn them into one provider call.
+Preserve each role's failures and findings so duplicate or unrelated findings can be evaluated.
 Efficiency records `reviewInvocations`, `riskInvocations`, `repeatedIdenticalInputReviews`, `executionErrorsByStage`, `escalationAttempts`, `diagnosedRecoveries`, and `registeredObservations`.
 Registered observations count artifacts, not separate QA executions.
 `answeringUsage` contains only provider-reported answering-attempt tokens and `reportedInvocations`; `usageScope` identifies missing/retry usage rather than estimating it.

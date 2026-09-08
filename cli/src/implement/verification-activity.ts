@@ -1,7 +1,19 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import { loadState, nowIso, persistState, StateConflictError } from "./store";
+import { reconcileParallelReviewFindings, reconcileRiskFindings } from "./convergence";
 import type { ImplementState, UnifiedVerificationAttempt } from "./types";
+
+export function preserveSettledFindings(state: ImplementState, attempt: UnifiedVerificationAttempt, at: string): void {
+  // The verdict and shared ledger are committed together. NOT_RUN means the
+  // owner died before that write; retain any independently settled exceptions
+  // so the next repair cannot forget them. Never apply a settled round twice.
+  if (attempt.verdict !== "NOT_RUN") return;
+  state.findings = reconcileParallelReviewFindings(state.findings, {
+    fidelity: attempt.reviews.fidelity?.result ?? null, code: attempt.reviews.code?.result ?? null,
+  }, attempt.id, at);
+  if (attempt.risk?.result) state.riskFindings = reconcileRiskFindings(state.riskFindings, attempt.risk.result, attempt.id, at);
+}
 
 function processPresent(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -39,6 +51,7 @@ export function assertNoActiveVerification(state: ImplementState): boolean {
   const attempt = state.verificationAttempts.find((entry) => entry.id === active.attemptId);
   if (attempt === undefined) throw new Error("active verification attempt is missing");
   const at = nowIso();
+  preserveSettledFindings(state, attempt, at);
   attempt.verdict = "ERROR";
   attempt.finishedAt = at;
   attempt.durationMs = Math.max(0, Date.parse(at) - Date.parse(attempt.startedAt));
@@ -148,6 +161,7 @@ export async function recoverVerification(statePath: string, state: ImplementSta
     assertChildrenExited(fresh);
     const attempt = fresh.verificationAttempts.find((entry) => entry.id === active.attemptId)!;
     const at = nowIso();
+    preserveSettledFindings(fresh, attempt, at);
     attempt.verdict = "ERROR";
     attempt.finishedAt = at;
     attempt.durationMs = Math.max(0, Date.parse(at) - Date.parse(attempt.startedAt));

@@ -1,7 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { latestAttemptResult, reconcileRiskFindings, validateRiskVerdict, reconcileReviewFindings, verificationInputManifest, verificationRoundContext } from "../../dist/implement/convergence.js";
+import { latestAttemptResult, reconcileRiskFindings, validateRiskVerdict, reconcileReviewFindings, reconcileParallelReviewFindings, verificationInputManifest, verificationRoundContext } from "../../dist/implement/convergence.js";
 import { REVIEW_PASS, defect } from "../helpers/implement-fixture.mjs";
+
+test("parallel reconciliation retains different defects sharing a requirement and only deduplicates identical content", () => {
+  const first = defect();
+  const second = defect({ problem: "The error path silently discards the approved value." });
+  const next = reconcileParallelReviewFindings([], {
+    fidelity: { ...REVIEW_PASS, findings: [first] },
+    code: { ...REVIEW_PASS, findings: [structuredClone(first), second] },
+  }, "V1", "2026-09-08T00:00:00.000Z");
+  assert.deepEqual(next.map((entry) => [entry.id, entry.problem]), [["F1", first.problem], ["F2", second.problem]]);
+});
+
+test("both roles must explicitly resolve a prior defect; missing or disputed disposition stays open", () => {
+  const initial = reconcileReviewFindings([], { ...REVIEW_PASS, findings: [defect()] }, "V1", "2026-09-08T00:00:00.000Z");
+  const response = (status) => ({ ...REVIEW_PASS, priorDispositions: [{ findingId: "F1", status, reason: status === "open" ? "The failing input still loses its value." : "The public path preserves the input now.", evidenceRefs: ["implementation.txt"] }] });
+  for (const code of [null, response("open")]) {
+    const next = reconcileParallelReviewFindings(initial, { fidelity: response("resolved"), code }, "V2", "2026-09-08T01:00:00.000Z");
+    assert.equal(next.length, 1);
+    assert.equal(next[0].id, "F1");
+    assert.equal(next[0].status, "open");
+    assert.match(next[0].history.at(-1).reason, /fidelity: resolved/);
+    assert.match(next[0].history.at(-1).reason, /code: (open|no completed disposition)/);
+  }
+  const closed = reconcileParallelReviewFindings(initial, { fidelity: response("resolved"), code: response("resolved") }, "V2", "2026-09-08T01:00:00.000Z");
+  assert.equal(closed[0].status, "resolved");
+  assert.equal(initial[0].status, "open", "reconciliation must not change the pinned prior ledger");
+});
+
+test("parallel continued findings preserve stable authority and both explanations without double-closing", () => {
+  const human = { kind: "human-confirmation", requirementRefs: ["B1"], problem: "The user must authorize destructive reset.", evidenceRefs: ["Risks"], nextAction: "Obtain the reserved approval.", human: { sourceRef: "Risks", quote: "The user must authorize reset before execution.", timing: "prerequisite" } };
+  const initial = reconcileReviewFindings([], { ...REVIEW_PASS, findings: [human] }, "V1", "2026-09-08T00:00:00.000Z");
+  const result = { ...REVIEW_PASS, findings: [{ ...human, priorFindingId: "F1" }], priorDispositions: [{ findingId: "F1", status: "open", reason: "Approval is still absent.", evidenceRefs: ["Risks"] }] };
+  const next = reconcileParallelReviewFindings(initial, { fidelity: result, code: result }, "V2", "2026-09-08T01:00:00.000Z");
+  assert.equal(next.length, 1);
+  assert.deepEqual(next[0].human, human.human);
+  assert.equal(next[0].status, "open");
+  assert.match(next[0].history.at(-1).reason, /fidelity: open/);
+  assert.match(next[0].history.at(-1).reason, /code: open/);
+  const weakened = { ...result, findings: [{ ...result.findings[0], human: { ...human.human, timing: "post-completion" } }] };
+  assert.throws(() => reconcileParallelReviewFindings(initial, { fidelity: result, code: weakened }, "V2", "2026-09-08T01:00:00.000Z"), /cannot change its authority source or timing/);
+});
 
 test("risk findings get stable ids and every prior finding is dispositioned on round 2+", () => {
   const first = validateRiskVerdict({

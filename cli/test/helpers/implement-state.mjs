@@ -2,7 +2,7 @@ export const AT = "2026-09-08T00:00:00.000Z";
 export const SHA = "a".repeat(64);
 export function stateFixture(root = "/tmp/fixture", overrides = {}) {
   return {
-    schema: "sasu.implement.state.v9", status: "active", topicSlug: "fixture",
+    schema: "sasu.implement.state.v9.parallel-review", status: "active", topicSlug: "fixture",
     projectRoot: root, worktree: null, runDir: "agents/runs/fixture", prdPath: "agents/prd/fixture/prd.md",
     prd: { sha256: SHA, snapshotPath: "agents/runs/fixture/prd.md", status: "ready", approval: { source: "frontmatter", evidence: "TEST-FIXTURE-APPROVAL" }, reviewProfile: "standard", reviewRationale: "fixture", sourceIntake: "current conversation" },
     initialSource: { head: null, digest: SHA, entries: [] },
@@ -21,7 +21,7 @@ export function attemptFixture(overrides = {}) {
     roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] },
     intentInput: { routing: "decisions", contentSha256: SHA },
     startedAt: AT, finishedAt: AT, durationMs: 0, phase: "preflight", verdict: "NOT_RUN",
-    prelint: { ok: true, findings: [] }, mechanical: [], review: null, risk: null, error: null,
+    prelint: { ok: true, findings: [] }, mechanical: [], reviews: { fidelity: null, code: null }, risk: null, error: null,
     ...overrides,
   };
 }

@@ -35,7 +35,7 @@ test("missing or altered registered evidence stops review, while a replacement p
   const initial = readState(root).artifacts.find((entry) => entry.path === relative);
   fs.appendFileSync(path.join(root, relative), "replacement capture\n");
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
-  assert.equal(readState(root).verificationAttempts.at(-1).review, null);
+  assert.equal(readState(root).verificationAttempts.at(-1).reviews.fidelity, null);
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
   registerEvidence(root, { relative, content: "replacement capture\n" });
   const state = readState(root);
@@ -76,7 +76,7 @@ test("an absent prior disposition cannot silently resolve a defect, and a new un
   assert.equal(after.findings.filter((entry) => entry.status === "open").length, 2);
   assert.ok(after.findings.some((entry) => entry.requirementRefs.includes("B28")));
   assert.deepEqual(after.verificationAttempts.at(-1).roundContext.changedPaths, []);
-  assert.equal(after.verificationAttempts.at(-1).review.verdict, "FAIL", "a real contract omission is admitted without changed-path proof");
+  assert.equal(after.verificationAttempts.at(-1).reviews.fidelity.verdict, "FAIL", "a real contract omission is admitted without changed-path proof");
   fs.appendFileSync(path.join(root, "implementation.txt"), "values 17 and 28 are now reachable\n");
   env = stub(root, { ...REVIEW_PASS, priorDispositions: after.findings.map((entry) => ({ findingId: entry.id, status: "resolved", reason: "Both missing values are now connected in the implementation.", evidenceRefs: ["implementation.txt"] })) });
   ok(run(root, ["implement", "verify"], { env }));
@@ -116,7 +116,7 @@ test("review receives recorded conversational admission and exact human-source q
   fs.writeFileSync(path.join(readState(root).worktree?.path ?? root, "implementation.txt"), "run-owned implementation\n");
   const env = stub(root);
   ok(run(root, ["implement", "verify"], { env }));
-  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_review.prompt.txt"), "utf8");
+  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
   const admission = JSON.parse(prompt.split("RUN ADMISSION AUTHORITY (not product evidence):\n")[1]?.split("\n")[0] ?? "null");
   assert.deepEqual(admission, { source: "conversation", evidence });
   const sources = JSON.parse(prompt.split("HUMAN SOURCE TEXT (sourceRef -> exact quoteable text):\n")[1]?.split("\n")[0] ?? "null");
@@ -221,7 +221,7 @@ test("a confirmed human authority remains visible to the next full review and is
   ok(run(root, ["implement", "confirm", "--issuer", "human", "--id", id, "--evidence", evidence]));
   const rereview = stub(root);
   ok(run(root, ["implement", "verify"], { env: rereview }));
-  const prompt = fs.readFileSync(path.join(rereview.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_review.prompt.txt"), "utf8");
+  const prompt = fs.readFileSync(path.join(rereview.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
   assert.ok(prompt.includes(evidence));
   assert.equal(readState(root).findings.find((entry) => entry.id === id).status, "confirmed");
   ok(run(root, ["implement", "finalize"]));
@@ -234,7 +234,7 @@ test("the source catalog is metadata until one shared run artifact supplies exac
   const env = stub(root);
   ok(run(root, ["implement", "verify"], { env }));
   const before = readState(root).verificationAttempts.at(-1);
-  const firstPrompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_review.prompt.txt"), "utf8");
+  const firstPrompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
   const catalogSection = firstPrompt.split("SOURCE CATALOG (current path metadata only;")[1].split("ALLOWLISTED PATHS")[0];
   assert.ok(catalogSection.includes("suite.cjs"));
   const staged = (attempt) => path.join(root, "agents/runs/fixture/review-inputs", attempt.id, "suite.cjs");
@@ -261,7 +261,7 @@ test("registered record-tree source cannot replace different current source in a
   const env = stub(root);
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
   const attempt = readState(root).verificationAttempts.at(-1);
-  assert.equal(attempt.review, null);
+  assert.equal(attempt.reviews.fidelity, null);
   assert.match(attempt.error.message, /registered source context.*differs from current product source/);
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
   assert.notEqual(run(root, ["implement", "finalize"]).status, 0);

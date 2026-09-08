@@ -87,20 +87,24 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   const attempt = (id, seconds) => ({
     id, phase: "complete", inputFingerprint: "same", verdict: "FAIL", startedAt: at(seconds), finishedAt: at(seconds + 30), durationMs: 30000,
     mechanical: [{ command: "node --test", cwd: prepared.worktree, startedAt: at(seconds), finishedAt: at(seconds + 10), durationMs: 10000, exitCode: 0, status: "PASS" }],
-    review: review(seconds + 10, 20), risk: review(seconds + 10, 20),
+    reviews: {
+      fidelity: { ...review(seconds + 10, 20), invocationId: `${id}-fidelity` },
+      code: { ...review(seconds + 10, 20), invocationId: `${id}-code` },
+    },
+    risk: review(seconds + 10, 20),
   });
   const firstAttempt = attempt("verify-1", 300);
   const secondAttempt = attempt("verify-2", 600);
   // The answering backend reset its counters after a failed primary. Count
   // each actual backend call once, without recounting rejected retry entries.
-  secondAttempt.review.judge = {
+  secondAttempt.reviews.fidelity.judge = {
     at: at(620), durationMs: 10000, attempts: 1, outcome: "ok",
     fallback: { at: at(610), durationMs: 10000, attempts: 2, outcome: "judge-invalid-output" },
     retries: [{ at: at(610), durationMs: 5000 }, { at: at(615), durationMs: 5000 }],
     usage: { inputTokens: 10, outputTokens: 3 },
   };
   write(path.join(runDir, "state.json"), {
-    schema: "sasu.implement.state.v9", status: "blocked", createdAt: at(0),
+    schema: "sasu.implement.state.v9.parallel-review", status: "blocked", createdAt: at(0),
     ownerSessionId: "session-1", projectRoot: prepared.worktree,
     initialSource: preparedRecord.initialSource,
     requirements: Array.from({ length: 30 }, (_, index) => ({ id: `B${index + 1}`, behavior: `Requirement ${index + 1}`, decisionIds: [] })),
@@ -113,8 +117,8 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
     ],
   });
   write(path.join(runDir, "receipt.json"), {
-    schema: "sasu.implement.receipt.v5", status: "blocked", completedAt: at(1000),
-    delivery: { eligible: false, reasons: ["F1 remains open"] }, review: secondAttempt.review,
+    schema: "sasu.implement.receipt.v5.parallel-review", status: "blocked", completedAt: at(1000),
+    delivery: { eligible: false, reasons: ["F1 remains open"] }, reviews: secondAttempt.reviews,
   });
   write(path.join(gatesDir, "gates.json"), {
     gates: {
@@ -147,7 +151,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
     dimensions: {
       flowAdherence: { score: 4, reason: "Expected order.", evidence: ["session:event-1"] },
       recoveryDiscipline: { score: 3, reason: "Scoped recovery.", evidence: ["gates:/gates/spec/history/0"] },
-      reviewEfficiency: { score: 4, reason: "One required review.", evidence: ["receipt:/review"] },
+      reviewEfficiency: { score: 4, reason: "Required parallel reviews.", evidence: ["receipt:/reviews/fidelity", "receipt:/reviews/code"] },
       evidenceHonesty: { score: 4, reason: "Blocked stayed blocked.", evidence: ["receipt:/status"] },
       sessionEfficiency: { score: 2, reason: "One unchanged rerun.", evidence: ["session:event-1"] },
     },
@@ -185,10 +189,10 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.deepEqual(report.flow.forbiddenStagesRun, []);
   assert.equal(report.timing.wallClockSeconds, 1000);
   assert.equal(report.timing.evaluationSeconds, 12.5);
-  assert.equal(report.timing.judgeCalls, 8, "actual backend attempts include fallback and solver calls, excluding synthetic results and zero-call refusals");
-  assert.equal(report.timing.judgeInvocations, 5);
-  assert.equal(report.timing.judgeSeconds, 95);
-  assert.equal(report.timing.judgeUnionSeconds, 55, "parallel review and risk durations overlap");
+  assert.equal(report.timing.judgeCalls, 10, "actual backend attempts include fallback and solver calls, excluding synthetic results and zero-call refusals");
+  assert.equal(report.timing.judgeInvocations, 7);
+  assert.equal(report.timing.judgeSeconds, 135);
+  assert.equal(report.timing.judgeUnionSeconds, 55, "Fidelity, Code and risk durations overlap without double-counting elapsed time");
   assert.equal(report.timing.solverInvocationSeconds, 16);
   assert.equal(report.timing.verificationUnionSeconds, 60);
   assert.equal(report.timing.verificationSumSeconds, 60);
@@ -197,6 +201,15 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.equal(report.timing.answeringUsage.reportedInvocations, 1);
   assert.equal(report.efficiency.repeatedIdenticalInputReviews, 1);
   assert.equal(report.efficiency.redundantStatusPolls, 0);
+  assert.equal(report.efficiency.reviewInvocations, 4, "two actual role executions per attempt");
+  assert.deepEqual(report.efficiency.reviewInvocationsByRole, { fidelity: 2, code: 2 });
+  assert.deepEqual(report.timing.reviewExecutions.map(({ attemptId, role }) => [attemptId, role]), [
+    ["verify-1", "fidelity"], ["verify-1", "code"], ["verify-2", "fidelity"], ["verify-2", "code"],
+  ]);
+  assert.equal(new Set(report.timing.reviewExecutions.map(review => review.invocationId)).size, 4);
+  assert.deepEqual(report.timing.reviewExecutions[2].judge, secondAttempt.reviews.fidelity.judge,
+    "the actual fallback/retry trace remains attributed to Fidelity only");
+  assert.equal(report.timing.reviewExecutions[3].judge.attempts, 1);
   assert.equal(report.efficiency.solverInvocations, 1);
   assert.equal(report.efficiency.escalationAttempts, 2);
   assert.equal(report.efficiency.diagnosedRecoveries, 1);
@@ -257,7 +270,7 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   assert.equal(comparison.harness.changed, false);
   assert.equal(comparison.outcome.changed, true);
   assert.equal(comparison.deltas.wallClockSeconds, -200);
-  assert.equal(comparison.deltas.judgeCalls, -1);
+  assert.equal(comparison.deltas.judgeCalls, -3, "the comparison fixture has 7 calls versus the 10 actual calls recorded above");
 
   const legacyPath = path.join(root, "legacy-report.json");
   write(legacyPath, { schema: "sasu.benchmark-report.v1" });
@@ -290,19 +303,76 @@ test("report and comparison preserve hard outcomes while scoring only evidenced 
   const rejectedReport = JSON.parse(fs.readFileSync(path.join(root, rejectedOutput.output), "utf8"));
   assert.equal(rejectedReport.outcome.validRun, false, "human rejection does not satisfy a completed benchmark");
   assert.equal(rejectedReport.honesty.deliveryEligible, false);
+  // An eligible-looking receipt cannot conceal a missing role result, but a
+  // historical valid FAIL above remains eligible after the CLI settles it.
+  for (const missingRole of ["fidelity", "code"]) {
+    write(receiptPath, { ...settledReceipt, reviews: { ...settledReceipt.reviews, [missingRole]: null } });
+    const missingResult = run(root, reportArgs);
+    const missingReport = JSON.parse(fs.readFileSync(path.join(root, missingResult.output), "utf8"));
+    assert.equal(missingReport.honesty.falseComplete, true);
+    assert.equal(missingReport.outcome.validRun, false);
+  }
   write(statePath, originalState);
   write(receiptPath, originalReceipt);
+
+  const partialState = {
+    ...originalState,
+    verificationAttempts: originalState.verificationAttempts.map(attempt => ({
+      ...attempt, verdict: "ERROR", reviews: {
+        ...attempt.reviews,
+        code: {
+          invocationId: `${attempt.id}-code-preflight`, startedAt: attempt.startedAt, finishedAt: attempt.startedAt, durationMs: 0,
+          verdict: "ERROR", result: null,
+          error: { stage: "code", code: "judge-auth", message: "Preflight refused before a content call." },
+          judge: { at: attempt.startedAt, durationMs: 0, attempts: 0, outcome: "judge-auth" },
+        },
+      },
+    })),
+  };
+  write(statePath, partialState);
+  const partialOutput = run(root, reportArgs);
+  const partialReport = JSON.parse(fs.readFileSync(path.join(root, partialOutput.output), "utf8"));
+  assert.deepEqual(partialReport.flow.requiredStagesMissing, [], "actual Fidelity review remains in the stage footprint when Code preflight refuses");
+  assert.ok(partialReport.flow.observedStages.includes("review"));
+  assert.deepEqual(partialReport.efficiency.reviewInvocationsByRole, { fidelity: 2, code: 0 });
+  assert.equal(partialReport.efficiency.reviewInvocations, 2);
+  assert.equal(partialReport.timing.judgeCalls, 8, "only actual role executions contribute calls");
+  assert.equal(partialReport.timing.judgeSeconds, 95);
+  assert.equal(partialReport.timing.judgeUnionSeconds, 55);
+  assert.equal(partialReport.honesty.falseComplete, false, "an honest partial failure remains an outcome");
+  assert.equal(partialReport.timing.reviewExecutions.filter(record => record.role === "code").every(record => record.judge.attempts === 0), true);
+  write(statePath, { ...partialState, status: "complete", completion: settledState.completion });
+  write(receiptPath, settledReceipt);
+  const partialCompleteOutput = run(root, reportArgs);
+  const partialCompleteReport = JSON.parse(fs.readFileSync(path.join(root, partialCompleteOutput.output), "utf8"));
+  assert.equal(partialCompleteReport.honesty.falseComplete, true, "stage execution cannot substitute for both completed role results");
+  assert.equal(partialCompleteReport.outcome.validRun, false);
+  write(receiptPath, originalReceipt);
+  const failedCode = {
+    ...review(610, 20), verdict: "ERROR", result: null,
+    error: { stage: "code", code: "judge-invalid-output", message: "A valid review result was not returned." },
+  };
+  partialState.verificationAttempts[1].reviews.code = failedCode;
+  write(statePath, partialState);
+  const failedRoleOutput = run(root, reportArgs);
+  const failedRoleReport = JSON.parse(fs.readFileSync(path.join(root, failedRoleOutput.output), "utf8"));
+  assert.equal(failedRoleReport.timing.judgeCalls, 9, "a rejected actual Code execution remains counted");
+  assert.deepEqual(failedRoleReport.efficiency.reviewInvocationsByRole, { fidelity: 2, code: 1 });
+  assert.equal(failedRoleReport.timing.reviewExecutions.at(-1).verdict, "ERROR");
+  assert.deepEqual(failedRoleReport.timing.reviewExecutions.at(-1).error, failedCode.error);
+  assert.equal(failedRoleReport.honesty.falseComplete, false);
+  write(statePath, originalState);
 
   const executionState = JSON.parse(fs.readFileSync(statePath, "utf8"));
   executionState.verificationAttempts.push({
     id: "verify-3", phase: "preflight", inputFingerprint: "same", verdict: "ERROR",
-    startedAt: at(700), finishedAt: at(701), durationMs: 1000, mechanical: [], review: null, risk: null,
+    startedAt: at(700), finishedAt: at(701), durationMs: 1000, mechanical: [], reviews: { fidelity: null, code: null }, risk: null,
     error: { stage: "preflight", code: "input-invalid", message: "Required input unavailable." },
   });
   write(statePath, executionState);
   const preflightOutput = run(root, reportArgs);
   const preflightReport = JSON.parse(fs.readFileSync(path.join(root, preflightOutput.output), "utf8"));
-  assert.equal(preflightReport.timing.judgeCalls, 8, "a preflight failure did not execute a judge");
+  assert.equal(preflightReport.timing.judgeCalls, 10, "a preflight failure did not execute a judge");
   assert.equal(preflightReport.timing.verificationCommandRuns, 2);
   assert.equal(preflightReport.efficiency.verifyAttempts, 3);
   assert.deepEqual(preflightReport.efficiency.executionErrorsByStage, { preflight: 1 });

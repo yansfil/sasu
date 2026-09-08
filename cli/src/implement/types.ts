@@ -1,10 +1,10 @@
 import type { JudgeCallRecord, JudgeFailureCause, ReviewFinding, ReviewResult } from "../judge/types";
 
-// v9 records static requirements and whole-contract review exceptions. Retired
-// row proof state has no faithful translation and is deliberately rejected.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v9" as const;
+// Experimental records cannot be adopted by the installed unified reviewer.
+// Each role keeps its real execution; no existing run is migrated for comparison.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v9.parallel-review" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
-export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "488d3cc7d6e99742e7f68a1680fcb101710c8e20";
+export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
 export type VerificationStatus = "NOT_RUN" | "PASS" | "FAIL" | "BLOCKED" | "ERROR" | "STALE";
 export type ReviewProfile = "trivial" | "standard" | "high-risk";
 export interface JudgeLaneError { code: string; message: string; cause?: JudgeFailureCause }
@@ -154,6 +154,10 @@ export interface LaneRecord<T> {
   // Names the ERROR'd attempt this settled lane was carried over from.
 }
 
+export type RoutineReviewRole = "fidelity" | "code";
+export const ROUTINE_REVIEW_ROLES: readonly RoutineReviewRole[] = ["fidelity", "code"];
+export type RoutineReviews = Record<RoutineReviewRole, LaneRecord<ReviewResult> | null>;
+
 export interface UnifiedVerificationAttempt {
   id: string;
   inputFingerprint: string;
@@ -168,7 +172,7 @@ export interface UnifiedVerificationAttempt {
   verdict: VerificationStatus;
   prelint: { ok: boolean; findings: unknown[] };
   mechanical: MechanicalRunRecord[];
-  review: LaneRecord<ReviewResult> | null;
+  reviews: RoutineReviews;
   risk: LaneRecord<RiskLaneResult> | null;
   error: { stage: string; code: string; message: string } | null;
 }

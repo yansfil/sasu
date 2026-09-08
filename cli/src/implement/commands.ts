@@ -10,7 +10,7 @@ import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judgeFailureCause, validateReviewResult, type JudgeFailureCause, type ReviewResult } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
-import { reconcileReviewFindings, reconcileRiskFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
+import { reconcileReviewFindings, reconcileParallelReviewFindings, reconcileRiskFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
@@ -18,7 +18,7 @@ import { suiteScore } from "./suite";
 import { assertCommandAuthority, isIssuedCommand, recordVerb, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
-import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
+import { assertNoActiveVerification, recoverVerification, preserveSettledFindings, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
@@ -26,7 +26,7 @@ import { DispatchRejected, dispatchImplementor } from "./dispatch";
 import { reviewPrompt, intentSource, riskPrompt, type ChangeFile, type ReviewPromptMaterial } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
+import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -1037,7 +1037,7 @@ function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unk
   return { id: attempt.id, verdict: attempt.verdict, phase: attempt.phase, inputFingerprint: attempt.inputFingerprint,
     sourceFingerprint: attempt.sourceFingerprint, startedAt: attempt.startedAt, finishedAt: attempt.finishedAt,
     durationMs: attempt.durationMs, prelint: attempt.prelint, mechanical: attempt.mechanical,
-    review: slim(attempt.review), risk: slim(attempt.risk), error: attempt.error };
+    reviews: { fidelity: slim(attempt.reviews.fidelity), code: slim(attempt.reviews.code) }, risk: slim(attempt.risk), error: attempt.error };
 }
 
 // Repeating the same preparation failure is bounded separately: it made no
@@ -1051,12 +1051,12 @@ function verificationBudget(state: ImplementState, budget: number) {
   for (const attempt of state.verificationAttempts.slice(grants.at(-1)?.attemptCountBefore ?? 0)) {
     if (attempt.verdict === "NOT_RUN") continue;
     if (attempt.verdict === "PASS") { fixAttempts = 0; consecutiveErrors = 0; prejudgeFailures = 0; lastPrejudgeKey = null; lastErrorKey = null; judgeErrorCause = null; continue; }
-    if (attempt.review === null && attempt.risk === null && attempt.error !== null) {
+    if (ROUTINE_REVIEW_ROLES.every((role) => attempt.reviews[role] === null) && attempt.risk === null && attempt.error !== null) {
       const key = JSON.stringify([attempt.inputFingerprint, attempt.error.stage, attempt.error.code, attempt.error.message]);
       prejudgeFailures = key === lastPrejudgeKey ? prejudgeFailures + 1 : 1;
       lastPrejudgeKey = key;
     } else { prejudgeFailures = 0; lastPrejudgeKey = null; }
-    const failures = [attempt.review, attempt.risk].flatMap((lane) => lane?.error?.cause ? [lane.error.cause] : []);
+    const failures = [...ROUTINE_REVIEW_ROLES.map((role) => attempt.reviews[role]), attempt.risk].flatMap((lane) => lane?.error?.cause ? [lane.error.cause] : []);
     if (attempt.verdict === "ERROR" && failures.length > 0) {
       const key = failures.map((cause) => `${cause.backend}:${cause.code}:${cause.reason ?? ""}`).sort().join("|");
       consecutiveErrors = key === lastErrorKey ? consecutiveErrors + 1 : 1;
@@ -1066,7 +1066,7 @@ function verificationBudget(state: ImplementState, budget: number) {
     consecutiveErrors = 0; lastErrorKey = null; judgeErrorCause = null;
     // Count actual non-completing semantic rounds, including a routine PASS
     // with an open blocking risk. Preflight and suite failures called no judge.
-    if (attempt.review?.result || attempt.risk?.result) fixAttempts += 1;
+    if (ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result) || attempt.risk?.result) fixAttempts += 1;
   }
   return { fixAttempts, totalAttempts: state.verificationAttempts.length, budget,
     budgetExhausted: fixAttempts >= budget, consecutiveErrors, judgeErrorThreshold: JUDGE_ERROR_LOOP_THRESHOLD,
@@ -1091,7 +1091,7 @@ function blockedReason(state: ImplementState): string | null {
   // Human risk authority cannot waive product defects or an uncompleted
   // review/suite. All remaining blockers must be the declared risk findings.
   return blocking.length > 0 && blocking.every((entry) => entry.nonConvergence !== undefined)
-    && latest?.error === null && latest.review?.result != null && latest.risk?.result != null
+    && latest?.error === null && ROUTINE_REVIEW_ROLES.every((role) => latest.reviews[role]?.result != null) && latest.risk?.result != null
     && latest.mechanical.every((entry) => entry.status === "PASS")
     && !openFindings(state).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion"))
     && openHumanRejections(state).length === 0 ? "non-convergent-findings" : null;
@@ -1105,7 +1105,7 @@ function openHumanRejections(state: ImplementState) {
 }
 function effectiveVerdict(state: ImplementState, attempt: UnifiedVerificationAttempt): VerificationStatus {
   if (attempt.verdict !== "FAIL") return attempt.verdict;
-  if (attempt.error !== null || attempt.review?.result == null || attempt.mechanical.some((entry) => entry.status !== "PASS")) return attempt.verdict;
+  if (attempt.error !== null || ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result == null) || attempt.mechanical.some((entry) => entry.status !== "PASS")) return attempt.verdict;
   if (state.prd.reviewProfile === "high-risk" && attempt.risk?.result == null) return attempt.verdict;
   if (openFindings(state).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion"))) return "FAIL";
   if (openRiskFindings(state).some((entry) => entry.severity === "blocking")) return "FAIL";
@@ -1289,7 +1289,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const attempt: UnifiedVerificationAttempt = { id: crypto.randomUUID(), inputFingerprint: inputs?.fingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, source: source.digest, invalid: true })),
     sourceFingerprint: source.digest, inputManifest: manifest, roundContext: verificationRoundContext(manifest, state.verificationAttempts.at(-1) ?? null),
     intentInput: inputs?.intentInput ?? { routing: "full-qa-log", contentSha256: sha256("") }, startedAt: nowIso(), finishedAt: nowIso(), durationMs: 0,
-    phase: "preflight", verdict: "NOT_RUN", prelint: { ok: false, findings: [] }, mechanical: [], review: null, risk: null, error: null };
+    phase: "preflight", verdict: "NOT_RUN", prelint: { ok: false, findings: [] }, mechanical: [], reviews: { fidelity: null, code: null }, risk: null, error: null };
   const started = Date.now();
   state = beginVerification(statePath, state, attempt);
   const update = (apply: (fresh: ImplementState, current: UnifiedVerificationAttempt) => void) => {
@@ -1337,29 +1337,44 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       const prepared = reviewInputs(state, active, inputs);
       const referenceContext = prepared.material.referenceContext;
       active.roundContext.requirementRefs = [...referenceContext.requirementRefs]; active.roundContext.evidenceRefs = [...referenceContext.evidenceRefs];
-      const reviewText = reviewPrompt(prepared.material);
+      const reviewTexts = { fidelity: reviewPrompt(prepared.material, "fidelity"), code: reviewPrompt(prepared.material, "code") };
+      const priorFindings = structuredClone(state.findings);
       const riskText = state.prd.reviewProfile === "high-risk" ? riskPrompt(prepared.material) : null;
       phase = "review"; update((_fresh, held) => { held.phase = phase; held.roundContext = active.roundContext; });
       const options = { cwd: prepared.cwd, agentic: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
       const validate = (value: unknown): ReviewResult | string => {
         const parsed = validateReviewResult(value, referenceContext);
         if (typeof parsed === "string") return parsed;
-        try { reconcileReviewFindings(state.findings, parsed, attempt.id, nowIso()); }
+        try { reconcileReviewFindings(priorFindings, parsed, attempt.id, nowIso()); }
         catch (error) { return error instanceof Error ? error.message : String(error); }
         return parsed;
       };
-      // Both reviews read the same fixed input; the distinct high-risk check
-      // has no dependency on the routine verdict and runs concurrently.
-      const [review, riskResult] = await Promise.all([
-        judgeLane(crypto.randomUUID(), () => runJudge(config, "implement:review", "routine", reviewText, validate, { ...options, execution: executionHooks() }), (value) => value.findings.some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) ? "FAIL" : "PASS"),
+      // Two real executions replace the general review, under one lease and
+      // budget. Persist each settlement even if its sibling is still running.
+      const routine = async (role: RoutineReviewRole) => {
+        const lane = await judgeLane(crypto.randomUUID(), () => runJudge(config, `implement:${role}`, "routine", reviewTexts[role], validate,
+          { ...options, execution: executionHooks() }), (value) => value.findings.some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) ? "FAIL" : "PASS");
+        update((_fresh, held) => { held.reviews[role] = lane; });
+        return lane;
+      };
+      const settled = await Promise.allSettled([
+        routine("fidelity"), routine("code"),
         riskText === null ? Promise.resolve(null) : judgeLane(crypto.randomUUID(), () => runJudge(config, "implement:risk", "high-risk", riskText,
-          (value) => validateRiskVerdict(value, prepared.material.priorRiskResult ?? null, active.roundContext, Math.max(0, ...state.riskFindings.map((entry) => Number(entry.id.slice(2)))) + 1), { ...options, execution: executionHooks() })),
+          (value) => validateRiskVerdict(value, prepared.material.priorRiskResult ?? null, active.roundContext, Math.max(0, ...state.riskFindings.map((entry) => Number(entry.id.slice(2)))) + 1), { ...options, execution: executionHooks() })).then((lane) => {
+            update((_fresh, held) => { held.risk = lane; });
+            return lane;
+          }),
       ]);
+      // A persistence failure must not let verify close while another owned
+      // execution is still running. Drain every role before surfacing failure.
+      const [fidelity, code, riskResult] = settled.map((entry) => {
+        if (entry.status === "rejected") throw entry.reason;
+        return entry.value;
+      }) as [LaneRecord<ReviewResult>, LaneRecord<ReviewResult>, LaneRecord<RiskLaneResult> | null];
       update((fresh, held) => {
-        held.review = review; held.risk = riskResult;
-        if (review.result) fresh.findings = reconcileReviewFindings(fresh.findings, review.result, attempt.id, nowIso());
+        fresh.findings = reconcileParallelReviewFindings(priorFindings, { fidelity: fidelity.result, code: code.result }, attempt.id, nowIso());
         if (riskResult?.result) fresh.riskFindings = reconcileRiskFindings(fresh.riskFindings, riskResult.result, attempt.id, nowIso());
-        const errors = [review.error, riskResult?.error].filter((entry) => entry != null);
+        const errors = [fidelity.error, code.error, riskResult?.error].filter((entry) => entry != null);
         held.verdict = errors.length > 0 ? "ERROR" : openFindings(fresh).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) || openRiskFindings(fresh).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS";
         held.error = errors.length > 0 ? { stage: "review", code: "judge-error", message: errors.map((entry) => entry!.message).join("; ") } : null;
       });
@@ -1369,7 +1384,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const after = currentInputs(state);
     if (after.held.drift !== null || after.fingerprint !== attempt.inputFingerprint || artifactIntegrityProblems(state.projectRoot, state).length > 0) throw new Error("verification inputs changed while verification was running");
   } catch (error) {
-    update((_fresh, held) => { held.verdict = "ERROR"; held.error = { stage: phase, code: error instanceof VerifyInvariantError ? error.reason : "verification-input-error", message: error instanceof Error ? error.message : String(error) }; });
+    update((fresh, held) => {
+      preserveSettledFindings(fresh, held, nowIso());
+      held.verdict = "ERROR"; held.error = { stage: phase, code: error instanceof VerifyInvariantError ? error.reason : "verification-input-error", message: error instanceof Error ? error.message : String(error) };
+    });
   }
   state = finishVerification(statePath, state, (fresh) => {
     const held = fresh.verificationAttempts.find((entry) => entry.id === attempt.id)!;
@@ -1383,7 +1401,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   return result("verify", final.verdict === "PASS", `verification ${final.verdict}; ${state.status} run retained${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget)) ? `; ${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget))}` : ""}`, { attempt: attemptSummary(final), findings: openFindings(state), riskFindings: openRiskFindings(state), verificationBudget: verificationBudget(state, config.judge.retryBudget) });
 }
 
-const RECEIPT_SCHEMA = "sasu.implement.receipt.v5";
+const RECEIPT_SCHEMA = "sasu.implement.receipt.v5.parallel-review";
 function completionFingerprint(state: ImplementState, sourceDigest: string | null, attempt: UnifiedVerificationAttempt): string {
   return sha256(JSON.stringify({ schema: RECEIPT_SCHEMA, input: attempt.inputFingerprint, sourceDigest, attempt: attempt.id }));
 }
@@ -1403,7 +1421,7 @@ function completionProblems(state: ImplementState): string[] {
   if (effectiveVerdict(state, latest) !== "PASS") problems.push(`verification is ${latest.verdict}${latest.error ? ` at ${latest.error.stage}: ${latest.error.message}` : ""}`);
   const executed = new Set(latest.mechanical.filter((run) => run.status === "PASS").map((run) => `${run.cwd}\0${run.command}`));
   for (const unit of planRunUnits(state)) if (!executed.has(`${unit.cwd}\0${unit.command}`)) problems.push(`required suite was not passed in the current attempt: ${unit.command} (cwd ${unit.cwd})`);
-  if (latest.review?.result == null) problems.push("independent contract review did not complete");
+  for (const role of ROUTINE_REVIEW_ROLES) if (latest.reviews[role]?.result == null) problems.push(`independent ${role} review did not complete`);
   if (state.prd.reviewProfile === "high-risk" && latest.risk?.result == null) problems.push("required high-risk review did not complete");
   for (const entry of openFindings(state)) {
     if (entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion")) problems.push(`${entry.id}: ${entry.problem}`);
@@ -1419,7 +1437,7 @@ function receiptData(state: ImplementState, source: ReturnType<typeof captureSou
     prdJudge: state.prd.judge, baselineAttribution: state.baselineAttribution, completedAt: completion.completedAt,
     completionFingerprint: completion.fingerprint, sourceFingerprint: source?.digest ?? null, sourceAvailability: source === null ? "unavailable" : "captured", inputFingerprint: latest.inputFingerprint,
     verificationAttemptId: latest.id, unifiedVerdict: latest.verdict, phase: latest.phase, error: latest.error,
-    review: attemptSummary(latest).review, risk: attemptSummary(latest).risk,
+    reviews: attemptSummary(latest).reviews, risk: attemptSummary(latest).risk,
     mechanical: latest.mechanical, artifacts: state.artifacts, findings: state.findings, humanConfirmations: humanConfirmations(state), riskFindings: state.riskFindings,
     suite: state.suite, ownedFiles: source ? changedPathsSince(state.initialSource, source) : [], requirementCount: state.requirements.length,
     verificationBudget: verificationBudget(state, loadConfig(state.projectRoot).judge.retryBudget), openItems,
@@ -1431,7 +1449,7 @@ function implementationReport(state: ImplementState, receipt: ReturnType<typeof 
   const latest = state.verificationAttempts.at(-1)!;
   return ["# Implementation result", "", `Status: ${state.status}.`, `PRD: ${state.prdPath}.`,
     `Source: ${receipt.sourceFingerprint}.`, `Verification attempt: ${latest.id}.`, "", "## Result", "",
-    latest.review?.result?.summary ?? "Independent contract review was not completed.",
+    ...ROUTINE_REVIEW_ROLES.map((role) => `${role}: ${latest.reviews[role]?.result?.summary ?? "Independent review was not completed."}`),
     "", "## Actual verification", "", ...(latest.mechanical.length === 0 ? ["No required project suite was configured or detected; no suite execution is claimed."] : latest.mechanical.map((entry) => `- ${entry.status}: ${entry.command} (cwd ${entry.cwd}, exit ${entry.exitCode}, ${entry.durationMs} ms); ${entry.logPath}`)),
     "", ...state.artifacts.filter((entry) => entry.command === undefined).map((entry) => `- [${entry.description}](${entry.path}), collected ${entry.observedAt}; ${entry.provenance}${entry.target ? `; target ${entry.target}` : ""}${entry.environment ? `; environment ${entry.environment}` : ""}`),
     "", "## Review and remaining findings", "", ...state.findings.map((entry) => `- ${entry.id} [${entry.kind}, ${entry.status}] ${entry.requirementRefs.join(", ")}: ${entry.problem} ${entry.nextAction}`),

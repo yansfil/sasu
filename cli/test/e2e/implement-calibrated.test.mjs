@@ -15,7 +15,7 @@ test("routine success never resets the round budget while a distinct blocking ri
   let env = stub(root, REVIEW_PASS, riskResult());
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
   let state = readState(root);
-  assert.equal(state.verificationAttempts[0].review.verdict, "PASS");
+  assert.equal(state.verificationAttempts[0].reviews.fidelity.verdict, "PASS");
   const riskId = state.riskFindings[0].id;
   env = stub(root, REVIEW_PASS, riskResult(riskId));
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
@@ -64,7 +64,7 @@ test("persistent backend errors terminate separately from implementation-fix rou
   assert.equal(before.verificationAttempts.length, 3);
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
   assert.equal(readState(root).verificationAttempts.length, 3);
-  assert.ok(before.verificationAttempts.every((attempt) => attempt.review?.result === null));
+  assert.ok(before.verificationAttempts.every((attempt) => attempt.reviews.fidelity?.result === null));
   ok(run(root, ["implement", "finalize", "--status", "blocked"]));
   const state = readState(root);
   const receipt = JSON.parse(fs.readFileSync(path.join(root, state.completion.receiptPath), "utf8"));
@@ -82,7 +82,7 @@ test("repeated identical pre-judge errors reach the harness bound and produce an
   }
   const before = readState(root);
   assert.equal(before.verificationAttempts.length, 3);
-  assert.ok(before.verificationAttempts.every((attempt) => attempt.error.stage === "preflight" && attempt.review === null));
+  assert.ok(before.verificationAttempts.every((attempt) => attempt.error.stage === "preflight" && attempt.reviews.fidelity === null));
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
   assert.equal(readState(root).verificationAttempts.length, 3, "the bound refuses a fourth execution");
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
@@ -91,18 +91,18 @@ test("repeated identical pre-judge errors reach the harness bound and produce an
   const receipt = JSON.parse(fs.readFileSync(path.join(root, state.completion.receiptPath), "utf8"));
   assert.equal(receipt.status, "blocked");
   assert.equal(receipt.delivery.eligible, false);
-  assert.equal(state.verificationAttempts.at(-1).review, null);
+  assert.equal(state.verificationAttempts.at(-1).reviews.fidelity, null);
 });
 
 test("high-risk and routine review execute concurrently on the same input with no duplicate suite", () => {
   const root = makeProject({ profile: "high-risk" });
   start(root);
-  const env = { ...stub(root, REVIEW_PASS, { verdict: "PASS", findings: [] }), SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:review": 800 }) };
+  const env = { ...stub(root, REVIEW_PASS, { verdict: "PASS", findings: [] }), SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:fidelity": 800 }) };
   ok(run(root, ["implement", "verify"], { env }));
   const attempt = readState(root).verificationAttempts[0];
-  assert.equal(attempt.review.verdict, "PASS");
+  assert.equal(attempt.reviews.fidelity.verdict, "PASS");
   assert.equal(attempt.risk.verdict, "PASS");
-  assert.ok(Date.parse(attempt.risk.startedAt) < Date.parse(attempt.review.finishedAt), "risk need not wait for routine review output");
+  assert.ok(Date.parse(attempt.risk.startedAt) < Date.parse(attempt.reviews.fidelity.finishedAt), "risk need not wait for routine review output");
   assert.equal(attempt.mechanical.length, 1);
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
 });

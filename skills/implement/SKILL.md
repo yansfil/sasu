@@ -12,13 +12,15 @@ description: |
 
 Implement the complete approved PRD and finish with an honest current receipt.
 Match the user's language.
+This experimental candidate replaces the comprehensive routine review with concurrent Fidelity and Code reviews.
+The Observer and Implementor responsibilities and user-facing commands remain the same.
 Before any repository write or mutating command, resolve the structural session role using the Observer reference below.
 In Herdr, the user-facing session observes and one marked Implementor executes; `$please` keeps specification in the main session until the PRD is ready.
 The benchmark coordinator is the explicit in-session Implementor when its contract requires that arrangement.
 
 ```text
 approved PRD -> autonomous implementation and actual QA
-  -> verify: required suites + one independent full-contract review
+  -> verify: required suites + concurrent Fidelity and Code reviews
   -> fix concrete findings and verify again within the recorded bound
   -> finalize: current complete, complete-pending-human, or blocked receipt
   -> authorized local or PR delivery
@@ -49,7 +51,7 @@ Read each directly linked reference completely when its condition applies.
 - Read the full Goal, Non-goals, Decisions, Behaviors, Technical structure, and Risks.
   Preserve all requirements and decision provenance without inventing scope.
 - The CLI executes the sealed required suites before independent review, records actual execution, validates evidence integrity, and pins the current inputs.
-- The independent reviewer compares the complete contract with implementation, permitted surrounding source, actual test results, shared observations, and prior findings.
+- Both independent reviewers compare the complete contract with implementation, permitted surrounding source, actual test results, shared observations, and prior findings.
   A high-risk run retains a distinct safety review with the same fixed inputs.
 - The implementor may collect and register its own QA evidence with honest provenance.
   The independent review decides whether those observations are sufficient.
@@ -156,17 +158,24 @@ The CLI records one attempt with fixed inputs:
 
 1. Validate the run, ownership, current contract/source, and registered evidence.
 2. Execute the sealed required suites once per identical command, cwd, and execution configuration.
-3. Independently review the complete contract against actual code, permitted surrounding source, test results, shared QA evidence, and prior findings.
+3. Run Fidelity and Code reviews concurrently against the same complete contract, actual code, permitted surrounding source, test results, shared QA evidence, and prior findings.
 4. For high-risk work, additionally review distinct data-loss, permission, destructive-action, and delivery-safety questions using the same fixed inputs.
 5. Persist actual calls, execution results, errors and their stages, finding history, timing, and current-input identity.
 
-The routine path uses one comprehensive review, regardless of the number of requirements.
-Its result records defects, optional advisories, and genuine human confirmations with concrete contract and evidence references.
+The routine path uses two independent reviews, regardless of the number of requirements.
+Fidelity owns complete intent and observable behavior fulfillment.
+Code review owns concrete implementation, integration, error-path and consequential design problems; cosmetic preferences remain advisory.
+Both use the same routine model profile and record separate results, timing, traces and actual provider calls in `reviews.fidelity` and `reviews.code`.
+Their results contain defects, optional advisories, and genuine human confirmations with concrete contract and evidence references.
+They replace the comprehensive reviewer; there is no third general judge or extra agent workflow step.
+One successful role cannot hide the other role's error or missing result.
 The harness validates structure and references; requirement satisfaction is independent semantic judgment, not a mechanical guarantee of zero omissions.
 A claimed PASS cannot override an accompanying open defect.
 
 Fix concrete defects and supply missing observations, then explicitly verify again.
-Prior open findings require an explicit resolved or unresolved disposition; omission from a later list never closes them.
+Both roles receive the same prior open findings and must give explicit dispositions.
+A prior issue closes only when both resolve it with evidence; an error, missing result or disputed disposition keeps it open.
+Distinct defects are not collapsed merely because they cite the same requirement.
 A real newly discovered omission in an unchanged file still counts when grounded in the approved contract and actual counterevidence.
 Do not launch extra adversarial review loops over the same contract.
 
@@ -186,12 +195,12 @@ sasu implement finalize
 ```
 
 Finalize reads state and hashes and refuses stale inputs, evidence corruption, unresolved defects, blocking risk, or unmet prerequisite authority.
-Successful finalization writes a v5 receipt and implementation result from v9 state.
+Successful finalization writes a `v5.parallel-review` receipt and implementation result from `v9.parallel-review` state, retaining both actual routine review records.
 Repeated finalize with unchanged inputs is idempotent.
 A permitted after-the-fact human confirmation may leave `complete-pending-human`; that status does not excuse an explicit open rejection.
 
 Do not report Done before the current status, receipt, and implementation result agree on a complete result.
-Report actual tests and observations, the full-contract review, unresolved items, and limitations without a requirement PASS table or a “100% execution verified” claim.
+Report actual tests and observations, both full-contract review results, unresolved items, and limitations without a requirement PASS table or a “100% execution verified” claim.
 
 Only the human closes or rejects a real confirmation item:
 
@@ -257,6 +266,6 @@ Do not proceed through credentials, billing, production data, destructive operat
 
 ## Final Report
 
-Report the implemented outcome and full PRD link, actual tests and QA observations, independent review result, current-input identity, and receipt path.
+Report the implemented outcome and full PRD link, actual tests and QA observations, independent Fidelity and Code review results, current-input identity, and receipt path.
 State the receipt status, delivery eligibility, open findings and human judgments, deviations, autonomous assumptions, timing when measured, and remaining risks.
 Separate implementation completion from local commit or PR delivery and from checks that were skipped, failed, or unavailable.

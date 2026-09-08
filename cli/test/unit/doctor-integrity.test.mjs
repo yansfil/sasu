@@ -40,7 +40,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
   for (const [slug, schema] of [["retired-schema-active", "v8"], ["future-active", "v99"]]) {
     assert.ok(section.lines.includes(
-      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v9; last supported commit: 488d3cc7d6e99742e7f68a1680fcb101710c8e20; use that matching CLI to inspect or retire the old run, or start a new slug`,
+      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v9.parallel-review; last supported commit: 3f549dcfff71fe1f7fa974a383f6e8a055ce8463; use that matching CLI to inspect or retire the old run, or start a new slug`,
     ));
     assert.ok(!section.lines.some((line) => line.startsWith(`retire candidate: ${slug} `)));
   }

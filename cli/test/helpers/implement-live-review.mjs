@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { reviewPrompt, renderDecisions } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { validateReviewResult } from "../../dist/judge/types.js";
-import { runJudge } from "../../dist/judge/runner.js";
+import { runJudge, judgeCallRecordFrom } from "../../dist/judge/runner.js";
 import { loadConfig } from "../../dist/config.js";
 import { prd } from "./implement-fixture.mjs";
 
@@ -37,7 +37,7 @@ function fixtureHumanSources(contract, intentContent) {
   };
 }
 
-function diagnosticValidator(t, variant, referenceContext) {
+function diagnosticValidator(t, variant, role, referenceContext) {
   let attempt = 0;
   const refs = (value) => Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : null;
   return (value) => {
@@ -48,12 +48,41 @@ function diagnosticValidator(t, variant, referenceContext) {
       findings: Array.isArray(value?.findings) ? value.findings.map((finding) => ({ kind: typeof finding?.kind === "string" ? finding.kind : null, requirementRefs: refs(finding?.requirementRefs), evidenceRefs: refs(finding?.evidenceRefs) })) : null,
       priorDispositions: Array.isArray(value?.priorDispositions) ? value.priorDispositions.map((entry) => ({ findingId: typeof entry?.findingId === "string" ? entry.findingId : null, status: typeof entry?.status === "string" ? entry.status : null, evidenceRefs: refs(entry?.evidenceRefs) })) : null,
     });
-    t.diagnostic(JSON.stringify({ variant, validatorAttempt: ++attempt,
+    t.diagnostic(JSON.stringify({ variant, role, validatorAttempt: ++attempt,
       validationError: typeof validated === "string" ? validated.slice(0, 2_000) : null,
       resultReferences: references.slice(0, 12_000), referencesTruncated: references.length > 12_000,
     }));
     return validated;
   };
+}
+
+async function evaluateRoles(config, variant, t, material, options) {
+  const roles = ["fidelity", "code"];
+  const startedAt = new Map();
+  const finishedAt = new Map();
+  const settled = await Promise.allSettled(roles.map(async (role) => {
+    startedAt.set(role, new Date().toISOString());
+    try {
+      const outcome = await runJudge(config, `smoke:implement:review:${role}:${variant}`, "routine", reviewPrompt(material, role),
+        diagnosticValidator(t, variant, role, material.referenceContext), options);
+      return { review: outcome.value, call: outcome.record };
+    } finally {
+      finishedAt.set(role, new Date().toISOString());
+    }
+  }));
+  // Preserve each actual execution before raising a partial failure or testing
+  // the fixture oracle. The successful peer must remain visible after an error.
+  const reviews = Object.fromEntries(settled.map((entry, index) => {
+    const role = roles[index];
+    const timing = { startedAt: startedAt.get(role), finishedAt: finishedAt.get(role) };
+    const result = entry.status === "fulfilled"
+      ? { status: "complete", ...timing, ...entry.value }
+      : { status: "error", ...timing, review: null, call: judgeCallRecordFrom(entry.reason), error: String(entry.reason) };
+    return [role, result];
+  }));
+  t.diagnostic(JSON.stringify({ variant, reviews }));
+  for (const role of roles) assert.equal(reviews[role].status, "complete", `${role} review failed: ${reviews[role].error ?? "no result"}`);
+  return reviews;
 }
 
 // This deliberately stays outside default suites. Unlike the fixture judge,
@@ -87,26 +116,29 @@ export async function evaluateLiveReview(backend, t) {
     fs.writeFileSync(path.join(root, "smoke.log"), observed.stdout);
     const requirementRefs = [...contract.rows.map((row) => row.id), ...contract.decisions.map((decision) => decision.id)];
     const referenceContext = { requirementRefs, evidenceRefs: ["PRD", "Goal", "Non-goals", "Decisions", "Behaviors", "Technical structure", "Risks", "intent", ...requirementRefs, "src/public.mjs", "smoke.log"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
-    const prompt = reviewPrompt({
+    const material = {
       prdText: contractText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed approved evaluation contract" },
       changeMaterial: [], runOwnedDiff: "", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, tail: observed.stdout }], evidence: [], artifacts: [],
       readablePaths: ["src/public.mjs", "smoke.log"], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] },
-    });
+    };
     const config = loadConfig(root);
     config.judge.profiles.routine = { primary: { backend, model: backend === "codex" ? "gpt-5.6-luna" : "claude-sonnet-5", effort: "xhigh" }, fallback: null };
-    const outcome = await runJudge(config, `smoke:implement:review:${variant}`, "routine", prompt,
-      diagnosticValidator(t, variant, referenceContext),
+    const reviews = await evaluateRoles(config, variant, t, material,
       { agentic: true, cwd: root, evidencePaths: ["src/public.mjs", "smoke.log"] });
-    assert.equal(outcome.record.backend, backend, "a fallback must not masquerade as the evaluated backend");
     const expected = { "middle-omission": "B17", "final-omission": "B30", unwired: "B28", "storage-failure": "B31" }[variant];
-    const trace = outcome.record.activity?.commands ?? [];
-    if (backend === "codex") {
-      assert.ok(trace.length > 0, "the omitted inline source must be read through production isolation");
-      assert.doesNotMatch(trace.join("\n"), /private\/decoy|\bgit\s|\bcurl\s|\bwget\s|\bnode\s/);
+    for (const outcome of Object.values(reviews)) {
+      assert.equal(outcome.call.backend, backend, "a fallback must not masquerade as the evaluated backend");
+      const trace = outcome.call.activity?.commands ?? [];
+      if (backend === "codex") {
+        assert.ok(trace.length > 0, "each role must read the omitted inline source through production isolation");
+        assert.doesNotMatch(trace.join("\n"), /private\/decoy|\bgit\s|\bcurl\s|\bwget\s|\bnode\s/);
+      }
     }
-    outcomes.push({ variant, expectedDefect: expected ?? null, review: outcome.value, call: outcome.record });
-    t.diagnostic(JSON.stringify(outcomes.at(-1)));
-    assertReviewBlockingRefs(outcome.value, expected ? [expected] : [], contract.decisions.map((decision) => decision.id));
+    outcomes.push({ variant, expectedDefect: expected ?? null, reviews });
+    t.diagnostic(JSON.stringify({ variant, expectedDefect: expected ?? null }));
+    // Union only for the fixed oracle. Keep all original findings above so
+    // duplicate findings are measurable and either role's extra blocker fails.
+    assertReviewBlockingRefs({ findings: Object.values(reviews).flatMap((entry) => entry.review.findings) }, expected ? [expected] : [], contract.decisions.map((decision) => decision.id));
   }
   return outcomes;
 }
@@ -125,11 +157,11 @@ export async function evaluateLiveVisual(t) {
   const intentContent = renderDecisions(contract);
   const artifact = { path: "visual.png", kind: "image", description: "Delivered character illustration", sha256, bytes: bytes.length, registeredAt: new Date().toISOString(), observedAt: new Date().toISOString(), provenance: "fixed visual fixture", target: "visual.png" };
   const referenceContext = { requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
-  const prompt = reviewPrompt({ prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [{ ...artifact, attachedImage: true }], artifacts: [artifact], readablePaths: ["visual.png"], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } });
+  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [{ ...artifact, attachedImage: true }], artifacts: [artifact], readablePaths: ["visual.png"], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
   const config = loadConfig(root);
   config.judge.profiles.routine = { primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" }, fallback: null };
-  const outcome = await runJudge(config, "smoke:implement:review:visual", "routine", prompt, diagnosticValidator(t, "visual", referenceContext), { agentic: true, cwd: root, evidencePaths: ["visual.png"], images: [imagePath] });
-  assert.equal(outcome.record.backend, "codex");
-  t.diagnostic(JSON.stringify({ case: "actual-image-attachment", review: outcome.value, call: outcome.record }));
-  assertReviewBlockingRefs(outcome.value, [], contract.decisions.map((decision) => decision.id));
+  const reviews = await evaluateRoles(config, "visual", t, material, { agentic: true, cwd: root, evidencePaths: ["visual.png"], images: [imagePath] });
+  for (const outcome of Object.values(reviews)) assert.equal(outcome.call.backend, "codex");
+  t.diagnostic(JSON.stringify({ case: "actual-image-attachment", variant: "visual" }));
+  assertReviewBlockingRefs({ findings: Object.values(reviews).flatMap((entry) => entry.review.findings) }, [], contract.decisions.map((decision) => decision.id));
 }

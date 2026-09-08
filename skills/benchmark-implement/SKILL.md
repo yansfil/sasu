@@ -97,7 +97,7 @@ The coordinator is the implementation executor for this benchmark.
 Do not spawn an implementation worker session and do not delegate implementation through a subagent.
 This preserves the coordinator's approved-PRD context while the prepared worktree still isolates the source tree and run records.
 Bind the implement run to the current session ID when initializing, and record the coordinator's actual runtime and model as the executor coordinates.
-Let that skill own start, autonomous implementation, actual QA, required suites, comprehensive review, finalization, and its receipt.
+Let that skill own start, autonomous implementation, actual QA, required suites, concurrent Fidelity and Code reviews, finalization, and its receipt.
 Do not reproduce or bypass implement commands in this skill.
 Treat `complete`, `complete-pending-human`, and `blocked` receipts as analyzable outcomes.
 Do not call a pending-human or blocked run successful unless its case contract expected that terminal state.
@@ -159,7 +159,7 @@ It then calculates statuses, stages, timing, retry counts, repeated identical-in
 The evaluator judges only process behavior such as flow adherence, recovery, review efficiency, evidence honesty, and session efficiency.
 
 Do not score UI taste, entertainment value, code elegance, visual polish, or general product quality.
-The harness records the comprehensive reviewer's semantic contract judgment; it does not mechanically guarantee zero omissions.
+The candidate harness records both Fidelity and Code reviewers' semantic contract judgments and their separate actual executions; it does not mechanically guarantee zero omissions.
 For workflow-quality pilots, separately evaluate planted middle/end omissions, disconnected entry points, and missing data-failure handling against fixed expectations with a real backend.
 Do not claim fixture success proves that omission detection worked live.
 This pilot is evaluation work, not an extra mandatory workflow stage for users.

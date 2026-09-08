@@ -9,6 +9,8 @@ import { scratchDir } from "../scratch.mjs";
 import { stateFixture, attemptFixture, AT } from "../helpers/implement-state.mjs";
 import { assertNoActiveVerification, beginVerification, finishVerification, completeVerificationExecution, prepareVerificationExecution, recordVerificationExecution, recoverVerification, progressVerification } from "../../dist/implement/verification-activity.js";
 import { loadState, persistState } from "../../dist/implement/store.js";
+import { reconcileReviewFindings } from "../../dist/implement/convergence.js";
+import { REVIEW_PASS, defect } from "../helpers/implement-fixture.mjs";
 
 function fixture(t) {
   const root = scratchDir("sasu-verification-activity-");
@@ -89,4 +91,25 @@ test("settled groups leave the live lease only after process absence is proved",
   completeVerificationExecution(f.statePath, f.state, child.pid);
   assert.deepEqual(f.reload().activeVerification.executionPids, []);
   finishVerification(f.statePath, f.state);
+});
+
+test("interrupted review preserves settled findings for repair without applying a recorded round twice", async (t) => {
+  for (const alreadyRecorded of [false, true]) {
+    const f = fixture(t);
+    const review = { invocationId: "J1", startedAt: AT, finishedAt: AT, durationMs: 0,
+      verdict: "FAIL", result: { ...REVIEW_PASS, findings: [defect()] }, judge: null, error: null };
+    const attempt = attemptFixture({ phase: "review", reviews: { fidelity: review, code: null }, verdict: alreadyRecorded ? "ERROR" : "NOT_RUN" });
+    if (alreadyRecorded) f.state.findings = reconcileReviewFindings([], review.result, attempt.id, AT);
+    beginVerification(f.statePath, f.state, attempt);
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = dead.pid; });
+    const recovered = await recoverVerification(f.statePath, f.reload());
+    assert.equal(recovered.verificationAttempts[0].error.code, "verification-interrupted");
+    assert.equal(recovered.verificationAttempts[0].reviews.code, null);
+    assert.equal(recovered.findings.length, 1);
+    assert.equal(recovered.findings[0].id, "F1");
+    assert.equal(recovered.findings[0].status, "open");
+    assert.equal(recovered.findings[0].history.length, 1, "recovery cannot duplicate settled finding history");
+    assert.deepEqual(recovered.verificationAttempts[0].reviews.fidelity, review);
+  }
 });

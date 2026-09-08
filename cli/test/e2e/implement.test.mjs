@@ -8,7 +8,7 @@ import { PRD_PATH, STATE_PATH, REVIEW_PASS, makeProject, prd, readState, run, st
 
 const QA_FIXTURE = fs.readFileSync(path.resolve(import.meta.dirname, "../fixtures/prelint/qa-clean.md"), "utf8");
 
-test("thirty requirements and all decisions reach one independent review with no requirement PASS ledger", () => {
+test("thirty requirements and all decisions reach both independent reviews with no requirement PASS ledger", () => {
   const root = makeProject({ count: 30 });
   start(root);
   const env = stub(root);
@@ -16,26 +16,28 @@ test("thirty requirements and all decisions reach one independent review with no
   const verified = run(root, ["implement", "verify"], { env });
   ok(verified);
   const state = readState(root);
-  assert.equal(state.schema, "sasu.implement.state.v9");
+  assert.equal(state.schema, "sasu.implement.state.v9.parallel-review");
   assert.equal(state.requirements.length, 30);
   assert.equal(state.rows, undefined);
   for (const requirement of state.requirements) assert.deepEqual(Object.keys(requirement).sort(), ["behavior", "decisionIds", "id"]);
-  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_review.prompt.txt"), "utf8");
+  for (const role of ["fidelity", "code"]) {
+  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.prompt.txt`), "utf8");
   for (let index = 1; index <= 30; index++) assert.ok(prompt.includes(`Requirement ${index}:`), `B${index} must not be omitted`);
   assert.ok(prompt.includes("Preserve every value in the approved request."));
   assert.ok(prompt.includes("The user requested all values."));
   assert.ok(prompt.includes(observation));
-  assert.deepEqual(fs.readdirSync(env.SASU_JUDGE_STUB_CAPTURE_DIR).filter((name) => name.endsWith(".prompt.txt")), ["implement_review.prompt.txt"]);
+  }
+  assert.deepEqual(fs.readdirSync(env.SASU_JUDGE_STUB_CAPTURE_DIR).filter((name) => name.endsWith(".prompt.txt")), ["implement_code.prompt.txt", "implement_fidelity.prompt.txt"]);
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
   const attempt = state.verificationAttempts.at(-1);
   assert.equal(attempt.verdict, "PASS");
   assert.equal(attempt.mechanical.length, 1);
   assert.equal(attempt.mechanical[0].exitCode, 0);
   assert.ok(fs.readFileSync(path.join(root, attempt.mechanical[0].logPath), "utf8").includes("REAL-SUITE-OUTPUT"));
-  assert.deepEqual(attempt.review.result, REVIEW_PASS);
+  for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result, REVIEW_PASS);
   const finalized = ok(run(root, ["implement", "finalize"]));
   const receipt = JSON.parse(fs.readFileSync(path.join(root, finalized.detail.completion.receiptPath), "utf8"));
-  assert.equal(receipt.schema, "sasu.implement.receipt.v5");
+  assert.equal(receipt.schema, "sasu.implement.receipt.v5.parallel-review");
   assert.equal(readState(root).status, "complete");
   assert.equal(receipt.rows, undefined);
   assert.equal(receipt.score, undefined);
@@ -67,7 +69,7 @@ test("a failed mandatory suite is an actual failed attempt and leaves the correc
   const attempt = readState(root).verificationAttempts.at(-1);
   assert.equal(attempt.error.stage, "mechanical");
   assert.equal(attempt.mechanical[0].exitCode, 7);
-  assert.equal(attempt.review, null);
+  assert.equal(attempt.reviews.fidelity, null);
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
   assert.equal(readState(root).status, "active");
   assert.notEqual(run(root, ["implement", "finalize", "--status", "blocked"]).status, 0);
@@ -90,7 +92,7 @@ test("retired commands and old state schemas fail explicitly instead of replayin
   assert.notEqual(refused.status, 0);
   assert.match(refused.json.message, /v8/);
   assert.match(refused.json.message, /v9/);
-  assert.match(refused.json.message, /488d3cc/);
+  assert.match(refused.json.message, /3f549dc/);
 });
 
 test("an empty source change is recorded as preflight failure rather than a successful review", () => {
@@ -100,7 +102,7 @@ test("an empty source change is recorded as preflight failure rather than a succ
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
   const attempt = readState(root).verificationAttempts.at(-1);
   assert.equal(attempt.error.stage, "preflight");
-  assert.equal(attempt.review, null);
+  assert.equal(attempt.reviews.fidelity, null);
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
   assert.notEqual(run(root, ["implement", "finalize", "--status", "blocked"]).status, 0);
   assert.equal(readState(root).status, "active");
@@ -292,7 +294,7 @@ test("an unborn Git repository still requires attribution and keeps its files in
   const env = stub(root);
   registerEvidence(root);
   ok(run(root, ["implement", "verify"], { env }));
-  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_review.prompt.txt"), "utf8");
+  const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
   assert.ok(prompt.includes("impl.txt"));
   assert.ok(prompt.includes("package.json"));
 });
@@ -414,7 +416,7 @@ test("a successful command that changes product source cannot earn a current rev
   assert.equal(attempt.mechanical[0].exitCode, 0);
   assert.equal(attempt.mechanical[0].mutatedTree, true);
   assert.equal(attempt.mechanical[0].status, "FAIL");
-  assert.equal(attempt.review, null);
+  assert.equal(attempt.reviews.fidelity, null);
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
   assert.notEqual(run(root, ["implement", "finalize"]).status, 0);
   assert.notEqual(run(root, ["implement", "finalize", "--status", "blocked"]).status, 0);
@@ -427,8 +429,8 @@ test("a backend without bounded evidence access fails visibly instead of reviewi
   const env = { ...stub(root), SASU_JUDGE_STUB_NO_AGENTIC: "1" };
   assert.notEqual(run(root, ["implement", "verify"], { env }).status, 0);
   const attempt = readState(root).verificationAttempts.at(-1);
-  assert.equal(attempt.review.result, null);
-  assert.match(attempt.review.error.message, /requires isolated read-only evidence access/);
+  assert.equal(attempt.reviews.fidelity.result, null);
+  assert.match(attempt.reviews.fidelity.error.message, /requires isolated read-only evidence access/);
   assert.equal(fs.existsSync(env.SASU_JUDGE_STUB_CAPTURE_DIR), false);
   assert.notEqual(run(root, ["implement", "finalize"]).status, 0);
 });

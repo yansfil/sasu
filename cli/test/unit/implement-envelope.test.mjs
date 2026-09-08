@@ -13,22 +13,26 @@ function material(overrides = {}) {
 test("the whole-review input distinguishes real execution from collection metadata and attributed claims", () => {
   const observation = { kind: "log", path: "agents/observed.log", sha256: "a".repeat(64), bytes: 12, description: "flow worked", registeredAt: "2026-09-08T01:00:00Z", provenance: "operator browser drive", observedAt: "2026-09-08T00:00:00Z", target: "dev browser", environment: "local fixture" };
   const command = { ...observation, path: "agents/suite.log", command: "npm test", cwd: ".", exitCode: 0 };
-  const prompt = reviewPrompt(material({ artifacts: [observation, command], claims: [{ origin: "human", subject: "amendment", text: "approved request" }, { origin: "observer", subject: "diagnosis", text: "likely complete" }, { origin: "solver", subject: "diagnosis", text: "possible missing fixture" }] }));
-  assert.match(prompt, /agent-registered at 2026-09-08T01:00:00Z/);
-  assert.match(prompt, /description as the implementer's claim, not a harness observation/);
-  assert.match(prompt, /declared collection source=operator browser drive; observedAt=2026-09-08T00:00:00Z/);
-  assert.match(prompt, /the harness ran `npm test`.*exit=0/);
-  assert.match(prompt, /target=dev browser; environment=local fixture/);
-  for (const text of ["approved request", "likely complete", "possible missing fixture"]) assert.ok(prompt.includes(text));
-  assert.match(prompt, /ATTRIBUTED CLAIMS \(not observations\)/);
-  assert.match(prompt, /A build cannot establish rendered UI/);
+  const input = material({ artifacts: [observation, command], claims: [{ origin: "human", subject: "amendment", text: "approved request" }, { origin: "observer", subject: "diagnosis", text: "likely complete" }, { origin: "solver", subject: "diagnosis", text: "possible missing fixture" }] });
+  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code")]) {
+    assert.match(prompt, /agent-registered at 2026-09-08T01:00:00Z/);
+    assert.match(prompt, /description as the implementer's claim, not a harness observation/);
+    assert.match(prompt, /declared collection source=operator browser drive; observedAt=2026-09-08T00:00:00Z/);
+    assert.match(prompt, /the harness ran `npm test`.*exit=0/);
+    assert.match(prompt, /target=dev browser; environment=local fixture/);
+    for (const text of ["approved request", "likely complete", "possible missing fixture"]) assert.ok(prompt.includes(text));
+    assert.match(prompt, /ATTRIBUTED CLAIMS \(not observations\)/);
+    assert.match(prompt, /A build cannot establish rendered UI/);
+  }
 });
 
 test("an empty evidence or suite list reports no observation and prior findings cannot disappear through omission", () => {
-  const prompt = reviewPrompt(material());
-  assert.match(prompt, /No required suite commands were recorded/);
-  assert.match(prompt, /none registered; do not claim runtime QA occurred/);
-  assert.match(prompt, /Disappearance does not resolve it/);
-  assert.match(prompt, /unchanged file is a defect/);
-  assert.match(prompt, /Older observations retain their original date and target/);
+  for (const role of ["fidelity", "code"]) {
+    const prompt = reviewPrompt(material(), role);
+    assert.match(prompt, /No required suite commands were recorded/);
+    assert.match(prompt, /none registered; do not claim runtime QA occurred/);
+    assert.match(prompt, /Disappearance does not resolve it/);
+    assert.match(prompt, /unchanged file is a defect/);
+    assert.match(prompt, /Older observations retain their original date and target/);
+  }
 });

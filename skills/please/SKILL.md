@@ -218,7 +218,7 @@ Rules:
 - Existing or old-schema runs are not resumed or migrated. Start a new topic slug after explicitly retiring obsolete state.
 - Require the Risks section's human-owned prerequisites to have been resolved by the main session before dispatch.
   If a human-owned blocker remains, emit `OBSERVER_BLOCK`; do not ask from the Implementor pane.
-- Register useful observations at run level with provenance, execute required suites and one independent full-contract review through verify, and use state-only finalize.
+- Register useful observations at run level with provenance, execute required suites and concurrent independent Fidelity and Code reviews through verify, and use state-only finalize.
   A high-risk run retains a distinct safety check; open risks count toward the correction bound.
   A first failed verify remains active, and an exhausted or persistently failed attempt closes honestly with `finalize --status blocked`.
   Pending permitted human judgment may travel with delivery, but explicit open rejection blocks it.

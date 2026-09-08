@@ -12,6 +12,7 @@ const RUN_SCHEMA = "sasu.benchmark-run.v2";
 const QUALITATIVE_SCHEMA = "sasu.benchmark-qualitative.v1";
 const REPORT_SCHEMA = "sasu.benchmark-report.v2";
 const COMPARISON_SCHEMA = "sasu.benchmark-comparison.v2";
+const REVIEW_ROLES = ["fidelity", "code"];
 const DIMENSIONS = [
   "flowAdherence",
   "recoveryDiscipline",
@@ -400,12 +401,18 @@ function hasJudgeExecution(record) {
   return Boolean(record && record.attempts + (record.fallback?.attempts ?? 0) > 0);
 }
 
+function completedReviews(reviews) {
+  return REVIEW_ROLES.every(role => reviews?.[role]?.result && ["PASS", "FAIL"].includes(reviews[role].verdict));
+}
+
 function stageSet(state, receipt) {
   const stages = new Set(["start"]);
   const attempts = state.verificationAttempts;
   if (attempts.length) stages.add("verification");
   if (attempts.some(attempt => attempt.mechanical.length)) stages.add("mechanical");
-  if (attempts.some(attempt => hasJudgeExecution(attempt.review?.judge))) stages.add("review");
+  // Stage footprint records work that happened, including a partial pair.
+  // Completion separately requires both roles' completed semantic results.
+  if (attempts.some(attempt => REVIEW_ROLES.some(role => hasJudgeExecution(attempt.reviews[role]?.judge)))) stages.add("review");
   if (attempts.some(attempt => hasJudgeExecution(attempt.risk?.judge))) stages.add("risk");
   if (receipt.completedAt) stages.add("finalize");
   return stages;
@@ -415,7 +422,7 @@ function repeatedFingerprintRuns(state) {
   const seen = new Set();
   let repeats = 0;
   for (const attempt of state.verificationAttempts) {
-    if (!hasJudgeExecution(attempt.review?.judge) && !hasJudgeExecution(attempt.risk?.judge)) continue;
+    if (!REVIEW_ROLES.some(role => hasJudgeExecution(attempt.reviews[role]?.judge)) && !hasJudgeExecution(attempt.risk?.judge)) continue;
     const fingerprint = attempt.inputFingerprint;
     if (seen.has(fingerprint)) repeats += 1;
     else seen.add(fingerprint);
@@ -462,8 +469,17 @@ function modernTiming(state, receipt) {
     }
     if (!Number.isFinite(escalation.durationMs) || escalation.durationMs < 0) throw new Error("invalid solver invocation duration");
   }
+  const reviewExecutions = attempts.flatMap(attempt => REVIEW_ROLES.flatMap(role => {
+    const review = attempt.reviews[role];
+    return review ? [{
+      attemptId: attempt.id, role, invocationId: review.invocationId,
+      startedAt: review.startedAt, finishedAt: review.finishedAt, durationMs: review.durationMs,
+      verdict: review.verdict, error: review.error, judge: review.judge,
+    }] : [];
+  }));
   const judges = [
-    ...attempts.flatMap(attempt => [attempt.review?.judge, attempt.risk?.judge]),
+    ...reviewExecutions.map(review => review.judge),
+    ...attempts.map(attempt => attempt.risk?.judge),
     ...state.escalations.map(escalation => escalation.judge),
   ].filter(Boolean);
   // JudgeCallRecord resets its clock/count on fallback. Both backend windows
@@ -491,6 +507,7 @@ function modernTiming(state, receipt) {
     judgeSeconds: judgeIntervals.reduce((sum, [begin, end]) => sum + end - begin, 0) / 1000,
     judgeCalls: backendRuns.reduce((sum, judge) => sum + judge.attempts, 0),
     judgeInvocations: judges.filter(hasJudgeExecution).length,
+    reviewExecutions,
     solverInvocationSeconds: state.escalations.reduce((sum, escalation) => sum + escalation.durationMs, 0) / 1000,
     answeringUsage: judges.reduce((usage, judge) => ({
       inputTokens: usage.inputTokens + (judge.usage?.inputTokens || 0),
@@ -672,10 +689,19 @@ function commandReport(options) {
   const receiptPath = path.join(runDir, "receipt.json");
   const statePath = path.join(runDir, "state.json");
   const receipt = readJson(receiptPath, "implementation receipt");
-  assertSchema(receipt, "sasu.implement.receipt.v5", "implementation receipt");
+  if (receipt.schema !== "sasu.implement.receipt.v5.parallel-review") {
+    throw new Error(`implementation receipt received schema ${receipt.schema ?? "missing"}; expected sasu.implement.receipt.v5.parallel-review; last unified reader 3f549dcfff71fe1f7fa974a383f6e8a055ce8463. Start a new run with the candidate contract.`);
+  }
   const state = readJson(statePath, "implementation state");
-  assertSchema(state, "sasu.implement.state.v9", "implementation state");
-  if (![state.verificationAttempts, state.findings, state.riskFindings, state.escalations, state.artifacts].every(Array.isArray)) throw new Error("invalid v9 execution ledger");
+  if (state.schema !== "sasu.implement.state.v9.parallel-review") {
+    throw new Error(`implementation state received schema ${state.schema ?? "missing"}; expected sasu.implement.state.v9.parallel-review; last unified reader 3f549dcfff71fe1f7fa974a383f6e8a055ce8463. Start a new run with the candidate contract.`);
+  }
+  if (![state.verificationAttempts, state.findings, state.riskFindings, state.escalations, state.artifacts].every(Array.isArray)) throw new Error("invalid parallel review execution ledger");
+  for (const attempt of state.verificationAttempts) {
+    if (!attempt.reviews || REVIEW_ROLES.some(role => !Object.hasOwn(attempt.reviews, role))) {
+      throw new Error(`verification attempt ${attempt.id} must record both review roles, using null for unrun work`);
+    }
+  }
   if (!state.projectRoot || canonicalPath(state.projectRoot) !== canonicalPath(prepared.record.worktreePath)) {
     throw new Error("implementation state does not belong to the prepared fresh worktree");
   }
@@ -744,6 +770,8 @@ function commandReport(options) {
     || typeof receipt.completionFingerprint !== "string"
     || !receipt.completionFingerprint
     || receipt.completionFingerprint !== state.completion?.fingerprint
+    || !completedReviews(receipt.reviews)
+    || !completedReviews(state.verificationAttempts.at(-1)?.reviews)
   );
   const evaluationRequired = contract.evaluation?.required === true;
   const evaluationAvailable = qualitative !== null && qualitative.sessionAnalysis.coverage !== "unavailable";
@@ -824,7 +852,10 @@ function commandReport(options) {
       verifyAttempts,
       verifyAttemptLimit: contract.expected.maxVerifyAttempts ?? null,
       repeatedIdenticalInputReviews: repeatedFingerprintRuns(state),
-      reviewInvocations: state.verificationAttempts.filter(attempt => hasJudgeExecution(attempt.review?.judge)).length,
+      reviewInvocations: timing.reviewExecutions.filter(review => hasJudgeExecution(review.judge)).length,
+      reviewInvocationsByRole: Object.fromEntries(REVIEW_ROLES.map(role => [role,
+        timing.reviewExecutions.filter(review => review.role === role && hasJudgeExecution(review.judge)).length,
+      ])),
       riskInvocations: state.verificationAttempts.filter(attempt => hasJudgeExecution(attempt.risk?.judge)).length,
       solverInvocations: state.escalations.filter(escalation => hasJudgeExecution(escalation.judge)).length,
       executionErrorsByStage: state.verificationAttempts.filter(attempt => attempt.error).reduce((counts, attempt) => {

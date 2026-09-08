@@ -54,7 +54,7 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   const stateDir = path.join(root, "agents", "runs", "merge-flow");
   const statePath = path.join(stateDir, "state.json");
   const state = {
-    schema: "sasu.implement.state.v9",
+    schema: "sasu.implement.state.v9.parallel-review",
     status: "complete",
     topicSlug: "merge-flow",
     projectRoot: root,
@@ -64,7 +64,7 @@ function initMergeFixture({ includeDelivery = true } = {}) {
   if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };
   write(statePath, JSON.stringify(state, null, 2));
   write(path.join(stateDir, "receipt.json"), JSON.stringify({
-    schema: "sasu.implement.receipt.v5",
+    schema: "sasu.implement.receipt.v5.parallel-review",
     status: "complete",
     completionFingerprint: "fixture-completion",
     ownedFiles: ["src/feature.js"],
@@ -73,7 +73,10 @@ function initMergeFixture({ includeDelivery = true } = {}) {
     delivery: { eligible: true, reasons: [] },
     artifacts: [],
     mechanical: [{ command: "node src/check.js", cwd: root, exitCode: 0, finishedAt: "2026-07-14T11:00:00Z" }],
-    review: { verdict: "PASS", result: { summary: "The complete contract matches the implementation.", findings: [] } },
+    reviews: {
+      fidelity: { verdict: "PASS", result: { summary: "The complete contract matches the implementation.", findings: [] } },
+      code: { verdict: "PASS", result: { summary: "Implementation and integration paths have no concrete defects.", findings: [] } },
+    },
     findings: [],
     humanConfirmations: [],
     riskFindings: [],
@@ -311,6 +314,9 @@ test("permitted pending human judgments ship and the body describes shared tests
   assert.match(draft, /F1.*The user judges the wording/);
   assert.match(draft, /node src\/check.js/);
   assert.match(draft, /The complete contract matches the implementation/);
+  assert.match(draft, /Fidelity review: PASS/);
+  assert.match(draft, /Code review: PASS/);
+  assert.match(draft, /Implementation and integration paths have no concrete defects/);
   assert.doesNotMatch(draft, /## Behaviors|Verification Lanes|Acceptance lane|Fidelity lane|Score:|--row/);
   const output = JSON.parse(run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
   assert.equal(output.ok, true);
@@ -350,8 +356,52 @@ test("receipt schema is checked before completed status is consumed", () => {
   write(path.join(fixture.stateDir, "receipt.json"), JSON.stringify({ schema: "sasu.implement.receipt.v4", status: "complete" }));
   const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /received schema sasu.implement.receipt.v4; expected sasu.implement.receipt.v5; last supported commit 488d3cc/);
+  assert.match(result.stderr, /received schema sasu.implement.receipt.v4; expected sasu.implement.receipt.v5.parallel-review; last supported commit 3f549dc/);
   assert.equal(fs.existsSync(fixture.ghLog), false);
+});
+
+test("delivery requires both completed role results even when eligibility is recorded", () => {
+  for (const [role, value] of [
+    ["fidelity", null],
+    ["code", null],
+    ["code", { verdict: "ERROR", result: null }],
+    ["fidelity", { verdict: "PASS", result: null }],
+  ]) {
+    const fixture = initLocalFixture();
+    const receiptPath = path.join(fixture.stateDir, "receipt.json");
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+    receipt.reviews[role] = value;
+    write(receiptPath, JSON.stringify(receipt, null, 2));
+    const head = gitHead(fixture.root);
+    const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(`Receipt ${role} review has no completed result`));
+    assert.equal(gitHead(fixture.root), head);
+    assert.equal(fs.existsSync(fixture.ghLog), false);
+  }
+});
+
+test("delivery preserves historical role FAIL after the CLI settles human authority and risk", () => {
+  const fixture = initLocalFixture();
+  const receiptPath = path.join(fixture.stateDir, "receipt.json");
+  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  receipt.reviews.fidelity = {
+    verdict: "FAIL", result: { summary: "Prerequisite approval was pending during review.", findings: [] },
+  };
+  receipt.humanConfirmations = [{
+    id: "F1", kind: "human-confirmation", status: "resolved", problem: "Prerequisite approval.",
+    responses: [{ response: "confirmed", evidence: "I approve this unchanged result." }],
+  }];
+  receipt.risk = { verdict: "FAIL", result: { summary: "Declared risk needs acceptance." } };
+  receipt.riskFindings = [{ id: "RF1", severity: "blocking", status: "accepted", text: "Declared risk.", resolution: { evidence: "Accept this risk." } }];
+  write(receiptPath, JSON.stringify(receipt, null, 2));
+  const body = JSON.parse(run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
+  const draft = fs.readFileSync(path.join(fixture.root, body.bodyPath), "utf8");
+  assert.match(draft, /Fidelity review: FAIL/);
+  assert.match(draft, /Code review: PASS/);
+  assert.match(draft, /Distinct risk review: FAIL/);
+  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env });
+  assert.equal(JSON.parse(result.stdout).ok, true);
 });
 
 test("local delivery refuses unrelated dirty paths outside receipt ownership", () => {
