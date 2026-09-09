@@ -224,7 +224,13 @@ Every SKILL.md is a real file.
 A fresh Codex prompt-input load and a fresh Claude Skill invocation selected the staged implementation skill and sibling paths.
 Both local CLI shims reported contract version 0.10.0.
 Evidence is `agents/benchmarks/review-source-staging/result.json` and its referenced loading traces.
-This proves staged loading; installed global rollout is reported separately after the final checks.
+The implementation commit c80190a was fast-forwarded into the previously clean local main checkout.
+The canonical installer then rebuilt the CLI and installed all ten skills for both runtimes.
+All 27 Codex and 22 Claude effective contract files matched their canonical transformations, and every installed SKILL.md was a regular file.
+A fresh installed Codex prompt-input invocation discovered implement; the four changed built modules matched the tested isolated build byte-for-byte.
+The installed command reports contract version 0.10.0 and points to the main checkout.
+Installation evidence is /tmp/sasu-review-source-install.json and /tmp/sasu-review-source-installed-prompt.json.
+No remote push or product-run verification/finalization was performed.
 
 ## Existing product run boundary
 
