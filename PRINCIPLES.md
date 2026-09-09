@@ -19,6 +19,8 @@ The approved 2026-09-08 workflow plan explicitly changes the earlier per-AC proo
 See [the approved direction](docs/plans/2026-09-08-workflow-simplification.md); this is a policy change, not a reinterpretation.
 The subsequent approved production change uses parallel Fidelity and Code reviews with CLI-validated grouped assessment records.
 It changes the routine review and record shape without restoring per-AC execution, separate evidence obligations, or requirement lifecycles.
+The user-approved [2026-09-09 source exploration change](docs/plans/2026-09-09-review-input-capacity.md) explicitly replaces preselected-file-only review with autonomous discovery in a fixed product source copy.
+Reviewers choose the related files they inspect; the harness owns the copied boundary and input integrity.
 
 ## 1. Preserve every requirement and review the complete contract
 
@@ -32,7 +34,9 @@ One coherent observation can support multiple requirements.
 Independent Fidelity and Code reviews receive the same complete original inputs without the current peer verdict.
 Fidelity accounts for every Bn exactly once in grouped assessments with concrete rationale and actual evidence references.
 Code records its own substantive implementation and error-path grounds without a duplicate all-Bn accounting form.
-Satisfied assessments require actual supplied source, execution logs, or artifacts; PRD-only citations and source catalog metadata are insufficient.
+Satisfied assessments require actual inspected source, execution logs, or artifacts; PRD-only citations and file names are insufficient.
+Reviewers read the complete contract, start from the changes, and search the fixed product source copy for relevant callers, dependencies, and omitted behavior.
+The initial prompt points to complete documents and evidence instead of repeating the source tree and file catalog inline.
 Pending-human assessments preserve permitted after-the-fact judgment only through corresponding validated post-completion human findings, without asserting satisfaction or waiving prerequisites.
 The CLI guarantees structural coverage, execution facts, evidence integrity, current-input identity, ownership, authority, and an honest record.
 Whether the implementation satisfies the contract is semantic judgment by the independent reviewers, not a mechanical guarantee of correct conclusions or zero omissions.
@@ -111,6 +115,10 @@ A field belongs in a document only when the harness executes or compares it; do 
 
 Do not replace deleted commands with a required Markdown PASS checklist, flow-ID table, user mode, or manual coverage ledger.
 Reuse the existing command runner, snapshot, evidence registration, review sandbox, and receipt path.
+Copy the existing content-hashed product source set rather than requiring the implementor to predict and register every related source file.
+Keep product and evidence discovery inside the fixed copied tree; source access never grants writes, project execution, network, repository history, or access to the live worktree and other host data.
+Enforce that read boundary through native restrictions as well as command auditing.
+The minimal OS/runtime access needed to run the review engine is execution substrate, not additional review material.
 Parallel Fidelity and Code reviews share one attempt, lease, correction budget, and issue history; the distinct high-risk check retains a unique safety question.
 Review assessments live in the existing CLI-owned state history, not a second ledger or mandatory user document.
 

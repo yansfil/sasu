@@ -4,11 +4,12 @@
 // refactor cannot silently broaden judge activity.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENTIC_READ_MAX_ROUNDS, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
   assert.ok(args.includes("--safe-mode"));
+  assert.ok(args.includes("--restricted"), "customization isolation alone does not restrict native file reads");
   assert.ok(args.includes("--no-session-persistence"));
   assert.ok(args.includes("--disable-slash-commands"));
   const tools = args.indexOf("--tools");
@@ -36,8 +37,12 @@ test("codex judge argv carries the full isolation set", () => {
   assert.ok(args.includes("--ignore-user-config"), "must not load user config into the judge");
   const cdIndex = args.indexOf("-C");
   assert.ok(cdIndex >= 0 && args[cdIndex + 1] === "/tmp/work-root", "work root must be the empty temp dir, not the host repo");
-  const sandboxIndex = args.indexOf("--sandbox");
-  assert.equal(args[sandboxIndex + 1], "read-only", "sandbox must stay read-only (no writes/exfiltration)");
+  assert.ok(!args.includes("--sandbox"), "generic read-only permits outside source reads and must not override the scoped profile");
+  assert.ok(args.includes("--strict-config"), "unsupported CLIs must refuse the boundary instead of ignoring it");
+  assert.ok(args.includes('default_permissions="review-evidence"'));
+  assert.ok(args.includes('permissions.review-evidence.filesystem={":minimal"="read","/tmp/work-root"="read"}'), "only the fixed source root, not a tool-selected cwd, gets product file access");
+  assert.ok(args.includes("permissions.review-evidence.network.enabled=false"));
+  assert.ok(args.includes('approval_policy="never"'));
   assert.ok(args.includes("--ignore-rules"), "project rules must not alter a judge session");
   assert.ok(args.includes("--json"), "command activity must be observable");
   assert.deepEqual(args.slice(-4), ["--model", "gpt-5.6-luna", "--config", 'model_reasoning_effort="xhigh"']);
@@ -319,4 +324,90 @@ test("codex line auditor reports the first violating item in trace order", () =>
   const bad = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "rm -rf a.md" } });
   assert.equal(audit(ok), null);
   assert.equal(audit(bad).reason, "non-read-command");
+});
+
+test("exploration can discover and search only the staged source tree", () => {
+  const options = { agentic: true, explore: true, evidencePaths: ["src/api/save.ts", "src/view.tsx", "README.md"] };
+  const audit = (command, overrides = {}) => codexActivityProblem(JSON.stringify({
+    type: "item.completed", item: { type: "command_execution", command },
+  }), { ...options, ...overrides });
+  for (const command of [
+    "rg --files", "rg --files --hidden --no-ignore", "rg --files src", "rg --files -g '*.ts' .", "rg --files --glob='src/**'",
+    "rg --files missing", "rg save last-message.txt", "rg --files --hidden --no-ignore src agents/benchmarks/missing",
+    "rg -n 'save'", "rg -n -g '*.tsx' save src", "rg -n save ./src/api/", "sed -n '1,30p' ./src/api/save.ts",
+  ]) assert.equal(audit(command), null, command);
+  for (const command of [
+    "rg --files /etc", "rg save ..", "rg --files src/../../etc", "rg --files --glob '../*'",
+    "rg --files --glob='/etc/*'", "sed -n '1,30p' src", "sed -n '1,30p' missing",
+    "rg --pre sh save src", "rg -f README.md src", "rg --ignore-file README.md save src", "rg --files --follow",
+    'rg save "$HOME"', 'rg --files $(pwd)', "rg --files; cat /etc/passwd",
+  ]) assert.notEqual(audit(command), null, command);
+  assert.notEqual(audit("rg --files", { explore: false }), null, "exact-path callers retain their narrower contract");
+  assert.equal(audit("rg --files", { agentic: false }).reason, "prompt-only-shell");
+});
+
+test("exploration filters only an approved pipeline's stdout with bounded sed or rg", () => {
+  const options = { agentic: true, explore: true, evidencePaths: ["src/item.ts"] };
+  const event = (command) => JSON.stringify({ type: "item.completed", item: { type: "command_execution", command } });
+  const audit = (command, overrides = {}) => codexActivityProblem(event(command), { ...options, ...overrides });
+  for (const command of [
+    "rg -n save app components lib | sed -n '1,220p'",
+    "rg --files | rg -n 'item' | sed -n '1,20p'",
+    "sed -n '1,100p' src/item.ts | rg -F -e save | sed -n '2p'",
+    "rg --files |\nsed -n '1,20p'",
+    "/bin/zsh -lc \"rg --files | sed -n '1,20p'\"",
+    "rg --files | /bin/zsh -c \"sed -n '1,20p'\"",
+    "rg --files | sed -n '1p'; rg save src | sed -n '2p'",
+  ]) {
+    assert.equal(audit(command), null, command);
+    assert.equal(codexLineAuditor(options)(event(command)), null, `streaming: ${command}`);
+  }
+  for (const command of [
+    "sed -n '1p'",
+    "rg --files; sed -n '1p'", "rg --files && sed -n '1p'", "rg --files || sed -n '1p'",
+    "rg --files\nsed -n '1p'", "rg --files | sed -n '1p'; sed -n '2p'",
+    "rg --files | /bin/zsh -c \"sed -n '1p'; sed -n '2p'\"",
+    "rg --files | sed -n '1p' /etc/passwd", "rg --files | sed -n '1p' missing",
+    "rg --files | sed -n -f src/item.ts", "rg --files | sed -n '1e id'",
+    "rg --files | rg -f src/item.ts", "rg --files | rg --pre sh value",
+    "rg --files | rg value ../outside", "rg --files | rg value /etc",
+    "cat src/item.ts | sed -n '1p'", "rg --files /etc | sed -n '1p'",
+    "rg --files | sed -n '1p' > output", "rg --files | sed -n '1p' < src/item.ts",
+    "rg --files | sed -n '1p' |", "rg --files |; sed -n '1p'",
+    "rg -n 'literal | pipe' src/item.ts; sed -n '1p'",
+  ]) {
+    assert.notEqual(audit(command), null, command);
+    assert.notEqual(codexLineAuditor(options)(event(command)), null, `streaming: ${command}`);
+  }
+  assert.notEqual(audit("sed -n '1p' src/item.ts | sed -n '2p'", { explore: false }), null);
+  assert.notEqual(audit("sed -n '1p' src/item.ts | rg value", { explore: false }), null);
+  assert.equal(audit("rg value"), null, "standalone exploration rg retains default workspace search");
+});
+
+test("Claude exploration grants discovery only when agentic access is requested", () => {
+  assert.equal(claudePrintArgs({ model: null, agentic: true, explore: true })[claudePrintArgs({ model: null, agentic: true, explore: true }).indexOf("--tools") + 1], "Read,Grep,Glob");
+  const promptOnly = claudePrintArgs({ model: null, explore: true });
+  assert.equal(promptOnly[promptOnly.indexOf("--tools") + 1], "");
+});
+
+
+test("Codex exploration bounds actual read volume without rejecting many small reads", () => {
+  const options = { agentic: true, explore: true, evidencePaths: ["src/item.ts"] };
+  const event = (output) => JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "rg -n value src/item.ts", aggregated_output: output,
+  } });
+  const audit = codexLineAuditor(options);
+  for (let index = 0; index < AGENTIC_READ_MAX_ROUNDS + 1; index += 1) {
+    assert.equal(audit(event("x")), null, "30 small reads remain within the volume budget");
+  }
+  assert.equal(audit(event("x".repeat(AGENTIC_READ_MAX_OUTPUT_CHARS - AGENTIC_READ_MAX_ROUNDS - 1))), null);
+  assert.equal(codexActivityProblem(event("x".repeat(AGENTIC_READ_MAX_OUTPUT_CHARS)), options), null);
+  assert.equal(codexActivityProblem(event("x".repeat(AGENTIC_READ_MAX_OUTPUT_CHARS + 1)), options).reason,
+    "read-budget-exceeded", "an unterminated final trace event cannot bypass the output cap");
+  const overflow = audit(event("x"));
+  assert.equal(overflow.reason, "read-budget-exceeded");
+  assert.match(overflow.detail, /chars of read output/);
+  const exactPaths = codexLineAuditor({ ...options, explore: false });
+  for (let index = 0; index < AGENTIC_READ_MAX_ROUNDS; index += 1) assert.equal(exactPaths(event("x")), null);
+  assert.equal(exactPaths(event("x")).reason, "read-budget-exceeded", "ordinary exact-path callers retain their existing limit");
 });

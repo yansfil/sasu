@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { PRD_PATH, STATE_PATH, REVIEW_PASS, makeProject, prd, readState, run, start, stub, ok, registerEvidence, defect, reviewWithAssessments } from "../helpers/implement-fixture.mjs";
+import { REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
+import { PRD_PATH, STATE_PATH, REVIEW_PASS, makeProject, prd, readState, run, start, stub, ok, registerEvidence, defect, reviewWithAssessments, git } from "../helpers/implement-fixture.mjs";
+
+function reviewFile(env, role, relative) {
+  const { cwd } = JSON.parse(fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.options.json`), "utf8"));
+  return fs.readFileSync(path.join(cwd, relative), "utf8");
+}
 
 const QA_FIXTURE = fs.readFileSync(path.resolve(import.meta.dirname, "../fixtures/prelint/qa-clean.md"), "utf8");
 
@@ -22,10 +28,15 @@ test("thirty requirements receive grouped evidence grounds in independent review
   for (const requirement of state.requirements) assert.deepEqual(Object.keys(requirement).sort(), ["behavior", "decisionIds", "id"]);
   for (const role of ["fidelity", "code"]) {
   const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.prompt.txt`), "utf8");
-  for (let index = 1; index <= 30; index++) assert.ok(prompt.includes(`Requirement ${index}:`), `B${index} must not be omitted`);
-  assert.ok(prompt.includes("Preserve every value in the approved request."));
-  assert.ok(prompt.includes("The user requested all values."));
-  assert.ok(prompt.includes(observation));
+  const contract = reviewFile(env, role, REVIEW_INPUT_PATHS.contract);
+  const context = reviewFile(env, role, REVIEW_INPUT_PATHS.context);
+  for (let index = 1; index <= 30; index++) assert.ok(contract.includes(`Requirement ${index}:`), `B${index} must not be omitted`);
+  assert.ok(context.includes("Preserve every value in the approved request."));
+  assert.ok(context.includes("The user requested all values."));
+  assert.ok(reviewFile(env, role, REVIEW_INPUT_PATHS.evidence).includes(observation));
+  assert.equal(reviewFile(env, role, observation), fs.readFileSync(path.join(root, observation), "utf8"));
+  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.contract));
+  assert.ok(!prompt.includes(contract));
   }
   assert.deepEqual(fs.readdirSync(env.SASU_JUDGE_STUB_CAPTURE_DIR).filter((name) => name.endsWith(".prompt.txt")), ["implement_code.prompt.txt", "implement_fidelity.prompt.txt"]);
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
@@ -53,6 +64,47 @@ test("thirty requirements receive grouped evidence grounds in independent review
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n", "finalize runs neither tests nor review");
   ok(run(root, ["implement", "finalize"]));
   assert.equal(readState(root).verificationAttempts.length, 1);
+});
+
+test("large unrelated inventories and deleted source stay fully available without overflowing the review prompt", () => {
+  const root = makeProject({ count: 30, extraRows: ["| B31 | The obsolete removed.txt file is absent from the delivered product. | D-01 |"] });
+  fs.mkdirSync(path.join(root, "docs"));
+  const unrelated = Array.from({ length: 1_600 }, (_, index) => `docs/${"unrelated-context-".repeat(8)}${index}.md`);
+  for (const relative of unrelated) fs.writeFileSync(path.join(root, relative), "Unrelated course reference.\n");
+  const deleted = "DELETED-BEGIN\n" + "기존에 보존하던 동작\n".repeat(15_000) + "DELETED-END\n";
+  fs.writeFileSync(path.join(root, "removed.txt"), deleted);
+  git(root, ["add", "docs", "removed.txt"]);
+  git(root, ["-c", "user.name=test", "-c", "user.email=test@example.test", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture context"]);
+  start(root);
+  fs.unlinkSync(path.join(root, "removed.txt"));
+  const evidence = registerEvidence(root, { content: "QA-BEGIN\n" + "한글 실제 관찰\n".repeat(45_000) + "QA-END\n" });
+  const env = stub(root);
+  const fidelity = reviewWithAssessments(root);
+  fidelity.assessments[0].requirementRefs = fidelity.assessments[0].requirementRefs.filter((ref) => ref !== "B31");
+  const deletion = { requirementRefs: ["B31"], conclusion: "satisfied", rationale: "The complete baseline diff deletes removed.txt, including its first and last lines, and the current source snapshot has no such file.", evidenceRefs: [REVIEW_INPUT_PATHS.diff] };
+  fidelity.assessments.push(deletion);
+  const code = reviewWithAssessments(root, REVIEW_PASS, "code");
+  code.assessments.push(deletion);
+  fs.writeFileSync(env.SASU_JUDGE_STUB_FILE, JSON.stringify({ byPurpose: { "implement:fidelity": fidelity, "implement:code": code } }));
+  ok(run(root, ["implement", "verify"], { env }));
+  const attempt = readState(root).verificationAttempts.at(-1);
+  assert.ok(attempt.reviewContext.actualEvidenceRefs.includes(REVIEW_INPUT_PATHS.diff), "a complete deletion diff is actual evidence even when its old file no longer exists");
+  assert.ok(!attempt.reviewContext.actualEvidenceRefs.includes(REVIEW_INPUT_PATHS.contract));
+  for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result.assessments.find((entry) => entry.requirementRefs.includes("B31")), deletion);
+  for (const role of ["fidelity", "code"]) {
+    const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.prompt.txt`), "utf8");
+    assert.ok(prompt.length < 25_000, "repository and observation size must not exhaust the initial input budget");
+    assert.ok(!prompt.includes(unrelated[0]));
+    assert.ok(!prompt.includes("QA-BEGIN"));
+    const diff = reviewFile(env, role, REVIEW_INPUT_PATHS.diff);
+    assert.ok(diff.includes("-DELETED-BEGIN\n"));
+    assert.ok(diff.includes("-DELETED-END\n"));
+    assert.equal(diff.split("-기존에 보존하던 동작\n").length - 1, 15_000, "every deleted line must survive transport");
+    assert.equal(reviewFile(env, role, evidence), fs.readFileSync(path.join(root, evidence), "utf8"));
+    assert.equal(reviewFile(env, role, unrelated.at(-1)), fs.readFileSync(path.join(root, unrelated.at(-1)), "utf8"));
+    assert.equal(reviewFile(env, role, REVIEW_INPUT_PATHS.contract), fs.readFileSync(path.join(root, PRD_PATH), "utf8"));
+  }
+  ok(run(root, ["implement", "finalize"]));
 });
 
 test("a valid failed review stays active and repair appends a passing attempt without rewriting history", () => {
@@ -305,7 +357,7 @@ test("isolated starts carry source dirtiness and preserve its selected attributi
   assert.equal(runOwned.initialSource.entries.some((entry) => entry.path === "impl.txt"), false);
 });
 
-test("an unborn Git repository still requires attribution and keeps its files in the run-owned diff", () => {
+test("unborn additions retain their diff while hash-only pre-existing baselines report unavailable bytes honestly", () => {
   const root = makeProject();
   fs.rmSync(path.join(root, ".git"), { recursive: true, force: true });
   assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
@@ -330,8 +382,32 @@ test("an unborn Git repository still requires attribution and keeps its files in
   registerEvidence(root);
   ok(run(root, ["implement", "verify"], { env }));
   const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  assert.ok(prompt.includes("impl.txt"));
-  assert.ok(prompt.includes("package.json"));
+  const diff = reviewFile(env, "fidelity", REVIEW_INPUT_PATHS.diff);
+  assert.ok(diff.includes("impl.txt"));
+  assert.ok(diff.includes("package.json"));
+  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.diff));
+
+  const nonGit = makeProject();
+  fs.rmSync(path.join(nonGit, ".git"), { recursive: true, force: true });
+  fs.writeFileSync(path.join(nonGit, "existing.txt"), "PRE-RUN-EXISTING\n");
+  fs.writeFileSync(path.join(nonGit, "deleted.txt"), "PRE-RUN-DELETED\n");
+  start(nonGit);
+  assert.equal(readState(nonGit).initialSource.head, null);
+  fs.writeFileSync(path.join(nonGit, "existing.txt"), "MODIFIED-CURRENT-BODY\n");
+  fs.unlinkSync(path.join(nonGit, "deleted.txt"));
+  fs.writeFileSync(path.join(nonGit, "new.txt"), "GENUINELY-NEW-BODY\n");
+  const nonGitEnv = stub(nonGit);
+  ok(run(nonGit, ["implement", "verify"], { env: nonGitEnv }));
+  for (const role of ["fidelity", "code"]) {
+    const partial = reviewFile(nonGitEnv, role, REVIEW_INPUT_PATHS.diff);
+    assert.match(partial, /existing\.txt \(modified; pre-run bytes were not captured\)/);
+    assert.match(partial, /deleted\.txt \(deleted; pre-run bytes were not captured\)/);
+    assert.match(partial, /Do not infer unchanged behavior or a complete deletion review/);
+    assert.doesNotMatch(partial, /byte-identical/);
+    assert.doesNotMatch(partial, /diff --git[^\n]*(existing|deleted)\.txt/, "a hash-only baseline cannot produce invented before/after hunks");
+    assert.ok(partial.includes("+GENUINELY-NEW-BODY\n"), "genuine post-start additions still have an exact diff");
+    assert.equal(reviewFile(nonGitEnv, role, "existing.txt"), "MODIFIED-CURRENT-BODY\n", "unavailable old bytes do not hide the current implementation");
+  }
 });
 
 test("worktree.enabled isolates the first run too", () => {

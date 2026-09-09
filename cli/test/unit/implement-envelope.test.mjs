@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { reviewPrompt } from "../../dist/implement/prompts.js";
+import { reviewPrompt, reviewInputDocuments } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { prd } from "../helpers/implement-fixture.mjs";
 
 function material(overrides = {}) {
   const prdText = prd();
   const contract = parseImplementContract(prdText);
-  return { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, referenceContext: { requiredRequirementRefs: contract.rows.map((entry) => entry.id), actualEvidenceRefs: [], requirementRefs: [...contract.rows.map((entry) => entry.id), ...contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD"], priorFindingIds: [], humanSources: {} }, intentSource: { routing: "decisions", content: "User decisions", explanation: "approved" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [], artifacts: [], readablePaths: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  return { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, referenceContext: { requiredRequirementRefs: contract.rows.map((entry) => entry.id), actualEvidenceRefs: [], requirementRefs: [...contract.rows.map((entry) => entry.id), ...contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD"], priorFindingIds: [], humanSources: {} }, intentSource: { routing: "decisions", content: "User decisions", explanation: "approved" }, changedPaths: [], runOwnedDiff: "", checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
 }
 
 test("the whole-review input distinguishes real execution from collection metadata and attributed claims", () => {
   const observation = { kind: "log", path: "agents/observed.log", sha256: "a".repeat(64), bytes: 12, description: "flow worked", registeredAt: "2026-09-08T01:00:00Z", provenance: "operator browser drive", observedAt: "2026-09-08T00:00:00Z", target: "dev browser", environment: "local fixture" };
   const command = { ...observation, path: "agents/suite.log", command: "npm test", cwd: ".", exitCode: 0 };
   const input = material({ artifacts: [observation, command], claims: [{ origin: "human", subject: "amendment", text: "approved request" }, { origin: "observer", subject: "diagnosis", text: "likely complete" }, { origin: "solver", subject: "diagnosis", text: "possible missing fixture" }] });
-  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code")]) {
+  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code")].map((text) => text + "\n" + Object.values(reviewInputDocuments(input)).join("\n"))) {
     assert.match(prompt, /agent-registered at 2026-09-08T01:00:00Z/);
     assert.match(prompt, /description as the implementer's claim, not a harness observation/);
     assert.match(prompt, /declared collection source=operator browser drive; observedAt=2026-09-08T00:00:00Z/);
@@ -28,11 +28,27 @@ test("the whole-review input distinguishes real execution from collection metada
 
 test("an empty evidence or suite list reports no observation and prior findings cannot disappear through omission", () => {
   for (const role of ["fidelity", "code"]) {
-    const prompt = reviewPrompt(material(), role);
+    const input = material();
+    const prompt = reviewPrompt(input, role) + "\n" + Object.values(reviewInputDocuments(input)).join("\n");
     assert.match(prompt, /No required suite commands were recorded/);
     assert.match(prompt, /none registered; do not claim runtime QA occurred/);
     assert.match(prompt, /Disappearance does not resolve it/);
-    assert.match(prompt, /unchanged file is a defect/);
-    assert.match(prompt, /Older observations retain their original date and target/);
+    assert.match(prompt, /concrete omission in unchanged code still counts/);
+    assert.match(prompt, /Older observations keep their original date and target/);
   }
+});
+
+
+test("a long canonical human source remains complete once without changing quote authority", () => {
+  const input = material();
+  const original = "사용자가 승인한 정확한 원문입니다. ".repeat(5000);
+  input.intentSource.content = original;
+  input.referenceContext.humanSources = { instruction: original, "D-01": "A separately reserved human judgment." };
+  const before = structuredClone(input.referenceContext);
+  const context = reviewInputDocuments(input)["agents/review-input/context.md"];
+  assert.ok(context.includes(original), "the complete quote source must remain readable");
+  assert.equal(context.indexOf(original), context.lastIndexOf(original), "reading the context must not repeat the full intake");
+  assert.ok(context.includes('"instruction"'));
+  assert.ok(context.includes("A separately reserved human judgment."));
+  assert.deepEqual(input.referenceContext, before, "deduplicating presentation must not change authoritative quote values");
 });

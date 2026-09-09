@@ -12,10 +12,13 @@
 ## Full-Contract Review
 
 All profiles use concurrent independent Fidelity and Code reviews in the routine path.
-Both read every requirement and decision, actual implementation and permitted surrounding source, executed required-suite results, shared QA observations, and previous findings.
+Both read every requirement and decision, inspect actual implementation and related source, and assess executed required-suite results, shared QA observations, and previous findings.
 Both receive the same fixed original inputs without the current peer verdict.
-The source catalog supplies path metadata only; it is neither content evidence nor permission to read a file outside the allowlist.
-One shared artifact containing current surrounding source can support many Bn references without a per-Bn mapping.
+They read the complete contract from the generated review documents and independently discover related files inside the fixed product source copy.
+Changed files are starting points, not the review scope: an unchanged caller or omitted route remains relevant when the contract requires it.
+No manual artifact registration is needed for ordinary surrounding source already present in the copy.
+File names alone are not content evidence; product and evidence reads stay within the copied source and registered evidence rather than the live worktree or other host data.
+Native read restrictions enforce that boundary; the minimal OS/runtime substrate required by the review engine does not supply additional review evidence.
 Fidelity owns complete intent and observable behavior fulfillment, including omitted requirements and explicit human authority.
 Code review owns concrete implementation, integration and error-path defects and consequential design problems.
 Cosmetic preferences and speculative improvements remain advisory.
@@ -30,7 +33,7 @@ Each assessment contains:
 | `requirementRefs` | Approved requirement or decision references for the semantic group. Fidelity includes every Bn exactly once across its groups; Code does not repeat an all-Bn accounting form. |
 | `conclusion` | `satisfied`, `unresolved`, or `pending-human`. Unresolved coverage cannot pass; pending-human requires a corresponding validated post-completion human-confirmation finding for every cited requirement. |
 | `rationale` | A short, concrete assessment of the implementation and the grounds for the conclusion. Empty rationale is invalid. |
-| `evidenceRefs` | Valid references from the fixed review input. A satisfied assessment includes actual supplied source, an execution log, or an artifact, not only PRD text or catalog metadata. |
+| `evidenceRefs` | Valid references from the fixed review input. A satisfied assessment includes actual inspected source, an execution log, or an artifact, not only PRD text or file names. |
 
 Both roles record meaningful assessment grounds.
 Each requirement or decision reference appears at most once across a role's assessments; findings may cite those references independently.

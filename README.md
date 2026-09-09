@@ -170,11 +170,19 @@ Routine judgment defaults to Codex `gpt-5.6-luna` at `xhigh`, with Claude Sonnet
 High-risk review defaults to Codex `gpt-5.6-sol` at `xhigh`, with Claude Opus 5 at `xhigh` fallback.
 The workflow refactor preserves these code defaults; model changes need their own measurement.
 Prompt-only Codex calls run in an empty ephemeral work root with user config and project rules disabled.
-When a judge needs source evidence, the harness copies only the exact allowlisted files into a disposable working directory.
-Codex's read-only sandbox blocks writes but does not provide an OS-hard boundary against every host read.
-The prompt limits reads to the copied working set, and the CLI audits Codex's JSON command trace: only bounded `sed` or `rg` reads naming allowlisted paths are accepted, while any other command invalidates the verdict.
+Implementation review uses a disposable fixed copy of the product source plus registered evidence.
+The source set is Git-visible regular files: tracked files and untracked files not excluded by Git ignore rules, excluding root `agents/**` bookkeeping and symlinks.
+The harness adds `agents/review-input/{contract.md,context.md,changes.diff,evidence.md}` so the initial prompt points to the complete contract, review context, change diff, and actual evidence without repeating their bodies or a repository-wide catalog.
+Reviewers read the complete contract and independently discover relevant callers and surrounding code with read-only file discovery and search inside that copy.
+For example, a changed save function leads the reviewer to its button caller and error handling without requiring source-context artifact registration.
+Codex uses native scoped permissions: the fixed copy is the only product/evidence read root, `:minimal` supplies the OS/runtime files needed to run the engine, and network access is disabled.
+The minimal runtime allowance is not extra product evidence or permission to explore host data.
+`--strict-config` rejects unsupported permission configuration.
+The CLI also audits the JSON command trace against copied paths and permitted read/search operations; a trace alone cannot prove the tool's working directory, so it is not the read boundary.
+Product reads from the live worktree or other host locations, project execution, writes, network access, and repository history remain forbidden.
 Accepted command traces are recorded with the judge call so later review can answer what the judge inspected.
-Claude fallback sessions grant only `Read` and `Grep` for the same prompt-level allowlist.
+Claude fallback sessions use `--restricted` and read/search tools inside the same disposable copied boundary.
+This is the explicit user-approved [source exploration policy change](docs/plans/2026-09-09-review-input-capacity.md), replacing the old exact-selected-files restriction.
 Gates are hard blocks, and every judgment, reopen, and override lands in `agents/runs/<topic>/gates/` for the receipt.
 Gap-audit and spec keep an open findings set: a rerun judges only the findings still open, by id, and may add one only in a lane whose Decision Register rows changed, so the set can only shrink; a BLOCK means an agent-fixable finding is open, NEEDS_HUMAN hands every remaining question to the user as one bundle that `sasu gate answer` seals on their words, and a PASS seals the cycle so warnings cannot start another loop.
 Only an explicit user-evidenced `sasu gate reopen` starts another PRD review cycle; `--grant-budget` is reserved for retrying a repaired judge backend that failed without returning a verdict.

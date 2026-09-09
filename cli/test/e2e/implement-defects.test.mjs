@@ -3,7 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
 import { PRD_PATH, REVIEW_PASS, makeProject, readState, run, start, stub, ok, registerEvidence, defect } from "../helpers/implement-fixture.mjs";
+
+function reviewFile(env, role, relative) {
+  const { cwd } = JSON.parse(fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.options.json`), "utf8"));
+  return fs.readFileSync(path.join(cwd, relative), "utf8");
+}
 
 // These assertions protect completion integrity; the external stub does not
 // establish that a model can detect the planted defects in the live smoke.
@@ -117,10 +123,18 @@ test("review receives recorded conversational admission and exact human-source q
   const env = stub(root);
   ok(run(root, ["implement", "verify"], { env }));
   const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  const admission = JSON.parse(prompt.split("RUN ADMISSION AUTHORITY (not product evidence):\n")[1]?.split("\n")[0] ?? "null");
+  const context = reviewFile(env, "fidelity", REVIEW_INPUT_PATHS.context);
+  const admission = JSON.parse(context.split("RUN ADMISSION AUTHORITY (not product evidence):\n")[1]?.split("\n")[0] ?? "null");
   assert.deepEqual(admission, { source: "conversation", evidence });
-  const sources = JSON.parse(prompt.split("HUMAN SOURCE TEXT (sourceRef -> exact quoteable text):\n")[1]?.split("\n")[0] ?? "null");
-  assert.deepEqual(sources, { Decisions: `${decision}\n${rationale}`, Risks: "None.", instruction: `- D-01: ${decision} (근거: ${rationale})`, "D-01": decision });
+  // Quotation authority is unchanged when duplicate canonical text is a pointer.
+  // Assert every exact source and its target without assuming a JSON-object rendering.
+  const sources = context.split("HUMAN SOURCE TEXT (sourceRef -> exact quoteable text):\n")[1]?.split("\nUse an exact sourceRef")[0];
+  assert.ok(sources);
+  for (const [ref, text] of Object.entries({ Decisions: `${decision}\n${rationale}`, Risks: "None.", "D-01": decision })) {
+    assert.ok(sources.includes(`${JSON.stringify(ref)}: ${JSON.stringify(text)}`));
+  }
+  assert.ok(sources.includes('"instruction": the exact complete CANONICAL INTENT SOURCE text above'));
+  assert.ok(context.split("RUN ADMISSION AUTHORITY")[0].includes(`- D-01: ${decision} (근거: ${rationale})`));
   assert.match(prompt, /Pending frontmatter or agent-owned assumptions alone do not create a human-confirmation finding/);
   ok(run(root, ["implement", "finalize"]));
   assert.equal(readState(root).status, "complete");
@@ -222,32 +236,34 @@ test("a confirmed human authority remains visible to the next full review and is
   const rereview = stub(root);
   ok(run(root, ["implement", "verify"], { env: rereview }));
   const prompt = fs.readFileSync(path.join(rereview.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  assert.ok(prompt.includes(evidence));
+  assert.ok(reviewFile(rereview, "fidelity", REVIEW_INPUT_PATHS.context).includes(evidence));
+  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.context));
   assert.equal(readState(root).findings.find((entry) => entry.id === id).status, "confirmed");
   ok(run(root, ["implement", "finalize"]));
   assert.equal(readState(root).status, "complete");
 });
 
-test("the source catalog is metadata until one shared run artifact supplies exact unchanged source context", () => {
+// User-approved policy: the reviewer discovers unchanged callers in the
+// frozen product source instead of asking the implementor to register each one.
+test("the frozen source includes unchanged callers without exposing bookkeeping or ignored files", () => {
   const root = makeProject();
   start(root);
+  fs.appendFileSync(path.join(root, ".gitignore"), "private/\n");
+  fs.mkdirSync(path.join(root, "private"));
+  fs.writeFileSync(path.join(root, "private/secret.txt"), "private decoy\n");
   const env = stub(root);
   ok(run(root, ["implement", "verify"], { env }));
-  const before = readState(root).verificationAttempts.at(-1);
-  const firstPrompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  const catalogSection = firstPrompt.split("SOURCE CATALOG (current path metadata only;")[1].split("ALLOWLISTED PATHS")[0];
-  assert.ok(catalogSection.includes("suite.cjs"));
-  const staged = (attempt) => path.join(root, "agents/runs/fixture/review-inputs", attempt.id, "suite.cjs");
-  assert.equal(fs.existsSync(staged(before)), false, "a catalog entry grants no file bytes to the reviewer");
-  ok(run(root, ["implement", "artifact", "--kind", "file", "--path", "suite.cjs", "--description", "Shared unchanged source context for the complete contract", "--source", "current project source"]));
-  const artifact = readState(root).artifacts.find((entry) => entry.path === "suite.cjs");
-  assert.equal(artifact.requirementRefs, undefined, "one shared artifact needs no per-requirement evidence mapping");
-  ok(run(root, ["implement", "verify"], { env }));
-  const after = readState(root).verificationAttempts.at(-1);
-  assert.notEqual(after.inputFingerprint, before.inputFingerprint);
-  assert.equal(fs.readFileSync(staged(after), "utf8"), fs.readFileSync(path.join(root, "suite.cjs"), "utf8"));
-  assert.deepEqual(readState(root).requirements.map((entry) => entry.id), ["B1", "B2"]);
-  ok(run(root, ["implement", "finalize"]));
+  const attempt = readState(root).verificationAttempts.at(-1);
+  const { cwd } = JSON.parse(fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.options.json"), "utf8"));
+  assert.equal(reviewFile(env, "fidelity", "suite.cjs"), fs.readFileSync(path.join(root, "suite.cjs"), "utf8"));
+  assert.ok(attempt.reviewContext.actualEvidenceRefs.includes("suite.cjs"));
+  assert.equal(fs.existsSync(path.join(cwd, "agents/runs/fixture/state.json")), false);
+  assert.equal(fs.existsSync(path.join(cwd, "private/secret.txt")), false);
+  assert.equal(fs.existsSync(path.join(cwd, ".git")), false);
+  const fixedCaller = reviewFile(env, "fidelity", "suite.cjs");
+  fs.appendFileSync(path.join(root, "suite.cjs"), "// subsequent source mutation\n");
+  assert.equal(reviewFile(env, "fidelity", "suite.cjs"), fixedCaller, "review input remains pinned after the working source changes");
+  assert.notEqual(run(root, ["implement", "finalize"]).status, 0, "the later source mutation must invalidate completion");
 });
 
 test("registered record-tree source cannot replace different current source in an isolated worktree", (t) => {

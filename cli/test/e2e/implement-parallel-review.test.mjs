@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { PRD_PATH, REVIEW_PASS, defect, makeProject, ok, readState, registerEvidence, run, runAsync, start, stub, reviewWithAssessments } from "../helpers/implement-fixture.mjs";
+
+function reviewFile(env, role, relative) {
+  const { cwd } = JSON.parse(fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.options.json`), "utf8"));
+  return fs.readFileSync(path.join(cwd, relative), "utf8");
+}
 
 // These tests exercise the public CLI and actual suite process. Only the
 // external reviewers are stubbed; their answers are not omission-detection proof.
@@ -20,12 +26,12 @@ function captured(env, role, extension = "prompt.txt") {
 
 function assertSharedInputs(env) {
   const prompts = [captured(env, "fidelity"), captured(env, "code")];
-  const marker = "INPUT SAFETY AND EXPLORATION:";
+  const marker = "FIXED REVIEW WORKSPACE:";
   assert.ok(prompts.every((prompt) => prompt.includes(marker)), "both roles must receive the complete fixed input envelope");
   assert.equal(prompts[0].slice(prompts[0].indexOf(marker)), prompts[1].slice(prompts[1].indexOf(marker)));
   assert.deepEqual(captured(env, "fidelity", "options.json"), captured(env, "code", "options.json"), "both roles must use the same isolated evidence root and read-only execution options");
   assert.equal(captured(env, "fidelity", "options.json").agentic, true);
-  return prompts;
+  return prompts.map((prompt, index) => prompt + "\n" + Object.values(REVIEW_INPUT_PATHS).map((relative) => reviewFile(env, index === 0 ? "fidelity" : "code", relative)).join("\n"));
 }
 
 const disposition = (findingId, status, reason) => ({ findingId, status, reason, evidenceRefs: ["implementation.txt"] });
@@ -70,8 +76,12 @@ test("two independently recorded reviews overlap on one full contract, evidence 
   for (const prompt of assertSharedInputs(env)) {
     assert.ok(prompt.includes(fs.readFileSync(path.join(root, PRD_PATH), "utf8")));
     assert.ok(prompt.includes(evidence));
-    assert.ok(prompt.includes("REAL-SUITE-OUTPUT"));
+    assert.ok(prompt.includes(attempt.mechanical[0].logPath));
     for (let index = 1; index <= 30; index++) assert.ok(prompt.includes(`Requirement ${index}:`));
+  }
+  for (const role of ["fidelity", "code"]) {
+    assert.ok(reviewFile(env, role, attempt.mechanical[0].logPath).includes("REAL-SUITE-OUTPUT"));
+    assert.equal(reviewFile(env, role, evidence), fs.readFileSync(path.join(root, evidence), "utf8"));
   }
   assert.equal(attempt.mechanical.length, 1);
   assert.equal(suiteCount(root), "ran\n");

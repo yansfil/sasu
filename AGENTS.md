@@ -69,6 +69,8 @@ are a pair, read together or not at all: ceremony gets cut, proof never does.
 The approved [2026-09-08 workflow change](docs/plans/2026-09-08-workflow-simplification.md) explicitly replaces the old per-AC proof and per-AC judge policies in items 1 and 6.
 This is a policy change, not a reinterpretation of the retired rules.
 The subsequent approved production change replaces the comprehensive reviewer with parallel Fidelity and Code reviews and adds CLI-validated grouped assessment records without restoring per-AC execution or evidence ceremony.
+The user-approved [2026-09-09 source exploration change](docs/plans/2026-09-09-review-input-capacity.md) replaces preselected-file-only review with autonomous discovery inside a fixed product source copy.
+This explicitly changes the old exact-selected-files restriction; product and evidence reads remain confined to the fixed copy rather than the live worktree or other host data.
 
 Full text, with the reasoning and the incidents behind each item:
 [`PRINCIPLES.md`](PRINCIPLES.md). When a review cites a principle, cite it by
@@ -214,11 +216,16 @@ The actual code defaults are Codex `gpt-5.6-luna` xhigh with Claude
 `claude-sonnet-5` xhigh fallback for routine, and Codex `gpt-5.6-sol` xhigh
 with Claude `claude-opus-5` xhigh fallback for high-risk.
 The workflow change does not change these models.
-Evidence access is a harness-owned capability, not a project knob: Codex gets a
-disposable workspace containing only allowlisted files, runs read-only, and has
-its JSON command trace checked against the allowlist. Any non-bounded read
-invalidates the verdict. No judge may write, execute project code, browse the
-network, or inspect repository history.
+Evidence access is a harness-owned capability, not a project knob.
+Implementation reviewers receive the same fixed copy of Git-visible regular product files, registered evidence, and generated contract/context/diff/evidence documents.
+Root `agents/**` bookkeeping, ignored untracked files, symlinks, and repository history are excluded from the product copy; explicitly selected review documents and actual evidence are copied separately.
+Reviewers discover and search related source within that copied tree without manual source-context artifact registration.
+Native read restrictions enforce the product/evidence boundary before access: Codex grants read access only to the absolute fixed root and its `:minimal` OS/runtime substrate, disables network access, and rejects unsupported configuration with `--strict-config`.
+The OS/runtime substrate lets the review engine run; it is not additional product evidence or permission to explore host data.
+Claude read-enabled fallback uses `--restricted` within its disposable copy.
+Codex's JSON command trace is additionally checked against the copied paths and permitted read/search operations.
+This audit does not substitute for native restrictions: a tool-selected working directory may be absent from the command trace.
+No judge may inspect product or evidence outside the copy, write, execute project code, browse the network, or inspect repository history.
 
 **Concurrent sessions.** Multiple Claude sessions work this repository at once.
 Before editing `cli/**`, check with peer sessions and claim the files you are

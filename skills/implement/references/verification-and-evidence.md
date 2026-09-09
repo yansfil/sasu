@@ -16,7 +16,7 @@ It does not infer sufficiency from keywords in the PRD or require an artifact fo
 The independent review decides whether the actual implementation and observations support the complete contract.
 Fidelity's grouped assessments account for every Bn, but one shared source file or observation may support many requirements without separate execution or artifact obligations.
 Code records its own substantive evidence grounds without another all-Bn accounting form.
-Satisfied assessments must cite actual supplied source, execution logs, or artifacts; PRD-only references and catalog metadata do not establish implementation satisfaction.
+Satisfied assessments must cite actual inspected source, execution logs, or artifacts; PRD-only references and file names do not establish implementation satisfaction.
 Structural coverage and valid references make the grounds inspectable, not mechanically correct.
 
 Capture final material evidence after implementation is coherent.
@@ -31,7 +31,7 @@ A suite failure prevents review and records the actual failed phase and output.
 An empty required suite is reported as no tests configured, never as successful execution.
 Suite exclusions require human authorization and preserve their prior results.
 
-After mechanical success, independent Fidelity and Code reviews run concurrently with the same entire sealed PRD and decision/intent sources, owned change, permitted surrounding source, suite execution facts, registered observations, and prior findings.
+After mechanical success, independent Fidelity and Code reviews run concurrently with the same entire sealed PRD and decision/intent sources, owned change, fixed product source copy, suite execution facts, registered observations, and prior findings.
 They use the same routine model profile and preserve separate actual results and call records within one verification attempt and lease.
 Neither receives the current peer verdict.
 Settled judgments and their input identity remain unchanged in state history when a later attempt records a correction.
@@ -40,13 +40,22 @@ The reviewer may cite any concrete approved requirement and actual countereviden
 Both roles must disposition every prior open issue; it closes only when both resolve it with evidence.
 A partial failure remains visible and cannot become a complete review.
 
-The judge may read only allowlisted evidence and source in its disposable read-only workspace.
-Its recorded command trace is audited; broad reads, process execution, writes, network access, and repository history invalidate the verdict.
-The source catalog lists known paths, not file contents or additional read permission.
-If a necessary router, caller, or other surrounding file is inaccessible, the reviewer names the unmet contract, inaccessible path, and specific question in an insufficient-evidence finding.
-Register that current surrounding source once as a shared `file` artifact when appropriate; it can support many Bn references without separate evidence or a per-Bn mapping.
-Its registered bytes must match the current product source, including when the record root and implementation worktree differ.
-Missing surrounding context is an explicit inability-to-verify finding, never permission to broaden access silently.
+The judge discovers and searches source only inside its disposable fixed review workspace.
+The product copy contains the same content-hashed Git-visible regular-file set used for source freshness: tracked files and nonignored untracked files, excluding root `agents/**` bookkeeping and symlinks.
+Registered actual evidence is copied separately with its pinned identity and provenance.
+The initial prompt points to complete `agents/review-input/contract.md`, `context.md`, `changes.diff`, and `evidence.md` documents instead of repeating source bodies and file catalogs.
+Every reviewer reads the entire contract, then follows relevant callers, dependencies, and error paths through read-only file discovery and search.
+Ordinary unchanged source needs no manual artifact registration.
+A file name alone is not evidence that its behavior was inspected.
+Native restrictions enforce the product/evidence read boundary before access.
+Codex uses the absolute fixed root plus its `:minimal` OS/runtime substrate, disables network access, and rejects unsupported permission configuration with `--strict-config`.
+The runtime allowance lets the engine run; it is not extra source or evidence to inspect.
+Claude read-enabled fallback uses `--restricted` inside its disposable copy.
+The recorded command trace is additionally audited against copied paths and permitted reads/searches; the trace alone cannot attest to a tool-selected working directory.
+Product reads from the live worktree or other host locations, project execution, writes, network access, and repository history remain forbidden.
+If required evidence is absent from the copy, the reviewer names the unmet contract, missing evidence, and specific question in an insufficient-evidence finding.
+Missing context remains unverified and never permits access outside the copied boundary.
+Registered source evidence must still match the current product bytes, including when record and implementation roots differ.
 An incapable image backend must use an existing capable route or report an error; unreadable evidence cannot silently downgrade a requirement to later human confirmation.
 
 Use synthetic or non-production data and an explicitly disposable database for writing scenarios.

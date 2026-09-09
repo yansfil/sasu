@@ -1,6 +1,6 @@
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
-import { AGENTIC_READ_MAX_ROUNDS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
+import { AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
 import { extractJsonObject, JudgeError, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
 
 /**
@@ -203,7 +203,7 @@ export async function runJudge<T>(
   profile: JudgeProfile,
   prompt: string,
   validate: (value: unknown, activity: JudgeActivity) => T | string,
-  options: { execution?: ExecutionLifecycle; images?: string[]; agentic?: boolean; cwd?: string; evidencePaths?: string[]; effort?: JudgeEffort } = {},
+  options: { execution?: ExecutionLifecycle; images?: string[]; agentic?: boolean; explore?: boolean; cwd?: string; evidencePaths?: string[]; effort?: JudgeEffort } = {},
 ): Promise<JudgeOutcome<T>> {
   // The caller's effort wins over the profile's for BOTH targets, applied once
   // here rather than at the backend.run call site: every downstream reader of
@@ -322,6 +322,11 @@ export async function runJudge<T>(
     // command-audit rejection, missing JSON, and schema rejection must not
     // acquire three subtly different attempt or fallback contracts - and it
     // is therefore also the one place the health ledger can learn anything.
+    if (error.reason === "input-too-large") {
+      throw Object.assign(error, {
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+      });
+    }
     recordBackendFailure(backend.name, target.model, error.code);
     // A rejected attempt's spend must never be persisted as the call's usage:
     // the field is documented as the answering attempt's.
@@ -336,7 +341,7 @@ export async function runJudge<T>(
       durationMs: Date.now() - attemptStartedAt,
     });
     if (error.code === "judge-invalid-output" && attempts < 2) {
-      lastProblem = error.detail;
+      lastProblem = error.detail.slice(0, JUDGE_CORRECTION_MAX_CHARS);
       return;
     }
     const canFallback = error.code === "judge-auth"
@@ -349,6 +354,14 @@ export async function runJudge<T>(
     });
   };
   while (true) {
+    try {
+      assertJudgeInputFits(backend.name, prompt, options, true);
+    } catch (error) {
+      if (!(error instanceof JudgeError)) throw error;
+      throw Object.assign(error, {
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+      });
+    }
     try {
       const preflight = await preflightBackend(backend, target, config.judge.timeoutMs, options.execution);
       addAdvisories(preflight?.advisories);
@@ -387,6 +400,7 @@ export async function runJudge<T>(
         ...(target.baseUrl !== undefined ? { baseUrl: target.baseUrl } : {}),
         ...(options.images !== undefined ? { images: options.images } : {}),
         ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
+        ...(options.explore !== undefined ? { explore: options.explore } : {}),
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         ...(options.evidencePaths !== undefined ? { evidencePaths: options.evidencePaths } : {}),
       });
@@ -410,15 +424,12 @@ export async function runJudge<T>(
       }
       throw error;
     }
-    // Read-budget backstop for every agentic surface. Both real backends are
-    // bounded in flight (codex by the streaming auditor, claude by
-    // --max-turns), so an honest over-read never reaches this line. It stays
-    // because the in-flight bounds live in each backend, and a backend that
-    // reports tool rounds without honouring a cap (the stub, a CLI whose
-    // flag stopped working) would otherwise route over-reading to an
-    // UNBOUNDED read - the 575s failure the budget exists to stop
-    // (PRINCIPLES 1). null stays unknown, never "read nothing".
-    if (options.agentic === true && attemptActivity.toolRounds !== null && attemptActivity.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
+    // Preserve the same backend budget after the call. Codex exploration is
+    // bounded by streamed read-output volume plus timeout, not command count:
+    // its 30-command/139.770s original-case review was otherwise discarded.
+    // Claude's num_turns measures model turns and retains its native cap.
+    if (options.agentic === true && !(backend.name === "codex" && options.explore === true)
+      && attemptActivity.toolRounds !== null && attemptActivity.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
         backend.name,

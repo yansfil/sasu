@@ -3,12 +3,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { reviewPrompt, renderDecisions } from "../../dist/implement/prompts.js";
+import { reviewPrompt, renderDecisions, reviewInputDocuments, REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { validateImplementationReviewResult } from "../../dist/implement/review-contract.js";
 import { runJudge, judgeCallRecordFrom } from "../../dist/judge/runner.js";
 import { loadConfig } from "../../dist/config.js";
 import { prd } from "./implement-fixture.mjs";
+
+function writeReviewDocuments(root, material) {
+  const documents = reviewInputDocuments(material);
+  for (const [relative, text] of Object.entries(documents)) {
+    const target = path.join(root, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+  }
+  material.referenceContext.evidenceRefs.push(...Object.keys(documents));
+  material.referenceContext.actualEvidenceRefs.push(REVIEW_INPUT_PATHS.diff);
+  return Object.keys(documents);
+}
 
 // The fixture oracle runs after the production validator, never as retry
 // feedback: the backend must not be told which omission was planted.
@@ -89,9 +101,9 @@ async function evaluateRoles(config, variant, t, material, options) {
 // This deliberately stays outside default suites. Unlike the fixture judge,
 // the real reviewer must identify independently fixed omissions in a contract
 // whose middle and final requirements are equally important.
-export async function evaluateLiveReview(backend, t) {
+export async function evaluateLiveReview(backend, t, variants = ["complete", "middle-omission", "final-omission", "unwired", "storage-failure", "authorized-assumptions"]) {
   const outcomes = [];
-  for (const variant of ["complete", "middle-omission", "final-omission", "unwired", "storage-failure", "authorized-assumptions"]) {
+  for (const variant of variants) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), `sasu-live-review-${variant}-`));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.mkdirSync(path.join(root, "src"));
@@ -101,8 +113,9 @@ export async function evaluateLiveReview(backend, t) {
     const bindings = Array.from({ length: 30 }, (_, index) => variant === "unwired" && index === 27 ? "undefined" : `value${index + 1}`).join(", ");
     // B31 does not restrict thrown values to Error. A real review exposed the
     // former baseline losing string errors and crashing on null, beyond the planted defect.
-    const source = `${definitions}\nconst actions = [${bindings}];\nexport function command(n) { return actions[n - 1]?.(); }\nexport function save(store, value) { ${variant === "storage-failure" ? "try { store.write(value); } catch {} return { ok: true };" : "try { store.write(value); return { ok: true }; } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error), value }; }"} }\n`;
+    const source = `import { ${Array.from({ length: 30 }, (_, index) => `value${index + 1}`).join(", ")} } from './values.mjs';\nconst actions = [${bindings}];\nexport function command(n) { return actions[n - 1]?.(); }\nexport function save(store, value) { ${variant === "storage-failure" ? "try { store.write(value); } catch {} return { ok: true };" : "try { store.write(value); return { ok: true }; } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error), value }; }"} }\n`;
     fs.writeFileSync(path.join(root, "src/public.mjs"), source);
+    fs.writeFileSync(path.join(root, "src/values.mjs"), definitions + "\n");
     let original = prd({ count: 30, extraRows: ["| B31 | If the injected store throws while saving, save returns ok false with the error message and preserves the input value. | D-01 |"] });
     const authorizedAssumptions = variant === "authorized-assumptions";
     if (authorizedAssumptions) original = original.replace('human_approval: "approved"', 'human_approval: "pending"').replace("The user requested all values.", "Agent-owned product assumptions: these product items have not been individually approved by the user.");
@@ -116,16 +129,19 @@ export async function evaluateLiveReview(backend, t) {
     assert.equal(observed.status, 0, observed.stderr);
     fs.writeFileSync(path.join(root, "smoke.log"), observed.stdout);
     const requirementRefs = [...contract.rows.map((row) => row.id), ...contract.decisions.map((decision) => decision.id)];
-    const referenceContext = { requiredRequirementRefs: contract.rows.map((row) => row.id), actualEvidenceRefs: ["src/public.mjs", "smoke.log"], requirementRefs, evidenceRefs: ["PRD", "Goal", "Non-goals", "Decisions", "Behaviors", "Technical structure", "Risks", "intent", ...requirementRefs, "src/public.mjs", "smoke.log"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
+    const referenceContext = { requiredRequirementRefs: contract.rows.map((row) => row.id), actualEvidenceRefs: ["src/public.mjs", "src/values.mjs", "smoke.log"], requirementRefs, evidenceRefs: ["PRD", "Decisions", "Risks", "instruction", ...requirementRefs, "src/public.mjs", "src/values.mjs", "smoke.log"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
     const material = {
       prdText: contractText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed approved evaluation contract" },
-      changeMaterial: [], runOwnedDiff: "", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, tail: observed.stdout }], evidence: [], artifacts: [],
-      readablePaths: ["src/public.mjs", "smoke.log"], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] },
+      // The changed helper alone cannot prove the public API is wired. The
+      // reviewer must discover the unchanged caller in the fixed snapshot.
+      changedPaths: ["src/values.mjs"], runOwnedDiff: "diff --git a/src/values.mjs b/src/values.mjs\n--- a/src/values.mjs\n+++ b/src/values.mjs\n@@ -0,0 +1,30 @@\n" + definitions.split("\n").map((line) => "+" + line).join("\n") + "\n", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, logPath: "smoke.log", provenance: "fixed fixture command(1) execution only" }], artifacts: [],
+      referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] },
     };
     const config = loadConfig(root);
     config.judge.profiles.routine = { primary: { backend, model: backend === "codex" ? "gpt-5.6-luna" : "claude-sonnet-5", effort: "xhigh" }, fallback: null };
+    const documents = writeReviewDocuments(root, material);
     const reviews = await evaluateRoles(config, variant, t, material,
-      { agentic: true, cwd: root, evidencePaths: ["src/public.mjs", "smoke.log"] });
+      { agentic: true, explore: true, cwd: root, evidencePaths: ["src/public.mjs", "src/values.mjs", "smoke.log", ...documents] });
     const expected = { "middle-omission": "B17", "final-omission": "B30", unwired: "B28", "storage-failure": "B31" }[variant];
     for (const outcome of Object.values(reviews)) {
       assert.equal(outcome.call.backend, backend, "a fallback must not masquerade as the evaluated backend");
@@ -157,11 +173,12 @@ export async function evaluateLiveVisual(t) {
   const approval = { source: "frontmatter", evidence: "human_approval: approved" };
   const intentContent = renderDecisions(contract);
   const artifact = { path: "visual.png", kind: "image", description: "Delivered character illustration", sha256, bytes: bytes.length, registeredAt: new Date().toISOString(), observedAt: new Date().toISOString(), provenance: "fixed visual fixture", target: "visual.png" };
-  const referenceContext = { requiredRequirementRefs: ["B1", "B2"], actualEvidenceRefs: ["visual.png"], requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
-  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changeMaterial: [], runOwnedDiff: "", checks: [], evidence: [{ ...artifact, attachedImage: true }], artifacts: [artifact], readablePaths: ["visual.png"], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
+  const referenceContext = { requiredRequirementRefs: ["B1", "B2"], actualEvidenceRefs: ["visual.png"], requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "Decisions", "Risks", "instruction", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
+  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changedPaths: ["visual.png"], runOwnedDiff: "", checks: [], artifacts: [artifact], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
   const config = loadConfig(root);
   config.judge.profiles.routine = { primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" }, fallback: null };
-  const reviews = await evaluateRoles(config, "visual", t, material, { agentic: true, cwd: root, evidencePaths: ["visual.png"], images: [imagePath] });
+  const documents = writeReviewDocuments(root, material);
+  const reviews = await evaluateRoles(config, "visual", t, material, { agentic: true, explore: true, cwd: root, evidencePaths: ["visual.png", ...documents], images: [imagePath] });
   for (const outcome of Object.values(reviews)) assert.equal(outcome.call.backend, "codex");
   t.diagnostic(JSON.stringify({ case: "actual-image-attachment", variant: "visual" }));
   assertReviewBlockingRefs({ findings: Object.values(reviews).flatMap((entry) => entry.review.findings) }, [], contract.decisions.map((decision) => decision.id));

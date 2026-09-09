@@ -7,7 +7,6 @@ import { spawnSync } from "node:child_process";
 import { loadConfig } from "../config";
 import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
-import type { CheckResult, EvidenceMaterial } from "../gates/prompts";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judgeFailureCause, type JudgeFailureCause } from "../judge/types";
 import { runDirRel } from "../runs/paths";
@@ -25,7 +24,7 @@ import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEsc
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
 import { DispatchRejected, dispatchImplementor } from "./dispatch";
-import { reviewPrompt, intentSource, riskPrompt, type ChangeFile, type ReviewPromptMaterial } from "./prompts";
+import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, REVIEW_INPUT_PATHS, type ReviewPromptMaterial } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
 import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
@@ -912,65 +911,52 @@ function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptI
   state.suite.results.push(entry);
 }
 
-function changeMaterial(projectRoot: string, state: ImplementState, current: ReturnType<typeof captureSourceSnapshot>): ChangeFile[] {
-  return changedPathsSince(state.initialSource, current).map((relative) => {
-    const absolute = path.join(projectRoot, relative);
-    if (!fs.existsSync(absolute)) return { path: relative, body: "[deleted]" };
-    const buffer = fs.readFileSync(absolute);
-    if (buffer.includes(0)) return { path: relative, body: `[binary ${buffer.length} bytes]` };
-    const text = buffer.toString("utf8");
-    return { path: relative, body: text };
-  });
-}
-
 /**
- * The selected changed paths as a diff against the initial commit.
- * Current file bodies alone cannot identify deleted behavior or distinguish
- * newly introduced code from behavior already present at the baseline.
- *
- * Bounded by `--stat`-free plain diff over exactly the changed paths, so
- * generated trees excluded from the snapshot stay excluded here too. Without
- * git (or when git fails), explicitly report that the diff is unavailable;
- * the reviewer must assess whether current bodies are sufficient evidence.
+ * Compare committed baseline bytes with the already frozen source, never with
+ * the live tree a second time. The no-index diff also covers an unborn repo
+ * and untracked additions without changing the project's index.
  */
-function runOwnedDiff(projectRoot: string, state: ImplementState, paths: string[]): string {
-  const head = state.initialSource.head;
-  if (head === null || paths.length === 0) return "No diff available (the project is not a git repository, or nothing changed).";
-  const tracked = spawnSync("git", ["ls-tree", "-r", "--name-only", head], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (tracked.error !== undefined || tracked.status !== 0) return `No diff available (git ls-tree ${head} failed).`;
-  const atHead = new Set(tracked.stdout.split("\n").filter((entry) => entry !== ""));
-  const sections: string[] = [];
-  const known = paths.filter((entry) => atHead.has(entry));
-  if (known.length > 0) {
-    const executed = spawnSync("git", ["diff", head, "--", ...known], {
-      cwd: projectRoot,
-      encoding: "utf8",
-      maxBuffer: 128 * 1024 * 1024,
-    });
-    if (executed.error !== undefined || executed.status !== 0) return `No diff available (git diff against ${head} failed).`;
-    if (executed.stdout.trim() !== "") sections.push(executed.stdout.trimEnd());
-  }
-  // Files absent from the pre-run commit are the run's newest work and the
-  // most likely place for accretion, yet `git diff <head>` never shows them:
-  // untracked paths are invisible to it, and `git add -N` would buy their
-  // visibility by mutating the index of a tree under judgment. --no-index
-  // against /dev/null reads the same diff without touching any repository state.
-  for (const relative of paths) {
-    if (atHead.has(relative)) continue;
-    if (!fs.existsSync(path.join(projectRoot, relative))) continue;
-    const added = spawnSync("git", ["diff", "--no-index", "--", "/dev/null", relative], {
-      cwd: projectRoot,
-      encoding: "utf8",
-      maxBuffer: 128 * 1024 * 1024,
-    });
-    // --no-index exits 1 when the inputs differ, which is the normal case here.
-    if (added.error === undefined && added.stdout.trim() !== "") sections.push(added.stdout.trimEnd());
-  }
-  return sections.length === 0 ? "The changed files are byte-identical to the pre-run commit." : sections.join("\n");
+function runOwnedDiff(projectRoot: string, state: ImplementState, paths: string[], frozenRoot: string, currentPaths: Set<string>): string {
+  if (paths.length === 0) return "No product source changed.";
+  const scratch = fs.mkdtempSync(path.join(path.dirname(frozenRoot), "diff-"));
+  const baselineRoot = path.join(scratch, "a"), currentRoot = path.join(scratch, "b");
+  fs.mkdirSync(baselineRoot); fs.mkdirSync(currentRoot);
+  const git = (args: string[], cwd: string) => spawnSync("git", args, { cwd, maxBuffer: 128 * 1024 * 1024 });
+  try {
+    const head = state.initialSource.head;
+    const atHead = new Set<string>();
+    if (head !== null) {
+      const tracked = git(["ls-tree", "-r", "--name-only", "-z", head], projectRoot);
+      if (tracked.error || tracked.status !== 0) throw new Error(`cannot read review diff baseline ${head}: ${tracked.error?.message ?? tracked.stderr.toString()}`);
+      for (const entry of tracked.stdout.toString("utf8").split("\0")) if (entry) atHead.add(entry);
+    }
+    const initialPaths = new Set(state.initialSource.entries.map((entry) => entry.path));
+    const unavailable: string[] = [];
+    for (const relative of paths) {
+      // A fingerprint has no historical body. Non-git/pre-existing untracked
+      // source must never be misrepresented as a new file or an unchanged deletion.
+      if (!atHead.has(relative) && initialPaths.has(relative)) {
+        unavailable.push(`${relative} (${currentPaths.has(relative) ? "modified" : "deleted"}; pre-run bytes were not captured)`);
+        continue;
+      }
+      if (atHead.has(relative)) {
+        const baseline = git(["show", `${head}:${relative}`], projectRoot);
+        if (baseline.error || baseline.status !== 0) throw new Error(`cannot read review diff baseline file ${relative}: ${baseline.error?.message ?? baseline.stderr.toString()}`);
+        const dest = normalizeProjectPath(baselineRoot, relative).absolute;
+        fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, baseline.stdout);
+      }
+      if (currentPaths.has(relative)) {
+        const dest = normalizeProjectPath(currentRoot, relative).absolute;
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(normalizeProjectPath(frozenRoot, relative).absolute, dest);
+      }
+    }
+    const diff = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-prefix", "--", "a", "b"], scratch);
+    // --no-index exits 1 for differences, 0 for identical inputs, and >1 on error.
+    if (diff.error || (diff.status !== 0 && diff.status !== 1)) throw new Error(`cannot generate frozen review diff: ${diff.error?.message ?? diff.stderr.toString()}`);
+    const limitation = unavailable.length === 0 ? "" : `Diff unavailable for these pre-existing paths; their baseline has no committed bytes. Do not infer unchanged behavior or a complete deletion review:\n${unavailable.join("\n")}\n\n`;
+    return limitation + (diff.stdout.length > 0 ? diff.stdout.toString("utf8") : unavailable.length > 0 ? "No other changes have a reconstructible diff." : "The changed files are byte-identical to the pre-run commit.");
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
 async function judgeLane<T>(
@@ -1224,55 +1210,62 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
 function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt, inputs: ReturnType<typeof currentInputs>): { material: ReviewPromptMaterial; cwd: string; evidencePaths: string[]; images: string[] } {
   const workRoot = requireWorkRoot(state);
   const changed = changedPathsSince(state.initialSource, inputs.source);
-  const sourceCatalog = inputs.source.entries.map((entry) => entry.path);
   const currentSource = new Map(inputs.source.entries.map((entry) => [entry.path, entry.sha256]));
-  // The existing judge isolation can only admit files beneath one root. Stage
-  // exact product/evidence bytes together when record and work trees differ.
   const cwd = path.join(state.projectRoot, state.runDir, "review-inputs", attempt.id);
   fs.mkdirSync(cwd, { recursive: true });
   const paths = new Set<string>(), images: string[] = [];
-  const copy = (root: string, relative: string) => {
+  const copy = (root: string, relative: string, expectedHash: string) => {
     const from = normalizeProjectPath(root, relative); assertEvidencePathInsideProject(root, from);
-    if (!fs.existsSync(from.absolute) || !fs.statSync(from.absolute).isFile()) return;
-    const dest = normalizeProjectPath(cwd, relative); fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });
-    if (paths.has(relative) && sha256(fs.readFileSync(dest.absolute)) !== sha256(fs.readFileSync(from.absolute))) {
-      throw new Error(`review input collision: evidence ${relative} differs from the current product source; register observations under a distinct path`);
+    if (!fs.lstatSync(from.absolute).isFile()) throw new Error(`review input is not a regular file: ${relative}`);
+    // Hash the same bytes we stage. A later source freshness check alone can
+    // miss a file changed during copying and restored before the check.
+    const buffer = fs.readFileSync(from.absolute);
+    if (sha256(buffer) !== expectedHash) throw new Error(`review input changed before snapshot copy: ${relative}`);
+    const dest = normalizeProjectPath(cwd, relative);
+    if (paths.has(relative)) {
+      if (sha256(fs.readFileSync(dest.absolute)) !== expectedHash) throw new Error(`review input collision: evidence ${relative} differs from the current product source; register observations under a distinct path`);
+      return;
     }
-    fs.copyFileSync(from.absolute, dest.absolute); paths.add(relative);
+    fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });
+    fs.writeFileSync(dest.absolute, buffer); paths.add(relative);
   };
-  for (const relative of changed) copy(workRoot, relative);
-  const evidence: EvidenceMaterial[] = [];
+  // The product fingerprint already covers the whole git-visible regular
+  // tree. Freeze that exact set so reviewers discover unchanged callers,
+  // without an implementer selecting or re-registering every surrounding file.
+  for (const entry of inputs.source.entries) {
+    if (entry.state !== "present" || entry.sha256 === null) throw new Error(`frozen source has no current bytes: ${entry.path}`);
+    copy(workRoot, entry.path, entry.sha256);
+  }
   for (const artifact of state.artifacts) {
-    // An existing run-wide source artifact can supply unchanged surroundings
-    // for many requirements. Its registration must name the current bytes,
-    // especially when the record root and implementation worktree differ.
-    if (currentSource.has(artifact.path)) {
-      if (currentSource.get(artifact.path) !== artifact.sha256) throw new Error(`registered source context ${artifact.path} differs from current product source; refresh the shared artifact`);
-      copy(workRoot, artifact.path);
+    if (currentSource.has(artifact.path) && currentSource.get(artifact.path) !== artifact.sha256) {
+      throw new Error(`registered source context ${artifact.path} differs from current product source; refresh the shared artifact`);
     }
-    copy(state.projectRoot, artifact.path);
-    const buffer = fs.readFileSync(path.join(state.projectRoot, artifact.path));
+    copy(state.projectRoot, artifact.path, artifact.sha256);
+    const buffer = fs.readFileSync(path.join(cwd, artifact.path));
     const image = artifact.kind === "image" || artifact.kind === "screenshot";
     if (image) images.push(path.join(cwd, artifact.path));
     else if (buffer.includes(0)) throw new Error(`unsupported binary evidence: ${artifact.path}; provide a judge-readable actual capture`);
-    else evidence.push({ path: artifact.path, sha256: artifact.sha256, bytes: artifact.bytes,
-      text: buffer.toString("utf8"), provenance: `${artifact.provenance}; observed ${artifact.observedAt}; ${artifact.description}` });
   }
-  const checks: Array<CheckResult & { logPath: string }> = attempt.mechanical.map((run) => ({ command: run.command, exitCode: run.exitCode, logPath: run.logPath,
-    tail: fs.readFileSync(path.join(state.projectRoot, run.logPath), "utf8"), provenance: `CLI execution ${run.startedAt}; cwd=${run.cwd}; log=${run.logPath}` }));
-  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...sourceCatalog, ...paths])];
+  const checks = attempt.mechanical.map((run) => ({ command: run.command, exitCode: run.exitCode, logPath: run.logPath,
+    provenance: `CLI execution ${run.startedAt}; cwd=${run.cwd}; log=${run.logPath}` }));
+  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, REVIEW_INPUT_PATHS.diff])];
   const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
-    changeMaterial: changeMaterial(workRoot, state, inputs.source), runOwnedDiff: runOwnedDiff(workRoot, state, changed), checks, evidence,
-    artifacts: state.artifacts, sourceCatalog, readablePaths: [...paths],
+    changedPaths: changed, runOwnedDiff: runOwnedDiff(workRoot, state, changed, cwd, new Set(currentSource.keys())), checks,
+    artifacts: state.artifacts,
     referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
-      actualEvidenceRefs: [...paths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
+      actualEvidenceRefs: [...paths, REVIEW_INPUT_PATHS.diff].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
       requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
-      // Preserve the existing quote boundaries and expose those same bytes to the reviewer.
       humanSources: { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) } },
     priorFindings: state.findings, priorRiskResult: priorRisk,
     roundContext: attempt.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
     claims: state.escalations.filter((entry) => entry.diagnosis !== null).map((entry) => ({ origin: "solver", subject: `escalation ${entry.id}`, text: entry.diagnosis! })) };
+  for (const [relative, text] of Object.entries(reviewInputDocuments(material))) {
+    if (paths.has(relative)) throw new Error(`registered evidence collides with a reserved review document: ${relative}`);
+    const dest = normalizeProjectPath(cwd, relative);
+    fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });
+    fs.writeFileSync(dest.absolute, text); paths.add(relative);
+  }
   return { material, cwd, evidencePaths: [...paths], images };
 }
 
@@ -1346,7 +1339,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       const priorFindings = structuredClone(state.findings);
       const riskText = state.prd.reviewProfile === "high-risk" ? riskPrompt(prepared.material) : null;
       phase = "review"; update((_fresh, held) => { held.phase = phase; held.roundContext = active.roundContext; held.reviewContext = structuredClone(referenceContext); });
-      const options = { cwd: prepared.cwd, agentic: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
+      const options = { cwd: prepared.cwd, agentic: true, explore: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
       const validate = (role: RoutineReviewRole) => (value: unknown): ImplementationReviewResult | string => {
         const parsed = validateImplementationReviewResult(value, referenceContext, role);
         if (typeof parsed === "string") return parsed;

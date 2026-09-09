@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { reviewPrompt, riskPrompt, intentSource, renderDecisions, reviewDiffMaterial, IMPLEMENT_REVIEW_DIFF_MAX_CHARS } from "../../dist/implement/prompts.js";
+import { reviewPrompt, riskPrompt, intentSource, renderDecisions, reviewInputDocuments, REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { prd } from "../helpers/implement-fixture.mjs";
 import { validateReviewResult } from "../../dist/judge/types.js";
@@ -11,14 +11,14 @@ import { validateReviewResult } from "../../dist/judge/types.js";
 export function material(overrides = {}) {
   const prdText = prd({ count: 30 });
   const contract = parseImplementContract(prdText);
-  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changeMaterial: [{ path: "implementation.txt", body: "complete source" }], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], evidence: [], artifacts: [], readablePaths: ["implementation.txt"], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
-  return { ...value, referenceContext: overrides.referenceContext ?? { requiredRequirementRefs: value.contract.rows.map((entry) => entry.id), actualEvidenceRefs: value.readablePaths, requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", ...value.readablePaths], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
+  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  return { ...value, referenceContext: overrides.referenceContext ?? { requiredRequirementRefs: value.contract.rows.map((entry) => entry.id), actualEvidenceRefs: ["implementation.txt"], requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", "implementation.txt"], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
 }
 
 test("review prompts advertise the exact validator vocabulary, including whole-contract findings without invented requirement IDs", () => {
   const referenceContext = { requiredRequirementRefs: ["B1"], actualEvidenceRefs: ["src/public.mjs"], requirementRefs: ["B1", "D-01"], evidenceRefs: ["PRD", "src/public.mjs"], priorFindingIds: [], humanSources: {} };
   for (const prompt of [reviewPrompt(material({ referenceContext }), "fidelity"), reviewPrompt(material({ referenceContext }), "code"), riskPrompt(material({ referenceContext }))]) {
-    const advertised = prompt.split("\nVALID CONTRACT REFERENCES")[1].split("\nVALID EVIDENCE REFERENCES")[0]
+    const advertised = prompt.split("\nVALID CONTRACT REFERENCES")[1].split("\nREQUIRED FIDELITY REFERENCES")[0]
       .split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
     assert.deepEqual(advertised, referenceContext.requirementRefs);
     for (const ref of advertised) assert.equal(typeof validateReviewResult({ summary: "known gap", findings: [{ kind: "defect", requirementRefs: [ref], problem: "entrypoint is absent", evidenceRefs: ["PRD"], nextAction: "implement it" }], priorDispositions: [] }, referenceContext), "object");
@@ -30,11 +30,18 @@ test("review prompts advertise the exact validator vocabulary, including whole-c
 
 test("both routine roles and the distinct risk reviewer receive all thirty requirements, full decisions, and fixed actual inputs", () => {
   const input = material();
+  assert.match(reviewPrompt(input, "fidelity"), /REQUIRED FIDELITY REFERENCES/);
+  assert.doesNotMatch(reviewPrompt(input, "code"), /REQUIRED FIDELITY REFERENCES/);
+  assert.doesNotMatch(riskPrompt(input), /REQUIRED FIDELITY REFERENCES/);
   for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
-    assert.ok(prompt.includes(input.prdText));
-    assert.ok(prompt.includes(input.intentSource.content));
-    for (let n = 1; n <= 30; n++) assert.ok(prompt.includes(`Requirement ${n}:`));
-    assert.ok(prompt.includes(input.runOwnedDiff));
+    const documents = reviewInputDocuments(input);
+    assert.equal(documents[REVIEW_INPUT_PATHS.contract], input.prdText);
+    assert.ok(documents[REVIEW_INPUT_PATHS.context].includes(input.intentSource.content));
+    for (let n = 1; n <= 30; n++) assert.ok(documents[REVIEW_INPUT_PATHS.contract].includes(`Requirement ${n}:`));
+    assert.equal(documents[REVIEW_INPUT_PATHS.diff], input.runOwnedDiff);
+    for (const entrypoint of Object.values(REVIEW_INPUT_PATHS)) assert.ok(prompt.includes(entrypoint));
+    assert.ok(!prompt.includes(input.prdText));
+    assert.ok(!prompt.includes(input.runOwnedDiff));
     assert.match(prompt, /Never execute project code/);
     assert.match(prompt, /state.json.*not product proof/);
   }
@@ -48,21 +55,23 @@ test("both routine roles and the distinct risk reviewer receive all thirty requi
   assert.match(riskPrompt(input), /may run concurrently/);
 });
 
-test("a complete diff is retained at the boundary and excess is explicitly rejected without clipping", () => {
-  const exact = "d".repeat(IMPLEMENT_REVIEW_DIFF_MAX_CHARS);
-  assert.equal(reviewDiffMaterial(exact).text, exact);
-  assert.throws(() => reviewDiffMaterial(exact + "d"), /input-too-large.*No content was truncated/);
-  assert.throws(() => reviewPrompt(material({ prdText: exact + "d" }), "fidelity"), /approved PRD.*No content was truncated/);
-  assert.throws(() => reviewPrompt(material({ intentSource: { routing: "full-qa-log", content: exact + "d", explanation: "full intent" } }), "code"), /canonical intent.*No content was truncated/);
-});
-
-test("large source bodies require an exact readable file instead of disappearing from review", () => {
-  const body = "s".repeat(IMPLEMENT_REVIEW_DIFF_MAX_CHARS + 1);
-  const input = material({ changeMaterial: [{ path: "large.txt", body }], readablePaths: ["large.txt"] });
-  const prompt = reviewPrompt(input, "fidelity");
-  assert.match(prompt, /COMPLETE BODIES AVAILABLE BY ALLOWLISTED READ/);
-  assert.ok(prompt.includes("large.txt"));
-  assert.throws(() => reviewPrompt({ ...input, readablePaths: [] }, "code"), /large.txt.*not readable/);
+// The user-approved exploration change moves complete bytes to files; it does
+// not permit clipping large contracts, deletion hunks, or canonical intent.
+test("large Korean contracts, deleted hunks and canonical intent remain complete without expanding the initial prompt", () => {
+  const original = material();
+  const prdText = original.prdText + "\n" + "한글 요구사항 원문\n".repeat(40_000);
+  const deleted = "diff --git a/deleted.ts b/deleted.ts\n--- a/deleted.ts\n+++ /dev/null\n" + "-deleted behavior\n".repeat(40_000);
+  const intent = "원래 사용자 결정\n".repeat(40_000);
+  const input = material({ prdText, runOwnedDiff: deleted, intentSource: { routing: "full-qa-log", content: intent, explanation: "complete recorded intent" } });
+  const documents = reviewInputDocuments(input);
+  assert.equal(documents[REVIEW_INPUT_PATHS.contract], prdText);
+  assert.equal(documents[REVIEW_INPUT_PATHS.diff], deleted);
+  assert.ok(documents[REVIEW_INPUT_PATHS.context].includes(intent));
+  for (const role of ["fidelity", "code"]) {
+    const prompt = reviewPrompt(input, role);
+    assert.equal(prompt, reviewPrompt(original, role), "content size must not change the entrypoint instructions");
+    assert.ok(prompt.length < 25_000, "a large contract must be admitted without an oversized inline envelope");
+  }
 });
 
 test("intent routing checks the source even after spec PASS and never substitutes a missing or escaped document", () => {
@@ -79,35 +88,24 @@ test("intent routing checks the source even after spec PASS and never substitute
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("large execution and QA excerpts retain exact full-file access and cannot silently clip unavailable evidence", () => {
-  const tail = "LOG-START\n" + "l".repeat(9_000) + "\nLOG-END";
-  const text = "QA-START\n" + "e".repeat(45_000) + "\nQA-END";
-  const input = material({ checks: [{ command: "npm test", exitCode: 0, tail, logPath: "agents/suite.log" }], evidence: [{ path: "agents/qa.log", kind: "log", text, bytes: text.length, sha256: "a".repeat(64) }], readablePaths: ["implementation.txt", "agents/suite.log", "agents/qa.log"] });
-  const prompt = reviewPrompt(input, "fidelity");
-  for (const marker of ["LOG-START", "LOG-END", "QA-START", "QA-END", "LABELED INLINE EXCERPT ONLY", "agents/suite.log", "agents/qa.log"]) assert.ok(prompt.includes(marker));
-  assert.throws(() => reviewPrompt({ ...input, readablePaths: ["implementation.txt"] }, "code"), /exact full allowlisted logPath|complete allowlisted file/);
-  const noLogPath = { ...input, checks: [{ command: "npm test", exitCode: 0, tail }] };
-  assert.throws(() => reviewPrompt(noLogPath, "fidelity"), /exact full allowlisted logPath/);
-});
-
-
-test("the source catalog identifies unavailable context without granting file access or fabricating inspected content", () => {
-  const catalog = ["implementation.txt", "src/router.ts", "src/storage.ts"];
-  const input = material({ sourceCatalog: catalog });
-  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
-    const catalogSection = prompt.split("SOURCE CATALOG (current path metadata only;")[1].split("ALLOWLISTED PATHS")[0];
-    const readableSection = prompt.split("ALLOWLISTED PATHS (only these exact files are readable):")[1].split("VALID CONTRACT REFERENCES")[0];
-    for (const file of catalog) assert.ok(catalogSection.includes(`- ${file}`));
-    assert.ok(readableSection.includes("- implementation.txt"));
-    assert.ok(!readableSection.includes("src/router.ts"));
-    assert.ok(!readableSection.includes("src/storage.ts"));
-    assert.ok(!prompt.includes("FILE src/router.ts"));
-    assert.match(prompt, /catalog-only paths may identify an access gap, never unseen content/);
-    assert.match(prompt, /insufficient-evidence defect naming the relevant contract, the inaccessible path/);
-    assert.match(prompt, /One shared run artifact or bounded source context may support many requirements/);
+test("evidence uses exact log locations and provenance while unrelated source inventories stay out of the prompt", () => {
+  const input = material({
+    checks: [{ command: "npm test", exitCode: 0, logPath: "agents/suite.log", provenance: "CLI execution at fixed time" }],
+    artifacts: [{ path: "agents/qa.log", kind: "log", bytes: 500_000, sha256: "a".repeat(64), description: "observed flow", registeredAt: "2026-09-09T00:00:00Z", observedAt: "2026-09-09T00:00:00Z", provenance: "operator" }],
+  });
+  const sourcePaths = Array.from({ length: 2_000 }, (_, index) => `강의/관련없는-파일-${index}.md`);
+  const expanded = { ...input, referenceContext: { ...input.referenceContext, evidenceRefs: [...input.referenceContext.evidenceRefs, ...sourcePaths], actualEvidenceRefs: [...input.referenceContext.actualEvidenceRefs, ...sourcePaths] } };
+  const documents = reviewInputDocuments(expanded);
+  for (const value of ["agents/suite.log", "npm test", "agents/qa.log", "operator"]) assert.ok(documents[REVIEW_INPUT_PATHS.evidence].includes(value));
+  for (const prompt of [reviewPrompt(expanded, "fidelity"), reviewPrompt(expanded, "code"), riskPrompt(expanded)]) {
+    assert.ok(!prompt.includes(sourcePaths[0]));
+    assert.ok(!prompt.includes("observed flow"));
+    assert.match(prompt, /snapshot|frozen/);
+    assert.match(prompt, /entrypoint|caller/);
+    assert.match(prompt, /rg/);
   }
+  assert.equal(reviewPrompt(input, "fidelity"), reviewPrompt(expanded, "fidelity"));
 });
-
 
 test("Fidelity and Code differ in responsibility while retaining identical complete inputs and strict authority", () => {
   const input = material({ approval: { source: "conversation", evidence: "Implement the approved assumptions." } });
@@ -118,16 +116,16 @@ test("Fidelity and Code differ in responsibility while retaining identical compl
   assert.match(code, /independent Code reviewer/);
   assert.match(code, /consequential design or maintainability problems with an identified failure or material impact/);
   assert.match(code, /Cosmetic preferences.*advisory, not blocking defects/);
-  assert.equal(fidelity.slice(fidelity.indexOf("INPUT SAFETY AND EXPLORATION:")), code.slice(code.indexOf("INPUT SAFETY AND EXPLORATION:")));
-  for (const prompt of [fidelity, code]) {
+  assert.equal(fidelity.slice(fidelity.indexOf("FIXED REVIEW WORKSPACE:")), code.slice(code.indexOf("FIXED REVIEW WORKSPACE:")));
+  for (const prompt of [fidelity, code].map((text) => text + "\n" + reviewInputDocuments(input)[REVIEW_INPUT_PATHS.context])) {
     assert.match(prompt, /never produce a per-requirement PASS array/);
     assert.match(prompt, /Complete readable source can establish deterministic behavior/);
     assert.match(prompt, /an execution count or absent per-requirement test is not itself a defect/);
     assert.match(prompt, /source reasoning never substitutes for a configured suite execution/);
-    assert.match(prompt, /contiguous verbatim substring of that key's value/);
+    assert.match(prompt, /contiguous verbatim substring/);
     assert.match(prompt, /Pending frontmatter or agent-owned assumptions alone do not create a human-confirmation finding/);
     assert.match(prompt, /Disappearance does not resolve it/);
-    assert.match(prompt, /Never resolve one through review, change its authority source, or downgrade prerequisite timing/);
+    assert.match(prompt, /Preserve human confirmation\/rejection history and original timing; never.*waive prerequisites/);
   }
   assert.throws(() => reviewPrompt(input), /explicit fidelity or code role/);
   assert.throws(() => reviewPrompt(input, "comprehensive"), /explicit fidelity or code role/);

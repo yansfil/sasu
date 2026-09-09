@@ -130,8 +130,13 @@ Registration pins file identity and preserves provenance.
 Missing or modified registered files fail integrity checks.
 A source hash cannot establish that an external service, ignored fixture, database, or installed app is unchanged; explain the validity of earlier observations or recapture affected behavior.
 No artifact is required merely because a keyword occurs in the PRD.
-The source catalog lists paths, not file contents or read permission.
-When surrounding source is needed, one current shared `file` artifact may support many Bn references without a per-Bn mapping.
+Verify copies the content-hashed product source set and registered evidence into a fixed review workspace.
+Reviewers read the complete contract and discover related callers and surrounding code inside that copy; ordinary source context requires no manual artifact registration.
+Tracked files and nonignored untracked regular files are available, excluding root `agents/**` bookkeeping and symlinks.
+Ignored runtime outputs or external observations still need actual evidence registration when material to the review.
+Native read restrictions confine product and evidence discovery to the fixed copy, with only the OS/runtime access required to run the review engine.
+That runtime substrate is not additional review material.
+Product reads from the live worktree or other host locations, project execution, writes, network access, and repository history remain forbidden.
 
 ## 3. Apply Authorized Contract Changes
 

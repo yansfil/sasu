@@ -822,3 +822,81 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
     delete process.env.CLAUDE_FAKE_ENVELOPE;
   }
 });
+
+test("oversized immutable input fails before even a canary, including UTF-8 and correction reserve", async () => {
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-input-admission-")), "calls");
+  await withFakeCodex(fakeCodexProgram([], { countFile: marker }), async () => {
+    for (const prompt of ["x".repeat(400_001), "한".repeat(140_000), "x".repeat(396_000)]) {
+      await assert.rejects(runJudge(config, "input-admission", "routine", prompt, validateGapVerdict), error => {
+        assert.equal(error.code, "judge-context-overflow");
+        assert.equal(error.reason, "input-too-large");
+        assert.equal(error.record.attempts, 0);
+        assert.equal(error.record.fallback, undefined);
+        assert.match(error.detail, /UTF-8 bytes/);
+        return true;
+      });
+    }
+    assert.equal(fs.existsSync(marker), false, "invalid fixed input cannot spend a canary or correction attempt");
+  });
+});
+
+test("exploration sees only copied evidence and cannot enumerate adapter output", async () => {
+  const response = JSON.stringify({ verdict: "PASS", findings: [] });
+  const command = "rg --files";
+  const event = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command, aggregated_output: "src/allowed.txt" } });
+  const program = fakeCodexProgram([
+    'test ! -f "$root/last-message.txt" || exit 80',
+    'test -f "$root/src/allowed.txt" || exit 81',
+    'test ! -f "$root/secret.txt" || exit 82',
+    'case "$last" in "$root"/*) exit 83 ;; esac',
+    `printf '%s' '${response}' > "$last"`,
+    `printf '%s\\n' '${event}'`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]);
+  await withFakeCodex(program, async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "source");
+    fs.writeFileSync(path.join(source, "secret.txt"), "excluded");
+    const result = await runJudge(config, "explore", "routine", "review the source", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    });
+    assert.equal(result.value.verdict, "PASS");
+  });
+});
+
+test("missing evidence and a parent symlink outside the snapshot cannot produce a verdict", async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-outside-evidence-"));
+  fs.writeFileSync(path.join(outside, "secret.txt"), "host secret");
+  await withFakeCodex(fakeCodexProgram(['exit 90']), async (source) => {
+    fs.symlinkSync(outside, path.join(source, "linked"));
+    for (const evidencePath of ["missing.txt", "linked/secret.txt"]) {
+      await assert.rejects(runJudge(config, "invalid-evidence", "routine", "review", validateGapVerdict, {
+        agentic: true, explore: true, cwd: source, evidencePaths: [evidencePath],
+      }), error => error.reason === "evidence-access");
+    }
+  });
+});
+
+
+test("Codex exploration recovers from a missing path and accepts more than 29 bounded reads", async () => {
+  const event = (command, aggregated_output, exit_code = 0) => JSON.stringify({
+    type: "item.completed", item: { type: "command_execution", command, aggregated_output, exit_code },
+  });
+  const lines = [
+    `printf '%s\\n' '${event("rg --files src missing", "src/allowed.txt\nrg: missing: No such file or directory", 2)}'`,
+    ...Array.from({ length: AGENTIC_READ_MAX_ROUNDS }, () =>
+      `printf '%s\\n' '${event("rg -n value src/allowed.txt", "1:value")}'`),
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ];
+  await withFakeCodex(fakeCodexProgram(lines), async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "value");
+    const result = await runJudge(config, "bounded-exploration", "routine", "review the source", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    });
+    assert.equal(result.value.verdict, "PASS");
+    assert.equal(result.record.attempts, 1, "a missing relative search path does not restart the reviewer");
+    assert.equal(result.record.activity.commands.length, AGENTIC_READ_MAX_ROUNDS + 1);
+  });
+});
