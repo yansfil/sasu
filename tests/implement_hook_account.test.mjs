@@ -11,11 +11,12 @@ const installer = fs.readFileSync(path.join(repoRoot, "scripts", "install-local-
 // harness's own state, not by a runtime callback (D-41). The marker list is
 // also retraction history - anything this installer ever registered must stay
 // listed, or a later run cannot withdraw it without disturbing a foreign hook.
-test("AC26: the harness still registers exactly the two hooks it always did", () => {
+// The user-approved commit reminder adds advisory context, not supervision.
+test("hook ownership retains retirement history and the approved advisory reminder", () => {
   const markers = installer.match(/const HARNESS_HOOK_MARKERS = \[([^\]]*)\]/);
   assert.ok(markers, "HARNESS_HOOK_MARKERS must remain declared in the installer");
   const listed = [...markers[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]).sort();
-  assert.deepEqual(listed, ["challenge_trigger.mjs", "prd_state_harness.js"]);
+  assert.deepEqual(listed, ["challenge_trigger.mjs", "commit_reminder.mjs", "prd_state_harness.js"]);
 });
 
 test("AC26: no implement source registers a lifecycle hook", () => {

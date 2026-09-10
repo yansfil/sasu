@@ -21,13 +21,14 @@ the finalize response names the branch or worktree and the follow-up delivery co
 ## Boundary
 
 Implementation completion and PR delivery are separate outcomes.
-`sasu implement finalize` creates the implementation receipt before commit, push, PR creation, CI observation, or merge.
+Local intermediate commits may preserve coherent work during implementation.
+`sasu implement finalize` creates the implementation receipt before recorded delivery, push, PR creation, CI observation, or merge.
 
 ## Local Delivery
 
 The default delivery mode is local.
 After a current delivery-eligible receipt, run the local delivery command to validate freshness and
-rules, commit the allowlisted implementation with a semantic project message, and
+rules, commit remaining allowlisted implementation changes with a semantic project message or validate existing unpushed implementation history, and
 record `delivery/delivery-result.json`.
 It never pushes, opens a PR, watches CI, or merges.
 Running it again for the same receipt and HEAD is idempotent.

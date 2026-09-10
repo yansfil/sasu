@@ -124,16 +124,17 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.doesNotMatch(claudeChallenge, /\$challenge/);
   assert.match(fs.readFileSync(path.join(home, ".codex", "skills", "challenge", "SKILL.md"), "utf8"), /\$challenge/);
 
-  // The implement workflow stays CLI-owned; the only lifecycle hook is the
-  // challenge trigger, registered once per runtime.
-  for (const [file, event] of [
-    [path.join(home, ".codex", "hooks.json"), "UserPromptSubmit"],
-    [path.join(home, ".claude", "settings.json"), "UserPromptSubmit"],
+  // The approved reminder and challenge routing install once on both runtimes.
+  for (const file of [
+    path.join(home, ".codex", "hooks.json"),
+    path.join(home, ".claude", "settings.json"),
   ]) {
     const config = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.deepEqual(Object.keys(config.hooks), [event]);
-    assert.equal(config.hooks[event].length, 1);
-    assert.match(config.hooks[event][0].hooks[0].command, /challenge_trigger\.mjs$/);
+    assert.deepEqual(Object.keys(config.hooks), ["UserPromptSubmit", "PostToolUse"]);
+    assert.equal(config.hooks.UserPromptSubmit.length, 1);
+    assert.match(config.hooks.UserPromptSubmit[0].hooks[0].command, /challenge_trigger\.mjs$/);
+    assert.equal(config.hooks.PostToolUse.length, 1);
+    assert.match(config.hooks.PostToolUse[0].hooks[0].command, /commit_reminder\.mjs$/);
   }
 });
 
@@ -203,28 +204,35 @@ test("installer retires legacy harness hooks without touching foreign hooks", ()
   assert.deepEqual(codex.hooks.Stop, [foreign]);
   assert.equal(codex.hooks.PreToolUse, undefined);
   const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.deepEqual(claude.hooks.PostToolUse, [foreign]);
+  assert.equal(claude.hooks.PostToolUse.length, 2);
+  assert.deepEqual(claude.hooks.PostToolUse[0], foreign);
+  assert.match(claude.hooks.PostToolUse[1].hooks[0].command, /commit_reminder\.mjs$/);
   assert.equal(claude.hooks.Stop, undefined);
 });
 
-test("installer retracts a stale challenge trigger and keeps foreign UserPromptSubmit hooks", () => {
+test("installer replaces stale advisory and routing hooks while preserving foreign entries", () => {
   const home = freshHome();
-  fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   const foreign = { hooks: [{ type: "command", command: "echo unrelated" }] };
-  // A trigger registered by an earlier checkout at a different path: ours by
-  // marker, so it must be replaced rather than duplicated.
-  const stale = { hooks: [{ type: "command", command: "node /old/checkout/scripts/challenge_trigger.mjs", timeout: 10 }] };
-  fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({
-    hooks: { UserPromptSubmit: [foreign, stale] },
-  }, null, 2));
+  const files = [path.join(home, ".claude", "settings.json"), path.join(home, ".codex", "hooks.json")];
+  const scripts = { UserPromptSubmit: "challenge_trigger.mjs", PostToolUse: "commit_reminder.mjs" };
+  for (const file of files) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const hooks = Object.fromEntries(Object.entries(scripts).map(([event, script]) => [event, [foreign,
+      { hooks: [{ type: "command", command: `node /old/checkout/scripts/${script}`, timeout: 10 }] },
+    ]]));
+    fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2));
+  }
 
   runInstaller(home);
 
-  const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.equal(claude.hooks.UserPromptSubmit.length, 2);
-  assert.deepEqual(claude.hooks.UserPromptSubmit[0], foreign);
-  assert.match(claude.hooks.UserPromptSubmit[1].hooks[0].command, /challenge_trigger\.mjs$/);
-  assert.doesNotMatch(claude.hooks.UserPromptSubmit[1].hooks[0].command, /\/old\/checkout\//);
+  for (const file of files) {
+    const config = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const [event, script] of Object.entries(scripts)) {
+      assert.equal(config.hooks[event].length, 2);
+      assert.deepEqual(config.hooks[event][0], foreign);
+      assert.equal(config.hooks[event][1].hooks[0].command, `node ${path.join(repoRoot, "scripts", script)}`);
+    }
+  }
 });
 
 test("installer refuses to overwrite a foreign skill directory", () => {

@@ -66,7 +66,8 @@ Read each directly linked reference completely when its condition applies.
 - A first failed verify leaves the run active with the failed attempt and open findings.
   Fix the actual cause; do not replace state to reset the budget.
 - Only the person's own words resolve a human confirmation, and an open explicit rejection makes delivery ineligible.
-- Commit, push, PR creation, CI, and merge are post-receipt delivery outcomes.
+- Local intermediate commits preserve coherent implementation units; they do not establish completion.
+- Recorded delivery, push, PR creation, CI, and merge are post-receipt delivery outcomes.
 
 ## 1. Confirm Readiness And Start
 
@@ -108,6 +109,12 @@ Choose a plan suited to the work, grouping changes by coherent product flow and 
 Requirements are references for understanding scope, not mandatory execution units.
 Use focused tests while editing and observe actual product behavior where it matters.
 For screens, drive the real flow and inspect the result; a build or function definition does not establish a working interaction.
+
+Commit each coherent completed change unit locally, staging only changes you own.
+Describe the change and its purpose in the commit; Git already records the changed files.
+Do not wait for final verification to preserve completed units, and do not split unfinished work merely to meet a size target.
+The advisory reminder starts at 10 uncommitted files or 500 added-plus-deleted lines; it neither commits nor blocks work.
+Follow the commit guidance in `references/execution-planning.md`.
 
 Delegate independent work when useful with explicit non-overlapping file ownership and the relevant requirements and decisions in each brief.
 Workers return changes, observed checks, and evidence provenance; the Implementor coordinates run commands.

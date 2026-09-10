@@ -63,7 +63,7 @@ node scripts/install-local-skills.mjs
 | `SKILL.md` | Copied verbatim | Copied with path and invocation substitution (`~/.codex/skills/` becomes `~/.claude/skills/`, `$implement` becomes `/implement`) |
 | `scripts/` | Symlinked to this repository | Symlinked to this repository |
 | `references/` | Symlinked to this repository | Copied with the same substitutions as `SKILL.md` |
-| Hooks | `~/.codex/hooks.json` (`UserPromptSubmit`) | `~/.claude/settings.json` (`UserPromptSubmit`) |
+| Hooks | `~/.codex/hooks.json` (`UserPromptSubmit`, `PostToolUse`) | `~/.claude/settings.json` (`UserPromptSubmit`, `PostToolUse`) |
 
 During development, stage this checkout's runtime-transformed skill files in each validation project's local skill surface and put a project-local shim for this checkout's built CLI first on PATH.
 Do not replace global CLI, user configuration, or installed skills for a candidate test.
@@ -79,6 +79,11 @@ The mechanics that make one source possible:
   The Claude copies of `SKILL.md` and `references/*.md` are generated, so a skill edit in this repository lands in both runtimes on the next install.
 - **Idempotent hook retirement.**
   The installer removes legacy implement hooks without touching unrelated entries, and refuses to overwrite a foreign skill directory.
+
+During implementation, commit coherent completed changes locally with a descriptive message.
+The `PostToolUse` reminder nudges the active implementor at 10 uncommitted files or 500 added-plus-deleted lines, counting staged, unstaged, and new regular files within the run's scope.
+It excludes `agents/**`, never commits or blocks, and suppresses unchanged reminders; changed-state reminders are at least 10 minutes apart until a commit resets the interval.
+Intermediate commits preserve work; completion still requires current verification and a finalized receipt.
 
 ## Optional Git Hooks
 
@@ -312,6 +317,7 @@ skills/
 scripts/
   install-local-skills.mjs   dual-runtime installer + legacy hook retirement
   challenge_trigger.mjs      UserPromptSubmit hook: !rv routing + round budget
+  commit_reminder.mjs        PostToolUse hook: advisory intermediate-commit reminder
   hooks/install.mjs          opt-in installer for the two git-safety hooks
   hooks/git-checkpoint.sh    optional Stop hook: turn-end checkpoint commit
   hooks/worktree-create.sh   optional WorktreeCreate hook: checkpoint + bootstrap

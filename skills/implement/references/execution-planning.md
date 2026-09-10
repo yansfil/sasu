@@ -16,6 +16,24 @@ Workers return their own changed paths, actual checks, and evidence provenance.
 The Implementor coordinates run commands, preserves peer edits, and evaluates each result in the integrated product.
 The CLI alone writes `state.json`.
 
+## Intermediate Commits
+
+Commit a coherent completed change unit locally while implementing, after the relevant checks required by the project.
+Stage only your own changes; when workers share a tree, coordinate their returned paths before committing.
+Use a descriptive subject, such as `Preserve retry state after a failed request`, and explain important intent or tradeoffs in the body when useful.
+Report actual checks honestly; unrun checks remain unrun.
+Git supplies the file list and diff, so do not maintain a second commit or task ledger.
+There is no required commit per requirement and no whole verify run per commit unless project instructions require it.
+
+The PostToolUse reminder measures current run changes against HEAD, combining staged, unstaged, and nonignored untracked regular files.
+At 10 files or 500 added-plus-deleted lines, consider whether a coherent unit is ready to commit.
+If it is still incomplete, continue to a sensible boundary without asking the user for permission.
+The reminder does not stage, commit, push, block, or establish completion.
+It checks at most once per 30 seconds after eligible tools, does not repeat an unchanged state, and spaces changed-state reminders by at least 10 minutes until a new commit resets the interval.
+Run bookkeeping under `agents/**` is excluded.
+
+## Verification
+
 Do not create a required task file, requirement PASS checklist, flow-ID table, or coverage graph.
 The independent review reads the full contract and shared actual evidence regardless of how implementation was divided.
 

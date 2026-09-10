@@ -112,15 +112,14 @@ completion authority must not be added there.
 `skills/implement/scripts/prd_state_harness.js` is a removed-entrypoint
 tombstone, not an implementation surface.
 
-**Lifecycle hooks.** The pipeline is CLI-owned and registers exactly one hook:
-`scripts/challenge_trigger.mjs` on `UserPromptSubmit`, which turns the `!rv`
-token into a routing instruction for the `challenge` skill plus that skill's
-round budget. It reads the prompt, writes no state, blocks nothing, and exits 0
-on any payload it does not recognise. The adversarial round cap lives in that
-script rather than in the skill document because a bound that exists only as
-prose is a request for discipline, not a guard (items 7 and 13). Any hook this
-installer has ever registered must stay listed in `HARNESS_HOOK_MARKERS`, or a
-later run cannot retract it without disturbing a foreign hook.
+**Lifecycle hooks.** The pipeline remains CLI-owned; the installer registers two runtime hooks.
+`scripts/challenge_trigger.mjs` on `UserPromptSubmit` turns the `!rv` token into a routing instruction for the `challenge` skill plus its round budget.
+It reads the prompt, writes no state, blocks nothing, and exits 0 on any payload it does not recognise.
+The adversarial round cap lives in that script because a bound that exists only as prose is a request for discipline, not a guard (items 7 and 13).
+The user-approved intermediate-commit policy adds `scripts/commit_reminder.mjs` on `PostToolUse`: an advisory reminder at 10 run-owned uncommitted files or 500 added-plus-deleted lines.
+It never stages, commits, blocks, or changes lifecycle state; its disposable rate-limit cache lives under `agents/**`, never in `state.json`.
+The reminder replaces reliance on end-of-run commit discipline, not any verification or completion check.
+Any hook this installer has ever registered must stay listed in `HARNESS_HOOK_MARKERS`, or a later run cannot retract it without disturbing a foreign hook.
 
 **Supervision and state attribution.** The CLI is the only physical writer of
 `state.json`, and domain changes carry an issuer declaration: `implementor`,

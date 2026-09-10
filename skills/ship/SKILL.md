@@ -170,12 +170,13 @@ The receipt retains grouped assessment grounds; summarize their actual support a
 silently discarded.
 
 `local` validates the complete receipt against a fresh implementation PASS and the learned rules,
-stages only the delivery allowlist, creates one semantic commit (default message
-`Implement <topic-slug>`), and records
+stages only the delivery allowlist, commits remaining changes with a semantic message (default message
+`Implement <topic-slug>`) or validates existing unpushed implementation history, and records
 `agents/runs/<topic-slug>/delivery/delivery-result.json` plus a `local` event in
 `delivery/ship-log.jsonl`.
 It does not call `gh`, push, create a PR, watch CI, or merge.
 Running it again for the same receipt and HEAD returns the recorded result without a second commit.
+Intermediate commits are not completion evidence; existing history must still satisfy the receipt, baseline, allowlist, and remote reachability checks.
 If the Stop hook has already saved the same unpushed run as a `checkpoint:` commit, local delivery
 promotes that commit's message only after it proves the recorded baseline, allowlist, and remote
 reachability conditions.

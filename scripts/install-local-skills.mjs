@@ -179,7 +179,7 @@ function cleanupLegacyDirs(targetKey) {
 // has ever registered must stay listed here: the marker is the only way a
 // later run can retract an entry it no longer wants without touching a hook
 // somebody else installed.
-const HARNESS_HOOK_MARKERS = ["prd_state_harness.js", "challenge_trigger.mjs"];
+const HARNESS_HOOK_MARKERS = ["prd_state_harness.js", "challenge_trigger.mjs", "commit_reminder.mjs"];
 
 function isHarnessOwnedHook(matcher) {
   if (!Array.isArray(matcher?.hooks)) return false;
@@ -290,11 +290,11 @@ function runInstaller() {
     claude: cleanupLegacyDirs("claude"),
   };
 
-  // The implement pipeline stays CLI-owned and registers no lifecycle hooks.
-  // The challenge trigger is the sole exception because its adversarial round
-  // cap must be an executable guard, not a prose-only request.
+  // Lifecycle authority stays CLI-owned. These callbacks supply routing and
+  // advisory context only; the reminder cannot commit or change run state.
   const challengeTriggerCommand = `node ${path.join(repoRoot, "scripts", "challenge_trigger.mjs")}`;
-  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand };
+  const commitReminderCommand = `node ${path.join(repoRoot, "scripts", "commit_reminder.mjs")}`;
+  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand };
   const hooks = {
     codex: ensureHooks(path.join(home, ".codex", "hooks.json"), lifecycleHooks),
     claude: ensureHooks(path.join(home, ".claude", "settings.json"), lifecycleHooks),
