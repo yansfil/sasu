@@ -1,7 +1,8 @@
+import path from "node:path";
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
 import { AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
-import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
+import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
 
 /**
  * Backends that failed authentication or runtime in THIS process.
@@ -169,6 +170,43 @@ export function effectiveJudgeProfile(config: SasuConfig, profile: JudgeProfile)
   return { primary: overriddenPrimary, fallback: null };
 }
 
+/**
+ * Whether this backend can put this call's screenshots in front of the judge.
+ *
+ * Two capabilities answer that question and they are not the same guarantee,
+ * which is exactly why recovery and first routing ask different things.
+ * Attachment puts the image in the request whatever the judge decides;
+ * a readable workspace copy only means the judge can open it, and a backend
+ * with no command trace cannot show that it did. Recovery may accept the
+ * weaker guarantee - the alternative is no review at all - so both fallback
+ * decisions call this. The initial choice does not: a default must be the
+ * strong guarantee, and reachability is what recovery falls back TO, never
+ * what the run starts from.
+ *
+ * One predicate rather than the same boolean at both fallback sites: they are
+ * one question, and 2026-09-10 they had answered it differently, so a visual
+ * call whose primary was already known dead paid that primary's full latency
+ * before crossing to the backend it could have started from.
+ *
+ * Reachability is a property of the call, not of the backend alone: the
+ * workspace is built from cwd-relative evidence paths, so an image outside
+ * cwd is not reachable however capable the backend is. Answering that here
+ * keeps `workspace-readable` in the record true by construction instead of
+ * true by whichever caller happened to register the screenshots.
+ */
+function carriesVisualEvidence(backend: JudgeBackend, agentic: boolean, images: readonly string[], cwd: string | undefined): boolean {
+  if (backend.attachments) return true;
+  if (!agentic || !backend.readableImages) return false;
+  return cwd !== undefined && images.every((image) => insideRoot(cwd, image));
+}
+
+/** An absolute path strictly under `root`, the only shape a workspace copy can carry. */
+function insideRoot(root: string, candidate: string): boolean {
+  if (!path.isAbsolute(candidate)) return false;
+  const relative = path.relative(root, candidate);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
 /** Caller-scoped reasoning budget, applied to the primary and the fallback alike. */
 function withEffortOverride(
   selected: { primary: JudgeTarget; fallback: JudgeTarget | null },
@@ -229,7 +267,7 @@ export async function runJudge<T>(
     const candidate = resolveBackend(selected.fallback.backend);
     const capable = candidate.available()
       && (options.agentic !== true || candidate.agentic)
-      && (!visualEvidence || candidate.attachments);
+      && (!visualEvidence || carriesVisualEvidence(candidate, options.agentic === true, options.images ?? [], options.cwd));
     if (capable) {
       fallback = {
         at: new Date().toISOString(),
@@ -260,6 +298,34 @@ export async function runJudge<T>(
   let observation: JudgeActivity = newJudgeActivity();
   /** The current backend's last attempt, or null while no attempt has run. */
   const attemptObservation = (): JudgeActivity | null => (attempts > 0 ? observation : null);
+  /**
+   * Recorded for every call that carried screenshots, not only for the
+   * fallback that made it possible: "how did the pictures get there, and can
+   * this record show the judge took them in" is a property of the call.
+   * Reaching here with neither capability is unreachable - first routing and
+   * both fallback predicates refuse it - so the delivery follows attachment.
+   */
+  const visualEvidenceRecord = (): VisualEvidenceRecord | undefined => {
+    const images = options.images?.length ?? 0;
+    if (images === 0) return undefined;
+    return { images, delivery: backend.attachments ? "attached" : "workspace-readable", verifiedSeen: backend.attachments };
+  };
+  /**
+   * Evidence paths for the backend about to run. A reachability-only delivery
+   * needs the screenshots inside the copied workspace, and only the caller
+   * that registered them as evidence puts them there: the implement lane does,
+   * the quick gate resolves them from a separate lane. Adding them here makes
+   * the delivery real wherever the images come from; containment was already
+   * proved by carriesVisualEvidence, and an attachment backend never reaches
+   * this branch, so no command-audit allowlist changes.
+   */
+  const evidencePathsForCall = (): string[] | undefined => {
+    const base = options.evidencePaths;
+    const images = options.images ?? [];
+    if (options.agentic !== true || backend.attachments || images.length === 0 || options.cwd === undefined) return base;
+    const root = options.cwd;
+    return [...new Set([...(base ?? []), ...images.map((image) => path.relative(root, image))])];
+  };
   const advisories: JudgeAdvisory[] = [];
   const advisoryKeys = new Set<string>();
   const addAdvisories = (incoming: JudgeAdvisory[] = []): void => {
@@ -287,7 +353,7 @@ export async function runJudge<T>(
     // evidence access or image visibility would turn backend recovery into a
     // different judgment with missing inputs.
     if (options.agentic === true && !fallbackBackend.agentic) return false;
-    if ((options.images?.length ?? 0) > 0 && !fallbackBackend.attachments) return false;
+    if ((options.images?.length ?? 0) > 0 && !carriesVisualEvidence(fallbackBackend, options.agentic === true, options.images ?? [], options.cwd)) return false;
     fallbackUsed = true;
     fallback = {
       at: new Date(startedAt).toISOString(),
@@ -320,7 +386,7 @@ export async function runJudge<T>(
     // is therefore also the one place the health ledger can learn anything.
     if (error.reason === "input-too-large") {
       throw Object.assign(error, {
-        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories, visualEvidenceRecord()),
       });
     }
     recordBackendFailure(backend.name, target.model, error.code);
@@ -349,7 +415,7 @@ export async function runJudge<T>(
       || error.code === "judge-invalid-output";
     if (canFallback && useFallback(error)) return;
     throw Object.assign(error, {
-      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories, visualEvidenceRecord()),
     });
   };
   while (true) {
@@ -358,7 +424,7 @@ export async function runJudge<T>(
     } catch (error) {
       if (!(error instanceof JudgeError)) throw error;
       throw Object.assign(error, {
-        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories, visualEvidenceRecord()),
       });
     }
     try {
@@ -375,7 +441,7 @@ export async function runJudge<T>(
         || error.code === "judge-invalid-output";
       if (canFallback && useFallback(error)) continue;
       throw Object.assign(error, {
-        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories, visualEvidenceRecord()),
       });
     }
     attempts += 1;
@@ -403,7 +469,10 @@ export async function runJudge<T>(
         ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
         ...(options.explore !== undefined ? { explore: options.explore } : {}),
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-        ...(options.evidencePaths !== undefined ? { evidencePaths: options.evidencePaths } : {}),
+        ...((): { evidencePaths?: string[] } => {
+          const paths = evidencePathsForCall();
+          return paths !== undefined ? { evidencePaths: paths } : {};
+        })(),
       });
       text = result.text;
       usage = result.usage;
@@ -445,7 +514,7 @@ export async function runJudge<T>(
     recordBackendSuccess(backend.name, target.model);
     return {
       value: validated,
-      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, attemptObservation(), retries, usage, advisories),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, attemptObservation(), retries, usage, advisories, visualEvidenceRecord()),
     };
   }
 }
@@ -463,6 +532,7 @@ function makeRecord(
   retries: JudgeRetry[] = [],
   usage?: JudgeUsage,
   advisories: JudgeAdvisory[] = [],
+  visual?: VisualEvidenceRecord,
 ): JudgeCallRecord {
   return {
     at: new Date(startedAt).toISOString(),
@@ -479,6 +549,7 @@ function makeRecord(
     // omitting an empty observation made "read nothing" and "never observed"
     // the same missing key, and that is what a failed call used to look like.
     ...(activity !== null ? { activity } : {}),
+    ...(visual !== undefined ? { visualEvidence: visual } : {}),
     ...(usage !== undefined ? { usage } : {}),
     ...(retries.length > 0 ? { retries } : {}),
     ...(fallback !== undefined ? { fallback } : {}),

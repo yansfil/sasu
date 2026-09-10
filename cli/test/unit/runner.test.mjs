@@ -406,8 +406,132 @@ test("visual evidence routes a Claude-primary profile to its attachment-capable 
   try {
     const outcome = await runJudge(claudePrimaryConfig, "gate:test", "routine", "prompt", validateGapVerdict, { images: [path.join(binDir, "proof.png")] });
     assert.equal(outcome.record.backend, "codex");
-    assert.equal(fs.existsSync(claudeMarker), false, "visual evidence must never be delivered to Claude through Read");
+    assert.equal(fs.existsSync(claudeMarker), false, "the first choice for visual evidence is the attachment guarantee, not reachability");
+    assert.deepEqual(outcome.record.visualEvidence, { images: 1, delivery: "attached", verifiedSeen: true });
   } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+function fakeClaudeVerdict(binDir, markerName = "claude-ran") {
+  const marker = path.join(binDir, markerName);
+  const response = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 2 });
+  const fakeClaude = path.join(binDir, "claude");
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' '${response}'\n`);
+  fs.chmodSync(fakeClaude, 0o755);
+  return marker;
+}
+
+/** A visual lane whose primary fails: the pictures must survive the crossing. */
+test("a failed visual judge crosses to a fallback that can only reach images in its workspace", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-"));
+  fs.writeFileSync(path.join(source, "allowed.txt"), "allowed evidence\n");
+  fs.writeFileSync(path.join(source, "proof.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+  const claudeMarker = fakeClaudeVerdict(binDir);
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeCodex, "#!/bin/sh\nexit 1\n");
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    const outcome = await runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict, {
+      agentic: true,
+      cwd: source,
+      evidencePaths: ["allowed.txt"],
+      images: [path.join(source, "proof.png")],
+    });
+    assert.equal(outcome.record.backend, "claude");
+    assert.equal(fs.existsSync(claudeMarker), true, "the fallback must actually run the visual call");
+    assert.deepEqual(outcome.record.visualEvidence, { images: 1, delivery: "workspace-readable", verifiedSeen: false });
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+/**
+ * The same eligibility, decided before the first attempt. Without it a visual
+ * call whose primary is already condemned still pays that primary's latency.
+ */
+test("a visual call whose primary is already unhealthy pre-selects the reachability-only fallback", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-"));
+  fs.writeFileSync(path.join(source, "proof.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+  fakeClaudeVerdict(binDir);
+  const countFile = path.join(binDir, "codex-calls");
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeCodex, fakeCodexProgram(["exit 1"], { countFile }));
+  fs.chmodSync(fakeCodex, 0o755);
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const call = () => runJudge(config, "gate:test", "routine", "prompt", validateGapVerdict, {
+    agentic: true,
+    cwd: source,
+    evidencePaths: [],
+    images: [path.join(source, "proof.png")],
+  });
+  try {
+    // Two runtime strikes condemn the primary; the third call must not dial it.
+    await call();
+    await call();
+    const before = fs.readFileSync(countFile, "utf8");
+    const outcome = await call();
+    assert.equal(fs.readFileSync(countFile, "utf8"), before, "a condemned primary must not be dialled again for a visual call");
+    assert.equal(outcome.record.backend, "claude");
+    assert.equal(outcome.record.fallback?.backend, "codex");
+    assert.equal(outcome.record.fallback?.attempts, 0);
+    assert.equal(outcome.record.visualEvidence?.delivery, "workspace-readable");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+  }
+});
+
+/** Neither capability is still a refusal: reachability widened one door, not the wall. */
+test("a fallback that can neither attach nor open an image never receives the visual call", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-"));
+  fs.writeFileSync(path.join(source, "proof.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+  const stubFile = path.join(binDir, "stub.json");
+  fs.writeFileSync(stubFile, JSON.stringify([JSON.stringify({ verdict: "PASS", findings: [] })]));
+  const fakeCodex = path.join(binDir, "codex");
+  fs.writeFileSync(fakeCodex, "#!/bin/sh\nexit 1\n");
+  fs.chmodSync(fakeCodex, 0o755);
+  const stubFallback = {
+    ...config,
+    judge: {
+      ...config.judge,
+      profiles: { ...config.judge.profiles, routine: { primary: config.judge.profiles.routine.primary, fallback: { backend: "stub", model: null, effort: "xhigh" } } },
+    },
+  };
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.SASU_JUDGE_STUB_FILE = stubFile;
+  process.env.SASU_JUDGE_STUB_NO_ATTACHMENTS = "1";
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    await assert.rejects(
+      () => runJudge(stubFallback, "gate:test", "routine", "prompt", validateGapVerdict, {
+        agentic: true,
+        cwd: source,
+        evidencePaths: [],
+        images: [path.join(source, "proof.png")],
+      }),
+      (error) => error.code === "judge-auth-or-runtime" && error.backend === "codex",
+    );
+  } finally {
+    delete process.env.SASU_JUDGE_STUB_FILE;
+    delete process.env.SASU_JUDGE_STUB_NO_ATTACHMENTS;
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
     process.env.PATH = previousPath;

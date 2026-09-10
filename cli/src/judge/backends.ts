@@ -69,6 +69,20 @@ export interface JudgeBackend {
    */
   attachments: boolean;
   /**
+   * Whether an image copied into the agentic workspace can be opened by the
+   * judge's own read tools. This is a WEAKER guarantee than `attachments`:
+   * the picture is reachable, not delivered, so the judge sees it only if it
+   * chooses to look, and a backend with no command trace cannot show whether
+   * it did. Measured on claude 2026-09-10 - it read a token that exists only
+   * in pixels on 4 of 4 calls, and reported the file missing when the same
+   * call was run without the copy
+   * (agents/benchmarks/claude-image-read-20260910/report.md).
+   *
+   * False for codex: its audited read grammar is sed and rg only, which
+   * cannot open a PNG. False for api: it has no workspace to read.
+   */
+  readableImages: boolean;
+  /**
    * Whether the backend can run the read-only agentic judge (oversized-diff
    * fallback): the judge session sees the project tree and may Read/Grep/Glob
    * it, nothing more. Distinct from `attachments` the same way: this reopens
@@ -355,10 +369,17 @@ function runProcess(
 export class ClaudeBackend implements JudgeBackend {
   readonly name: BackendName = "claude";
   readonly binary = "claude";
-  // `claude -p` has no local-image flag (--file takes remote file ids), and
-  // the only path to an image would be the Read tool, which the no-tools
-  // contract above forbids. Verified against the CLI help, 2026-08-08.
+  // `claude -p` still has no local-image flag - `--file` takes remote file ids
+  // (CLI help, re-checked 2026-09-10) - so nothing can be attached here.
   readonly attachments = false;
+  // The old second half of that reasoning ("the only path to an image is the
+  // Read tool, which the no-tools contract forbids") is dead: an agentic call
+  // is given --tools Read,Grep,Glob by run() below, and 2026-09-10 measurement
+  // shows the judge opening PNGs in its workspace and reporting pixel-only
+  // content correctly, 4 of 4, plus all 8 production screenshots (1,669,492
+  // bytes) in one call, tokenised as images rather than base64
+  // (agents/benchmarks/claude-image-read-20260910/report.md).
+  readonly readableImages = true;
   // Read-only tool grants work through the same --tools flag (see run()).
   readonly agentic = true;
 
@@ -425,6 +446,9 @@ export class ClaudeBackend implements JudgeBackend {
           const usage = claudeUsage(rec);
           // claude streams no command trace, so `commands` stays null here:
           // an empty list would claim this call was seen running nothing.
+          // `readOutputChars` stays null for the same reason: the envelope
+          // reports turns, never the bytes a Read returned, and metering it
+          // would mean inventing a number (principle 10).
           if (options.observation !== undefined && typeof numTurns === "number" && Number.isFinite(numTurns)) {
             options.observation.toolRounds = Math.max(0, numTurns - 1);
           }
@@ -1255,6 +1279,9 @@ export class CodexBackend implements JudgeBackend {
   readonly binary = "codex";
   // `codex exec -i/--image <FILE>...` attaches local images to the prompt.
   readonly attachments = true;
+  // The audited read grammar is sed and rg only, so a PNG in the workspace
+  // cannot be opened; images reach this judge as attachments or not at all.
+  readonly readableImages = false;
   // Agentic Codex receives only copied evidence in its working directory. The
   // native scoped sandbox blocks outside product reads and writes; every JSONL
   // command event also passes the read grammar audit before its verdict counts.
@@ -1359,6 +1386,10 @@ export class StubBackend implements JudgeBackend {
   get attachments(): boolean {
     return process.env["SASU_JUDGE_STUB_NO_ATTACHMENTS"] !== "1";
   }
+
+  // The stub opens nothing, so it rehearses the backend that can neither
+  // attach nor read an image once SASU_JUDGE_STUB_NO_ATTACHMENTS is set.
+  readonly readableImages = false;
 
   // Same rehearsal pattern as attachments: SASU_JUDGE_STUB_NO_AGENTIC=1 lets
   // tests exercise the hard-error path a non-agentic backend (codex) takes on

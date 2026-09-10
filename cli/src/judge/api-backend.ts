@@ -204,6 +204,8 @@ export class ApiBackend implements JudgeBackend {
   binary = "";
   /** Images ride as base64 content blocks; the wire format has a slot for them. */
   attachments = true;
+  // Images ride in the request; this backend has no workspace to read from.
+  readableImages = false;
   /** No tool loop by construction - that is the whole point of this backend. */
   agentic = false;
 

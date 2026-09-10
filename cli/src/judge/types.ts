@@ -155,6 +155,32 @@ export class JudgeError extends Error {
   }
 }
 
+/**
+ * How this call's screenshots reached the judge. Recorded whenever a call
+ * carried any, because the two ways of delivering them are not the same
+ * guarantee.
+ *
+ * `attached` means the images are in the request whatever the judge decides.
+ * `workspace-readable` means they were copied into the read-only workspace and
+ * the judge had to open them: measured possible on claude 2026-09-10
+ * (agents/benchmarks/claude-image-read-20260910/report.md, 4/4 on a token that
+ * exists only in pixels), but that backend streams no command trace, so
+ * nothing in the record can separate a verdict that studied the screenshots
+ * from one that never opened them. A reader must weigh such a verdict knowing
+ * that (PRINCIPLES item 10).
+ *
+ * `verifiedSeen` tracks `delivery` exactly across today's backends, and is
+ * recorded separately because that is a fact about today's backends rather
+ * than a definition - a backend that both reads its workspace and streams a
+ * trace could deliver `workspace-readable` with `verifiedSeen: true`. Until
+ * one exists, do not read them as independent signals.
+ */
+export interface VisualEvidenceRecord {
+  images: number;
+  delivery: "attached" | "workspace-readable";
+  verifiedSeen: boolean;
+}
+
 export interface JudgeCallRecord {
   at: string;
   backend: BackendName;
@@ -179,6 +205,8 @@ export interface JudgeCallRecord {
    * missing key. Earlier attempts keep their own `retries[].observation`.
    */
   activity?: JudgeActivity;
+  /** How screenshots reached this judge, when the call carried any. */
+  visualEvidence?: VisualEvidenceRecord;
   /** Provider-reported token spend of the answering attempt, when exposed. */
   usage?: JudgeUsage;
   /** Every rejected attempt, in order, across the primary and any fallback. */
