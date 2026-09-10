@@ -931,8 +931,8 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
       seen = activity;
       return validateGapVerdict(value);
     });
-    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: 3, readOutputChars: null, msToLastRead: null },
-      "num_turns rides in raw and also yields the measured read count (num_turns - 1); the command trace and read volume stay unattested");
+    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: null, readOutputChars: null, msToLastRead: null },
+      "num_turns counts tool calls, so it yields the read count exactly and says nothing about API turns; the command trace and read volume stay unattested");
 
     fs.writeFileSync(envelopeFile, envelope({}));
     await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
@@ -1116,8 +1116,8 @@ test("a fallback crossing keeps the primary's observed reads and attests its own
     assert.equal(outcome.record.fallback.backend, "codex");
     assert.deepEqual(outcome.record.retries.map((retry) => retry.observation.commands), [["rg -n value src/allowed.txt"], ["rg -n value src/allowed.txt"]],
       "the crossed-out primary's reads stay in the record");
-    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: 4, readOutputChars: null, msToLastRead: null },
-      "the answering backend attests both numbers in their own units; an empty command list would claim it ran nothing");
+    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: null, readOutputChars: null, msToLastRead: null },
+      "the answering backend attests its reads and nothing else; an empty command list or an API-turn count would both claim more than it said");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
