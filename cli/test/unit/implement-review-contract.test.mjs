@@ -20,6 +20,33 @@ test('one complete shared source and one actual execution can ground all thirty 
   assert.match(validate(result([assessment([])])), /missing required references: B1.*B30/);
 });
 
+// A chunk path is a derived name - `agents/review-input/changes/<product
+// path>.diff` - so a reviewer that knows the product path can reconstruct a
+// plausible but wrong reference for a file it genuinely read. Observed
+// 2026-09-10: a review covering all 23 required requirements exactly once was
+// rejected whole because 10 of its 74 references dropped that prefix. The
+// resolution must stay a resolution, not a relaxation: only an unambiguous
+// suffix of exactly one allowed entry, recorded as that entry.
+test('an unambiguous shortened reference resolves to the allowed entry, and an ambiguous one still fails', () => {
+  const chunk = 'agents/review-input/changes/scripts/verify.mjs.diff';
+  const ctx = { ...context, evidenceRefs: [...context.evidenceRefs, chunk], actualEvidenceRefs: [...context.actualEvidenceRefs, chunk] };
+  const cited = (refs) => ({ ...result([{ ...assessment(), evidenceRefs: refs }]) });
+  const run = (refs, extra = {}) => validateImplementationReviewResult(cited(refs), { ...ctx, ...extra }, 'fidelity');
+
+  const accepted = run(['src/public.mjs', 'scripts/verify.mjs.diff']);
+  assert.equal(typeof accepted, 'object', 'a reference that names exactly one allowed chunk must be accepted');
+  assert.deepEqual(accepted.assessments[0].evidenceRefs, ['src/public.mjs', chunk],
+    'the record keeps the canonical path, not the spelling the reviewer used');
+
+  const twin = 'agents/review-input/other/scripts/verify.mjs.diff';
+  assert.match(String(run(['src/public.mjs', 'scripts/verify.mjs.diff'], { evidenceRefs: [...ctx.evidenceRefs, twin], actualEvidenceRefs: [...ctx.actualEvidenceRefs, twin] })),
+    /unknown reference/, 'a suffix matching two allowed entries names neither');
+  assert.match(String(run(['src/public.mjs', 'scripts/absent.mjs.diff'])), /unknown reference/,
+    'a suffix matching nothing is still unknown');
+  assert.match(String(run(['scripts/verify.mjs.diff', chunk])), /duplicate reference/,
+    'two spellings of one file are one citation twice');
+});
+
 test('missing, duplicated, unknown and empty requirement/evidence accounting cannot be accepted', () => {
   assert.match(validate(result([assessment(behaviors.slice(0, 29))])), /missing required references: B30/);
   assert.match(validate(result([assessment(), assessment(['B30'])])), /duplicate assessment reference B30/);

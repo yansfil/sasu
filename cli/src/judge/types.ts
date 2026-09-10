@@ -189,6 +189,19 @@ export class JudgeError extends Error {
  * from one that never opened them. A reader must weigh such a verdict knowing
  * that (PRINCIPLES item 10).
  *
+ * The two deliveries also differ in what they spend. `attached` consumes no
+ * read rounds; `workspace-readable` is paid out of the read budget, and how
+ * much varies rather than being one round per image - in uncensored
+ * 2026-09-10 reviews one run took 3 images in a single round and another took
+ * 8 images across 8 (agents/benchmarks/max-turns-20260910). Nothing here says
+ * which happened, because this envelope reports only a total read count.
+ *
+ * That is a statement about rounds and about nothing else. The wall-clock cost
+ * of those rounds was measured too and is not summarised here, because the
+ * same measurement puts a single-image round at a few seconds and a
+ * three-image round at over a minute; one number for both would mislead
+ * whichever way it was rounded.
+ *
  * `verifiedSeen` tracks `delivery` exactly across today's backends, and is
  * recorded separately because that is a fact about today's backends rather
  * than a definition - a backend that both reads its workspace and streams a
@@ -296,21 +309,53 @@ export interface ReviewValidationContext {
   humanSources?: Readonly<Record<string, string>>;
 }
 
+/**
+ * The allowed entry a reference names, or null when it names none or several.
+ *
+ * An exact match wins. Failing that, a reference is accepted when it is the
+ * unique path-suffix of exactly one allowed entry, and the canonical entry is
+ * what gets recorded. Nothing outside `allowed` can be admitted this way: the
+ * return value is always an element of that list, so integrity is unchanged
+ * and ambiguity still fails.
+ *
+ * This exists because some allowed paths are derived names rather than names
+ * the reviewer was handed whole. A run-owned diff chunk is
+ * `agents/review-input/changes/<product path>.diff`, so a reviewer that knows
+ * the product path can reconstruct a plausible but wrong reference for a file
+ * it genuinely read. Observed 2026-09-10 in a review that otherwise covered
+ * all 23 required requirements exactly once and was rejected whole: 10 of its
+ * 74 references named chunks without the prefix, all under `scripts/`. That
+ * is a property of how the name is built, not of one model's phrasing, so the
+ * harness resolves it rather than asking the prompt to prevent it (harness
+ * guide item 7).
+ */
+function resolveReference(ref: string, allowed: readonly string[]): string | null {
+  if (allowed.includes(ref)) return ref;
+  const suffix = `/${ref}`;
+  const matches = allowed.filter((entry) => entry.endsWith(suffix));
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 /** Keep the first faulty reference actionable within the existing 300-char retry record. */
 export function reviewReferences(value: unknown, allowed: readonly string[], field: string): string[] | string {
   if (!Array.isArray(value)) return `${field} must be an array of exact reference strings`;
   const seen = new Set<string>();
+  const resolved: string[] = [];
   for (const [index, ref] of value.entries()) {
     const location = `${field}[${index}]`;
     if (typeof ref !== "string" || ref.trim() === "") return `${location} must be a non-empty string; got ${ref === null ? "null" : typeof ref}`;
     const encoded = JSON.stringify(ref);
     const displayed = encoded.length > 70 ? `${encoded.slice(0, 67)}...` : encoded;
     const choices = allowed.join(", ");
-    if (!allowed.includes(ref)) return `${location}: unknown reference ${displayed}; allowed: ${choices.slice(0, 100)}${choices.length > 100 ? "... (full list in prompt)" : ""}`;
-    if (seen.has(ref)) return `${location}: duplicate reference ${displayed}; each reference may appear once`;
-    seen.add(ref);
+    const canonical = resolveReference(ref, allowed);
+    if (canonical === null) return `${location}: unknown reference ${displayed}; allowed: ${choices.slice(0, 100)}${choices.length > 100 ? "... (full list in prompt)" : ""}`;
+    // Deduplication is on the resolved entry: citing one file by two spellings
+    // is one citation twice, not two citations.
+    if (seen.has(canonical)) return `${location}: duplicate reference ${displayed}; each reference may appear once`;
+    seen.add(canonical);
+    resolved.push(canonical);
   }
-  return value as string[];
+  return resolved;
 }
 
 /** The harness validates structure and references; semantic sufficiency belongs to the independent reviewer. */
