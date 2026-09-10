@@ -249,10 +249,22 @@ function changeIndexDocument(material: ReviewPromptMaterial): string {
 ${rows}${notes.length === 0 ? "" : `\n\n${notes.join("\n")}`}`;
 }
 
-/** The batch read the index exists to enable, using this run's own chunks. */
+/**
+ * The batch read the index exists to enable, in this run's own chunk paths.
+ *
+ * Paths only, never a command: every backend receives this same document and
+ * each one's read grammar is named in its own preamble, so a concrete `sed`
+ * line here is an example a Read-tool reviewer cannot run. 28b9482 made this
+ * document tool-agnostic for that reason and one command-shaped example put
+ * the coupling back. The paths are quoted so one containing a space stays a
+ * single argument - that is path disambiguation, not shell syntax.
+ *
+ * Fewer than two chunks is nothing to batch, and an example that reads one
+ * path does not demonstrate the behavior the line is asking for.
+ */
 function chunkBatchExample(material: ReviewPromptMaterial): string {
-  const example = material.changeSet.changes.slice(0, 3).map((change) => JSON.stringify(change.chunkPath)).join(" ");
-  return example === "" ? "" : `sed -n '1,400p' ${example}`;
+  const paths = material.changeSet.changes.slice(0, 3).map((change) => JSON.stringify(change.chunkPath));
+  return paths.length < 2 ? "" : paths.join(" ");
 }
 
 function sharedInput(material: ReviewPromptMaterial): string {
@@ -280,7 +292,7 @@ HOW TO USE THE QUOTED MATERIAL (this is the harness speaking, not the documents)
 - A source hash does not prove external services, DB contents or installed apps are unchanged. Older observations keep their original date and target; explain applicability or report insufficient evidence.
 - An empty execution list is not "tests all passed". A producer's description of a capture is a claim, not proof of what it shows; read the named evidence files and inspect attached screenshots when a conclusion depends on them.
 - Where the change index reports an unavailable baseline, do not infer unchanged behavior or a complete deletion review for that path.
-- Each chunk holds one file's complete hunks, including deleted files and deleted lines; together they are the whole run-owned diff. The index sizes are enough to choose files, and a chunk you do not open is a chunk you did not need.${chunkBatchExample(material) === "" ? "" : `\n- Read several chunks per command rather than one at a time, for example:\n  ${chunkBatchExample(material)}`}
+- Each chunk holds one file's complete hunks, including deleted files and deleted lines; together they are the whole run-owned diff. The index sizes are enough to choose files, and a chunk you do not open is a chunk you did not need.${chunkBatchExample(material) === "" ? "" : `\n- Read several chunks per command rather than one at a time: name several chunk paths in a single read, for example these together in one command:\n  ${chunkBatchExample(material)}`}
 
 FIXED REVIEW WORKSPACE:
 The documents above are quoted in full here and are not files; do not look for them in the workspace. The disposable workspace holds the frozen product source, the registered evidence files named above, the run-owned change chunks named above, and a complete path index at ${REVIEW_INPUT_PATHS.sourceIndex}. Select and explore related source yourself; no implementer-selected source-context artifact is required.

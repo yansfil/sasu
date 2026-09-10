@@ -29,6 +29,33 @@ test("review prompts advertise the exact validator vocabulary, including whole-c
   assert.equal(typeof validateReviewResult({ ...wholeContract, findings: [{ ...wholeContract.findings[0], requirementRefs: ["Goal"] }] }, referenceContext), "string");
 });
 
+// One document reaches every backend, and each backend's read grammar is
+// named in its own preamble, not here. A concrete command in the shared text
+// is therefore an instruction some reviewer cannot follow: 28b9482 removed the
+// tool names and b79afbc's batch example put one back. Pin the class, not the
+// one word - any read command syntax landing in this document fails here.
+test("the shared review prompt shows batching by naming chunk paths, never a backend's read command", () => {
+  const chunks = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"].map((file) => ({
+    path: file, chunkPath: `${REVIEW_DIFF_DIR}/${file}.diff`, addedLines: 3, removedLines: 1,
+  }));
+  const input = material({
+    changedPaths: chunks.map((chunk) => chunk.path),
+    workspacePaths: [...chunks.map((chunk) => chunk.path), ...chunks.map((chunk) => chunk.chunkPath)],
+    changeSet: { changes: chunks, notes: [] },
+  });
+  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
+    const line = prompt.split("\n").find((text) => text.trim().startsWith(`"${chunks[0].chunkPath}"`));
+    assert.ok(line !== undefined, "the example must name this run's own chunk paths");
+    assert.ok(line.includes(`"${chunks[1].chunkPath}"`), "several paths in one command is the whole point of the example");
+    assert.doesNotMatch(prompt, /\bsed\b|\brg\b|\bcat\b|\bhead\b|\bgrep\b|\bGlob\b|\bGrep\b/i, "the shared document names no backend's read grammar");
+  }
+  // One chunk is nothing to batch, so the example is absent rather than
+  // demonstrating a single read as if it were several.
+  const single = material();
+  assert.equal(single.changeSet.changes.length, 1);
+  assert.doesNotMatch(reviewPrompt(single, "fidelity"), /these together in one command/);
+});
+
 test("both routine roles and the distinct risk reviewer receive all thirty requirements, full decisions, and fixed actual inputs", () => {
   const input = material();
   assert.match(reviewPrompt(input, "fidelity"), /REQUIRED FIDELITY REFERENCES/);
