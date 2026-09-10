@@ -3,22 +3,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { reviewPrompt, renderDecisions, reviewInputDocuments, REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
+import { reviewPrompt, renderDecisions, reviewInputDocuments, diffChunkPath } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { validateImplementationReviewResult } from "../../dist/implement/review-contract.js";
 import { runJudge, judgeCallRecordFrom } from "../../dist/judge/runner.js";
 import { loadConfig } from "../../dist/config.js";
 import { prd } from "./implement-fixture.mjs";
 
-function writeReviewDocuments(root, material) {
-  const documents = reviewInputDocuments(material);
+function writeReviewDocuments(root, material, chunks = {}) {
+  const documents = { ...chunks, ...reviewInputDocuments(material) };
   for (const [relative, text] of Object.entries(documents)) {
     const target = path.join(root, relative);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, text);
   }
   material.referenceContext.evidenceRefs.push(...Object.keys(documents));
-  material.referenceContext.actualEvidenceRefs.push(REVIEW_INPUT_PATHS.diff);
+  material.referenceContext.actualEvidenceRefs.push(...Object.keys(chunks));
   return Object.keys(documents);
 }
 
@@ -134,12 +134,14 @@ export async function evaluateLiveReview(backend, t, variants = ["complete", "mi
       prdText: contractText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed approved evaluation contract" },
       // The changed helper alone cannot prove the public API is wired. The
       // reviewer must discover the unchanged caller in the fixed snapshot.
-      changedPaths: ["src/values.mjs"], workspacePaths: ["src/public.mjs", "src/values.mjs", "smoke.log"], runOwnedDiff: "diff --git a/src/values.mjs b/src/values.mjs\n--- a/src/values.mjs\n+++ b/src/values.mjs\n@@ -0,0 +1,30 @@\n" + definitions.split("\n").map((line) => "+" + line).join("\n") + "\n", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, logPath: "smoke.log", provenance: "fixed fixture command(1) execution only" }], artifacts: [],
+      changedPaths: ["src/values.mjs"], workspacePaths: ["src/public.mjs", "src/values.mjs", "smoke.log", diffChunkPath("src/values.mjs")],
+      changeSet: { changes: [{ path: "src/values.mjs", chunkPath: diffChunkPath("src/values.mjs"), addedLines: 30, removedLines: 0 }], notes: [] }, checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, logPath: "smoke.log", provenance: "fixed fixture command(1) execution only" }], artifacts: [],
       referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] },
     };
     const config = loadConfig(root);
     config.judge.profiles.routine = { primary: { backend, model: backend === "codex" ? "gpt-5.6-luna" : "claude-sonnet-5", effort: "xhigh" }, fallback: null };
-    const documents = writeReviewDocuments(root, material);
+    const chunk = "diff --git a/src/values.mjs b/src/values.mjs\n--- a/src/values.mjs\n+++ b/src/values.mjs\n@@ -0,0 +1,30 @@\n" + definitions.split("\n").map((line) => "+" + line).join("\n") + "\n";
+    const documents = writeReviewDocuments(root, material, { [diffChunkPath("src/values.mjs")]: chunk });
     const reviews = await evaluateRoles(config, variant, t, material,
       { agentic: true, explore: true, cwd: root, evidencePaths: ["src/public.mjs", "src/values.mjs", "smoke.log", ...documents] });
     const expected = { "middle-omission": "B17", "final-omission": "B30", unwired: "B28", "storage-failure": "B31" }[variant];
@@ -174,7 +176,7 @@ export async function evaluateLiveVisual(t) {
   const intentContent = renderDecisions(contract);
   const artifact = { path: "visual.png", kind: "image", description: "Delivered character illustration", sha256, bytes: bytes.length, registeredAt: new Date().toISOString(), observedAt: new Date().toISOString(), provenance: "fixed visual fixture", target: "visual.png" };
   const referenceContext = { requiredRequirementRefs: ["B1", "B2"], actualEvidenceRefs: ["visual.png"], requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "Decisions", "Risks", "instruction", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
-  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changedPaths: ["visual.png"], workspacePaths: ["visual.png"], runOwnedDiff: "", checks: [], artifacts: [artifact], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
+  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changedPaths: ["visual.png"], workspacePaths: ["visual.png"], changeSet: { changes: [], notes: ["No product source changed."] }, checks: [], artifacts: [artifact], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
   const config = loadConfig(root);
   config.judge.profiles.routine = { primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" }, fallback: null };
   const documents = writeReviewDocuments(root, material);

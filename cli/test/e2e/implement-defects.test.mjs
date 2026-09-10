@@ -123,12 +123,13 @@ test("review receives recorded conversational admission and exact human-source q
   const env = stub(root);
   ok(run(root, ["implement", "verify"], { env }));
   const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  const context = reviewFile(env, "fidelity", REVIEW_INPUT_PATHS.context);
+  // Canonical context now rides in the prompt inside its quoted boundary.
+  const context = prompt;
   const admission = JSON.parse(context.split("RUN ADMISSION AUTHORITY (not product evidence):\n")[1]?.split("\n")[0] ?? "null");
   assert.deepEqual(admission, { source: "conversation", evidence });
   // Quotation authority is unchanged when duplicate canonical text is a pointer.
   // Assert every exact source and its target without assuming a JSON-object rendering.
-  const sources = context.split("HUMAN SOURCE TEXT (sourceRef -> exact quoteable text):\n")[1]?.split("\nUse an exact sourceRef")[0];
+  const sources = context.split("HUMAN SOURCE TEXT (sourceRef -> exact quoteable text):\n")[1]?.split("\n\nHARNESS BOOKKEEPING FACTS")[0];
   assert.ok(sources);
   for (const [ref, text] of Object.entries({ Decisions: `${decision}\n${rationale}`, Risks: "None.", "D-01": decision })) {
     assert.ok(sources.includes(`${JSON.stringify(ref)}: ${JSON.stringify(text)}`));
@@ -236,8 +237,7 @@ test("a confirmed human authority remains visible to the next full review and is
   const rereview = stub(root);
   ok(run(root, ["implement", "verify"], { env: rereview }));
   const prompt = fs.readFileSync(path.join(rereview.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  assert.ok(reviewFile(rereview, "fidelity", REVIEW_INPUT_PATHS.context).includes(evidence));
-  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.context));
+  assert.ok(prompt.includes(evidence), "the recorded human authority is quoted for the next review");
   assert.equal(readState(root).findings.find((entry) => entry.id === id).status, "confirmed");
   ok(run(root, ["implement", "finalize"]));
   assert.equal(readState(root).status, "complete");

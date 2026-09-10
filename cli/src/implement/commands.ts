@@ -24,7 +24,7 @@ import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEsc
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
 import { DispatchRejected, dispatchImplementor } from "./dispatch";
-import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, REVIEW_INPUT_PATHS, type ReviewPromptMaterial } from "./prompts";
+import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, diffChunkPath, type ReviewPromptMaterial, type RunOwnedChange, type RunOwnedChangeSet } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
 import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
@@ -916,8 +916,20 @@ function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptI
  * the live tree a second time. The no-index diff also covers an unborn repo
  * and untracked additions without changing the project's index.
  */
-function runOwnedDiff(projectRoot: string, state: ImplementState, paths: string[], frozenRoot: string, currentPaths: Set<string>): string {
-  if (paths.length === 0) return "No product source changed.";
+/**
+ * One diff per changed file, generated per file rather than by splitting one
+ * whole-tree diff. The header of that combined output is genuinely ambiguous
+ * here - `--no-prefix` emits `diff --git b/x b/x` for a new file, `a/x a/x`
+ * for a deletion, and an unquoted `a/spaced name.txt b/spaced name.txt` for a
+ * path with a space - so a regex splitter would be keyed on how one
+ * repository's output happens to look (PRINCIPLES item 11). The baseline and
+ * current trees are already staged per file, so asking git once per file
+ * needs no parser at all.
+ */
+function runOwnedDiffChunks(
+  projectRoot: string, state: ImplementState, paths: string[], frozenRoot: string, currentPaths: Set<string>,
+): { changeSet: RunOwnedChangeSet; files: Record<string, string> } {
+  if (paths.length === 0) return { changeSet: { changes: [], notes: ["No product source changed."] }, files: {} };
   const scratch = fs.mkdtempSync(path.join(path.dirname(frozenRoot), "diff-"));
   const baselineRoot = path.join(scratch, "a"), currentRoot = path.join(scratch, "b");
   fs.mkdirSync(baselineRoot); fs.mkdirSync(currentRoot);
@@ -932,6 +944,8 @@ function runOwnedDiff(projectRoot: string, state: ImplementState, paths: string[
     }
     const initialPaths = new Set(state.initialSource.entries.map((entry) => entry.path));
     const unavailable: string[] = [];
+    const changes: RunOwnedChange[] = [];
+    const files: Record<string, string> = {};
     for (const relative of paths) {
       // A fingerprint has no historical body. Non-git/pre-existing untracked
       // source must never be misrepresented as a new file or an unchanged deletion.
@@ -939,23 +953,41 @@ function runOwnedDiff(projectRoot: string, state: ImplementState, paths: string[
         unavailable.push(`${relative} (${currentPaths.has(relative) ? "modified" : "deleted"}; pre-run bytes were not captured)`);
         continue;
       }
+      let baselineArg = "/dev/null";
       if (atHead.has(relative)) {
         const baseline = git(["show", `${head}:${relative}`], projectRoot);
         if (baseline.error || baseline.status !== 0) throw new Error(`cannot read review diff baseline file ${relative}: ${baseline.error?.message ?? baseline.stderr.toString()}`);
         const dest = normalizeProjectPath(baselineRoot, relative).absolute;
         fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, baseline.stdout);
+        baselineArg = `a/${relative}`;
       }
+      let currentArg = "/dev/null";
       if (currentPaths.has(relative)) {
         const dest = normalizeProjectPath(currentRoot, relative).absolute;
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.copyFileSync(normalizeProjectPath(frozenRoot, relative).absolute, dest);
+        currentArg = `b/${relative}`;
       }
+      const diff = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-prefix", baselineArg, currentArg], scratch);
+      // --no-index exits 1 for differences, 0 for identical inputs, and >1 on error.
+      if (diff.error || (diff.status !== 0 && diff.status !== 1)) throw new Error(`cannot generate frozen review diff for ${relative}: ${diff.error?.message ?? diff.stderr.toString()}`);
+      const text = diff.stdout.toString("utf8");
+      if (text.length === 0) continue;
+      const lines = text.split("\n");
+      const chunkPath = diffChunkPath(relative);
+      changes.push({ path: relative, chunkPath,
+        addedLines: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+        removedLines: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length });
+      files[chunkPath] = text;
     }
-    const diff = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-prefix", "--", "a", "b"], scratch);
-    // --no-index exits 1 for differences, 0 for identical inputs, and >1 on error.
-    if (diff.error || (diff.status !== 0 && diff.status !== 1)) throw new Error(`cannot generate frozen review diff: ${diff.error?.message ?? diff.stderr.toString()}`);
-    const limitation = unavailable.length === 0 ? "" : `Diff unavailable for these pre-existing paths; their baseline has no committed bytes. Do not infer unchanged behavior or a complete deletion review:\n${unavailable.join("\n")}\n\n`;
-    return limitation + (diff.stdout.length > 0 ? diff.stdout.toString("utf8") : unavailable.length > 0 ? "No other changes have a reconstructible diff." : "The changed files are byte-identical to the pre-run commit.");
+    const notes: string[] = [];
+    if (unavailable.length > 0) {
+      notes.push(`Diff unavailable for these pre-existing paths; their baseline has no committed bytes. Do not infer unchanged behavior or a complete deletion review:\n${unavailable.join("\n")}`);
+    }
+    if (changes.length === 0) {
+      notes.push(unavailable.length > 0 ? "No other changes have a reconstructible diff." : "The changed files are byte-identical to the pre-run commit.");
+    }
+    return { changeSet: { changes, notes }, files };
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
@@ -1248,19 +1280,23 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   }
   const checks = attempt.mechanical.map((run) => ({ command: run.command, exitCode: run.exitCode, logPath: run.logPath,
     provenance: `CLI execution ${run.startedAt}; cwd=${run.cwd}; log=${run.logPath}` }));
-  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, REVIEW_INPUT_PATHS.diff])];
+  // Chunks are readable evidence like any product file: they must be citable,
+  // and for a deleted file the chunk is the only surviving record of its code.
+  const diff = runOwnedDiffChunks(workRoot, state, changed, cwd, new Set(currentSource.keys()));
+  const chunkPaths = Object.keys(diff.files);
+  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, ...chunkPaths])];
   const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
-    changedPaths: changed, workspacePaths: [...paths], runOwnedDiff: runOwnedDiff(workRoot, state, changed, cwd, new Set(currentSource.keys())), checks,
+    changedPaths: changed, workspacePaths: [...paths, ...chunkPaths], changeSet: diff.changeSet, checks,
     artifacts: state.artifacts,
     referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
-      actualEvidenceRefs: [...paths, REVIEW_INPUT_PATHS.diff].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
+      actualEvidenceRefs: [...paths, ...chunkPaths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
       requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
       humanSources: { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) } },
     priorFindings: state.findings, priorRiskResult: priorRisk,
     roundContext: attempt.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
     claims: state.escalations.filter((entry) => entry.diagnosis !== null).map((entry) => ({ origin: "solver", subject: `escalation ${entry.id}`, text: entry.diagnosis! })) };
-  for (const [relative, text] of Object.entries(reviewInputDocuments(material))) {
+  for (const [relative, text] of Object.entries({ ...diff.files, ...reviewInputDocuments(material) })) {
     if (paths.has(relative)) throw new Error(`registered evidence collides with a reserved review document: ${relative}`);
     const dest = normalizeProjectPath(cwd, relative);
     fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });

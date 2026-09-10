@@ -7,7 +7,7 @@ import { prd } from "../helpers/implement-fixture.mjs";
 function material(overrides = {}) {
   const prdText = prd();
   const contract = parseImplementContract(prdText);
-  return { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, referenceContext: { requiredRequirementRefs: contract.rows.map((entry) => entry.id), actualEvidenceRefs: [], requirementRefs: [...contract.rows.map((entry) => entry.id), ...contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD"], priorFindingIds: [], humanSources: {} }, intentSource: { routing: "decisions", content: "User decisions", explanation: "approved" }, changedPaths: [], workspacePaths: [], runOwnedDiff: "", checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  return { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, referenceContext: { requiredRequirementRefs: contract.rows.map((entry) => entry.id), actualEvidenceRefs: [], requirementRefs: [...contract.rows.map((entry) => entry.id), ...contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD"], priorFindingIds: [], humanSources: {} }, intentSource: { routing: "decisions", content: "User decisions", explanation: "approved" }, changedPaths: [], workspacePaths: [], changeSet: { changes: [], notes: ["No product source changed."] }, checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
 }
 
 test("the whole-review input distinguishes real execution from collection metadata and attributed claims", () => {
@@ -30,7 +30,8 @@ test("an empty evidence or suite list reports no observation and prior findings 
   for (const role of ["fidelity", "code"]) {
     const input = material();
     const prompt = reviewPrompt(input, role) + "\n" + Object.values(reviewInputDocuments(input)).join("\n");
-    assert.match(prompt, /No required suite commands were recorded/);
+    assert.match(prompt, /No required suite command was recorded/);
+    assert.match(prompt, /An empty execution list is not "tests all passed"/);
     assert.match(prompt, /none registered; do not claim runtime QA occurred/);
     assert.match(prompt, /Disappearance does not resolve it/);
     assert.match(prompt, /concrete omission in unchanged code still counts/);
@@ -45,9 +46,12 @@ test("a long canonical human source remains complete once without changing quote
   input.intentSource.content = original;
   input.referenceContext.humanSources = { instruction: original, "D-01": "A separately reserved human judgment." };
   const before = structuredClone(input.referenceContext);
-  const context = reviewInputDocuments(input)["agents/review-input/context.md"];
+  // The canonical intake now rides in the prompt itself; it must still appear
+  // exactly once, because a duplicated 52,731-byte intake is what the single
+  // copy was introduced to stop.
+  const context = reviewPrompt(input, "fidelity");
   assert.ok(context.includes(original), "the complete quote source must remain readable");
-  assert.equal(context.indexOf(original), context.lastIndexOf(original), "reading the context must not repeat the full intake");
+  assert.equal(context.indexOf(original), context.lastIndexOf(original), "quoting the context must not repeat the full intake");
   assert.ok(context.includes('"instruction"'));
   assert.ok(context.includes("A separately reserved human judgment."));
   assert.deepEqual(input.referenceContext, before, "deduplicating presentation must not change authoritative quote values");

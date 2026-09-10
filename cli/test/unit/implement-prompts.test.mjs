@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { reviewPrompt, riskPrompt, intentSource, renderDecisions, reviewInputDocuments, REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
+import { reviewPrompt, riskPrompt, intentSource, renderDecisions, reviewInputDocuments, REVIEW_INPUT_PATHS, REVIEW_DIFF_DIR } from "../../dist/implement/prompts.js";
+import { assertJudgeInputFits } from "../../dist/judge/backends.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { prd } from "../helpers/implement-fixture.mjs";
 import { validateReviewResult } from "../../dist/judge/types.js";
@@ -11,7 +12,7 @@ import { validateReviewResult } from "../../dist/judge/types.js";
 export function material(overrides = {}) {
   const prdText = prd({ count: 30 });
   const contract = parseImplementContract(prdText);
-  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], workspacePaths: ["implementation.txt"], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], workspacePaths: ["implementation.txt", "agents/review-input/changes/implementation.txt.diff"], changeSet: { changes: [{ path: "implementation.txt", chunkPath: "agents/review-input/changes/implementation.txt.diff", addedLines: 1, removedLines: 0 }], notes: [] }, checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
   return { ...value, referenceContext: overrides.referenceContext ?? { requiredRequirementRefs: value.contract.rows.map((entry) => entry.id), actualEvidenceRefs: ["implementation.txt"], requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", "implementation.txt"], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
 }
 
@@ -35,13 +36,17 @@ test("both routine roles and the distinct risk reviewer receive all thirty requi
   assert.doesNotMatch(riskPrompt(input), /REQUIRED FIDELITY REFERENCES/);
   for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
     const documents = reviewInputDocuments(input);
-    assert.equal(documents[REVIEW_INPUT_PATHS.contract], input.prdText);
-    assert.ok(documents[REVIEW_INPUT_PATHS.context].includes(input.intentSource.content));
-    for (let n = 1; n <= 30; n++) assert.ok(documents[REVIEW_INPUT_PATHS.contract].includes(`Requirement ${n}:`));
-    assert.equal(documents[REVIEW_INPUT_PATHS.diff], input.runOwnedDiff);
-    for (const entrypoint of Object.values(REVIEW_INPUT_PATHS)) assert.ok(prompt.includes(entrypoint));
-    assert.ok(!prompt.includes(input.prdText));
-    assert.ok(!prompt.includes(input.runOwnedDiff));
+    // The harness's own documents ride in the prompt; only the path index and
+    // the change chunks are still files, because only those are read selectively.
+    assert.ok(prompt.includes(input.prdText), "the complete approved contract is quoted, not fetched");
+    assert.ok(prompt.includes(input.intentSource.content));
+    for (let n = 1; n <= 30; n++) assert.ok(prompt.includes(`Requirement ${n}:`));
+    assert.ok(prompt.includes(input.changeSet.changes[0].chunkPath), "each change chunk is named for selective reading");
+    assert.deepEqual(Object.keys(documents), [REVIEW_INPUT_PATHS.sourceIndex]);
+    assert.ok(prompt.includes(REVIEW_INPUT_PATHS.sourceIndex));
+    for (const retired of ["agents/review-input/contract.md", "agents/review-input/context.md", "agents/review-input/evidence.md", "agents/review-input/changes.diff"]) {
+      assert.ok(!prompt.includes(retired), `${retired} must not be advertised as a file to read`);
+    }
     assert.match(prompt, /Never execute project code/);
     assert.match(prompt, /state.json.*not product proof/);
   }
@@ -55,23 +60,35 @@ test("both routine roles and the distinct risk reviewer receive all thirty requi
   assert.match(riskPrompt(input), /may run concurrently/);
 });
 
-// The user-approved exploration change moves complete bytes to files; it does
-// not permit clipping large contracts, deletion hunks, or canonical intent.
-test("large Korean contracts, deleted hunks and canonical intent remain complete without expanding the initial prompt", () => {
-  const original = material();
-  const prdText = original.prdText + "\n" + "한글 요구사항 원문\n".repeat(40_000);
-  const deleted = "diff --git a/deleted.ts b/deleted.ts\n--- a/deleted.ts\n+++ /dev/null\n" + "-deleted behavior\n".repeat(40_000);
-  const intent = "원래 사용자 결정\n".repeat(40_000);
-  const input = material({ prdText, runOwnedDiff: deleted, intentSource: { routing: "full-qa-log", content: intent, explanation: "complete recorded intent" } });
-  const documents = reviewInputDocuments(input);
-  assert.equal(documents[REVIEW_INPUT_PATHS.contract], prdText);
-  assert.equal(documents[REVIEW_INPUT_PATHS.diff], deleted);
-  assert.ok(documents[REVIEW_INPUT_PATHS.context].includes(intent));
+// The 2026-09-09 rule kept complete bytes out of argv; 2026-09-10 measurement
+// reversed it for the harness's own documents, which the reviewer was buying
+// back through the tool boundary. Deletion hunks and canonical intent must
+// still arrive complete, and the transport budget is counted in UTF-8 bytes -
+// Korean text is three bytes per character, so a character count would report
+// a comfortable margin while the real limit is already gone.
+test("a large Korean contract stays complete, is measured in bytes, and oversized input is refused rather than clipped", () => {
+  const prdText = material().prdText + "\n" + "한글 요구사항 원문\n".repeat(400);
+  const intent = "원래 사용자 결정\n".repeat(400);
+  const input = material({ prdText, intentSource: { routing: "full-qa-log", content: intent, explanation: "complete recorded intent" },
+    changeSet: { changes: [{ path: "deleted.ts", chunkPath: `${REVIEW_DIFF_DIR}/deleted.ts.diff`, addedLines: 0, removedLines: 4_000 }], notes: [] } });
   for (const role of ["fidelity", "code"]) {
     const prompt = reviewPrompt(input, role);
-    assert.equal(prompt, reviewPrompt(original, role), "content size must not change the entrypoint instructions");
-    assert.ok(prompt.length < 25_000, "a large contract must be admitted without an oversized inline envelope");
+    assert.ok(prompt.includes(prdText), "a large contract is quoted complete, never clipped");
+    assert.ok(prompt.includes(intent), "canonical intent arrives complete");
+    assert.ok(prompt.includes(`${REVIEW_DIFF_DIR}/deleted.ts.diff`), "the deletion's chunk stays citable and readable");
+    const bytes = Buffer.byteLength(prompt, "utf8");
+    assert.ok(bytes > prompt.length, "Korean contracts must be measured as UTF-8 bytes, not characters");
+    assert.doesNotThrow(() => assertJudgeInputFits("codex", prompt, { agentic: true, explore: true }), `${role} prompt of ${bytes} bytes must fit the transport budget`);
   }
+  // A contract too large for the transport is an explicit refusal, never a
+  // silent truncation: the reviewer must not judge a contract it was not sent.
+  const oversized = material({ prdText: "한".repeat(200_000) });
+  assert.throws(() => assertJudgeInputFits("codex", reviewPrompt(oversized, "fidelity"), { agentic: true, explore: true }), (error) => {
+    assert.equal(error.code, "judge-context-overflow");
+    assert.equal(error.reason, "input-too-large");
+    assert.match(error.detail, /UTF-8 bytes/);
+    return true;
+  });
 });
 
 test("intent routing checks the source even after spec PASS and never substitutes a missing or escaped document", () => {
@@ -96,18 +113,18 @@ test("evidence uses exact log locations and provenance while unrelated source in
   const sourcePaths = Array.from({ length: 2_000 }, (_, index) => `강의/관련없는-파일-${index}.md`);
   const expanded = { ...input, referenceContext: { ...input.referenceContext, evidenceRefs: [...input.referenceContext.evidenceRefs, ...sourcePaths], actualEvidenceRefs: [...input.referenceContext.actualEvidenceRefs, ...sourcePaths] } };
   const documents = reviewInputDocuments({ ...expanded, workspacePaths: [...expanded.workspacePaths, ...sourcePaths] });
-  for (const value of ["agents/suite.log", "npm test", "agents/qa.log", "operator"]) assert.ok(documents[REVIEW_INPUT_PATHS.evidence].includes(value));
-  // The same inventory the reviewer would otherwise re-list belongs in the
-  // workspace index document, never in the initial prompt.
-  for (const entry of [sourcePaths[0], sourcePaths.at(-1)]) assert.ok(documents[REVIEW_INPUT_PATHS.sourceIndex].includes(entry.slice(entry.lastIndexOf("/") + 1)));
+  // The execution facts and evidence roster are small and always needed, so
+  // they are quoted; the unrelated path inventory is large and selectively
+  // needed, so it stays in the workspace index the reviewer greps.
   for (const prompt of [reviewPrompt(expanded, "fidelity"), reviewPrompt(expanded, "code"), riskPrompt(expanded)]) {
-    assert.ok(!prompt.includes(sourcePaths[0]));
-    assert.ok(!prompt.includes("observed flow"));
+    for (const value of ["agents/suite.log", "npm test", "agents/qa.log", "operator", "observed flow"]) assert.ok(prompt.includes(value), value);
+    assert.ok(!prompt.includes(sourcePaths[0]), "an unrelated 2,000-path inventory must never enter the prompt");
     assert.match(prompt, /snapshot|frozen/);
     assert.match(prompt, /entrypoint|caller/);
     // Targeted search stays instructed; the backend policy names the tool.
     assert.match(prompt, /search them with a pattern/);
   }
+  for (const entry of [sourcePaths[0], sourcePaths.at(-1)]) assert.ok(documents[REVIEW_INPUT_PATHS.sourceIndex].includes(entry.slice(entry.lastIndexOf("/") + 1)));
   assert.equal(reviewPrompt(input, "fidelity"), reviewPrompt(expanded, "fidelity"));
 });
 
@@ -144,7 +161,7 @@ test("Fidelity and Code differ in responsibility while retaining identical compl
   assert.match(code, /consequential design or maintainability problems with an identified failure or material impact/);
   assert.match(code, /Cosmetic preferences.*advisory, not blocking defects/);
   assert.equal(fidelity.slice(fidelity.indexOf("FIXED REVIEW WORKSPACE:")), code.slice(code.indexOf("FIXED REVIEW WORKSPACE:")));
-  for (const prompt of [fidelity, code].map((text) => text + "\n" + reviewInputDocuments(input)[REVIEW_INPUT_PATHS.context])) {
+  for (const prompt of [fidelity, code]) {
     assert.match(prompt, /never produce a per-requirement PASS array/);
     assert.match(prompt, /Complete readable source can establish deterministic behavior/);
     assert.match(prompt, /an execution count or absent per-requirement test is not itself a defect/);

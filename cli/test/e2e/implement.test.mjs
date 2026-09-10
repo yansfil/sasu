@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
+import { REVIEW_INPUT_PATHS, REVIEW_DIFF_DIR, diffChunkPath } from "../../dist/implement/prompts.js";
+import { assertJudgeInputFits } from "../../dist/judge/backends.js";
 import { PRD_PATH, STATE_PATH, REVIEW_PASS, makeProject, prd, readState, run, start, stub, ok, registerEvidence, defect, reviewWithAssessments, git } from "../helpers/implement-fixture.mjs";
 
 function reviewFile(env, role, relative) {
@@ -28,15 +29,16 @@ test("thirty requirements receive grouped evidence grounds in independent review
   for (const requirement of state.requirements) assert.deepEqual(Object.keys(requirement).sort(), ["behavior", "decisionIds", "id"]);
   for (const role of ["fidelity", "code"]) {
   const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.prompt.txt`), "utf8");
-  const contract = reviewFile(env, role, REVIEW_INPUT_PATHS.contract);
-  const context = reviewFile(env, role, REVIEW_INPUT_PATHS.context);
-  for (let index = 1; index <= 30; index++) assert.ok(contract.includes(`Requirement ${index}:`), `B${index} must not be omitted`);
-  assert.ok(context.includes("Preserve every value in the approved request."));
-  assert.ok(context.includes("The user requested all values."));
-  assert.ok(reviewFile(env, role, REVIEW_INPUT_PATHS.evidence).includes(observation));
+  // The harness's own documents are quoted in the prompt; the reviewer no
+  // longer spends read rounds buying back bytes the harness already had.
+  for (let index = 1; index <= 30; index++) assert.ok(prompt.includes(`Requirement ${index}:`), `B${index} must not be omitted`);
+  assert.ok(prompt.includes("Preserve every value in the approved request."));
+  assert.ok(prompt.includes("The user requested all values."));
+  assert.ok(prompt.includes(observation), "the registered evidence roster is quoted, not fetched");
   assert.equal(reviewFile(env, role, observation), fs.readFileSync(path.join(root, observation), "utf8"));
-  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.contract));
-  assert.ok(!prompt.includes(contract));
+  assert.ok(prompt.includes(diffChunkPath("implementation.txt")), "each changed file is named with its own chunk");
+  assert.equal(reviewFile(env, role, diffChunkPath("implementation.txt")).includes("implementation.txt"), true);
+  assert.doesNotMatch(prompt, /agents\/review-input\/(contract|context|evidence)\.md|changes\.diff/, "the retired documents are neither files nor advertised");
   // The frozen copy carries its own complete path index, so a reviewer never
   // pays for a whole-tree listing to find an unchanged caller.
   const index = reviewFile(env, role, REVIEW_INPUT_PATHS.sourceIndex);
@@ -89,28 +91,33 @@ test("large unrelated inventories and deleted source stay fully available withou
   const env = stub(root);
   const fidelity = reviewWithAssessments(root);
   fidelity.assessments[0].requirementRefs = fidelity.assessments[0].requirementRefs.filter((ref) => ref !== "B31");
-  const deletion = { requirementRefs: ["B31"], conclusion: "satisfied", rationale: "The complete baseline diff deletes removed.txt, including its first and last lines, and the current source snapshot has no such file.", evidenceRefs: [REVIEW_INPUT_PATHS.diff] };
+  const deletion = { requirementRefs: ["B31"], conclusion: "satisfied", rationale: "The complete baseline diff deletes removed.txt, including its first and last lines, and the current source snapshot has no such file.", evidenceRefs: [diffChunkPath("removed.txt")] };
   fidelity.assessments.push(deletion);
   const code = reviewWithAssessments(root, REVIEW_PASS, "code");
   code.assessments.push(deletion);
   fs.writeFileSync(env.SASU_JUDGE_STUB_FILE, JSON.stringify({ byPurpose: { "implement:fidelity": fidelity, "implement:code": code } }));
   ok(run(root, ["implement", "verify"], { env }));
   const attempt = readState(root).verificationAttempts.at(-1);
-  assert.ok(attempt.reviewContext.actualEvidenceRefs.includes(REVIEW_INPUT_PATHS.diff), "a complete deletion diff is actual evidence even when its old file no longer exists");
-  assert.ok(!attempt.reviewContext.actualEvidenceRefs.includes(REVIEW_INPUT_PATHS.contract));
+  assert.ok(attempt.reviewContext.actualEvidenceRefs.includes(diffChunkPath("removed.txt")), "a deleted file's chunk is actual evidence even when its old file no longer exists");
+  assert.ok(!attempt.reviewContext.actualEvidenceRefs.includes(PRD_PATH), "the approved contract is not implementation evidence");
   for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result.assessments.find((entry) => entry.requirementRefs.includes("B31")), deletion);
   for (const role of ["fidelity", "code"]) {
     const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.prompt.txt`), "utf8");
-    assert.ok(prompt.length < 25_000, "repository and observation size must not exhaust the initial input budget");
+    // Quoting the harness documents must not pull the large material in with
+    // them: a 45,000-line observation and an unrelated repository inventory
+    // stay files, and the transport budget is checked in bytes by the guard
+    // that actually enforces it.
+    assert.doesNotThrow(() => assertJudgeInputFits("codex", prompt, { agentic: true, explore: true }),
+      `repository and observation size must not exhaust the transport budget (${Buffer.byteLength(prompt, "utf8")} bytes)`);
     assert.ok(!prompt.includes(unrelated[0]));
     assert.ok(!prompt.includes("QA-BEGIN"));
-    const diff = reviewFile(env, role, REVIEW_INPUT_PATHS.diff);
+    const diff = reviewFile(env, role, diffChunkPath("removed.txt"));
     assert.ok(diff.includes("-DELETED-BEGIN\n"));
     assert.ok(diff.includes("-DELETED-END\n"));
     assert.equal(diff.split("-기존에 보존하던 동작\n").length - 1, 15_000, "every deleted line must survive transport");
     assert.equal(reviewFile(env, role, evidence), fs.readFileSync(path.join(root, evidence), "utf8"));
     assert.equal(reviewFile(env, role, unrelated.at(-1)), fs.readFileSync(path.join(root, unrelated.at(-1)), "utf8"));
-    assert.equal(reviewFile(env, role, REVIEW_INPUT_PATHS.contract), fs.readFileSync(path.join(root, PRD_PATH), "utf8"));
+    assert.ok(prompt.includes(fs.readFileSync(path.join(root, PRD_PATH), "utf8")), "the complete approved contract is quoted");
   }
   ok(run(root, ["implement", "finalize"]));
 });
@@ -390,10 +397,10 @@ test("unborn additions retain their diff while hash-only pre-existing baselines 
   registerEvidence(root);
   ok(run(root, ["implement", "verify"], { env }));
   const prompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
-  const diff = reviewFile(env, "fidelity", REVIEW_INPUT_PATHS.diff);
-  assert.ok(diff.includes("impl.txt"));
-  assert.ok(diff.includes("package.json"));
-  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.diff));
+  for (const changed of ["impl.txt", "package.json"]) {
+    assert.ok(reviewFile(env, "fidelity", diffChunkPath(changed)).includes(changed));
+    assert.ok(prompt.includes(diffChunkPath(changed)), `${changed} must be named in the change index`);
+  }
 
   const nonGit = makeProject();
   fs.rmSync(path.join(nonGit, ".git"), { recursive: true, force: true });
@@ -407,13 +414,18 @@ test("unborn additions retain their diff while hash-only pre-existing baselines 
   const nonGitEnv = stub(nonGit);
   ok(run(nonGit, ["implement", "verify"], { env: nonGitEnv }));
   for (const role of ["fidelity", "code"]) {
-    const partial = reviewFile(nonGitEnv, role, REVIEW_INPUT_PATHS.diff);
+    // The change index carries the honest gap: an uncaptured baseline is
+    // reported as unavailable, and no chunk is invented for it.
+    const { cwd } = JSON.parse(fs.readFileSync(path.join(nonGitEnv.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.options.json`), "utf8"));
+    const partial = fs.readFileSync(path.join(nonGitEnv.SASU_JUDGE_STUB_CAPTURE_DIR, `implement_${role}.prompt.txt`), "utf8");
     assert.match(partial, /existing\.txt \(modified; pre-run bytes were not captured\)/);
     assert.match(partial, /deleted\.txt \(deleted; pre-run bytes were not captured\)/);
-    assert.match(partial, /Do not infer unchanged behavior or a complete deletion review/);
+    assert.match(partial, /do not infer unchanged behavior or a complete deletion review/i);
     assert.doesNotMatch(partial, /byte-identical/);
-    assert.doesNotMatch(partial, /diff --git[^\n]*(existing|deleted)\.txt/, "a hash-only baseline cannot produce invented before/after hunks");
-    assert.ok(partial.includes("+GENUINELY-NEW-BODY\n"), "genuine post-start additions still have an exact diff");
+    for (const absent of ["existing.txt", "deleted.txt"]) {
+      assert.equal(fs.existsSync(path.join(cwd, diffChunkPath(absent))), false, "a hash-only baseline cannot produce invented before/after hunks");
+    }
+    assert.ok(reviewFile(nonGitEnv, role, diffChunkPath("new.txt")).includes("+GENUINELY-NEW-BODY\n"), "genuine post-start additions still have an exact diff");
     assert.equal(reviewFile(nonGitEnv, role, "existing.txt"), "MODIFIED-CURRENT-BODY\n", "unavailable old bytes do not hide the current implementation");
   }
 });
