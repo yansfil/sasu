@@ -2,7 +2,7 @@ import path from "node:path";
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
 import { AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
-import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
+import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeFailureReason, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
 
 /**
  * Backends that failed authentication or runtime in THIS process.
@@ -220,6 +220,39 @@ function withEffortOverride(
 }
 
 /**
+ * A retry resends the same prompt to the same backend with one sentence of
+ * correction prepended. It is worth its full latency only when that sentence
+ * can change what the next attempt does.
+ *
+ * A read-budget rejection cannot be corrected that way. `backends.ts` recorded
+ * the expectation as fact - "attempt 2 reads selectively instead of
+ * exhaustively" - and the production records falsify it four times out of
+ * four (agents/benchmarks/paperwork-delivery-20260910/results, 2026-09-10):
+ * 35 rounds became 30 and was rejected again by one, 44 became 54. Those
+ * second attempts cost 533s, 569s, 588s and 596s and ended exactly where the
+ * first ones did. Nothing between the two attempts differs - same workspace,
+ * same documents, same budget - and the retry is not failing for want of
+ * being told: the rejection detail travels in the preamble verbatim, so the
+ * judge is asked in as many words to batch its reads and open only the paths
+ * the criterion needs. It read more anyway. Prompting the count down is dead
+ * twice over; three batching-instruction cells moved it by nothing (9, 9, 10
+ * rounds, agents/benchmarks/max-turns-20260910, 2026-09-10).
+ * Refusing the retry does not remove recovery: `judge-invalid-output` is in
+ * the fallback set below, so the call now crosses to a backend that is
+ * actually different instead of paying ten minutes to fail where it stood.
+ *
+ * Other reasons have the same shape on paper and are deliberately left alone
+ * until someone measures them: `evidence-access` must fail identically (the
+ * path is missing or outside the root), and a refusal recorded as
+ * `empty-response` has nothing to correct. Neither has an observation behind
+ * it. An unnamed reason keeps the old behaviour, so this change is only as
+ * wide as its evidence.
+ */
+function retryCanCorrect(reason: JudgeFailureReason | null): boolean {
+  return reason !== "read-budget-exceeded";
+}
+
+/**
  * One-shot judge call with the D-16 output defense: schema validation plus
  * exactly one retry on invalid output. Backend/model/attempt counts are
  * returned for receipt recording; the caller persists them. Async so lane
@@ -405,7 +438,7 @@ export async function runJudge<T>(
       // not move if anything still holds the live sink.
       observation: structuredClone(observation),
     });
-    if (error.code === "judge-invalid-output" && attempts < 2) {
+    if (error.code === "judge-invalid-output" && attempts < 2 && retryCanCorrect(error.reason)) {
       lastProblem = error.detail.slice(0, JUDGE_CORRECTION_MAX_CHARS);
       return;
     }

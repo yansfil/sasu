@@ -539,9 +539,12 @@ export function codexExecArgs(
  * calls recorded in that project's state.json used 0-15 commands. The prompt
  * already says "inspect only what it needs", but a rule that lives only as
  * prose is a request for discipline, not a guard (PRINCIPLES 7); this is the
- * guard. Exceeding it aborts the call as judge-invalid-output, which the
- * runner retries once with the rejection in the preamble, so attempt 2 reads
- * selectively instead of exhaustively.
+ * guard. Exceeding it aborts the call as judge-invalid-output. This used to
+ * say the runner retries once with the rejection in the preamble "so attempt
+ * 2 reads selectively instead of exhaustively"; the preamble part is true and
+ * the consequence is not - four of four production retries read at least as
+ * much (35 rounds became 30, 44 became 54), so `retryCanCorrect` in runner.ts
+ * no longer retries this rejection and the call crosses instead.
  *
  * Exact-path calls retain the command bound. Claude retains its actual model
  * turn cap through --max-turns; its tool rounds are not shell-command counts.

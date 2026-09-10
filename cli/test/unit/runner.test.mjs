@@ -838,7 +838,10 @@ test("without an override, runJudge falls back from a Codex runtime failure to C
 // The turn cap is what makes over-reading cheap; this pins what the harness
 // does with the call it cut. The envelope is the one measured 2026-09-04 on
 // claude 2.1.260: exit 1, subtype error_max_turns, no result field.
-test("an agentic claude call stopped by the turn cap is retried as a read-budget overrun, not crossed to the fallback", async () => {
+// It used to be retried in place. Four production retries measured 2026-09-10
+// read at least as much the second time (35 rounds -> 30, 44 -> 54) at
+// 533-596s each, so the rejection now travels instead of repeating.
+test("an agentic claude call stopped by the turn cap is not retried in place", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-capped-proj-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
@@ -852,9 +855,9 @@ test("an agentic claude call stopped by the turn cap is retried as a read-budget
   const answered = JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: JSON.stringify({ verdict: "PASS", findings: [] }) });
   const callCount = path.join(binDir, "calls");
   const argvLog = path.join(binDir, "argv");
-  // First call: capped, exit 1. Second call: answers. The argv of each call
-  // is recorded so the test can see the cap travelled and the retry preamble
-  // named the overrun.
+  // The fake binary would answer on a second call, and the count file records
+  // that no second call is made. The argv is recorded so the test can still
+  // see the cap travelled.
   fs.writeFileSync(path.join(binDir, "claude"), [
     "#!/bin/sh",
     `printf '%s\\n' "$*" >> ${JSON.stringify(argvLog)}`,
@@ -886,23 +889,26 @@ test("an agentic claude call stopped by the turn cap is retried as a read-budget
     },
   };
   try {
-    const outcome = await runJudge(cappedConfig, "regression:turn-cap", "routine", "prompt", validateGapVerdict, {
+    // The declared fallback is codex, which this PATH does not provide, so the
+    // call has nowhere to cross and surfaces the rejection. That is the point:
+    // it must arrive without a second full-length claude call behind it.
+    const error = await runJudge(cappedConfig, "regression:turn-cap", "routine", "prompt", validateGapVerdict, {
       agentic: true,
       cwd: project,
       evidencePaths: ["evidence.md"],
-    });
-    assert.equal(outcome.value.verdict, "PASS");
-    assert.equal(outcome.record.backend, "claude");
-    assert.equal(outcome.record.attempts, 2, "the capped attempt is retried in place");
-    assert.equal(outcome.record.fallback, undefined, "an over-read is not a backend failure; no crossing");
-    assert.equal(outcome.record.retries.length, 1);
-    assert.equal(outcome.record.retries[0].code, "judge-invalid-output");
-    assert.equal(outcome.record.retries[0].reason, "read-budget-exceeded");
-    assert.match(outcome.record.retries[0].detail, new RegExp(`${AGENTIC_READ_MAX_ROUNDS + 1}-turn cap`));
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "a read-budget rejection with no reachable fallback fails the call");
+    assert.equal(error.code, "judge-invalid-output");
+    assert.equal(error.reason, "read-budget-exceeded");
+    assert.equal(error.record.attempts, 1, "the capped attempt is not retried in place");
+    assert.equal(fs.readFileSync(callCount, "utf8"), "1", "the backend is called once, not twice");
+    assert.equal(fs.existsSync(path.join(binDir, "retry-prompt")), false, "no correction preamble is ever sent");
+    assert.equal(error.record.retries.length, 1);
+    assert.equal(error.record.retries[0].code, "judge-invalid-output");
+    assert.equal(error.record.retries[0].reason, "read-budget-exceeded");
+    assert.match(error.record.retries[0].detail, new RegExp(`${AGENTIC_READ_MAX_ROUNDS + 1}-turn cap`));
     const argv = fs.readFileSync(argvLog, "utf8");
     assert.match(argv, new RegExp(`--max-turns ${AGENTIC_READ_MAX_ROUNDS + 1}`));
-    const retryPrompt = fs.readFileSync(path.join(binDir, "retry-prompt"), "utf8");
-    assert.match(retryPrompt, new RegExp(`^Your previous attempt was rejected: judge hit the ${AGENTIC_READ_MAX_ROUNDS + 1}-turn cap`), "the retry names the overrun so attempt 2 reads selectively");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
