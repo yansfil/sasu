@@ -39,6 +39,60 @@ export interface JudgeUsage {
 }
 
 /**
+ * What the harness actually observed while ONE backend attempt ran.
+ *
+ * Written as it is observed rather than derived from the reply, because the
+ * calls that most need explaining are the ones that never reply. The
+ * 2026-09-10 verify-timeout benchmark had to rebuild 62-94 read commands and
+ * 294,797-406,394 chars of read output with a temporary PATH shim: the
+ * streaming audit observed every one of them and the record kept none, so a
+ * read-volume abort and a model that simply never answered were the same
+ * empty record.
+ *
+ * `null` never means zero. A field is null exactly when this backend cannot
+ * attest that dimension, so "unmetered" stays distinguishable from "metered
+ * and zero" (PRINCIPLES item 10: unavailable is unverified, not a value).
+ */
+export interface JudgeActivity {
+  /** Audited read commands in trace order; null when the backend exposes no command trace. */
+  commands: string[] | null;
+  /** Read rounds seen in the trace or attested by the reply envelope; null when neither exists. */
+  toolRounds: number | null;
+  /** Chars of read output the streaming audit metered; null when this backend streams no readable trace. */
+  readOutputChars: number | null;
+  /**
+   * ms from the start of this backend invocation to the last observed read;
+   * null when no read was observed. With the attempt's own duration this is
+   * what separates "died carrying reads" from "read early, then never
+   * answered": the benchmark's code #1 ended 0.0s after its last read
+   * (read-volume abort) while code #2 spent its final 122.8s producing no
+   * reads at all before the timeout.
+   */
+  msToLastRead: number | null;
+}
+
+/** A fresh sink: nothing observed yet, and nothing claimed about what will be. */
+export function newJudgeActivity(): JudgeActivity {
+  return { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null };
+}
+
+/**
+ * Whether an observation carries positive evidence that the judge read its
+ * allowlisted source. Callers that gate on reading must not treat an
+ * unmetered call as zero (a normal call by a backend that attests nothing
+ * would be rejected) nor as satisfied (unverified reading would become a
+ * PASS). Naming the three shapes here keeps that decision one judgment
+ * instead of one truthiness expression per caller.
+ */
+export type ReadEvidence = "observed" | "none-observed" | "unmetered";
+
+export function readEvidence(activity: JudgeActivity): ReadEvidence {
+  if ((activity.commands?.length ?? 0) > 0 || (activity.toolRounds ?? 0) > 0 || (activity.readOutputChars ?? 0) > 0) return "observed";
+  if (activity.commands === null && activity.toolRounds === null && activity.readOutputChars === null) return "unmetered";
+  return "none-observed";
+}
+
+/**
  * One rejected attempt inside a judge call. `attempts: 2` alone cannot answer
  * "why 2" - the rejection reason lived only in the in-memory retry preamble
  * and evaporated when the retry succeeded.
@@ -52,6 +106,12 @@ export interface JudgeRetry {
   /** Bounded diagnostic; the full text reaches only the in-memory retry preamble. */
   detail: string;
   durationMs: number;
+  /**
+   * What this rejected attempt was observed doing. Per attempt on purpose:
+   * summing a call's attempts hid exactly the sequence the benchmark needed
+   * ("attempt 1 aborted on 406,394 read chars, attempt 2 timed out").
+   */
+  observation: JudgeActivity;
 }
 
 export const JUDGE_ERROR_LOOP_THRESHOLD = 3;
@@ -112,10 +172,13 @@ export interface JudgeCallRecord {
   outcome: "ok" | JudgeErrorCode;
   /** Non-fatal backend notices observed during this invocation. */
   advisories?: JudgeAdvisory[];
-  /** Audited shell reads made by an agentic backend, when exposed. */
-  activity?: {
-    commands: string[];
-  };
+  /**
+   * What the harness observed during the answering attempt, or during the
+   * fatal one when this call failed. Absent only when no attempt ran, so an
+   * observed-nothing call and an unobserved one are no longer the same
+   * missing key. Earlier attempts keep their own `retries[].observation`.
+   */
+  activity?: JudgeActivity;
   /** Provider-reported token spend of the answering attempt, when exposed. */
   usage?: JudgeUsage;
   /** Every rejected attempt, in order, across the primary and any fallback. */

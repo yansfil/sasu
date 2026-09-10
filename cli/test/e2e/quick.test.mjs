@@ -100,6 +100,34 @@ test("semantic static reruns refuse without spend; source and input changes allo
   successful(run(dir, {...PASS, priorDispositions: [{findingId: "F1", status: "resolved", reason: "Action connected", evidenceRefs: ["widget.js"]}]}));
 });
 
+// The read-evidence gate has three inputs, not two: a metered zero, a metered
+// positive count, and a backend that attests nothing. The third must be
+// refused as unverified - mapping it to zero would reject honest backends,
+// and mapping it to satisfied would let an unread review pass (harness item
+// 10). Each shape is pinned here because prose cannot hold that distinction.
+test("an oversized diff review passes only on positive read evidence, and names which evidence was missing", t => {
+  const inline = (dir) => {
+    // Past VERIFY_DIFF_MAX_CHARS the gate stops inlining the diff and requires
+    // the reviewer to read the source itself.
+    fs.appendFileSync(path.join(dir, "widget.js"), Array.from({length: 8_000}, (_, index) => `export const padding${index} = ${index};`).join("\n") + "\n");
+  };
+  const observed = project(t);
+  inline(observed);
+  successful(run(observed, PASS, [], {SASU_JUDGE_STUB_TOOL_ROUNDS: "3"}));
+  assert.equal(state(observed).gates.verify.verdict, "PASS");
+
+  for (const [rounds, expected] of [[undefined, /observed zero read commands and zero tool rounds/], ["unmetered", /attested no command trace and no round count, so its reading is unverified rather than zero/]]) {
+    const dir = project(t);
+    inline(dir);
+    const output = run(dir, PASS, [], rounds === undefined ? {} : {SASU_JUDGE_STUB_TOOL_ROUNDS: rounds});
+    assert.equal(output.status, 1, `${rounds}: an unproven read must not pass`);
+    const recorded = state(dir);
+    const detail = JSON.stringify({ judgeCalls: recorded.judgeCalls, gate: recorded.gates.verify });
+    assert.match(detail, expected, `${rounds}: the record must say which read evidence was missing`);
+    assert.doesNotMatch(detail, rounds === undefined ? /unverified rather than zero/ : /observed zero read commands/, `${rounds}: the two shapes must not be reported as one`);
+  }
+});
+
 test("registered shared evidence is hash-pinned and changed content stales PASS", t => {
   const dir = project(t, "\n## Evidence\n- agents/observed.txt\n");
   fs.writeFileSync(path.join(dir, "agents/observed.txt"), "Observed installed app at test time\n");

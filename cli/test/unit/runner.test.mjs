@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { beforeEach } from "node:test";
 import { resetJudgeHealth, runJudge } from "../../dist/judge/runner.js";
-import { AGENTIC_READ_MAX_ROUNDS } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS } from "../../dist/judge/backends.js";
 import { validateGapVerdict } from "../../dist/judge/types.js";
 import { loadConfig } from "../../dist/config.js";
 
@@ -807,7 +807,8 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
       seen = activity;
       return validateGapVerdict(value);
     });
-    assert.deepEqual(seen, { commands: [], toolRounds: 2 }, "num_turns 3 = two tool rounds");
+    assert.deepEqual(seen, { commands: null, toolRounds: 2, readOutputChars: null, msToLastRead: null },
+      "num_turns 3 = two tool rounds, and claude exposes no command trace or metered read volume");
 
     fs.writeFileSync(envelopeFile, envelope({}));
     await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
@@ -815,12 +816,202 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
       return validateGapVerdict(value);
     });
     assert.equal(seen.toolRounds, null, "a missing num_turns must stay unknown, never zero");
+    assert.equal(seen.commands, null, "and an absent trace must stay absent rather than become an observed empty list");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
     process.env.PATH = previousPath;
     delete process.env.CLAUDE_FAKE_ENVELOPE;
   }
+});
+
+// The 2026-09-10 verify-timeout benchmark could not tell a read-volume abort
+// from a model that never answered, because every failing call recorded an
+// empty trace and the diagnosis needed a temporary PATH shim. Each failure
+// path below must leave the observation the harness actually made.
+test("every failed judge call records what it was observed reading", async () => {
+  const event = (command, output, exit_code = 0) => JSON.stringify({
+    type: "item.completed", item: { type: "command_execution", command, aggregated_output: output, exit_code },
+  });
+  const reads = [
+    `printf '%s\\n' '${event("rg -n value src/allowed.txt", "1:value")}'`,
+    `printf '%s\\n' '${event("sed -n '1,40p' src/allowed.txt", "value")}'`,
+  ];
+  const timedOut = { ...config, judge: { ...config.judge, timeoutMs: 900 } };
+
+  // 1. Timeout after real reads: the record must show reads that ended early,
+  //    which is what separates this from a call killed by read volume.
+  await withFakeCodex(fakeCodexProgram([...reads, "/bin/sleep 5"]), async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
+    await assert.rejects(runJudge(timedOut, "observed:timeout", "routine", "review", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    }), (error) => {
+      assert.equal(error.code, "judge-timeout");
+      const activity = error.record.activity;
+      assert.deepEqual(activity.commands, ["rg -n value src/allowed.txt", "sed -n 1,40p src/allowed.txt"]);
+      assert.equal(activity.toolRounds, 2);
+      assert.equal(activity.readOutputChars, 12);
+      assert.ok(activity.msToLastRead < error.record.retries[0].durationMs,
+        "a call that stopped reading long before it died must be readable as exactly that");
+      assert.deepEqual(error.record.retries[0].observation, activity);
+      return true;
+    });
+  });
+
+  // 2. Read-volume abort: the streamed audit kills the call, and the record
+  //    must carry the volume that did it.
+  await withFakeCodex(fakeCodexProgram([
+    `printf '%s\\n' '${event("sed -n '1,200000p' src/allowed.txt", "x".repeat(1_000))}'`,
+    `printf '%s\\n' '${event("sed -n '1,200000p' src/allowed.txt", "y".repeat(AGENTIC_READ_MAX_OUTPUT_CHARS))}'`,
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]), async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
+    await assert.rejects(runJudge(config, "observed:read-budget", "routine", "review", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    }), (error) => {
+      assert.equal(error.reason, "read-budget-exceeded");
+      assert.equal(error.record.activity.toolRounds, 2);
+      assert.ok(error.record.activity.readOutputChars > AGENTIC_READ_MAX_OUTPUT_CHARS);
+      assert.equal(error.record.activity.commands.length, 2);
+      return true;
+    });
+  });
+
+  // 3. Command-audit rejection: the offending command is the whole point of
+  //    the record.
+  await withFakeCodex(fakeCodexProgram([
+    ...reads,
+    `printf '%s\\n' '${event("cat /etc/passwd", "root:x:0:0")}'`,
+    `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
+  ]), async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
+    await assert.rejects(runJudge(config, "observed:audit", "routine", "review", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    }), (error) => {
+      assert.equal(error.reason, "non-read-command");
+      assert.deepEqual(error.record.activity.commands.at(-1), "cat /etc/passwd");
+      assert.equal(error.record.activity.toolRounds, 3);
+      return true;
+    });
+  });
+
+  // 4. A backend that dies before streaming anything must record unmetered,
+  //    never an observed zero: claiming zero reads for a call nobody watched
+  //    is the same false certainty this observation removes.
+  await withFakeCodex(fakeCodexProgram(["exit 7"]), async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
+    await assert.rejects(runJudge(config, "observed:silent", "routine", "review", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    }), (error) => {
+      assert.deepEqual(error.record.activity, { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null });
+      return true;
+    });
+  });
+
+  // 5. Invalid output twice: each rejected attempt keeps its own observation
+  //    instead of one summed trace, so "attempt 1 read, attempt 2 did not"
+  //    survives in the record.
+  // A per-test counter path: the codex work root is fresh per attempt, so a
+  // relative sibling would be shared with every other run on this machine.
+  const attemptFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-observed-attempts-")), "attempts");
+  await withFakeCodex(fakeCodexProgram([
+    `attempt_file=${JSON.stringify(attemptFile)}`,
+    "attempt=0",
+    'test ! -f "$attempt_file" || attempt=$(cat "$attempt_file")',
+    "attempt=$((attempt + 1))",
+    'printf %s "$attempt" > "$attempt_file"',
+    'if [ "$attempt" = "1" ]; then',
+    ...reads,
+    "fi",
+    `printf '%s' 'not json at all' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]), async (source) => {
+    fs.mkdirSync(path.join(source, "src"));
+    fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
+    await assert.rejects(runJudge(config, "observed:invalid", "routine", "review", validateGapVerdict, {
+      agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    }), (error) => {
+      assert.equal(error.record.attempts, 2);
+      assert.equal(error.record.retries.length, 2);
+      assert.equal(error.record.retries[0].observation.toolRounds, 2);
+      assert.equal(error.record.retries[1].observation.toolRounds, 0);
+      assert.deepEqual(error.record.retries[1].observation.commands, [],
+        "an attempt that read nothing records an observed zero, not a missing observation");
+      assert.deepEqual(error.record.activity, error.record.retries[1].observation,
+        "the call-level observation is the fatal attempt's, never a sum of attempts");
+      return true;
+    });
+  });
+});
+
+// Crossing vendors must not erase what the primary was observed doing: the
+// benchmark's failing lane crossed after a read-heavy attempt, and the reads
+// that caused the crossing are the diagnosis.
+test("a fallback crossing keeps the primary's observed reads and attests its own", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-observed-fallback-"));
+  const event = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "rg -n value src/allowed.txt", aggregated_output: "1:value" } });
+  fs.writeFileSync(path.join(binDir, "codex"), fakeCodexProgram([
+    `printf '%s\\n' '${event}'`,
+    `printf '%s' 'not json' > "$last"`,
+    `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
+  ]));
+  const envelope = path.join(binDir, "envelope.json");
+  fs.writeFileSync(envelope, JSON.stringify({ type: "result", is_error: false, num_turns: 4, result: JSON.stringify({ verdict: "PASS", findings: [] }) }));
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(envelope)}\n`);
+  fs.chmodSync(path.join(binDir, "codex"), 0o755);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-observed-source-"));
+  fs.mkdirSync(path.join(source, "src"));
+  fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
+  const crossing = {
+    ...config,
+    judge: {
+      ...config.judge,
+      profiles: {
+        ...config.judge.profiles,
+        routine: { primary: { backend: "codex", model: null, effort: "high" }, fallback: { backend: "claude", model: null, effort: "high" } },
+      },
+    },
+  };
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  const previousPath = process.env.PATH;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  try {
+    const outcome = await runJudge(crossing, "observed:crossing", "routine", "review", validateGapVerdict, {
+      agentic: true, cwd: source, evidencePaths: ["src/allowed.txt"],
+    });
+    assert.equal(outcome.value.verdict, "PASS");
+    assert.equal(outcome.record.backend, "claude");
+    assert.equal(outcome.record.fallback.backend, "codex");
+    assert.deepEqual(outcome.record.retries.map((retry) => retry.observation.commands), [["rg -n value src/allowed.txt"], ["rg -n value src/allowed.txt"]],
+      "the crossed-out primary's reads stay in the record");
+    assert.deepEqual(outcome.record.activity, { commands: null, toolRounds: 3, readOutputChars: null, msToLastRead: null },
+      "the answering backend attests rounds and exposes no command trace; an empty list would claim it ran nothing");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(source, { recursive: true, force: true });
+  }
+});
+
+test("a prompt-only backend that attests nothing records no observation instead of a zero", async () => {
+  await withStub({ verdict: "PASS", findings: [] }, async () => {
+    process.env.SASU_JUDGE_STUB_TOOL_ROUNDS = "unmetered";
+    try {
+      const outcome = await runJudge(config, "observed:unmetered", "routine", "prompt", validateGapVerdict);
+      assert.deepEqual(outcome.record.activity, { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null });
+    } finally {
+      delete process.env.SASU_JUDGE_STUB_TOOL_ROUNDS;
+    }
+  });
 });
 
 test("oversized immutable input fails before even a canary, including UTF-8 and correction reserve", async () => {

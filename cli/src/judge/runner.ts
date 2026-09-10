@@ -1,7 +1,7 @@
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
 import { AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
-import { extractJsonObject, JudgeError, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
+import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeRetry, type JudgeUsage } from "./types";
 
 /**
  * Backends that failed authentication or runtime in THIS process.
@@ -109,16 +109,7 @@ async function preflightBackend(
   return pending;
 }
 
-/**
- * What the judge demonstrably did to gather evidence during one attempt.
- * `toolRounds: null` means the backend gave no signal - callers must treat
- * that as unknown, never as "read nothing", or a missing envelope field
- * would invalidate honest verdicts.
- */
-export interface JudgeActivity {
-  commands: string[];
-  toolRounds: number | null;
-}
+export type { JudgeActivity } from "./types";
 
 export interface JudgeOutcome<T> {
   value: T;
@@ -262,7 +253,13 @@ export async function runJudge<T>(
   let startedAt = Date.now();
   let attempts = 0;
   let lastProblem = "";
-  let activityCommands: string[] = [];
+  // One sink per attempt, written by the backend while the attempt runs. It
+  // replaces the old post-return assembly of a command list, which is why a
+  // timeout used to record nothing: the observation only existed on the
+  // success path (2026-09-10 verify-timeout benchmark).
+  let observation: JudgeActivity = newJudgeActivity();
+  /** The current backend's last attempt, or null while no attempt has run. */
+  const attemptObservation = (): JudgeActivity | null => (attempts > 0 ? observation : null);
   const advisories: JudgeAdvisory[] = [];
   const advisoryKeys = new Set<string>();
   const addAdvisories = (incoming: JudgeAdvisory[] = []): void => {
@@ -307,10 +304,9 @@ export async function runJudge<T>(
     startedAt = Date.now();
     attempts = 0;
     lastProblem = "";
-    activityCommands = [];
+    observation = newJudgeActivity();
     return true;
   };
-  let attemptActivity: JudgeActivity = { commands: [], toolRounds: null };
   // Persisted answer to "why attempts=N": one entry per rejected attempt,
   // across the primary and any fallback. The full detail still drives the
   // in-memory retry preamble; the record keeps a bounded copy.
@@ -324,7 +320,7 @@ export async function runJudge<T>(
     // is therefore also the one place the health ledger can learn anything.
     if (error.reason === "input-too-large") {
       throw Object.assign(error, {
-        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
       });
     }
     recordBackendFailure(backend.name, target.model, error.code);
@@ -339,6 +335,9 @@ export async function runJudge<T>(
       reason: error.reason,
       detail: error.detail.slice(0, 300),
       durationMs: Date.now() - attemptStartedAt,
+      // Copied, not referenced: this attempt is over, and its observation must
+      // not move if anything still holds the live sink.
+      observation: structuredClone(observation),
     });
     if (error.code === "judge-invalid-output" && attempts < 2) {
       lastProblem = error.detail.slice(0, JUDGE_CORRECTION_MAX_CHARS);
@@ -350,7 +349,7 @@ export async function runJudge<T>(
       || error.code === "judge-invalid-output";
     if (canFallback && useFallback(error)) return;
     throw Object.assign(error, {
-      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
     });
   };
   while (true) {
@@ -359,7 +358,7 @@ export async function runJudge<T>(
     } catch (error) {
       if (!(error instanceof JudgeError)) throw error;
       throw Object.assign(error, {
-        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
       });
     }
     try {
@@ -376,11 +375,12 @@ export async function runJudge<T>(
         || error.code === "judge-invalid-output";
       if (canFallback && useFallback(error)) continue;
       throw Object.assign(error, {
-        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, activityCommands, retries, usage, advisories),
+        record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, error.code, fallback, attemptObservation(), retries, usage, advisories),
       });
     }
     attempts += 1;
     attemptStartedAt = Date.now();
+    observation = newJudgeActivity();
     // Usage belongs to the answering attempt only; a stale value from an
     // attempt whose reply was later rejected must not be recorded as the
     // call's spend.
@@ -392,6 +392,7 @@ export async function runJudge<T>(
     let text: string;
     try {
       const result = await backend.run(retryPreamble + prompt, {
+        observation,
         model: target.model,
         ...(options.execution !== undefined ? { execution: options.execution } : {}),
         timeoutMs: config.judge.timeoutMs,
@@ -407,13 +408,6 @@ export async function runJudge<T>(
       text = result.text;
       usage = result.usage;
       addAdvisories(result.advisories);
-      activityCommands.push(...(result.activity?.commands ?? []));
-      attemptActivity = {
-        commands: result.activity?.commands ?? [],
-        toolRounds:
-          result.activity?.toolRounds ??
-          (result.activity !== undefined ? result.activity.commands.length : null),
-      };
     } catch (error) {
       if (error instanceof JudgeError) {
         // The creator-assist baseline recorded 27/56 acceptance calls crossing
@@ -429,11 +423,11 @@ export async function runJudge<T>(
     // its 30-command/139.770s original-case review was otherwise discarded.
     // Claude's num_turns measures model turns and retains its native cap.
     if (options.agentic === true && !(backend.name === "codex" && options.explore === true)
-      && attemptActivity.toolRounds !== null && attemptActivity.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
+      && observation.toolRounds !== null && observation.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
         backend.name,
-        `judge used ${attemptActivity.toolRounds} tool rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
+        `judge used ${observation.toolRounds} tool rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
         "read-budget-exceeded",
       ));
       continue;
@@ -443,7 +437,7 @@ export async function runJudge<T>(
       retryOrFallback(new JudgeError("judge-invalid-output", backend.name, "no JSON object found in output", "missing-json"));
       continue;
     }
-    const validated = validate(parsed, attemptActivity);
+    const validated = validate(parsed, observation);
     if (typeof validated === "string") {
       retryOrFallback(new JudgeError("judge-invalid-output", backend.name, validated, "invalid-contract"));
       continue;
@@ -451,7 +445,7 @@ export async function runJudge<T>(
     recordBackendSuccess(backend.name, target.model);
     return {
       value: validated,
-      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, activityCommands, retries, usage, advisories),
+      record: makeRecord(backend.name, target, profile, purpose, startedAt, attempts, "ok", fallback, attemptObservation(), retries, usage, advisories),
     };
   }
 }
@@ -465,7 +459,7 @@ function makeRecord(
   attempts: number,
   outcome: JudgeCallRecord["outcome"],
   fallback?: JudgeCallRecord["fallback"],
-  activityCommands: string[] = [],
+  activity: JudgeActivity | null = null,
   retries: JudgeRetry[] = [],
   usage?: JudgeUsage,
   advisories: JudgeAdvisory[] = [],
@@ -481,7 +475,10 @@ function makeRecord(
     attempts,
     outcome,
     ...(advisories.length > 0 ? { advisories } : {}),
-    ...(activityCommands.length > 0 ? { activity: { commands: activityCommands } } : {}),
+    // Recorded whenever an attempt ran, including when it observed nothing:
+    // omitting an empty observation made "read nothing" and "never observed"
+    // the same missing key, and that is what a failed call used to look like.
+    ...(activity !== null ? { activity } : {}),
     ...(usage !== undefined ? { usage } : {}),
     ...(retries.length > 0 ? { retries } : {}),
     ...(fallback !== undefined ? { fallback } : {}),

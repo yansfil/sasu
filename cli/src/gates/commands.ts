@@ -8,6 +8,7 @@ import {
   JudgeError,
   describeJudgeFailureCause,
   judgeFailureCause,
+  readEvidence,
   validateGapVerdict,
   validateReviewResult,
   type ReviewResult,
@@ -922,7 +923,16 @@ export async function runVerifyGate(projectRoot: string, config: SasuConfig, top
           const previous = prior.find((item) => item.id === finding.priorFindingId);
           if (previous && previous.kind !== finding.kind) return `unresolved review finding ${previous.id} cannot change kind; resolve it explicitly with evidence before reporting a different concern`;
         }
-        if (agentic && activity.commands.length === 0 && activity.toolRounds === 0) return "whole-contract review requires recorded reads of the allowlisted source; no code was inlined";
+        // Positive evidence, not "is it zero": an unmetered call proves no
+        // reading either way, and mapping that to zero would reject an honest
+        // backend while mapping it to satisfied would promote unverified
+        // reading to a PASS (PRINCIPLES item 10). The two rejections stay
+        // distinct so the record says which one happened.
+        if (agentic) {
+          const evidence = readEvidence(activity);
+          if (evidence === "none-observed") return "whole-contract review requires recorded reads of the allowlisted source; the harness observed zero read commands and zero tool rounds for this call, and no code was inlined";
+          if (evidence === "unmetered") return "whole-contract review requires recorded reads of the allowlisted source; this backend attested no command trace and no round count, so its reading is unverified rather than zero";
+        }
         return validated;
       }, { cwd: projectRoot, effort: laneEffortFor(config, "verify"), ...(evidence.images.length ? { images: evidence.images } : {}), ...(agentic ? { agentic: true, evidencePaths: changedFiles.filter((file) => fs.existsSync(path.join(projectRoot, file))) } : {}) });
       records.push(outcome.record);

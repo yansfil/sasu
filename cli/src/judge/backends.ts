@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BackendName, JudgeEffort } from "../config";
-import { JudgeError, type JudgeAdvisory, type JudgeFailureReason, type JudgeUsage } from "./types";
+import { JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeFailureReason, type JudgeUsage } from "./types";
 
 export interface BackendRunResult {
   text: string;
@@ -12,16 +12,6 @@ export interface BackendRunResult {
   usage?: JudgeUsage;
   /** Non-fatal backend notices observed during this invocation. */
   advisories?: JudgeAdvisory[];
-  activity?: {
-    commands: string[];
-    /**
-     * Evidence-gathering rounds the backend can attest to beyond `commands`:
-     * claude `-p` reports `num_turns`, where a one-shot no-tool reply is 1
-     * turn, so `num_turns - 1` counts tool rounds. Absent means the backend
-     * has no signal, which callers must treat as unknown, never as zero.
-     */
-    toolRounds?: number;
-  };
 }
 
 export interface ExecutionLifecycle {
@@ -32,6 +22,14 @@ export interface ExecutionLifecycle {
 
 export interface BackendRunOptions {
   execution?: ExecutionLifecycle;
+  /**
+   * Where this attempt's observation is written AS IT IS OBSERVED. Handing
+   * the backend a sink instead of returning a trace is the whole fix: a
+   * timeout, a streamed audit abort, a rejected reply and a clean answer all
+   * leave the caller the same observation, without a patch per throw site
+   * (PRINCIPLES item 13). Callers that pass no sink observe nothing.
+   */
+  observation?: JudgeActivity;
   model: string | null;
   timeoutMs: number;
   /** Telemetry, plus the stub backend's lane selector. */
@@ -425,12 +423,14 @@ export class ClaudeBackend implements JudgeBackend {
           // so a missing field stays "unknown" instead of a false zero.
           const numTurns = rec["num_turns"];
           const usage = claudeUsage(rec);
+          // claude streams no command trace, so `commands` stays null here:
+          // an empty list would claim this call was seen running nothing.
+          if (options.observation !== undefined && typeof numTurns === "number" && Number.isFinite(numTurns)) {
+            options.observation.toolRounds = Math.max(0, numTurns - 1);
+          }
           return {
             text: rec["result"],
             ...(usage !== undefined ? { usage } : {}),
-            ...(typeof numTurns === "number" && Number.isFinite(numTurns)
-              ? { activity: { commands: [], toolRounds: Math.max(0, numTurns - 1) } }
-              : {}),
           };
         }
       }
@@ -1052,6 +1052,21 @@ function codexTraceItem(line: string): CodexTraceItem | null {
 }
 
 /**
+ * Whether this line is a codex trace event at all, whatever its type. It is
+ * the proof that the trace channel works: a turn event with no item still
+ * means the harness was watching, so a later "no reads" is an observed zero
+ * rather than an absent observation.
+ */
+function isCodexTraceLine(line: string): boolean {
+  try {
+    const event = JSON.parse(line) as { type?: unknown };
+    return typeof event.type === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Audit for exactly one traced item. Extracted so the streaming auditor and
  * the whole-stdout backstop cannot drift into two allowlists.
  */
@@ -1088,6 +1103,23 @@ function codexItemProblem(
 }
 
 /**
+ * The same observation once its read counters have started. The narrowing
+ * lives in the type so the audit's hot path needs no non-null assertion: the
+ * one place that can turn an unmetered sink into a metered one is below, and
+ * after it the counters are numbers by construction. The counters stay in the
+ * sink itself - the read budget and the record must never be two tallies of
+ * one fact.
+ */
+type MeteredActivity = JudgeActivity & { commands: string[]; toolRounds: number; readOutputChars: number };
+
+function startMeteredReads(observation: JudgeActivity): MeteredActivity {
+  observation.commands ??= [];
+  observation.toolRounds ??= 0;
+  observation.readOutputChars ??= 0;
+  return observation as MeteredActivity;
+}
+
+/**
  * Line-at-a-time audit for a still-running codex judge. First violation wins,
  * which is the point: the call is killed there rather than after the model
  * finishes reasoning against evidence its own trace already invalidated.
@@ -1095,30 +1127,57 @@ function codexItemProblem(
  * Stateful per call: it also enforces the agentic read budget, because the
  * stream is the only place the harness sees a read before paying for the
  * model turn that follows it.
+ *
+ * That makes it the one place a codex read is ever counted, so it is also
+ * where the attempt's observation is written, from the first trace record
+ * onward. The budget reads its numbers back out of that sink rather than
+ * keeping a private tally: two counters for one fact is how the record and
+ * the enforcement drift apart. The stream is also the only accurate source -
+ * `result.stdout` is truncated at MAX_OUTPUT_CHARS and carries no arrival
+ * times, so a trace rebuilt after the fact would undercount the very calls
+ * that read the most.
+ *
+ * The observation covers complete streamed trace records. A final
+ * newline-less chunk is still audited by the codexActivityProblem backstop,
+ * but it cannot be counted here, so a violating last record can leave one
+ * uncounted read.
  */
 export function codexLineAuditor(
   options: { agentic: boolean; evidencePaths: string[]; explore?: boolean },
+  observation: JudgeActivity = newJudgeActivity(),
 ): (line: string) => ActivityProblem | null {
-  let rounds = 0;
-  let outputChars = 0;
+  let metered: MeteredActivity | null = null;
+  const startedAt = Date.now();
   return (line) => {
+    // Metering starts at the first trace event, not at call setup: a codex
+    // process that dies before emitting one (a failed spawn, an immediate
+    // exit) observed nothing, and recording that as zero reads would assert
+    // exactly the thing this observation exists to stop asserting. Any event
+    // type proves the channel, so from here a zero is an observed zero.
+    if (isCodexTraceLine(line)) metered ??= startMeteredReads(observation);
     const item = codexTraceItem(line);
-    if (item === null) return null;
+    if (item === null || metered === null) return null;
+    // Count before judging: the command that gets a call killed is exactly
+    // the one a later reader needs to see.
+    if (item.type === "command_execution" && typeof item.command === "string") {
+      metered.commands.push(item.command);
+      metered.toolRounds += 1;
+      metered.readOutputChars += item.aggregated_output?.length ?? 0;
+      metered.msToLastRead = Date.now() - startedAt;
+    }
     const problem = codexItemProblem(item, options);
     if (problem !== null) return problem;
     if (item.type !== "command_execution") return null;
-    rounds += 1;
-    outputChars += item.aggregated_output?.length ?? 0;
-    if (options.explore !== true && rounds > AGENTIC_READ_MAX_ROUNDS) {
+    if (options.explore !== true && metered.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
       return {
         reason: "read-budget-exceeded",
-        detail: `isolated judge exceeded the read budget: ${rounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
+        detail: `isolated judge exceeded the read budget: ${metered.toolRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
       };
     }
-    if (outputChars > AGENTIC_READ_MAX_OUTPUT_CHARS) {
+    if (metered.readOutputChars > AGENTIC_READ_MAX_OUTPUT_CHARS) {
       return {
         reason: "read-budget-exceeded",
-        detail: `isolated judge exceeded the read budget: ${outputChars} chars of read output against a limit of ${AGENTIC_READ_MAX_OUTPUT_CHARS}; read narrower ranges of only the paths the criterion needs`,
+        detail: `isolated judge exceeded the read budget: ${metered.readOutputChars} chars of read output against a limit of ${AGENTIC_READ_MAX_OUTPUT_CHARS}; read narrower ranges of only the paths the criterion needs`,
       };
     }
     return null;
@@ -1186,13 +1245,6 @@ export function claudeUsage(envelope: Record<string, unknown>): JudgeUsage | und
   return { inputTokens, outputTokens, ...(cached !== undefined ? { cachedInputTokens: cached } : {}) };
 }
 
-function codexCommandTrace(stdout: string): string[] {
-  return codexEvents(stdout)
-    .flatMap((event) => (event.type === "item.completed" && event.item !== undefined ? [event.item] : []))
-    .filter((item) => item.type === "command_execution" && typeof item.command === "string")
-    .map((item) => item.command!);
-}
-
 /**
  * One-shot judgment via Codex CLI exec mode. The sandbox is read-only so the
  * judge cannot write; the last agent message is captured through a temp file
@@ -1252,7 +1304,7 @@ export class CodexBackend implements JudgeBackend {
         // disallowed command; the replacement judge needed 89s and 2s. The
         // trace is JSONL and arrives as it happens, so the violating command
         // is now what stops the call.
-        abortOnLine: codexLineAuditor({ agentic, evidencePaths, explore }),
+        abortOnLine: codexLineAuditor({ agentic, evidencePaths, explore }, options.observation),
       });
       if (result.aborted !== undefined) {
         throw new JudgeError("judge-invalid-output", this.name, result.aborted.detail, result.aborted.reason);
@@ -1277,7 +1329,6 @@ export class CodexBackend implements JudgeBackend {
             text,
             ...(usage !== undefined ? { usage } : {}),
             advisories: codexBackendAdvisories(result.stdout),
-            activity: { commands: codexCommandTrace(result.stdout) },
           };
         }
       }
@@ -1352,16 +1403,19 @@ export class StubBackend implements JudgeBackend {
       if (item === undefined) {
         throw new JudgeError("judge-invalid-output", this.name, `stub byPurpose has no match for: ${purpose ?? "(none)"}`);
       }
-      return { text: typeof item === "string" ? item : JSON.stringify(item), activity: stubActivity() };
+      stubActivity(options.observation);
+      return { text: typeof item === "string" ? item : JSON.stringify(item) };
     }
     if (Array.isArray(raw)) {
       const cursorFile = `${stubFile}.cursor`;
       const cursor = fs.existsSync(cursorFile) ? Number(fs.readFileSync(cursorFile, "utf8")) : 0;
       const item = raw[Math.min(cursor, raw.length - 1)];
       fs.writeFileSync(cursorFile, String(cursor + 1));
-      return { text: typeof item === "string" ? item : JSON.stringify(item), activity: stubActivity() };
+      stubActivity(options.observation);
+      return { text: typeof item === "string" ? item : JSON.stringify(item) };
     }
-    return { text: typeof raw === "string" ? raw : JSON.stringify(raw), activity: stubActivity() };
+    stubActivity(options.observation);
+    return { text: typeof raw === "string" ? raw : JSON.stringify(raw) };
   }
 }
 
@@ -1387,11 +1441,24 @@ async function stubDelay(purpose: string | undefined): Promise<void> {
  * The stub reads nothing by construction, so it attests zero tool rounds by
  * default - that default is what lets tests exercise the read-evidence
  * guard. Tests simulating a judge that DID read live files (same rehearsal
- * pattern as SASU_JUDGE_STUB_NO_AGENTIC) set SASU_JUDGE_STUB_TOOL_ROUNDS.
+ * pattern as SASU_JUDGE_STUB_NO_AGENTIC) set SASU_JUDGE_STUB_TOOL_ROUNDS to a
+ * positive count, and `unmetered` rehearses the third shape a read-evidence
+ * caller must tell apart: a backend that attests nothing at all, which is
+ * unverified reading rather than zero reading. An unparseable value is an
+ * error rather than a silent zero, because a silent zero is precisely the
+ * conflation this observation exists to remove.
  */
-function stubActivity(): { commands: string[]; toolRounds: number } {
-  const raw = Number(process.env["SASU_JUDGE_STUB_TOOL_ROUNDS"] ?? "0");
-  return { commands: [], toolRounds: Number.isFinite(raw) && raw > 0 ? raw : 0 };
+function stubActivity(observation: JudgeActivity | undefined): void {
+  if (observation === undefined) return;
+  const raw = process.env["SASU_JUDGE_STUB_TOOL_ROUNDS"];
+  if (raw === "unmetered") return;
+  const rounds = raw === undefined || raw === "" ? 0 : Number(raw);
+  if (!Number.isInteger(rounds) || rounds < 0) {
+    throw new JudgeError("judge-invalid-output", "stub", `SASU_JUDGE_STUB_TOOL_ROUNDS must be a non-negative integer or "unmetered", got: ${raw}`);
+  }
+  observation.commands = [];
+  observation.toolRounds = rounds;
+  observation.readOutputChars = 0;
 }
 
 interface SpawnOutcome {
