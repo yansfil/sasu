@@ -78,19 +78,7 @@ test("recovery terminates a dead owner's command group before a new verification
   await execution.done;
   assert.equal(groups.some((pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } }), true, "the killed owner left a real running command group");
   retry = runAsync(root, ["implement", "verify"], env);
-  // This wait spans dead-owner detection, process-group cleanup, a second
-  // CLI's startup and its suite registration - strictly more than one CLI run,
-  // so it takes the test's own budget instead of the default, which is sized
-  // to a single CLI timeout (see LEASE_TEST_TIMEOUT above).
-  //
-  // The default never had room for this: the note on that constant records
-  // 33.5s measured for concurrent orchestration against a 30,000ms bound, so
-  // the margin here was negative from the start and load only exposed it.
-  // Observed twice from two sessions as `assert.fail` out of `until`, once at
-  // 44.4s - inside the 90s the test is allowed and outside the 30s this wait
-  // took. The other waits in this file each cover one CLI and keep the
-  // default: raising all of them would hide a real hang for 90s instead.
-  await until(() => fs.readFileSync(path.join(root, "agents/suite-ready"), "utf8") !== originalSuitePid && readState(root).activeVerification?.attemptId !== original, "recovery never reached the next real suite execution", LEASE_TEST_TIMEOUT);
+  await until(() => fs.readFileSync(path.join(root, "agents/suite-ready"), "utf8") !== originalSuitePid && readState(root).activeVerification?.attemptId !== original, "recovery never reached the next real suite execution");
   for (const pid of groups) assert.throws(() => process.kill(-pid, 0), { code: "ESRCH" }, "the old group must be gone before the next execution starts");
   fs.writeFileSync(path.join(root, "agents/suite-release"), "release\n");
   ok(await retry.done);
