@@ -134,7 +134,7 @@ export async function evaluateLiveReview(backend, t, variants = ["complete", "mi
       prdText: contractText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed approved evaluation contract" },
       // The changed helper alone cannot prove the public API is wired. The
       // reviewer must discover the unchanged caller in the fixed snapshot.
-      changedPaths: ["src/values.mjs"], runOwnedDiff: "diff --git a/src/values.mjs b/src/values.mjs\n--- a/src/values.mjs\n+++ b/src/values.mjs\n@@ -0,0 +1,30 @@\n" + definitions.split("\n").map((line) => "+" + line).join("\n") + "\n", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, logPath: "smoke.log", provenance: "fixed fixture command(1) execution only" }], artifacts: [],
+      changedPaths: ["src/values.mjs"], workspacePaths: ["src/public.mjs", "src/values.mjs", "smoke.log"], runOwnedDiff: "diff --git a/src/values.mjs b/src/values.mjs\n--- a/src/values.mjs\n+++ b/src/values.mjs\n@@ -0,0 +1,30 @@\n" + definitions.split("\n").map((line) => "+" + line).join("\n") + "\n", checks: [{ command: "node first-requirement-smoke", exitCode: observed.status, logPath: "smoke.log", provenance: "fixed fixture command(1) execution only" }], artifacts: [],
       referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] },
     };
     const config = loadConfig(root);
@@ -174,7 +174,7 @@ export async function evaluateLiveVisual(t) {
   const intentContent = renderDecisions(contract);
   const artifact = { path: "visual.png", kind: "image", description: "Delivered character illustration", sha256, bytes: bytes.length, registeredAt: new Date().toISOString(), observedAt: new Date().toISOString(), provenance: "fixed visual fixture", target: "visual.png" };
   const referenceContext = { requiredRequirementRefs: ["B1", "B2"], actualEvidenceRefs: ["visual.png"], requirementRefs: ["B1", "B2", "D-01"], evidenceRefs: ["PRD", "Decisions", "Risks", "instruction", "B1", "B2", "D-01", "visual.png"], priorFindingIds: [], humanSources: fixtureHumanSources(contract, intentContent) };
-  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changedPaths: ["visual.png"], runOwnedDiff: "", checks: [], artifacts: [artifact], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
+  const material = { prdText, contract, approval, intentSource: { routing: "decisions", content: intentContent, explanation: "fixed visual contract" }, changedPaths: ["visual.png"], workspacePaths: ["visual.png"], runOwnedDiff: "", checks: [], artifacts: [artifact], referenceContext, priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] } };
   const config = loadConfig(root);
   config.judge.profiles.routine = { primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" }, fallback: null };
   const documents = writeReviewDocuments(root, material);

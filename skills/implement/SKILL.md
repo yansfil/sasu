@@ -139,6 +139,7 @@ A source hash cannot establish that an external service, ignored fixture, databa
 No artifact is required merely because a keyword occurs in the PRD.
 Verify copies the content-hashed product source set and registered evidence into a fixed review workspace.
 Reviewers read the complete contract and discover related callers and surrounding code inside that copy; ordinary source context requires no manual artifact registration.
+That workspace ships a grouped index of every readable path, so a reviewer locates and searches directories from it instead of rebuilding a whole-tree file listing.
 Tracked files and nonignored untracked regular files are available, excluding root `agents/**` bookkeeping and symlinks.
 Ignored runtime outputs or external observations still need actual evidence registration when material to the review.
 Native read restrictions confine product and evidence discovery to the fixed copy, with only the OS/runtime access required to run the review engine.

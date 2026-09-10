@@ -11,7 +11,7 @@ import { validateReviewResult } from "../../dist/judge/types.js";
 export function material(overrides = {}) {
   const prdText = prd({ count: 30 });
   const contract = parseImplementContract(prdText);
-  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], workspacePaths: ["implementation.txt"], runOwnedDiff: "diff --git a/implementation.txt b/implementation.txt\n--- /dev/null\n+++ b/implementation.txt\n+complete source\n", checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
   return { ...value, referenceContext: overrides.referenceContext ?? { requiredRequirementRefs: value.contract.rows.map((entry) => entry.id), actualEvidenceRefs: ["implementation.txt"], requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", "implementation.txt"], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
 }
 
@@ -95,16 +95,43 @@ test("evidence uses exact log locations and provenance while unrelated source in
   });
   const sourcePaths = Array.from({ length: 2_000 }, (_, index) => `강의/관련없는-파일-${index}.md`);
   const expanded = { ...input, referenceContext: { ...input.referenceContext, evidenceRefs: [...input.referenceContext.evidenceRefs, ...sourcePaths], actualEvidenceRefs: [...input.referenceContext.actualEvidenceRefs, ...sourcePaths] } };
-  const documents = reviewInputDocuments(expanded);
+  const documents = reviewInputDocuments({ ...expanded, workspacePaths: [...expanded.workspacePaths, ...sourcePaths] });
   for (const value of ["agents/suite.log", "npm test", "agents/qa.log", "operator"]) assert.ok(documents[REVIEW_INPUT_PATHS.evidence].includes(value));
+  // The same inventory the reviewer would otherwise re-list belongs in the
+  // workspace index document, never in the initial prompt.
+  for (const entry of [sourcePaths[0], sourcePaths.at(-1)]) assert.ok(documents[REVIEW_INPUT_PATHS.sourceIndex].includes(entry.slice(entry.lastIndexOf("/") + 1)));
   for (const prompt of [reviewPrompt(expanded, "fidelity"), reviewPrompt(expanded, "code"), riskPrompt(expanded)]) {
     assert.ok(!prompt.includes(sourcePaths[0]));
     assert.ok(!prompt.includes("observed flow"));
     assert.match(prompt, /snapshot|frozen/);
     assert.match(prompt, /entrypoint|caller/);
-    assert.match(prompt, /rg/);
+    // Targeted search stays instructed; the backend policy names the tool.
+    assert.match(prompt, /search them with a pattern/);
   }
   assert.equal(reviewPrompt(input, "fidelity"), reviewPrompt(expanded, "fidelity"));
+});
+
+// Both roles previously opened by inventorying the frozen tree with
+// rg --files. The tree is fixed for the whole call, so that listing is
+// derivable once by the harness; discovery of unchanged callers must survive.
+test("the frozen workspace index names every readable path once, off the initial prompt", () => {
+  const input = material({ workspacePaths: ["src/api/save.ts", "src/api/load.ts", "src/view.tsx", "README.md", "agents/qa.log"] });
+  const index = reviewInputDocuments(input)[REVIEW_INPUT_PATHS.sourceIndex];
+  assert.match(index, /^src\/api\/ \(2\): load\.ts, save\.ts$/m, "one line per directory keeps the complete set compact");
+  assert.match(index, /^src\/ \(1\): view\.tsx$/m);
+  assert.match(index, /^\(workspace root\) \(1\): README\.md$/m);
+  // The review documents are readable files of the same workspace.
+  for (const document of Object.values(REVIEW_INPUT_PATHS)) assert.ok(index.includes(document.slice(document.lastIndexOf("/") + 1)), document);
+  assert.ok(index.includes("qa.log"));
+  for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
+    assert.ok(prompt.includes(REVIEW_INPUT_PATHS.sourceIndex), "every role is pointed at the index");
+    assert.doesNotMatch(prompt, /rg --files/, "no role is told to rebuild the tree listing");
+    assert.match(prompt, /listing the tree again adds nothing/);
+    // Discovery itself is preserved: the reviewer still chooses and reads the
+    // unchanged callers behind a changed file.
+    assert.match(prompt, /Follow public callers, imports, integration boundaries and error paths/);
+    assert.ok(!prompt.includes("src/api/save.ts"), "the index lives in the workspace, not in argv");
+  }
 });
 
 test("Fidelity and Code differ in responsibility while retaining identical complete inputs and strict authority", () => {

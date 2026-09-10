@@ -1251,7 +1251,7 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, REVIEW_INPUT_PATHS.diff])];
   const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
-    changedPaths: changed, runOwnedDiff: runOwnedDiff(workRoot, state, changed, cwd, new Set(currentSource.keys())), checks,
+    changedPaths: changed, workspacePaths: [...paths], runOwnedDiff: runOwnedDiff(workRoot, state, changed, cwd, new Set(currentSource.keys())), checks,
     artifacts: state.artifacts,
     referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
       actualEvidenceRefs: [...paths, REVIEW_INPUT_PATHS.diff].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),

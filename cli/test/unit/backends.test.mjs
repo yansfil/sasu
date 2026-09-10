@@ -4,7 +4,7 @@
 // refactor cannot silently broaden judge activity.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -382,6 +382,27 @@ test("exploration filters only an approved pipeline's stdout with bounded sed or
   assert.notEqual(audit("sed -n '1p' src/item.ts | sed -n '2p'", { explore: false }), null);
   assert.notEqual(audit("sed -n '1p' src/item.ts | rg value", { explore: false }), null);
   assert.equal(audit("rg value"), null, "standalone exploration rg retains default workspace search");
+});
+
+// The supplied path index already names every readable file, so instructing a
+// whole-tree inventory only buys the same listing again on every call. The
+// audited command boundary is unchanged: a listing stays admissible, it is
+// simply no longer what the reviewer is told to start from.
+test("exploration policies start from the supplied path index instead of a whole-tree inventory", () => {
+  for (const preamble of [CODEX_EXPLORATION_PREAMBLE, CLAUDE_EXPLORATION_PREAMBLE]) {
+    assert.match(preamble, /path index document listing every file/);
+    assert.doesNotMatch(preamble, /rg --files|--hidden|--no-ignore/);
+  }
+  // Targeted search and range reads inside named directories remain the way
+  // an unchanged caller or error path is found.
+  assert.match(CODEX_EXPLORATION_PREAMBLE, /rg with quoted patterns and optional -g\/--glob filters to search the relevant directories/);
+  assert.match(CODEX_EXPLORATION_PREAMBLE, /sed -n 'START,ENDp' on exact paths/);
+  assert.match(CLAUDE_EXPLORATION_PREAMBLE, /Use Grep and Read on the relative source and evidence paths/);
+  assert.match(CLAUDE_EXPLORATION_PREAMBLE, /Glob only for a narrow pattern inside a directory the index names/);
+  const audit = (command) => codexActivityProblem(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command } }),
+    { agentic: true, explore: true, evidencePaths: ["src/item.ts"] });
+  assert.equal(audit("rg --files --hidden --no-ignore"), null, "the read boundary must not narrow with the instruction");
+  assert.equal(audit("rg -n 'save' src"), null);
 });
 
 test("Claude exploration grants discovery only when agentic access is requested", () => {

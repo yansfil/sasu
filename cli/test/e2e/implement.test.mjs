@@ -37,6 +37,14 @@ test("thirty requirements receive grouped evidence grounds in independent review
   assert.equal(reviewFile(env, role, observation), fs.readFileSync(path.join(root, observation), "utf8"));
   assert.ok(prompt.includes(REVIEW_INPUT_PATHS.contract));
   assert.ok(!prompt.includes(contract));
+  // The frozen copy carries its own complete path index, so a reviewer never
+  // pays for a whole-tree listing to find an unchanged caller.
+  const index = reviewFile(env, role, REVIEW_INPUT_PATHS.sourceIndex);
+  assert.ok(index.includes("implementation.txt"), "the copied product paths are indexed");
+  assert.ok(index.includes(observation.slice(observation.lastIndexOf("/") + 1)), "registered evidence is readable and indexed");
+  assert.ok(index.includes(REVIEW_INPUT_PATHS.sourceIndex.slice(REVIEW_INPUT_PATHS.sourceIndex.lastIndexOf("/") + 1)));
+  assert.ok(prompt.includes(REVIEW_INPUT_PATHS.sourceIndex));
+  assert.ok(!prompt.includes(index), "the index stays in the workspace, not in argv");
   }
   assert.deepEqual(fs.readdirSync(env.SASU_JUDGE_STUB_CAPTURE_DIR).filter((name) => name.endsWith(".prompt.txt")), ["implement_code.prompt.txt", "implement_fidelity.prompt.txt"]);
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
