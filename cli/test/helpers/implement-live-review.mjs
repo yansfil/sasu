@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { reviewPrompt, renderDecisions, reviewInputDocuments, diffChunkPath } from "../../dist/implement/prompts.js";
+import { reviewPrompt, renderDecisions, reviewInputDocuments, diffChunkPath, REVIEW_INPUT_PATHS } from "../../dist/implement/prompts.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { validateImplementationReviewResult } from "../../dist/implement/review-contract.js";
 import { runJudge, judgeCallRecordFrom } from "../../dist/judge/runner.js";
@@ -11,6 +11,10 @@ import { loadConfig } from "../../dist/config.js";
 import { prd } from "./implement-fixture.mjs";
 
 function writeReviewDocuments(root, material, chunks = {}) {
+  // Production hands the generated documents to the index and to the citable
+  // reference list from one place; the fixture mirrors that rather than
+  // letting the index manufacture paths nothing else knows about.
+  material.workspacePaths = [...new Set([...material.workspacePaths ?? [], ...Object.values(REVIEW_INPUT_PATHS)])];
   const documents = { ...chunks, ...reviewInputDocuments(material) };
   for (const [relative, text] of Object.entries(documents)) {
     const target = path.join(root, relative);

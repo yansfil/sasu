@@ -159,13 +159,19 @@ test("evidence uses exact log locations and provenance while unrelated source in
 // rg --files. The tree is fixed for the whole call, so that listing is
 // derivable once by the harness; discovery of unchanged callers must survive.
 test("the frozen workspace index names every readable path once, off the initial prompt", () => {
-  const input = material({ workspacePaths: ["src/api/save.ts", "src/api/load.ts", "src/view.tsx", "README.md", "agents/qa.log"] });
+  const input = material({ workspacePaths: ["src/api/save.ts", "src/api/load.ts", "src/view.tsx", "README.md", "agents/qa.log", ...Object.values(REVIEW_INPUT_PATHS)] });
   const index = reviewInputDocuments(input)[REVIEW_INPUT_PATHS.sourceIndex];
   assert.match(index, /^src\/api\/ \(2\): load\.ts, save\.ts$/m, "one line per directory keeps the complete set compact");
   assert.match(index, /^src\/ \(1\): view\.tsx$/m);
   assert.match(index, /^\(workspace root\) \(1\): README\.md$/m);
-  // The review documents are readable files of the same workspace.
+  // The review documents are readable files of the same workspace, and they
+  // reach the index the way every other path does - from the caller. The
+  // index adding them itself is what let the readable set outgrow the citable
+  // one: a review that cited the index the harness told it to read was
+  // rejected for an unknown reference (2026-09-10, one measured rejection).
   for (const document of Object.values(REVIEW_INPUT_PATHS)) assert.ok(index.includes(document.slice(document.lastIndexOf("/") + 1)), document);
+  const withoutDocuments = reviewInputDocuments(material({ workspacePaths: ["src/view.tsx"] }))[REVIEW_INPUT_PATHS.sourceIndex];
+  for (const document of Object.values(REVIEW_INPUT_PATHS)) assert.ok(!withoutDocuments.includes(document.slice(document.lastIndexOf("/") + 1)), document);
   assert.ok(index.includes("qa.log"));
   for (const prompt of [reviewPrompt(input, "fidelity"), reviewPrompt(input, "code"), riskPrompt(input)]) {
     assert.ok(prompt.includes(REVIEW_INPUT_PATHS.sourceIndex), "every role is pointed at the index");

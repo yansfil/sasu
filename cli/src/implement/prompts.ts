@@ -90,10 +90,12 @@ export interface ReviewPromptMaterial {
   intentSource: IntentSource;
   changedPaths: string[];
   /**
-   * Every product-source, registered-evidence and change-chunk path copied
-   * into the frozen review workspace. The reviewer receives this as an index
-   * document, so a whole-tree path inventory answers a question already
-   * answered.
+   * Every path the frozen review workspace holds: product source, registered
+   * evidence, change chunks, and the documents the harness itself writes. The
+   * reviewer receives this as an index document, so a whole-tree path
+   * inventory answers a question already answered. The caller supplies the
+   * complete set - this file no longer appends its own paths, because the set
+   * the reviewer may read and the set it may cite must be built once.
    */
   workspacePaths: readonly string[];
   changeSet: RunOwnedChangeSet;
@@ -163,7 +165,7 @@ These are every file this review can read: the frozen product source, the regist
 Each line is one directory, written as <directory>/ (<file count>): <file names>. Join the directory and one file name to form the exact relative path; a workspace-root file is its name alone.
 Search the relevant directories with a pattern and read exact paths. A name absent from this index is absent from the workspace.
 
-${pathIndex([...material.workspacePaths, ...Object.values(REVIEW_INPUT_PATHS)])}
+${pathIndex(material.workspacePaths)}
 `,
   };
 }

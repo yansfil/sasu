@@ -24,7 +24,7 @@ import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEsc
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
 import { DispatchRejected, dispatchImplementor } from "./dispatch";
-import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, diffChunkPath, type ReviewPromptMaterial, type RunOwnedChange, type RunOwnedChangeSet } from "./prompts";
+import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, diffChunkPath, REVIEW_INPUT_PATHS, type ReviewPromptMaterial, type RunOwnedChange, type RunOwnedChangeSet } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
 import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
@@ -1284,20 +1284,35 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   // and for a deleted file the chunk is the only surviving record of its code.
   const diff = runOwnedDiffChunks(workRoot, state, changed, cwd, new Set(currentSource.keys()));
   const chunkPaths = Object.keys(diff.files);
-  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, ...chunkPaths])];
+  // The workspace the reviewer sees is registered evidence, change chunks, and
+  // the documents the harness authors - and every one of the three must be
+  // citable. Naming the third here rather than at the write loop below is what
+  // keeps the citable set from drifting behind the readable one: a document
+  // absent from this registry never reaches the workspace, because the write
+  // loop refuses it.
+  const generatedDocPaths: string[] = Object.values(REVIEW_INPUT_PATHS);
+  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, ...chunkPaths, ...generatedDocPaths])];
   const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
-    changedPaths: changed, workspacePaths: [...paths, ...chunkPaths], changeSet: diff.changeSet, checks,
+    changedPaths: changed, workspacePaths: [...paths, ...chunkPaths, ...generatedDocPaths], changeSet: diff.changeSet, checks,
     artifacts: state.artifacts,
     referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
+      // Deliberately narrower than `refs`: a generated document is citable but
+      // is not implementation material, and the contract already says so
+      // ("path metadata alone do not establish implementation").
       actualEvidenceRefs: [...paths, ...chunkPaths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
       requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
       humanSources: { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) } },
     priorFindings: state.findings, priorRiskResult: priorRisk,
     roundContext: attempt.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
     claims: state.escalations.filter((entry) => entry.diagnosis !== null).map((entry) => ({ origin: "solver", subject: `escalation ${entry.id}`, text: entry.diagnosis! })) };
+  const citable = new Set(refs);
   for (const [relative, text] of Object.entries({ ...diff.files, ...reviewInputDocuments(material) })) {
     if (paths.has(relative)) throw new Error(`registered evidence collides with a reserved review document: ${relative}`);
+    // A file the reviewer can open but cannot cite fails the whole review for
+    // quoting what the harness handed it. Refusing here means the two sets
+    // cannot silently diverge again the next time a document is added.
+    if (!citable.has(relative)) throw new Error(`review document is not a citable reference: ${relative}; declare it in REVIEW_INPUT_PATHS`);
     const dest = normalizeProjectPath(cwd, relative);
     fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });
     fs.writeFileSync(dest.absolute, text); paths.add(relative);

@@ -266,6 +266,27 @@ test("the frozen source includes unchanged callers without exposing bookkeeping 
   assert.notEqual(run(root, ["implement", "finalize"]).status, 0, "the later source mutation must invalidate completion");
 });
 
+// 2026-09-10, one measured production rejection: a review that cited this
+// document was thrown out for an unknown reference. The harness writes it,
+// lists it in its own path index, and names it in the prompt, so the readable
+// set and the citable set have to be built from one place.
+test("every document the harness writes into the review workspace is citable", () => {
+  const root = makeProject();
+  start(root);
+  const env = stub(root);
+  ok(run(root, ["implement", "verify"], { env }));
+  const attempt = readState(root).verificationAttempts.at(-1);
+  const { cwd } = JSON.parse(fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.options.json"), "utf8"));
+  for (const document of Object.values(REVIEW_INPUT_PATHS)) {
+    assert.ok(fs.existsSync(path.join(cwd, document)), `${document} is readable`);
+    assert.ok(attempt.reviewContext.evidenceRefs.includes(document), `${document} is citable`);
+    // Citable, but never the actual evidence a satisfied assessment rests on:
+    // the contract already says catalog-only paths establish no implementation.
+    assert.equal(attempt.reviewContext.actualEvidenceRefs.includes(document), false, document);
+  }
+  assert.ok(reviewFile(env, "fidelity", REVIEW_INPUT_PATHS.sourceIndex).includes("suite.cjs"), "the index names the frozen product source");
+});
+
 test("registered record-tree source cannot replace different current source in an isolated worktree", (t) => {
   const root = makeProject();
   const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-source-context-"));
