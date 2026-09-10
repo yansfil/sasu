@@ -56,8 +56,25 @@ export interface JudgeUsage {
 export interface JudgeActivity {
   /** Audited read commands in trace order; null when the backend exposes no command trace. */
   commands: string[] | null;
-  /** Read rounds seen in the trace or attested by the reply envelope; null when neither exists. */
-  toolRounds: number | null;
+  /**
+   * Read operations attributable to this call, in the unit the harness read
+   * budget is written in; null when the backend can attest neither a trace
+   * nor a count. Codex counts audited command_execution events directly.
+   * Claude derives it from `num_turns - 1`, which is a measurement, not an
+   * assumption: 2026-09-10 against claude 2.1.267, a stream-json trace showed
+   * 8 reads at num_turns 9 and 30 reads at num_turns 31, one tool round per
+   * turn plus the answering turn. It is a lower bound where a turn issues
+   * several tool calls at once, which is the safe direction for a budget.
+   */
+  readRounds: number | null;
+  /**
+   * The backend's own turn count, exactly as it reported it (claude
+   * `num_turns`, one completion for the API backend). Recorded raw for cost
+   * and latency accounting and for comparison against a turn cap; it is a
+   * different question from "how much did this call read", and a backend that
+   * answers in one turn having read nothing must not look like a reader.
+   */
+  modelTurns: number | null;
   /** Chars of read output the streaming audit metered; null when this backend streams no readable trace. */
   readOutputChars: number | null;
   /**
@@ -73,7 +90,7 @@ export interface JudgeActivity {
 
 /** A fresh sink: nothing observed yet, and nothing claimed about what will be. */
 export function newJudgeActivity(): JudgeActivity {
-  return { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null };
+  return { commands: null, readRounds: null, modelTurns: null, readOutputChars: null, msToLastRead: null };
 }
 
 /**
@@ -87,8 +104,11 @@ export function newJudgeActivity(): JudgeActivity {
 export type ReadEvidence = "observed" | "none-observed" | "unmetered";
 
 export function readEvidence(activity: JudgeActivity): ReadEvidence {
-  if ((activity.commands?.length ?? 0) > 0 || (activity.toolRounds ?? 0) > 0 || (activity.readOutputChars ?? 0) > 0) return "observed";
-  if (activity.commands === null && activity.toolRounds === null && activity.readOutputChars === null) return "unmetered";
+  // Read-unit signals only. `modelTurns` is deliberately absent: the API
+  // backend reports one turn having read nothing at all, so counting turns
+  // here would let a call with no read surface present itself as a reader.
+  if ((activity.commands?.length ?? 0) > 0 || (activity.readRounds ?? 0) > 0 || (activity.readOutputChars ?? 0) > 0) return "observed";
+  if (activity.commands === null && activity.readRounds === null && activity.readOutputChars === null) return "unmetered";
   return "none-observed";
 }
 

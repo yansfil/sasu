@@ -113,13 +113,13 @@ test("an oversized diff review passes only on positive read evidence, and names 
   };
   const observed = project(t);
   inline(observed);
-  successful(run(observed, PASS, [], {SASU_JUDGE_STUB_TOOL_ROUNDS: "3"}));
+  successful(run(observed, PASS, [], {SASU_JUDGE_STUB_READ_ROUNDS: "3"}));
   assert.equal(state(observed).gates.verify.verdict, "PASS");
 
   for (const [rounds, expected] of [[undefined, /observed zero read commands and zero tool rounds/], ["unmetered", /attested no command trace and no round count, so its reading is unverified rather than zero/]]) {
     const dir = project(t);
     inline(dir);
-    const output = run(dir, PASS, [], rounds === undefined ? {} : {SASU_JUDGE_STUB_TOOL_ROUNDS: rounds});
+    const output = run(dir, PASS, [], rounds === undefined ? {} : {SASU_JUDGE_STUB_READ_ROUNDS: rounds});
     assert.equal(output.status, 1, `${rounds}: an unproven read must not pass`);
     const recorded = state(dir);
     const detail = JSON.stringify({ judgeCalls: recorded.judgeCalls, gate: recorded.gates.verify });

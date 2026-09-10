@@ -285,10 +285,11 @@ export class ApiBackend implements JudgeBackend {
       if (acc.text.trim() === "") {
         throw new JudgeError("judge-invalid-output", "api", "Messages API returned no text content", "empty-response");
       }
-      // One completion, no tools: `commands` stays null because this backend
-      // exposes no trace, while the single answered turn is attested.
+      // One completion, no tools: `commands` and `readRounds` stay null
+      // because this backend exposes no trace and reads nothing, while the
+      // single answered turn is attested in its own unit.
       if (options.observation !== undefined) {
-        options.observation.toolRounds = 1;
+        options.observation.modelTurns = 1;
       }
       return {
         text: acc.text,

@@ -444,13 +444,21 @@ export class ClaudeBackend implements JudgeBackend {
           // so a missing field stays "unknown" instead of a false zero.
           const numTurns = rec["num_turns"];
           const usage = claudeUsage(rec);
-          // claude streams no command trace, so `commands` stays null here:
-          // an empty list would claim this call was seen running nothing.
-          // `readOutputChars` stays null for the same reason: the envelope
-          // reports turns, never the bytes a Read returned, and metering it
-          // would mean inventing a number (principle 10).
+          // claude streams no command trace in this output format, so
+          // `commands` stays null: an empty list would claim this call was
+          // seen running nothing. `readOutputChars` stays null for the same
+          // reason - the envelope never reports the bytes a Read returned, and
+          // metering it would mean inventing a number (principle 10).
+          //
+          // Read rounds are different: `num_turns - 1` is a measured read
+          // count, not a guess. Against claude 2.1.267 on 2026-09-10 a
+          // stream-json trace showed 8 reads at num_turns 9 and 30 reads at
+          // num_turns 31, one tool round per turn plus the turn that answers.
+          // Both numbers are recorded, in their own units, because the raw
+          // turn count is what a turn cap is compared against.
           if (options.observation !== undefined && typeof numTurns === "number" && Number.isFinite(numTurns)) {
-            options.observation.toolRounds = Math.max(0, numTurns - 1);
+            options.observation.modelTurns = Math.max(0, numTurns);
+            options.observation.readRounds = Math.max(0, numTurns - 1);
           }
           return {
             text: rec["result"],
@@ -1134,11 +1142,11 @@ function codexItemProblem(
  * sink itself - the read budget and the record must never be two tallies of
  * one fact.
  */
-type MeteredActivity = JudgeActivity & { commands: string[]; toolRounds: number; readOutputChars: number };
+type MeteredActivity = JudgeActivity & { commands: string[]; readRounds: number; readOutputChars: number };
 
 function startMeteredReads(observation: JudgeActivity): MeteredActivity {
   observation.commands ??= [];
-  observation.toolRounds ??= 0;
+  observation.readRounds ??= 0;
   observation.readOutputChars ??= 0;
   return observation as MeteredActivity;
 }
@@ -1185,17 +1193,17 @@ export function codexLineAuditor(
     // the one a later reader needs to see.
     if (item.type === "command_execution" && typeof item.command === "string") {
       metered.commands.push(item.command);
-      metered.toolRounds += 1;
+      metered.readRounds += 1;
       metered.readOutputChars += item.aggregated_output?.length ?? 0;
       metered.msToLastRead = Date.now() - startedAt;
     }
     const problem = codexItemProblem(item, options);
     if (problem !== null) return problem;
     if (item.type !== "command_execution") return null;
-    if (options.explore !== true && metered.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
+    if (options.explore !== true && metered.readRounds > AGENTIC_READ_MAX_ROUNDS) {
       return {
         reason: "read-budget-exceeded",
-        detail: `isolated judge exceeded the read budget: ${metered.toolRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
+        detail: `isolated judge exceeded the read budget: ${metered.readRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
       };
     }
     if (metered.readOutputChars > AGENTIC_READ_MAX_OUTPUT_CHARS) {
@@ -1472,7 +1480,7 @@ async function stubDelay(purpose: string | undefined): Promise<void> {
  * The stub reads nothing by construction, so it attests zero tool rounds by
  * default - that default is what lets tests exercise the read-evidence
  * guard. Tests simulating a judge that DID read live files (same rehearsal
- * pattern as SASU_JUDGE_STUB_NO_AGENTIC) set SASU_JUDGE_STUB_TOOL_ROUNDS to a
+ * pattern as SASU_JUDGE_STUB_NO_AGENTIC) set SASU_JUDGE_STUB_READ_ROUNDS to a
  * positive count, and `unmetered` rehearses the third shape a read-evidence
  * caller must tell apart: a backend that attests nothing at all, which is
  * unverified reading rather than zero reading. An unparseable value is an
@@ -1481,14 +1489,14 @@ async function stubDelay(purpose: string | undefined): Promise<void> {
  */
 function stubActivity(observation: JudgeActivity | undefined): void {
   if (observation === undefined) return;
-  const raw = process.env["SASU_JUDGE_STUB_TOOL_ROUNDS"];
+  const raw = process.env["SASU_JUDGE_STUB_READ_ROUNDS"];
   if (raw === "unmetered") return;
   const rounds = raw === undefined || raw === "" ? 0 : Number(raw);
   if (!Number.isInteger(rounds) || rounds < 0) {
-    throw new JudgeError("judge-invalid-output", "stub", `SASU_JUDGE_STUB_TOOL_ROUNDS must be a non-negative integer or "unmetered", got: ${raw}`);
+    throw new JudgeError("judge-invalid-output", "stub", `SASU_JUDGE_STUB_READ_ROUNDS must be a non-negative integer or "unmetered", got: ${raw}`);
   }
   observation.commands = [];
-  observation.toolRounds = rounds;
+  observation.readRounds = rounds;
   observation.readOutputChars = 0;
 }
 

@@ -66,7 +66,7 @@ export function makeProject(options = {}) {
 // A child must never claim the developer's session or reach a live Herdr pane.
 export function isolatedEnv(overrides = {}) {
   const env = { ...process.env, ...overrides };
-  for (const key of ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "SASU_HERDR_ROLE", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_SOCKET_PATH", "SASU_JUDGE_BACKEND", "SASU_JUDGE_STUB_FILE", "SASU_JUDGE_STUB_CAPTURE_DIR", "SASU_JUDGE_STUB_DELAY_MS", "SASU_JUDGE_STUB_NO_AGENTIC", "SASU_JUDGE_STUB_NO_ATTACHMENTS", "SASU_JUDGE_STUB_TOOL_ROUNDS"])
+  for (const key of ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "SASU_HERDR_ROLE", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_SOCKET_PATH", "SASU_JUDGE_BACKEND", "SASU_JUDGE_STUB_FILE", "SASU_JUDGE_STUB_CAPTURE_DIR", "SASU_JUDGE_STUB_DELAY_MS", "SASU_JUDGE_STUB_NO_AGENTIC", "SASU_JUDGE_STUB_NO_ATTACHMENTS", "SASU_JUDGE_STUB_READ_ROUNDS"])
     if (!(key in overrides)) delete env[key];
   return env;
 }

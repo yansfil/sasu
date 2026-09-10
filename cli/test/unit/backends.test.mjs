@@ -323,16 +323,35 @@ test("codex line auditor ignores non-trace lines instead of aborting on them", (
 // unmetered call from a call that read nothing, which is the same conflation
 // that left failed judge calls with no record at all.
 test("read evidence separates a metered zero from an unmetered call from a positive observation", () => {
+  const shape = (overrides) => ({ commands: null, readRounds: null, modelTurns: null, readOutputChars: null, msToLastRead: null, ...overrides });
   assert.equal(readEvidence(newJudgeActivity()), "unmetered");
-  assert.equal(readEvidence({ commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null }), "unmetered");
-  assert.equal(readEvidence({ commands: [], toolRounds: 0, readOutputChars: 0, msToLastRead: null }), "none-observed");
-  assert.equal(readEvidence({ commands: null, toolRounds: 0, readOutputChars: null, msToLastRead: null }), "none-observed",
-    "a backend that attests zero rounds has metered this call, even with no command trace");
-  assert.equal(readEvidence({ commands: ["sed -n '1,5p' a.md"], toolRounds: 1, readOutputChars: 12, msToLastRead: 4 }), "observed");
-  assert.equal(readEvidence({ commands: null, toolRounds: 2, readOutputChars: null, msToLastRead: null }), "observed",
-    "an attested round count is positive evidence without a command trace");
-  assert.equal(readEvidence({ commands: [], toolRounds: 0, readOutputChars: 900, msToLastRead: 7 }), "observed",
+  assert.equal(readEvidence(shape({})), "unmetered");
+  assert.equal(readEvidence(shape({ commands: [], readRounds: 0, readOutputChars: 0 })), "none-observed");
+  assert.equal(readEvidence(shape({ readRounds: 0 })), "none-observed",
+    "a backend that attests zero read rounds has metered this call, even with no command trace");
+  assert.equal(readEvidence(shape({ commands: ["sed -n '1,5p' a.md"], readRounds: 1, readOutputChars: 12, msToLastRead: 4 })), "observed");
+  assert.equal(readEvidence(shape({ commands: [], readRounds: 0, readOutputChars: 900, msToLastRead: 7 })), "observed",
     "metered read output cannot be reported as nothing read");
+  // Turns are a different question and never answer this one. The API backend
+  // reports exactly one turn having read nothing at all, which is why counting
+  // turns here would let a call with no read surface look like a reader.
+  assert.equal(readEvidence(shape({ modelTurns: 1 })), "unmetered",
+    "a turn count says nothing about reading, so a call that reports only turns remains unverified");
+  assert.equal(readEvidence(shape({ modelTurns: 9, readRounds: 8 })), "observed",
+    "the read count is what answers, and it rides beside the raw turn count rather than replacing it");
+  assert.equal(readEvidence(shape({ modelTurns: 1, readRounds: 0 })), "none-observed",
+    "one turn and a metered zero is a call that read nothing, not a call nobody measured");
+});
+
+// The budget and the gate ask different questions, and 2026-09-10 they were
+// asking them of one number. A read budget compared against claude's
+// num_turns - 1 discarded a valid 537.3s review at "41 tool rounds against a
+// limit of 29" while that same call ran under --max-turns 30 and answered.
+test("read rounds and model turns are separate numbers with separate meanings", () => {
+  const activity = newJudgeActivity();
+  assert.equal(activity.readRounds, null);
+  assert.equal(activity.modelTurns, null);
+  assert.equal("toolRounds" in activity, false, "one field cannot answer both a read budget and a turn cap");
 });
 
 // The stream is the only place a codex read is ever counted, so it is also
@@ -341,23 +360,23 @@ test("the streaming audit meters the observation it enforces, including the comm
   const observation = newJudgeActivity();
   const audit = codexLineAuditor({ agentic: true, evidencePaths: ["a.md"], explore: true }, observation);
   const event = (command, output) => JSON.stringify({ type: "item.completed", item: { type: "command_execution", command, aggregated_output: output } });
-  assert.deepEqual(observation, { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null },
+  assert.deepEqual(observation, { commands: null, readRounds: null, modelTurns: null, readOutputChars: null, msToLastRead: null },
     "before any trace record arrives nothing has been observed; a call that dies here is unmetered, not zero");
   assert.equal(audit("this is not a trace record"), null);
   assert.equal(observation.commands, null, "an unparseable line attests nothing about reading");
   assert.equal(audit(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "thinking" } })), null);
-  assert.deepEqual(observation, { commands: [], toolRounds: 0, readOutputChars: 0, msToLastRead: null },
+  assert.deepEqual(observation, { commands: [], readRounds: 0, modelTurns: null, readOutputChars: 0, msToLastRead: null },
     "once the trace channel works, zero reads is an observed zero");
   assert.equal(audit(event("sed -n '1,5p' a.md", "one")), null);
   assert.equal(audit(event("rg -n value a.md", "two")), null);
   assert.deepEqual(observation.commands, ["sed -n '1,5p' a.md", "rg -n value a.md"]);
-  assert.equal(observation.toolRounds, 2);
+  assert.equal(observation.readRounds, 2);
   assert.equal(observation.readOutputChars, 6);
   assert.ok(observation.msToLastRead !== null && observation.msToLastRead >= 0);
   const rejected = audit(event("rm -rf a.md", "gone"));
   assert.equal(rejected.reason, "non-read-command");
   assert.deepEqual(observation.commands.at(-1), "rm -rf a.md", "the command that killed the call must be in its record");
-  assert.equal(observation.toolRounds, 3);
+  assert.equal(observation.readRounds, 3);
 });
 
 test("the read-output budget aborts on metered volume and the observation carries what it read", () => {
@@ -368,7 +387,7 @@ test("the read-output budget aborts on metered volume and the observation carrie
   const problem = audit(event("xx"));
   assert.equal(problem.reason, "read-budget-exceeded");
   assert.equal(observation.readOutputChars, AGENTIC_READ_MAX_OUTPUT_CHARS + 1, "the enforced number and the recorded number are one number");
-  assert.equal(observation.toolRounds, 2);
+  assert.equal(observation.readRounds, 2);
 });
 
 test("codex line auditor reports the first violating item in trace order", () => {

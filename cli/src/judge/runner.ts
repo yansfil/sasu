@@ -487,16 +487,26 @@ export async function runJudge<T>(
       }
       throw error;
     }
-    // Preserve the same backend budget after the call. Codex exploration is
-    // bounded by streamed read-output volume plus timeout, not command count:
-    // its 30-command/139.770s original-case review was otherwise discarded.
-    // Claude's num_turns measures model turns and retains its native cap.
+    // Preserve the same backend budget after the call, in the budget's own
+    // unit. Codex exploration is bounded by streamed read-output volume plus
+    // timeout, not command count: its 30-command/139.770s original-case review
+    // was otherwise discarded.
+    //
+    // Only `readRounds` may be compared here, and every backend that fills it
+    // fills it in this unit. This post-hoc check is load-bearing rather than
+    // redundant: measured 2026-09-10 against claude 2.1.267, `--max-turns` is
+    // real (a capped call arrives as exit 1, subtype error_max_turns, no
+    // result field, at exactly cap + 1 turns) but does not always hold - two
+    // runs of one 40-file fixture under the same cap of 30 ended at 31 turns
+    // capped and 41 turns completed, and the production reviews leaked to 42,
+    // 45 and 54. Whatever lets a call past the cap, this check is what
+    // actually caught those.
     if (options.agentic === true && !(backend.name === "codex" && options.explore === true)
-      && observation.toolRounds !== null && observation.toolRounds > AGENTIC_READ_MAX_ROUNDS) {
+      && observation.readRounds !== null && observation.readRounds > AGENTIC_READ_MAX_ROUNDS) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
         backend.name,
-        `judge used ${observation.toolRounds} tool rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
+        `judge used ${observation.readRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
         "read-budget-exceeded",
       ));
       continue;

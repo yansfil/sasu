@@ -324,10 +324,15 @@ test("an agentic claude judge that over-reads is rejected by the post-hoc round 
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "fixture evidence\n");
-  // Claude has no streaming trace; num_turns is the only read signal its
-  // surface admits. Budget + 9 tool rounds, reported as one more turn. A
-  // budget living only on the codex stream would route exactly the
-  // over-reading calls to this unbounded path.
+  // Claude exposes no streaming trace in this output format; num_turns is the
+  // only read signal it admits, and it is a real one - measured 2026-09-10
+  // against claude 2.1.267, num_turns is the read count plus the answering
+  // turn (8 reads at 9 turns, 30 reads at 31; see
+  // agents/benchmarks/max-turns-20260910/results). Budget + 9 read rounds,
+  // reported as one more turn. A budget living only on the codex stream would
+  // route exactly the over-reading calls to this unbounded path, and
+  // `--max-turns` cannot stand in for it: the same measurement saw one 40-file
+  // fixture capped at 31 turns and an identical run complete at 41.
   const { AGENTIC_READ_MAX_ROUNDS } = require(backendsPath);
   const rounds = AGENTIC_READ_MAX_ROUNDS + 8;
   const envelope = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: rounds + 1 });
@@ -355,7 +360,7 @@ test("an agentic claude judge that over-reads is rejected by the post-hoc round 
       (error) => {
         assert.equal(error.code, "judge-invalid-output");
         assert.equal(error.reason, "read-budget-exceeded", `expected the post-hoc budget, got ${error.reason}: ${error.detail}`);
-        assert.match(error.detail, new RegExp(`${rounds} tool rounds`));
+        assert.match(error.detail, new RegExp(`${rounds} read rounds`));
         return true;
       },
     );

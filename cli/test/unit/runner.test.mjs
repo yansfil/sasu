@@ -931,15 +931,16 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
       seen = activity;
       return validateGapVerdict(value);
     });
-    assert.deepEqual(seen, { commands: null, toolRounds: 2, readOutputChars: null, msToLastRead: null },
-      "num_turns 3 = two tool rounds, and claude exposes no command trace or metered read volume");
+    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: 3, readOutputChars: null, msToLastRead: null },
+      "num_turns rides in raw and also yields the measured read count (num_turns - 1); the command trace and read volume stay unattested");
 
     fs.writeFileSync(envelopeFile, envelope({}));
     await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
       seen = activity;
       return validateGapVerdict(value);
     });
-    assert.equal(seen.toolRounds, null, "a missing num_turns must stay unknown, never zero");
+    assert.equal(seen.modelTurns, null, "a missing num_turns must stay unknown, never zero");
+    assert.equal(seen.readRounds, null, "and with no turn count there is no read count to derive either");
     assert.equal(seen.commands, null, "and an absent trace must stay absent rather than become an observed empty list");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
@@ -974,7 +975,7 @@ test("every failed judge call records what it was observed reading", async () =>
       assert.equal(error.code, "judge-timeout");
       const activity = error.record.activity;
       assert.deepEqual(activity.commands, ["rg -n value src/allowed.txt", "sed -n 1,40p src/allowed.txt"]);
-      assert.equal(activity.toolRounds, 2);
+      assert.equal(activity.readRounds, 2);
       assert.equal(activity.readOutputChars, 12);
       assert.ok(activity.msToLastRead < error.record.retries[0].durationMs,
         "a call that stopped reading long before it died must be readable as exactly that");
@@ -997,7 +998,7 @@ test("every failed judge call records what it was observed reading", async () =>
       agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
     }), (error) => {
       assert.equal(error.reason, "read-budget-exceeded");
-      assert.equal(error.record.activity.toolRounds, 2);
+      assert.equal(error.record.activity.readRounds, 2);
       assert.ok(error.record.activity.readOutputChars > AGENTIC_READ_MAX_OUTPUT_CHARS);
       assert.equal(error.record.activity.commands.length, 2);
       return true;
@@ -1018,7 +1019,7 @@ test("every failed judge call records what it was observed reading", async () =>
     }), (error) => {
       assert.equal(error.reason, "non-read-command");
       assert.deepEqual(error.record.activity.commands.at(-1), "cat /etc/passwd");
-      assert.equal(error.record.activity.toolRounds, 3);
+      assert.equal(error.record.activity.readRounds, 3);
       return true;
     });
   });
@@ -1032,7 +1033,7 @@ test("every failed judge call records what it was observed reading", async () =>
     await assert.rejects(runJudge(config, "observed:silent", "routine", "review", validateGapVerdict, {
       agentic: true, explore: true, cwd: source, evidencePaths: ["src/allowed.txt"],
     }), (error) => {
-      assert.deepEqual(error.record.activity, { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null });
+      assert.deepEqual(error.record.activity, { commands: null, readRounds: null, modelTurns: null, readOutputChars: null, msToLastRead: null });
       return true;
     });
   });
@@ -1062,8 +1063,8 @@ test("every failed judge call records what it was observed reading", async () =>
     }), (error) => {
       assert.equal(error.record.attempts, 2);
       assert.equal(error.record.retries.length, 2);
-      assert.equal(error.record.retries[0].observation.toolRounds, 2);
-      assert.equal(error.record.retries[1].observation.toolRounds, 0);
+      assert.equal(error.record.retries[0].observation.readRounds, 2);
+      assert.equal(error.record.retries[1].observation.readRounds, 0);
       assert.deepEqual(error.record.retries[1].observation.commands, [],
         "an attempt that read nothing records an observed zero, not a missing observation");
       assert.deepEqual(error.record.activity, error.record.retries[1].observation,
@@ -1115,8 +1116,8 @@ test("a fallback crossing keeps the primary's observed reads and attests its own
     assert.equal(outcome.record.fallback.backend, "codex");
     assert.deepEqual(outcome.record.retries.map((retry) => retry.observation.commands), [["rg -n value src/allowed.txt"], ["rg -n value src/allowed.txt"]],
       "the crossed-out primary's reads stay in the record");
-    assert.deepEqual(outcome.record.activity, { commands: null, toolRounds: 3, readOutputChars: null, msToLastRead: null },
-      "the answering backend attests rounds and exposes no command trace; an empty list would claim it ran nothing");
+    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: 4, readOutputChars: null, msToLastRead: null },
+      "the answering backend attests both numbers in their own units; an empty command list would claim it ran nothing");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
@@ -1128,12 +1129,12 @@ test("a fallback crossing keeps the primary's observed reads and attests its own
 
 test("a prompt-only backend that attests nothing records no observation instead of a zero", async () => {
   await withStub({ verdict: "PASS", findings: [] }, async () => {
-    process.env.SASU_JUDGE_STUB_TOOL_ROUNDS = "unmetered";
+    process.env.SASU_JUDGE_STUB_READ_ROUNDS = "unmetered";
     try {
       const outcome = await runJudge(config, "observed:unmetered", "routine", "prompt", validateGapVerdict);
-      assert.deepEqual(outcome.record.activity, { commands: null, toolRounds: null, readOutputChars: null, msToLastRead: null });
+      assert.deepEqual(outcome.record.activity, { commands: null, readRounds: null, modelTurns: null, readOutputChars: null, msToLastRead: null });
     } finally {
-      delete process.env.SASU_JUDGE_STUB_TOOL_ROUNDS;
+      delete process.env.SASU_JUDGE_STUB_READ_ROUNDS;
     }
   });
 });
