@@ -1295,17 +1295,47 @@ export function codexUsage(stdout: string): JudgeUsage | undefined {
   return undefined;
 }
 
-/** Same contract as codexUsage, for the `claude -p --output-format json` envelope. */
+/**
+ * Same contract as codexUsage, for the `claude -p --output-format json`
+ * envelope.
+ *
+ * Reasoning tokens need their own lookup here: this envelope nests them as
+ * `usage.output_tokens_details.thinking_tokens` rather than beside the flat
+ * counters, so the same flat read that finds codex's `reasoning_output_tokens`
+ * silently found nothing and the field was dropped for this backend only.
+ *
+ * What was missing is the breakdown, not the total: `outputTokens` was already
+ * recorded on both backends. But the breakdown is most of the total. Measured
+ * 2026-09-10 across five uncensored reviews, output tokens order wall-clock
+ * (46,880 to 74,696 tokens against 498.4s to 872.9s, a near-constant 10.56 to
+ * 11.69 ms per token) and 81 to 86% of them are thinking
+ * (agents/benchmarks/max-turns-20260910). Without this field a record can say
+ * the output was large and cannot say the thinking was, and it said different
+ * things about the same event depending on which backend answered.
+ *
+ * Absent stays absent rather than becoming zero - an envelope without the
+ * detail block has not reported nothing, it has reported nothing measured.
+ */
 export function claudeUsage(envelope: Record<string, unknown>): JudgeUsage | undefined {
   const raw = envelope["usage"];
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
   const rec = raw as Record<string, unknown>;
-  const num = (key: string): number | undefined => (typeof rec[key] === "number" && Number.isFinite(rec[key]) ? (rec[key] as number) : undefined);
+  const finite = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+  const num = (key: string): number | undefined => finite(rec[key]);
   const inputTokens = num("input_tokens");
   const outputTokens = num("output_tokens");
   if (inputTokens === undefined || outputTokens === undefined) return undefined;
   const cached = num("cache_read_input_tokens");
-  return { inputTokens, outputTokens, ...(cached !== undefined ? { cachedInputTokens: cached } : {}) };
+  const details = rec["output_tokens_details"];
+  const reasoning = typeof details === "object" && details !== null && !Array.isArray(details)
+    ? finite((details as Record<string, unknown>)["thinking_tokens"])
+    : undefined;
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cached !== undefined ? { cachedInputTokens: cached } : {}),
+    ...(reasoning !== undefined ? { reasoningOutputTokens: reasoning } : {}),
+  };
 }
 
 /**

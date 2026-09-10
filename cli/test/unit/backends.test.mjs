@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { newJudgeActivity, readEvidence } from "../../dist/judge/types.js";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -503,4 +503,21 @@ test("Codex exploration bounds actual read volume without rejecting many small r
   const exactPaths = codexLineAuditor({ ...options, explore: false });
   for (let index = 0; index < AGENTIC_READ_MAX_ROUNDS; index += 1) assert.equal(exactPaths(event("x")), null);
   assert.equal(exactPaths(event("x")).reason, "read-budget-exceeded", "ordinary exact-path callers retain their existing limit");
+});
+
+// Reasoning tokens are the field that says where a slow call went: measured
+// 2026-09-10 over five uncensored reviews, output tokens order wall-clock at a
+// near-constant 10.56-11.69 ms each, and 81-86% of them are thinking. This
+// envelope nests them one level down, which is why the flat read that finds
+// codex's counter found nothing here and the record kept no answer.
+test("claude usage carries nested thinking tokens, and reports nothing rather than zero when they are absent", () => {
+  const full = claudeUsage({ usage: { input_tokens: 34, output_tokens: 46_880, cache_read_input_tokens: 2_550_113, output_tokens_details: { thinking_tokens: 37_897 } } });
+  assert.deepEqual(full, { inputTokens: 34, outputTokens: 46_880, cachedInputTokens: 2_550_113, reasoningOutputTokens: 37_897 });
+
+  for (const details of [undefined, null, {}, { thinking_tokens: "many" }, []]) {
+    const partial = claudeUsage({ usage: { input_tokens: 1, output_tokens: 2, ...(details === undefined ? {} : { output_tokens_details: details }) } });
+    assert.deepEqual(partial, { inputTokens: 1, outputTokens: 2 },
+      "an unreported reasoning count stays unreported; zero would claim the call did no thinking");
+  }
+  assert.equal(claudeUsage({}), undefined, "no usage block at all is still no usage");
 });
