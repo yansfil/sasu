@@ -102,6 +102,9 @@ test("a claude judge call records envelope usage, and a clean call records no re
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-"));
   const envelope = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
     result: JSON.stringify({ verdict: "PASS", findings: [] }),
     num_turns: 1,
     usage: { input_tokens: 1200, output_tokens: 90, cache_read_input_tokens: 800 },

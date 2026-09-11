@@ -225,7 +225,7 @@ test("SASU_JUDGE_BACKEND pins Claude without returning to configured Codex", asy
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-pinned-claude-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
-  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"forced Claude failure"}\'\n');
+  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"type":"result","is_error":true,"result":"forced Claude failure"}\'\n');
   fs.writeFileSync(fakeCodex, fakeCodexProgram([
     `printf '%s' '{"verdict":"PASS","findings":[]}' > "$last"`,
     `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
@@ -333,7 +333,7 @@ test("runJudge enforces judge.timeoutMs per call after the async refactor", asyn
 test("Claude JSON context overflow on exit 1 preserves its detail and is not classified as auth", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
-  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"Prompt is too long","subtype":"success"}\\n\'\nexit 1\n');
+  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"type":"result","is_error":true,"result":"Prompt is too long","subtype":"success"}\\n\'\nexit 1\n');
   fs.chmodSync(fakeClaude, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
   const previousPath = process.env.PATH;
@@ -359,7 +359,7 @@ test("agentic Claude receives a disposable evidence workspace instead of the pro
   const marker = path.join(binDir, "cwd.txt");
   const fakeClaude = path.join(binDir, "claude");
   fs.writeFileSync(path.join(source, "allowed.txt"), "allowed evidence\n");
-  const response = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 1 });
+  const response = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 1 });
   fs.writeFileSync(fakeClaude, `#!/bin/sh\npwd > ${JSON.stringify(marker)}\nprintf '%s\\n' '${response}'\n`);
   fs.chmodSync(fakeClaude, 0o755);
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
@@ -417,7 +417,7 @@ test("visual evidence routes a Claude-primary profile to its attachment-capable 
 
 function fakeClaudeVerdict(binDir, markerName = "claude-ran") {
   const marker = path.join(binDir, markerName);
-  const response = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 2 });
+  const response = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: 2 });
   const fakeClaude = path.join(binDir, "claude");
   fs.writeFileSync(fakeClaude, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' '${response}'\n`);
   fs.chmodSync(fakeClaude, 0o755);
@@ -697,7 +697,7 @@ test("backend audit rejection gets one reasoned retry before fallback and record
   ], { countFile }));
   fs.writeFileSync(
     fakeClaude,
-    '#!/bin/sh\nprintf \'%s\\n\' \'{"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}\'\n',
+    '#!/bin/sh\nprintf \'%s\\n\' \'{"type":"result","subtype":"success","is_error":false,"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}\'\n',
   );
   fs.chmodSync(fakeCodex, 0o755);
   fs.chmodSync(fakeClaude, 0o755);
@@ -736,7 +736,7 @@ test("without an override, runJudge falls back from Claude authentication failur
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
-  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"Not logged in. Please run /login."}\'\n');
+  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"type":"result","is_error":true,"result":"Not logged in. Please run /login."}\'\n');
   fs.writeFileSync(
     fakeCodex,
     fakeCodexProgram([
@@ -773,7 +773,7 @@ test("without an override, runJudge falls back from a Claude runtime failure to 
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const fakeClaude = path.join(binDir, "claude");
   const fakeCodex = path.join(binDir, "codex");
-  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"is_error":true,"result":"upstream service unavailable"}\'\n');
+  fs.writeFileSync(fakeClaude, '#!/bin/sh\nprintf \'{"type":"result","is_error":true,"result":"upstream service unavailable"}\'\n');
   fs.writeFileSync(
     fakeCodex,
     fakeCodexProgram([
@@ -810,7 +810,7 @@ test("without an override, runJudge falls back from a Codex runtime failure to C
   const fakeCodex = path.join(binDir, "codex");
   fs.writeFileSync(
     fakeClaude,
-    '#!/bin/sh\nprintf \'%s\\n\' \'{"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}\'\n',
+    '#!/bin/sh\nprintf \'%s\\n\' \'{"type":"result","subtype":"success","is_error":false,"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}\'\n',
   );
   fs.writeFileSync(fakeCodex, "#!/bin/sh\nexit 99\n");
   fs.chmodSync(fakeClaude, 0o755);
@@ -1381,6 +1381,210 @@ test("missing evidence and a parent symlink outside the snapshot cannot produce 
   });
 });
 
+
+// Three places used to read claude's stdout as one JSON document. Under
+// stream-json every one of them silently changes answer, and each failure is
+// worse than a crash because it produces something that looks like a result.
+// The envelope is now found as the trace's own terminal record.
+function claudeStreamLines(resultEnvelope, reads = 0) {
+  const lines = [JSON.stringify({ type: "system", subtype: "init", session_id: "s" })];
+  for (let i = 0; i < reads; i += 1) {
+    lines.push(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${i}`, name: "Read", input: {} }] } }));
+    lines.push(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `t${i}`, content: "x".repeat(10) }] } }));
+  }
+  lines.push(JSON.stringify(resultEnvelope));
+  return `${lines.join("\n")}\n`;
+}
+
+test("a streamed claude verdict is read from the trace's terminal record", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const stdout = claudeStreamLines({
+    type: "result", subtype: "success", is_error: false, num_turns: 4,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  }, 3);
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat <<'STREAM'\n${stdout}STREAM\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const outcome = await runJudge(claudeOnly, "regression:stream-verdict", "routine", "prompt", validateGapVerdict);
+    assert.equal(outcome.value.verdict, "PASS");
+    assert.equal(outcome.record.attempts, 1, "the envelope is found on the first reply, not after a retry");
+    // Same arithmetic as the json envelope: num_turns counts tool calls plus
+    // the answering turn, so the read count is one less.
+    assert.equal(outcome.record.activity.readRounds, 3);
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+// The trap this commit exists to close. A capped call exits 1 with the
+// envelope carrying subtype error_max_turns and no result field. Read as one
+// JSON document, JSONL parses to nothing, the subtype is never seen, and the
+// exit code alone makes it judge-auth-or-runtime: a health strike and a
+// crossing, for what is the judge over-reading.
+test("a streamed turn-cap stop stays a read-budget rejection, not a runtime failure", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const stdout = claudeStreamLines({
+    type: "result", subtype: "error_max_turns", is_error: true, num_turns: 31,
+    errors: ["Reached maximum number of turns (30)"],
+  }, 2);
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat <<'STREAM'\n${stdout}STREAM\nexit 1\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const error = await runJudge(claudeOnly, "regression:stream-cap", "routine", "prompt", validateGapVerdict)
+      .then(() => null, (thrown) => thrown);
+    assert.ok(error, "a capped call does not answer");
+    assert.equal(error.reason, "read-budget-exceeded", "over-reading must not be recorded as a runtime failure");
+    assert.equal(error.code, "judge-invalid-output");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+// The third site, and the one that fails most quietly. Returning raw stdout as
+// the verdict text used to be a safe hedge against an envelope shape changing
+// between CLI versions; against a trace it hands the validator a stream whose
+// first JSON object is a session banner. A missing terminal record is now an
+// explicit failure.
+test("a claude trace with no terminal record fails instead of passing the stream off as a verdict", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const lines = [
+    JSON.stringify({ type: "system", subtype: "init", session_id: "s" }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "thinking out loud" }] } }),
+  ].join("\n");
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat <<'STREAM'\n${lines}\nSTREAM\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const error = await runJudge(claudeOnly, "regression:stream-truncated", "routine", "prompt", validateGapVerdict)
+      .then(() => null, (thrown) => thrown);
+    assert.ok(error, "an unterminated trace is not a verdict");
+    assert.equal(error.reason, "empty-response");
+    assert.match(error.detail, /terminal/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+// The transport cap that IS armed by the format switch. Unlike the line cap,
+// this one runs with or without a line watcher, and it does not abort - it
+// stops appending. The terminal record is the last line of a trace, so a cut
+// trace loses precisely the record that says what happened, and without this
+// branch the call would be reported as a judge that did not answer.
+test("a claude trace cut by the transport limit says so instead of looking like no reply", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const tracePath = path.join(binDir, "trace.jsonl");
+  // 17 MiB of complete, well-formed records and no terminal one, which is what
+  // a trace looks like after the transport limit has eaten its tail.
+  const filler = `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "x".repeat(64_000) }] } })}\n`;
+  fs.writeFileSync(tracePath, filler.repeat(Math.ceil((17 * 1024 * 1024) / filler.length)));
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const error = await runJudge(claudeOnly, "regression:stream-truncated-transport", "routine", "prompt", validateGapVerdict)
+      .then(() => null, (thrown) => thrown);
+    assert.ok(error, "a cut trace is not a verdict");
+    assert.equal(error.reason, "unauditable-trace", "a cut trace is not the same event as a judge that said nothing");
+    assert.match(error.detail, /transport limit/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+// The streaming line cap (MAX_PENDING_LINE_CHARS, 1 MiB) is what a judge trace
+// with an image in it runs into: claude may open a picture in its workspace
+// (readableImages), the CLI carries that payload twice in one JSONL record,
+// and 84 of the 411 images in one production review workspace are over the
+// resulting threshold - the largest by 9.2x, which no cap raise reaches.
+//
+// That cap is armed by installing a line watcher, not by the output format:
+// `runProcess` returns before it accumulates anything when `abortOnLine` is
+// undefined (backends.ts:328-329), and this backend passes none. So switching
+// the format does not arm it. This test is the guard on that sentence, and it
+// is the one that must be satisfied before a claude line auditor is added -
+// whoever adds one inherits this assertion and has to solve the image line to
+// keep it.
+test("a claude record larger than the streaming line cap still answers, because no line watcher is installed", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const tracePath = path.join(binDir, "trace.jsonl");
+  // One record past the cap, shaped like the image record that produces it:
+  // a tool_result whose body is a base64 payload and whose read text is empty.
+  const huge = JSON.stringify({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "t0", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "A".repeat(1_100_000) } }] }] },
+  });
+  assert.ok(huge.length > 1024 * 1024, "the fixture must exceed the 1 MiB line cap");
+  fs.writeFileSync(tracePath, `${huge}\n${JSON.stringify({
+    type: "result", subtype: "success", is_error: false, num_turns: 2,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  })}\n`);
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const outcome = await runJudge(claudeOnly, "regression:image-line", "routine", "prompt", validateGapVerdict);
+    assert.equal(outcome.value.verdict, "PASS", "a visual review must not die on the size of its own evidence");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});
 
 // The round budget is lifted for exploring calls, and what makes that safe is
 // that another budget holds: codex meters read output in chars and enforces it

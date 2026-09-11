@@ -57,7 +57,7 @@ esac
 function writeAnsweringClaude(binDir, callLog) {
   writeShell(
     path.join(binDir, "claude"),
-    `echo call >> ${JSON.stringify(callLog)}\nprintf '%s' '{"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}'\n`,
+    `echo call >> ${JSON.stringify(callLog)}\nprintf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"{\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"}'\n`,
   );
 }
 
@@ -109,7 +109,7 @@ test("a judge backend that failed authentication is skipped by the next call in 
   const codexLog = path.join(binDir, "codex-calls.log");
   // Claude primary, logged out; Codex fallback answers. classifyFailure maps
   // "Not logged in" to judge-auth, which is one strike and enough.
-  writeShell(path.join(binDir, "claude"), `echo call >> ${JSON.stringify(claudeLog)}\nprintf '%s' '{"is_error":true,"result":"Not logged in. Please run /login."}'\n`);
+  writeShell(path.join(binDir, "claude"), `echo call >> ${JSON.stringify(claudeLog)}\nprintf '%s' '{"type":"result","is_error":true,"result":"Not logged in. Please run /login."}'\n`);
   writeAnsweringCodex(binDir, codexLog);
   // Claude primary is declared in config: SASU_JUDGE_BACKEND is a diagnostic
   // pin that drops the fallback, and this scenario needs the fallback.
@@ -178,7 +178,7 @@ test("a fallback known dead in this run is not dialled again to prove it", { ski
   writeShell(path.join(binDir, "codex"), "exit 99\n");
   writeShell(
     path.join(binDir, "claude"),
-    `echo call >> ${JSON.stringify(claudeLog)}\nprintf '%s' '{"is_error":true,"result":"You have hit your weekly limit"}'\nexit 1\n`,
+    `echo call >> ${JSON.stringify(claudeLog)}\nprintf '%s' '{"type":"result","is_error":true,"result":"You have hit your weekly limit"}'\nexit 1\n`,
   );
   resetJudgeHealth();
   try {

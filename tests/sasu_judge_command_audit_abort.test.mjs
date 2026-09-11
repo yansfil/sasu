@@ -335,7 +335,7 @@ test("an agentic claude judge that over-reads is rejected by the post-hoc round 
   // fixture capped at 31 turns and an identical run complete at 41.
   const { AGENTIC_READ_MAX_ROUNDS } = require(backendsPath);
   const rounds = AGENTIC_READ_MAX_ROUNDS + 8;
-  const envelope = JSON.stringify({ result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: rounds + 1 });
+  const envelope = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: rounds + 1 });
   fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${envelope.replace(/'/g, "'\\''")}'\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const config = loadConfig(project);

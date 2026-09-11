@@ -26,6 +26,18 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
   assert.equal(args[cap + 1], String(AGENTIC_READ_MAX_ROUNDS + 1));
 });
 
+// stream-json is what makes a claude read countable at all: the trace carries
+// one user.tool_result block per assistant.tool_use, and the block body is the
+// same quantity codex meters as aggregated_output. Under --print the CLI
+// refuses the format without --verbose - measured 2026-09-11 on claude 2.1.268,
+// exit 1 with "When using --print, --output-format=stream-json requires
+// --verbose" and empty stdout - so the two flags are one decision, not two.
+test("Claude judge streams its trace, which the CLI only allows with verbose", () => {
+  const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
+  assert.equal(args[args.indexOf("--output-format") + 1], "stream-json");
+  assert.ok(args.includes("--verbose"), "the CLI exits 1 on stream-json under --print without it");
+});
+
 test("prompt-only Claude judge has no tools and therefore no turn cap", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low" });
   assert.equal(args[args.indexOf("--tools") + 1], "");

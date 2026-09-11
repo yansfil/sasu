@@ -702,7 +702,7 @@ test("a dual-backend auth failure's recovery is built from the failure record", 
   fs.writeFileSync(path.join(bin, "codex"), "#!/bin/sh\nexit 99\n");
   fs.writeFileSync(
     path.join(bin, "claude"),
-    "#!/bin/sh\nprintf '%s' '{\"is_error\":true,\"result\":\"Not logged in. Please run /login.\"}'\n",
+    "#!/bin/sh\nprintf '%s' '{\"type\":\"result\",\"is_error\":true,\"result\":\"Not logged in. Please run /login.\"}'\n",
   );
   fs.chmodSync(path.join(bin, "codex"), 0o755);
   fs.chmodSync(path.join(bin, "claude"), 0o755);

@@ -184,8 +184,20 @@ export function processSpawnOptions(options: { env?: NodeJS.ProcessEnv; cwd?: st
 export function claudePrintArgs(options: { model: string | null; effort?: JudgeEffort; agentic?: boolean; explore?: boolean }): string[] {
   const args = [
     "-p",
+    // The trace, not just the answer. `stream-json` emits one JSONL record per
+    // event, which is what makes a claude read countable at all: each
+    // assistant `tool_use` is followed by a user `tool_result` whose body is
+    // the same quantity codex meters as `aggregated_output`. The verdict
+    // envelope this format's consumers need still arrives, as the stream's
+    // terminal `type: "result"` record.
+    //
+    // `--verbose` is not a separate choice. Measured 2026-09-11 on claude
+    // 2.1.268: under `--print`, `--output-format stream-json` alone exits 1
+    // with "When using --print, --output-format=stream-json requires
+    // --verbose" and writes nothing to stdout.
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     // A judge is not a normal coding session. Disable project/user
     // customizations and persistence so granting read tools cannot activate
     // skills, plugins, memories, or resumable side work unrelated to the
@@ -432,7 +444,7 @@ export class ClaudeBackend implements JudgeBackend {
         env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
         ...(evidenceRoot !== undefined ? { cwd: evidenceRoot } : cwd !== undefined ? { cwd } : {}),
       });
-      const envelope = safeParse(result.stdout);
+      const envelope = claudeResultEnvelope(result.stdout);
       // A call stopped by --max-turns is a read-budget overrun, not a runtime
       // failure, and it must be told apart before the exit code is read:
       // measured 2026-09-04 (claude 2.1.260, --max-turns 2 against a
@@ -496,9 +508,38 @@ export class ClaudeBackend implements JudgeBackend {
           };
         }
       }
-      // Fall back to raw stdout when the envelope shape changes across CLI versions.
-      if (result.stdout.trim() !== "") return { text: result.stdout };
-      throw new JudgeError("judge-invalid-output", this.name, "empty stdout from claude -p", "empty-response");
+      // Returning raw stdout here used to be a cheap hedge against the
+      // envelope shape moving between CLI versions, and against one JSON
+      // document it was nearly harmless. Against a trace it is the worst of
+      // the three readers: the stream always parses to *something*, so the
+      // validator gets handed a session banner and answers about it, and the
+      // call fails as a contract violation by the judge rather than as the
+      // harness failing to find the reply. A trace with no terminal record is
+      // an unfinished call, and the only honest thing to say about it is that
+      // there was no reply (engineering item 4 - no silent skip over an
+      // invalid state).
+      // Two different causes, and they were one missing record until the
+      // format changed. `runProcess` stops appending past MAX_OUTPUT_CHARS
+      // whatever else it is doing - that line runs with or without a line
+      // watcher - and one envelope never came near it while a whole trace can:
+      // the largest image in one production review workspace is 3.4 MiB, the
+      // CLI carries a payload twice in its record, and two of those pass 16
+      // MiB. The terminal record is the LAST line, so a truncated trace loses
+      // exactly the part that identifies the call, and the loss is silent -
+      // nothing aborts. Left as one cause it would read as "the judge did not
+      // answer" and be classified from the exit code instead.
+      if (result.stdout.length >= MAX_OUTPUT_CHARS) {
+        throw new JudgeError(
+          "judge-invalid-output",
+          this.name,
+          `claude -p output reached the ${MAX_OUTPUT_CHARS}-char transport limit at ${result.stdout.length} chars; the trace was cut before its terminal result record`,
+          "unauditable-trace",
+        );
+      }
+      const detail = result.stdout.trim() === ""
+        ? "empty stdout from claude -p"
+        : "claude -p produced no terminal result record; the trace ended without a reply";
+      throw new JudgeError("judge-invalid-output", this.name, detail, "empty-response");
     } finally {
       if (evidenceRoot !== undefined) fs.rmSync(evidenceRoot, { recursive: true, force: true });
     }
@@ -1623,10 +1664,7 @@ function interpretSpawnFailure(backend: BackendName, result: SpawnOutcome): void
     // Claude reports some command failures as a JSON envelope on stdout with
     // exit 1 and an empty stderr. Prefer that structured failure over the
     // transport status so context overflow cannot masquerade as auth/runtime.
-    const envelope = safeParse(result.stdout ?? "");
-    const reported = envelope !== null && typeof envelope === "object" && !Array.isArray(envelope)
-      ? envelope as Record<string, unknown>
-      : null;
+    const reported = claudeResultEnvelope(result.stdout ?? "");
     const stdoutDetail = reported?.["is_error"] === true && typeof reported["result"] === "string"
       ? reported["result"].trim()
       : "";
@@ -1644,6 +1682,48 @@ function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "
   return /(?:not\s+logged\s+in|log\s*in|auth(?:entication|orization)?|api\s*key|unauthori[sz]ed|\b401\b|credential|oauth|access\s+token|token\s+expired|expired\s+token)/i.test(detail)
     ? "judge-auth"
     : "judge-auth-or-runtime";
+}
+
+/**
+ * The verdict envelope out of a claude trace.
+ *
+ * Before `stream-json` this was `JSON.parse(stdout)` and that was right: the
+ * whole of stdout was the envelope. Against a trace the same call returns null
+ * on every line, and three separate readers then answer differently - the
+ * turn-cap check stops seeing `error_max_turns` and a read overrun arrives as
+ * `judge-auth-or-runtime`, `interpretSpawnFailure` loses the structured
+ * failure detail, and the raw-stdout hedge hands the validator a stream whose
+ * first JSON object is a session banner. None of the three crashes; all three
+ * produce something that looks like an answer. That is why the format switch
+ * and this function are one commit.
+ *
+ * The last matching record wins rather than the first: a terminal record is
+ * what the format guarantees, and taking the earliest would let anything the
+ * judge quoted mid-stream stand in for it. Codex traces reach this through
+ * `interpretSpawnFailure` and carry no such record, which is the same null
+ * they got from `JSON.parse` before.
+ *
+ * Match on `type` alone, never on `subtype`. A capped call's terminal record
+ * is `subtype: "error_max_turns"`, and narrowing to "success" would step over
+ * exactly the record the turn-cap check below needs - the overrun would then
+ * arrive as an exit code, be classified `judge-auth-or-runtime`, take a health
+ * strike and cross to the fallback, with nothing in the log saying the judge
+ * over-read. Checked against a real capped trace, 2026-09-11: this function
+ * returns that record, `subtype: "error_max_turns"`, `num_turns: 31`,
+ * `is_error: true`, and no `result` field at all. Across every claude trace on
+ * disk the only two terminal shapes are ("success", false) x23 and
+ * ("error_max_turns", true) x5.
+ */
+function claudeResultEnvelope(stdout: string): Record<string, unknown> | null {
+  let envelope: Record<string, unknown> | null = null;
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") continue;
+    const parsed = safeParse(line);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const record = parsed as Record<string, unknown>;
+    if (record["type"] === "result") envelope = record;
+  }
+  return envelope;
 }
 
 function safeParse(text: string): unknown | null {

@@ -16,7 +16,7 @@ function binaryFixture(t, program) {
 const absent = (pid) => assert.throws(() => process.kill(-pid, 0), (error) => error.code === "ESRCH");
 
 test("a judge's returned result has no surviving owned process group", { skip: process.platform === "win32" }, async (t) => {
-  binaryFixture(t, `process.stdin.resume(); process.stdin.on('end', () => { require('child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore'}).unref(); console.log(JSON.stringify({result:'accepted', num_turns:1})); });`);
+  binaryFixture(t, `process.stdin.resume(); process.stdin.on('end', () => { require('child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore'}).unref(); console.log(JSON.stringify({type:'result', subtype:'success', is_error:false, result:'accepted', num_turns:1})); });`);
   let group;
   const result = await new ClaudeBackend().run("fixture prompt", { model: null, timeoutMs: 5000, execution: { prepare() {}, spawned(pid) { group = pid; process.kill(-pid, 0); }, settled() {} } });
   assert.equal(result.text, "accepted");
@@ -41,7 +41,7 @@ test("a timed-out judge that ignores SIGTERM is bounded and leaves no process gr
 });
 
 test("a signal permission race clears only after the judge group is confirmed absent", { skip: process.platform === "win32" }, async (t) => {
-  binaryFixture(t, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({result:'accepted',num_turns:1}))); ");
+  binaryFixture(t, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'accepted',num_turns:1}))); ");
   const kill = process.kill.bind(process);
   let group;
   let injected = false;
@@ -62,7 +62,7 @@ test("a signal permission race clears only after the judge group is confirmed ab
 });
 
 test("an uninspectable judge group rejects cleanup and keeps its execution lease", { skip: process.platform === "win32" }, async (t) => {
-  binaryFixture(t, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({result:'accepted',num_turns:1}))); ");
+  binaryFixture(t, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'accepted',num_turns:1}))); ");
   const kill = process.kill.bind(process);
   let group;
   let closed = false;
