@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import test from "node:test";
 import { scratchDir } from "../scratch.mjs";
@@ -11,6 +11,15 @@ import { assertNoActiveVerification, beginVerification, finishVerification, comp
 import { loadState, persistState } from "../../dist/implement/store.js";
 import { reconcileReviewFindings } from "../../dist/implement/convergence.js";
 import { defect } from "../helpers/implement-fixture.mjs";
+
+// A pid above the platform's allocatable range: `kill(pid, 0)` answers ESRCH,
+// which is what `processPresent` reads as "demonstrably dead". The earlier
+// shape spawned a node process and reused its pid once it exited, and that is
+// a pid the OS is free to hand to the next process - under the suite's own
+// process churn it did, and the owner then read as alive (2026-09-11 flake,
+// three sites, one concept). Same constant and same reason as
+// gate-concurrency.test.mjs's dead-owner lock.
+const UNALLOCATABLE_PID = 99_999_999;
 
 const REVIEW_CONTEXT = {
   requirementRefs: ["B1"], requiredRequirementRefs: ["B1"],
@@ -52,8 +61,7 @@ test("a dead owner is recovered only after every registered process group exits"
   await once(child, "spawn");
   prepareVerificationExecution(f.statePath, f.state);
   recordVerificationExecution(f.statePath, f.state, child.pid);
-  const dead = spawnSync(process.execPath, ["-e", ""], { detached: true });
-  progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = dead.pid; });
+  progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = UNALLOCATABLE_PID; });
   const exited = once(child, "exit");
   await recoverVerification(f.statePath, f.reload());
   await exited;
@@ -66,8 +74,7 @@ test("a crash inside process registration leaves an explicit uncertainty instead
   const f = fixture(t);
   beginVerification(f.statePath, f.state, attemptFixture());
   prepareVerificationExecution(f.statePath, f.state);
-  const dead = spawnSync(process.execPath, ["-e", ""]);
-  progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = dead.pid; });
+  progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = UNALLOCATABLE_PID; });
   await assert.rejects(() => recoverVerification(f.statePath, f.reload()), /uninspectable/);
   const remote = f.reload(); remote.activeVerification.hostname = `${os.hostname()}-remote`;
   assert.throws(() => assertNoActiveVerification(remote), /uninspectable/);
@@ -147,8 +154,7 @@ test("interrupted review preserves settled findings for repair without applying 
     const attempt = attemptFixture({ phase: "review", reviewContext: REVIEW_CONTEXT, reviews: { fidelity: review, code: null }, verdict: alreadyRecorded ? "ERROR" : "NOT_RUN" });
     if (alreadyRecorded) f.state.findings = reconcileReviewFindings([], review.result, attempt.id, AT);
     beginVerification(f.statePath, f.state, attempt);
-    const dead = spawnSync(process.execPath, ["-e", ""]);
-    progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = dead.pid; });
+    progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = UNALLOCATABLE_PID; });
     const recovered = await recoverVerification(f.statePath, f.reload());
     assert.equal(recovered.verificationAttempts[0].error.code, "verification-interrupted");
     assert.equal(recovered.verificationAttempts[0].reviews.code, null);

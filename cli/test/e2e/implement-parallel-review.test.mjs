@@ -152,7 +152,17 @@ test("a settled role persists under the live lease, and its new defect survives 
   const env = { ...roleOutputs(root, fidelity, "malformed external reviewer response"), SASU_JUDGE_STUB_DELAY_MS: JSON.stringify({ "implement:code": 3_000 }) };
   const execution = runAsync(root, ["implement", "verify"], env);
   t.after(async () => { execution.child.kill("SIGTERM"); await execution.done; });
-  await until(() => readState(root).verificationAttempts.at(-1)?.reviews.fidelity !== null && readState(root).verificationAttempts.length === 2, "the first role never persisted its settled result");
+  // One snapshot per evaluation, not two. `at(-1)` is not monotonic here: the
+  // prior attempt already carries a settled fidelity, so the first read could
+  // answer that clause about attempt 1 while the second read answered the
+  // length clause about attempt 2. Both true, neither about the same state -
+  // and the next line then read attempt 2 with `reviews.fidelity` still null
+  // and threw a TypeError (2026-09-11, load 9; passed on rerun). Load only
+  // widened the window; the conjunction across snapshots was the defect.
+  await until(() => {
+    const state = readState(root);
+    return state.verificationAttempts.length === 2 && state.verificationAttempts.at(-1)?.reviews.fidelity !== null;
+  }, "the first role never persisted its settled result");
   const partial = readState(root);
   const pending = partial.verificationAttempts.at(-1);
   assert.deepEqual(pending.reviews.fidelity.result, reviewWithAssessments(root, fidelity, "fidelity"));
