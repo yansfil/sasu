@@ -9,10 +9,22 @@ const heldSuite = `const fs = require('node:fs'); fs.mkdirSync('agents', { recur
 // The concurrent full E2E suite took 33.5s across the sequential refusal
 // subprocesses. Bound orchestration separately from each CLI's 30s timeout.
 const LEASE_TEST_TIMEOUT = 90_000;
-async function until(condition, message, timeout = 30_000) {
-  const deadline = Date.now() + timeout;
+// The inner wait is derived from the test's own timeout rather than carried as
+// a second number. At 30_000 it was the tighter of the two, so a slow but
+// correct run failed here while the test still had 60s of its own budget
+// unspent - these tests spawn the CLI twice and run a real held suite, which
+// takes ~2.8s alone and more than 10x that when other suites run beside it
+// (2026-09-11: reported as the lease-recovery flake, 45.3s total, which is
+// this wait expiring plus its setup). The margin leaves room for the
+// assertions that follow the wait.
+const UNTIL_TIMEOUT = LEASE_TEST_TIMEOUT - 15_000;
+async function until(condition, message, timeout = UNTIL_TIMEOUT) {
+  const started = Date.now();
+  const deadline = started + timeout;
   while (Date.now() < deadline) { if (condition()) return; await delay(25); }
-  assert.fail(message);
+  // The elapsed time and the budget are in the message because without them a
+  // wait expiry and a failed assertion read the same in a log.
+  assert.fail(`${message} (waited ${Date.now() - started}ms of ${timeout}ms)`);
 }
 
 test("the whole verify lease refuses every domain mutation and merges their refusal history before releasing", { timeout: LEASE_TEST_TIMEOUT }, async (t) => {
@@ -78,7 +90,23 @@ test("recovery terminates a dead owner's command group before a new verification
   await execution.done;
   assert.equal(groups.some((pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } }), true, "the killed owner left a real running command group");
   retry = runAsync(root, ["implement", "verify"], env);
-  await until(() => fs.readFileSync(path.join(root, "agents/suite-ready"), "utf8") !== originalSuitePid && readState(root).activeVerification?.attemptId !== original, "recovery never reached the next real suite execution");
+  // A refused retry will never satisfy the wait below, so watching only the
+  // state turns an immediate, explained refusal into a silent wait expiry.
+  // Measured 2026-09-11 under three concurrent runs of this file: 4 of 15 runs
+  // exited 2 with "liveness probe of process group N failed with EPERM", and
+  // by the time the test looked, that same group answered ESRCH. The group is
+  // reaped, its id is briefly taken by a process that is not ours, and the
+  // probe refuses rather than read an unreadable signal as absence. Surfacing
+  // the exit is the test's job; whether that refusal is the right product
+  // behaviour is a separate question recorded in the investigation notes.
+  let refused;
+  retry.done.then((result) => { if (result.status !== 0) refused = result; }, () => {});
+  await until(
+    () => refused !== undefined
+      || (fs.readFileSync(path.join(root, "agents/suite-ready"), "utf8") !== originalSuitePid && readState(root).activeVerification?.attemptId !== original),
+    "recovery never reached the next real suite execution",
+  );
+  assert.equal(refused, undefined, `the recovering run refused instead of starting the next execution: ${JSON.stringify(refused?.stdout ?? "")}`);
   for (const pid of groups) assert.throws(() => process.kill(-pid, 0), { code: "ESRCH" }, "the old group must be gone before the next execution starts");
   fs.writeFileSync(path.join(root, "agents/suite-release"), "release\n");
   ok(await retry.done);

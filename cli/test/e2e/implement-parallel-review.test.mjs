@@ -38,10 +38,16 @@ const disposition = (findingId, status, reason) => ({ findingId, status, reason,
 const withDisposition = (findingId, status, reason) => ({ ...REVIEW_PASS, priorDispositions: [disposition(findingId, status, reason)] });
 const suiteCount = (root) => fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8");
 
-async function until(condition, message) {
-  const deadline = Date.now() + 30_000;
+// Derived from the test timeout, not a second copy of a number: at 30_000 this
+// inner wait was the tighter of the two and could fail a correct run while the
+// test still had most of its budget left. See the same change in
+// implement-envelope.test.mjs for the measurement behind it.
+const LEASE_TEST_TIMEOUT = 90_000;
+async function until(condition, message, timeout = LEASE_TEST_TIMEOUT - 15_000) {
+  const started = Date.now();
+  const deadline = started + timeout;
   while (Date.now() < deadline) { if (condition()) return; await delay(25); }
-  assert.fail(message);
+  assert.fail(`${message} (waited ${Date.now() - started}ms of ${timeout}ms)`);
 }
 
 test("two independently recorded reviews overlap on one full contract, evidence snapshot, suite and receipt", () => {
@@ -141,7 +147,7 @@ test("a findings-only summary cannot substitute for either role's recorded groun
   assert.equal(readState(root).completion, null);
 });
 
-test("a settled role persists under the live lease, and its new defect survives a sibling error without closing prior findings", { timeout: 90_000 }, async (t) => {
+test("a settled role persists under the live lease, and its new defect survives a sibling error without closing prior findings", { timeout: LEASE_TEST_TIMEOUT }, async (t) => {
   const root = makeProject();
   start(root);
   const original = defect();
