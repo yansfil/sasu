@@ -1119,8 +1119,13 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
       seen = activity;
       return validateGapVerdict(value);
     });
-    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: null, readOutputChars: null, msToLastRead: null },
-      "num_turns counts tool calls, so it yields the read count exactly and says nothing about API turns; the command trace and read volume stay unattested");
+    // `readOutputChars: 0` is this envelope's honest answer, not a default: it
+    // carries no tool_result records, so nothing was read in it. A real trace
+    // of 2 reads carries 2 of them - that is the case the char budget tests
+    // cover. `commands` stays null because this format has no command trace at
+    // all, and an empty list would claim the call was watched running nothing.
+    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: null, readOutputChars: 0, msToLastRead: null },
+      "num_turns counts tool calls, so it yields the read count exactly and says nothing about API turns; the command trace stays unattested");
 
     fs.writeFileSync(envelopeFile, envelope({}));
     await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
@@ -1304,8 +1309,8 @@ test("a fallback crossing keeps the primary's observed reads and attests its own
     assert.equal(outcome.record.fallback.backend, "codex");
     assert.deepEqual(outcome.record.retries.map((retry) => retry.observation.commands), [["rg -n value src/allowed.txt"], ["rg -n value src/allowed.txt"]],
       "the crossed-out primary's reads stay in the record");
-    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: null, readOutputChars: null, msToLastRead: null },
-      "the answering backend attests its reads and nothing else; an empty command list or an API-turn count would both claim more than it said");
+    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: null, readOutputChars: 0, msToLastRead: null },
+      "the answering backend attests its reads and its read volume, and nothing else; an empty command list or an API-turn count would both claim more than it said");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;
@@ -1500,6 +1505,108 @@ test("a claude trace with no terminal record fails instead of passing the stream
   }
 });
 
+// What the whole read-budget line of work was for. Nine production reviews
+// were discarded at 35-48 read rounds against a limit of 29 while using
+// 33.8-52.7% of the char budget those same traces were later measured in
+// (agents/benchmarks/max-turns-20260910/results, 12 traces, 2026-09-10). An
+// exploring call is now held to the budget that tracks what it cost.
+test("an exploring claude review past the round limit is accepted on a char budget it fits", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-charbudget-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const tracePath = path.join(binDir, "trace.jsonl");
+  const reads = AGENTIC_READ_MAX_ROUNDS + 15;
+  // Half the char budget spread over more reads than the round budget allows,
+  // which is the production shape: many small reads, well inside the volume.
+  const per = Math.floor((AGENTIC_READ_MAX_OUTPUT_CHARS / 2) / reads);
+  const lines = [];
+  for (let i = 0; i < reads; i += 1) {
+    lines.push(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${i}`, name: "Read", input: {} }] } }));
+    lines.push(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `t${i}`, content: [{ type: "text", text: "x".repeat(per) }] }] } }));
+  }
+  lines.push(JSON.stringify({
+    type: "result", subtype: "success", is_error: false, num_turns: reads + 1,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  }));
+  fs.writeFileSync(tracePath, `${lines.join("\n")}\n`);
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const outcome = await runJudge(claudeOnly, "regression:char-budget-pass", "routine", "prompt", validateGapVerdict, {
+      agentic: true, explore: true, cwd: project, evidencePaths: ["evidence.md"],
+    });
+    assert.equal(outcome.value.verdict, "PASS", "a review inside the volume budget is not discarded for its read count");
+    assert.equal(outcome.record.activity.readRounds, reads);
+    assert.ok(outcome.record.activity.readOutputChars > 0, "the call is metered, not merely exempt");
+    assert.ok(outcome.record.activity.readOutputChars < AGENTIC_READ_MAX_OUTPUT_CHARS);
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// The budget still bites, which is the half that keeps the trade honest: the
+// same limit has already discarded two codex reviews in production, one of
+// them 1.6% over, and a deliberately large-file claude trace measured 235% of
+// it. Lifting the round budget moves the axis; it does not remove a bound.
+test("an exploring claude review over the char budget is still rejected", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-charbudget-over-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const tracePath = path.join(binDir, "trace.jsonl");
+  const reads = 8;
+  const per = Math.ceil((AGENTIC_READ_MAX_OUTPUT_CHARS * 1.2) / reads);
+  const lines = [];
+  for (let i = 0; i < reads; i += 1) {
+    lines.push(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${i}`, name: "Read", input: {} }] } }));
+    lines.push(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `t${i}`, content: [{ type: "text", text: "x".repeat(per) }] }] } }));
+  }
+  lines.push(JSON.stringify({
+    type: "result", subtype: "success", is_error: false, num_turns: reads + 1,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  }));
+  fs.writeFileSync(tracePath, `${lines.join("\n")}\n`);
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const error = await runJudge(claudeOnly, "regression:char-budget-over", "routine", "prompt", validateGapVerdict, {
+      agentic: true, explore: true, cwd: project, evidencePaths: ["evidence.md"],
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "eight reads can exhaust a volume budget that forty small ones do not");
+    assert.equal(error.reason, "read-budget-exceeded");
+    assert.match(error.detail, /chars of read output/);
+    // Same treatment the round rejection got: look before discarding.
+    assert.equal(error.record.retries[0].discarded.contract, "accepted");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
 // The transport cap that IS armed by the format switch. Unlike the line cap,
 // this one runs with or without a line watcher, and it does not abort - it
 // stops appending. The terminal record is the last line of a trace, so a cut
@@ -1587,45 +1694,32 @@ test("a claude record larger than the streaming line cap still answers, because 
 });
 
 // The round budget is lifted for exploring calls, and what makes that safe is
-// that another budget holds: codex meters read output in chars and enforces it
-// in flight (backends.ts:1243, the one comparison site for that limit). The
-// exemption used to name the backend, which said the true thing for the wrong
-// reason - the property that matters is the metering, not the name.
+// that another budget holds. The exemption used to name codex, which said the
+// true thing for the wrong reason - the property that matters is the metering,
+// not the name.
+//
+// This used to point at claude, which metered nothing. Claude now meters, so
+// the assertion moved to the stub with its rehearsal flag off rather than
+// being deleted: what needs guarding is the predicate keeping both halves, and
+// that needs a backend where the metering half is false.
 test("an exploring call is exempt from the round budget only where chars are metered", async () => {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-explore-claude-"));
-  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
-  const answered = JSON.stringify({
-    type: "result", subtype: "success", is_error: false,
-    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
-    result: JSON.stringify({ verdict: "PASS", findings: [] }),
-  });
-  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
-  fs.chmodSync(path.join(binDir, "claude"), 0o755);
-  const previousPath = process.env.PATH;
-  const previousBackend = process.env.SASU_JUDGE_BACKEND;
-  delete process.env.SASU_JUDGE_BACKEND;
-  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
-  const claudeOnly = {
-    ...config,
-    judge: { ...config.judge, profiles: { ...config.judge.profiles,
-      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
-  };
+  const previousMeters = process.env.SASU_JUDGE_STUB_METERS_READ_CHARS;
+  const previousRounds = process.env.SASU_JUDGE_STUB_READ_ROUNDS;
+  delete process.env.SASU_JUDGE_STUB_METERS_READ_CHARS;
+  process.env.SASU_JUDGE_STUB_READ_ROUNDS = String(AGENTIC_READ_MAX_ROUNDS + 1);
   try {
-    // Same `explore: true` the codex test below is accepted under. This
-    // backend meters no chars, so lifting the round budget here would leave
-    // the call with no read bound at all.
-    const error = await runJudge(claudeOnly, "regression:explore-unmetered", "routine", "prompt", validateGapVerdict, {
-      agentic: true, explore: true, cwd: project, evidencePaths: ["evidence.md"],
-    }).then(() => null, (thrown) => thrown);
-    assert.ok(error, "exploration does not lift the round budget on a backend that meters no chars");
-    assert.equal(error.reason, "read-budget-exceeded");
+    await withStub({ verdict: "PASS", findings: [] }, async () => {
+      const error = await runJudge(config, "regression:explore-unmetered", "routine", "prompt", validateGapVerdict, {
+        agentic: true, explore: true,
+      }).then(() => null, (thrown) => thrown);
+      assert.ok(error, "exploration does not lift the round budget on a backend that meters no chars");
+      assert.equal(error.reason, "read-budget-exceeded");
+    });
   } finally {
-    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
-    else process.env.SASU_JUDGE_BACKEND = previousBackend;
-    process.env.PATH = previousPath;
-    fs.rmSync(binDir, { recursive: true, force: true });
-    fs.rmSync(project, { recursive: true, force: true });
+    if (previousMeters === undefined) delete process.env.SASU_JUDGE_STUB_METERS_READ_CHARS;
+    else process.env.SASU_JUDGE_STUB_METERS_READ_CHARS = previousMeters;
+    if (previousRounds === undefined) delete process.env.SASU_JUDGE_STUB_READ_ROUNDS;
+    else process.env.SASU_JUDGE_STUB_READ_ROUNDS = previousRounds;
   }
 });
 

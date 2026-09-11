@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
-import { AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
+import { AGENTIC_READ_MAX_OUTPUT_CHARS, AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
 import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type DiscardedOutput, type JudgeErrorCode, type JudgeFailureReason, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
 
 /**
@@ -640,12 +640,37 @@ export async function runJudge<T>(
       ));
       continue;
     }
+    // The budget the exemption above is granted against, applied wherever the
+    // backend did not already apply it itself. Codex kills its own call at the
+    // limit, so a codex call that reaches here is inside it and this compares
+    // a number to itself; claude is measured from its finished trace and this
+    // is the only place its volume is ever checked. Before this existed, the
+    // repository compared this limit in exactly one place - inside codex's
+    // streaming audit - so lifting the round budget for any other backend
+    // would have left the call with no read bound at all.
+    if (options.agentic === true && backend.metersReadChars
+      && observation.readOutputChars !== null && observation.readOutputChars > AGENTIC_READ_MAX_OUTPUT_CHARS) {
+      retryOrFallback(new JudgeError(
+        "judge-invalid-output",
+        backend.name,
+        `judge read ${observation.readOutputChars} chars of read output against a limit of ${AGENTIC_READ_MAX_OUTPUT_CHARS}; read narrower ranges of only the paths the criterion needs`,
+        "read-budget-exceeded",
+      ), inspectDiscarded(text, observation, validate));
+      continue;
+    }
     if (options.agentic === true && !(options.explore === true && backend.metersReadChars)
       && observation.readRounds !== null && observation.readRounds > AGENTIC_READ_MAX_ROUNDS) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
         backend.name,
-        `judge used ${observation.readRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
+        // "batch reads" left this sentence. It is true for codex, where a round
+      // is an audited command and joining reads with && makes one; it is not
+      // true for claude, where a round comes from `num_turns - 1` and 20 reads
+      // in 2 API turns still report 21. An instruction that is inert for one
+      // of the two backends that can receive it does not belong in a message
+      // both receive - and this rejection no longer travels into a retry
+      // prompt anyway (retryCanCorrect), so its only reader is a person.
+      `judge used ${observation.readRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; inspect only the paths the criterion needs`,
         "read-budget-exceeded",
       ), inspectDiscarded(text, observation, validate));
       continue;

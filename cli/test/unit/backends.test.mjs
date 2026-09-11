@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { newJudgeActivity, readEvidence } from "../../dist/judge/types.js";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -24,6 +24,51 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
   const cap = args.indexOf("--max-turns");
   assert.ok(cap >= 0, "agentic calls must carry a turn cap");
   assert.equal(args[cap + 1], String(AGENTIC_READ_MAX_ROUNDS + 1));
+});
+
+// The metering unit, stated as the path it walks rather than as a list of what
+// it skips. An exclusion list never closes: two implementations that both
+// "skip tool_use_result" were measured at 103% and 128% of the same budget on
+// the same trace, because they serialised different amounts of what was left.
+// Naming the path makes everything else a consequence.
+//
+// The three numbers below are one production trace (shard3, 2026-09-10) under
+// three definitions, and they decide opposite things about the same call:
+//   A  message.content tool_result text        202,549   52.7%   accepted
+//   B  A plus the CLI's tool_use_result copy   >384,000  >100%   rejected
+//   C  B counting image payloads too         >1,920,000  >500%   rejected
+// A is pinned exactly; B and C are asserted as lower bounds, because "naive"
+// is a family rather than a number and a test that pins one of them would
+// break with the wrong explanation when an implementation picked another.
+test("claude read chars count tool_result text, and nothing that merely repeats it", () => {
+  const imageData = "A".repeat(2000);
+  const text = "x".repeat(500);
+  const line = (content, extra = {}) => JSON.stringify({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "t", content }] },
+    ...extra,
+  });
+  const trace = [
+    // A read: text in the block, and the CLI's duplicate of the same body
+    // hanging off the record's top level.
+    line([{ type: "text", text }], { tool_use_result: { file: { content: text } } }),
+    // An image: the read text is empty and the payload is not read output.
+    line([{ type: "image", source: { type: "base64", media_type: "image/png", data: imageData } }],
+      { tool_use_result: { file: { content: imageData } } }),
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: "{}" }),
+  ].join("\n");
+  assert.equal(claudeReadChars(trace), text.length, "one read's text, counted once, with the image contributing nothing");
+  // The two wrong answers this must not give, as lower bounds.
+  assert.ok(trace.length > text.length * 2, "the naive definitions have more to count than the right one does");
+});
+
+test("claude read chars ignore a trace with no reads instead of guessing", () => {
+  const noReads = [
+    JSON.stringify({ type: "system", subtype: "init" }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "answering" }] } }),
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 1, result: "{}" }),
+  ].join("\n");
+  assert.equal(claudeReadChars(noReads), 0, "a trace that read nothing observed zero, which is not the same as unmetered");
 });
 
 // stream-json is what makes a claude read countable at all: the trace carries
