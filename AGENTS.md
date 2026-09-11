@@ -217,7 +217,9 @@ with Claude `claude-opus-5` high fallback for high-risk.
 The four budgets moved xhigh -> high on 2026-09-11 by user decision; the
 reasoning and its open risk live next to `DEFAULT_JUDGE`.
 The workflow change does not change these models.
-Evidence access is a harness-owned capability, not a project knob.
+Evidence access is a harness-owned capability, not a project knob: which paths a judge may read, and that it may read at all, are decided in code.
+The read *budget* is the one exception and is stated here because the code now has it: `judge.readMaxRounds` overrides the non-exploring round bound per project, on the measurement that the knee depends on the repository under review.
+Budget is not access - it cannot widen what a judge may see, only how much of it one call may pull - but the line between them is thin enough that a second knob of this kind needs a decision, not a precedent.
 Implementation reviewers receive the same fixed copy of Git-visible regular product files, registered evidence, and generated contract/context/diff/evidence documents.
 Root `agents/**` bookkeeping, ignored untracked files, symlinks, and repository history are excluded from the product copy; explicitly selected review documents and actual evidence are copied separately.
 Reviewers discover and search related source within that copied tree without manual source-context artifact registration.
