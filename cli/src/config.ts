@@ -139,15 +139,25 @@ const DEFAULT_JUDGE: JudgeConfig = {
   retryBudget: 5,
   laneEffort: null,
   readMaxRounds: DEFAULT_READ_MAX_ROUNDS,
+  // A timeout burns the full cap on primary AND fallback with nothing to show,
+  // so the cap must sit well above a real completion, not near it.
+  //
   // 2026-08-13 creator-assist exploration-settings run: with ~145KB of diff
   // per lane at xhigh effort, Codex Luna finished in 159-165s while Claude
   // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. Those two
   // numbers were measured at xhigh, which is no longer the shipped budget, so
-  // they now bound the worst case rather than describe the common one. A
-  // timeout
-  // burns the full cap on primary AND fallback with nothing to show, so the
-  // cap must sit well above a real completion, not near it.
-  timeoutMs: 600_000,
+  // they now bound the worst case rather than describe the common one.
+  //
+  // 2026-09-11: raised 600s -> 900s by user decision. The measurement that
+  // makes 600 the wrong number is from the verify-latency investigation: one
+  // codex review on the B18 census path ran 606,338ms and was killed at the
+  // cap, which is a legitimate attempt lost to a bound it missed by 1.1%. A
+  // cap a real completion lands within 1% of is not a cap on runaway calls,
+  // it is a coin flip on finishing, and the loss is the whole call twice over.
+  // 900s is 1.48x that observed completion. Raising it cannot make a fast call
+  // slow; what it costs is how long a genuinely hung call holds the lane, and
+  // that is bounded by the lease rather than by this number.
+  timeoutMs: 900_000,
   fanout: true,
 };
 

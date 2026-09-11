@@ -108,7 +108,7 @@ Then interview:
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
      (default 5 for implementation correction; extra work after exhaustion
      requires the recorded user grant).
-   - `judge.timeoutMs`: wall-clock cap for one judge call (default 600000).
+   - `judge.timeoutMs`: wall-clock cap for one judge call (default 900000 = 15 minutes).
      The primary and the fallback each get the full budget, so a call that
      times out on both costs up to twice this. Raise it per project when
      large contracts time out on the fallback: the 2026-09-10 pilot's
