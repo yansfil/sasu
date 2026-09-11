@@ -123,6 +123,25 @@ export interface JudgeRetry {
   model: string | null;
   code: JudgeErrorCode;
   reason: JudgeFailureReason | null;
+  /**
+   * This attempt's ordinal on its own backend: 1 was sent the bare prompt, 2
+   * was sent the previous rejection as a correction sentence. The position in
+   * `retries` cannot answer that - a fallback crossing resets both the
+   * attempt counter and the correction text, so the second entry in the array
+   * is a first attempt whenever the backend changed.
+   *
+   * Needed to read `discarded` at all: a second-attempt reply was written by a
+   * judge that had already been told what was wrong, so mixing the two into
+   * one rate answers a question nobody asked.
+   *
+   * Entries recorded before this field existed do not carry it. Absent is
+   * unknown, not 1 - reading it as 1 would pour every old record into exactly
+   * the half of the split this field was added to separate. That is every
+   * record on disk today: 23 of 23 retry entries in the benchmark copies have
+   * no `attempt`, 3 of them read-budget rejections (2026-09-11; a lower bound,
+   * since operational records outside those copies were not counted).
+   */
+  attempt: number;
   /** Bounded diagnostic; the full text reaches only the in-memory retry preamble. */
   detail: string;
   durationMs: number;
@@ -132,6 +151,38 @@ export interface JudgeRetry {
    * ("attempt 1 aborted on 406,394 read chars, attempt 2 timed out").
    */
   observation: JudgeActivity;
+  /**
+   * What the rejected reply turned out to contain, when the rejection was
+   * decided without ever looking at it. Only the read-budget check does that,
+   * and that is exactly the case nobody could answer: four production
+   * rejections discarded 533-596s of judge work each and the records cannot
+   * say whether the discarded text was a usable review (2026-09-10,
+   * agents/benchmarks/paperwork-delivery-20260910/results).
+   *
+   * Recording, never acceptance. The rejection is unchanged; this only makes
+   * "was it worth keeping" a question the records can answer later.
+   *
+   * Later, and not before: the rejections already on disk have no `discarded`
+   * either, because they were decided without reading the text. This answers
+   * for runs after it lands and says nothing about the 2,645s already thrown
+   * away - having the field is not having the answer.
+   */
+  discarded?: DiscardedOutput;
+}
+
+/**
+ * A bounded verdict on a reply the harness threw away without reading.
+ *
+ * `problem` ends in U+2026 when it was cut, so a reader counting rejection
+ * causes can tell a short reason from the front of a long one.
+ */
+export interface DiscardedOutput {
+  /** Whether a JSON object could be extracted from the reply at all. */
+  parsed: boolean;
+  /** The caller's contract verdict; absent when nothing parsed. */
+  contract?: "accepted" | "rejected";
+  /** Bounded rejection reason, when the contract refused it. */
+  problem?: string;
 }
 
 export const JUDGE_ERROR_LOOP_THRESHOLD = 3;

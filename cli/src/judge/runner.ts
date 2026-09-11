@@ -2,7 +2,7 @@ import path from "node:path";
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
 import { AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
-import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type JudgeErrorCode, type JudgeFailureReason, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
+import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type DiscardedOutput, type JudgeErrorCode, type JudgeFailureReason, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
 
 /**
  * Backends that failed authentication or runtime in THIS process.
@@ -220,6 +220,84 @@ function withEffortOverride(
 }
 
 /**
+ * Look at a reply the read-budget check is about to throw away.
+ *
+ * This rejection is the only one decided without reading the text, so four
+ * production rejections discarded 533-596s of judge work each and nothing in
+ * the records says whether any of them was a usable review (2026-09-10,
+ * agents/benchmarks/paperwork-delivery-20260910/results). That question has no
+ * answer today, which is why nobody can argue it either way.
+ *
+ * Recording, never acceptance: the rejection above is unchanged, and a reply
+ * that parses and validates is still discarded. Only the record grows.
+ *
+ * The caller's validator runs here on text that will be thrown away, so it
+ * must not change anything. Audited 2026-09-11 across all six call sites:
+ * four are schema checks, one is a read-only comparison, and the implement
+ * review validator's `reconcileReviewFindings` clones its input
+ * (convergence.ts) and has its result discarded.
+ *
+ * `observation` is the live activity object, and arguments evaluate before
+ * `retryOrFallback` clones it, so a validator that wrote to it would corrupt
+ * the recorded observation rather than a copy. Five of the six call sites
+ * declare `(value)` and never see it; `gates/commands.ts` takes it and passes
+ * it to `readEvidence` (types.ts:106), which reads three counters and returns
+ * a label. The signature permits a write that no caller makes - the first one
+ * that wants to must re-check this call, not just its own lane.
+ *
+ * No validator can throw into the catch below today, and what holds that is a
+ * layout rather than a property of the validators. Checked 2026-09-11 across
+ * all four lanes: every validator returns `| string` for a rejection, and the
+ * two reconciles that do throw sit on either side of the boundary - the review
+ * one runs inside its validator and has its own catch (commands.ts:1397-1398),
+ * the risk one is called after the lane settles (commands.ts:1425) and so
+ * never sees this call at all. Move that second one inside its validator, for
+ * atomicity or to save a pass, and this branch goes live - and whoever moves
+ * it will not know they armed it. So the catch stays, a test exercises it with
+ * a deliberately throwing validator, and the risk lane's missing catch is a
+ * different layout rather than a defect to be repaired.
+ *
+ * Catching is not the silent failure engineering item 4 forbids. This call is
+ * an observation, not a judgement, and an observation that comes back
+ * "invalid" is its value, not a failure of the call. Letting it propagate
+ * would replace `read-budget-exceeded` with an unhandled exception and lose
+ * the fallback crossing with it.
+ */
+function inspectDiscarded<T>(
+  text: string,
+  observation: JudgeActivity,
+  validate: (value: unknown, activity: JudgeActivity) => T | string,
+): DiscardedOutput {
+  const parsed = extractJsonObject(text);
+  if (parsed === null) return { parsed: false };
+  try {
+    const validated = validate(parsed, observation);
+    return typeof validated === "string"
+      ? { parsed: true, contract: "rejected", problem: boundedProblem(validated) }
+      : { parsed: true, contract: "accepted" };
+  } catch (error) {
+    return {
+      parsed: true,
+      contract: "rejected",
+      problem: boundedProblem(error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
+
+/**
+ * `detail` next to it is bounded the same way and says so only in prose, which
+ * leaves a cut message looking like a whole one. These records exist to be
+ * counted later, and "the reply was invalid, reason unknown" is the one answer
+ * that would waste the counting, so the cut is marked in the value itself.
+ */
+function boundedProblem(text: string): string {
+  return text.length <= DISCARDED_PROBLEM_MAX_CHARS ? text : `${text.slice(0, DISCARDED_PROBLEM_MAX_CHARS - 1)}\u2026`;
+}
+
+/** Same order as `JudgeRetry.detail`: enough to tell two rejections apart, not a transcript. */
+const DISCARDED_PROBLEM_MAX_CHARS = 300;
+
+/**
  * A retry resends the same prompt to the same backend with one sentence of
  * correction prepended. It is worth its full latency only when that sentence
  * can change what the next attempt does.
@@ -412,7 +490,7 @@ export async function runJudge<T>(
   const retries: JudgeRetry[] = [];
   let usage: JudgeUsage | undefined;
   let attemptStartedAt = Date.now();
-  const retryOrFallback = (error: JudgeError): void => {
+  const retryOrFallback = (error: JudgeError, discarded?: DiscardedOutput): void => {
     // Every unusable judge response crosses this one boundary. Backend
     // command-audit rejection, missing JSON, and schema rejection must not
     // acquire three subtly different attempt or fallback contracts - and it
@@ -432,11 +510,13 @@ export async function runJudge<T>(
       model: target.model,
       code: error.code,
       reason: error.reason,
+      attempt: attempts,
       detail: error.detail.slice(0, 300),
       durationMs: Date.now() - attemptStartedAt,
       // Copied, not referenced: this attempt is over, and its observation must
       // not move if anything still holds the live sink.
       observation: structuredClone(observation),
+      ...(discarded !== undefined ? { discarded } : {}),
     });
     if (error.code === "judge-invalid-output" && attempts < 2 && retryCanCorrect(error.reason)) {
       lastProblem = error.detail.slice(0, JUDGE_CORRECTION_MAX_CHARS);
@@ -541,7 +621,7 @@ export async function runJudge<T>(
         backend.name,
         `judge used ${observation.readRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; batch reads and inspect only the paths the criterion needs`,
         "read-budget-exceeded",
-      ));
+      ), inspectDiscarded(text, observation, validate));
       continue;
     }
     const parsed = extractJsonObject(text);

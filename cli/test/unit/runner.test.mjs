@@ -835,6 +835,188 @@ test("without an override, runJudge falls back from a Codex runtime failure to C
   }
 });
 
+// A read-budget rejection is the only one decided without reading the reply,
+// so four production rejections discarded 533-596s of judge work each and the
+// records cannot say whether any of it was usable (2026-09-10,
+// agents/benchmarks/paperwork-delivery-20260910/results). The rejection still
+// stands; only the record grows.
+test("an over-budget reply is inspected before it is discarded", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-proj-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  // A complete, contract-valid answer that simply read too much: num_turns - 1
+  // is the read count, so this lands one round past the budget.
+  const answered = JSON.stringify({
+    type: "result", subtype: "success", is_error: false,
+    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  });
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const overreadConfig = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const error = await runJudge(overreadConfig, "regression:over-read", "routine", "prompt", validateGapVerdict, {
+      agentic: true, cwd: project, evidencePaths: ["evidence.md"],
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "the over-budget call is still rejected");
+    assert.equal(error.reason, "read-budget-exceeded", "the rejection reason is unchanged");
+    assert.equal(error.record.retries.length, 1);
+    assert.deepEqual(error.record.retries[0].discarded, { parsed: true, contract: "accepted" },
+      "the record now says the discarded reply was a usable answer");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// Two branches remain, and one of them is what production actually takes: the
+// implement review validator answers with a string even for its own throw
+// (implement/commands.ts:1394-1399), so `contract: "rejected"` in the records
+// will nearly always have arrived this way. If the string did not reach
+// `problem`, the distribution would read "invalid, cause unknown" - the one
+// answer that makes the counting worthless.
+test("an over-budget reply the contract refuses records why it was refused", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-refuse-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const answered = JSON.stringify({
+    type: "result", subtype: "success", is_error: false,
+    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  });
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const overreadConfig = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  // Long enough to be cut, so the same test pins that a cut reason says so.
+  const refusal = `verdict PASS cites no requirement; ${"x".repeat(400)}`;
+  try {
+    const error = await runJudge(overreadConfig, "regression:over-read-refused", "routine", "prompt", () => refusal, {
+      agentic: true, cwd: project, evidencePaths: ["evidence.md"],
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "the over-budget call is still rejected");
+    assert.equal(error.reason, "read-budget-exceeded");
+    const discarded = error.record.retries[0].discarded;
+    assert.equal(discarded.parsed, true);
+    assert.equal(discarded.contract, "rejected");
+    assert.match(discarded.problem, /^verdict PASS cites no requirement/,
+      "the contract's own words are what the record keeps");
+    assert.equal(discarded.problem.length, 300);
+    assert.ok(discarded.problem.endsWith("\u2026"), "a cut reason is marked as cut, not left looking whole");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// Prose instead of JSON is the other thing an over-reading judge comes back
+// with, and it must be distinguishable from a parseable reply the contract
+// refused: those two answer "was the discarded work usable" differently.
+test("an over-budget reply that is not JSON is recorded as unparsed", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-prose-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const answered = JSON.stringify({
+    type: "result", subtype: "success", is_error: false,
+    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
+    result: "I ran out of turns before I could finish reviewing.",
+  });
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const overreadConfig = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    const error = await runJudge(overreadConfig, "regression:over-read-prose", "routine", "prompt", validateGapVerdict, {
+      agentic: true, cwd: project, evidencePaths: ["evidence.md"],
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "the over-budget call is still rejected");
+    assert.equal(error.reason, "read-budget-exceeded");
+    assert.deepEqual(error.record.retries[0].discarded, { parsed: false },
+      "nothing parsed, so there is no contract verdict to claim");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// The probe runs the caller's validator, and validators throw: the implement
+// review validator's `reconcileReviewFindings` does, and only that one lane
+// catches it itself (implement/commands.ts:1397-1398). Everywhere else this
+// is the only net, and an escaping throw would replace `read-budget-exceeded`
+// with an unhandled exception and lose the fallback crossing with it.
+test("a validator that throws while inspecting a discarded reply does not lose the rejection", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-throw-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const answered = JSON.stringify({
+    type: "result", subtype: "success", is_error: false,
+    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  });
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const overreadConfig = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  const throwing = () => { throw new Error("prior finding F-1 cannot be reopened without evidence"); };
+  try {
+    const error = await runJudge(overreadConfig, "regression:over-read-throw", "routine", "prompt", throwing, {
+      agentic: true, cwd: project, evidencePaths: ["evidence.md"],
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "the over-budget call is still rejected");
+    assert.equal(error.reason, "read-budget-exceeded", "the throw did not replace the rejection");
+    assert.equal(error.record.retries.length, 1);
+    assert.equal(error.record.retries[0].attempt, 1, "this reply was written without a correction sentence");
+    assert.equal(error.record.retries[0].discarded.parsed, true);
+    assert.equal(error.record.retries[0].discarded.contract, "rejected");
+    assert.match(error.record.retries[0].discarded.problem, /cannot be reopened/,
+      "the thrown message is recorded as the rejection it is");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
 // The turn cap is what makes over-reading cheap; this pins what the harness
 // does with the call it cut. The envelope is the one measured 2026-09-04 on
 // claude 2.1.260: exit 1, subtype error_max_turns, no result field.
