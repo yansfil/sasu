@@ -3,6 +3,7 @@
 // shell. These tests pin the argv, prompt boundary, and command audit so a
 // refactor cannot silently broaden judge activity.
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { newJudgeActivity, readEvidence } from "../../dist/judge/types.js";
 import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CLAUDE_ISOLATED_READ_PREAMBLE, CLAUDE_MAX_API_TURNS, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeReadRounds, claudeTraceObserved, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
@@ -100,6 +101,47 @@ test("an exploring claude call is told the budgets that actually hold it", () =>
 // because "naive" is a family rather than a number and a test that pins one of
 // them would break with the wrong explanation when an implementation picked
 // another.
+// The two counters, aimed at real CLI output instead of a trace we wrote.
+//
+// Everything else here is synthetic, and synthetic fixtures cannot notice the
+// CLI changing its format: the counters would return 0, and 0 passes the char
+// budget (0 < the limit), so the metering would die silently and take the
+// budget with it. The excerpt's provenance and edits are in
+// cli/test/fixtures/judge-traces/README.md.
+//
+// The constants come from a separate walk of the fixture, recorded in that
+// README, not from the functions below - a number taken from the thing under
+// test cannot fail. And 12 read rounds against a `num_turns` of 45 is the
+// point of this excerpt: a trace where those agreed would not catch a
+// regression to the old `num_turns - 1` unit.
+//
+// It also carries the `tool_result` shape real reads actually use: `content`
+// as a plain string, not a list of blocks. Across the 24 traces on disk that
+// is 600 string bodies against 75 list bodies, and all 75 lists are images
+// with no text block among them - so every char ever metered came through the
+// string branch, and every written fixture here exercises the other one.
+// Deleting the string branch from claudeReadChars takes this fixture from
+// 52,820 chars to 0 while the written tests stay green (verified
+// 2026-09-11). That is the whole argument for keeping a real sample beside
+// them.
+test("the metering functions hold against a real claude trace, not only a written one", () => {
+  const fixture = fs.readFileSync(
+    new URL("../fixtures/judge-traces/claude-stream-imgfirst1-excerpt.jsonl", import.meta.url), "utf8");
+  // Exact equality, and it has to stay exact. The base64 payloads here are
+  // 12-char dummies, so an implementation that counted image data would add
+  // only 96 chars (192 counting the image blocks' own copies) - 0.18% of the
+  // total. An equality catches that; loosening this to a bound would let the
+  // image exclusion die silently, and the size argument for excluding images
+  // lives in the original trace, not in this excerpt.
+  assert.equal(claudeReadChars(fixture), 52_820);
+  assert.equal(claudeReadRounds(fixture), 12);
+  const terminal = JSON.parse(fixture.trimEnd().split("\n").at(-1));
+  assert.equal(terminal.num_turns, 45, "the excerpt keeps the whole call's turn count");
+  assert.notEqual(claudeReadRounds(fixture), terminal.num_turns - 1,
+    "the read count is the trace's tool calls; a fixture where the old unit agreed would prove nothing");
+  assert.equal(claudeTraceObserved(fixture), true);
+});
+
 // The read count's own net. The measurement that chose this unit lives in
 // claudeReadRounds' comment; without a test naming the function, reverting it
 // to `num_turns - 1` stays green - and that reversion is not hypothetical,

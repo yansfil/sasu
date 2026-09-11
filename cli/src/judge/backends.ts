@@ -1829,8 +1829,19 @@ function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "
  * measured against (384,000, before the 2026-09-11 raise) on the same trace,
  * differing only in how much of what remained they serialised. The path
  * is: every `type: "user"` event, the `type: "tool_result"` blocks of its
- * `message.content`, and inside each, the `type: "text"` blocks (or the whole
- * string when `content` is one). Everything else follows from that.
+ * `message.content`, and inside each, the whole string when `content` is one,
+ * or the `type: "text"` blocks when it is a list. Everything else follows from
+ * that.
+ *
+ * Which of those two arrives is not a coin flip, and the order above is the
+ * measured one. Censused 2026-09-11 over all 24 benchmark stream traces: 600
+ * string bodies carrying 3,317,099 chars, and 75 list bodies carrying 75
+ * image blocks and zero text blocks. Every char this function has ever metered
+ * came through the string branch; the text-block branch has never been reached
+ * by real output and is kept because the block shape allows it. A fixture
+ * written only in the list form - which every synthetic one here was until
+ * cli/test/fixtures/judge-traces arrived - tests the branch production does
+ * not use.
  *
  * Two things the path excludes, and why each matters:
  *
