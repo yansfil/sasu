@@ -171,8 +171,8 @@ Reference numbering gaps are not missing requirements by themselves; duplicate o
 
 Judgment runs as one-shot headless calls (`claude -p` / `codex exec`) with schema validation, one retry, and fail-closed errors.
 The gap-list gates fan out into lane-parallel narrow judges (gap-audit: 4 document-area lanes; spec: 2 review-axis lanes) whose findings the CLI merges mechanically - union, normalized dedupe, any blocking finding blocks - so the wall-clock cost is one narrow judge, not one exhaustive sweep; set `judge.fanout: false` to restore the single-judge path.
-Routine judgment defaults to Codex `gpt-5.6-luna` at `xhigh`, with Claude Sonnet 5 at `xhigh` as the fallback.
-High-risk review defaults to Codex `gpt-5.6-sol` at `xhigh`, with Claude Opus 5 at `xhigh` fallback.
+Routine judgment defaults to Codex `gpt-5.6-luna` at `high`, with Claude Sonnet 5 at `high` as the fallback.
+High-risk review defaults to Codex `gpt-5.6-sol` at `high`, with Claude Opus 5 at `high` fallback.
 The workflow refactor preserves these code defaults; model changes need their own measurement.
 Prompt-only Codex calls run in an empty ephemeral work root with user config and project rules disabled.
 Implementation review uses a disposable fixed copy of the product source plus registered evidence.
@@ -206,12 +206,12 @@ Omitted fields inherit the defaults above.
   "judge": {
     "profiles": {
       "routine": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
-        "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "xhigh" }
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "high" },
+        "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "high" }
       },
       "high-risk": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
-        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "xhigh" }
+        "primary": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "high" }
       }
     }
   }

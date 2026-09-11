@@ -95,10 +95,10 @@ Then interview:
 6. Required suites and judge profiles (defaults work without config):
    - `judge.profiles.routine`: primary and fallback target for interview,
      document gates and comprehensive implementation/quick review.
-     The default is Codex `gpt-5.6-luna` xhigh, then Claude Sonnet 5 xhigh.
+     The default is Codex `gpt-5.6-luna` high, then Claude Sonnet 5 high.
    - `judge.profiles.high-risk`: primary and fallback target for the final
      high-risk lane.
-     The default is Codex `gpt-5.6-sol` xhigh, then Claude Opus 5 xhigh.
+     The default is Codex `gpt-5.6-sol` high, then Claude Opus 5 high.
      Keep configured models fixed when comparing workflow changes.
    - Each target has `backend`, `model`, and `effort`; `fallback: null`
      explicitly disables fallback for that profile.
@@ -168,11 +168,11 @@ Reference shape:
     "profiles": {
       "routine": {
         "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
-        "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "xhigh" }
+        "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "high" }
       },
       "high-risk": {
         "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
-        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "xhigh" }
+        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "high" }
       }
     }
   },

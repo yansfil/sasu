@@ -83,18 +83,36 @@ export interface SasuConfig {
 }
 
 // Model strength and review risk are separate from evidence access. Routine
-// calls use the inexpensive high-throughput model at the same xhigh reasoning
-// budget as every other judge. High-risk changes upgrade the model, while an
-// scoped evidence workspace and audited command trace constrain source reads.
+// calls use the inexpensive high-throughput model at the same reasoning budget
+// as every other judge. High-risk changes upgrade the model, while an scoped
+// evidence workspace and audited command trace constrain source reads.
+//
+// 2026-09-11: the four budgets moved xhigh -> high by user decision, taken
+// after the verify-latency investigation reported that wall is essentially
+// fixed on the input side (eight levers measured 0) and that the reasoning
+// budget is the only remaining lever on it. That provenance matters the same
+// way AGENTIC_READ_MAX_OUTPUT_CHARS's does: a measurement alone cannot move
+// these back, because no measurement put them at xhigh either.
+//
+// The direction agrees with every budget sweep this repo actually ran. high is
+// the measured knee on both OPEN-search lanes below (xhigh bought 2.1x the
+// time for FEWER findings on spec), and the implement review asks a CLOSED
+// question - does this implementation satisfy this contract - which is the
+// shape where LANE_EFFORT already sits at medium. What was never swept is
+// these profiles themselves, so the expected cost is stated as a risk and not
+// as a number: a budget drop can only lose findings, and the planted-defect
+// rate on this path is already 0 of 11 for claude and 1 of 2 for codex
+// (2026-09-11 B18 census). Re-measure detection here before trusting the
+// saving; the 2026-09-15 pre-registered run is the first chance.
 const DEFAULT_JUDGE: JudgeConfig = {
   profiles: {
     routine: {
-      primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" },
-      fallback: { backend: "claude", model: "claude-sonnet-5", effort: "xhigh" },
+      primary: { backend: "codex", model: "gpt-5.6-luna", effort: "high" },
+      fallback: { backend: "claude", model: "claude-sonnet-5", effort: "high" },
     },
     "high-risk": {
-      primary: { backend: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-      fallback: { backend: "claude", model: "claude-opus-5", effort: "xhigh" },
+      primary: { backend: "codex", model: "gpt-5.6-sol", effort: "high" },
+      fallback: { backend: "claude", model: "claude-opus-5", effort: "high" },
     },
   },
   // 2026-08-13: raised from 3 after a real run exhausted the budget on two
@@ -106,7 +124,10 @@ const DEFAULT_JUDGE: JudgeConfig = {
   laneEffort: null,
   // 2026-08-13 creator-assist exploration-settings run: with ~145KB of diff
   // per lane at xhigh effort, Codex Luna finished in 159-165s while Claude
-  // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. A timeout
+  // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. Those two
+  // numbers were measured at xhigh, which is no longer the shipped budget, so
+  // they now bound the worst case rather than describe the common one. A
+  // timeout
   // burns the full cap on primary AND fallback with nothing to show, so the
   // cap must sit well above a real completion, not near it.
   timeoutMs: 600_000,

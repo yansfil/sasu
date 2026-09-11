@@ -60,8 +60,8 @@ Actual planted-omission evaluation tests that judgment separately from JSON and 
 `trivial` and `standard` use the same concurrent Fidelity and Code reviews and the same routine model profile.
 `high-risk` adds a distinct safety check for data loss, permissions, destructive effects, and delivery risk using the same fixed inputs.
 Independent checks may run concurrently.
-The routine configured default is `gpt-5.6-luna` xhigh with `claude-sonnet-5` xhigh fallback.
-The high-risk configured default is `gpt-5.6-sol` xhigh with `claude-opus-5` xhigh fallback.
+The routine configured default is `gpt-5.6-luna` high with `claude-sonnet-5` high fallback.
+The high-risk configured default is `gpt-5.6-sol` high with `claude-opus-5` high fallback.
 These are code defaults, not a request to change a project's configured models.
 
 Open blocking risks remain incomplete and consume the existing correction budget even when routine review succeeds.

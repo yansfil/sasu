@@ -14,15 +14,15 @@ function tempProject(configJson) {
   return dir;
 }
 
-test("judge profiles default to Codex xhigh with capability-preserving Claude fallbacks", () => {
+test("judge profiles default to Codex high with capability-preserving Claude fallbacks", () => {
   const config = loadConfig(tempProject());
   assert.deepEqual(config.judge.profiles.routine, {
-    primary: { backend: "codex", model: "gpt-5.6-luna", effort: "xhigh" },
-    fallback: { backend: "claude", model: "claude-sonnet-5", effort: "xhigh" },
+    primary: { backend: "codex", model: "gpt-5.6-luna", effort: "high" },
+    fallback: { backend: "claude", model: "claude-sonnet-5", effort: "high" },
   });
   assert.deepEqual(config.judge.profiles["high-risk"], {
-    primary: { backend: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-    fallback: { backend: "claude", model: "claude-opus-5", effort: "xhigh" },
+    primary: { backend: "codex", model: "gpt-5.6-sol", effort: "high" },
+    fallback: { backend: "claude", model: "claude-opus-5", effort: "high" },
   });
   assert.equal(config.judge.retryBudget, 5);
   assert.equal(config.judge.fanout, true);
@@ -34,7 +34,9 @@ test("project config partially overrides one profile without repeating defaults"
     judge: {
       profiles: {
         routine: {
-          primary: { model: "gpt-project-routine", effort: "high" },
+          // "max", not "high": once the shipped default became high a
+          // matching override could not show that it was applied at all.
+          primary: { model: "gpt-project-routine", effort: "max" },
           fallback: null,
         },
         "high-risk": {
@@ -47,13 +49,13 @@ test("project config partially overrides one profile without repeating defaults"
     verify: { commandTimeoutMs: 1234 },
   }));
   assert.deepEqual(config.judge.profiles.routine, {
-    primary: { backend: "codex", model: "gpt-project-routine", effort: "high" },
+    primary: { backend: "codex", model: "gpt-project-routine", effort: "max" },
     fallback: null,
   });
   assert.deepEqual(config.judge.profiles["high-risk"].fallback, {
     backend: "claude",
     model: "claude-project-opus",
-    effort: "xhigh",
+    effort: "high",
   });
   assert.equal(config.judge.retryBudget, 7);
   assert.equal(config.judge.fanout, false);

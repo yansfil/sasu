@@ -211,9 +211,11 @@ Behaviors row in that PRD.
 
 **Judge policy.** Judge model routing is project-configurable only through the
 `routine` and `high-risk` profiles in `agents/config.json`.
-The actual code defaults are Codex `gpt-5.6-luna` xhigh with Claude
-`claude-sonnet-5` xhigh fallback for routine, and Codex `gpt-5.6-sol` xhigh
-with Claude `claude-opus-5` xhigh fallback for high-risk.
+The actual code defaults are Codex `gpt-5.6-luna` high with Claude
+`claude-sonnet-5` high fallback for routine, and Codex `gpt-5.6-sol` high
+with Claude `claude-opus-5` high fallback for high-risk.
+The four budgets moved xhigh -> high on 2026-09-11 by user decision; the
+reasoning and its open risk live next to `DEFAULT_JUDGE`.
 The workflow change does not change these models.
 Evidence access is a harness-owned capability, not a project knob.
 Implementation reviewers receive the same fixed copy of Git-visible regular product files, registered evidence, and generated contract/context/diff/evidence documents.

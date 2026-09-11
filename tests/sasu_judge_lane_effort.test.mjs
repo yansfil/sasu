@@ -78,7 +78,10 @@ test("a caller's lane effort reaches the backend and the persisted record", { sk
   await withBackend(binDir, async () => {
     resetJudgeHealth();
     const config = loadConfig(project);
-    assert.equal(config.judge.profiles.routine.primary.effort, "xhigh", "fixture assumes the shipped profile budget");
+    // The precondition is that the shipped profile budget differs from the
+    // override, not that it is any particular value - a literal here broke
+    // when the four budgets moved xhigh -> high (2026-09-11).
+    assert.notEqual(config.judge.profiles.routine.primary.effort, "medium", "the override must differ from the profile budget to discriminate");
     const outcome = await runJudge(config, "test:lane", "routine", "judge this", (v) => validateGapVerdict(v, {}), { effort: "medium" });
     assert.equal(outcome.record.effort, "medium", "the record must report the budget actually spent, not the profile's");
     assert.ok(observedEfforts(binDir).every((e) => e === "medium"), `backend saw: ${observedEfforts(binDir).join(",")}`);
@@ -94,9 +97,13 @@ test("without an override the profile budget is still used", { skip: !built && "
   await withBackend(binDir, async () => {
     resetJudgeHealth();
     const config = loadConfig(project);
+    const shipped = config.judge.profiles.routine.primary.effort;
     const outcome = await runJudge(config, "test:lane", "routine", "judge this", (v) => validateGapVerdict(v, {}));
-    assert.equal(outcome.record.effort, "xhigh");
-    assert.ok(observedEfforts(binDir).every((e) => e === "xhigh"), `backend saw: ${observedEfforts(binDir).join(",")}`);
+    // Compared against the profile rather than a literal: the property is
+    // that the runner spends the profile's budget, and a second copy of that
+    // value is just a place for the two to drift apart.
+    assert.equal(outcome.record.effort, shipped);
+    assert.ok(observedEfforts(binDir).every((e) => e === shipped), `backend saw: ${observedEfforts(binDir).join(",")}`);
   });
 });
 
