@@ -538,7 +538,7 @@ export function runInterviewCheckpoint(projectRoot: string, options: InterviewCh
   const marked = markNormalized(content, normalized);
   if (marked.missing.length > 0) {
     throw new Error(
-      `cannot mark normalized: ${marked.missing.join(", ")} (entry missing or already normalized)`,
+      `cannot mark normalized: ${marked.missing.join(", ")} ${marked.missing.length === 1 ? "is" : "are"} not in Raw Q&A (existing turns: ${questionNumbers(content).map((q) => `Q${q}`).join(", ") || "none"})`,
     );
   }
   const state = readQaLogState(marked.content);
@@ -549,7 +549,8 @@ export function runInterviewCheckpoint(projectRoot: string, options: InterviewCh
   clearCadence(file);
   return result("checkpoint", projectRoot, options.slug, updated, {
     checkpoint: checkpointed.number,
-    normalized,
+    normalized: normalized.filter((qId) => !marked.alreadyNormalized.includes(qId)),
+    alreadyNormalized: marked.alreadyNormalized,
   });
 }
 

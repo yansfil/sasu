@@ -415,9 +415,17 @@ export function questionBlockRange(lines: string[], qNumber: string): { start: n
   return { start, end };
 }
 
-export function markNormalized(content: string, qIds: string[]): { content: string; missing: string[] } {
+/**
+ * Flip `needs_normalization` for the named turns. A turn that does not exist
+ * is `missing`; a turn already marked is `alreadyNormalized`, and its state is
+ * exactly what was asked for, so it is reported rather than refused - a
+ * checkpoint repeated with an overlapping list converges instead of aborting
+ * the whole call over the one entry that was already done (2026-09-10).
+ */
+export function markNormalized(content: string, qIds: string[]): { content: string; missing: string[]; alreadyNormalized: string[] } {
   const lines = content.split("\n");
   const missing: string[] = [];
+  const alreadyNormalized: string[] = [];
   for (const qId of qIds) {
     const match = qId.match(/^Q(\d+)$/);
     if (!match) throw new Error(`invalid question id: ${qId} (use Q<number>)`);
@@ -434,9 +442,9 @@ export function markNormalized(content: string, qIds: string[]): { content: stri
         break;
       }
     }
-    if (!flipped) missing.push(qId);
+    if (!flipped) alreadyNormalized.push(qId);
   }
-  return { content: lines.join("\n"), missing };
+  return { content: lines.join("\n"), missing, alreadyNormalized };
 }
 
 /**

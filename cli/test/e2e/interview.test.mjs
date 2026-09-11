@@ -230,3 +230,29 @@ test("an explicit --anchor moves a decision's citation instead of duplicating it
   assert.equal(decide("--anchor", "none").status, 0);
   assert.deepEqual(citations(), { Q1: "none", Q2: "none" });
 });
+
+// `checkpoint --normalized "Q21,Q22"` aborted whole when one entry was already
+// normalized, and its error could not say whether an entry was missing or
+// already done (2026-09-10). Already-done is the requested state, so it
+// converges; only a turn that does not exist is refused, by name.
+test("checkpoint tolerates an already-normalized entry and names a missing one", () => {
+  const dir = makeProject();
+  const transcript = makeCodexTranscript(dir, "checkpoint-session");
+  assert.equal(runCli(dir, ["interview", "init", "--slug", "cp", "--topic", "Checkpoints", "--where", "greenfield", "--packs", "ux", "--understanding", "checkpoints converge", "--transcript", transcript]).status, 0);
+  appendCodexTurn(transcript, "First?", "one", 1);
+  assert.equal(runCli(dir, ["interview", "sync", "--slug", "cp", "--transcript", transcript]).status, 0);
+  appendCodexTurn(transcript, "Second?", "two", 2);
+  assert.equal(runCli(dir, ["interview", "sync", "--slug", "cp", "--transcript", transcript]).status, 0);
+
+  assert.equal(runCli(dir, ["interview", "checkpoint", "--slug", "cp", "--normalized", "Q1"]).status, 0);
+  const overlapping = runCli(dir, ["interview", "checkpoint", "--slug", "cp", "--normalized", "Q1,Q2", "--json"]);
+  assert.equal(overlapping.status, 0, overlapping.stdout + overlapping.stderr);
+  const detail = JSON.parse(overlapping.stdout).detail;
+  assert.deepEqual(detail.normalized, ["Q2"]);
+  assert.deepEqual(detail.alreadyNormalized, ["Q1"]);
+
+  const missing = runCli(dir, ["interview", "checkpoint", "--slug", "cp", "--normalized", "Q2,Q9"]);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /cannot mark normalized: Q9 is not in Raw Q&A \(existing turns: Q1, Q2\)/);
+  assert.doesNotMatch(missing.stderr, /Q2 /, "the entry that exists is not blamed");
+});
