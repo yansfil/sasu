@@ -71,18 +71,29 @@ test("an exploring claude call is told the budgets that actually hold it", () =>
 
 // The metering unit, stated as the path it walks rather than as a list of what
 // it skips. An exclusion list never closes: two implementations that both
-// "skip tool_use_result" were measured at 103% and 128% of the same budget on
-// the same trace, because they serialised different amounts of what was left.
+// "skip tool_use_result" were measured at 103% and 128% of the budget in
+// force then (384,000) on the same trace, because they serialised different
+// amounts of what was left.
 // Naming the path makes everything else a consequence.
 //
-// The three numbers below are one production trace (shard3, 2026-09-10) under
-// three definitions, and they decide opposite things about the same call:
-//   A  message.content tool_result text        202,549   52.7%   accepted
-//   B  A plus the CLI's tool_use_result copy   >384,000  >100%   rejected
-//   C  B counting image payloads too         >1,920,000  >500%   rejected
-// A is pinned exactly; B and C are asserted as lower bounds, because "naive"
-// is a family rather than a number and a test that pins one of them would
-// break with the wrong explanation when an implementation picked another.
+// The numbers below are one production trace (shard3, 2026-09-10) under four
+// definitions, re-measured 2026-09-11 against the raised 512,000 budget:
+//   A   message.content tool_result text       202,549    39.6%   accepted
+//   B1  A plus tool_use_result.file body       395,260    77.2%   accepted
+//   B2  A plus the whole tool_use_result JSON  2,270,916  443.5%  rejected
+//   C   B2 counting image payloads too         4,131,584  806.9%  rejected
+//
+// The raise changed what this census decides. Across the 12 production traces
+// the A/B1 choice rejected 2 at 384,000 and rejects 0 at 512,000, so on this
+// evidence the two are no longer separable by outcome; B2 rejects 11 of 12 at
+// both values. The unit declaration is still a real decision, but the live
+// form of it is {A, B1} against B2. A remains the unit because it counts each
+// read once - an argument from the path, not from these twelve traces.
+//
+// A is pinned exactly; the wrong definitions are asserted as lower bounds,
+// because "naive" is a family rather than a number and a test that pins one of
+// them would break with the wrong explanation when an implementation picked
+// another.
 test("claude read chars count tool_result text, and nothing that merely repeats it", () => {
   // The payload is deliberately shorter than the read text so the two bounds
   // below discriminate: an implementation that counts images lands under the

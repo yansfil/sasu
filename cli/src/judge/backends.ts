@@ -106,9 +106,9 @@ export interface JudgeBackend {
    *
    * The unit is the declaration, not an implementation detail. Codex sums
    * `aggregated_output.length` over audited `command_execution` events, which
-   * is what the 384,000 limit was measured against; anything else claiming
-   * this flag must say what it counts, because the limit does not travel
-   * between units.
+   * is the unit AGENTIC_READ_MAX_OUTPUT_CHARS is stated in; anything else
+   * claiming this flag must say what it counts, because the limit does not
+   * travel between units.
    *
    * False for claude and api, which stream no readable trace, and for the stub
    * unless a test asks it to rehearse the combination.
@@ -672,7 +672,27 @@ export const AGENTIC_READ_MAX_ROUNDS = 29;
  * needs more samples than that.
  */
 export const CLAUDE_MAX_API_TURNS = 30;
-export const AGENTIC_READ_MAX_OUTPUT_CHARS = 384_000;
+/**
+ * Raised from 384,000 on 2026-09-11 by user decision, not by measurement, and
+ * that provenance is the reason a later measurement alone cannot lower it.
+ *
+ * What the old value cost, from two records on disk
+ * (agents/benchmarks/verify-timeout-20260910/prior-code-result.json and
+ * .../work/s4-results/timeline.jsonl, both role=code on codex): reviews that
+ * had finished in 258.7 s and 100.3 s were discarded at 390,161 and 406,394
+ * chars - 101.6% and 105.8% of 384,000 - and both replacement attempts then
+ * died on the 600 s call timeout at 601.5 s and 603.3 s. 1,578.6 s spent, zero
+ * results produced. 512,000 admits both, and both originals were under 480 s.
+ *
+ * Why this number and not a rounder one: it is 1.26x the largest overrun ever
+ * observed (406,394) and 2.53x the largest claude read ever measured in this
+ * unit (202,549, the 12 production traces at 25.4-39.6% of the new budget).
+ * It is the smallest value that stands above every observation we have.
+ *
+ * The fence still bites. The bigcontext stress trace meters 901,842 chars,
+ * 176.1% of this budget, and is still rejected.
+ */
+export const AGENTIC_READ_MAX_OUTPUT_CHARS = 512_000;
 
 export const CODEX_NO_TOOLS_PREAMBLE =
   "You are a one-shot judge. Do NOT run shell commands, do NOT read or list any files, and do NOT use any tools. Every document you need is already included in this prompt; answer directly from it.\n\n";
@@ -716,7 +736,7 @@ Missing relative paths are ordinary search errors: adjust the path and continue.
  * the judge reads them, with no path index and no Glob.
  *
  * It had no preamble at all, so it was told none of the three bounds it runs
- * under - 29 read rounds, 384,000 chars of read output, and 30 API turns -
+ * under - 29 read rounds, 512,000 chars of read output, and 30 API turns -
  * while the codex call on the same footing is told two of its own
  * (CODEX_ISOLATED_READ_PREAMBLE). Most of that gap predates the char budget;
  * that budget added the third number to a message that did not exist.
@@ -1812,8 +1832,9 @@ function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "
  *
  * Stated as the path it walks, not as a list of what it skips, because an
  * exclusion list never closes. Two implementations that both "skip
- * tool_use_result" were measured at 103% and 128% of this budget on the same
- * trace, differing only in how much of what remained they serialised. The path
+ * tool_use_result" were measured at 103% and 128% of the budget they were
+ * measured against (384,000, before the 2026-09-11 raise) on the same trace,
+ * differing only in how much of what remained they serialised. The path
  * is: every `type: "user"` event, the `type: "tool_result"` blocks of its
  * `message.content`, and inside each, the `type: "text"` blocks (or the whole
  * string when `content` is one). Everything else follows from that.
@@ -1821,17 +1842,26 @@ function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "
  * Two things the path excludes, and why each matters:
  *
  * - `tool_use_result`, a top-level field the CLI adds that repeats the same
- *   body. Counting it doubles every read, which turns a 384,000 budget into an
- *   effective 192,000 and rejects reviews that fit.
+ *   body. Counting it doubles every read, which halves the budget in effect
+ *   and rejects reviews that fit.
  * - Image payloads. A picture the judge opened is attached evidence, not
  *   source it read, and the read text of an image block is empty in all 12
  *   production traces measured. One 3.4 MiB screenshot would otherwise spend
  *   several times the whole budget by itself.
  *
+ * If a later implementation does reach into `tool_use_result`, the thing that
+ * separates a read from a picture there is the key, not the object: both hang
+ * a `file` off it, and shard3 carries 41 records with `file.content` (a read
+ * body) beside 10 with `file.base64` (a screenshot), measured 2026-09-11. So
+ * "skip images" tells an implementer nothing about which key to read, while
+ * `file.content` names one and drops the images as a consequence. Reading the
+ * `file` object widely instead is definition C, 4,131,584 chars against
+ * 395,260 on that same trace.
+ *
  * Measured in this unit, 12 production review traces sit at 129,943-202,549
- * chars, 33.8-52.7% of the budget, while their read counts are 25-55 against a
+ * chars, 25.4-39.6% of the budget, while their read counts are 25-55 against a
  * round limit of 29 (agents/benchmarks/max-turns-20260910/results,
- * 2026-09-10). A deliberately large-file trace in the same set measures 235%,
+ * 2026-09-10). A deliberately large-file trace in the same set measures 176%,
  * so the budget still rejects a runaway reader.
  */
 export function claudeReadChars(stdout: string): number {
