@@ -6,6 +6,7 @@ import { cadenceDrift, clearCadence, recordDecisionTurn } from "./cadence";
 import { GateStore, isSealed } from "../gates/store";
 import {
   anchorDecisionToQuestion,
+  unanchorDecision,
   appendAddendumEntry,
   appendCheckpoint,
   appendQaEntry,
@@ -473,13 +474,28 @@ export async function runInterviewDecision(
   // R2: reuse the existing prelint predicate so this call site and the
   // qa-unanchored-user-decision warning can never disagree about what counts
   // as user-sourced consent (no new classification rule, D-19).
+  // An explicit --anchor is the whole truth about where this decision is
+  // cited: `Q<n>` moves it there and `none` removes it, from every turn that
+  // cited it before. Without --anchor an existing citation stays where it is;
+  // only a decision cited nowhere is auto-anchored to the latest turn, so
+  // re-registering a decision to change its text never silently moves it.
   const isUserSourced = isUserSourcedResolvedDecision(upserted.row.kind, upserted.row.status, upserted.row.source);
+  const movedFrom = (from: number[]): string => (from.length === 0 ? "" : `; moved from ${from.map((q) => `Q${q}`).join(", ")}`);
   if (isUserSourced && anchor === "none") {
-    anchorDetail = { anchored: false, q: null, reason: "explicitly rejected via --anchor none" };
+    const cleared = unanchorDecision(anchored, upserted.row.id);
+    anchored = cleared.content;
+    anchorDetail = { anchored: false, q: null, reason: `explicitly rejected via --anchor none${movedFrom(cleared.from)}` };
+  } else if (isUserSourced && explicitQNumber !== null) {
+    const cleared = unanchorDecision(anchored, upserted.row.id);
+    anchored = anchorDecisionToQuestion(cleared.content, explicitQNumber, upserted.row.id);
+    anchorDetail = { anchored: true, q: `Q${explicitQNumber}`, reason: `explicit${movedFrom(cleared.from.filter((q) => q !== explicitQNumber))}` };
   } else if (isUserSourced) {
+    const cited = unanchorDecision(anchored, upserted.row.id).from;
     const nums = questionNumbers(anchored);
-    const targetQ = explicitQNumber ?? (nums.length > 0 ? Math.max(...nums) : null);
-    if (targetQ === null) {
+    const targetQ = cited.length > 0 ? null : (nums.length > 0 ? Math.max(...nums) : null);
+    if (cited.length > 0) {
+      anchorDetail = { anchored: true, q: cited.map((q) => `Q${q}`).join(", "), reason: "kept the existing anchor; pass --anchor to move it" };
+    } else if (targetQ === null) {
       extraDrift.push(noSyncedQWarning(upserted.row.id));
       anchorDetail = { anchored: false, q: null, reason: "no synced Q turn exists yet" };
     } else {

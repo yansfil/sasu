@@ -445,6 +445,35 @@ export function markNormalized(content: string, qIds: string[]): { content: stri
  * cli/src/interview/commands.ts runInterviewDecision). Idempotent: re-adding
  * an already-cited D# is a no-op.
  */
+/**
+ * The other half of moving an anchor: drop a Decision Register ID from every
+ * Raw Q&A turn that cites it, restoring `none` where it was the only one.
+ * `sasu interview decision --anchor` used to add only, so a decision anchored
+ * to the wrong turn kept both citations and the operator hand-edited
+ * `decision_ids` to fix it, which the interview skill forbids (2026-09-10).
+ * Returns the turns the ID was removed from, so the caller can say where the
+ * anchor moved from.
+ */
+export function unanchorDecision(content: string, decisionId: string): { content: string; from: number[] } {
+  const lines = content.split("\n");
+  const from: number[] = [];
+  for (const qNumber of questionNumbers(content)) {
+    const range = questionBlockRange(lines, String(qNumber));
+    if (!range) continue;
+    for (let i = range.start + 1; i < range.end; i += 1) {
+      const match = lines[i]!.match(/^-\s*decision_ids:\s*(.*)$/);
+      if (!match) continue;
+      const existing = match[1]!.split(",").map((token) => token.trim()).filter((token) => token !== "" && token !== "none");
+      if (!existing.includes(decisionId)) break;
+      const remaining = existing.filter((token) => token !== decisionId);
+      lines[i] = `- decision_ids: ${remaining.length === 0 ? "none" : remaining.join(", ")}`;
+      from.push(qNumber);
+      break;
+    }
+  }
+  return { content: lines.join("\n"), from };
+}
+
 export function anchorDecisionToQuestion(content: string, qNumber: number, decisionId: string): string {
   const lines = content.split("\n");
   const range = questionBlockRange(lines, String(qNumber));
