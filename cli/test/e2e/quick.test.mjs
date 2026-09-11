@@ -128,6 +128,32 @@ test("an oversized diff review passes only on positive read evidence, and names 
   }
 });
 
+// A change can be large enough to stop inlining the diff and still leave the
+// reviewer nothing to open: past VERIFY_DIFF_MAX_CHARS the gate goes agentic
+// on diff size alone, and its evidence list is the changed files that still
+// exist. Delete enough and that list is empty. The read-evidence rejection
+// exists to stop a verdict reached without opening the allowlisted source; with
+// no allowlisted source it was rejecting a reviewer for not reading what was
+// not there, so a big enough deletion could not pass this gate at all.
+test("a purely deleting change large enough to go agentic can still be reviewed", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-quick-v2-"));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  fs.mkdirSync(path.join(dir, "agents/quick/demo"), {recursive: true});
+  fs.writeFileSync(path.join(dir, "agents/quick/demo/contract.md"), CONTRACT);
+  fs.writeFileSync(path.join(dir, ".gitignore"), "agents/\n");
+  fs.writeFileSync(path.join(dir, "widget.js"), "export const render = () => null;\n");
+  fs.writeFileSync(path.join(dir, "legacy.js"),
+    Array.from({length: 8_000}, (_, index) => `export const legacy${index} = ${index};`).join("\n") + "\n");
+  git(dir, ["init", "-b", "main"]); git(dir, ["add", "."]); git(dir, ["commit", "-m", "initial"]);
+  fs.rmSync(path.join(dir, "legacy.js"));
+
+  // No read rounds are set: there is nothing in the workspace to read, and the
+  // judge reporting zero is the honest answer rather than a withheld one.
+  const output = run(dir, PASS);
+  assert.equal(output.status, 0, output.stdout + output.stderr);
+  assert.equal(state(dir).gates.verify.verdict, "PASS");
+});
+
 test("registered shared evidence is hash-pinned and changed content stales PASS", t => {
   const dir = project(t, "\n## Evidence\n- agents/observed.txt\n");
   fs.writeFileSync(path.join(dir, "agents/observed.txt"), "Observed installed app at test time\n");

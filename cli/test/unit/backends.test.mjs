@@ -53,7 +53,8 @@ test("the isolated preambles ask for the reading their only caller requires", ()
   assert.equal(readEvidence(readNothing), "none-observed",
     "reading nothing is a rejection at that gate, not a shortcut");
   for (const preamble of [CLAUDE_ISOLATED_READ_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE]) {
-    assert.match(preamble, /must read/, "the requirement has to be stated, not only enforced");
+    assert.match(preamble, /Read the paths the prompt names/,
+      "stated, and scoped to what exists: that caller's evidence list is empty for a purely deleting change");
     assert.doesNotMatch(preamble, /read nothing|use no command/,
       "an invitation to read nothing would name the one behavior this call is rejected for");
   }

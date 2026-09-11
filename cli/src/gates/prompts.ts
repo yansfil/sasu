@@ -381,6 +381,14 @@ export function fullContractReviewPrompt(input: {
   priorFindings: unknown[];
   evidenceRefs: string[];
   agentic: boolean;
+  /**
+   * How many changed files the reviewer can actually open. Zero is a real
+   * state, not a missing value: `agentic` is decided by diff size alone, so a
+   * change that is purely deletions gets an empty workspace. Saying "read
+   * their current content" there would be an instruction with no object, and
+   * the gate's read-evidence check is skipped for the same reason.
+   */
+  readablePaths: number;
 }): string {
   // The whole document is required input. A bounded explicit error is honest;
   // silently clamping the last requirements would turn review into omission.
@@ -394,7 +402,7 @@ If necessary surrounding source is not allowlisted, return a concrete evidence-a
 Human Review input never removes any requirement from this review. Keep prerequisite authorization unresolved until the actual person's words resolve it.
 ${QUOTED_DATA_NOTE}
 FULL CONTRACT:\n---\n${input.contract}\n---
-${input.agentic ? "CHANGED FILES (read their allowlisted current content; no code is inlined here):" : "IMPLEMENTATION DIFF:"}\n---\n${input.diff}\n---
+${input.agentic ? (input.readablePaths === 0 ? "CHANGED FILES (all of them are gone from the working tree; nothing is readable and no code is inlined, so this summary is the whole of the change):" : "CHANGED FILES (read their allowlisted current content; no code is inlined here):") : "IMPLEMENTATION DIFF:"}\n---\n${input.diff}\n---
 ${checkSection(input.checks)}
 ${evidenceSection(input.evidence)}
 PRIOR OPEN FINDINGS:\n---\n${JSON.stringify(input.priorFindings)}\n---

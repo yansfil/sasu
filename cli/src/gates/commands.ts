@@ -913,7 +913,11 @@ export async function runVerifyGate(projectRoot: string, config: SasuConfig, top
     const prior = (state.gates.verify?.reviewFindings ?? []).filter((finding) => finding.kind !== "advisory");
     const agentic = diff.length > VERIFY_DIFF_MAX_CHARS;
     if (agentic && !resolveBackend(effectiveJudgeProfile(config, "routine").primary.backend).agentic) throw new Error("review input too large for the configured backend; full diff was not truncated and no review was performed");
-    const prompt = fullContractReviewPrompt({ contract: document.content, diff: agentic ? diffStatFromText(diff) : diff, evidence: evidence.material, checks, priorFindings: prior, evidenceRefs: allowedRefs, agentic });
+    // The allowlist the agentic reviewer is actually given, hoisted so the
+    // check below can see it: `agentic` is decided by diff size alone, and a
+    // change that is purely deletions leaves nothing on disk to copy.
+    const readablePaths = agentic ? changedFiles.filter((file) => fs.existsSync(path.join(projectRoot, file))) : [];
+    const prompt = fullContractReviewPrompt({ contract: document.content, diff: agentic ? diffStatFromText(diff) : diff, evidence: evidence.material, checks, priorFindings: prior, evidenceRefs: allowedRefs, agentic, readablePaths: readablePaths.length });
     const artifactBase = { schema: "sasu.quick.receipt.v2", mechanical, inputs, evidence: evidence.artifacts, checks, promptSha256: sha256Of(prompt), diffSource };
     try {
       const outcome = await runJudge(config, "gate:verify", "routine", prompt, (value, activity) => {
@@ -928,13 +932,19 @@ export async function runVerifyGate(projectRoot: string, config: SasuConfig, top
         // backend while mapping it to satisfied would promote unverified
         // reading to a PASS (PRINCIPLES item 10). The two rejections stay
         // distinct so the record says which one happened.
-        if (agentic) {
+        // Only when there was something to read. This rejection exists to stop
+        // a verdict reached without opening the allowlisted source, and an
+        // empty allowlist has no such source: a large enough deletion went
+        // agentic on diff size, copied no files, and was then refused for not
+        // reading them, so it could not pass this gate at all. The premise was
+        // always "reading was possible" and was never written down.
+        if (agentic && readablePaths.length > 0) {
           const evidence = readEvidence(activity);
           if (evidence === "none-observed") return "whole-contract review requires recorded reads of the allowlisted source; the harness observed zero read commands and zero tool rounds for this call, and no code was inlined";
           if (evidence === "unmetered") return "whole-contract review requires recorded reads of the allowlisted source; this backend attested no command trace and no round count, so its reading is unverified rather than zero";
         }
         return validated;
-      }, { cwd: projectRoot, effort: laneEffortFor(config, "verify"), ...(evidence.images.length ? { images: evidence.images } : {}), ...(agentic ? { agentic: true, evidencePaths: changedFiles.filter((file) => fs.existsSync(path.join(projectRoot, file))) } : {}) });
+      }, { cwd: projectRoot, effort: laneEffortFor(config, "verify"), ...(evidence.images.length ? { images: evidence.images } : {}), ...(agentic ? { agentic: true, evidencePaths: readablePaths } : {}) });
       records.push(outcome.record);
       // A command or judge is allowed to observe, never silently move the source
       // whose receipt it will create. Re-read pinned inputs and diff after both.

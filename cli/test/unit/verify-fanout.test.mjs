@@ -43,6 +43,14 @@ test("oversized input is explicit when no independent read-capable backend exist
 
 test("read-capable backend must actually read source before accepting oversized input", async t => {
   const dir = fixture(t);
+  // The files the diff names have to exist, or this asserts the wrong thing:
+  // the gate's allowlist is the changed files still on disk, and with none of
+  // them present there is nothing to read and the rejection no longer applies.
+  // Before that rejection was scoped, this fixture passed the test by way of
+  // the case it was not written for.
+  fs.mkdirSync(path.join(dir, "src")); fs.mkdirSync(path.join(dir, "docs"));
+  fs.writeFileSync(path.join(dir, "src/app.ts"), "export const app = 1;\n");
+  fs.writeFileSync(path.join(dir, "docs/guide.md"), "# guide\n");
   await withStub(dir, {}, async () => {
     const result = await runVerifyGate(dir, loadConfig(dir), "t", {contractPath: "agents/contract.md", diffText: DIFF + "x".repeat(VERIFY_DIFF_MAX_CHARS)});
     assert.equal(result.ok, false);
