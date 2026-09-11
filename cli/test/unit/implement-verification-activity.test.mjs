@@ -70,6 +70,35 @@ test("a dead owner is recovered only after every registered process group exits"
   assert.equal(f.reload().activeVerification, undefined);
 });
 
+test("an unreadable liveness signal names the pid and the errno it came from", { skip: process.platform === "win32" }, async (t) => {
+  // The group probes inside recoverVerification have no catch wrapper, so
+  // whatever they throw is what reaches the operator. A bare errno reached it
+  // once (2026-09-11, one of four whole-unit-suite runs at load 12.35) with
+  // nothing saying which pid answered EPERM, which is why that occurrence
+  // could not be turned into a diagnosis. This is the guard for the next one.
+  const f = fixture(t);
+  beginVerification(f.statePath, f.state, attemptFixture());
+  const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
+  t.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  await once(child, "spawn");
+  prepareVerificationExecution(f.statePath, f.state);
+  recordVerificationExecution(f.statePath, f.state, child.pid);
+  progressVerification(f.statePath, f.state, fresh => { fresh.activeVerification.pid = UNALLOCATABLE_PID; });
+  const real = process.kill.bind(process);
+  t.mock.method(process, "kill", (pid, signal) => {
+    if (pid === -child.pid) throw Object.assign(new Error("recycled group"), { code: "EPERM" });
+    return real(pid, signal);
+  });
+  await assert.rejects(() => recoverVerification(f.statePath, f.reload()), (error) => {
+    assert.match(error.message, new RegExp(`process group ${child.pid}\\b`), "the failure must name the pid that answered");
+    assert.match(error.message, /EPERM/, "the failure must name the errno");
+    assert.equal(error.code, "EPERM", "callers keying on the errno must still see it");
+    return true;
+  });
+  // The lease is retained, not stolen: an unreadable signal is not absence.
+  assert.notEqual(f.reload().activeVerification, undefined);
+});
+
 test("a crash inside process registration leaves an explicit uncertainty instead of stealing the lease", async (t) => {
   const f = fixture(t);
   beginVerification(f.statePath, f.state, attemptFixture());

@@ -15,11 +15,30 @@ export function preserveSettledFindings(state: ImplementState, attempt: UnifiedV
   if (attempt.risk?.result) state.riskFindings = reconcileRiskFindings(state.riskFindings, attempt.risk.result, attempt.id, at);
 }
 
+/**
+ * ESRCH is the only answer that means "not there". Everything else is a
+ * signal we are not allowed to read, and the caller must not convert it into
+ * absence - a recycled process-group id answers EPERM, and reading that as
+ * "the group is gone" is exactly the fail-open this file exists to refuse.
+ *
+ * The throw names the pid and the errno because the same uncertainty used to
+ * leave by two different doors: the owner probes wrap their catch and replace
+ * the message, while the group probes inside `recoverVerification` do not, so
+ * a group EPERM arrived as a bare errno with nothing identifying which pid it
+ * came from. Observed once, 2026-09-11, in one of four whole-unit-suite runs
+ * at load 12.35, and not reproducible on demand - so this carries identity
+ * for the next occurrence rather than guessing at a fix. Measured the same
+ * day: probing a process group owned by another user answers EPERM, an absent
+ * group answers ESRCH. `code` is preserved so callers that key on the errno
+ * still see it.
+ */
 function processPresent(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-    throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    const target = pid < 0 ? `process group ${-pid}` : `pid ${pid}`;
+    throw Object.assign(new Error(`liveness probe of ${target} failed with ${code ?? "an unknown errno"}`, { cause: error }), { code });
   }
 }
 
@@ -33,7 +52,7 @@ function assertChildrenExited(state: ImplementState): void {
     if (process.platform === "win32") throw new Error(`verification process group ${pid} is uninspectable on this platform`);
     let alive: boolean;
     try { alive = processPresent(-pid); }
-    catch { throw new Error(`verification process group ${pid} is uninspectable; execution lease retained`); }
+    catch (error) { throw new Error(`verification process group ${pid} is uninspectable; execution lease retained (${(error as Error).message})`); }
     if (alive) throw new Error(`verification still active: process group ${pid} survives; execution lease retained`);
   }
 }
@@ -45,7 +64,7 @@ export function assertNoActiveVerification(state: ImplementState): boolean {
   if (active.hostname !== os.hostname()) throw new Error(`verification still active or uninspectable on ${active.hostname}`);
   let alive: boolean;
   try { alive = processPresent(active.pid); }
-  catch { throw new Error("verification owner liveness is uninspectable; execution lease retained"); }
+  catch (error) { throw new Error(`verification owner liveness is uninspectable; execution lease retained (${(error as Error).message})`); }
   if (alive) throw new Error(`verification still active: ${active.attemptId} (pid ${active.pid}); retry after it finishes`);
   assertChildrenExited(state);
   const attempt = state.verificationAttempts.find((entry) => entry.id === active.attemptId);
@@ -143,7 +162,7 @@ export async function recoverVerification(statePath: string, state: ImplementSta
   if (active.hostname !== os.hostname()) throw new Error(`verification still active or uninspectable on ${active.hostname}`);
   let ownerAlive: boolean;
   try { ownerAlive = processPresent(active.pid); }
-  catch { throw new Error("verification owner liveness is uninspectable; execution lease retained"); }
+  catch (error) { throw new Error(`verification owner liveness is uninspectable; execution lease retained (${(error as Error).message})`); }
   if (ownerAlive) throw new Error(`verification still active: ${active.attemptId} (pid ${active.pid})`);
   if (active.pendingSpawns > 0 || (process.platform === "win32" && active.executionPids.length > 0)) throw new Error("verification still active or uninspectable: process registration is uncertain");
   // Inspect every group before sending any signal; EPERM is not authority.
