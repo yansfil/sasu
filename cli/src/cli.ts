@@ -658,7 +658,10 @@ async function main(): Promise<void> {
         requireFlag(args, "evidence"),
       );
       if (asJson) {
-        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), status: view }, null, 2)}\n`);
+        // A reopened gate is honestly NOT_RUN with a null verdict, which read
+        // as an empty result to a caller that had just succeeded (2026-09-10);
+        // say what happened the way `override` does with `overridden`.
+        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), reopened: true, gate, status: view }, null, 2)}\n`);
       } else {
         process.stdout.write(`${gate} review reopened with recorded user evidence.\n`);
         printStatusView(view);
@@ -676,7 +679,7 @@ async function main(): Promise<void> {
         requireFlag(args, "evidence"),
       );
       if (asJson) {
-        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), status: view }, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), answered: true, gate, status: view }, null, 2)}\n`);
       } else {
         process.stdout.write(`${gate} human bundle answered with recorded user evidence; the gate is sealed PASS without another judge call.\n`);
         printStatusView(view);

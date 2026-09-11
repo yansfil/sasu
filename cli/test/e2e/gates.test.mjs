@@ -541,6 +541,35 @@ test("json contract: gate results carry contractVersion and a prelint key separa
   assert.equal(blocked.status, 1, "missing file still exits 1");
 });
 
+// A reopened gate is NOT_RUN with a null verdict by design (the next judge
+// run is what fills it), and that read as an empty result to a caller whose
+// command had just succeeded (2026-09-10). The JSON says what happened, the
+// way `override` says `overridden`.
+test("gate reopen --json and gate answer --json say what they did beside the NOT_RUN or PASS status", () => {
+  const dir = makeProject();
+  const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+  const reopened = runCli(dir, ["gate", "reopen", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "user: review the new answer", "--json"], {});
+  assert.equal(reopened.status, 0, reopened.stdout + reopened.stderr);
+  const parsed = JSON.parse(reopened.stdout);
+  assert.equal(parsed.reopened, true);
+  assert.equal(parsed.gate, "gap-audit");
+  assert.equal(parsed.status.effective, "NOT_RUN", "reopening starts a new cycle; the gate must be judged again");
+  assert.equal(parsed.status.verdict, null);
+  assert.equal(parsed.status.reviewCycle, 2);
+
+  const asked = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, BLOCK_RESPONSE),
+  });
+  assert.equal(JSON.parse(asked.stdout).status.effective, "NEEDS_HUMAN", asked.stdout + asked.stderr);
+  const answered = JSON.parse(runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "spec", "--evidence", "Retain for 30 days.", "--json"], {}).stdout);
+  assert.equal(answered.answered, true);
+  assert.equal(answered.gate, "spec");
+  assert.equal(answered.status.effective, "PASS");
+});
+
 test("json contract: doctor, status, and override all emit contractVersion-tagged JSON", () => {
   const dir = makeProject();
   const doctor = runCli(dir, ["doctor", "--json"], {});
