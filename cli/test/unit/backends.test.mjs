@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { newJudgeActivity, readEvidence } from "../../dist/judge/types.js";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CLAUDE_ISOLATED_READ_PREAMBLE, CLAUDE_MAX_API_TURNS, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -26,6 +26,48 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
   assert.equal(args[cap + 1], String(AGENTIC_READ_MAX_ROUNDS + 1));
 });
 
+// Three bounds hold an agentic claude call and the non-exploring one was told
+// none of them: it had no preamble at all, while the codex call on the same
+// footing gets CODEX_ISOLATED_READ_PREAMBLE. The numbers must come from the
+// constants, not be retyped, or the message drifts from the check silently.
+test("a non-exploring agentic claude call is told every bound it runs under", () => {
+  const preamble = CLAUDE_ISOLATED_READ_PREAMBLE;
+  assert.match(preamble, new RegExp(String(AGENTIC_READ_MAX_ROUNDS)), "the round budget");
+  assert.match(preamble, new RegExp(String(AGENTIC_READ_MAX_OUTPUT_CHARS)), "the char budget");
+  assert.match(preamble, new RegExp(String(CLAUDE_MAX_API_TURNS)), "the turn cap");
+  // What this call may use is pinned by the argv test above, not by matching
+  // prose here - the preamble names Glob and the path index in order to rule
+  // them out, and a regex looking for the words cannot tell "do not use Glob"
+  // from "use Glob" without keying on how one sentence happens to be phrased
+  // (PRINCIPLES item 11).
+});
+
+// Guidance and check pointing the same way, asserted through the function the
+// check actually uses rather than through either one's prose. Both isolated
+// preambles go to one call site, the agentic whole-contract gate, whose
+// validator rejects `readEvidence(...) === "none-observed"`. An observation
+// with counters at zero is exactly that, so a preamble that invites reading
+// nothing describes a path to a rejection.
+test("the isolated preambles ask for the reading their only caller requires", () => {
+  const readNothing = { commands: [], readRounds: 0, modelTurns: null, readOutputChars: 0, msToLastRead: null };
+  assert.equal(readEvidence(readNothing), "none-observed",
+    "reading nothing is a rejection at that gate, not a shortcut");
+  for (const preamble of [CLAUDE_ISOLATED_READ_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE]) {
+    assert.match(preamble, /must read/, "the requirement has to be stated, not only enforced");
+    assert.doesNotMatch(preamble, /read nothing|use no command/,
+      "an invitation to read nothing would name the one behavior this call is rejected for");
+  }
+});
+
+// The exploring call keeps its own two, and must not be told the round budget
+// it is exempt from.
+test("an exploring claude call is told the budgets that actually hold it", () => {
+  assert.match(CLAUDE_EXPLORATION_PREAMBLE, new RegExp(String(AGENTIC_READ_MAX_OUTPUT_CHARS)));
+  assert.match(CLAUDE_EXPLORATION_PREAMBLE, new RegExp(String(CLAUDE_MAX_API_TURNS)));
+  assert.doesNotMatch(CLAUDE_EXPLORATION_PREAMBLE, new RegExp(`at most ${AGENTIC_READ_MAX_ROUNDS}`),
+    "exploration lifts the round budget; stating it would be asking for something the harness does not check");
+});
+
 // The metering unit, stated as the path it walks rather than as a list of what
 // it skips. An exclusion list never closes: two implementations that both
 // "skip tool_use_result" were measured at 103% and 128% of the same budget on
@@ -41,7 +83,12 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
 // is a family rather than a number and a test that pins one of them would
 // break with the wrong explanation when an implementation picked another.
 test("claude read chars count tool_result text, and nothing that merely repeats it", () => {
-  const imageData = "A".repeat(2000);
+  // The payload is deliberately shorter than the read text so the two bounds
+  // below discriminate: an implementation that counts images lands under the
+  // duplicate bound and fails only the image one. Real payloads are far larger
+  // - the production figures are in claudeReadChars' own comment - and that
+  // size is not what either bound is testing.
+  const imageData = "A".repeat(300);
   const text = "x".repeat(500);
   const line = (content, extra = {}) => JSON.stringify({
     type: "user",
@@ -57,11 +104,25 @@ test("claude read chars count tool_result text, and nothing that merely repeats 
       { tool_use_result: { file: { content: imageData } } }),
     JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: "{}" }),
   ].join("\n");
+  // The two wrong answers come first, and deliberately: the exact assertion
+  // below is strictly stronger, so it would catch either drift on its own and
+  // report only that the number is off. These name which definition it drifted
+  // to. (An earlier version of these lines compared the fixture's own length
+  // instead of the result, and so could not fail for any implementation.)
+  assert.ok(claudeReadChars(trace) < text.length * 2,
+    "counting the CLI's tool_use_result copy would put every read in twice");
+  assert.ok(claudeReadChars(trace) < text.length + imageData.length,
+    "counting image payloads would add a base64 body that was never read text");
   assert.equal(claudeReadChars(trace), text.length, "one read's text, counted once, with the image contributing nothing");
-  // The two wrong answers this must not give, as lower bounds.
-  assert.ok(trace.length > text.length * 2, "the naive definitions have more to count than the right one does");
 });
 
+// The other way this meter can be wrong is downward, and nothing here catches
+// that: a trace cut by the 16 MiB transport limit would meter only the part
+// that arrived. What stops it is that the cut is detected first and the call
+// never reaches metering - one branch, guarded by
+// "a claude trace cut by the transport limit says so instead of looking like
+// no reply" in runner.test.mjs. If that branch is ever relaxed, this meter
+// starts under-reporting silently.
 test("claude read chars ignore a trace with no reads instead of guessing", () => {
   const noReads = [
     JSON.stringify({ type: "system", subtype: "init" }),
