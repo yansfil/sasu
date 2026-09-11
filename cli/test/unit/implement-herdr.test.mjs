@@ -23,7 +23,7 @@ function recorder(overrides = {}) {
   const run = (args) => {
     argv.push(args);
     const key = args.slice(0, 2).join(" ");
-    if (key in overrides) return overrides[key];
+    if (key in overrides) return typeof overrides[key] === "function" ? overrides[key](args) : overrides[key];
     if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
     if (key === "pane split") return { status: 0, stdout: splitOk, stderr: "" };
     return { status: 0, stdout: "{}", stderr: "" };
@@ -216,6 +216,57 @@ test("a failed agent start closes only the empty pane it created", () => {
   assert.match(outcome.problem, /no shell prompt/);
   assert.deepEqual(of("pane close"), ["pane", "close", "w4G:p13"]);
   assert.match(outcome.problem, /the empty pane was closed/);
+});
+
+/**
+ * A fake wall clock: `sleep` advances time instead of spending it, so the
+ * adapter's 30 s readiness wait is exercised in full without a test paying
+ * for it, and the sleeps themselves are the observation.
+ */
+function fakeClock() {
+  let t = 1_000_000;
+  const slept = [];
+  return { now: () => t, sleep: (ms) => { slept.push(ms); t += ms; }, slept };
+}
+
+const paneBusy = { status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "agent_pane_busy", message: "agent target pane is not an available shell" } }) };
+const bareShell = { status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
+  pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
+} } }) };
+
+// The split pane's shell is still reading its profile when the first start
+// arrives, and herdr refuses the pane until it has seen a prompt. Measured
+// 2026-09-10: two starts in a row refused with agent_pane_busy and the dispatch
+// closed a pane that would have been ready a moment later.
+test("a start refused because the new shell is still booting is retried until herdr accepts the pane", () => {
+  let starts = 0;
+  const clock = fakeClock();
+  const { run, count } = recorder({ "agent start": () => (++starts < 3 ? paneBusy : { status: 0, stdout: "{}", stderr: "" }) });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run, clock });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.equal(count("agent start"), 3, "the third start is the one herdr accepted");
+  assert.deepEqual(clock.slept, [1000, 1000], "one second between attempts, none after the acceptance");
+  assert.equal(count("pane close"), 0);
+  assert.equal(count("agent prompt"), 1, "the handoff follows the accepted start");
+});
+
+test("a pane that never becomes a shell is given up after 30 seconds and closed", () => {
+  const clock = fakeClock();
+  const { run, count } = recorder({ "agent start": paneBusy, "pane process-info": bareShell });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run, clock });
+  assert.equal(outcome.ok, false);
+  assert.equal(clock.slept.reduce((sum, ms) => sum + ms, 0), 30_000, "the wait is bounded at 30 s of wall clock");
+  assert.match(outcome.problem, /agent_pane_busy/);
+  assert.match(outcome.problem, /never became an available shell in 30 s \(30 retries\)/);
+  assert.match(outcome.problem, /the empty pane was closed/);
+  assert.equal(count("agent prompt"), 0);
+
+  // Only the busy refusal is worth waiting on; any other failure is final at once.
+  const other = fakeClock();
+  const immediate = recorder({ "agent start": { status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "agent_not_ready" } }) } });
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: immediate.run, clock: other });
+  assert.equal(immediate.count("agent start"), 1);
+  assert.deepEqual(other.slept, []);
 });
 
 test("a started implementor is never closed just because its handoff failed", () => {

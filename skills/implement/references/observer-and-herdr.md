@@ -80,7 +80,7 @@ When `HERDR_PANE_ID` is unset there is no pane to split, so `spawn` reports itse
 On success it prints the new pane id, agent name, kind, and PRD as JSON.
 The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
 `--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
-Waiting for the new shell to become interactive is herdr's own `agent start` timeout, not a loop of this skill's.
+The new pane's shell takes a few seconds to print its first prompt, and herdr refuses `agent start` with `agent_pane_busy` until it has seen one; the adapter retries exactly that refusal once a second for up to 30 seconds and reports any other failure at once, so the wait is the harness's, never this skill's.
 
 Two costs are real and are not bugs to re-report:
 
