@@ -689,8 +689,9 @@ export const CODEX_NO_TOOLS_PREAMBLE =
 // "The paths the prompt names" is doing work. That caller's evidence list is
 // `changedFiles.filter(existsSync)`, so a change that is purely deletions
 // leaves it empty and the workspace with nothing in it; a flat "you must read"
-// would be an instruction the call cannot follow. The gate's own rejection has
-// the same gap and is fixed separately.
+// would be an instruction the call cannot follow. The gate's own rejection had
+// the same gap - it refused a reply for not reading files the change had
+// deleted - and is scoped the same way, in gates/commands.ts.
 export const CODEX_ISOLATED_READ_PREAMBLE = `You are a one-shot read-only judge in a scoped evidence workspace.
 You may use shell commands only to inspect exact relative paths listed in the prompt.
 Do not list directories, search broadly, inspect git history, read environment variables, access the network, or inspect an unlisted path.
