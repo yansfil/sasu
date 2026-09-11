@@ -324,19 +324,25 @@ test("an agentic claude judge that over-reads is rejected by the post-hoc round 
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-proj-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "fixture evidence\n");
-  // Claude exposes no streaming trace in this output format; num_turns is the
-  // only read signal it admits, and it is a real one - measured 2026-09-10
-  // against claude 2.1.267, num_turns is the read count plus the answering
-  // turn (8 reads at 9 turns, 30 reads at 31; see
-  // agents/benchmarks/max-turns-20260910/results). Budget + 9 read rounds,
-  // reported as one more turn. A budget living only on the codex stream would
-  // route exactly the over-reading calls to this unbounded path, and
-  // `--max-turns` cannot stand in for it: the same measurement saw one 40-file
-  // fixture capped at 31 turns and an identical run complete at 41.
+  // The read signal claude admits is its stream-json trace, and the unit is
+  // the `tool_use` blocks in it. A budget living only on the codex stream
+  // would route exactly the over-reading calls to this unbounded path, and
+  // `--max-turns` cannot stand in for it: one 40-file fixture capped at 31
+  // turns while an identical run completed at 41
+  // (agents/benchmarks/max-turns-20260910/results, 2026-09-10). Budget + 8
+  // reads, written as a trace that actually contains them - a fixture that
+  // only announced the number would pass whatever the counter did with it.
   const { AGENTIC_READ_MAX_ROUNDS } = require(backendsPath);
   const rounds = AGENTIC_READ_MAX_ROUNDS + 8;
-  const envelope = JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: rounds + 1 });
-  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${envelope.replace(/'/g, "'\\''")}'\n`);
+  const lines = [];
+  for (let index = 0; index < rounds; index += 1) {
+    lines.push(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${index}`, name: "Read", input: { file_path: "evidence.md" } }] } }));
+    lines.push(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `t${index}`, content: [{ type: "text", text: "fixture evidence" }] }] } }));
+  }
+  lines.push(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ verdict: "PASS", findings: [] }), num_turns: rounds + 1 }));
+  const tracePath = path.join(binDir, "trace.jsonl");
+  fs.writeFileSync(tracePath, lines.join("\n") + "\n");
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const config = loadConfig(project);
   config.judge.timeoutMs = TIMEOUT_MS;

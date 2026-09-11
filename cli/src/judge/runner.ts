@@ -665,8 +665,9 @@ export async function runJudge<T>(
         backend.name,
         // "batch reads" left this sentence. It is true for codex, where a round
       // is an audited command and joining reads with && makes one; it is not
-      // true for claude, where a round comes from `num_turns - 1` and 20 reads
-      // in 2 API turns still report 21. An instruction that is inert for one
+      // true for claude, where a round is a `tool_use` block counted from the
+      // trace, so 20 reads batched into 2 API turns are still 20. An
+      // instruction that is inert for one
       // of the two backends that can receive it does not belong in a message
       // both receive - and this rejection no longer travels into a retry
       // prompt anyway (retryCanCorrect), so its only reader is a person.

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { newJudgeActivity, readEvidence } from "../../dist/judge/types.js";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CLAUDE_ISOLATED_READ_PREAMBLE, CLAUDE_MAX_API_TURNS, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CLAUDE_ISOLATED_READ_PREAMBLE, CLAUDE_MAX_API_TURNS, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeReadRounds, claudeTraceObserved, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -19,11 +19,17 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
   assert.match(args[denied + 1], /Bash/);
   assert.match(args[denied + 1], /Write/);
   assert.doesNotMatch(args[tools + 1], /Glob|Bash|Write/);
-  // Bounded in flight: the read budget plus the answering turn. A judge that
-  // needs a 17th read is stopped there rather than after it finishes.
+  // A runaway bound, not an in-flight read brake: one turn carried 20 Read
+  // calls in the 2026-09-10 measurement, so this cap cannot hold a read budget
+  // and the read budget is enforced only after the call returns (the same
+  // reasoning as the code's own comment beside `--max-turns`). Asserted
+  // against CLAUDE_MAX_API_TURNS, because that is the constant pushed here;
+  // this used to read AGENTIC_READ_MAX_ROUNDS + 1, which passed only because
+  // 29 + 1 happens to equal 30 and would fail on a read-budget change that
+  // left the turn cap alone.
   const cap = args.indexOf("--max-turns");
   assert.ok(cap >= 0, "agentic calls must carry a turn cap");
-  assert.equal(args[cap + 1], String(AGENTIC_READ_MAX_ROUNDS + 1));
+  assert.equal(args[cap + 1], String(CLAUDE_MAX_API_TURNS));
 });
 
 // Three bounds hold an agentic claude call and the non-exploring one was told
@@ -94,6 +100,32 @@ test("an exploring claude call is told the budgets that actually hold it", () =>
 // because "naive" is a family rather than a number and a test that pins one of
 // them would break with the wrong explanation when an implementation picked
 // another.
+// The read count's own net. The measurement that chose this unit lives in
+// claudeReadRounds' comment; without a test naming the function, reverting it
+// to `num_turns - 1` stays green - and that reversion is not hypothetical,
+// it is what the code did until 2026-09-11.
+test("claude read rounds are the trace's tool calls, whatever the terminal record announces", () => {
+  const assistant = (...blocks) => JSON.stringify({ type: "assistant", message: { content: blocks } });
+  const trace = [
+    // Two calls in one turn: the unit is the call, not the turn it rode in.
+    assistant({ type: "thinking", thinking: "planning" },
+      { type: "tool_use", id: "t0", name: "Read", input: { file_path: "a.ts" } },
+      { type: "tool_use", id: "t1", name: "Read", input: { file_path: "b.ts" } }),
+    JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t0", content: [{ type: "text", text: "a" }] }] } }),
+    // Prose and reasoning are not tool calls, and neither is a tool_use that
+    // is quoted inside text: the key is the block's own `type`.
+    assistant({ type: "text", text: "I will now read c.ts with a tool_use block" }),
+    assistant({ type: "tool_use", id: "t2", name: "Grep", input: { pattern: "x" } }),
+    // A record announcing a read count the trace does not contain.
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 99, result: "{}" }),
+  ].join("\n");
+  assert.equal(claudeReadRounds(trace), 3, "three tool_use blocks, across two turns and beside text and thinking");
+  assert.notEqual(claudeReadRounds(trace), 98, "the terminal record's num_turns is not the source");
+  assert.equal(claudeReadRounds(""), 0, "the counter itself answers zero; the caller decides whether zero is attestable");
+  assert.equal(claudeTraceObserved(""), false, "and for an empty stream it is not - nothing was watched reading nothing");
+  assert.equal(claudeTraceObserved(trace), true);
+});
+
 test("claude read chars count tool_result text, and nothing that merely repeats it", () => {
   // The payload is deliberately shorter than the read text so the two bounds
   // below discriminate: an implementation that counts images lands under the

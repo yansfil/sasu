@@ -60,11 +60,13 @@ export interface JudgeActivity {
    * Read operations attributable to this call, in the unit the harness read
    * budget is written in; null when the backend can attest neither a trace
    * nor a count. Codex counts audited command_execution events directly.
-   * Claude derives it from `num_turns - 1`, which is a measurement, not an
-   * assumption: 2026-09-10 against claude 2.1.267, a stream-json trace showed
-   * 8 reads at num_turns 9 and 30 reads at num_turns 31, one tool round per
-   * turn plus the answering turn. It is a lower bound where a turn issues
-   * several tool calls at once, which is the safe direction for a budget.
+   * Claude counts the `tool_use` blocks in its stream-json trace, which is
+   * exact rather than a bound: it is the tool calls themselves, not a turn
+   * count they are inferred from. That distinction is measured - a turn can
+   * carry many calls (20 reads in 2 API turns, 2026-09-10), and on the two
+   * capped traces on disk `num_turns` reports 9 against 22 and 28 tool calls
+   * (2026-09-11). An earlier version of this field was derived from
+   * `num_turns - 1` and described itself as a lower bound for that reason.
    */
   readRounds: number | null;
   /**
@@ -235,10 +237,14 @@ export class JudgeError extends Error {
  * `workspace-readable` means they were copied into the read-only workspace and
  * the judge had to open them: measured possible on claude 2026-09-10
  * (agents/benchmarks/claude-image-read-20260910/report.md, 4/4 on a token that
- * exists only in pixels), but that backend streams no command trace, so
- * nothing in the record can separate a verdict that studied the screenshots
- * from one that never opened them. A reader must weigh such a verdict knowing
- * that (PRINCIPLES item 10).
+ * exists only in pixels). Whether the judge did open them is answerable from
+ * its trace and simply is not recorded here: a `tool_use` block carries the
+ * path it read, and the imgfirst1 production trace names 8 image reads among
+ * its 44 tool calls (2026-09-11). So a reader of this field alone cannot tell
+ * a verdict that studied the screenshots from one that never opened them, and
+ * must weigh it knowing that (PRINCIPLES item 10) - but that is this record
+ * being narrow, not the backend being silent, and per-image evidence is
+ * buildable without new capability.
  *
  * The two deliveries also differ in what they spend. `attached` consumes no
  * read rounds; `workspace-readable` is paid out of the read budget, and how

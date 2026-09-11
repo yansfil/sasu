@@ -84,6 +84,22 @@ function fakeCodexProgram(mainLines, options = {}) {
   ].join("\n");
 }
 
+/**
+ * A claude stream-json trace: `reads` tool calls each returning `text`, then
+ * the terminal record. Built as one piece so the trace and its `num_turns`
+ * cannot drift apart - the harness counts the tool calls, and a fixture that
+ * announced a read count it did not contain would be testing neither.
+ */
+function claudeTrace(reads, result, extra = {}, text = "") {
+  const lines = [];
+  for (let index = 0; index < reads; index += 1) {
+    lines.push(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${index}`, name: "Read", input: { file_path: "evidence.md" } }] } }));
+    lines.push(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `t${index}`, content: [{ type: "text", text }] }] } }));
+  }
+  lines.push(JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: reads + 1, result, ...extra }));
+  return lines.join("\n") + "\n";
+}
+
 async function withFakeCodex(program, fn) {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fake-codex-"));
   const fakeCodex = path.join(binDir, "codex");
@@ -846,12 +862,10 @@ test("an over-budget reply is inspected before it is discarded", async () => {
   fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
   // A complete, contract-valid answer that simply read too much: num_turns - 1
   // is the read count, so this lands one round past the budget.
-  const answered = JSON.stringify({
-    type: "result", subtype: "success", is_error: false,
-    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
-    result: JSON.stringify({ verdict: "PASS", findings: [] }),
-  });
-  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  // One read past the round budget, as a trace that actually contains them.
+  const tracePath = path.join(binDir, "trace.jsonl");
+  fs.writeFileSync(tracePath, claudeTrace(AGENTIC_READ_MAX_ROUNDS + 1, JSON.stringify({ verdict: "PASS", findings: [] })));
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const previousPath = process.env.PATH;
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
@@ -890,12 +904,10 @@ test("an over-budget reply the contract refuses records why it was refused", asy
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-refuse-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
-  const answered = JSON.stringify({
-    type: "result", subtype: "success", is_error: false,
-    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
-    result: JSON.stringify({ verdict: "PASS", findings: [] }),
-  });
-  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  // One read past the round budget, as a trace that actually contains them.
+  const tracePath = path.join(binDir, "trace.jsonl");
+  fs.writeFileSync(tracePath, claudeTrace(AGENTIC_READ_MAX_ROUNDS + 1, JSON.stringify({ verdict: "PASS", findings: [] })));
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const previousPath = process.env.PATH;
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
@@ -937,12 +949,9 @@ test("an over-budget reply that is not JSON is recorded as unparsed", async () =
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-prose-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
-  const answered = JSON.stringify({
-    type: "result", subtype: "success", is_error: false,
-    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
-    result: "I ran out of turns before I could finish reviewing.",
-  });
-  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  const tracePath = path.join(binDir, "trace.jsonl");
+  fs.writeFileSync(tracePath, claudeTrace(AGENTIC_READ_MAX_ROUNDS + 1, "I ran out of turns before I could finish reviewing."));
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const previousPath = process.env.PATH;
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
@@ -979,12 +988,10 @@ test("a validator that throws while inspecting a discarded reply does not lose t
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-overread-throw-"));
   fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
-  const answered = JSON.stringify({
-    type: "result", subtype: "success", is_error: false,
-    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
-    result: JSON.stringify({ verdict: "PASS", findings: [] }),
-  });
-  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  // One read past the round budget, as a trace that actually contains them.
+  const tracePath = path.join(binDir, "trace.jsonl");
+  fs.writeFileSync(tracePath, claudeTrace(AGENTIC_READ_MAX_ROUNDS + 1, JSON.stringify({ verdict: "PASS", findings: [] })));
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(tracePath)}\n`);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
   const previousPath = process.env.PATH;
   const previousBackend = process.env.SASU_JUDGE_BACKEND;
@@ -1100,7 +1107,7 @@ test("an agentic claude call stopped by the turn cap is not retried in place", a
   }
 });
 
-test("claude num_turns rides into validator activity; a missing field stays unknown", async () => {
+test("claude read counts come from the trace's tool calls, not from num_turns", async () => {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
   const verdict = JSON.stringify({ verdict: "PASS", findings: [] });
   const envelope = (extra) => JSON.stringify({ type: "result", is_error: false, result: verdict, ...extra });
@@ -1113,27 +1120,32 @@ test("claude num_turns rides into validator activity; a missing field stays unkn
   process.env.PATH = `${binDir}:/usr/bin:/bin`;
   process.env.CLAUDE_FAKE_ENVELOPE = envelopeFile;
   try {
-    fs.writeFileSync(envelopeFile, envelope({ num_turns: 3 }));
+    // The terminal record announces a number the trace contradicts. The
+    // harness counts what it can see, because `num_turns` reports API turns on
+    // a capped call - 9 against 22 and 28 tool calls on the two capped traces
+    // on disk (2026-09-11) - and those are exactly the calls a record has to
+    // explain.
+    fs.writeFileSync(envelopeFile, claudeTrace(2, verdict, { num_turns: 99 }, "value"));
     let seen = null;
     await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
       seen = activity;
       return validateGapVerdict(value);
     });
-    // `readOutputChars: 0` is this envelope's honest answer, not a default: it
-    // carries no tool_result records, so nothing was read in it. A real trace
-    // of 2 reads carries 2 of them - that is the case the char budget tests
-    // cover. `commands` stays null because this format has no command trace at
-    // all, and an empty list would claim the call was watched running nothing.
-    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: null, readOutputChars: 0, msToLastRead: null },
-      "num_turns counts tool calls, so it yields the read count exactly and says nothing about API turns; the command trace stays unattested");
+    assert.deepEqual(seen, { commands: null, readRounds: 2, modelTurns: null, readOutputChars: 10, msToLastRead: null },
+      "the two tool calls in the trace are the read count; the announced 99 is not");
 
+    // A terminal record with nothing around it. Zero is what this stream
+    // attests, and that is a different record from unknown. `commands` stays
+    // null because the format has no command trace at all, and an empty list
+    // would claim the call was watched running nothing.
     fs.writeFileSync(envelopeFile, envelope({}));
     await runJudge(config, "gate:test", "routine", "prompt", (value, activity) => {
       seen = activity;
       return validateGapVerdict(value);
     });
-    assert.equal(seen.modelTurns, null, "a missing num_turns must stay unknown, never zero");
-    assert.equal(seen.readRounds, null, "and with no turn count there is no read count to derive either");
+    assert.equal(seen.readRounds, 0, "a trace showing no tool calls attests zero reads");
+    assert.equal(seen.readOutputChars, 0, "and no read output, for the same reason");
+    assert.equal(seen.modelTurns, null, "this format still reports no API turn count");
     assert.equal(seen.commands, null, "and an absent trace must stay absent rather than become an observed empty list");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
@@ -1197,6 +1209,42 @@ test("every failed judge call records what it was observed reading", async () =>
       return true;
     });
   });
+
+  // 4. The same event on the other backend. Codex records case 1 in full;
+  //    claude recorded nulls, because its observation was written inside the
+  //    result envelope a timed-out call never reaches. One event, two records
+  //    (PRINCIPLES item 10). The trace here is deliberately partial - one read
+  //    and no terminal record - which is exactly what a killed call leaves.
+  await (async () => {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fake-claude-"));
+    const trace = [
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "src/allowed.txt" } }] } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "value" }] }] } }),
+    ];
+    fs.writeFileSync(path.join(binDir, "claude"),
+      `#!/bin/sh\n${trace.map((line) => `printf '%s\\n' '${line}'`).join("\n")}\n/bin/sleep 5\n`);
+    fs.chmodSync(path.join(binDir, "claude"), 0o755);
+    const previousBackend = process.env.SASU_JUDGE_BACKEND;
+    const previousPath = process.env.PATH;
+    process.env.SASU_JUDGE_BACKEND = "claude";
+    process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+    try {
+      await assert.rejects(runJudge(timedOut, "observed:claude-timeout", "routine", "review", validateGapVerdict, {
+        agentic: true, cwd: binDir, evidencePaths: [],
+      }), (error) => {
+        assert.equal(error.code, "judge-timeout");
+        const activity = error.record.activity;
+        assert.equal(activity.readRounds, 1, "the trace's one tool_use block is the read it was observed making");
+        assert.equal(activity.readOutputChars, 5, "the tool_result text is \"value\"");
+        assert.equal(activity.commands, null, "claude streams no command trace; an empty list would claim it was seen running nothing");
+        return true;
+      });
+    } finally {
+      if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+      else process.env.SASU_JUDGE_BACKEND = previousBackend;
+      process.env.PATH = previousPath;
+    }
+  })();
 
   // 3. Command-audit rejection: the offending command is the whole point of
   //    the record.
@@ -1279,7 +1327,7 @@ test("a fallback crossing keeps the primary's observed reads and attests its own
     `printf '%s\\n' '{"type":"turn.completed","usage":{}}'`,
   ]));
   const envelope = path.join(binDir, "envelope.json");
-  fs.writeFileSync(envelope, JSON.stringify({ type: "result", is_error: false, num_turns: 4, result: JSON.stringify({ verdict: "PASS", findings: [] }) }));
+  fs.writeFileSync(envelope, claudeTrace(3, JSON.stringify({ verdict: "PASS", findings: [] }), { is_error: false }, "value"));
   fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\ncat ${JSON.stringify(envelope)}\n`);
   fs.chmodSync(path.join(binDir, "codex"), 0o755);
   fs.chmodSync(path.join(binDir, "claude"), 0o755);
@@ -1309,7 +1357,7 @@ test("a fallback crossing keeps the primary's observed reads and attests its own
     assert.equal(outcome.record.fallback.backend, "codex");
     assert.deepEqual(outcome.record.retries.map((retry) => retry.observation.commands), [["rg -n value src/allowed.txt"], ["rg -n value src/allowed.txt"]],
       "the crossed-out primary's reads stay in the record");
-    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: null, readOutputChars: 0, msToLastRead: null },
+    assert.deepEqual(outcome.record.activity, { commands: null, readRounds: 3, modelTurns: null, readOutputChars: 15, msToLastRead: null },
       "the answering backend attests its reads and its read volume, and nothing else; an empty command list or an API-turn count would both claim more than it said");
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;

@@ -110,8 +110,9 @@ export interface JudgeBackend {
    * claiming this flag must say what it counts, because the limit does not
    * travel between units.
    *
-   * False for claude and api, which stream no readable trace, and for the stub
-   * unless a test asks it to rehearse the combination.
+   * True for claude too, from its own stream-json trace. False for api, which
+   * streams no readable trace, and for the stub unless a test asks it to
+   * rehearse the combination.
    */
   metersReadChars: boolean;
   available(): boolean;
@@ -453,6 +454,23 @@ export class ClaudeBackend implements JudgeBackend {
         env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sasu-judge", [JUDGE_SUBPROCESS_ENV]: "1" },
         ...(evidenceRoot !== undefined ? { cwd: evidenceRoot } : cwd !== undefined ? { cwd } : {}),
       });
+      // Observed before anything can throw, because the calls that most need
+      // explaining are the ones that never reply. Both numbers come from the
+      // trace, which `runProcess` hands back on every path it has - a clean
+      // answer, a turn-cap exit, a 16 MiB truncation, and a timeout, where the
+      // SIGTERM settle resolves with whatever stdout had accumulated. Written
+      // from inside the result envelope, as they were, a claude timeout
+      // recorded nulls for a call the harness had watched read for ten
+      // minutes, while codex recorded the same event in full (PRINCIPLES 10).
+      //
+      // Guarded on there being a trace at all, because zero and unmetered are
+      // different records (PRINCIPLES item 10): a call that printed nothing
+      // before it died was not watched reading nothing, and counting its
+      // absent trace as 0 would be the false zero this field exists to avoid.
+      if (options.observation !== undefined && claudeTraceObserved(result.stdout)) {
+        options.observation.readRounds = claudeReadRounds(result.stdout);
+        options.observation.readOutputChars = claudeReadChars(result.stdout);
+      }
       const envelope = claudeResultEnvelope(result.stdout);
       // A call stopped by --max-turns is a read-budget overrun, not a runtime
       // failure, and it must be told apart before the exit code is read:
@@ -487,44 +505,7 @@ export class ClaudeBackend implements JudgeBackend {
           // num_turns 1 = one-shot reply with zero tool rounds (verified
           // 2026-08-13 against a no-tool -p call). Reported only when parseable
           // so a missing field stays "unknown" instead of a false zero.
-          const numTurns = rec["num_turns"];
           const usage = claudeUsage(rec);
-          // claude streams no command trace in this output format, so
-          // `commands` stays null: an empty list would claim this call was
-          // seen running nothing. `readOutputChars` stays null for the same
-          // reason - the envelope never reports the bytes a Read returned, and
-          // metering it would mean inventing a number (principle 10).
-          //
-          // `num_turns` is a read count, not a turn count, and it is the one
-          // number this envelope reports exactly. Measured 2026-09-10 against
-          // claude 2.1.267 with a cap high enough that nothing was truncated,
-          // across three arms built so the two candidate formulas differed
-          // tenfold: 6 reads in 7 API turns reported 7, and 20 reads in 2 API
-          // turns reported 21 - num_turns = tool calls + 1, three times out of
-          // three (agents/benchmarks/max-turns-20260910/results).
-          //
-          // So `readRounds` is exact here and `modelTurns` stays null. This
-          // format cannot count API turns, and the same measurement shows the
-          // two genuinely diverge (21 API turns behind num_turns 45 on one
-          // production review), so calling num_turns a turn count would put a
-          // second wrong unit where the first one was (principle 10).
-          if (options.observation !== undefined && typeof numTurns === "number" && Number.isFinite(numTurns)) {
-            options.observation.readRounds = Math.max(0, numTurns - 1);
-          }
-          // Metered after the call rather than during it, which is the one
-          // place this backend differs from codex. A streaming audit needs a
-          // line watcher, and installing one arms the 1 MiB per-line cap on a
-          // stream that legitimately carries multi-megabyte records - claude
-          // may open a picture in its workspace, and 84 of the 411 images in
-          // one production review workspace exceed the resulting threshold,
-          // the largest by 9.2x. `stdout` accumulates with or without a
-          // watcher, so reading it here costs a parse and no capability. The
-          // price is that a runaway call is rejected after it finishes instead
-          // of when it crosses; that is what the round check already does, so
-          // it is the existing shape with a unit that tracks the actual cost.
-          if (options.observation !== undefined) {
-            options.observation.readOutputChars = claudeReadChars(result.stdout);
-          }
           return {
             text: rec["result"],
             ...(usage !== undefined ? { usage } : {}),
@@ -784,10 +765,11 @@ Read the paths the prompt names: a review that records no read of them is reject
 // old line asked for at most 29 files "batching related reads into the same
 // turn", and the two halves failed differently. The file count is no longer
 // the budget for an exploring call - read volume is. And batching never
-// affected that count anyway: `readRounds` comes from `num_turns - 1`, which
-// is tool calls, and the measurement beside the parser shows 20 reads in 2 API
-// turns reporting 21. Batching is real advice for the turn cap and useless for
-// the read count, so it moved to the clause about turns.
+// affected that count anyway: `readRounds` is the trace's `tool_use` blocks,
+// counted directly by `claudeReadRounds`, so joining reads into one turn
+// leaves it untouched - 20 reads in 2 API turns are still 20 reads. Batching
+// is real advice for the turn cap and useless for the read count, so it moved
+// to the clause about turns.
 //
 // Saying this correctly is fairness, not a lever. Nine production reviews read
 // 35-48 files against a stated limit of 29 (2026-09-10): the instruction that
@@ -1875,6 +1857,58 @@ function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "
  * 2026-09-10). A deliberately large-file trace in the same set measures 176%,
  * so the budget still rejects a runaway reader.
  */
+/**
+ * Read operations in a claude trace, counted as the `tool_use` blocks the
+ * assistant actually issued.
+ *
+ * This used to be `num_turns - 1` off the result envelope, which is the same
+ * number on a call that finished and a different one on a call that did not.
+ * Measured 2026-09-11 over the 24 benchmark stream traces: the two agree on
+ * all 22 that ended in a result, and on the 2 that hit the turn cap
+ * `num_turns` is 9 against 22 and 28 tool calls - because a capped call
+ * reports API turns there, exactly as the CLAUDE_MAX_API_TURNS comment
+ * records. Counting the trace is therefore one unit that holds on every path,
+ * and it needs no envelope, which is what lets a timed-out call be observed
+ * at all.
+ *
+ * Nested calls would be counted once at the level they were issued; no trace
+ * on disk carries any (0 of 24 have a `parent_tool_use_id`), so that is the
+ * shape of the data rather than a rule this enforces.
+ */
+/**
+ * Whether this stdout carries a trace at all: at least one line that parses to
+ * a JSON object. The counters below return 0 for a stream with no events, and
+ * 0 is a claim ("metered, read nothing") that an empty stream cannot support.
+ */
+export function claudeTraceObserved(stdout: string): boolean {
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") continue;
+    const parsed = safeParse(line);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) return true;
+  }
+  return false;
+}
+
+export function claudeReadRounds(stdout: string): number {
+  let rounds = 0;
+  for (const line of stdout.split("\n")) {
+    if (line.trim() === "") continue;
+    const parsed = safeParse(line);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const event = parsed as Record<string, unknown>;
+    if (event["type"] !== "assistant") continue;
+    const message = event["message"];
+    if (message === null || typeof message !== "object" || Array.isArray(message)) continue;
+    const content = (message as Record<string, unknown>)["content"];
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block !== null && typeof block === "object" && !Array.isArray(block)
+        && (block as Record<string, unknown>)["type"] === "tool_use") rounds += 1;
+    }
+  }
+  return rounds;
+}
+
 export function claudeReadChars(stdout: string): number {
   let total = 0;
   for (const line of stdout.split("\n")) {
