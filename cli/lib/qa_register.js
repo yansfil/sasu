@@ -76,12 +76,13 @@ function sha256Of(content) {
  * The user's answer text of every `## Raw Q&A` turn, keyed by question
  * number, or null when the section is absent. Every `### Q<n>` heading
  * yields one entry, with `answer: ""` when the turn has no `- answer:`
- * bullet or an empty one. Only the answer bullet counts: the turn's label,
- * anchors (`- decision_ids:`), route, source_ref, asked/recommended text and
- * notes are the agent's bookkeeping. Answers are the evidence a spec judge
- * compares decisions against (PRD gate-loop D-08), which is why they are
- * pinned with the decision cells (gate_freshness.js) and why the prelint
- * cited-question rule reads them through this same function.
+ * bullet or an empty one, and `decisionIds` from its `- decision_ids:`
+ * bullet (`none` reads as an empty list). The turn's label, route,
+ * source_ref, asked/recommended text and notes are the agent's bookkeeping.
+ * Answers are the evidence a spec judge compares decisions against (PRD
+ * gate-loop D-08), which is why the anchored ones are pinned with the
+ * decision cells (gate_freshness.js) and why the prelint cited-question rule
+ * reads them through this same function.
  *
  * `appendQaEntry` keeps a multi-line answer inside one bullet by indenting
  * its continuation lines, so the bullet ends at the next line with text in
@@ -100,11 +101,16 @@ function parseQaAnswers(content) {
   for (let i = range.start + 1; i < range.end; i += 1) {
     const heading = lines[i].match(/^###\s+Q(\d+)\b/);
     if (heading) {
-      current = { question: heading[1], answer: "" };
+      current = { question: heading[1], answer: "", decisionIds: [] };
       answers.push(current);
       continue;
     }
     if (current === null) continue;
+    const anchors = lines[i].match(/^-\s*decision_ids:(.*)$/);
+    if (anchors) {
+      current.decisionIds = anchors[1].split(",").map((id) => id.trim()).filter((id) => /^D-\d+$/.test(id));
+      continue;
+    }
     const answer = lines[i].match(/^-\s*answer:(.*)$/);
     if (!answer) continue;
     const parts = [answer[1]];

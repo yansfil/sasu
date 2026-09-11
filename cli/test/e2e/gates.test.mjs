@@ -666,6 +666,38 @@ test("delegated run: the stored invocation cannot be replaced by a per-call plac
   assert.equal(state.gates.spec.verdict, null);
 });
 
+// 2026-09-10: gap-audit passed, spec asked the user one question, and the
+// answer `gate answer` appended to the shared qa-log read as "qa-log.md
+// changed after this gate passed" for gap-audit, which then refused
+// `implement start`. An unanchored turn backs no decision yet; the seal moves
+// when the answer is normalized into the register, not when it is written.
+test("a sibling gate's recorded answer does not stale a sealed gate; an anchored answer still does", () => {
+  const dir = makeProject();
+  const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { verdict: "PASS", findings: [] }),
+  });
+  assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+  const asked = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, BLOCK_RESPONSE),
+  });
+  assert.equal(JSON.parse(asked.stdout).status.effective, "NEEDS_HUMAN", asked.stdout + asked.stderr);
+  const answered = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "spec", "--evidence", "Deleted tasks are retained for 30 days, then purged.", "--json"], {});
+  assert.equal(answered.status, 0, answered.stdout + answered.stderr);
+  assert.match(fs.readFileSync(path.join(dir, "qa-log.md"), "utf8"), /### Q3: spec human decision bundle[\s\S]*- decision_ids: none/, "the answer landed as an unanchored turn");
+
+  const status = JSON.parse(runCli(dir, ["gate", "status", "--slug", "fixture", "--json"], {}).stdout);
+  assert.equal(status["gap-audit"].effective, "PASS", JSON.stringify(status["gap-audit"]));
+  assert.equal(status["gap-audit"].stale, false);
+  assert.equal(status.spec.effective, "PASS");
+
+  // The RF2 protection is untouched: an answer a decision rests on is pinned.
+  const log = path.join(dir, "qa-log.md");
+  fs.writeFileSync(log, fs.readFileSync(log, "utf8").replace("- answer: yes, render a list", "- answer: no, render a grid"));
+  const edited = JSON.parse(runCli(dir, ["gate", "status", "--slug", "fixture", "--json"], {}).stdout);
+  assert.equal(edited["gap-audit"].effective, "STALE");
+  assert.deepEqual(edited["gap-audit"].staleInputs, [{ path: "qa-log.md", reason: "changed" }]);
+});
+
 test("delegated run: a P0 human finding still blocks under --assume-human-findings", () => {
   const dir = makeProject();
   const result = runCli(

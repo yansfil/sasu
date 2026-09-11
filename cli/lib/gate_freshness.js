@@ -74,19 +74,28 @@ const ABSENT_INPUT = `sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}:absent`;
  * compares decisions against: leaving them out let an answer be edited or
  * removed after the seal while a rerun returned the cached PASS, so the
  * recorded consent could contradict the sealed verdict (RF2, 2026-09-06).
- * `sasu gate answer` records actual new decision evidence before re-pinning
- * its gate; that evidence honestly stales sibling seals. `gate reopen`
- * records only in the gate ledger and Audit History, so an operational
- * approval does not manufacture a new answer and stale a sibling. The contract version
- * is not bumped: a pin recorded under the previous rule simply reads as
- * changed once, which is the honest reading of "the rule for this input
- * moved".
+ *
+ * Only answers a decision is anchored to (`- decision_ids:` naming a D#)
+ * are pinned. A turn anchored to nothing backs no decision yet, so it is not
+ * the evidence D-08 compares against, and pinning it made one gate's own
+ * bookkeeping stale its sibling: `sasu gate answer --gate spec` appends the
+ * user's answer as a new unanchored turn, and on 2026-09-10 that turn read
+ * as "qa-log.md changed after this gate passed" for a gap-audit sealed
+ * minutes earlier, which then refused `implement start` until the gate was
+ * reopened and re-judged. The answer becomes decision evidence when it is
+ * normalized into the Decision Register - a new or changed row, or a new
+ * anchor on the turn - and that is when the sibling seal honestly goes
+ * stale. `gate reopen` records only in the gate ledger and Audit History,
+ * so an operational approval never manufactures an answer. The contract
+ * version is not bumped: a pin recorded under the previous rule simply
+ * reads as changed once, which is the honest reading of "the rule for this
+ * input moved".
  */
 function qaLogDecisionHash(content) {
   const rows = parseRegisterRows(content);
   const answers = parseQaAnswers(content);
   const digest = rows === null ? "no-decision-register" : decisionDigest(rows);
-  const answered = answers === null ? "no-raw-qa" : answerDigest(answers);
+  const answered = answers === null ? "no-raw-qa" : answerDigest(answers.filter((entry) => entry.decisionIds.length > 0));
   return sha256Of(`sasu-gate-input-v${FRESHNESS_CONTRACT_VERSION}:qa-log-decisions\n${digest}\n${answered}`);
 }
 
