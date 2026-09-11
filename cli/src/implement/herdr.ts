@@ -260,6 +260,34 @@ export interface SpawnRequest {
   kind?: string;
   model?: string;
   effort?: string;
+  /** Extra variables for the new pane's shell, on top of PATH and the role marker. */
+  env?: Record<string, string>;
+}
+
+/** The variable name of the role marker, so a caller cannot smuggle a second value for it. */
+const ROLE_ENV_KEY = ROLE_ENV_MARKER.slice(0, ROLE_ENV_MARKER.indexOf("="));
+
+/**
+ * `--env` pairs for the split, beyond the role marker.
+ *
+ * A split pane's shell starts from the login PATH, not the dispatcher's.
+ * Measured 2026-09-10: an Observer running a locally built sasu ahead of its
+ * PATH dispatched an Implementor that could not see that build, and the
+ * supervisor fell back to a hand-typed `herdr pane split --env PATH=...`. So
+ * the dispatcher's own PATH always travels, a caller's pairs travel with it
+ * (a caller's PATH wins over the inherited one, explicit over implicit), and
+ * the marker is never among them: the recursion guard is not a pair anyone
+ * gets to set.
+ */
+function paneEnvironment(processEnv: NodeJS.ProcessEnv, extra: Record<string, string>): { argv: string[]; problem: string | null } {
+  if (ROLE_ENV_KEY in extra) {
+    return { argv: [], problem: `${ROLE_ENV_KEY} is the role marker the dispatch sets itself; it cannot be passed as an extra variable` };
+  }
+  const inheritedPath = processEnv["PATH"] ?? "";
+  const pairs: Record<string, string> = { ...(inheritedPath === "" ? {} : { PATH: inheritedPath }), ...extra };
+  const argv = ["--env", ROLE_ENV_MARKER];
+  for (const [key, value] of Object.entries(pairs)) argv.push("--env", `${key}=${value}`);
+  return { argv, problem: null };
 }
 
 export interface SpawnResult {
@@ -307,7 +335,9 @@ export function spawnImplementor(
     }
   }
 
-  const split = run(["pane", "split", "--pane", dispatcher, "--direction", "right", "--cwd", input.cwd, "--env", ROLE_ENV_MARKER, "--no-focus"], input.cwd);
+  const environmentArgv = paneEnvironment(environment.env ?? process.env, input.env ?? {});
+  if (environmentArgv.problem !== null) return { ok: false, value: null, problem: environmentArgv.problem };
+  const split = run(["pane", "split", "--pane", dispatcher, "--direction", "right", "--cwd", input.cwd, ...environmentArgv.argv, "--no-focus"], input.cwd);
   if (split.status !== 0) {
     return { ok: false, value: null, problem: `herdr pane split from ${dispatcher} failed (${split.status ?? "no status"}): ${(split.stderr || split.stdout).trim()}` };
   }

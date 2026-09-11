@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "../../dist/implement/herdr.js";
+import { parseEnvPairs } from "../../dist/implement/dispatch.js";
 
 const ok = (stdout = "") => () => ({ status: 0, stdout, stderr: "" });
 const fails = (status = 1, stderr = "boom") => () => ({ status, stdout: "", stderr });
@@ -162,6 +163,35 @@ test("a dispatch injects the implementor marker when the pane is created", () =>
   assert.deepEqual(split, ["pane", "split", "--pane", "w4G:p12", "--direction", "right", "--cwd", "/repo", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
   assert.deepEqual(of("agent start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w4G:p13"]);
   assert.deepEqual(of("agent prompt"), ["agent", "prompt", "impl", "p"]);
+});
+
+// A split pane starts from the login environment: a sasu build or shim that
+// only the supervisor's PATH could see was invisible to the Implementor, and
+// the supervisor had to type `herdr pane split --env PATH=...` by hand
+// (2026-09-10).
+test("a dispatch hands the new pane the dispatcher's PATH and the caller's extra variables", () => {
+  const env = { ...LIVE, PATH: "/opt/scratch/sasu/bin:/usr/bin" };
+  const passedEnv = (split) => split.flatMap((arg, i) => (arg === "--env" ? [split[i + 1]] : []));
+
+  const forwarded = recorder();
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { SASU_JUDGE_BACKEND: "stub" } }, { env, run: forwarded.run });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.deepEqual(passedEnv(forwarded.of("pane split")), ["SASU_HERDR_ROLE=implementor", "PATH=/opt/scratch/sasu/bin:/usr/bin", "SASU_JUDGE_BACKEND=stub"]);
+
+  const explicit = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { PATH: "/only/this" } }, { env, run: explicit.run });
+  assert.deepEqual(passedEnv(explicit.of("pane split")), ["SASU_HERDR_ROLE=implementor", "PATH=/only/this"], "an explicit PATH replaces the inherited one");
+
+  const refused = recorder();
+  const smuggled = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { SASU_HERDR_ROLE: "observer" } }, { env, run: refused.run });
+  assert.equal(smuggled.ok, false);
+  assert.match(smuggled.problem, /role marker/);
+  assert.equal(refused.count("pane split"), 0, "refused before anything is created");
+
+  // The CLI's `--env KEY=VALUE` shape: a shell variable name, and the first
+  // `=` is the boundary so a value may itself contain one.
+  assert.deepEqual(parseEnvPairs(["A=1", "B=x=y", "EMPTY="]), { A: "1", B: "x=y", EMPTY: "" });
+  for (const bad of ["=1", "NOEQ", "1A=2", "A B=1"]) assert.throws(() => parseEnvPairs([bad]), /KEY=VALUE/, bad);
 });
 
 test("the dispatched kind defaults to the dispatching pane's own agent and can be overridden", () => {

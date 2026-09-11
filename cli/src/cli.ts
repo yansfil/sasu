@@ -51,7 +51,7 @@ Usage:
     (records a human response and refreshes a closed run's receipt; explicit rejection blocks delivery.)
   sasu implement amend    --issuer human --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates full-review freshness.)
-  sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--json]
+  sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--json]
     (starts exactly one marked implementor beside this pane with the handoff packet on stdin; recursive dispatch is refused.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
     (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
@@ -146,12 +146,16 @@ before setting it, never guess.`;
 
 interface Args {
   positional: string[];
+  /** Last value per flag; the shape every command reads. */
   flags: Map<string, string | true>;
+  /** Every value per flag, in order, for the flags a command accepts repeated (`dispatch --env`). */
+  values: Map<string, string[]>;
 }
 
 function parseArgs(argv: string[]): Args {
   const positional: string[] = [];
   const flags = new Map<string, string | true>();
+  const values = new Map<string, string[]>();
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i]!;
     if (token.startsWith("--")) {
@@ -159,6 +163,7 @@ function parseArgs(argv: string[]): Args {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("--")) {
         flags.set(name, next);
+        values.set(name, [...(values.get(name) ?? []), next]);
         i += 1;
       } else {
         flags.set(name, true);
@@ -167,7 +172,7 @@ function parseArgs(argv: string[]): Args {
       positional.push(token);
     }
   }
-  return { positional, flags };
+  return { positional, flags, values };
 }
 
 function requireFlag(args: Args, name: string): string {

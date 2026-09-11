@@ -57,7 +57,7 @@ Build the complete Handoff Packet below and send it on stdin to the harness's ow
 
 ```sh
 sasu implement dispatch --name <unique-agent-name> --prd <ready-prd-path> \
-  [--kind <agent>] [--model <agent-model>] [--effort <reasoning-effort>] --json <<'SASU_HANDOFF'
+  [--kind <agent>] [--model <agent-model>] [--effort <reasoning-effort>] [--env KEY=VALUE ...] --json <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with `test "$SASU_HERDR_ROLE" = implementor` and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
@@ -80,6 +80,7 @@ When `HERDR_PANE_ID` is unset there is no pane to split, so `spawn` reports itse
 On success it prints the new pane id, agent name, kind, and PRD as JSON.
 The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
 `--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
+The new pane's shell starts from the login environment, not the Observer's, so the dispatch always passes the Observer's own `PATH` to the split pane (a locally built `sasu` or a shim ahead of the login PATH stays visible to the Implementor) and forwards each `--env KEY=VALUE` on top of it; an explicit `--env PATH=...` replaces the inherited one, and `SASU_HERDR_ROLE` is refused because the marker is the dispatch's own to set.
 The new pane's shell takes a few seconds to print its first prompt, and herdr refuses `agent start` with `agent_pane_busy` until it has seen one; the adapter retries exactly that refusal once a second for up to 30 seconds and reports any other failure at once, so the wait is the harness's, never this skill's.
 
 Two costs are real and are not bugs to re-report:
