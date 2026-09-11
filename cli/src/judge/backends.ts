@@ -89,6 +89,22 @@ export interface JudgeBackend {
    * agency only on the read side, and only when the caller asks for it.
    */
   agentic: boolean;
+  /**
+   * Whether this backend meters the chars its reads returned AND enforces
+   * `AGENTIC_READ_MAX_OUTPUT_CHARS` against them while the call is still
+   * running. Both halves are required: a number with no comparison is not a
+   * budget, and this flag is read as permission to lift the round budget.
+   *
+   * The unit is the declaration, not an implementation detail. Codex sums
+   * `aggregated_output.length` over audited `command_execution` events, which
+   * is what the 384,000 limit was measured against; anything else claiming
+   * this flag must say what it counts, because the limit does not travel
+   * between units.
+   *
+   * False for claude and api, which stream no readable trace, and for the stub
+   * unless a test asks it to rehearse the combination.
+   */
+  metersReadChars: boolean;
   available(): boolean;
   /** One-shot judge call. */
   run(prompt: string, options: BackendRunOptions): Promise<BackendRunResult>;
@@ -385,6 +401,11 @@ export class ClaudeBackend implements JudgeBackend {
   readonly readableImages = true;
   // Read-only tool grants work through the same --tools flag (see run()).
   readonly agentic = true;
+  // The --output-format json envelope reports no per-read volume, so nothing
+  // here can be counted without inventing it (principle 10), and there is no
+  // char comparison on this path either - the only one in the repository is
+  // codex's in-flight check. This stays false until both exist.
+  readonly metersReadChars = false;
 
   available(): boolean {
     return binaryOnPath(this.binary);
@@ -1358,6 +1379,10 @@ export class CodexBackend implements JudgeBackend {
   // native scoped sandbox blocks outside product reads and writes; every JSONL
   // command event also passes the read grammar audit before its verdict counts.
   readonly agentic = true;
+  // The streaming auditor counts aggregated_output chars per audited command
+  // and kills the call above the limit, unconditionally - the round check
+  // beside it is the one that exploration turns off.
+  readonly metersReadChars = true;
 
   available(): boolean {
     return binaryOnPath(this.binary);
@@ -1468,6 +1493,14 @@ export class StubBackend implements JudgeBackend {
   // an oversized diff.
   get agentic(): boolean {
     return process.env["SASU_JUDGE_STUB_NO_AGENTIC"] !== "1";
+  }
+
+  // Same rehearsal pattern again. No real backend presents "declares char
+  // metering, reports none" - codex starts its meter on any trace line and a
+  // successful call must emit one - so the guard against that state can only
+  // be exercised here.
+  get metersReadChars(): boolean {
+    return process.env["SASU_JUDGE_STUB_METERS_READ_CHARS"] === "1";
   }
 
   available(): boolean {

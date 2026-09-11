@@ -208,6 +208,8 @@ export class ApiBackend implements JudgeBackend {
   readableImages = false;
   /** No tool loop by construction - that is the whole point of this backend. */
   agentic = false;
+  /** No tool loop means no reads to meter. */
+  metersReadChars = false;
 
   available(): boolean {
     // Reachability is a per-call fact (a proxy may be down), so `available`

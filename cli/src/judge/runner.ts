@@ -614,7 +614,33 @@ export async function runJudge<T>(
     // capped and 41 turns completed, and the production reviews leaked to 42,
     // 45 and 54. Whatever lets a call past the cap, this check is what
     // actually caught those.
-    if (options.agentic === true && !(backend.name === "codex" && options.explore === true)
+    //
+    // The exemption used to name codex. That said the true thing for the wrong
+    // reason: what makes lifting the round budget safe is not which backend
+    // answered but that a different budget is holding the call, and the two
+    // halves of this predicate are the two separate facts it needs.
+    // `explore` is the caller's intent - this call is expected to range wider
+    // than a fixed path list - and `metersReadChars` is the precondition that
+    // intent is granted under. Drop the second half and an exploring call on a
+    // backend that meters nothing runs with no read bound at all.
+    if (options.agentic === true && options.explore === true && backend.metersReadChars
+      && observation.readOutputChars === null) {
+      // The trade was made and the other side did not arrive. This is not a
+      // satisfied budget, it is no budget - the one failure shape that looks
+      // like success, because the call comes back with a verdict and nothing
+      // in the record says what bounded it. Rejecting costs a real review when
+      // a meter breaks; accepting spends the budget's whole purpose to save it
+      // (principle 10, and engineering item 4: no silent skip over an invalid
+      // state).
+      retryOrFallback(new JudgeError(
+        "judge-invalid-output",
+        backend.name,
+        `judge exploration lifted the ${AGENTIC_READ_MAX_ROUNDS}-round budget because this backend meters read output in chars, and it then metered none; the call ran unbounded`,
+        "unauditable-trace",
+      ));
+      continue;
+    }
+    if (options.agentic === true && !(options.explore === true && backend.metersReadChars)
       && observation.readRounds !== null && observation.readRounds > AGENTIC_READ_MAX_ROUNDS) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",

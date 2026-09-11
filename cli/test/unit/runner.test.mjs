@@ -1382,6 +1382,78 @@ test("missing evidence and a parent symlink outside the snapshot cannot produce 
 });
 
 
+// The round budget is lifted for exploring calls, and what makes that safe is
+// that another budget holds: codex meters read output in chars and enforces it
+// in flight (backends.ts:1243, the one comparison site for that limit). The
+// exemption used to name the backend, which said the true thing for the wrong
+// reason - the property that matters is the metering, not the name.
+test("an exploring call is exempt from the round budget only where chars are metered", async () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-fakebin-"));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-explore-claude-"));
+  fs.writeFileSync(path.join(project, "evidence.md"), "evidence");
+  const answered = JSON.stringify({
+    type: "result", subtype: "success", is_error: false,
+    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
+    result: JSON.stringify({ verdict: "PASS", findings: [] }),
+  });
+  fs.writeFileSync(path.join(binDir, "claude"), `#!/bin/sh\nprintf '%s' '${answered}'\n`);
+  fs.chmodSync(path.join(binDir, "claude"), 0o755);
+  const previousPath = process.env.PATH;
+  const previousBackend = process.env.SASU_JUDGE_BACKEND;
+  delete process.env.SASU_JUDGE_BACKEND;
+  process.env.PATH = `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+  const claudeOnly = {
+    ...config,
+    judge: { ...config.judge, profiles: { ...config.judge.profiles,
+      routine: { primary: { backend: "claude", model: null, effort: "high" }, fallback: null } } },
+  };
+  try {
+    // Same `explore: true` the codex test below is accepted under. This
+    // backend meters no chars, so lifting the round budget here would leave
+    // the call with no read bound at all.
+    const error = await runJudge(claudeOnly, "regression:explore-unmetered", "routine", "prompt", validateGapVerdict, {
+      agentic: true, explore: true, cwd: project, evidencePaths: ["evidence.md"],
+    }).then(() => null, (thrown) => thrown);
+    assert.ok(error, "exploration does not lift the round budget on a backend that meters no chars");
+    assert.equal(error.reason, "read-budget-exceeded");
+  } finally {
+    if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
+    else process.env.SASU_JUDGE_BACKEND = previousBackend;
+    process.env.PATH = previousPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// The exemption trades one bound for another, so the trade has to be checked
+// rather than assumed. A backend that declares char metering and then reports
+// none has not satisfied a budget - it has no budget, which is the one state
+// that looks like success and is not. Unreachable through codex today (any
+// JSON trace line starts the meter, and a successful call must emit
+// turn.completed), so the stub rehearses it the way it rehearses the other
+// capability combinations no real backend currently presents.
+test("a metered exemption that reports no metering is rejected, not accepted", async () => {
+  const previousMeters = process.env.SASU_JUDGE_STUB_METERS_READ_CHARS;
+  const previousRounds = process.env.SASU_JUDGE_STUB_READ_ROUNDS;
+  process.env.SASU_JUDGE_STUB_METERS_READ_CHARS = "1";
+  process.env.SASU_JUDGE_STUB_READ_ROUNDS = "unmetered";
+  try {
+    await withStub({ verdict: "PASS", findings: [] }, async () => {
+      const error = await runJudge(config, "regression:unmetered-exemption", "routine", "prompt", validateGapVerdict, {
+        agentic: true, explore: true,
+      }).then(() => null, (thrown) => thrown);
+      assert.ok(error, "an unbounded call does not pass as a satisfied budget");
+      assert.equal(error.reason, "unauditable-trace");
+      assert.match(error.detail, /metered/);
+    });
+  } finally {
+    if (previousMeters === undefined) delete process.env.SASU_JUDGE_STUB_METERS_READ_CHARS;
+    else process.env.SASU_JUDGE_STUB_METERS_READ_CHARS = previousMeters;
+    if (previousRounds === undefined) delete process.env.SASU_JUDGE_STUB_READ_ROUNDS;
+    else process.env.SASU_JUDGE_STUB_READ_ROUNDS = previousRounds;
+  }
+});
+
 test("Codex exploration recovers from a missing path and accepts more than 29 bounded reads", async () => {
   const event = (command, aggregated_output, exit_code = 0) => JSON.stringify({
     type: "item.completed", item: { type: "command_execution", command, aggregated_output, exit_code },
