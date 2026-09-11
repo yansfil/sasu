@@ -679,10 +679,21 @@ export const CLAUDE_MAX_API_TURNS = 30;
  * What the old value cost, from two records on disk
  * (agents/benchmarks/verify-timeout-20260910/prior-code-result.json and
  * .../work/s4-results/timeline.jsonl, both role=code on codex): reviews that
- * had finished in 258.7 s and 100.3 s were discarded at 390,161 and 406,394
- * chars - 101.6% and 105.8% of 384,000 - and both replacement attempts then
- * died on the 600 s call timeout at 601.5 s and 603.3 s. 1,578.6 s spent, zero
- * results produced. 512,000 admits both, and both originals were under 480 s.
+ * had run to completion in 258.7 s and 100.3 s were discarded at 390,161 and
+ * 406,394 chars, 101.6% and 105.8% of 384,000. That is the cost this value
+ * addresses - 359.0 s of finished work thrown away at the boundary.
+ *
+ * Those two records total 1,578.6 s, but the rest of it is not this value's
+ * to claim: 1,204.9 s of it is the two replacement attempts that then died on
+ * the 600 s call timeout, and `d783c7c` already stopped retrying a read-budget
+ * rejection a retry cannot correct. Crediting the whole 1,578.6 s here would
+ * hand one value the effect of two changes.
+ *
+ * Nor is "zero results" turned into two: the records say the replies were
+ * discarded unread, so whether either would have validated is unrecorded -
+ * `discarded` was added after these runs. What 512,000 settles is that
+ * finished work stops being thrown away at the boundary. Both originals were
+ * under 480 s.
  *
  * Why this number and not a rounder one: it is 1.26x the largest overrun ever
  * observed (406,394) and 2.53x the largest claude read ever measured in this

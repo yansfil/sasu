@@ -165,7 +165,8 @@ The `:minimal` runtime substrate remains readable, including measured access to 
 The corresponding restricted file tools also allowed inside reads and denied outside Read/Grep/Glob in `/var/folders/_c/xjlzc0fd7gg04kcy18q5bd240000gn/T/sasu-restricted-probe-sn2rrr66/trace.jsonl`.
 These native boundary probes ran on macOS; other operating systems were not exercised.
 
-Exploration retains the 384,000-character aggregate read-output budget and configured call timeout.
+Exploration retains the aggregate read-output budget in force at approval, 384,000 characters, and the configured call timeout.
+That budget is now 512,000 by user decision of 2026-09-11; the constant in `cli/src/judge/backends.ts` is its single source.
 The old 29-command limit does not apply to Codex exploration because small discovery reads are not model turns; other modes retain their existing limits.
 Safe missing relative paths produce ordinary lookup failures, and only an actual approved read pipeline may supply stdin to a pathless filter.
 Literal paths must be quoted, including bracketed Next.js routes, and unsafe shell expansion remains rejected.
