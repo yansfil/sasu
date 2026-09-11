@@ -183,9 +183,45 @@ function requireFlag(args: Args, name: string): string {
   return value;
 }
 
+/**
+ * The one way out of this process, and the reason no line below calls
+ * process.exit directly.
+ *
+ * process.exit is not a flush. Node documents that stdout to a pipe is
+ * asynchronous on macOS (a file is synchronous, which is why `> out.json`
+ * never showed this), so a document larger than the kernel's 64 KiB pipe
+ * buffer followed by process.exit is cut there and the exit code still says
+ * 0. Measured 2026-09-10 against a 1.1 MB run record: `sasu implement status
+ * --json | wc -c` printed exactly 65536 of 194,916 bytes, the Task Factory
+ * daemon parsing it failed and moved the card to Needs human, and prd_ship's
+ * preflight reported "did not return JSON". Throwing a sentinel unwinds every
+ * caller to main's catch, which waits for both standard streams to report
+ * their queues drained before letting the process go - so the fix covers
+ * every command that prints, not the one that was caught.
+ */
+class Exit {
+  constructor(readonly code: number) {}
+}
+
+function exit(code: number): never {
+  throw new Exit(code);
+}
+
+function exitAfterFlush(code: number): void {
+  let pending = 2;
+  const drained = (): void => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  // An empty write queues behind everything already written and calls back
+  // once the OS has taken all of it.
+  process.stdout.write("", drained);
+  process.stderr.write("", drained);
+}
+
 function fail(message: string): never {
   process.stderr.write(`sasu: ${message}\n`);
-  process.exit(2);
+  exit(2);
 }
 
 function findProjectRoot(): string {
@@ -294,7 +330,7 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
     }
     printStatusView(result.status);
   }
-  process.exit(result.ok ? 0 : 1);
+  exit(result.ok ? 0 : 1);
 }
 
 function emitInterviewResult(result: InterviewResult, asJson: boolean): never {
@@ -327,22 +363,22 @@ function emitInterviewResult(result: InterviewResult, asJson: boolean): never {
       process.stdout.write(`  [drift] ${finding.rule}${where}: ${finding.missing}\n    fix: ${finding.recommendation}\n`);
     }
   }
-  process.exit(result.ok ? 0 : 1);
+  exit(result.ok ? 0 : 1);
 }
 
 function emitCoherenceResult(result: CoherenceResult, asJson: boolean): never {
   if (asJson) {
     process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
-    process.exit(result.ok ? 0 : 1);
+    exit(result.ok ? 0 : 1);
   }
   if (result.skipped) {
     process.stdout.write(`[interview:coherence] skipped - ${result.reason}\n`);
-    process.exit(0);
+    exit(0);
   }
   if (result.error) {
     process.stdout.write(`[interview:coherence] judge error: ${result.error.code} - ${result.error.message}\n`);
     process.stdout.write(`recovery: ${result.error.recovery}\n`);
-    process.exit(1);
+    exit(1);
   }
   const timing = result.durationMs !== null ? ` in ${(result.durationMs / 1000).toFixed(1)}s` : "";
   const head = result.verdict === "PASS" ? "coherent" : "coherence concerns";
@@ -356,7 +392,7 @@ function emitCoherenceResult(result: CoherenceResult, asJson: boolean): never {
   }
   // Advisory: a successful run always exits 0. Findings are next-question
   // candidates, not a block.
-  process.exit(0);
+  exit(0);
 }
 
 async function main(): Promise<void> {
@@ -367,11 +403,11 @@ async function main(): Promise<void> {
 
   if (args.flags.get("contract-version") === true || command === "contract-version") {
     process.stdout.write(`${contractVersion()}\n`);
-    process.exit(0);
+    exit(0);
   }
   if (command === undefined || args.flags.get("help") === true || command === "help") {
     process.stdout.write(`${USAGE}\n`);
-    process.exit(command === undefined ? 2 : 0);
+    exit(command === undefined ? 2 : 0);
   }
 
   if (command === "doctor") {
@@ -384,7 +420,7 @@ async function main(): Promise<void> {
         for (const line of section.lines) process.stdout.write(`  ${line}\n`);
       }
     }
-    process.exit(report.ok ? 0 : 1);
+    exit(report.ok ? 0 : 1);
   }
 
   if (command === "principles") {
@@ -404,7 +440,7 @@ async function main(): Promise<void> {
         process.stdout.write(`  ! ${failed.source}: ${failed.message}\n`);
       }
     }
-    process.exit(principlesResult.exitCode);
+    exit(principlesResult.exitCode);
   }
 
   const implementorBlockedGates = new Set(["gap-audit", "spec", "delegate", "reopen", "answer", "override"]);
@@ -420,7 +456,7 @@ async function main(): Promise<void> {
     } else {
       process.stderr.write(`sasu: ${message}\n`);
     }
-    process.exit(1);
+    exit(1);
   }
 
   // Every skill funnels through this CLI, so one guard here auto-provisions
@@ -444,7 +480,7 @@ async function main(): Promise<void> {
         process.stdout.write(`${JSON.stringify(implementResult.detail, null, 2)}\n`);
       }
     }
-    process.exit(implementResult.exitCode);
+    exit(implementResult.exitCode);
   }
 
   if (command === "prd") {
@@ -455,7 +491,7 @@ async function main(): Promise<void> {
       process.stdout.write(`[prd:${prdResult.action}] ${prdResult.ok ? "ok" : "FAIL"} - ${prdResult.message}\n`);
       if (prdResult.detail !== undefined) process.stdout.write(`${JSON.stringify(prdResult.detail, null, 2)}\n`);
     }
-    process.exit(prdResult.exitCode);
+    exit(prdResult.exitCode);
   }
 
   if (command === "verify") {
@@ -589,7 +625,7 @@ async function main(): Promise<void> {
         printStatusView(status.verify);
         process.stdout.write(`judge calls recorded: ${status.judgeCallCount}\n`);
       }
-      process.exit(0);
+      exit(0);
     }
     if (subcommand === "delegate") {
       if (args.flags.get("clear") === true) {
@@ -599,7 +635,7 @@ async function main(): Promise<void> {
         } else {
           process.stdout.write(cleared.cleared ? "delegation cleared. Later gate runs will block on human-consent findings again.\n" : "no stored delegation to clear.\n");
         }
-        process.exit(0);
+        exit(0);
       }
       const delegation = runDelegate(projectRoot, requireFlag(args, "slug"), requireFlag(args, "evidence"));
       if (asJson) {
@@ -609,7 +645,7 @@ async function main(): Promise<void> {
           `delegation recorded. Every gap-audit/spec run on this slug now converts non-P0 human-consent findings into recorded assumptions (P0 still blocks).\n`,
         );
       }
-      process.exit(0);
+      exit(0);
     }
     if (subcommand === "reopen") {
       const gate = requireFlag(args, "gate");
@@ -627,7 +663,7 @@ async function main(): Promise<void> {
         process.stdout.write(`${gate} review reopened with recorded user evidence.\n`);
         printStatusView(view);
       }
-      process.exit(0);
+      exit(0);
     }
     if (subcommand === "answer") {
       const gate = requireFlag(args, "gate");
@@ -645,7 +681,7 @@ async function main(): Promise<void> {
         process.stdout.write(`${gate} human bundle answered with recorded user evidence; the gate is sealed PASS without another judge call.\n`);
         printStatusView(view);
       }
-      process.exit(0);
+      exit(0);
     }
     if (subcommand === "override") {
       const gate = requireFlag(args, "gate");
@@ -661,7 +697,7 @@ async function main(): Promise<void> {
         process.stdout.write(`override recorded as a deviation. gate ${gate} is now passable.\n`);
         printStatusView(view);
       }
-      process.exit(0);
+      exit(0);
     }
     fail(`unknown gate subcommand: ${subcommand ?? "(none)"}\n\n${USAGE}`);
   }
@@ -669,8 +705,12 @@ async function main(): Promise<void> {
   fail(`unknown command: ${command}\n\n${USAGE}`);
 }
 
-main().catch((error: unknown) => {
+main().then(() => exitAfterFlush(0), (error: unknown) => {
+  if (error instanceof Exit) {
+    exitAfterFlush(error.code);
+    return;
+  }
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`sasu: ${message}\n`);
-  process.exit(1);
+  exitAfterFlush(1);
 });
