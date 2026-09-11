@@ -1748,7 +1748,10 @@ function classifyFailure(backend: BackendName, detail: string): "judge-auth" | "
  * returns that record, `subtype: "error_max_turns"`, `num_turns: 31`,
  * `is_error: true`, and no `result` field at all. Across every claude trace on
  * disk the only two terminal shapes are ("success", false) x23 and
- * ("error_max_turns", true) x5.
+ * ("error_max_turns", true) x5 - all of them benchmark transcripts. No
+ * production spawn's stdout was captured, so "the envelope is the last record"
+ * is measured on 24 of 24 benchmark traces and inferred, not observed, for a
+ * production call.
  */
 /**
  * Chars of read output in a claude trace, in the unit the read budget is
