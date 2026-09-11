@@ -70,7 +70,10 @@ Then interview:
    defaults to whatever branch is current at `implement start` time, not
    `main`, so a run started from a feature branch would open its PR against
    that feature branch.
-3. Worktree isolation: `worktree.enabled` (default false).
+3. Worktree isolation: `worktree.enabled` (default false), with `worktree.root`
+   (parent directory, default `../<repo>.worktrees`), `worktree.link`
+   (read-only shared files symlinked in), `worktree.copy` (files copied per
+   worktree) and `worktree.setup` (one-time preparation commands).
    The harness always isolates a run whose target tree already hosts an
    active in-place run; `enabled: true` additionally isolates every run from
    the start (the human keeps using the main checkout while runs work in
@@ -105,6 +108,16 @@ Then interview:
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
      (default 5 for implementation correction; extra work after exhaustion
      requires the recorded user grant).
+   - `judge.timeoutMs`: wall-clock cap for one judge call (default 600000).
+     The primary and the fallback each get the full budget, so a call that
+     times out on both costs up to twice this. Raise it per project when
+     large contracts time out on the fallback: the 2026-09-10 pilot's
+     32-requirement Fidelity review on the claude fallback needed more than
+     the default and passed only on retry.
+   - `judge.laneEffort`: pins one reasoning budget (`low` to `max`) across
+     the gap-audit, spec and verify lanes instead of each lane's measured
+     default (default `null`); measure with `cli/scripts/effort_sweep.mjs`
+     before setting it.
    - `judge.readMaxRounds`: read rounds a non-exploring agentic judge may
      spend before its reply is discarded (default 29). Rounds only: claude's
      API-turn cap is a separate constant. Raise it per project when a
