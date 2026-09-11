@@ -908,7 +908,8 @@ export async function runVerifyGate(projectRoot: string, config: SasuConfig, top
       return { ...baseResult, ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), evidence: evidence.artifacts, zeroJudgeCalls: true };
     }
     const requirements = contract.criteria.map((criterion) => criterion.id);
-    const changedFiles = splitDiffByFile(diff).map((block) => block.path);
+    const diffBlocks = splitDiffByFile(diff);
+    const changedFiles = diffBlocks.map((block) => block.path);
     const allowedRefs = [...new Set([...requirements, options.contractPath, "Human Review", ...changedFiles, ...evidence.material.map((item) => item.path), ...checks.map((check) => check.command)])];
     const prior = (state.gates.verify?.reviewFindings ?? []).filter((finding) => finding.kind !== "advisory");
     const agentic = diff.length > VERIFY_DIFF_MAX_CHARS;
@@ -916,7 +917,31 @@ export async function runVerifyGate(projectRoot: string, config: SasuConfig, top
     // The allowlist the agentic reviewer is actually given, hoisted so the
     // check below can see it: `agentic` is decided by diff size alone, and a
     // change that is purely deletions leaves nothing on disk to copy.
-    const readablePaths = agentic ? changedFiles.filter((file) => fs.existsSync(path.join(projectRoot, file))) : [];
+    //
+    // The key is the diff's own deletion marker, not `fs.existsSync`. Those
+    // answer different questions, and a proxy that silently turns the read-
+    // evidence check below into a no-op is the worst way to be wrong: with
+    // core.quotePath at its default every non-ASCII filename used to miss on
+    // disk, so a Korean-named change large enough to go agentic emptied this
+    // list, told the reviewer its files were gone, and passed the gate on a
+    // diffstat (measured 2026-09-11; the decode is in unquoteDiffPath).
+    const readablePaths = agentic ? diffBlocks.filter((block) => !block.deleted).map((block) => block.path) : [];
+    // And a file the diff says is there but the tree does not have is a
+    // contradiction between two views of the same change, not an allowlist
+    // entry to drop quietly (engineering item 4). Raising it means the next
+    // path-shaped surprise stops verify instead of leaking a PASS.
+    //
+    // What this asks is whether the path resolves, not whether the judge can
+    // read it, and `existsSync` follows links - so a dangling symlink in the
+    // judged diff surfaces here as this exception even though the link itself
+    // is present. That is the thin proxy left in a check whose whole point was
+    // that F3 used a proxy for a condition. `lstatSync` would make that case
+    // ordinary again, at the cost of putting a path the judge cannot open onto
+    // the allowlist; failing loudly is the side to be wrong on, so it stays.
+    if (agentic) {
+      const missing = readablePaths.filter((file) => !fs.existsSync(path.join(projectRoot, file)));
+      if (missing.length > 0) throw new Error(`the judged diff names ${missing.length} file(s) the working tree does not have and does not mark as deleted (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", ..." : ""}); the diff and the tree disagree, so the review allowlist cannot be built`);
+    }
     const prompt = fullContractReviewPrompt({ contract: document.content, diff: agentic ? diffStatFromText(diff) : diff, evidence: evidence.material, checks, priorFindings: prior, evidenceRefs: allowedRefs, agentic, readablePaths: readablePaths.length });
     const artifactBase = { schema: "sasu.quick.receipt.v2", mechanical, inputs, evidence: evidence.artifacts, checks, promptSha256: sha256Of(prompt), diffSource };
     try {
@@ -1225,28 +1250,104 @@ interface DiffFileBlock {
   /** Path of the change (b-side; a-side for deletions). */
   path: string;
   text: string;
+  /**
+   * Whether this block says the file is gone, read from the block's own
+   * markers rather than from the filesystem. "Nothing to read here" is a fact
+   * the diff states; asking the tree instead answers a different question
+   * ("did I fail to find it"), and the two sets part company for any reason a
+   * path fails to resolve.
+   */
+  deleted: boolean;
+}
+
+/**
+ * Decode one `diff --git` path token.
+ *
+ * git quotes a path whose bytes are not printable ASCII, and with the default
+ * core.quotePath=true that means every non-ASCII name: `café.js` arrives as
+ * `"a/caf\303\251.js"`. Stripping the quotes without decoding leaves a path
+ * carrying literal backslashes, which resolves to no file at all - measured
+ * 2026-09-11 in a scratch repo where `git diff HEAD -- .` over `café.js` and
+ * `설계.md` parsed to paths `fs.existsSync` reports false for, on the same
+ * `git diff HEAD -- .` that judgedDiff runs in production.
+ *
+ * The escapes are C-style, so the octal ones are bytes and must be decoded as
+ * bytes and only then read as UTF-8: one Korean character is three of them.
+ */
+function unquoteDiffPath(token: string): string {
+  if (token.length < 2 || !token.startsWith("\"") || !token.endsWith("\"")) return token;
+  const body = token.slice(1, -1);
+  const bytes: number[] = [];
+  const simple: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!;
+    if (char !== "\\") {
+      bytes.push(...Buffer.from(char, "utf8"));
+      continue;
+    }
+    const next = body[index + 1];
+    if (next === undefined) break;
+    const octal = body.slice(index + 1).match(/^[0-7]{1,3}/);
+    if (octal) {
+      bytes.push(parseInt(octal[0], 8) & 0xff);
+      index += octal[0].length;
+      continue;
+    }
+    const known = simple[next];
+    // An escape this function does not know is data, not a directive: keeping
+    // the character is what the raw path had before git quoted it.
+    bytes.push(...Buffer.from(known === undefined ? next : String.fromCharCode(known), "utf8"));
+    index += 1;
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/**
+ * The two path tokens of a `diff --git` header, each quoted or bare and
+ * independently so: a rename into a non-ASCII name quotes only the b side.
+ */
+function diffHeaderPaths(line: string): { a: string; b: string } | null {
+  const HEADER = "diff --git ";
+  if (!line.startsWith(HEADER)) return null;
+  const rest = line.slice(HEADER.length);
+  if (rest.startsWith("\"")) {
+    let end = 1;
+    while (end < rest.length && rest[end] !== "\"") end += rest[end] === "\\" ? 2 : 1;
+    if (end >= rest.length || rest[end + 1] !== " ") return null;
+    return { a: unquoteDiffPath(rest.slice(0, end + 1)), b: unquoteDiffPath(rest.slice(end + 2)) };
+  }
+  const quotedB = rest.indexOf(' "b/');
+  if (quotedB >= 0) return { a: rest.slice(0, quotedB), b: unquoteDiffPath(rest.slice(quotedB + 1)) };
+  // Both bare. A bare path may still contain spaces, so the split is the lazy
+  // one the anchored pattern finds, unchanged from before this decoded.
+  const bare = rest.match(/^(a\/.+?) (b\/.+)$/);
+  return bare ? { a: bare[1]!, b: bare[2]! } : null;
+}
+
+function stripDiffPrefix(token: string): string {
+  return token.startsWith("a/") || token.startsWith("b/") ? token.slice(2) : token;
 }
 
 /** Split a curated unified diff into per-file blocks on `diff --git` headers. */
 export function splitDiffByFile(diff: string): DiffFileBlock[] {
   const blocks: DiffFileBlock[] = [];
-  const headerRe = /^diff --git (?:"?a\/(.+?)"?) (?:"?b\/(.+?)"?)$/;
   let current: DiffFileBlock | null = null;
   let buffer: string[] = [];
   const flush = () => {
     if (current) {
       current.text = buffer.join("\n");
+      current.deleted = buffer.some((line) => line.startsWith("deleted file mode ") || line === "+++ /dev/null");
       blocks.push(current);
     }
     buffer = [];
   };
   for (const line of diff.split("\n")) {
-    const header = line.match(headerRe);
+    const header = diffHeaderPaths(line);
     if (header) {
       flush();
-      const aPath = header[1]!;
-      const bPath = header[2]!;
-      current = { path: bPath === "dev/null" ? aPath : bPath, text: "" };
+      const aPath = stripDiffPrefix(header.a);
+      const bPath = stripDiffPrefix(header.b);
+      current = { path: bPath === "dev/null" ? aPath : bPath, text: "", deleted: false };
     }
     if (current) buffer.push(line);
   }

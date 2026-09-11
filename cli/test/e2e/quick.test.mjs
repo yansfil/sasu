@@ -154,6 +154,36 @@ test("a purely deleting change large enough to go agentic can still be reviewed"
   assert.equal(state(dir).gates.verify.verdict, "PASS");
 });
 
+// The companion to that case, and the reason it needs one: "nothing to read"
+// must come from the diff saying so, never from a path failing to resolve.
+// git quotes a non-ASCII filename by default (core.quotePath), so this change
+// arrives as `"a/\354\204\244..."`. Read undecoded, the path missed on disk,
+// the allowlist came out empty, the reviewer was told the files were gone, and
+// the read-evidence rejection above switched itself off - a PASS on a diffstat
+// for a change whose source was sitting right there.
+test("a non-ASCII filename that was modified still has to be read", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-quick-v2-"));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  fs.mkdirSync(path.join(dir, "agents/quick/demo"), {recursive: true});
+  fs.writeFileSync(path.join(dir, "agents/quick/demo/contract.md"), CONTRACT);
+  fs.writeFileSync(path.join(dir, ".gitignore"), "agents/\n");
+  fs.writeFileSync(path.join(dir, "widget.js"), "export const render = () => null;\n");
+  const named = "설계.js";
+  fs.writeFileSync(path.join(dir, named), "export const base = 0;\n");
+  git(dir, ["init", "-b", "main"]); git(dir, ["add", "."]); git(dir, ["commit", "-m", "initial"]);
+  // Modified, not deleted, and past VERIFY_DIFF_MAX_CHARS so the gate goes
+  // agentic: the file is on disk and the reviewer is expected to open it.
+  fs.appendFileSync(path.join(dir, named),
+    Array.from({length: 8_000}, (_, index) => `export const padding${index} = ${index};`).join("\n") + "\n");
+
+  const output = run(dir, PASS);
+  assert.equal(output.status, 1, "a review that opened nothing must not pass a change whose source is readable");
+  const recorded = state(dir);
+  assert.match(JSON.stringify({ judgeCalls: recorded.judgeCalls, gate: recorded.gates.verify }),
+    /observed zero read commands and zero tool rounds/,
+    "the rejection must be the read-evidence one, not a diff/tree disagreement");
+});
+
 test("registered shared evidence is hash-pinned and changed content stales PASS", t => {
   const dir = project(t, "\n## Evidence\n- agents/observed.txt\n");
   fs.writeFileSync(path.join(dir, "agents/observed.txt"), "Observed installed app at test time\n");
