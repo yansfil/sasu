@@ -266,7 +266,7 @@ Issuer labels declare responsibility and preserve audit history; they are not au
 | `start` | `--prd` | `--allow-unapproved-prd`, `--dirty-attribution` | anyone |
 | `confirm` | `--id`, `--evidence` | `--reject` | human |
 | `amend` | `--reason`, `--approval` | `--exclude-suite` | human |
-| `dispatch` | `--name`, `--prd` | `--kind`, `--model`, `--effort` | anyone |
+| `dispatch` | `--name`, `--prd` | `--kind`, `--model`, `--effort`, `--env` (repeatable `KEY=VALUE`) | anyone |
 | `escalate` | `--reason` | `--target`, `--agent` | observer, human |
 | `await` | - | `--since`, `--pid`, `--agent`, `--notify-after` (automatic re-arm value) | anyone |
 | `artifact` | `--kind`, `--path`, `--description` (or `--manifest`) | `--source`, `--collected-at`, `--target`, `--environment`, `--refs` | implementor, human |

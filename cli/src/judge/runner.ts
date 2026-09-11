@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { BackendName, JudgeEffort, JudgeProfile, JudgeTarget, SasuConfig } from "../config";
 import { BACKENDS, judgeProfileFor } from "../config";
-import { AGENTIC_READ_MAX_OUTPUT_CHARS, AGENTIC_READ_MAX_ROUNDS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
+import { AGENTIC_READ_MAX_OUTPUT_CHARS, assertJudgeInputFits, JUDGE_CORRECTION_MAX_CHARS, resolveBackend, type BackendRunResult, type JudgeBackend, type ExecutionLifecycle } from "./backends";
 import { extractJsonObject, JudgeError, newJudgeActivity, type JudgeActivity, type JudgeAdvisory, type JudgeCallRecord, type DiscardedOutput, type JudgeErrorCode, type JudgeFailureReason, type JudgeRetry, type JudgeUsage, type VisualEvidenceRecord } from "./types";
 
 /**
@@ -533,7 +533,7 @@ export async function runJudge<T>(
   };
   while (true) {
     try {
-      assertJudgeInputFits(backend.name, prompt, options, true);
+      assertJudgeInputFits(backend.name, prompt, { ...options, readMaxRounds: config.judge.readMaxRounds }, true);
     } catch (error) {
       if (!(error instanceof JudgeError)) throw error;
       throw Object.assign(error, {
@@ -581,6 +581,7 @@ export async function runJudge<T>(
         ...(options.images !== undefined ? { images: options.images } : {}),
         ...(options.agentic !== undefined ? { agentic: options.agentic } : {}),
         ...(options.explore !== undefined ? { explore: options.explore } : {}),
+        readMaxRounds: config.judge.readMaxRounds,
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         ...((): { evidencePaths?: string[] } => {
           const paths = evidencePathsForCall();
@@ -635,7 +636,7 @@ export async function runJudge<T>(
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
         backend.name,
-        `judge exploration lifted the ${AGENTIC_READ_MAX_ROUNDS}-round budget because this backend meters read output in chars, and it then metered none; the call ran unbounded`,
+        `judge exploration lifted the ${config.judge.readMaxRounds}-round budget because this backend meters read output in chars, and it then metered none; the call ran unbounded`,
         "unauditable-trace",
       ));
       continue;
@@ -659,7 +660,7 @@ export async function runJudge<T>(
       continue;
     }
     if (options.agentic === true && !(options.explore === true && backend.metersReadChars)
-      && observation.readRounds !== null && observation.readRounds > AGENTIC_READ_MAX_ROUNDS) {
+      && observation.readRounds !== null && observation.readRounds > config.judge.readMaxRounds) {
       retryOrFallback(new JudgeError(
         "judge-invalid-output",
         backend.name,
@@ -671,7 +672,7 @@ export async function runJudge<T>(
       // of the two backends that can receive it does not belong in a message
       // both receive - and this rejection no longer travels into a retry
       // prompt anyway (retryCanCorrect), so its only reader is a person.
-      `judge used ${observation.readRounds} read rounds against a limit of ${AGENTIC_READ_MAX_ROUNDS}; inspect only the paths the criterion needs`,
+      `judge used ${observation.readRounds} read rounds against a limit of ${config.judge.readMaxRounds}; inspect only the paths the criterion needs`,
         "read-budget-exceeded",
       ), inspectDiscarded(text, observation, validate));
       continue;

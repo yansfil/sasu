@@ -23,7 +23,7 @@ import { assertNoActiveVerification, recoverVerification, preserveSettledFinding
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
-import { DispatchRejected, dispatchImplementor } from "./dispatch";
+import { DispatchRejected, dispatchImplementor, parseEnvPairs } from "./dispatch";
 import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, diffChunkPath, REVIEW_INPUT_PATHS, type ReviewPromptMaterial, type RunOwnedChange, type RunOwnedChangeSet } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
@@ -32,6 +32,8 @@ import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type Di
 export interface ImplementArgs {
   positional: string[];
   flags: Map<string, string | true>;
+  /** Every value of a repeated flag, in order; absent when the caller parsed none. */
+  values?: Map<string, string[]>;
 }
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
@@ -544,6 +546,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       kind: flag(args, "kind")?.trim() || undefined,
       model: flag(args, "model")?.trim() || undefined,
       effort: flag(args, "effort")?.trim() || undefined,
+      env: parseEnvPairs(args.values?.get("env") ?? []),
     });
     return result(
       "dispatch",

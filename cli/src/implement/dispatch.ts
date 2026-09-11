@@ -31,6 +31,26 @@ export interface DispatchInput {
   kind?: string;
   model?: string;
   effort?: string;
+  /** Extra `KEY=VALUE` variables for the Implementor's pane, already parsed. */
+  env?: Record<string, string>;
+}
+
+/**
+ * `--env KEY=VALUE`, repeated, as the pane environment the adapter injects.
+ * Only the shape is decided here (a name a shell accepts, exactly one `=`
+ * boundary); which names are reserved is the adapter's own rule.
+ */
+export function parseEnvPairs(values: string[]): Record<string, string> {
+  const pairs: Record<string, string> = {};
+  for (const value of values) {
+    const boundary = value.indexOf("=");
+    const key = boundary === -1 ? "" : value.slice(0, boundary);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new DispatchRejected(`--env expects KEY=VALUE with a shell variable name, got: ${value}`);
+    }
+    pairs[key] = value.slice(boundary + 1);
+  }
+  return pairs;
 }
 
 export interface DispatchRefusal {
@@ -121,7 +141,7 @@ export function dispatchImplementor(
   const prd = assertDispatchablePrd(projectRoot, input.prdPath);
 
   const spawned = spawnImplementor(
-    { name, cwd: input.cwd, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort },
+    { name, cwd: input.cwd, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env },
     { env },
   );
   if (!spawned.ok || spawned.value === null) throw new DispatchRejected(spawned.problem ?? "dispatch failed for an unreported reason");

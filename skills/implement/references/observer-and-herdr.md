@@ -57,7 +57,7 @@ Build the complete Handoff Packet below and send it on stdin to the harness's ow
 
 ```sh
 sasu implement dispatch --name <unique-agent-name> --prd <ready-prd-path> \
-  [--kind <agent>] [--model <agent-model>] [--effort <reasoning-effort>] --json <<'SASU_HANDOFF'
+  [--kind <agent>] [--model <agent-model>] [--effort <reasoning-effort>] [--env KEY=VALUE ...] --json <<'SASU_HANDOFF'
 ROLE: Implementor. Confirm the marker with `test "$SASU_HERDR_ROLE" = implementor` and never dispatch recursively.
 PIPELINE: implement via ~/.codex/skills/implement/SKILL.md
 ORIGINAL INVOCATION: <verbatim user message>
@@ -80,7 +80,8 @@ When `HERDR_PANE_ID` is unset there is no pane to split, so `spawn` reports itse
 On success it prints the new pane id, agent name, kind, and PRD as JSON.
 The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
 `--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
-Waiting for the new shell to become interactive is herdr's own `agent start` timeout, not a loop of this skill's.
+The new pane's shell starts from the login environment, not the Observer's, so the dispatch always passes the Observer's own `PATH` to the split pane (a locally built `sasu` or a shim ahead of the login PATH stays visible to the Implementor) and forwards each `--env KEY=VALUE` on top of it; an explicit `--env PATH=...` replaces the inherited one, and `SASU_HERDR_ROLE` is refused because the marker is the dispatch's own to set.
+The new pane's shell takes a few seconds to print its first prompt, and herdr refuses `agent start` with `agent_pane_busy` until it has seen one; the adapter retries exactly that refusal once a second for up to 30 seconds and reports any other failure at once, so the wait is the harness's, never this skill's.
 
 Two costs are real and are not bugs to re-report:
 
@@ -122,6 +123,9 @@ The Observer then arms exactly one background waiter and lets go of the turn:
 ```sh
 sasu implement await --since <last-event-id> [--pid <implementor-pid>]
 ```
+
+The run's record is `agents/runs/<slug>/state.json` in the tree where `sasu implement start` ran, even when the run is isolated into a worktree (`start --json` reports the judged tree as `worktree.path`); `await` and `status` take `--slug <slug>` from any worktree of the same repository and resolve that record, and they refuse by name when two trees carry it.
+The bare form without `--slug` follows the session that started the run, so an Observer in another pane passes `--slug`.
 
 Arm it as a background task, never in the foreground.
 Under Claude Code that is the Bash tool's `run_in_background`; under Codex it is that runtime's own detached-command form.

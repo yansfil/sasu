@@ -17,6 +17,7 @@ import { ISSUED_COMMANDS } from "./verbs";
 import { validateImplementationReviewResult } from "./review-contract";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
+import { siblingWorktrees } from "./worktree";
 
 export const ACTIVE_POINTER = ACTIVE_POINTER_REL;
 
@@ -88,9 +89,32 @@ function runCandidates(projectRoot: string): string[] {
   return [...slugs].sort();
 }
 
+/**
+ * `--slug` names a run, not a tree. A run isolated into a worktree keeps its
+ * record in the tree that started it, and a supervisor asking from another
+ * worktree of the same repository used to be told the record did not exist:
+ * on 2026-09-10 the Observer waited in the original checkout for a record
+ * that lived in the Implementor's worktree, never woke, and was found hours
+ * later by the daemon's stall detection. When the record is not in this
+ * tree, the repository's other worktrees are searched: exactly one match
+ * resolves, more than one is an ambiguity a person must name, and none
+ * leaves the local "not found". state.json stays the only authority - this
+ * is navigation to it, and every mutation still checks ownership.
+ */
+function recordPathForSlug(projectRoot: string, slug: string): string {
+  const local = statePathFor(projectRoot, slug);
+  if (fs.existsSync(local)) return local;
+  const found = siblingWorktrees(projectRoot).map((tree) => statePathFor(tree, slug)).filter((candidate) => fs.existsSync(candidate));
+  if (found.length === 1) return found[0]!;
+  if (found.length > 1) {
+    throw new Error(`implement run ${slug} is recorded in more than one worktree of this repository (${found.join(", ")}); run the command from the tree that owns it`);
+  }
+  return local;
+}
+
 export function resolveStatePath(projectRoot: string, options: { slug?: string; state?: string } = {}): string {
   if (options.state !== undefined) return normalizeProjectPath(projectRoot, options.state).absolute;
-  if (options.slug !== undefined) return statePathFor(projectRoot, options.slug);
+  if (options.slug !== undefined) return recordPathForSlug(projectRoot, options.slug);
   const pointerPath = activePointerReadPath(projectRoot, currentSessionId());
   if (!fs.existsSync(pointerPath)) {
     const candidates = runCandidates(projectRoot);

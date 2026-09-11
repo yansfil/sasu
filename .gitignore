@@ -6,6 +6,8 @@
 # sasu CLI build output (+ stray npm-prefix pollution from cli-sync)
 /cli/node_modules/
 /cli/dist/
+/cli/dist.staging/
+/cli/dist.previous/
 /cli/bin/
 /cli/lib/node_modules/
 

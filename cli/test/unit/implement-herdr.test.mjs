@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "../../dist/implement/herdr.js";
+import { parseEnvPairs } from "../../dist/implement/dispatch.js";
 
 const ok = (stdout = "") => () => ({ status: 0, stdout, stderr: "" });
 const fails = (status = 1, stderr = "boom") => () => ({ status, stdout: "", stderr });
@@ -23,7 +24,7 @@ function recorder(overrides = {}) {
   const run = (args) => {
     argv.push(args);
     const key = args.slice(0, 2).join(" ");
-    if (key in overrides) return overrides[key];
+    if (key in overrides) return typeof overrides[key] === "function" ? overrides[key](args) : overrides[key];
     if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
     if (key === "pane split") return { status: 0, stdout: splitOk, stderr: "" };
     return { status: 0, stdout: "{}", stderr: "" };
@@ -164,6 +165,35 @@ test("a dispatch injects the implementor marker when the pane is created", () =>
   assert.deepEqual(of("agent prompt"), ["agent", "prompt", "impl", "p"]);
 });
 
+// A split pane starts from the login environment: a sasu build or shim that
+// only the supervisor's PATH could see was invisible to the Implementor, and
+// the supervisor had to type `herdr pane split --env PATH=...` by hand
+// (2026-09-10).
+test("a dispatch hands the new pane the dispatcher's PATH and the caller's extra variables", () => {
+  const env = { ...LIVE, PATH: "/opt/scratch/sasu/bin:/usr/bin" };
+  const passedEnv = (split) => split.flatMap((arg, i) => (arg === "--env" ? [split[i + 1]] : []));
+
+  const forwarded = recorder();
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { SASU_JUDGE_BACKEND: "stub" } }, { env, run: forwarded.run });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.deepEqual(passedEnv(forwarded.of("pane split")), ["SASU_HERDR_ROLE=implementor", "PATH=/opt/scratch/sasu/bin:/usr/bin", "SASU_JUDGE_BACKEND=stub"]);
+
+  const explicit = recorder();
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { PATH: "/only/this" } }, { env, run: explicit.run });
+  assert.deepEqual(passedEnv(explicit.of("pane split")), ["SASU_HERDR_ROLE=implementor", "PATH=/only/this"], "an explicit PATH replaces the inherited one");
+
+  const refused = recorder();
+  const smuggled = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { SASU_HERDR_ROLE: "observer" } }, { env, run: refused.run });
+  assert.equal(smuggled.ok, false);
+  assert.match(smuggled.problem, /role marker/);
+  assert.equal(refused.count("pane split"), 0, "refused before anything is created");
+
+  // The CLI's `--env KEY=VALUE` shape: a shell variable name, and the first
+  // `=` is the boundary so a value may itself contain one.
+  assert.deepEqual(parseEnvPairs(["A=1", "B=x=y", "EMPTY="]), { A: "1", B: "x=y", EMPTY: "" });
+  for (const bad of ["=1", "NOEQ", "1A=2", "A B=1"]) assert.throws(() => parseEnvPairs([bad]), /KEY=VALUE/, bad);
+});
+
 test("the dispatched kind defaults to the dispatching pane's own agent and can be overridden", () => {
   const detected = recorder({ "agent list": { status: 0, stdout: listing({ agent: "codex", pane_id: "w4G:p12" }), stderr: "" } });
   spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: detected.run });
@@ -216,6 +246,57 @@ test("a failed agent start closes only the empty pane it created", () => {
   assert.match(outcome.problem, /no shell prompt/);
   assert.deepEqual(of("pane close"), ["pane", "close", "w4G:p13"]);
   assert.match(outcome.problem, /the empty pane was closed/);
+});
+
+/**
+ * A fake wall clock: `sleep` advances time instead of spending it, so the
+ * adapter's 30 s readiness wait is exercised in full without a test paying
+ * for it, and the sleeps themselves are the observation.
+ */
+function fakeClock() {
+  let t = 1_000_000;
+  const slept = [];
+  return { now: () => t, sleep: (ms) => { slept.push(ms); t += ms; }, slept };
+}
+
+const paneBusy = { status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "agent_pane_busy", message: "agent target pane is not an available shell" } }) };
+const bareShell = { status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
+  pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
+} } }) };
+
+// The split pane's shell is still reading its profile when the first start
+// arrives, and herdr refuses the pane until it has seen a prompt. Measured
+// 2026-09-10: two starts in a row refused with agent_pane_busy and the dispatch
+// closed a pane that would have been ready a moment later.
+test("a start refused because the new shell is still booting is retried until herdr accepts the pane", () => {
+  let starts = 0;
+  const clock = fakeClock();
+  const { run, count } = recorder({ "agent start": () => (++starts < 3 ? paneBusy : { status: 0, stdout: "{}", stderr: "" }) });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run, clock });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.equal(count("agent start"), 3, "the third start is the one herdr accepted");
+  assert.deepEqual(clock.slept, [1000, 1000], "one second between attempts, none after the acceptance");
+  assert.equal(count("pane close"), 0);
+  assert.equal(count("agent prompt"), 1, "the handoff follows the accepted start");
+});
+
+test("a pane that never becomes a shell is given up after 30 seconds and closed", () => {
+  const clock = fakeClock();
+  const { run, count } = recorder({ "agent start": paneBusy, "pane process-info": bareShell });
+  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run, clock });
+  assert.equal(outcome.ok, false);
+  assert.equal(clock.slept.reduce((sum, ms) => sum + ms, 0), 30_000, "the wait is bounded at 30 s of wall clock");
+  assert.match(outcome.problem, /agent_pane_busy/);
+  assert.match(outcome.problem, /never became an available shell in 30 s \(30 retries\)/);
+  assert.match(outcome.problem, /the empty pane was closed/);
+  assert.equal(count("agent prompt"), 0);
+
+  // Only the busy refusal is worth waiting on; any other failure is final at once.
+  const other = fakeClock();
+  const immediate = recorder({ "agent start": { status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "agent_not_ready" } }) } });
+  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: immediate.run, clock: other });
+  assert.equal(immediate.count("agent start"), 1);
+  assert.deepEqual(other.slept, []);
 });
 
 test("a started implementor is never closed just because its handoff failed", () => {

@@ -415,9 +415,17 @@ export function questionBlockRange(lines: string[], qNumber: string): { start: n
   return { start, end };
 }
 
-export function markNormalized(content: string, qIds: string[]): { content: string; missing: string[] } {
+/**
+ * Flip `needs_normalization` for the named turns. A turn that does not exist
+ * is `missing`; a turn already marked is `alreadyNormalized`, and its state is
+ * exactly what was asked for, so it is reported rather than refused - a
+ * checkpoint repeated with an overlapping list converges instead of aborting
+ * the whole call over the one entry that was already done (2026-09-10).
+ */
+export function markNormalized(content: string, qIds: string[]): { content: string; missing: string[]; alreadyNormalized: string[] } {
   const lines = content.split("\n");
   const missing: string[] = [];
+  const alreadyNormalized: string[] = [];
   for (const qId of qIds) {
     const match = qId.match(/^Q(\d+)$/);
     if (!match) throw new Error(`invalid question id: ${qId} (use Q<number>)`);
@@ -434,9 +442,9 @@ export function markNormalized(content: string, qIds: string[]): { content: stri
         break;
       }
     }
-    if (!flipped) missing.push(qId);
+    if (!flipped) alreadyNormalized.push(qId);
   }
-  return { content: lines.join("\n"), missing };
+  return { content: lines.join("\n"), missing, alreadyNormalized };
 }
 
 /**
@@ -445,6 +453,35 @@ export function markNormalized(content: string, qIds: string[]): { content: stri
  * cli/src/interview/commands.ts runInterviewDecision). Idempotent: re-adding
  * an already-cited D# is a no-op.
  */
+/**
+ * The other half of moving an anchor: drop a Decision Register ID from every
+ * Raw Q&A turn that cites it, restoring `none` where it was the only one.
+ * `sasu interview decision --anchor` used to add only, so a decision anchored
+ * to the wrong turn kept both citations and the operator hand-edited
+ * `decision_ids` to fix it, which the interview skill forbids (2026-09-10).
+ * Returns the turns the ID was removed from, so the caller can say where the
+ * anchor moved from.
+ */
+export function unanchorDecision(content: string, decisionId: string): { content: string; from: number[] } {
+  const lines = content.split("\n");
+  const from: number[] = [];
+  for (const qNumber of questionNumbers(content)) {
+    const range = questionBlockRange(lines, String(qNumber));
+    if (!range) continue;
+    for (let i = range.start + 1; i < range.end; i += 1) {
+      const match = lines[i]!.match(/^-\s*decision_ids:\s*(.*)$/);
+      if (!match) continue;
+      const existing = match[1]!.split(",").map((token) => token.trim()).filter((token) => token !== "" && token !== "none");
+      if (!existing.includes(decisionId)) break;
+      const remaining = existing.filter((token) => token !== decisionId);
+      lines[i] = `- decision_ids: ${remaining.length === 0 ? "none" : remaining.join(", ")}`;
+      from.push(qNumber);
+      break;
+    }
+  }
+  return { content: lines.join("\n"), from };
+}
+
 export function anchorDecisionToQuestion(content: string, qNumber: number, decisionId: string): string {
   const lines = content.split("\n");
   const range = questionBlockRange(lines, String(qNumber));

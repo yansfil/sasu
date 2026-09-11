@@ -198,3 +198,61 @@ test("usage errors exit 2 and unknown subcommands are rejected", () => {
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /unknown interview subcommand/);
 });
+
+// `--anchor` used to add a citation and never remove one, so a decision
+// anchored to the wrong turn stayed cited in both and the operator hand-edited
+// decision_ids to fix it, which the interview skill forbids (2026-09-10).
+test("an explicit --anchor moves a decision's citation instead of duplicating it, and --anchor none clears it", () => {
+  const dir = makeProject();
+  const transcript = makeCodexTranscript(dir, "anchor-session");
+  const init = runCli(dir, ["interview", "init", "--slug", "anchor-move", "--topic", "Anchors", "--where", "greenfield", "--packs", "ux", "--understanding", "anchors move", "--transcript", transcript]);
+  assert.equal(init.status, 0, init.stdout + init.stderr);
+  appendCodexTurn(transcript, "First question?", "first answer", 1);
+  assert.equal(runCli(dir, ["interview", "sync", "--slug", "anchor-move", "--transcript", transcript]).status, 0);
+  appendCodexTurn(transcript, "Second question?", "second answer", 2);
+  assert.equal(runCli(dir, ["interview", "sync", "--slug", "anchor-move", "--transcript", transcript]).status, 0);
+  const qaLog = path.join(dir, "agents", "interview", "anchor-move", "qa-log.md");
+  const citations = () => Object.fromEntries([...fs.readFileSync(qaLog, "utf8").matchAll(/^### (Q\d+):[\s\S]*?^- decision_ids: (.*)$/gm)].map((m) => [m[1], m[2]]));
+  const decide = (...extra) => runCli(dir, ["interview", "decision", "--slug", "anchor-move", "--id", "D-01", "--kind", "decision", "--area", "ux", "--text", "the first answer decides it", "--priority", "P1", "--source", "user", "--status", "resolved", "--json", ...extra]);
+
+  assert.equal(decide("--anchor", "Q1").status, 0);
+  assert.deepEqual(citations(), { Q1: "D-01", Q2: "none" });
+
+  const moved = decide("--anchor", "Q2");
+  assert.equal(moved.status, 0, moved.stdout + moved.stderr);
+  assert.deepEqual(citations(), { Q1: "none", Q2: "D-01" }, "the citation moved; it was not duplicated");
+  assert.match(JSON.parse(moved.stdout).detail.anchor.reason, /moved from Q1/);
+
+  const retexted = decide("--text", "the second answer decides it");
+  assert.equal(retexted.status, 0, retexted.stdout + retexted.stderr);
+  assert.deepEqual(citations(), { Q1: "none", Q2: "D-01" }, "re-registering without --anchor keeps the existing citation");
+
+  assert.equal(decide("--anchor", "none").status, 0);
+  assert.deepEqual(citations(), { Q1: "none", Q2: "none" });
+});
+
+// `checkpoint --normalized "Q21,Q22"` aborted whole when one entry was already
+// normalized, and its error could not say whether an entry was missing or
+// already done (2026-09-10). Already-done is the requested state, so it
+// converges; only a turn that does not exist is refused, by name.
+test("checkpoint tolerates an already-normalized entry and names a missing one", () => {
+  const dir = makeProject();
+  const transcript = makeCodexTranscript(dir, "checkpoint-session");
+  assert.equal(runCli(dir, ["interview", "init", "--slug", "cp", "--topic", "Checkpoints", "--where", "greenfield", "--packs", "ux", "--understanding", "checkpoints converge", "--transcript", transcript]).status, 0);
+  appendCodexTurn(transcript, "First?", "one", 1);
+  assert.equal(runCli(dir, ["interview", "sync", "--slug", "cp", "--transcript", transcript]).status, 0);
+  appendCodexTurn(transcript, "Second?", "two", 2);
+  assert.equal(runCli(dir, ["interview", "sync", "--slug", "cp", "--transcript", transcript]).status, 0);
+
+  assert.equal(runCli(dir, ["interview", "checkpoint", "--slug", "cp", "--normalized", "Q1"]).status, 0);
+  const overlapping = runCli(dir, ["interview", "checkpoint", "--slug", "cp", "--normalized", "Q1,Q2", "--json"]);
+  assert.equal(overlapping.status, 0, overlapping.stdout + overlapping.stderr);
+  const detail = JSON.parse(overlapping.stdout).detail;
+  assert.deepEqual(detail.normalized, ["Q2"]);
+  assert.deepEqual(detail.alreadyNormalized, ["Q1"]);
+
+  const missing = runCli(dir, ["interview", "checkpoint", "--slug", "cp", "--normalized", "Q2,Q9"]);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /cannot mark normalized: Q9 is not in Raw Q&A \(existing turns: Q1, Q2\)/);
+  assert.doesNotMatch(missing.stderr, /Q2 /, "the entry that exists is not blamed");
+});

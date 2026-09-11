@@ -172,8 +172,16 @@ test("markNormalized flips only the addressed block", () => {
   assert.deepEqual(marked.missing, []);
   const state = readQaLogState(marked.content);
   assert.deepEqual(state.outstanding, ["Q2"]);
-  assert.deepEqual(markNormalized(marked.content, ["Q1"]).missing, ["Q1"]);
-  assert.deepEqual(markNormalized(marked.content, ["Q9"]).missing, ["Q9"]);
+  // An already-normalized turn is a converged no-op, not a missing turn:
+  // checkpoint --normalized used to abort on it without saying which id was
+  // the problem (Task Factory pilot, 2026-09-10).
+  const again = markNormalized(marked.content, ["Q1"]);
+  assert.deepEqual(again.missing, []);
+  assert.deepEqual(again.alreadyNormalized, ["Q1"]);
+  assert.equal(again.content, marked.content);
+  const absent = markNormalized(marked.content, ["Q9"]);
+  assert.deepEqual(absent.missing, ["Q9"]);
+  assert.deepEqual(absent.alreadyNormalized, []);
 });
 
 test("normalization metadata never matches an answer continuation with the same text", () => {

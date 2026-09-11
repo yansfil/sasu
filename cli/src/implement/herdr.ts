@@ -97,6 +97,13 @@ export interface HerdrCapabilities {
 export interface HerdrEnvironment {
   env?: NodeJS.ProcessEnv;
   run?: (args: string[], cwd?: string) => { status: number | null; stdout: string; stderr: string };
+  /** Wall clock and blocking sleep; injected by tests, so a 30 s wait costs a test nothing. */
+  clock?: HerdrClock;
+}
+
+export interface HerdrClock {
+  now(): number;
+  sleep(ms: number): void;
 }
 
 function defaultRun(args: string[], cwd?: string): { status: number | null; stdout: string; stderr: string } {
@@ -104,6 +111,38 @@ function defaultRun(args: string[], cwd?: string): { status: number | null; stdo
   if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error) };
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }
+
+const defaultClock: HerdrClock = {
+  now: () => Date.now(),
+  // The adapter is synchronous end to end (spawnSync), so the wait between
+  // two start attempts is a blocking sleep, the same idiom gates/store.ts
+  // uses for its lock backoff.
+  sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
+};
+
+/** The structured code herdr prints on stderr when it refuses a call, or null when it printed none. */
+function herdrErrorCode(stderr: string): string | null {
+  const parsed = parseJson(stderr) as { error?: { code?: unknown } } | null;
+  return typeof parsed?.error?.code === "string" ? parsed.error.code : null;
+}
+
+/**
+ * How long a dispatch keeps retrying `agent start` on `agent_pane_busy`.
+ *
+ * A split pane's zsh takes a few seconds to read its profile and print a
+ * prompt, and herdr accepts a pane as an agent target only once it has seen
+ * that interactive prompt. Measured 2026-09-10 (herdr 0.8.2): that moment
+ * comes several seconds after `pane process-info` first reports a bare shell,
+ * so a start issued straight after the split was refused twice in a row with
+ * `agent_pane_busy: agent target pane is not an available shell`, and the
+ * dispatch closed an empty pane that would have been ready moments later.
+ * herdr's own acceptance is the only reliable readiness signal, so exactly
+ * that refusal is retried once a second for up to 30 s; any other failure
+ * surfaces at once. Task Factory's dispatcher started its pilot Observer the
+ * same day with this shape and never missed.
+ */
+const AGENT_START_BUSY_RETRY_MS = 1_000;
+const AGENT_START_BUSY_TIMEOUT_MS = 30_000;
 
 export function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
   const env = environment.env ?? process.env;
@@ -221,6 +260,34 @@ export interface SpawnRequest {
   kind?: string;
   model?: string;
   effort?: string;
+  /** Extra variables for the new pane's shell, on top of PATH and the role marker. */
+  env?: Record<string, string>;
+}
+
+/** The variable name of the role marker, so a caller cannot smuggle a second value for it. */
+const ROLE_ENV_KEY = ROLE_ENV_MARKER.slice(0, ROLE_ENV_MARKER.indexOf("="));
+
+/**
+ * `--env` pairs for the split, beyond the role marker.
+ *
+ * A split pane's shell starts from the login PATH, not the dispatcher's.
+ * Measured 2026-09-10: an Observer running a locally built sasu ahead of its
+ * PATH dispatched an Implementor that could not see that build, and the
+ * supervisor fell back to a hand-typed `herdr pane split --env PATH=...`. So
+ * the dispatcher's own PATH always travels, a caller's pairs travel with it
+ * (a caller's PATH wins over the inherited one, explicit over implicit), and
+ * the marker is never among them: the recursion guard is not a pair anyone
+ * gets to set.
+ */
+function paneEnvironment(processEnv: NodeJS.ProcessEnv, extra: Record<string, string>): { argv: string[]; problem: string | null } {
+  if (ROLE_ENV_KEY in extra) {
+    return { argv: [], problem: `${ROLE_ENV_KEY} is the role marker the dispatch sets itself; it cannot be passed as an extra variable` };
+  }
+  const inheritedPath = processEnv["PATH"] ?? "";
+  const pairs: Record<string, string> = { ...(inheritedPath === "" ? {} : { PATH: inheritedPath }), ...extra };
+  const argv = ["--env", ROLE_ENV_MARKER];
+  for (const [key, value] of Object.entries(pairs)) argv.push("--env", `${key}=${value}`);
+  return { argv, problem: null };
 }
 
 export interface SpawnResult {
@@ -268,7 +335,9 @@ export function spawnImplementor(
     }
   }
 
-  const split = run(["pane", "split", "--pane", dispatcher, "--direction", "right", "--cwd", input.cwd, "--env", ROLE_ENV_MARKER, "--no-focus"], input.cwd);
+  const environmentArgv = paneEnvironment(environment.env ?? process.env, input.env ?? {});
+  if (environmentArgv.problem !== null) return { ok: false, value: null, problem: environmentArgv.problem };
+  const split = run(["pane", "split", "--pane", dispatcher, "--direction", "right", "--cwd", input.cwd, ...environmentArgv.argv, "--no-focus"], input.cwd);
   if (split.status !== 0) {
     return { ok: false, value: null, problem: `herdr pane split from ${dispatcher} failed (${split.status ?? "no status"}): ${(split.stderr || split.stdout).trim()}` };
   }
@@ -277,14 +346,27 @@ export function spawnImplementor(
     return { ok: false, value: null, problem: "herdr pane split reported no pane id; refusing to start an implementor into an unknown pane" };
   }
 
-  const started = run(["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)], input.cwd);
+  const startArgv = ["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)];
+  const clock = environment.clock ?? defaultClock;
+  const firstStartAt = clock.now();
+  let started = run(startArgv, input.cwd);
+  let busyRetries = 0;
+  while (started.status !== 0 && herdrErrorCode(started.stderr) === "agent_pane_busy"
+    && clock.now() - firstStartAt < AGENT_START_BUSY_TIMEOUT_MS) {
+    clock.sleep(AGENT_START_BUSY_RETRY_MS);
+    busyRetries += 1;
+    started = run(startArgv, input.cwd);
+  }
   if (started.status !== 0) {
     // A nonzero startup may leave a live trust dialog (2026-09-07).
     // Only a positively observed shell-only foreground can be cleaned up;
     // an absent name alone does not prove the new pane is empty.
-    const error = parseJson(started.stderr) as { error?: { code?: string } } | null;
+    const code = herdrErrorCode(started.stderr);
+    const waited = code === "agent_pane_busy"
+      ? `; the pane never became an available shell in ${Math.round((clock.now() - firstStartAt) / 1000)} s (${busyRetries} retries)`
+      : "";
     let cleanup = `pane ${created} was retained for inspection; startup state is uncertain, and no handoff was sent`;
-    if (error?.error?.code === "agent_not_ready") {
+    if (code === "agent_not_ready") {
       cleanup = `agent ${input.name} is not ready; pane ${created} was retained for inspection, and no handoff was sent`;
     } else if (started.status !== null) {
       const observed = run(["pane", "process-info", "--pane", created]);
@@ -302,7 +384,7 @@ export function spawnImplementor(
         cleanup = closed.status === 0 ? "the empty pane was closed" : `the empty pane ${created} could not be closed (${closed.status ?? "no status"}) and is still open`;
       }
     }
-    return { ok: false, value: null, problem: `herdr agent start ${input.name} --kind ${kind} in ${created} failed (${started.status ?? "no status"}): ${(started.stderr || started.stdout).trim()}; ${cleanup}` };
+    return { ok: false, value: null, problem: `herdr agent start ${input.name} --kind ${kind} in ${created} failed (${started.status ?? "no status"}): ${(started.stderr || started.stdout).trim()}${waited}; ${cleanup}` };
   }
 
   const prompted = run(["agent", "prompt", input.name, input.prompt], input.cwd);
