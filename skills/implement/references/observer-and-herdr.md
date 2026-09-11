@@ -124,6 +124,9 @@ The Observer then arms exactly one background waiter and lets go of the turn:
 sasu implement await --since <last-event-id> [--pid <implementor-pid>]
 ```
 
+The run's record is `agents/runs/<slug>/state.json` in the tree where `sasu implement start` ran, even when the run is isolated into a worktree (`start --json` reports the judged tree as `worktree.path`); `await` and `status` take `--slug <slug>` from any worktree of the same repository and resolve that record, and they refuse by name when two trees carry it.
+The bare form without `--slug` follows the session that started the run, so an Observer in another pane passes `--slug`.
+
 Arm it as a background task, never in the foreground.
 Under Claude Code that is the Bash tool's `run_in_background`; under Codex it is that runtime's own detached-command form.
 A foreground wait holds the turn, so the user cannot reach the Observer for as long as the run lasts, which is the one thing the Observer exists to stay available for.
