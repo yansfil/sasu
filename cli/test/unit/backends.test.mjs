@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { newJudgeActivity, readEvidence } from "../../dist/judge/types.js";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, CLAUDE_ISOLATED_READ_PREAMBLE, CLAUDE_MAX_API_TURNS, CODEX_EXPLORATION_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeReadRounds, claudeTraceObserved, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_EXPLORATION_PREAMBLE, claudeIsolatedReadPreamble, CLAUDE_MAX_API_TURNS, CODEX_EXPLORATION_PREAMBLE, codexIsolatedReadPreamble, CODEX_NO_TOOLS_PREAMBLE, claudePrintArgs, claudeReadChars, claudeReadRounds, claudeTraceObserved, claudeUsage, codexActivityProblem, codexBackendAdvisories, codexExecArgs, codexLineAuditor, processSpawnOptions } from "../../dist/judge/backends.js";
 
 test("agentic Claude judge is isolated and can only read or grep", () => {
   const args = claudePrintArgs({ model: "claude-sonnet-5", effort: "low", agentic: true });
@@ -35,10 +35,10 @@ test("agentic Claude judge is isolated and can only read or grep", () => {
 
 // Three bounds hold an agentic claude call and the non-exploring one was told
 // none of them: it had no preamble at all, while the codex call on the same
-// footing gets CODEX_ISOLATED_READ_PREAMBLE. The numbers must come from the
+// footing gets codexIsolatedReadPreamble(). The numbers must come from the
 // constants, not be retyped, or the message drifts from the check silently.
 test("a non-exploring agentic claude call is told every bound it runs under", () => {
-  const preamble = CLAUDE_ISOLATED_READ_PREAMBLE;
+  const preamble = claudeIsolatedReadPreamble();
   assert.match(preamble, new RegExp(String(AGENTIC_READ_MAX_ROUNDS)), "the round budget");
   assert.match(preamble, new RegExp(String(AGENTIC_READ_MAX_OUTPUT_CHARS)), "the char budget");
   assert.match(preamble, new RegExp(String(CLAUDE_MAX_API_TURNS)), "the turn cap");
@@ -59,7 +59,7 @@ test("the isolated preambles ask for the reading their only caller requires", ()
   const readNothing = { commands: [], readRounds: 0, modelTurns: null, readOutputChars: 0, msToLastRead: null };
   assert.equal(readEvidence(readNothing), "none-observed",
     "reading nothing is a rejection at that gate, not a shortcut");
-  for (const preamble of [CLAUDE_ISOLATED_READ_PREAMBLE, CODEX_ISOLATED_READ_PREAMBLE]) {
+  for (const preamble of [claudeIsolatedReadPreamble(), codexIsolatedReadPreamble()]) {
     assert.match(preamble, /Read the paths the prompt names/,
       "stated, and scoped to what exists: that caller's evidence list is empty for a purely deleting change");
     assert.doesNotMatch(preamble, /read nothing|use no command/,
@@ -266,11 +266,11 @@ test("codex no-tools preamble forbids shell, file access, and tools", () => {
 });
 
 test("codex scoped-read preamble bounds shell exploration", () => {
-  assert.match(CODEX_ISOLATED_READ_PREAMBLE, /scoped evidence workspace/);
-  assert.match(CODEX_ISOLATED_READ_PREAMBLE, /join sed or rg reads with &&, \|\|, ;, \|, or newlines/);
-  assert.doesNotMatch(CODEX_ISOLATED_READ_PREAMBLE, /at most three commands/);
-  assert.match(CODEX_ISOLATED_READ_PREAMBLE, /Do not list directories/);
-  assert.match(CODEX_ISOLATED_READ_PREAMBLE, /Never execute project code/);
+  assert.match(codexIsolatedReadPreamble(), /scoped evidence workspace/);
+  assert.match(codexIsolatedReadPreamble(), /join sed or rg reads with &&, \|\|, ;, \|, or newlines/);
+  assert.doesNotMatch(codexIsolatedReadPreamble(), /at most three commands/);
+  assert.match(codexIsolatedReadPreamble(), /Do not list directories/);
+  assert.match(codexIsolatedReadPreamble(), /Never execute project code/);
 });
 
 test("codex activity audit accepts quoted regex metacharacters from real judge commands", () => {

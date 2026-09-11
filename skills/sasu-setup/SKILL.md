@@ -105,6 +105,11 @@ Then interview:
    - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
      (default 5 for implementation correction; extra work after exhaustion
      requires the recorded user grant).
+   - `judge.readMaxRounds`: read rounds a non-exploring agentic judge may
+     spend before its reply is discarded (default 29). Rounds only: claude's
+     API-turn cap is a separate constant. Raise it per project when a
+     non-exploring review (quick, gate verify) is rejected for over-reading
+     rather than for a wrong answer; explore calls are already exempt.
    - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
      lanes) and spec (2 review-axis lanes), merged mechanically by the CLI
      (default `true`; set `false` to restore the single exhaustive judge).

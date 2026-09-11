@@ -39,7 +39,23 @@ export interface JudgeConfig {
    * listed there, and say why.
    */
   laneEffort: JudgeEffort | null;
+  /**
+   * Read rounds an agentic judge may spend on a non-exploring call before its
+   * reply is discarded (backends.ts AGENTIC_READ_MAX_ROUNDS carries the
+   * measurements behind the default). Rounds only: claude's API-turn cap is
+   * a different unit and stays at its own constant.
+   */
+  readMaxRounds: number;
 }
+
+/**
+ * 29 was set on 2026-09-04 as a provisional bound to measure against; the
+ * 2026-09-10 Task Factory pilot measured claude fallback Code reviews at 34,
+ * 36 and 38 rounds in two repositories, all rejected here, and all passing
+ * once the bound was 60. That is why the bound is a project setting and not
+ * only a constant: the knee depends on the repository under review.
+ */
+export const DEFAULT_READ_MAX_ROUNDS = 29;
 
 export interface VerifyConfig {
   commands: Partial<Record<"test" | "lint" | "build" | "typecheck", string>>;
@@ -122,6 +138,7 @@ const DEFAULT_JUDGE: JudgeConfig = {
   // clumsy attempt.
   retryBudget: 5,
   laneEffort: null,
+  readMaxRounds: DEFAULT_READ_MAX_ROUNDS,
   // 2026-08-13 creator-assist exploration-settings run: with ~145KB of diff
   // per lane at xhigh effort, Codex Luna finished in 159-165s while Claude
   // Sonnet 5 xhigh timed out at the old 180s cap 7 times out of 7. Those two
@@ -245,7 +262,11 @@ export function loadConfig(projectRoot: string): SasuConfig {
     timeoutMs: judgeRaw.timeoutMs ?? DEFAULT_JUDGE.timeoutMs,
     fanout: judgeRaw.fanout ?? DEFAULT_JUDGE.fanout,
     laneEffort: judgeRaw.laneEffort ?? DEFAULT_JUDGE.laneEffort,
+    readMaxRounds: judgeRaw.readMaxRounds ?? DEFAULT_JUDGE.readMaxRounds,
   };
+  if (!Number.isInteger(judge.readMaxRounds) || judge.readMaxRounds <= 0) {
+    throw new Error(`judge.readMaxRounds must be a positive integer, got: ${String(judge.readMaxRounds)}`);
+  }
   if (judge.laneEffort !== null && !EFFORTS.includes(judge.laneEffort)) {
     throw new Error(`judge.laneEffort must be null or one of: ${EFFORTS.join(", ")}`);
   }
