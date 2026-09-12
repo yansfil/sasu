@@ -1,0 +1,30 @@
+{
+  "delivery": {
+    "mode": "pr",
+    "baseBranch": "main",
+    "branchPrefix": "gen-prd",
+    "ci": {
+      "watch": false,
+      "maxFixAttempts": 2,
+      "timeoutSeconds": 240
+    }
+  },
+  "judge": {
+    "retryBudget": 8
+  },
+  "verify": {
+    "commands": {
+      "test": "node --test tests/*.test.mjs cli/test/unit/*.test.mjs cli/test/e2e/*.test.mjs",
+      "build": "npm --prefix cli run build"
+    },
+    "commandTimeoutMs": 900000
+  },
+  "worktree": {
+    "enabled": true,
+    "link": [],
+    "copy": [],
+    "setup": [
+      "npm --prefix cli install"
+    ]
+  }
+}
