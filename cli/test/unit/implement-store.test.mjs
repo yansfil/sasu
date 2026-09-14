@@ -318,3 +318,29 @@ test("an artifact's source digest is optional for older records and a SHA-256 wh
   state.artifacts[0].sourceDigest = "3f9da3dd";
   assert.throws(() => parseImplementState(JSON.stringify(state)), /artifacts\[\]\.sourceDigest must be a SHA-256/);
 });
+
+// A reused lane is an earlier attempt's record byte for byte, named by the
+// repair record that reused it. Anything else is a rewritten judgment behind
+// an old invocation id, which is exactly the record this reader must refuse.
+test("a carried lane must match its origin attempt and be named by the repair record; scope and identity fields keep their shapes", () => {
+  const origin = attemptFixture({ id: "V1", verdict: "ERROR", phase: "complete", reviewContext: { ...REVIEW_CONTEXT, scope: { mode: "full" }, identity: "d".repeat(64), ledgerSnapshot: { findings: [], riskFindings: [], claims: [] } },
+    reviews: { fidelity: reviewFixture(), code: { ...reviewFixture({ verdict: "ERROR", result: null }), error: { code: "judge-timeout", message: "t" } } }, error: { stage: "review", code: "judge-error", message: "code lane failed" } });
+  const repair = attemptFixture({ id: "V2", verdict: "PASS", phase: "complete", reviewContext: origin.reviewContext,
+    reviewScope: { mode: "repair", reason: "V1 settled fidelity and lost code", referenceAttemptId: "V1", executedLanes: ["code"], carriedLanes: ["fidelity"] },
+    reviews: { fidelity: { ...reviewFixture(), carriedFrom: "V1" }, code: reviewFixture({ invocationId: "J2" }) } });
+  const baseline = stateFixture(undefined, { verificationAttempts: [origin, repair] });
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(baseline)));
+  for (const [mutate, reason] of [
+    [s => s.verificationAttempts[1].reviews.fidelity.result.summary = "rewritten", /carried reviews.fidelity differs from attempt V1/],
+    [s => s.verificationAttempts[1].reviews.fidelity.carriedFrom = "V9", /carried origin the attempt's repair record does not/],
+    [s => s.verificationAttempts[1].reviewScope.carriedLanes = ["code"], /carried origin the attempt's repair record does not/],
+    [s => s.verificationAttempts[1].reviewScope.mode = "focused", /carried origin|only a repair attempt reuses lanes/],
+    [s => s.verificationAttempts[1].reviewScope.executedLanes = ["risk", "design"], /reviewScope.executedLanes\[\]/],
+    [s => s.verificationAttempts[1].reviewContext.scope = { mode: "focused", anchorAttemptId: "V1" }, /scope.invalidatedEvidenceRefs/],
+    [s => s.verificationAttempts[1].reviewContext.identity = "short", /identity/],
+    [s => s.verificationAttempts[0].contractFingerprint = "nope", /contractFingerprint/],
+  ]) {
+    const changed = structuredClone(baseline); mutate(changed);
+    assert.throws(() => parseImplementState(JSON.stringify(changed)), reason);
+  }
+});

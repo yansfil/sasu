@@ -195,3 +195,23 @@ test("new risks in unchanged source require concrete valid contract and countere
   const invalid = { ...result, findings: [{ ...finding, deltaBasis: { ...finding.deltaBasis, requirementRefs: ["B99"] } }] };
   assert.equal(typeof validateRiskVerdict(invalid, { verdict: "PASS", findings: [] }, context), "string");
 });
+
+// A repair round rebuilds the ledger from the snapshot both roles were shown.
+// The reused role's findings must come out with the ids they already have,
+// whichever role it is, because the implementor may already be fixing them.
+test("a repair round settles from the pinned snapshot with the reused role first so its finding ids survive", async () => {
+  const { reconcileAttemptLedger, reconciliationBase } = await import("../../dist/implement/convergence.js");
+  const fidelityFinding = defect({ problem: "Fidelity saw the value dropped." });
+  const codeFinding = defect({ problem: "Code saw the dispatch miss." });
+  const snapshot = { findings: [], riskFindings: [], claims: [] };
+  const attempt = (carried) => ({ id: "V2", reviewScope: { mode: "repair", reason: "r", referenceAttemptId: "V1", executedLanes: carried === "code" ? ["fidelity"] : ["code"], carriedLanes: [carried] }, reviewContext: { ledgerSnapshot: snapshot } });
+  const results = { fidelity: { ...REVIEW_PASS, findings: [fidelityFinding] }, code: { ...REVIEW_PASS, findings: [codeFinding] }, risk: null };
+  const codeFirst = reconcileAttemptLedger(reconciliationBase({ findings: [{ id: "F1", problem: "stale interim" }], riskFindings: [] }, attempt("code")), attempt("code"), results, "2026-09-14T00:00:00.000Z");
+  assert.deepEqual(codeFirst.findings.map((entry) => [entry.id, entry.problem]), [["F1", codeFinding.problem], ["F2", fidelityFinding.problem]]);
+  const fidelityFirst = reconcileAttemptLedger(reconciliationBase({ findings: [], riskFindings: [] }, attempt("fidelity")), attempt("fidelity"), results, "2026-09-14T00:00:00.000Z");
+  assert.deepEqual(fidelityFirst.findings.map((entry) => [entry.id, entry.problem]), [["F1", fidelityFinding.problem], ["F2", codeFinding.problem]]);
+  const plain = { id: "V2", reviewScope: { mode: "focused", reason: "r", referenceAttemptId: "V1", executedLanes: ["fidelity", "code"], carriedLanes: [] } };
+  const current = { findings: [], riskFindings: [] };
+  assert.equal(reconciliationBase(current, plain), current, "outside a repair the ledger as it stands is the base");
+  assert.throws(() => reconciliationBase(current, { ...attempt("code"), reviewContext: {} }), /no pinned ledger snapshot/);
+});

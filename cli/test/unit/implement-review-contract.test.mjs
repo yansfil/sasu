@@ -85,3 +85,46 @@ test('a Behavior reserved for post-completion human judgment stays honestly pend
   assert.match(parse({ ...pending, findings: [{ ...finding, human: { ...finding.human, quote: 'Invented permission.' } }] }), /verbatim substring/);
   assert.match(parse({ ...pending, findings: [{ kind: 'defect', requirementRefs: ['B30'], problem: 'Missing behavior.', evidenceRefs: ['PRD'], nextAction: 'Implement B30.' }] }), /corresponding validated post-completion/);
 });
+
+// A focused round lets a role restate a ground it settled at the anchor. The
+// harness accepts that only where the record can show the same ground on the
+// same bytes; every other case is a reviewed ground or a refusal.
+const focusedScope = () => ({ mode: 'focused', anchorAttemptId: 'V1',
+  anchorAssessments: { fidelity: [assessment(behaviors.slice(0, 15)), { ...assessment(behaviors.slice(15)), evidenceRefs: ['src/unread.mjs'] }], code: [assessment([])] },
+  invalidatedEvidenceRefs: ['src/unread.mjs'], reopenedRequirementRefs: ['B3'] });
+const focused = (assessments, extra = {}) => validateImplementationReviewResult({ ...result(assessments), ...extra }, { ...context, scope: focusedScope() }, 'fidelity');
+const carried = (requirementRefs, evidenceRefs = ['src/public.mjs', 'smoke.log']) => ({ ...assessment(requirementRefs), evidenceRefs, basis: 'carried' });
+
+test('carried grounds are accepted only in a focused round, only for a satisfied anchor ground on unchanged evidence, and never for a reopened requirement', () => {
+  assert.match(String(validate(result([carried(behaviors)]))), /cannot carry grounds outside a focused round/);
+  assert.match(String(validate({ ...result([assessment(behaviors)]), scope: { basis: 'focused', reason: 'x' } })), /scope is accepted only in a focused round/);
+  const accepted = focused([carried(behaviors.slice(0, 2)), assessment(behaviors.slice(2))]);
+  assert.equal(typeof accepted, 'object', String(accepted));
+  assert.equal(accepted.assessments[0].basis, 'carried');
+  assert.equal(accepted.assessments[1].basis, undefined, 'a reviewed ground records no basis, exactly as a full review does');
+  assert.match(String(focused([carried(behaviors.slice(0, 2), ['src/public.mjs']), assessment(behaviors.slice(2))])), /^(?!.*refused).*/, 'a subset of the anchor evidence is still the anchor ground');
+  assert.match(String(focused([carried(['B3']), assessment(behaviors.filter((ref) => ref !== 'B3'))])), /named by an open blocking finding: B3/);
+  assert.match(String(focused([carried(behaviors.slice(15, 17), ['src/unread.mjs']), assessment([...behaviors.slice(0, 15), ...behaviors.slice(17)])])), /citing evidence that changed since attempt V1: src\/unread.mjs/);
+  assert.match(String(focused([carried(behaviors.slice(0, 2), ['src/public.mjs', 'src/unread.mjs']), assessment(behaviors.slice(2))])), /citing evidence that changed/);
+  assert.match(String(focused([carried(behaviors.slice(14, 16)), assessment([...behaviors.slice(0, 14), ...behaviors.slice(16)])])), /did not settle satisfied in one fidelity assessment/, 'a group spanning two anchor assessments is not one anchor ground');
+  assert.match(String(focused([{ ...carried(behaviors.slice(0, 2)), conclusion: 'unresolved' }, assessment(behaviors.slice(2))])), /carried grounds must be satisfied/);
+  assert.match(String(focused([{ ...carried(behaviors.slice(0, 2)), basis: 'kept' }, assessment(behaviors.slice(2))])), /basis must be reviewed\|carried/);
+});
+
+test('a widened declaration is recorded and forbids carried grounds; the scope reason is required', () => {
+  const widened = focused([assessment(behaviors)], { scope: { basis: 'widened', reason: 'the change replaces the shared dispatch helper every requirement runs through' } });
+  assert.equal(typeof widened, 'object', String(widened));
+  assert.deepEqual(widened.scope, { basis: 'widened', reason: 'the change replaces the shared dispatch helper every requirement runs through' });
+  assert.match(String(focused([carried(behaviors.slice(0, 2)), assessment(behaviors.slice(2))], { scope: { basis: 'widened', reason: 'r' } })), /cannot carry grounds in a round the reviewer widened/);
+  assert.match(String(focused([assessment(behaviors)], { scope: { basis: 'widened', reason: ' ' } })), /scope.reason must state/);
+  assert.match(String(focused([assessment(behaviors)], { scope: { basis: 'partial', reason: 'r' } })), /scope.basis must be focused\|widened/);
+  const declaredFocused = focused([carried(behaviors.slice(0, 2)), assessment(behaviors.slice(2))], { scope: { basis: 'focused', reason: 'the change is confined to the smoke path' } });
+  assert.equal(typeof declaredFocused, 'object', String(declaredFocused));
+  assert.equal(declaredFocused.scope.basis, 'focused');
+});
+
+test('a validator caller that passes an explicit basis of reviewed in a full round is not refused', () => {
+  const accepted = validate(result([{ ...assessment(behaviors), basis: 'reviewed' }]));
+  assert.equal(typeof accepted, 'object', String(accepted));
+  assert.equal(accepted.assessments[0].basis, undefined);
+});
