@@ -1,10 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planReview, reviewPrior, requirementGrounds, reviewPolicySha256, ledgerSnapshot } from "../../dist/implement/review-scope.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { planReview, reviewPrior, requirementGrounds, reviewPolicyFor, reviewPolicySha256, ledgerSnapshot } from "../../dist/implement/review-scope.js";
 import { diffChunkPath } from "../../dist/implement/prompts.js";
+import { loadConfig } from "../../dist/config.js";
 import { stateFixture, attemptFixture, SHA, AT } from "../helpers/implement-state.mjs";
 
-const POLICY = reviewPolicySha256("0.10.0", { profiles: {} }, "standard");
+const POLICY = reviewPolicySha256({ contractVersion: "0.10.0", judge: { profiles: {} }, reviewProfile: "standard" });
+
+function withJudgeBackend(value, body) {
+  const previous = process.env["SASU_JUDGE_BACKEND"];
+  if (value === undefined) delete process.env["SASU_JUDGE_BACKEND"]; else process.env["SASU_JUDGE_BACKEND"] = value;
+  try { return body(); } finally {
+    if (previous === undefined) delete process.env["SASU_JUDGE_BACKEND"]; else process.env["SASU_JUDGE_BACKEND"] = previous;
+  }
+}
+
+// The policy a settled judgment is reused under must name the judge that
+// actually produced it. `SASU_JUDGE_BACKEND` pins the backend outside the
+// project config, and a hash of the config alone read two rounds judged by
+// different backends as the same policy (2026-09-14).
+test("the review policy names the effective judge target, so a backend pinned by the environment is a different policy from the configured one", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-review-policy-"));
+  const config = loadConfig(root);
+  const configured = withJudgeBackend(undefined, () => reviewPolicyFor(config, "standard", "0.10.0"));
+  const pinned = withJudgeBackend("claude", () => reviewPolicyFor(config, "standard", "0.10.0"));
+  assert.equal(configured.judge.routine.primary.backend, "codex", "the code default routes routine review to Codex first");
+  assert.equal(pinned.judge.routine.primary.backend, "claude");
+  assert.equal(pinned.judge.routine.fallback, null, "an operator pin keeps no fallback into the bypassed backend");
+  assert.equal(pinned.judge["high-risk"].primary.backend, "claude", "the risk lane's routing is part of the same policy");
+  assert.notEqual(reviewPolicySha256(configured), reviewPolicySha256(pinned));
+  assert.equal(reviewPolicySha256(configured), reviewPolicySha256(withJudgeBackend(undefined, () => reviewPolicyFor(config, "standard", "0.10.0"))), "the same environment reproduces the same policy");
+  assert.notEqual(reviewPolicySha256(configured), reviewPolicySha256(reviewPolicyFor(config, "high-risk", "0.10.0")), "the run's review profile is part of the policy");
+  assert.equal("retryBudget" in configured.judge, false, "the retry budget is a harness bound, not a review input");
+});
 const CONTRACT = "c".repeat(64);
 const assessment = (requirementRefs, evidenceRefs = ["src/a.mjs"], conclusion = "satisfied") => ({ requirementRefs, conclusion, rationale: "grounds", evidenceRefs });
 const lane = (result, verdict = "PASS") => ({ invocationId: `inv-${Math.random().toString(16).slice(2)}`, startedAt: AT, finishedAt: AT, durationMs: 1, verdict, result, judge: null, error: null });

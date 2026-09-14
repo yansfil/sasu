@@ -1,3 +1,5 @@
+import type { SasuConfig } from "../config";
+import { effectiveJudgeProfile } from "../judge/runner";
 import { verificationRoundContext } from "./convergence";
 import { diffChunkPath } from "./prompts";
 import { sha256 } from "./store";
@@ -196,8 +198,27 @@ export function planReview(
  * probed: the model named in the routing is what judges, and a probe would
  * make every verify depend on two more executables answering.
  */
-export function reviewPolicySha256(contractVersion: string, judge: unknown, reviewProfile: string): string {
-  return sha256(JSON.stringify({ contractVersion, judge, reviewProfile }));
+export interface ReviewPolicy {
+  contractVersion: string;
+  judge: unknown;
+  reviewProfile: string;
+}
+
+/**
+ * The policy the next review would run under. The routing is the effective
+ * one - after `SASU_JUDGE_BACKEND` has pinned a backend and dropped the
+ * fallback - because that is the judge that produces the judgment; hashing
+ * the configured profiles read a Claude-pinned round and a Codex round as
+ * one policy (2026-09-14). retryBudget is a harness bound, not a review input.
+ */
+export function reviewPolicyFor(config: SasuConfig, reviewProfile: string, contractVersion: string): ReviewPolicy {
+  const { retryBudget: _budget, profiles: _profiles, ...bounds } = config.judge;
+  const judge = { ...bounds, routine: effectiveJudgeProfile(config, "routine"), "high-risk": effectiveJudgeProfile(config, "high-risk") };
+  return { contractVersion, judge, reviewProfile };
+}
+
+export function reviewPolicySha256(policy: ReviewPolicy): string {
+  return sha256(JSON.stringify(policy));
 }
 
 /**

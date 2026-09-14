@@ -12,7 +12,7 @@ import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judg
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 import { reconcileAttemptLedger, reconciliationBase, reconcileReviewFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
-import { ledgerSnapshot, planReview, requirementGrounds, reviewPolicySha256, reviewPrior, type ReviewPlan } from "./review-scope";
+import { ledgerSnapshot, planReview, requirementGrounds, reviewPolicyFor, reviewPolicySha256, reviewPrior, type ReviewPlan } from "./review-scope";
 import { contractVersion } from "../version";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
@@ -1080,10 +1080,8 @@ function inputIdentity(state: ImplementState, sourceDigest: string, intentInput:
   return { input: sha256(JSON.stringify(parts)), contract: sha256(JSON.stringify(contract)) };
 }
 
-/** The review policy identity; retryBudget is a harness bound, not a review input. */
 function currentReviewPolicy(state: ImplementState, config: ReturnType<typeof loadConfig>): string {
-  const { retryBudget: _budget, ...policy } = config.judge;
-  return reviewPolicySha256(contractVersion(), policy, state.prd.reviewProfile);
+  return reviewPolicySha256(reviewPolicyFor(config, state.prd.reviewProfile, contractVersion()));
 }
 
 function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {
