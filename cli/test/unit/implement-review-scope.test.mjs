@@ -94,6 +94,16 @@ test("a previous attempt that lost one lane to a backend error on this exact inp
   state.verbs.push({ id: 2, at: AT, verb: "confirm", issuer: "human", target: "F1", reason: "confirmed", outcome: "accepted", rejection: null });
   assert.notEqual(planReview(state, state.verificationAttempts[1], options(state)).record.mode, "repair");
   state.verbs.pop();
+  // Every human decision on the ledger, not only `confirm`. A repair rebuilds
+  // the ledger from the reference attempt's pinned snapshot, so an acceptance
+  // recorded after that attempt is not in it: the approval reverted to open
+  // with its evidence gone (2026-09-14). These verbs are what makes the guard
+  // above see them at all.
+  for (const verb of ["risk", "risk-non-convergent"]) {
+    state.verbs.push({ id: 2, at: AT, verb, issuer: "human", target: "RF1", reason: "accepted", outcome: "accepted", rejection: null });
+    assert.notEqual(planReview(state, state.verificationAttempts[1], options(state)).record.mode, "repair", `${verb} after the reference attempt must not be repaired over`);
+    state.verbs.pop();
+  }
   state.verbs.push({ id: 2, at: AT, verb: "amend", issuer: "human", target: null, reason: "refused", outcome: "rejected", rejection: { check: "authority", message: "m" } });
   assert.equal(planReview(state, state.verificationAttempts[1], options(state)).record.mode, "repair", "a refused command changed nothing");
   // Different input, a different policy, or a caller that forbids reuse: no repair.

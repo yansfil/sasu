@@ -116,6 +116,14 @@ test("accepted risk can release delivery while historical review failure remains
     const id = readState(root).riskFindings[0].id;
     ok(run(root, ["implement", "risk", "--issuer", "human", "--accept", "--id", id, "--evidence", "I explicitly accept the remaining risk for this delivery."]));
     assert.equal(readState(root).verificationAttempts.at(-1).verdict, "FAIL", "acceptance does not rewrite the actual historical result");
+    // The acceptance is a domain command and must be in the verb log. Without
+    // that record a later repair round saw no accepted command, rebuilt the
+    // ledger from a snapshot taken before the approval, and the acceptance
+    // reverted to open with its evidence gone and no deviation (2026-09-14).
+    const accepted = readState(root).verbs.filter((verb) => verb.verb === "risk" && verb.outcome === "accepted");
+    assert.equal(accepted.length, 1, "risk --accept must record the human's decision as a verb");
+    assert.equal(accepted[0].target, id);
+    assert.equal(accepted[0].issuer, "human");
     const finalized = run(root, ["implement", "finalize"]);
     if (missingRequirement) {
       assert.notEqual(finalized.status, 0);
@@ -143,5 +151,10 @@ test("only a human non-convergence declaration permits early blocked closure and
   const state = readState(root);
   assert.equal(state.riskFindings[0].status, "open");
   assert.equal(state.riskFindings[0].nonConvergence.approval, "I approve stopping this unresolved run.");
+  // Recorded for the same reason as `risk --accept`: a repair round must see
+  // that a human moved the ledger after the reference attempt.
+  const declared = state.verbs.filter((verb) => verb.verb === "risk-non-convergent" && verb.outcome === "accepted");
+  assert.equal(declared.length, 1, "risk --non-convergent must record the human's declaration as a verb");
+  assert.equal(declared[0].target, id);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, state.completion.receiptPath), "utf8")).delivery.eligible, false);
 });

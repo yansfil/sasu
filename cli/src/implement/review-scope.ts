@@ -167,9 +167,17 @@ export function planReview(
   const roundContext = verificationRoundContext(current.inputManifest, anchor!);
   const invalidated = new Set<string>();
   for (const path of roundContext.changedPaths) { invalidated.add(path); invalidated.add(diffChunkPath(path)); }
-  for (const entry of roundContext.newEvidence) invalidated.add(entry.path);
+  // New evidence invalidates its own path AND reopens the requirements it was
+  // registered against. Adding only the path let a contradicting observation
+  // pass untouched: no anchor assessment cited a file that did not exist when
+  // the anchor ran, so nothing was invalidated (2026-09-14).
+  const reopened = new Set(blockingRequirementRefs(options.ledger));
+  for (const entry of roundContext.newEvidence) {
+    invalidated.add(entry.path);
+    for (const ref of state.artifacts.find((artifact) => artifact.path === entry.path)?.requirementRefs ?? []) reopened.add(ref);
+  }
   const anchorAssessments = Object.fromEntries(ROUTINE_REVIEW_ROLES.map((role) => [role, structuredClone(anchor!.reviews[role]!.result!.assessments)])) as Record<RoutineReviewRole, ReviewAssessment[]>;
-  const scope: ReviewScope = { mode: "focused", anchorAttemptId: anchor!.id, anchorAssessments, invalidatedEvidenceRefs: [...invalidated].sort(), reopenedRequirementRefs: blockingRequirementRefs(options.ledger) };
+  const scope: ReviewScope = { mode: "focused", anchorAttemptId: anchor!.id, anchorAssessments, invalidatedEvidenceRefs: [...invalidated].sort(), reopenedRequirementRefs: [...reopened].sort() };
   return {
     record: { mode: "focused", reason: `attempt ${anchor!.id} settled every lane on the same contract and policy; ${roundContext.changedPaths.length} path(s) and ${roundContext.newEvidence.length} evidence file(s) changed since`,
       referenceAttemptId: anchor!.id, executedLanes: required, carriedLanes: [] },
