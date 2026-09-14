@@ -71,8 +71,10 @@ export function isolatedEnv(overrides = {}) {
   return env;
 }
 
-export function run(root, args, { env = {} } = {}) {
-  const result = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd: root, encoding: "utf8", env: isolatedEnv(env), timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+// `cli` names another built copy of the CLI to run instead of this tree's dist:
+// a test that must observe how the harness treats a different build.
+export function run(root, args, { env = {}, cli = CLI } = {}) {
+  const result = spawnSync(process.execPath, [cli, ...args, "--json"], { cwd: root, encoding: "utf8", env: isolatedEnv(env), timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
   let json;
   try { json = JSON.parse(result.stdout); } catch { json = { stdout: result.stdout, stderr: result.stderr }; }
   return { ...result, json };

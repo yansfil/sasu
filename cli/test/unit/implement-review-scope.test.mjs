@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,8 @@ import { diffChunkPath } from "../../dist/implement/prompts.js";
 import { loadConfig } from "../../dist/config.js";
 import { stateFixture, attemptFixture, SHA, AT } from "../helpers/implement-state.mjs";
 
-const POLICY = reviewPolicySha256({ contractVersion: "0.10.0", judge: { profiles: {} }, reviewProfile: "standard" });
+const POLICY = reviewPolicySha256({ contractVersion: "0.10.0", build: "b".repeat(64), judge: { profiles: {} }, reviewProfile: "standard" });
+const HARNESS = { contractVersion: "0.10.0", build: "b".repeat(64) };
 
 function withJudgeBackend(value, body) {
   const previous = process.env["SASU_JUDGE_BACKEND"];
@@ -25,16 +27,44 @@ function withJudgeBackend(value, body) {
 test("the review policy names the effective judge target, so a backend pinned by the environment is a different policy from the configured one", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-review-policy-"));
   const config = loadConfig(root);
-  const configured = withJudgeBackend(undefined, () => reviewPolicyFor(config, "standard", "0.10.0"));
-  const pinned = withJudgeBackend("claude", () => reviewPolicyFor(config, "standard", "0.10.0"));
+  const configured = withJudgeBackend(undefined, () => reviewPolicyFor(config, "standard", HARNESS));
+  const pinned = withJudgeBackend("claude", () => reviewPolicyFor(config, "standard", HARNESS));
   assert.equal(configured.judge.routine.primary.backend, "codex", "the code default routes routine review to Codex first");
   assert.equal(pinned.judge.routine.primary.backend, "claude");
   assert.equal(pinned.judge.routine.fallback, null, "an operator pin keeps no fallback into the bypassed backend");
   assert.equal(pinned.judge["high-risk"].primary.backend, "claude", "the risk lane's routing is part of the same policy");
   assert.notEqual(reviewPolicySha256(configured), reviewPolicySha256(pinned));
-  assert.equal(reviewPolicySha256(configured), reviewPolicySha256(withJudgeBackend(undefined, () => reviewPolicyFor(config, "standard", "0.10.0"))), "the same environment reproduces the same policy");
-  assert.notEqual(reviewPolicySha256(configured), reviewPolicySha256(reviewPolicyFor(config, "high-risk", "0.10.0")), "the run's review profile is part of the policy");
+  assert.equal(reviewPolicySha256(configured), reviewPolicySha256(withJudgeBackend(undefined, () => reviewPolicyFor(config, "standard", HARNESS))), "the same environment reproduces the same policy");
+  assert.notEqual(reviewPolicySha256(configured), reviewPolicySha256(reviewPolicyFor(config, "high-risk", HARNESS)), "the run's review profile is part of the policy");
+  assert.notEqual(reviewPolicySha256(configured), reviewPolicySha256(reviewPolicyFor(config, "standard", { ...HARNESS, build: "c".repeat(64) })), "a different CLI build is a different policy under the same version string");
   assert.equal("retryBudget" in configured.judge, false, "the retry budget is a harness bound, not a review input");
+});
+
+// The build digest is the bytes of the JavaScript this process runs, by
+// relative path, and nothing else: the same tree hashes the same twice, a
+// copy with one changed file hashes differently, and a non-JavaScript file
+// dropped beside it changes nothing.
+test("the build digest follows the JavaScript bytes of the build", async () => {
+  const { buildSha256 } = await import("../../dist/version.js");
+  const own = buildSha256();
+  assert.match(own, /^[0-9a-f]{64}$/);
+  assert.equal(buildSha256(), own, "computed once per process");
+  const dist = path.resolve(import.meta.dirname, "../../dist");
+  const digestOf = (root) => {
+    const files = [];
+    const walk = (dir) => { for (const entry of fs.readdirSync(dir, { withFileTypes: true })) { const absolute = path.join(dir, entry.name); if (entry.isDirectory()) walk(absolute); else if (entry.name.endsWith(".js")) files.push(absolute); } };
+    walk(root);
+    const hash = crypto.createHash("sha256");
+    for (const file of files.map((entry) => path.relative(root, entry)).sort()) { hash.update(file.split(path.sep).join("/")); hash.update("\0"); hash.update(fs.readFileSync(path.join(root, file))); hash.update("\0"); }
+    return hash.digest("hex");
+  };
+  assert.equal(own, digestOf(dist), "the digest is the sorted relative-path-and-bytes hash of dist");
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-build-digest-"));
+  fs.cpSync(dist, copy, { recursive: true });
+  fs.writeFileSync(path.join(copy, "notes.md"), "not code\n");
+  assert.equal(digestOf(copy), own, "a non-JavaScript file is not part of the build");
+  fs.appendFileSync(path.join(copy, "implement", "prompts.js"), "\n// changed\n");
+  assert.notEqual(digestOf(copy), own, "one changed module is a different build");
 });
 const CONTRACT = "c".repeat(64);
 const assessment = (requirementRefs, evidenceRefs = ["src/a.mjs"], conclusion = "satisfied") => ({ requirementRefs, conclusion, rationale: "grounds", evidenceRefs });

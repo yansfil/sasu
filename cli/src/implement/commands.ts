@@ -13,7 +13,7 @@ import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 import { reconcileAttemptLedger, reconciliationBase, reconcileReviewFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
 import { ledgerSnapshot, planReview, requirementGrounds, reviewPolicyFor, reviewPolicySha256, reviewPrior, type ReviewPlan } from "./review-scope";
-import { contractVersion } from "../version";
+import { buildSha256, contractVersion } from "../version";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
@@ -1081,7 +1081,7 @@ function inputIdentity(state: ImplementState, sourceDigest: string, intentInput:
 }
 
 function currentReviewPolicy(state: ImplementState, config: ReturnType<typeof loadConfig>): string {
-  return reviewPolicySha256(reviewPolicyFor(config, state.prd.reviewProfile, contractVersion()));
+  return reviewPolicySha256(reviewPolicyFor(config, state.prd.reviewProfile, { contractVersion: contractVersion(), build: buildSha256() }));
 }
 
 function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {

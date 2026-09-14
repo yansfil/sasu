@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { PRD_PATH, REVIEW_PASS, defect, makeProject, ok, readState, registerEvidence, run, start, stub } from "../helpers/implement-fixture.mjs";
+import { CLI, PRD_PATH, REVIEW_PASS, defect, makeProject, ok, readState, registerEvidence, run, start, stub } from "../helpers/implement-fixture.mjs";
 
 // These tests exercise the public CLI and the actual suite process with only
 // the external reviewers stubbed. What they establish is the harness's side of
@@ -108,6 +109,39 @@ test("a carried ground on changed evidence, on a reopened requirement, or outsid
   assert.equal(latest.reviews.code.carriedFrom, readState(root).verificationAttempts.at(-2).id);
   assert.equal(latest.verdict, "PASS");
   assert.notEqual(first.id, latest.id);
+});
+
+// The review policy must name the code that shaped the judgment, not the
+// version string a human remembered to bump: the prompts and validators
+// changed on 2026-09-14 under an unchanged `0.10.0`, and a policy keyed on the
+// version alone would have let a round judged under the old prompt anchor a
+// focused round or a repair under the new one.
+test("a CLI build whose bytes differ is a different review policy: the next round is full, and the same build stays focused", () => {
+  const root = makeProject({ count: 3 });
+  const { workRoot, first, fidelity, code } = firstRound(root);
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-rebuilt-cli-"));
+  // The built CLI reads its package.json and the shared helpers in cli/lib next to dist.
+  fs.cpSync(path.dirname(CLI), path.join(copy, "dist"), { recursive: true });
+  fs.cpSync(path.join(path.dirname(CLI), "..", "lib"), path.join(copy, "lib"), { recursive: true });
+  fs.copyFileSync(path.join(path.dirname(CLI), "..", "package.json"), path.join(copy, "package.json"));
+  fs.appendFileSync(path.join(copy, "dist", "implement", "prompts.js"), "\n// a one-line change to the prompt module; the version string is unchanged\n");
+  fs.appendFileSync(path.join(workRoot, IMPL), "second value fixed\n");
+  const rebuilt = path.join(copy, "dist", "cli.js");
+  let env = roleStub(root, fidelity, code);
+  ok(run(root, ["implement", "verify"], { env, cli: rebuilt }));
+  let latest = readState(root).verificationAttempts.at(-1);
+  assert.equal(latest.reviewScope.mode, "full");
+  assert.match(latest.reviewScope.reason, /review policy changed since attempt/);
+  assert.notEqual(latest.reviewPolicySha256, first.reviewPolicySha256);
+  assert.doesNotMatch(prompt(env, "fidelity"), /REVIEW SCOPE/);
+  // The rebuilt CLI, run again on a further change, is the same policy as itself.
+  fs.appendFileSync(path.join(workRoot, IMPL), "third value fixed\n");
+  env = roleStub(root, fidelity, code);
+  ok(run(root, ["implement", "verify"], { env, cli: rebuilt }));
+  const again = readState(root).verificationAttempts.at(-1);
+  assert.equal(again.reviewScope.mode, "focused");
+  assert.equal(again.reviewScope.referenceAttemptId, latest.id);
+  assert.equal(again.reviewPolicySha256, latest.reviewPolicySha256);
 });
 
 test("an amended contract sends the next round back to a full review with the reason recorded", () => {

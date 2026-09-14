@@ -192,14 +192,18 @@ export function planReview(
 }
 
 /**
- * The review policy a settled judgment was produced under: the harness
- * contract version (which fixes the prompts and validators), the judge
- * routing, and the profile. Backend binary versions are deliberately not
- * probed: the model named in the routing is what judges, and a probe would
- * make every verify depend on two more executables answering.
+ * The review policy a settled judgment was produced under: the CLI build
+ * that shaped it (its prompts, validators and judge invocation, as bytes -
+ * the declared contract version alone did not move when those changed on
+ * 2026-09-14), the judge routing, and the profile. Backend binary versions
+ * are deliberately not probed: the model named in the routing is what
+ * judges, and a probe would make every verify depend on two more
+ * executables answering.
  */
 export interface ReviewPolicy {
   contractVersion: string;
+  /** sha256 of the CLI build's JavaScript; see `buildSha256`. */
+  build: string;
   judge: unknown;
   reviewProfile: string;
 }
@@ -211,10 +215,10 @@ export interface ReviewPolicy {
  * the configured profiles read a Claude-pinned round and a Codex round as
  * one policy (2026-09-14). retryBudget is a harness bound, not a review input.
  */
-export function reviewPolicyFor(config: SasuConfig, reviewProfile: string, contractVersion: string): ReviewPolicy {
+export function reviewPolicyFor(config: SasuConfig, reviewProfile: string, harness: { contractVersion: string; build: string }): ReviewPolicy {
   const { retryBudget: _budget, profiles: _profiles, ...bounds } = config.judge;
   const judge = { ...bounds, routine: effectiveJudgeProfile(config, "routine"), "high-risk": effectiveJudgeProfile(config, "high-risk") };
-  return { contractVersion, judge, reviewProfile };
+  return { contractVersion: harness.contractVersion, build: harness.build, judge, reviewProfile };
 }
 
 export function reviewPolicySha256(policy: ReviewPolicy): string {
