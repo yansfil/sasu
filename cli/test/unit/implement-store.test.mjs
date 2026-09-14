@@ -305,3 +305,16 @@ test("event and refusal ledgers reject contradictory records", () => {
   const verb = { id: 1, at: AT, verb: "verify", issuer: "observer", target: null, reason: "fixture", outcome: "rejected", rejection: null };
   assert.throws(() => parseImplementState(JSON.stringify(stateFixture(undefined, { verbs: [verb] }))), /rejection/);
 });
+
+// The digest is what lets a review tell "observed on this source" from
+// "observed on an earlier one" (issue #2). Records from before it existed
+// load unchanged and read as unrecorded; a present value must be a digest.
+test("an artifact's source digest is optional for older records and a SHA-256 when present", () => {
+  const state = stateFixture();
+  state.artifacts = [{ kind: "log", path: "agents/observations/runtime.log", description: "observation", sha256: "a".repeat(64), bytes: 1, registeredAt: AT, observedAt: AT, provenance: "operator" }];
+  assert.equal(parseImplementState(JSON.stringify(state)).artifacts[0].sourceDigest, undefined);
+  state.artifacts[0].sourceDigest = "c".repeat(64);
+  assert.equal(parseImplementState(JSON.stringify(state)).artifacts[0].sourceDigest, "c".repeat(64));
+  state.artifacts[0].sourceDigest = "3f9da3dd";
+  assert.throws(() => parseImplementState(JSON.stringify(state)), /artifacts\[\]\.sourceDigest must be a SHA-256/);
+});

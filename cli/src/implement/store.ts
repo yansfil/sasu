@@ -316,6 +316,7 @@ export function parseImplementState(text: string): ImplementState {
     positiveInteger(artifact.bytes, "artifacts[].bytes");
     assertIsoTimestamp(artifact.registeredAt, "artifacts[].registeredAt");
     assertIsoTimestamp(artifact.observedAt, "artifacts[].observedAt");
+    if (artifact.sourceDigest !== undefined) assertSha256(artifact.sourceDigest, "artifacts[].sourceDigest");
     if ("rowId" in artifact) throw new Error("retired artifact rowId");
   }
   const findingIds = new Set<string>();

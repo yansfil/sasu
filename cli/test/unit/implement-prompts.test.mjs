@@ -12,7 +12,7 @@ import { validateReviewResult } from "../../dist/judge/types.js";
 export function material(overrides = {}) {
   const prdText = prd({ count: 30 });
   const contract = parseImplementContract(prdText);
-  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], workspacePaths: ["implementation.txt", "agents/review-input/changes/implementation.txt.diff"], changeSet: { changes: [{ path: "implementation.txt", chunkPath: "agents/review-input/changes/implementation.txt.diff", addedLines: 1, removedLines: 0 }], notes: [] }, checks: [], artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
+  const value = { prdText, approval: { source: "frontmatter", evidence: "human_approval: approved" }, contract, intentSource: { routing: "decisions", content: renderDecisions(contract), explanation: "approved decision record" }, changedPaths: ["implementation.txt"], workspacePaths: ["implementation.txt", "agents/review-input/changes/implementation.txt.diff"], changeSet: { changes: [{ path: "implementation.txt", chunkPath: "agents/review-input/changes/implementation.txt.diff", addedLines: 1, removedLines: 0 }], notes: [] }, checks: [], sourceDigest: "f".repeat(64), artifacts: [], priorFindings: [], roundContext: { priorAttemptId: null, changedPaths: [], newEvidence: [] }, ...overrides };
   return { ...value, referenceContext: overrides.referenceContext ?? { requiredRequirementRefs: value.contract.rows.map((entry) => entry.id), actualEvidenceRefs: ["implementation.txt"], requirementRefs: [...value.contract.rows.map((entry) => entry.id), ...value.contract.decisions.map((entry) => entry.id)], evidenceRefs: ["PRD", "implementation.txt"], priorFindingIds: value.priorFindings.filter((entry) => entry.status === "open").map((entry) => entry.id), humanSources: {} } };
 }
 
@@ -134,7 +134,7 @@ test("intent routing checks the source even after spec PASS and never substitute
 
 test("evidence uses exact log locations and provenance while unrelated source inventories stay out of the prompt", () => {
   const input = material({
-    checks: [{ command: "npm test", exitCode: 0, logPath: "agents/suite.log", provenance: "CLI execution at fixed time" }],
+    checks: [{ command: "npm test", exitCode: 0, logPath: "agents/suite.log", startedAt: "2026-09-09T12:00:00Z", provenance: "CLI execution at fixed time" }],
     artifacts: [{ path: "agents/qa.log", kind: "log", bytes: 500_000, sha256: "a".repeat(64), description: "observed flow", registeredAt: "2026-09-09T00:00:00Z", observedAt: "2026-09-09T00:00:00Z", provenance: "operator" }],
   });
   const sourcePaths = Array.from({ length: 2_000 }, (_, index) => `강의/관련없는-파일-${index}.md`);
@@ -206,4 +206,38 @@ test("Fidelity and Code differ in responsibility while retaining identical compl
   }
   assert.throws(() => reviewPrompt(input), /explicit fidelity or code role/);
   assert.throws(() => reviewPrompt(input, "comprehensive"), /explicit fidelity or code role/);
+});
+
+// Issue #2, 2026-09-14: a baseline note registered two hours before the
+// harness ran the sealed suite green said "no passing run exists yet", and the
+// Fidelity review read it as current and demanded the suite again. The facts
+// that settle it are timestamps and digests the harness already records, so
+// the prompt states them per artifact instead of leaving the reviewer to infer
+// them from the artifact's own prose.
+test("each registered artifact is positioned against this attempt's execution and source from recorded facts, not its own account", () => {
+  const current = "c".repeat(64);
+  const artifact = (overrides) => ({ path: "agents/runs/fixture/note.md", kind: "log", bytes: 10, sha256: "a".repeat(64), description: "baseline note", registeredAt: "2026-09-14T09:28:43Z", observedAt: "2026-09-14T09:28:26Z", provenance: "operator", ...overrides });
+  const checks = [{ command: "just check", exitCode: 0, logPath: "agents/runs/fixture/artifacts/logs/mechanical-1.log", startedAt: "2026-09-14T11:36:28Z", provenance: "CLI execution 2026-09-14T11:36:28Z" }];
+  const commandLog = { path: checks[0].logPath, kind: "command-log", bytes: 10, sha256: "b".repeat(64), description: "mechanical PASS: just check", registeredAt: "2026-09-14T11:39:10Z", observedAt: "2026-09-14T11:39:10Z", provenance: "CLI executed just check in .", command: "just check", cwd: ".", exitCode: 0, sourceDigest: current };
+  const prompt = reviewPrompt(material({ checks, sourceDigest: current, artifacts: [
+    artifact({ sourceDigest: "d".repeat(64) }),
+    artifact({ path: "agents/runs/fixture/later.md", observedAt: "2026-09-14T11:50:00Z", sourceDigest: current }),
+    artifact({ path: "agents/runs/fixture/old-record.md" }),
+    commandLog,
+  ] }), "fidelity");
+  const positions = prompt.split("\n").filter((line) => line.startsWith("  position: "));
+  assert.deepEqual(positions, [
+    "  position: observed 2h 8m BEFORE this attempt's harness execution began; registered on an earlier product source (digest dddddddddddd, not the one under review)",
+    "  position: observed 13m 32s after this attempt's harness execution began; registered on the source under review",
+    "  position: observed 2h 8m BEFORE this attempt's harness execution began; source at registration unrecorded",
+    "  position: this attempt's own harness execution; registered on the source under review",
+  ]);
+  assert.ok(prompt.includes(`SOURCE UNDER REVIEW: product digest ${current}`));
+  assert.match(prompt, /official result of the sealed suite on the source under review/);
+  assert.match(prompt, /not grounds to require that suite to be run again/);
+  assert.match(prompt, /A required suite failure recorded by the harness in this attempt stays blocking/);
+  // Without an execution there is nothing to be before or after, and the
+  // prompt says so rather than inventing a reference time.
+  const none = reviewPrompt(material({ checks: [], sourceDigest: current, artifacts: [artifact({})] }), "code");
+  assert.ok(none.includes("position: no harness execution in this attempt to compare against; source at registration unrecorded"));
 });

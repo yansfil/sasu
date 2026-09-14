@@ -44,6 +44,12 @@ export interface RegisteredArtifact {
   registeredAt: string;
   provenance: string;
   observedAt: string;
+  /**
+   * Product source digest at registration, so a review can tell an artifact
+   * observed on an earlier source from one observed on the source under
+   * review. Absent only on records made before it was recorded.
+   */
+  sourceDigest?: string;
   target?: string;
   environment?: string;
   requirementRefs?: string[];
