@@ -111,15 +111,28 @@ function repairObstacle(state: ImplementState, current: UnifiedVerificationAttem
   return null;
 }
 
-function focusedObstacle(state: ImplementState, current: UnifiedVerificationAttempt, prior: UnifiedVerificationAttempt | null, policySha256: string): string | null {
-  if (prior === null) return "first review of this run";
-  const settled = settledLanes(prior);
-  const missing = requiredLanes(state).filter((lane) => !settled.includes(lane));
-  if (missing.length > 0) return `attempt ${prior.id} did not settle ${missing.join(", ")}`;
-  if (prior.error !== null) return `attempt ${prior.id} ended in error after its lanes settled`;
-  if (prior.contractFingerprint === undefined || prior.reviewPolicySha256 === undefined || prior.reviewContext?.scope === undefined) return `attempt ${prior.id} predates scoped review records`;
-  if (prior.contractFingerprint !== current.contractFingerprint) return `contract inputs changed since attempt ${prior.id}: PRD, intent, suite ledger or amendments`;
-  if (prior.reviewPolicySha256 !== policySha256) return `review policy changed since attempt ${prior.id}`;
+/**
+ * The anchor a focused round builds on: the latest attempt that settled every
+ * required lane without error. A later attempt that settled only one lane is
+ * not it - its surviving grounds are newer but not whole - and the delta a
+ * carried ground is checked against runs from the anchor, so everything that
+ * changed across the intervening attempts counts as changed.
+ */
+export function focusAnchor(state: ImplementState, attempts: readonly UnifiedVerificationAttempt[]): UnifiedVerificationAttempt | null {
+  const required = requiredLanes(state);
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]!;
+    const settled = settledLanes(attempt);
+    if (attempt.error === null && required.every((lane) => settled.includes(lane))) return attempt;
+  }
+  return null;
+}
+
+function focusedObstacle(current: UnifiedVerificationAttempt, anchor: UnifiedVerificationAttempt | null, policySha256: string): string | null {
+  if (anchor === null) return "no earlier attempt settled every lane without error";
+  if (anchor.contractFingerprint === undefined || anchor.reviewPolicySha256 === undefined || anchor.reviewContext?.scope === undefined) return `attempt ${anchor.id} predates scoped review records`;
+  if (anchor.contractFingerprint !== current.contractFingerprint) return `contract inputs changed since attempt ${anchor.id}: PRD, intent, suite ledger or amendments`;
+  if (anchor.reviewPolicySha256 !== policySha256) return `review policy changed since attempt ${anchor.id}`;
   return null;
 }
 
@@ -145,21 +158,21 @@ export function planReview(
       };
     }
   }
-  const prior = reviewPrior(priorAttempts);
-  const roundContext = verificationRoundContext(current.inputManifest, prior);
-  const obstacle = focusedObstacle(state, current, prior, options.policySha256);
+  const anchor = focusAnchor(state, priorAttempts);
+  const obstacle = priorAttempts.length === 0 ? "first review of this run" : focusedObstacle(current, anchor, options.policySha256);
   if (obstacle !== null) {
+    const roundContext = verificationRoundContext(current.inputManifest, reviewPrior(priorAttempts));
     return { record: { mode: "full", reason: obstacle, referenceAttemptId: null, executedLanes: required, carriedLanes: [] }, scope: { mode: "full" }, ledger: options.ledger, reference: null, roundContext };
   }
-  const anchor = prior!;
+  const roundContext = verificationRoundContext(current.inputManifest, anchor!);
   const invalidated = new Set<string>();
   for (const path of roundContext.changedPaths) { invalidated.add(path); invalidated.add(diffChunkPath(path)); }
   for (const entry of roundContext.newEvidence) invalidated.add(entry.path);
-  const anchorAssessments = Object.fromEntries(ROUTINE_REVIEW_ROLES.map((role) => [role, structuredClone(anchor.reviews[role]!.result!.assessments)])) as Record<RoutineReviewRole, ReviewAssessment[]>;
-  const scope: ReviewScope = { mode: "focused", anchorAttemptId: anchor.id, anchorAssessments, invalidatedEvidenceRefs: [...invalidated].sort(), reopenedRequirementRefs: blockingRequirementRefs(options.ledger) };
+  const anchorAssessments = Object.fromEntries(ROUTINE_REVIEW_ROLES.map((role) => [role, structuredClone(anchor!.reviews[role]!.result!.assessments)])) as Record<RoutineReviewRole, ReviewAssessment[]>;
+  const scope: ReviewScope = { mode: "focused", anchorAttemptId: anchor!.id, anchorAssessments, invalidatedEvidenceRefs: [...invalidated].sort(), reopenedRequirementRefs: blockingRequirementRefs(options.ledger) };
   return {
-    record: { mode: "focused", reason: `attempt ${anchor.id} settled every lane on the same contract and policy; ${roundContext.changedPaths.length} path(s) and ${roundContext.newEvidence.length} evidence file(s) changed since`,
-      referenceAttemptId: anchor.id, executedLanes: required, carriedLanes: [] },
+    record: { mode: "focused", reason: `attempt ${anchor!.id} settled every lane on the same contract and policy; ${roundContext.changedPaths.length} path(s) and ${roundContext.newEvidence.length} evidence file(s) changed since`,
+      referenceAttemptId: anchor!.id, executedLanes: required, carriedLanes: [] },
     scope, ledger: options.ledger, reference: anchor, roundContext,
   };
 }
