@@ -178,8 +178,12 @@ export function reconcileParallelReviewFindings(
   results: Record<RoutineReviewRole, ReviewResult | null>,
   attemptId: string,
   at: string,
+  // New finding ids follow this order. A repair round puts the reused role
+  // first so the ids its findings already received, and which the implementor
+  // may already be fixing, come out the same when the ledger is rebuilt.
+  order: readonly RoutineReviewRole[] = ROUTINE_REVIEW_ROLES,
 ): TrackedReviewFinding[] {
-  const available = ROUTINE_REVIEW_ROLES.flatMap((role) => results[role] === null ? [] : [{ role, result: results[role]! }]);
+  const available = order.flatMap((role) => results[role] === null ? [] : [{ role, result: results[role]! }]);
   if (available.length === 0) return structuredClone(tracked) as TrackedReviewFinding[];
   // Validate each result against the original ledger, never another role's writes.
   for (const { result } of available) reconcileReviewFindings(tracked, result, attemptId, at);
@@ -423,4 +427,41 @@ export function reconcileRiskFindings(
   }
 
   return next;
+}
+
+/**
+ * Settle one attempt's lane results into the shared ledgers.
+ *
+ * The base is normally the ledger as it stands, which is what the reviewers
+ * were shown. A repair round is the exception: the ledger already absorbed
+ * the reused role's result once, when that role settled and its peer did
+ * not, so it is rebuilt from the snapshot both roles were shown - otherwise
+ * the reused findings would be entered twice and the peer disposition the
+ * first pass could not record would never be. Rebuilding replaces the
+ * interim "no completed disposition" entries; the attempt that recorded
+ * them keeps its lane records unchanged.
+ */
+export function reconcileAttemptLedger(
+  base: { findings: readonly TrackedReviewFinding[]; riskFindings: readonly TrackedRiskFinding[] },
+  attempt: UnifiedVerificationAttempt,
+  results: { fidelity: ReviewResult | null; code: ReviewResult | null; risk: RiskLaneResult | null },
+  at: string,
+): { findings: TrackedReviewFinding[]; riskFindings: TrackedRiskFinding[] } {
+  const carried = attempt.reviewScope?.mode === "repair" ? attempt.reviewScope.carriedLanes : [];
+  const order = [...ROUTINE_REVIEW_ROLES].sort((left, right) => Number(carried.includes(right)) - Number(carried.includes(left)));
+  return {
+    findings: reconcileParallelReviewFindings(base.findings, { fidelity: results.fidelity, code: results.code }, attempt.id, at, order),
+    riskFindings: results.risk === null ? structuredClone(base.riskFindings) as TrackedRiskFinding[] : reconcileRiskFindings(base.riskFindings, results.risk, attempt.id, at),
+  };
+}
+
+/** The ledger an attempt's reconciliation starts from; see reconcileAttemptLedger. */
+export function reconciliationBase(
+  state: { findings: readonly TrackedReviewFinding[]; riskFindings: readonly TrackedRiskFinding[] },
+  attempt: UnifiedVerificationAttempt,
+): { findings: readonly TrackedReviewFinding[]; riskFindings: readonly TrackedRiskFinding[] } {
+  if (attempt.reviewScope?.mode !== "repair") return state;
+  const snapshot = attempt.reviewContext?.ledgerSnapshot;
+  if (snapshot === undefined) throw new Error(`repair attempt ${attempt.id} has no pinned ledger snapshot`);
+  return snapshot;
 }

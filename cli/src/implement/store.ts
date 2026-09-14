@@ -237,6 +237,23 @@ function assertReviewContext(value: unknown): void {
   for (const [ref, source] of Object.entries(value["humanSources"])) {
     if (ref.trim() === "" || typeof source !== "string") throw new Error(`malformed implement state: ${label}.humanSources must map exact references to source text`);
   }
+  if (value["identity"] !== undefined) assertSha256(value["identity"], `${label}.identity`);
+  if (value["scope"] !== undefined) {
+    const scope = value["scope"];
+    assertRecord(scope, `${label}.scope`);
+    enumValue(scope["mode"], ["full", "focused"], `${label}.scope.mode`);
+    if (scope["mode"] === "focused") {
+      assertString(scope["anchorAttemptId"], `${label}.scope.anchorAttemptId`);
+      assertStringArray(scope["invalidatedEvidenceRefs"], `${label}.scope.invalidatedEvidenceRefs`);
+      assertStringArray(scope["reopenedRequirementRefs"], `${label}.scope.reopenedRequirementRefs`);
+      assertRecord(scope["anchorAssessments"], `${label}.scope.anchorAssessments`);
+      for (const role of ["fidelity", "code"]) array(scope["anchorAssessments"][role], `${label}.scope.anchorAssessments.${role}`);
+    }
+  }
+  if (value["ledgerSnapshot"] !== undefined) {
+    assertRecord(value["ledgerSnapshot"], `${label}.ledgerSnapshot`);
+    for (const field of ["findings", "riskFindings", "claims"]) array(value["ledgerSnapshot"][field], `${label}.ledgerSnapshot.${field}`);
+  }
 }
 
 export function parseImplementState(text: string): ImplementState {
@@ -424,6 +441,21 @@ export function parseImplementState(text: string): ImplementState {
     if (attemptIds.has(attempt.id)) throw new Error("malformed implement state: duplicate verification attempt id");
     attemptIds.add(attempt.id);
     assertSha256(attempt.inputFingerprint, "verificationAttempts[].inputFingerprint");
+    if (attempt.contractFingerprint !== undefined) assertSha256(attempt.contractFingerprint, "verificationAttempts[].contractFingerprint");
+    if (attempt.reviewPolicySha256 !== undefined) assertSha256(attempt.reviewPolicySha256, "verificationAttempts[].reviewPolicySha256");
+    if (attempt.reviewScope !== undefined) {
+      const scope = attempt.reviewScope;
+      assertRecord(scope, "verificationAttempts[].reviewScope");
+      enumValue(scope.mode, ["full", "focused", "repair"], "verificationAttempts[].reviewScope.mode");
+      assertString(scope.reason, "verificationAttempts[].reviewScope.reason");
+      assertNullableString(scope.referenceAttemptId, "verificationAttempts[].reviewScope.referenceAttemptId");
+      for (const field of ["executedLanes", "carriedLanes"] as const) {
+        assertStringArray(scope[field], `verificationAttempts[].reviewScope.${field}`);
+        for (const lane of scope[field]) enumValue(lane, ["fidelity", "code", "risk"], `verificationAttempts[].reviewScope.${field}[]`);
+      }
+      if (scope.mode === "repair" && (scope.referenceAttemptId === null || !attemptIds.has(scope.referenceAttemptId) || scope.carriedLanes.length === 0)) throw new Error("malformed implement state: repair attempt must name an earlier attempt and the lanes reused from it");
+      if (scope.mode !== "repair" && scope.carriedLanes.length !== 0) throw new Error("malformed implement state: only a repair attempt reuses lanes");
+    }
     assertSha256(attempt.sourceFingerprint, "verificationAttempts[].sourceFingerprint");
     assertSha256(attempt.prdSha256, "verificationAttempts[].prdSha256");
     if (attempt.reviewContext === undefined) throw new Error("malformed implement state: verificationAttempts[].reviewContext must be null or an object");
@@ -448,6 +480,16 @@ export function parseImplementState(text: string): ImplementState {
       if (result !== null) {
         assertRecord(result, `verificationAttempts[].${field}`);
         enumValue(result.verdict, ["NOT_RUN", "PASS", "FAIL", "BLOCKED", "ERROR", "STALE"], `verificationAttempts[].${field}.verdict`);
+        if (result.carriedFrom !== undefined) {
+          // A reused lane is that earlier attempt's record byte for byte;
+          // anything else is a rewritten judgment wearing an old invocation id.
+          const origin = candidate.verificationAttempts.find((entry) => entry.id === result.carriedFrom);
+          const lane = field === "risk" ? "risk" : field === "reviews.fidelity" ? "fidelity" : "code";
+          const original = origin === undefined ? undefined : lane === "risk" ? origin.risk : origin.reviews[lane];
+          if (origin === undefined || origin === attempt || attempt.reviewScope?.mode !== "repair" || attempt.reviewScope.referenceAttemptId !== result.carriedFrom || !attempt.reviewScope.carriedLanes.includes(lane)) throw new Error(`malformed implement state: ${field} names a carried origin the attempt's repair record does not`);
+          const { carriedFrom, ...reused } = result;
+          if (original == null || JSON.stringify(reused) !== JSON.stringify(original)) throw new Error(`malformed implement state: carried ${field} differs from attempt ${carriedFrom}`);
+        }
         if (field !== "risk" && result.result === undefined) throw new Error(`malformed implement state: ${field}.result must be null or an object`);
         if (result.result !== null && field !== "risk") {
           if (attempt.reviewContext === null) throw new Error(`malformed implement state: ${field}.result requires its pinned reviewContext`);
@@ -574,10 +616,11 @@ function assertVerificationHistory(held: ImplementState, next: ImplementState): 
   for (const [index, previous] of held.verificationAttempts.entries()) {
     const current = next.verificationAttempts[index]!;
     if (previous.id !== current.id) throw new Error("verification history is append-only; attempts cannot be reordered or replaced");
-    for (const field of ["id", "inputFingerprint", "sourceFingerprint", "prdSha256", "inputManifest", "intentInput", "startedAt"] as const) {
+    for (const field of ["id", "inputFingerprint", "contractFingerprint", "reviewPolicySha256", "sourceFingerprint", "prdSha256", "inputManifest", "intentInput", "startedAt"] as const) {
       if (JSON.stringify(previous[field]) !== JSON.stringify(current[field])) throw new Error(`verification attempt ${previous.id} pinned ${field} is immutable`);
     }
     if (previous.reviewContext !== null && JSON.stringify(previous.reviewContext) !== JSON.stringify(current.reviewContext)) throw new Error(`verification attempt ${previous.id} pinned reviewContext is immutable`);
+    if (previous.reviewScope !== undefined && JSON.stringify(previous.reviewScope) !== JSON.stringify(current.reviewScope)) throw new Error(`verification attempt ${previous.id} recorded reviewScope is immutable`);
     for (const [role, before, after] of [["fidelity", previous.reviews.fidelity, current.reviews?.fidelity], ["code", previous.reviews.code, current.reviews?.code], ["risk", previous.risk, current.risk]] as const) {
       if (before !== null && JSON.stringify(before) !== JSON.stringify(after)) throw new Error(`verification attempt ${previous.id} settled ${role} record is immutable`);
     }

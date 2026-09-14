@@ -11,7 +11,9 @@ import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judgeFailureCause, type JudgeFailureCause } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
-import { reconcileReviewFindings, reconcileParallelReviewFindings, reconcileRiskFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
+import { reconcileAttemptLedger, reconciliationBase, reconcileReviewFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
+import { ledgerSnapshot, planReview, requirementGrounds, reviewPolicySha256, reviewPrior, type ReviewPlan } from "./review-scope";
+import { contractVersion } from "../version";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
@@ -27,7 +29,7 @@ import { DispatchRejected, dispatchImplementor, parseEnvPairs } from "./dispatch
 import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, diffChunkPath, REVIEW_INPUT_PATHS, type ReviewPromptMaterial, type RunOwnedChange, type RunOwnedChangeSet } from "./prompts";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
+import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type ReviewExecutionRecord, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -1046,24 +1048,69 @@ function specGateIsFresh(projectRoot: string, state: ImplementState): boolean {
 }
 
 
-function inputFingerprint(state: ImplementState, sourceDigest: string, intentInput: UnifiedVerificationAttempt["intentInput"]): string {
+/**
+ * Two identities from one set of parts. `input` is the whole pinned input
+ * and keeps its historical layout, so fingerprints already recorded on
+ * active runs stay comparable. `contract` leaves out the source digest and
+ * the registered evidence: when only those two differ between attempts, the
+ * product moved under an unchanged contract, which is what a focused round
+ * requires.
+ */
+function inputIdentity(state: ImplementState, sourceDigest: string, intentInput: UnifiedVerificationAttempt["intentInput"]): { input: string; contract: string } {
   const artifacts = state.artifacts.filter((entry) => entry.command === undefined)
     .map(({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }) => ({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }))
     .sort((a, b) => a.path.localeCompare(b.path));
   const sourcePath = state.prd.sourceIntake && state.prd.sourceIntake != "current conversation" ? normalizeProjectPath(state.projectRoot, state.prd.sourceIntake).absolute : null;
   const sourceIntake = sourcePath === null ? null : sha256(fs.readFileSync(sourcePath));
-  return sha256(JSON.stringify({ schema: state.schema, prd: state.prd.sha256, sourceDigest, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments }));
+  const parts = { schema: state.schema, prd: state.prd.sha256, sourceDigest, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments };
+  const { sourceDigest: _source, artifacts: _artifacts, ...contract } = parts;
+  return { input: sha256(JSON.stringify(parts)), contract: sha256(JSON.stringify(contract)) };
+}
+
+/** The review policy identity; retryBudget is a harness bound, not a review input. */
+function currentReviewPolicy(state: ImplementState, config: ReturnType<typeof loadConfig>): string {
+  const { retryBudget: _budget, ...policy } = config.judge;
+  return reviewPolicySha256(contractVersion(), policy, state.prd.reviewProfile);
 }
 
 function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {
   const slim = <T>(lane: LaneRecord<T> | null) => lane === null ? null : {
     invocationId: lane.invocationId, verdict: lane.verdict, result: lane.result,
     startedAt: lane.startedAt, finishedAt: lane.finishedAt, durationMs: lane.durationMs, error: lane.error,
+    ...(lane.carriedFrom === undefined ? {} : { carriedFrom: lane.carriedFrom }),
   };
   return { id: attempt.id, prdSha256: attempt.prdSha256, reviewContext: attempt.reviewContext, verdict: attempt.verdict, phase: attempt.phase, inputFingerprint: attempt.inputFingerprint,
     sourceFingerprint: attempt.sourceFingerprint, startedAt: attempt.startedAt, finishedAt: attempt.finishedAt,
-    durationMs: attempt.durationMs, prelint: attempt.prelint, mechanical: attempt.mechanical,
+    durationMs: attempt.durationMs, prelint: attempt.prelint, mechanical: attempt.mechanical, reviewScope: attempt.reviewScope ?? null,
     reviews: { fidelity: slim(attempt.reviews.fidelity), code: slim(attempt.reviews.code) }, risk: slim(attempt.risk), error: attempt.error };
+}
+
+/**
+ * The operator's one-line account of an attempt's review: why it was full,
+ * focused or a repair, and where each requirement's current ground was last
+ * actually inspected. Carried counts are named so a round that carried
+ * everything reads as what it is.
+ */
+function reviewScopeLines(state: ImplementState, attempt: UnifiedVerificationAttempt | null): string[] {
+  if (attempt === null || attempt.reviewScope === undefined) return [];
+  const scope = attempt.reviewScope;
+  const lines = [`Review scope: ${scope.mode}${scope.referenceAttemptId ? ` (reference attempt ${scope.referenceAttemptId})` : ""}; ${scope.reason}`];
+  if (scope.mode === "repair") lines.push(`Reused settled lanes: ${scope.carriedLanes.join(", ")}; executed: ${scope.executedLanes.join(", ") || "none"}`);
+  for (const role of ROUTINE_REVIEW_ROLES) {
+    const result = attempt.reviews[role]?.result;
+    if (result === undefined || result === null) continue;
+    const carried = result.assessments.filter((entry) => entry.basis === "carried").length;
+    if (scope.mode !== "full" || carried > 0 || result.scope !== undefined) lines.push(`${role}: ${result.assessments.length - carried} assessment(s) reviewed, ${carried} carried${result.scope?.basis === "widened" ? `; widened: ${result.scope.reason}` : ""}`);
+  }
+  const grounds = requirementGrounds(state, attempt);
+  const reviewedNow = grounds.filter((entry) => entry.reviewedInAttempt === attempt.id).length;
+  const carried = grounds.filter((entry) => entry.reviewedInAttempt !== null && entry.reviewedInAttempt !== attempt.id);
+  const unreviewed = grounds.filter((entry) => entry.reviewedInAttempt === null).length;
+  if (grounds.length > 0 && attempt.reviews.fidelity?.result) {
+    const origins = [...new Set(carried.map((entry) => entry.reviewedInAttempt))].join(", ");
+    lines.push(`Requirement grounds: ${reviewedNow} reviewed in this attempt, ${carried.length} carried from ${origins || "no earlier attempt"}, ${unreviewed} without a current ground`);
+  }
+  return lines;
 }
 
 // Repeating the same preparation failure is bounded separately: it made no
@@ -1165,7 +1212,8 @@ function currentInputs(state: ImplementState) {
   const contract = parseImplementContract(held.text);
   const context = intentSource(state.projectRoot, contract, specGateIsFresh(state.projectRoot, state));
   const intentInput = { routing: context.routing, contentSha256: sha256(context.content) };
-  return { source, held, contract, context, intentInput, fingerprint: inputFingerprint(state, source.digest, intentInput) };
+  const identity = inputIdentity(state, source.digest, intentInput);
+  return { source, held, contract, context, intentInput, fingerprint: identity.input, contractFingerprint: identity.contract };
 }
 
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1181,11 +1229,13 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   if (problems.length > 0) fingerprint = "INPUT_ERROR";
   const detail = publicState(state, config.judge.retryBudget, sourceDigest, fingerprint);
   const currentDelivery = delivery(state, problems.concat((detail.verification as {verdict:string}).verdict === "STALE" ? ["verification is STALE"] : []));
-  return result("status", true, `${state.topicSlug}: ${state.status}`, { ...detail, delivery: currentDelivery, artifactProblems: problems,
+  const latest = state.verificationAttempts.at(-1) ?? null;
+  return result("status", true, `${state.topicSlug}: ${state.status}`, { ...detail, delivery: currentDelivery, artifactProblems: problems, requirementGrounds: requirementGrounds(state),
     herdr: { available: herdr.available, unavailableHoles: (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]), reason: herdr.reason } }, [
       `${state.topicSlug}: ${state.status}; ${(detail.verification as {verdict:string}).verdict}`,
       `Source: ${sourceDigest ?? "unavailable"}; ${state.requirements.length} requirements retained in the contract`,
       `Required suite: ${JSON.stringify(suiteScore(state))}`,
+      ...reviewScopeLines(state, latest),
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent; amend with human approval or finalize blocked" : ""}`,
       ...openFindings(state).map((entry) => `${entry.id} [${entry.kind}] ${entry.problem} - ${entry.nextAction}`),
       ...openRiskFindings(state).map((entry) => `${entry.id} [risk ${entry.severity}] ${entry.text}`),
@@ -1249,7 +1299,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   return result("artifact", true, `${registered.length} run evidence file(s) registered; unchanged bytes retain their original observation time`, { artifacts: registered });
 }
 
-function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt, inputs: ReturnType<typeof currentInputs>): { material: ReviewPromptMaterial; cwd: string; evidencePaths: string[]; images: string[] } {
+function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt, inputs: ReturnType<typeof currentInputs>, plan: ReviewPlan): { material: ReviewPromptMaterial; cwd: string; evidencePaths: string[]; images: string[] } {
   const workRoot = requireWorkRoot(state);
   const changed = changedPathsSince(state.initialSource, inputs.source);
   const currentSource = new Map(inputs.source.entries.map((entry) => [entry.path, entry.sha256]));
@@ -1278,7 +1328,18 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
     if (entry.state !== "present" || entry.sha256 === null) throw new Error(`frozen source has no current bytes: ${entry.path}`);
     copy(workRoot, entry.path, entry.sha256);
   }
-  for (const artifact of state.artifacts) {
+  // A repair round reuses a lane whose result cites the suite logs of the
+  // attempt it ran in. Those logs stay readable and citable here, positioned
+  // as an earlier execution of the same sealed command on the same source,
+  // so the reused result validates against this attempt's references and the
+  // rerun role sees what its peer saw in addition to this attempt's own run.
+  const priorLogs: RegisteredArtifact[] = plan.record.mode === "repair"
+    ? plan.reference!.mechanical.map((run) => ({ kind: "command-log", path: run.logPath, description: `mechanical ${run.status}: ${run.command} (attempt ${plan.reference!.id})`,
+      ...inspectArtifactFile(path.join(state.projectRoot, run.logPath), "log"), registeredAt: run.finishedAt, observedAt: run.finishedAt, sourceDigest: plan.reference!.sourceFingerprint,
+      provenance: `CLI executed ${run.command} in ${run.cwd} during attempt ${plan.reference!.id} on the same source`, command: run.command, cwd: run.cwd, exitCode: run.exitCode }))
+    : [];
+  const artifacts = [...state.artifacts, ...priorLogs.filter((prior) => !state.artifacts.some((entry) => entry.path === prior.path))];
+  for (const artifact of artifacts) {
     if (currentSource.has(artifact.path) && currentSource.get(artifact.path) !== artifact.sha256) {
       throw new Error(`registered source context ${artifact.path} differs from current product source; refresh the shared artifact`);
     }
@@ -1302,20 +1363,30 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   // loop refuses it.
   const generatedDocPaths: string[] = Object.values(REVIEW_INPUT_PATHS);
   const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, ...chunkPaths, ...generatedDocPaths])];
-  const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
+  const ledger = plan.ledger;
+  const openRisks = ledger.riskFindings.filter((entry) => entry.status === "open");
+  const priorRisk: RiskLaneResult | null = ledger.riskFindings.length === 0 ? null : { verdict: openRisks.some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRisks.map(({ id, severity, text }) => ({ id, severity, text })) };
+  const actualEvidenceRefs = [...paths, ...chunkPaths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry));
+  const requirementRefs = [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)];
+  const humanSources = { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) };
+  const priorFindingIds = ledger.findings.filter((entry) => entry.status === "open").map((entry) => entry.id);
+  // The harness's own suite logs are re-executed and renamed every attempt;
+  // everything else the reviewer is shown is what the identity names.
+  const mechanicalLogs = new Set(artifacts.filter((entry) => entry.command !== undefined).map((entry) => entry.path));
+  const identity = sha256(JSON.stringify({ requirementRefs, requiredRequirementRefs: state.requirements.map((entry) => entry.id), evidenceRefs: refs.filter((entry) => !mechanicalLogs.has(entry)),
+    actualEvidenceRefs: actualEvidenceRefs.filter((entry) => !mechanicalLogs.has(entry)), priorFindingIds, humanSources, scope: plan.scope, ledger }));
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
     changedPaths: changed, workspacePaths: [...paths, ...chunkPaths, ...generatedDocPaths], changeSet: diff.changeSet, checks,
-    sourceDigest: attempt.sourceFingerprint, artifacts: state.artifacts,
+    sourceDigest: attempt.sourceFingerprint, artifacts,
     referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
       // Deliberately narrower than `refs`: a generated document is citable but
       // is not implementation material, and the contract already says so
       // ("path metadata alone do not establish implementation").
-      actualEvidenceRefs: [...paths, ...chunkPaths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry)),
-      requirementRefs: [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)], evidenceRefs: refs, priorFindingIds: openFindings(state).map((entry) => entry.id),
-      humanSources: { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) } },
-    priorFindings: state.findings, priorRiskResult: priorRisk,
-    roundContext: attempt.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
-    claims: state.escalations.filter((entry) => entry.diagnosis !== null).map((entry) => ({ origin: "solver", subject: `escalation ${entry.id}`, text: entry.diagnosis! })) };
+      actualEvidenceRefs, requirementRefs, evidenceRefs: refs, priorFindingIds, humanSources,
+      scope: plan.scope, identity, ledgerSnapshot: ledger },
+    priorFindings: ledger.findings, priorRiskResult: priorRisk,
+    roundContext: plan.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
+    claims: ledger.claims };
   const citable = new Set(refs);
   for (const [relative, text] of Object.entries({ ...diff.files, ...reviewInputDocuments(material) })) {
     if (paths.has(relative)) throw new Error(`registered evidence collides with a reserved review document: ${relative}`);
@@ -1345,8 +1416,10 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   try { inputs = currentInputs(state); } catch (error) { preflightError = error; }
   const source = inputs?.source ?? state.initialSource;
   const manifest = verificationInputManifest(state.initialSource, source, state.artifacts);
+  const policySha256 = currentReviewPolicy(state, config);
   const attempt: UnifiedVerificationAttempt = { id: crypto.randomUUID(), inputFingerprint: inputs?.fingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, source: source.digest, invalid: true })),
-    prdSha256: state.prd.sha256, reviewContext: null, sourceFingerprint: source.digest, inputManifest: manifest, roundContext: verificationRoundContext(manifest, state.verificationAttempts.at(-1) ?? null),
+    contractFingerprint: inputs?.contractFingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, invalid: true })), reviewPolicySha256: policySha256,
+    prdSha256: state.prd.sha256, reviewContext: null, sourceFingerprint: source.digest, inputManifest: manifest, roundContext: verificationRoundContext(manifest, reviewPrior(state.verificationAttempts)),
     intentInput: inputs?.intentInput ?? { routing: "full-qa-log", contentSha256: sha256("") }, startedAt: nowIso(), finishedAt: nowIso(), durationMs: 0,
     phase: "preflight", verdict: "NOT_RUN", prelint: { ok: false, findings: [] }, mechanical: [], reviews: { fidelity: null, code: null }, risk: null, error: null };
   const started = Date.now();
@@ -1393,13 +1466,34 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       const integrity = artifactIntegrityProblems(state.projectRoot, state);
       if (integrity.length) throw new Error(integrity.join("; "));
       const active = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
-      const prepared = reviewInputs(state, active, inputs);
+      const currentLedger = ledgerSnapshot(state);
+      let plan = planReview(state, active, { policySha256, ledger: currentLedger, allowRepair: true });
+      let prepared = reviewInputs(state, active, inputs, plan);
+      if (plan.record.mode === "repair" && prepared.material.referenceContext.identity !== plan.reference!.reviewContext!.identity) {
+        // The plan's conditions are the record's account of sameness; the
+        // identity is the input's own. When they disagree the input wins
+        // and every lane runs - a repair is never assumed, only proven.
+        const summary = `repair refused: the prepared review input differs from attempt ${plan.reference!.id}; every lane runs`;
+        update((fresh) => { fresh.deviations.push({ at: nowIso(), type: "repair-refused", summary }); });
+        plan = planReview(state, active, { policySha256, ledger: currentLedger, allowRepair: false });
+        prepared = reviewInputs(state, active, inputs, plan);
+      }
       const referenceContext = prepared.material.referenceContext;
-      active.roundContext.requirementRefs = [...referenceContext.requirementRefs]; active.roundContext.evidenceRefs = [...referenceContext.evidenceRefs];
+      const executed = new Set(plan.record.executedLanes);
+      active.roundContext = { ...plan.roundContext, requirementRefs: [...referenceContext.requirementRefs], evidenceRefs: [...referenceContext.evidenceRefs] };
       const reviewTexts = { fidelity: reviewPrompt(prepared.material, "fidelity"), code: reviewPrompt(prepared.material, "code") };
-      const priorFindings = structuredClone(state.findings);
-      const riskText = state.prd.reviewProfile === "high-risk" ? riskPrompt(prepared.material) : null;
-      phase = "review"; update((_fresh, held) => { held.phase = phase; held.roundContext = active.roundContext; held.reviewContext = structuredClone(referenceContext); });
+      const priorFindings = structuredClone(plan.ledger.findings);
+      const riskText = executed.has("risk") ? riskPrompt(prepared.material) : null;
+      const reference = plan.reference;
+      phase = "review"; update((_fresh, held) => {
+        held.phase = phase; held.roundContext = active.roundContext; held.reviewContext = structuredClone(referenceContext); held.reviewScope = structuredClone(plan.record);
+        // Reused lanes are recorded before any fresh lane starts, so an
+        // interruption after this point still shows which judgments this
+        // attempt rests on and where they came from.
+        for (const role of ROUTINE_REVIEW_ROLES) if (plan.record.carriedLanes.includes(role)) held.reviews[role] = { ...structuredClone(reference!.reviews[role]!), carriedFrom: reference!.id };
+        if (plan.record.carriedLanes.includes("risk")) held.risk = { ...structuredClone(reference!.risk!), carriedFrom: reference!.id };
+      });
+      progress(`review ${plan.record.mode}: ${plan.record.reason}; executing ${plan.record.executedLanes.join(", ")}${plan.record.carriedLanes.length > 0 ? `; reusing ${plan.record.carriedLanes.join(", ")} from attempt ${reference!.id}` : ""}`);
       const options = { cwd: prepared.cwd, agentic: true, explore: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
       const validate = (role: RoutineReviewRole) => (value: unknown): ImplementationReviewResult | string => {
         const parsed = validateImplementationReviewResult(value, referenceContext, role);
@@ -1408,18 +1502,24 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
         catch (error) { return error instanceof Error ? error.message : String(error); }
         return parsed;
       };
+      const carriedLane = <T>(lane: "fidelity" | "code" | "risk"): LaneRecord<T> => {
+        const held = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
+        return (lane === "risk" ? held.risk : held.reviews[lane]) as LaneRecord<T>;
+      };
       // Two real executions replace the general review, under one lease and
       // budget. Persist each settlement even if its sibling is still running.
       const routine = async (role: RoutineReviewRole) => {
+        if (!executed.has(role)) return carriedLane<ImplementationReviewResult>(role);
         const lane = await judgeLane(crypto.randomUUID(), () => runJudge(config, `implement:${role}`, "routine", reviewTexts[role], validate(role),
           { ...options, execution: executionHooks() }), (value) => value.findings.some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) ? "FAIL" : "PASS");
         update((_fresh, held) => { held.reviews[role] = lane; });
         return lane;
       };
+      const nextRiskId = Math.max(0, ...plan.ledger.riskFindings.map((entry) => Number(entry.id.slice(2)))) + 1;
       const settled = await Promise.allSettled([
         routine("fidelity"), routine("code"),
-        riskText === null ? Promise.resolve(null) : judgeLane(crypto.randomUUID(), () => runJudge(config, "implement:risk", "high-risk", riskText,
-          (value) => validateRiskVerdict(value, prepared.material.priorRiskResult ?? null, active.roundContext, Math.max(0, ...state.riskFindings.map((entry) => Number(entry.id.slice(2)))) + 1), { ...options, execution: executionHooks() })).then((lane) => {
+        riskText === null ? Promise.resolve(plan.record.carriedLanes.includes("risk") ? carriedLane<RiskLaneResult>("risk") : null) : judgeLane(crypto.randomUUID(), () => runJudge(config, "implement:risk", "high-risk", riskText,
+          (value) => validateRiskVerdict(value, prepared.material.priorRiskResult ?? null, active.roundContext, nextRiskId), { ...options, execution: executionHooks() })).then((lane) => {
             update((_fresh, held) => { held.risk = lane; });
             return lane;
           }),
@@ -1431,8 +1531,8 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
         return entry.value;
       }) as [LaneRecord<ImplementationReviewResult>, LaneRecord<ImplementationReviewResult>, LaneRecord<RiskLaneResult> | null];
       update((fresh, held) => {
-        fresh.findings = reconcileParallelReviewFindings(priorFindings, { fidelity: fidelity.result, code: code.result }, attempt.id, nowIso());
-        if (riskResult?.result) fresh.riskFindings = reconcileRiskFindings(fresh.riskFindings, riskResult.result, attempt.id, nowIso());
+        const ledgers = reconcileAttemptLedger(reconciliationBase(fresh, held), held, { fidelity: fidelity.result, code: code.result, risk: riskResult?.result ?? null }, nowIso());
+        fresh.findings = ledgers.findings; fresh.riskFindings = ledgers.riskFindings;
         const errors = [fidelity.error, code.error, riskResult?.error].filter((entry) => entry != null);
         held.verdict = errors.length > 0 ? "ERROR" : openFindings(fresh).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) || openRiskFindings(fresh).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS";
         held.error = errors.length > 0 ? { stage: "review", code: "judge-error", message: errors.map((entry) => entry!.message).join("; ") } : null;
@@ -1457,7 +1557,9 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   });
   const final = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
   progress(`verification ${final.verdict}; ${(final.durationMs / 1000).toFixed(1)}s`);
-  return result("verify", final.verdict === "PASS", `verification ${final.verdict}; ${state.status} run retained${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget)) ? `; ${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget))}` : ""}`, { attempt: attemptSummary(final), findings: openFindings(state), riskFindings: openRiskFindings(state), verificationBudget: verificationBudget(state, config.judge.retryBudget) });
+  const message = `verification ${final.verdict}; ${state.status} run retained${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget)) ? `; ${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget))}` : ""}`;
+  return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), findings: openFindings(state), riskFindings: openRiskFindings(state), verificationBudget: verificationBudget(state, config.judge.retryBudget), requirementGrounds: requirementGrounds(state, final) },
+    [message, ...reviewScopeLines(state, final), ...openFindings(state).map((entry) => `${entry.id} [${entry.kind}] ${entry.problem} - ${entry.nextAction}`)]);
 }
 
 const RECEIPT_SCHEMA = "sasu.implement.receipt.v6";
@@ -1505,7 +1607,7 @@ function receiptData(state: ImplementState, source: ReturnType<typeof captureSou
     prdJudge: state.prd.judge, baselineAttribution: state.baselineAttribution, completedAt: completion.completedAt,
     completionFingerprint: completion.fingerprint, sourceFingerprint: source?.digest ?? null, sourceAvailability: source === null ? "unavailable" : "captured", inputFingerprint: latest.inputFingerprint,
     verificationAttemptId: latest.id, prdSha256: latest.prdSha256, reviewContext: latest.reviewContext, unifiedVerdict: latest.verdict, phase: latest.phase, error: latest.error,
-    reviews: attemptSummary(latest).reviews, risk: attemptSummary(latest).risk,
+    reviews: attemptSummary(latest).reviews, risk: attemptSummary(latest).risk, reviewScope: latest.reviewScope ?? null, requirementGrounds: requirementGrounds(state, latest),
     mechanical: latest.mechanical, artifacts: state.artifacts, findings: state.findings, humanConfirmations: humanConfirmations(state), riskFindings: state.riskFindings,
     suite: state.suite, ownedFiles: source ? changedPathsSince(state.initialSource, source) : [], requirementCount: state.requirements.length,
     verificationBudget: verificationBudget(state, loadConfig(state.projectRoot).judge.retryBudget), openItems,
@@ -1517,7 +1619,8 @@ function implementationReport(state: ImplementState, receipt: ReturnType<typeof 
   const latest = state.verificationAttempts.at(-1)!;
   return ["# Implementation result", "", `Status: ${state.status}.`, `PRD: ${state.prdPath}.`,
     `Source: ${receipt.sourceFingerprint}.`, `Verification attempt: ${latest.id}.`, "", "## Result", "",
-    ...ROUTINE_REVIEW_ROLES.map((role) => `${role}: ${latest.reviews[role]?.result?.summary ?? "Independent review was not completed."}`),
+    ...ROUTINE_REVIEW_ROLES.map((role) => `${role}: ${latest.reviews[role]?.result?.summary ?? "Independent review was not completed."}${latest.reviews[role]?.carriedFrom ? ` (settled in attempt ${latest.reviews[role]!.carriedFrom} on this same input)` : ""}`),
+    ...reviewScopeLines(state, latest),
     "", "## Actual verification", "", ...(latest.mechanical.length === 0 ? ["No required project suite was configured or detected; no suite execution is claimed."] : latest.mechanical.map((entry) => `- ${entry.status}: ${entry.command} (cwd ${entry.cwd}, exit ${entry.exitCode}, ${entry.durationMs} ms); ${entry.logPath}`)),
     "", ...state.artifacts.filter((entry) => entry.command === undefined).map((entry) => `- [${entry.description}](${entry.path}), collected ${entry.observedAt}; ${entry.provenance}${entry.target ? `; target ${entry.target}` : ""}${entry.environment ? `; environment ${entry.environment}` : ""}`),
     "", "## Review and remaining findings", "", ...state.findings.map((entry) => `- ${entry.id} [${entry.kind}, ${entry.status}] ${entry.requirementRefs.join(", ")}: ${entry.problem} ${entry.nextAction}`),

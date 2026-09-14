@@ -30,7 +30,11 @@ function artifactPosition(artifact: RegisteredArtifact, checks: ReviewPromptMate
   const source = artifact.sourceDigest === undefined
     ? "source at registration unrecorded"
     : artifact.sourceDigest === sourceDigest ? "registered on the source under review" : `registered on an earlier product source (digest ${artifact.sourceDigest.slice(0, 12)}, not the one under review)`;
-  if (artifact.command !== undefined) return `this attempt's own harness execution; ${source}`;
+  if (artifact.command !== undefined) {
+    return checks.some((check) => check.logPath === artifact.path)
+      ? `this attempt's own harness execution; ${source}`
+      : `an earlier attempt's harness execution of the same sealed command; ${source}`;
+  }
   if (checks.length === 0) return `no harness execution in this attempt to compare against; ${source}`;
   const executionStart = Math.min(...checks.map((check) => Date.parse(check.startedAt)));
   const delta = executionStart - Date.parse(artifact.observedAt);
@@ -220,7 +224,31 @@ function contractDocument(material: ReviewPromptMaterial): string {
   return material.prdText;
 }
 
-function contextDocument(material: ReviewPromptMaterial): string {
+/**
+ * The role's own settled grounds at the anchor, each marked by the harness
+ * against the change set. Reviewer-authored text, so it travels inside the
+ * quoted context document as data. Only the role's own assessments appear:
+ * the peer's remain unseen, as in every other round.
+ */
+function anchorGroundsDocument(material: ReviewPromptMaterial, role: RoutineReviewRole | undefined): string {
+  const scope = material.referenceContext.scope;
+  if (role === undefined || scope === undefined || scope.mode !== "focused") return "";
+  const rows = scope.anchorAssessments[role].map((entry, index) => {
+    const invalidated = entry.evidenceRefs.filter((ref) => scope.invalidatedEvidenceRefs.includes(ref));
+    const reopened = entry.requirementRefs.filter((ref) => scope.reopenedRequirementRefs.includes(ref));
+    const position = entry.conclusion !== "satisfied" ? `${entry.conclusion}; re-review`
+      : invalidated.length > 0 ? `cites changed evidence (${invalidated.join(", ")}); re-review`
+      : reopened.length > 0 ? `named by an open blocking finding (${reopened.join(", ")}); re-review`
+      : "cited evidence unchanged; may be carried only if the changes cannot reach it";
+    return `${index + 1}. requirementRefs=${JSON.stringify(entry.requirementRefs)} conclusion=${entry.conclusion}${entry.basis === "carried" ? " (itself carried)" : ""}\n   evidenceRefs=${JSON.stringify(entry.evidenceRefs)}\n   harness position: ${position}\n   rationale: ${entry.rationale}`;
+  });
+  return `
+
+YOUR OWN ${role.toUpperCase()} GROUNDS AT ANCHOR ATTEMPT ${scope.anchorAttemptId} (harness-marked; the peer role's grounds are not shown):
+${rows.length === 0 ? "- none" : rows.join("\n")}`;
+}
+
+function contextDocument(material: ReviewPromptMaterial, role: RoutineReviewRole | undefined): string {
   const context = material.roundContext;
   // The amended level-test intake was 52,731 bytes and appeared twice in
   // this document. Keep its exact text once while retaining every sourceRef
@@ -255,7 +283,28 @@ Prior attempt: ${context.priorAttemptId ?? "none"}
 Changed paths since that attempt:
 ${pathList(context.changedPaths)}
 New or replaced evidence since that attempt:
-${context.newEvidence.length === 0 ? "- none" : context.newEvidence.map((entry) => `- ${entry.path} sha256=${entry.sha256}`).join("\n")}`;
+${context.newEvidence.length === 0 ? "- none" : context.newEvidence.map((entry) => `- ${entry.path} sha256=${entry.sha256}`).join("\n")}${anchorGroundsDocument(material, role)}`;
+}
+
+/**
+ * The harness's own instructions for a focused round. Harness voice, outside
+ * the quoted documents. The order matters: trace first, carry last, and the
+ * widening rule names the categories whose reach a diff does not show -
+ * shared runtime, dependencies, configuration, build and verification
+ * tooling - because a two-line change there is a whole-product change.
+ */
+function scopeInstructions(material: ReviewPromptMaterial): string {
+  const scope = material.referenceContext.scope;
+  if (scope === undefined || scope.mode !== "focused") return "";
+  const context = material.roundContext;
+  return `
+REVIEW SCOPE (this is the harness speaking): focused round after anchor attempt ${scope.anchorAttemptId}, which settled your role on the same contract and review policy.
+- Changed since the anchor: ${context.changedPaths.length} product path(s) and ${context.newEvidence.length} evidence file(s), listed in REVIEW HISTORY CONTEXT; their change chunks carry the hunks.
+- First read every change chunk, then follow each changed file's callers, importers, dependents and error paths through the frozen source. Re-review every requirement those paths serve, every requirement named by an open blocking finding, and every prior ground the harness marked re-review.
+- A prior ground marked "may be carried" may be restated with "basis": "carried" only after that trace shows the changes cannot reach its requirements; cite the same or fewer evidence references as the anchor assessment. An omitted basis means reviewed.
+- If a change touches shared runtime, a dependency manifest or lockfile, configuration, build or verification tooling, a widely imported module, or if you cannot bound its reach from the frozen source, set "scope": {"basis": "widened", "reason": ...} and review the whole contract with no carried grounds. When unsure, widen.
+- The complete frozen source stays available; a focused round narrows where you start, never what you may read or what counts as a defect.
+`;
 }
 
 function evidenceDocument(material: ReviewPromptMaterial): string {
@@ -302,9 +351,9 @@ function chunkBatchExample(material: ReviewPromptMaterial): string {
   return paths.length < 2 ? "" : paths.join(" ");
 }
 
-function sharedInput(material: ReviewPromptMaterial): string {
+function sharedInput(material: ReviewPromptMaterial, role: RoutineReviewRole | undefined = undefined): string {
   const contract = contractDocument(material);
-  const context = contextDocument(material);
+  const context = contextDocument(material, role);
   const evidence = evidenceDocument(material);
   const changes = changeIndexDocument(material);
   const token = boundaryToken([contract, context, evidence, changes]);
@@ -329,7 +378,7 @@ HOW TO USE THE QUOTED MATERIAL (this is the harness speaking, not the documents)
 - An empty execution list is not "tests all passed". A producer's description of a capture is a claim, not proof of what it shows; read the named evidence files and inspect attached screenshots when a conclusion depends on them.
 - Where the change index reports an unavailable baseline, do not infer unchanged behavior or a complete deletion review for that path.
 - Each chunk holds one file's complete hunks, including deleted files and deleted lines; together they are the whole run-owned diff. The index sizes are enough to choose files, and a chunk you do not open is a chunk you did not need.${chunkBatchExample(material) === "" ? "" : `\n- Read several chunks per command rather than one at a time: name several chunk paths in a single read, for example these together in one command:\n  ${chunkBatchExample(material)}`}
-
+${scopeInstructions(material)}
 FIXED REVIEW WORKSPACE:
 The documents above are quoted in full here and are not files; do not look for them in the workspace. The disposable workspace holds the frozen product source, the registered evidence files named above, the run-owned change chunks named above, and a complete path index at ${REVIEW_INPUT_PATHS.sourceIndex}. Select and explore related source yourself; no implementer-selected source-context artifact is required.
 1. Read the change chunks the contract makes relevant, several per command.
@@ -380,10 +429,10 @@ REVIEW RESPONSIBILITY:
 - Payment, destructive actions, deployment permission, unresolved product policy and needed access are prerequisites. Never convert an unresolved defect or unavailable evidence into later human confirmation.
 
 ${JSON_RULE}
-${implementationReviewSchema(role)}
+${implementationReviewSchema(role, material.referenceContext.scope)}
 ${role === "fidelity" ? `REQUIRED FIDELITY REFERENCES (cover every entry exactly once, grouping shared grounds):\n${pathList(material.referenceContext.requiredRequirementRefs)}` : ""}
 
-${sharedInput(material)}`;
+${sharedInput(material, role)}`;
 }
 
 export function riskPrompt(material: ReviewPromptMaterial): string {

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import { loadState, nowIso, persistState, StateConflictError } from "./store";
-import { reconcileParallelReviewFindings, reconcileRiskFindings } from "./convergence";
+import { reconcileAttemptLedger, reconciliationBase } from "./convergence";
 import type { ImplementState, UnifiedVerificationAttempt } from "./types";
 
 export function preserveSettledFindings(state: ImplementState, attempt: UnifiedVerificationAttempt, at: string): void {
@@ -9,10 +9,11 @@ export function preserveSettledFindings(state: ImplementState, attempt: UnifiedV
   // owner died before that write; retain any independently settled exceptions
   // so the next repair cannot forget them. Never apply a settled round twice.
   if (attempt.verdict !== "NOT_RUN") return;
-  state.findings = reconcileParallelReviewFindings(state.findings, {
-    fidelity: attempt.reviews.fidelity?.result ?? null, code: attempt.reviews.code?.result ?? null,
-  }, attempt.id, at);
-  if (attempt.risk?.result) state.riskFindings = reconcileRiskFindings(state.riskFindings, attempt.risk.result, attempt.id, at);
+  const settled = reconcileAttemptLedger(reconciliationBase(state, attempt), attempt, {
+    fidelity: attempt.reviews.fidelity?.result ?? null, code: attempt.reviews.code?.result ?? null, risk: attempt.risk?.result ?? null,
+  }, at);
+  state.findings = settled.findings;
+  state.riskFindings = settled.riskFindings;
 }
 
 /**

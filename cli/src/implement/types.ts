@@ -161,22 +161,89 @@ export interface LaneRecord<T> {
   result: T | null;
   judge: JudgeCallRecord | null;
   error: JudgeLaneError | null;
-  // Names the ERROR'd attempt this settled lane was carried over from.
+  /**
+   * The attempt this settled lane was reused from, on a repair round. The
+   * invocation, result and judge record are that attempt's, byte for byte;
+   * only the attempt that reads them is new. Absent on a lane this attempt
+   * executed itself.
+   */
+  carriedFrom?: string;
 }
 
 export type RoutineReviewRole = "fidelity" | "code";
 export const ROUTINE_REVIEW_ROLES: readonly RoutineReviewRole[] = ["fidelity", "code"];
+export type VerificationLane = RoutineReviewRole | "risk";
+/**
+ * Where an assessment's grounds come from. `reviewed` is this attempt's own
+ * inspection; `carried` restates a satisfied ground the same role settled at
+ * the focused round's anchor attempt, on evidence whose bytes have not changed
+ * since. Absent means `reviewed`: a reviewer that ignores the scoping and
+ * re-reviews everything is producing a full review, which is always
+ * acceptable, so the harness only has to check what a reviewer explicitly
+ * claims to have skipped.
+ */
+export type AssessmentBasis = "reviewed" | "carried";
 export interface ReviewAssessment {
   requirementRefs: string[];
   conclusion: "satisfied" | "unresolved" | "pending-human";
   rationale: string;
   evidenceRefs: string[];
+  basis?: AssessmentBasis;
 }
-export interface ImplementationReviewResult extends ReviewResult { assessments: ReviewAssessment[] }
+/** The reviewer's own account of how far a focused round actually reached. */
+export interface ReviewScopeDeclaration { basis: "focused" | "widened"; reason: string }
+export interface ImplementationReviewResult extends ReviewResult { assessments: ReviewAssessment[]; scope?: ReviewScopeDeclaration }
+/**
+ * What a focused round may build on, pinned with the attempt so the record
+ * that accepted a carried ground also holds the ground it was carried from
+ * and the change set it was checked against.
+ */
+export interface FocusedReviewScope {
+  mode: "focused";
+  anchorAttemptId: string;
+  /** Each role's settled assessments at the anchor; a role may carry only from its own. */
+  anchorAssessments: Record<RoutineReviewRole, ReviewAssessment[]>;
+  /** References whose bytes differ from the anchor: changed product paths, their change chunks, and new or replaced evidence. */
+  invalidatedEvidenceRefs: string[];
+  /** Requirements named by open blocking findings at review start; these are re-reviewed, never carried. */
+  reopenedRequirementRefs: string[];
+}
+export type ReviewScope = { mode: "full" } | FocusedReviewScope;
+/**
+ * The findings, risk ledger and attributed claims exactly as the reviewers of
+ * one attempt were shown them, before that attempt's own reconciliation. A
+ * repair round hands the same bytes to the role that failed, so the role that
+ * settled and the role that is rerun judged one input and neither saw the
+ * other's verdict.
+ */
+export interface ReviewLedgerSnapshot {
+  findings: TrackedReviewFinding[];
+  riskFindings: TrackedRiskFinding[];
+  claims: Array<{ origin: ClaimOrigin; subject: string; text: string }>;
+}
 export interface ImplementationReviewContext extends ReviewValidationContext {
   requiredRequirementRefs: readonly string[];
   actualEvidenceRefs: readonly string[];
   humanSources: Readonly<Record<string, string>>;
+  /** Absent only on records made before scoped review existed; those attempts were full reviews. */
+  scope?: ReviewScope;
+  /**
+   * sha256 of this context minus the harness's own suite logs, which are
+   * re-executed and renamed on every attempt. Two attempts with equal
+   * identities showed their reviewers the same contract, source, evidence,
+   * findings and scope; that equality is what licenses a repair round.
+   */
+  identity?: string;
+  ledgerSnapshot?: ReviewLedgerSnapshot;
+}
+/** How one attempt chose to spend its review, recorded for the operator and the receipt. */
+export interface ReviewExecutionRecord {
+  mode: "full" | "focused" | "repair";
+  reason: string;
+  /** focused: the anchor whose grounds may be carried; repair: the attempt whose settled lanes are reused. */
+  referenceAttemptId: string | null;
+  executedLanes: VerificationLane[];
+  carriedLanes: VerificationLane[];
 }
 export type RoutineReviews = Record<RoutineReviewRole, LaneRecord<ImplementationReviewResult> | null>;
 
@@ -185,6 +252,19 @@ export interface UnifiedVerificationAttempt {
   prdSha256: string;
   reviewContext: ImplementationReviewContext | null;
   inputFingerprint: string;
+  /**
+   * The input identity without source and registered evidence: schema, PRD,
+   * intent, suite ledger and amendments. Equal contract fingerprints across
+   * two attempts mean only the product and its observations moved, which is
+   * the precondition for reviewing the delta rather than the whole.
+   */
+  contractFingerprint?: string;
+  /**
+   * sha256 of what shaped the review policy: the CLI contract version, the
+   * judge routing configuration and the run's review profile. A settled
+   * judgment is reused or built on only under the policy that produced it.
+   */
+  reviewPolicySha256?: string;
   sourceFingerprint: string;
   inputManifest: VerificationInputManifest;
   roundContext: VerificationRoundContext;
@@ -198,6 +278,8 @@ export interface UnifiedVerificationAttempt {
   mechanical: MechanicalRunRecord[];
   reviews: RoutineReviews;
   risk: LaneRecord<RiskLaneResult> | null;
+  /** Absent on records made before scoped review existed; those attempts reviewed in full. */
+  reviewScope?: ReviewExecutionRecord;
   error: { stage: string; code: string; message: string } | null;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
