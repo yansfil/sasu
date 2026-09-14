@@ -60,7 +60,17 @@ test("thirty requirements receive grouped evidence grounds in independent review
   assert.deepEqual(attempt.reviews.code.result.assessments[0].requirementRefs, [], "code-wide grounds do not repeat Fidelity accounting");
   assert.equal(attempt.mechanical.length, 1);
   assert.equal(attempt.mechanical[0].exitCode, 0);
-  assert.ok(fs.readFileSync(path.join(root, attempt.mechanical[0].logPath), "utf8").includes("REAL-SUITE-OUTPUT"));
+  const mechanicalLog = fs.readFileSync(path.join(root, attempt.mechanical[0].logPath), "utf8");
+  assert.ok(mechanicalLog.includes("REAL-SUITE-OUTPUT"));
+  const tmpdir = mechanicalLog.match(/^tmpdir: (.+)$/m)?.[1];
+  assert.ok(tmpdir !== undefined && !tmpdir.startsWith(root) && !fs.existsSync(tmpdir), `the log names the batch TMPDIR, which lived outside the run directory and is gone: ${tmpdir}`);
+  // Every artifact says which product source it was registered on, and the
+  // reviewer is told where each stands against this attempt's execution.
+  for (const artifact of state.artifacts) assert.equal(artifact.sourceDigest, attempt.sourceFingerprint, artifact.path);
+  const fidelityPrompt = fs.readFileSync(path.join(env.SASU_JUDGE_STUB_CAPTURE_DIR, "implement_fidelity.prompt.txt"), "utf8");
+  assert.ok(fidelityPrompt.includes(`SOURCE UNDER REVIEW: product digest ${attempt.sourceFingerprint}`));
+  assert.match(fidelityPrompt, /position: observed \d+h \d+m BEFORE this attempt's harness execution began; registered on the source under review/, "the fixture observation collected on 2026-09-08 predates the execution");
+  assert.match(fidelityPrompt, /position: this attempt's own harness execution; registered on the source under review/);
   for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result, reviewWithAssessments(root, REVIEW_PASS, role));
   const finalized = ok(run(root, ["implement", "finalize"]));
   const receipt = JSON.parse(fs.readFileSync(path.join(root, finalized.detail.completion.receiptPath), "utf8"));

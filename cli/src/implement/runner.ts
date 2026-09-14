@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { executeMechanicalArgv, type MechanicalExecution } from "../mechanical";
 import { captureSourceSnapshot } from "./store";
@@ -179,6 +180,8 @@ export interface RunUnitResult {
   stdout: string;
   stderr: string;
   tree: ExecutionTreeFingerprint;
+  /** The TMPDIR the command ran under; removed with the batch, named in its log. */
+  tmpdir: string;
 }
 
 /** The active sealed suite as run units, in sealed order. */
@@ -199,14 +202,22 @@ export function treeFingerprint(_state: ImplementState, workRoot: string): Execu
  * The scrubbed environment every mechanical command runs under: no shell
  * and none of the agent process's credential-bearing environment. The suite
  * used to get both; unifying on the stricter side is the point of one runner.
+ *
+ * TMPDIR is the batch's own short directory under the host temp root (see
+ * suiteTmpDir), not `<runDir>/suite-runtime/tmp` like HOME and the cache.
+ * A Unix socket path fits in sun_path, 104 bytes on macOS and 108 on Linux,
+ * and the run directory alone was 113 bytes in the 2026-09-14 herdr run, so
+ * every socket a test bound under TMPDIR failed with "local socket name
+ * length exceeds capacity of sun_path of sockaddr_un" before a single byte
+ * of product behavior was exercised (issue #2). HOME and the cache stay
+ * where they were: nothing binds a socket under them and their contents are
+ * worth keeping across attempts.
  */
-export function runtimeEnv(state: ImplementState): NodeJS.ProcessEnv {
+export function runtimeEnv(state: ImplementState, runtimeTmp: string): NodeJS.ProcessEnv {
   const runtimeRoot = path.join(state.projectRoot, state.runDir, "suite-runtime");
   const runtimeHome = path.join(runtimeRoot, "home");
-  const runtimeTmp = path.join(runtimeRoot, "tmp");
   const runtimeCache = path.join(runtimeRoot, "cache");
   fs.mkdirSync(runtimeHome, { recursive: true });
-  fs.mkdirSync(runtimeTmp, { recursive: true });
   fs.mkdirSync(runtimeCache, { recursive: true });
   return {
     PATH: process.env.PATH ?? "",
@@ -223,15 +234,26 @@ export function runtimeEnv(state: ImplementState): NodeJS.ProcessEnv {
   };
 }
 
+/**
+ * A fresh private TMPDIR for one batch, created here and removed by the batch
+ * that ran under it. The host temp root keeps the path short (49 bytes on
+ * macOS, 4 on Linux) and the `sasu-suite-` prefix names the owner of anything
+ * a killed batch leaves behind for the OS temp cleaner.
+ */
+export function suiteTmpDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "sasu-suite-"));
+}
+
 export async function executeUnit(
   state: ImplementState,
   workRoot: string,
   unit: Pick<RunUnit, "argv" | "cwd">,
   timeoutMs: number,
+  runtimeTmp: string,
   onSpawn?: (pid: number) => void,
 ): Promise<{ execution: MechanicalExecution; mutatedTree: boolean; tree: ExecutionTreeFingerprint }> {
   const before = captureSourceSnapshot(workRoot).digest;
-  const execution = await executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state), onSpawn);
+  const execution = await executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state, runtimeTmp), onSpawn);
   const tree = treeFingerprint(state, workRoot);
   // A command that rewrites the tree it is being judged on has moved the
   // goalposts mid-measurement: its own exit code no longer describes the tree
@@ -273,30 +295,36 @@ export async function runBatch(
 ): Promise<BatchOutcome> {
   const before = captureSourceSnapshot(workRoot).digest;
   const results: RunUnitResult[] = [];
-  for (const unit of units) {
-    const started = Date.now();
-    const startedAt = new Date().toISOString();
-    execution?.prepare();
-    let measured: Awaited<ReturnType<typeof executeUnit>>;
-    try { measured = await executeUnit(state, workRoot, unit, timeoutMs, execution?.spawned); }
-    finally { execution?.settled(); }
-    const { execution: executed, mutatedTree, tree } = measured;
-    const result: RunUnitResult = {
-      unit,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - started,
-      exitCode: executed.exitCode,
-      timedOut: executed.timedOut,
-      signal: executed.signal,
-      mutatedTree,
-      outcome: mechanicalOutcome({ exitCode: executed.exitCode, timedOut: executed.timedOut, signal: executed.signal, mutatedTree }),
-      stdout: executed.stdout,
-      stderr: `${executed.stderr}${executed.timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : ""}${mutatedTree ? "\n[sasu] command changed judged source files and was rejected" : ""}`,
-      tree,
-    };
-    results.push(result);
-    onResult?.(result);
+  const tmpdir = suiteTmpDir();
+  try {
+    for (const unit of units) {
+      const started = Date.now();
+      const startedAt = new Date().toISOString();
+      execution?.prepare();
+      let measured: Awaited<ReturnType<typeof executeUnit>>;
+      try { measured = await executeUnit(state, workRoot, unit, timeoutMs, tmpdir, execution?.spawned); }
+      finally { execution?.settled(); }
+      const { execution: executed, mutatedTree, tree } = measured;
+      const result: RunUnitResult = {
+        unit,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - started,
+        exitCode: executed.exitCode,
+        timedOut: executed.timedOut,
+        signal: executed.signal,
+        mutatedTree,
+        outcome: mechanicalOutcome({ exitCode: executed.exitCode, timedOut: executed.timedOut, signal: executed.signal, mutatedTree }),
+        stdout: executed.stdout,
+        stderr: `${executed.stderr}${executed.timedOut ? `\n[sasu] command timed out after ${timeoutMs}ms` : ""}${mutatedTree ? "\n[sasu] command changed judged source files and was rejected" : ""}`,
+        tree,
+        tmpdir,
+      };
+      results.push(result);
+      onResult?.(result);
+    }
+  } finally {
+    fs.rmSync(tmpdir, { recursive: true, force: true });
   }
   const after = captureSourceSnapshot(workRoot).digest;
   return { results, treeMoved: before === after ? null : { before, after } };

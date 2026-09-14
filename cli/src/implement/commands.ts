@@ -842,6 +842,7 @@ function writeMechanicalLog(
   run: Omit<MechanicalRunRecord, "logPath">,
   stdout: string,
   stderr: string,
+  tmpdir: string,
 ): string {
   const key = sha256(`${run.startedAt}\0${run.cwd}\0${run.command}`).slice(0, 16);
   const relative = `${state.runDir}/artifacts/logs/mechanical-${key}.log`;
@@ -849,6 +850,7 @@ function writeMechanicalLog(
   writeTextAtomic(absolute, [
     `command: ${run.command}`,
     `cwd: ${run.cwd}`,
+    `tmpdir: ${tmpdir}`,
     `startedAt: ${run.startedAt}`,
     `finishedAt: ${run.finishedAt}`,
     `durationMs: ${run.durationMs}`,
@@ -864,7 +866,7 @@ function writeMechanicalLog(
   return relative;
 }
 
-function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord, projectRoot: string): void {
+function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord, projectRoot: string, sourceDigest: string): void {
   const inspected = inspectArtifactFile(path.join(projectRoot, run.logPath), "log");
   const artifact: RegisteredArtifact = {
     kind: "command-log",
@@ -873,6 +875,7 @@ function upsertCommandArtifacts(state: ImplementState, run: MechanicalRunRecord,
     ...inspected,
     registeredAt: run.finishedAt,
     observedAt: run.finishedAt,
+    sourceDigest,
     provenance: `CLI executed ${run.command} in ${run.cwd}`,
     command: run.command,
     cwd: run.cwd,
@@ -1215,6 +1218,10 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     inputs = raw;
   } else inputs = [{ kind: requiredFlag(args, "kind"), path: requiredFlag(args, "path"), description: requiredFlag(args, "description"), source: flag(args, "source"), collectedAt: flag(args, "collected-at"), target: flag(args, "target"), environment: flag(args, "environment"), requirementRefs: flag(args, "refs")?.split(",").map((entry) => entry.trim()) }];
   const registered: RegisteredArtifact[] = [];
+  // One digest for the whole registration: the reviewer later compares it
+  // with the source under review to tell "observed on this source" from
+  // "observed on an earlier one" (issue #2, a baseline note read as current).
+  const sourceDigest = captureSourceSnapshot(requireWorkRoot(state)).digest;
   for (const input of inputs) {
     for (const key of ["kind", "path", "description"]) if (typeof input[key] !== "string" || !(input[key] as string).trim()) throw new Error(`artifact ${key} must be a non-empty string`);
     if ("rowId" in input || "row" in input) throw new Error("per-requirement artifact fields are retired");
@@ -1232,7 +1239,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const refs = input.requirementRefs;
     if (refs !== undefined && (!Array.isArray(refs) || refs.some((ref) => typeof ref !== "string" || !state.requirements.some((entry) => entry.id === ref)))) throw new Error("artifact requirementRefs must name existing requirements");
     const entry: RegisteredArtifact = { kind, path: target.relative, description: input.description as string, ...inspected,
-      registeredAt: nowIso(), observedAt, provenance: typeof input.source === "string" && input.source.trim() ? input.source : `registered by ${resolveIssuer(flag(args, "issuer"))}; collection is self-reported`,
+      registeredAt: nowIso(), observedAt, sourceDigest, provenance: typeof input.source === "string" && input.source.trim() ? input.source : `registered by ${resolveIssuer(flag(args, "issuer"))}; collection is self-reported`,
       ...(typeof input.target === "string" ? { target: input.target } : {}), ...(typeof input.environment === "string" ? { environment: input.environment } : {}), ...(refs ? { requirementRefs: refs as string[] } : {}) };
     if (previous) recordEvidenceReplacement(state, { kind: "artifact", previous: `${previous.path}@${previous.sha256} observed ${previous.observedAt}`, next: `${entry.path}@${entry.sha256}`, priorDisposition: "invalidated" });
     state.artifacts = state.artifacts.filter((held) => held.path !== entry.path); state.artifacts.push(entry); registered.push(entry);
@@ -1281,7 +1288,7 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
     if (image) images.push(path.join(cwd, artifact.path));
     else if (buffer.includes(0)) throw new Error(`unsupported binary evidence: ${artifact.path}; provide a judge-readable actual capture`);
   }
-  const checks = attempt.mechanical.map((run) => ({ command: run.command, exitCode: run.exitCode, logPath: run.logPath,
+  const checks = attempt.mechanical.map((run) => ({ command: run.command, exitCode: run.exitCode, logPath: run.logPath, startedAt: run.startedAt,
     provenance: `CLI execution ${run.startedAt}; cwd=${run.cwd}; log=${run.logPath}` }));
   // Chunks are readable evidence like any product file: they must be citable,
   // and for a deleted file the chunk is the only surviving record of its code.
@@ -1298,7 +1305,7 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   const priorRisk: RiskLaneResult | null = state.riskFindings.length === 0 ? null : { verdict: openRiskFindings(state).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRiskFindings(state).map(({ id, severity, text }) => ({ id, severity, text })) };
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
     changedPaths: changed, workspacePaths: [...paths, ...chunkPaths, ...generatedDocPaths], changeSet: diff.changeSet, checks,
-    artifacts: state.artifacts,
+    sourceDigest: attempt.sourceFingerprint, artifacts: state.artifacts,
     referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
       // Deliberately narrower than `refs`: a generated document is citable but
       // is not implementation material, and the contract already says so
@@ -1375,8 +1382,8 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const batch = await runBatch(state, requireWorkRoot(state), units, config.verify.commandTimeoutMs, (completed) => {
       const base: Omit<MechanicalRunRecord, "logPath"> = { command: completed.unit.command, cwd: completed.unit.cwd, startedAt: completed.startedAt, finishedAt: completed.finishedAt,
         durationMs: completed.durationMs, exitCode: completed.exitCode, mutatedTree: completed.mutatedTree, status: completed.outcome === "green" ? "PASS" : "FAIL" };
-      const logPath = writeMechanicalLog(state.projectRoot, state, base, completed.stdout, completed.stderr);
-      update((fresh, held) => { const run = { ...base, logPath }; held.mechanical.push(run); upsertCommandArtifacts(fresh, run, fresh.projectRoot); attributeToSuite(fresh, completed, attempt.id, logPath); });
+      const logPath = writeMechanicalLog(state.projectRoot, state, base, completed.stdout, completed.stderr, completed.tmpdir);
+      update((fresh, held) => { const run = { ...base, logPath }; held.mechanical.push(run); upsertCommandArtifacts(fresh, run, fresh.projectRoot, completed.tree.product); attributeToSuite(fresh, completed, attempt.id, logPath); });
       progress(`${base.status}: ${base.command} (${(base.durationMs / 1000).toFixed(1)}s)`);
     }, executionHooks());
     if (batch.treeMoved !== null || batch.results.some((entry) => entry.outcome !== "green")) {

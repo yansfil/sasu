@@ -656,13 +656,25 @@ export const AGENTIC_READ_MAX_ROUNDS = DEFAULT_READ_MAX_ROUNDS;
  * 2026-09-10, 20 Read calls in a single turn - so 30 of them permits hundreds
  * of reads and this bounds runaway, not reading.
  *
- * The value is unchanged from what that arithmetic produced and has never been
- * justified in its own unit. There is one uncensored turn observation to date,
- * 21 turns for a fidelity review that answered
- * (agents/benchmarks/max-turns-20260910), so choosing this number deliberately
- * needs more samples than that.
+ * The value stayed at what that arithmetic produced, 30, until 2026-09-14,
+ * never justified in its own unit: one uncensored turn observation, 21 turns
+ * for a fidelity review that answered (agents/benchmarks/max-turns-20260910).
+ *
+ * 2026-09-14: raised from 30 to 80 on measurement. At 30 the cap sat inside
+ * the healthy range: 19 completed production exploring reviews read 11-48
+ * files, and the 4 calls the cap discarded had read 45, 46, 53 and 65 -
+ * overlapping the completed ones, so at 30 the cap was a coin flip on a
+ * healthy review (PRINCIPLES 11), and because claude is already the fallback
+ * each hit ended the whole verify attempt as ERROR (issue #2: 538s of Code
+ * review discarded after 927s of attempt). Under cap 80 the five uncensored
+ * benchmark reviews finished at num_turns 36-49 with no cap contact
+ * (agents/benchmarks/max-turns-20260910/report.md, section 5), which makes
+ * 80 the smallest round value at 1.6x the largest healthy observation. The
+ * bounds that actually hold an exploring claude call are the char budget
+ * below, checked from the finished trace, and the call timeout; this is the
+ * runaway stop above both, not the read budget.
  */
-export const CLAUDE_MAX_API_TURNS = 30;
+export const CLAUDE_MAX_API_TURNS = 80;
 /**
  * Raised from 384,000 on 2026-09-11 by user decision, not by measurement, and
  * that provenance is the reason a later measurement alone cannot lower it.
@@ -1065,21 +1077,27 @@ const RG_TYPE_NAME = /^[A-Za-z0-9]+$/;
  */
 function readCommandProblem(words: string[], evidencePaths: string[], explore = false, pipedInput = false): { reason: JudgeFailureReason; detail: string } | null {
   const evidence = new Set(evidencePaths);
-  const permitted = (command: "sed" | "rg", candidate: string): boolean => {
-    // Native fixed-root permissions already bound product reads. A guessed
-    // missing relative path is an ordinary rg ENOENT, not a policy violation:
-    // rejecting it discarded the original Code review after 17s (2026-09-09).
-    if (explore && command === "rg") return true;
-    const normalized = explore ? path.posix.normalize(candidate).replace(/\/$/, "") : candidate;
-    return evidence.has(normalized);
+  const permitted = (candidate: string): boolean => {
+    // Native fixed-root permissions already bound product reads, so inside
+    // the workspace (tokenEscapesWorkspace has already run) a guessed
+    // missing relative path is an ordinary ENOENT, not a policy violation.
+    // rg was exempted on 2026-09-09 after a guess discarded the original
+    // Code review at 17s; sed kept the exact-path allowlist, and every
+    // exploring audit rejection on record since is a sed guess - six of six
+    // across three repositories, 2026-09-13..14: a chunk read without its
+    // `.diff` suffix, `src/cli/mod.rs` guessed in a Rust tree, a batch of
+    // eight reads with one guessed `src/README.md`. Each threw away 24-195s
+    // of review, and one took a whole verify attempt with it (issue #2).
+    if (explore) return true;
+    return evidence.has(candidate);
   };
   const operandProblem = (command: "sed" | "rg", paths: string[]): { reason: JudgeFailureReason; detail: string } | null => {
     const escaped = paths.find(tokenEscapesWorkspace);
     if (escaped !== undefined) {
       return { reason: "out-of-workspace", detail: `${command} file operand escapes the evidence workspace: ${escaped}` };
     }
-    if (paths.every((candidate) => permitted(command, candidate))) return null;
-    if (!paths.some((candidate) => permitted(command, candidate))) {
+    if (paths.every(permitted)) return null;
+    if (!paths.some(permitted)) {
       return { reason: "missing-allowlisted-path", detail: `${command} named no allowlisted evidence path` };
     }
     return { reason: "non-read-command", detail: `${command} named a file operand outside the evidence allowlist` };

@@ -11,13 +11,42 @@ export function agentRegisteredArtifactProvenance(registeredAt: string): string 
   return `agent-registered at ${registeredAt}; treat its description as the implementer's claim, not a harness observation`;
 }
 
-function artifactSummary(artifacts: readonly RegisteredArtifact[]): string {
+function elapsed(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m ${Math.floor((ms % 60_000) / 1000)}s`;
+}
+
+/**
+ * Where one artifact stands against this attempt's official execution and
+ * source, computed from recorded timestamps and digests rather than from
+ * anything the artifact says about itself. 2026-09-14 (issue #2): a baseline
+ * note registered at 09:28 UTC said "no passing run exists yet"; the harness
+ * ran the sealed suite green at 11:39 UTC on the source under review, and the
+ * Fidelity review read the note as current and demanded the suite again. The
+ * two facts that settle that - the note predates the execution, and it was
+ * registered on an earlier source - were in the record and not in the prompt.
+ */
+function artifactPosition(artifact: RegisteredArtifact, checks: ReviewPromptMaterial["checks"], sourceDigest: string): string {
+  const source = artifact.sourceDigest === undefined
+    ? "source at registration unrecorded"
+    : artifact.sourceDigest === sourceDigest ? "registered on the source under review" : `registered on an earlier product source (digest ${artifact.sourceDigest.slice(0, 12)}, not the one under review)`;
+  if (artifact.command !== undefined) return `this attempt's own harness execution; ${source}`;
+  if (checks.length === 0) return `no harness execution in this attempt to compare against; ${source}`;
+  const executionStart = Math.min(...checks.map((check) => Date.parse(check.startedAt)));
+  const delta = executionStart - Date.parse(artifact.observedAt);
+  const timing = delta >= 0
+    ? `observed ${elapsed(delta)} BEFORE this attempt's harness execution began`
+    : `observed ${elapsed(-delta)} after this attempt's harness execution began`;
+  return `${timing}; ${source}`;
+}
+
+function artifactSummary(artifacts: readonly RegisteredArtifact[], checks: ReviewPromptMaterial["checks"], sourceDigest: string): string {
   if (artifacts.length === 0) return "- none registered; do not claim runtime QA occurred";
   return artifacts.map((artifact) => {
     const provenance = artifact.command === undefined
       ? `${agentRegisteredArtifactProvenance(artifact.registeredAt)}; declared collection source=${artifact.provenance}; observedAt=${artifact.observedAt}`
       : `the harness ran \`${artifact.command}\` at ${artifact.observedAt} from cwd=${artifact.cwd}; exit=${artifact.exitCode}`;
-    return `- ${artifact.kind} ${artifact.path} sha256=${artifact.sha256}; ${provenance}${artifact.target === undefined ? "" : `; target=${artifact.target}`}${artifact.environment === undefined ? "" : `; environment=${artifact.environment}`} - ${artifact.description}`;
+    return `- ${artifact.kind} ${artifact.path} sha256=${artifact.sha256}; ${provenance}${artifact.target === undefined ? "" : `; target=${artifact.target}`}${artifact.environment === undefined ? "" : `; environment=${artifact.environment}`} - ${artifact.description}\n  position: ${artifactPosition(artifact, checks, sourceDigest)}`;
   }).join("\n");
 }
 
@@ -99,7 +128,9 @@ export interface ReviewPromptMaterial {
    */
   workspacePaths: readonly string[];
   changeSet: RunOwnedChangeSet;
-  checks: Array<{ command: string; exitCode: number; logPath: string; provenance?: string }>;
+  checks: Array<{ command: string; exitCode: number; logPath: string; startedAt: string; provenance?: string }>;
+  /** Product digest of the frozen source this attempt reviews. */
+  sourceDigest: string;
   artifacts: RegisteredArtifact[];
   referenceContext: ImplementationReviewContext;
   priorFindings: readonly TrackedReviewFinding[];
@@ -228,11 +259,13 @@ ${context.newEvidence.length === 0 ? "- none" : context.newEvidence.map((entry) 
 }
 
 function evidenceDocument(material: ReviewPromptMaterial): string {
-  return `ACTUAL HARNESS EXECUTION:
+  return `SOURCE UNDER REVIEW: product digest ${material.sourceDigest}
+
+ACTUAL HARNESS EXECUTION (the official result of the sealed suite on the source under review, in this attempt):
 ${material.checks.length === 0 ? "No required suite command was recorded for this attempt." : material.checks.map((entry) => `${entry.provenance ?? "Harness executed this command during this attempt"}: ${entry.command}; exit ${entry.exitCode}; full log=${entry.logPath}`).join("\n")}
 
-REGISTERED EVIDENCE IDENTITY AND COLLECTION CLAIMS:
-${artifactSummary(material.artifacts)}`;
+REGISTERED EVIDENCE IDENTITY AND COLLECTION CLAIMS (each entry's position is computed by the harness from recorded timestamps and source digests):
+${artifactSummary(material.artifacts, material.checks, material.sourceDigest)}`;
 }
 
 /**
@@ -292,6 +325,7 @@ HOW TO USE THE QUOTED MATERIAL (this is the harness speaking, not the documents)
 - Every prior open finding requires an explicit disposition. Disappearance does not resolve it. Preserve human confirmation/rejection history and original timing; never mint a duplicate settled human decision or waive prerequisites.
 - Changed paths guide attention, not admissibility. A concrete omission in unchanged code still counts.
 - A source hash does not prove external services, DB contents or installed apps are unchanged. Older observations keep their original date and target; explain applicability or report insufficient evidence.
+- The harness execution list is the official result of the sealed suite on the source under review. An artifact whose position says it was observed before that execution, or registered on an earlier source, is an account of its own time and target: use it for the defects and observations it documents, but what it says about suite results or about runs that had not yet happened does not contradict a later official execution on the source under review, and it is not grounds to require that suite to be run again. A required suite failure recorded by the harness in this attempt stays blocking.
 - An empty execution list is not "tests all passed". A producer's description of a capture is a claim, not proof of what it shows; read the named evidence files and inspect attached screenshots when a conclusion depends on them.
 - Where the change index reports an unavailable baseline, do not infer unchanged behavior or a complete deletion review for that path.
 - Each chunk holds one file's complete hunks, including deleted files and deleted lines; together they are the whole run-owned diff. The index sizes are enough to choose files, and a chunk you do not open is a chunk you did not need.${chunkBatchExample(material) === "" ? "" : `\n- Read several chunks per command rather than one at a time: name several chunk paths in a single read, for example these together in one command:\n  ${chunkBatchExample(material)}`}

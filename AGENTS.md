@@ -226,7 +226,7 @@ Reviewers discover and search related source within that copied tree without man
 Native read restrictions enforce the product/evidence boundary before access: Codex grants read access only to the absolute fixed root and its `:minimal` OS/runtime substrate, disables network access, and rejects unsupported configuration with `--strict-config`.
 The OS/runtime substrate lets the review engine run; it is not additional product evidence or permission to explore host data.
 Claude read-enabled fallback uses `--restricted` within its disposable copy.
-Codex's JSON command trace is additionally checked against the copied paths and permitted read/search operations.
+Codex's JSON command trace is additionally checked against the copied root and permitted read/search operations; a guessed path inside that root is an ordinary read error, not a violation.
 This audit does not substitute for native restrictions: a tool-selected working directory may be absent from the command trace.
 No judge may inspect product or evidence outside the copy, write, execute project code, browse the network, or inspect repository history.
 

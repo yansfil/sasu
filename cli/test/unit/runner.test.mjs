@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { beforeEach } from "node:test";
 import { resetJudgeHealth, runJudge } from "../../dist/judge/runner.js";
-import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS } from "../../dist/judge/backends.js";
+import { AGENTIC_READ_MAX_ROUNDS, AGENTIC_READ_MAX_OUTPUT_CHARS, CLAUDE_MAX_API_TURNS } from "../../dist/judge/backends.js";
 import { validateGapVerdict } from "../../dist/judge/types.js";
 import { loadConfig } from "../../dist/config.js";
 
@@ -1038,8 +1038,8 @@ test("an agentic claude call stopped by the turn cap is not retried in place", a
     type: "result",
     subtype: "error_max_turns",
     is_error: true,
-    num_turns: AGENTIC_READ_MAX_ROUNDS + 2,
-    errors: [`Reached maximum number of turns (${AGENTIC_READ_MAX_ROUNDS + 1})`],
+    num_turns: CLAUDE_MAX_API_TURNS + 1,
+    errors: [`Reached maximum number of turns (${CLAUDE_MAX_API_TURNS})`],
   });
   const answered = JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: JSON.stringify({ verdict: "PASS", findings: [] }) });
   const callCount = path.join(binDir, "calls");
@@ -1095,9 +1095,9 @@ test("an agentic claude call stopped by the turn cap is not retried in place", a
     assert.equal(error.record.retries.length, 1);
     assert.equal(error.record.retries[0].code, "judge-invalid-output");
     assert.equal(error.record.retries[0].reason, "read-budget-exceeded");
-    assert.match(error.record.retries[0].detail, new RegExp(`${AGENTIC_READ_MAX_ROUNDS + 1}-turn cap`));
+    assert.match(error.record.retries[0].detail, new RegExp(`${CLAUDE_MAX_API_TURNS}-turn cap`));
     const argv = fs.readFileSync(argvLog, "utf8");
-    assert.match(argv, new RegExp(`--max-turns ${AGENTIC_READ_MAX_ROUNDS + 1}`));
+    assert.match(argv, new RegExp(`--max-turns ${CLAUDE_MAX_API_TURNS}`));
   } finally {
     if (previousBackend === undefined) delete process.env.SASU_JUDGE_BACKEND;
     else process.env.SASU_JUDGE_BACKEND = previousBackend;

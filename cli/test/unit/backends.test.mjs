@@ -611,14 +611,23 @@ test("exploration can discover and search only the staged source tree", () => {
     "rg --files", "rg --files --hidden --no-ignore", "rg --files src", "rg --files -g '*.ts' .", "rg --files --glob='src/**'",
     "rg --files missing", "rg save last-message.txt", "rg --files --hidden --no-ignore src agents/benchmarks/missing",
     "rg -n 'save'", "rg -n -g '*.tsx' save src", "rg -n save ./src/api/", "sed -n '1,30p' ./src/api/save.ts",
+    // A guessed path inside the workspace is an ordinary read error for sed as
+    // it already was for rg: six of six exploring audit rejections on record
+    // (2026-09-13..14) were sed guesses, each discarding a whole review. These
+    // are the recorded shapes: a chunk read without its .diff suffix, a
+    // batch with one guessed name, a directory, a lone guess.
+    "sed -n '1,30p' src", "sed -n '1,30p' missing",
+    "sed -n '240,520p' agents/review-input/changes/src/api/save.ts agents/review-input/changes/src/view.tsx",
+    "sed -n '1,240p' 'src/api/save.ts' 'src/view.tsx' 'src/README.md'", "sed -n '1,100p' \"src/cli/mod.rs\"",
   ]) assert.equal(audit(command), null, command);
   for (const command of [
     "rg --files /etc", "rg save ..", "rg --files src/../../etc", "rg --files --glob '../*'",
-    "rg --files --glob='/etc/*'", "sed -n '1,30p' src", "sed -n '1,30p' missing",
+    "rg --files --glob='/etc/*'", "sed -n '1,30p' /etc/passwd", "sed -n '1,30p' ../missing",
     "rg --pre sh save src", "rg -f README.md src", "rg --ignore-file README.md save src", "rg --files --follow",
     'rg save "$HOME"', 'rg --files $(pwd)', "rg --files; cat /etc/passwd",
   ]) assert.notEqual(audit(command), null, command);
   assert.notEqual(audit("rg --files", { explore: false }), null, "exact-path callers retain their narrower contract");
+  assert.equal(audit("sed -n '1,30p' missing", { explore: false }).reason, "missing-allowlisted-path", "exact-path callers still read only listed paths");
   assert.equal(audit("rg --files", { agentic: false }).reason, "prompt-only-shell");
 });
 
@@ -634,6 +643,7 @@ test("exploration filters only an approved pipeline's stdout with bounded sed or
     "/bin/zsh -lc \"rg --files | sed -n '1,20p'\"",
     "rg --files | /bin/zsh -c \"sed -n '1,20p'\"",
     "rg --files | sed -n '1p'; rg save src | sed -n '2p'",
+    "rg --files | sed -n '1p' missing",
   ]) {
     assert.equal(audit(command), null, command);
     assert.equal(codexLineAuditor(options)(event(command)), null, `streaming: ${command}`);
@@ -643,7 +653,7 @@ test("exploration filters only an approved pipeline's stdout with bounded sed or
     "rg --files; sed -n '1p'", "rg --files && sed -n '1p'", "rg --files || sed -n '1p'",
     "rg --files\nsed -n '1p'", "rg --files | sed -n '1p'; sed -n '2p'",
     "rg --files | /bin/zsh -c \"sed -n '1p'; sed -n '2p'\"",
-    "rg --files | sed -n '1p' /etc/passwd", "rg --files | sed -n '1p' missing",
+    "rg --files | sed -n '1p' /etc/passwd", "rg --files | sed -n '1p' ../missing",
     "rg --files | sed -n -f src/item.ts", "rg --files | sed -n '1e id'",
     "rg --files | rg -f src/item.ts", "rg --files | rg --pre sh value",
     "rg --files | rg value ../outside", "rg --files | rg value /etc",
