@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -203,4 +204,27 @@ child.once('message', (pid) => { console.log('helper:' + pid); process.exit(0); 
   assert.match(result.stderr, /inherited output pipes remained open past the drain bound/);
   assert.ok(Date.now() - startedAt < 3000, "pipe drain stays bounded below the command timeout");
   assert.doesNotThrow(() => process.kill(helperPid, 0), "the fixture really escaped the leader's process group");
+});
+
+// Issue #2, 2026-09-14: the suite TMPDIR lived under the run directory, whose
+// path alone was 113 bytes in a worktree run, and a Unix socket path must fit
+// in sun_path (104 bytes on macOS, 108 on Linux). Three product socket tests
+// failed on the path before touching product behavior. The batch now owns a
+// short private TMPDIR, names it in each result, and removes it afterwards.
+test("a suite command can bind a Unix socket under TMPDIR even when the run directory is too deep for sun_path", async () => {
+  const { root, state } = scratchState();
+  state.runDir = path.join("agents", "runs", "a-slug-long-enough-to-push-the-old-suite-runtime-tmp-path-past-sun-path-limits-on-every-platform");
+  assert.ok(path.join(root, state.runDir, "suite-runtime", "tmp").length > 108, "the fixture reproduces the deep run directory");
+  const bind = `const net = require("node:net"); const p = require("node:path").join(process.env.TMPDIR, "sasu.sock");`
+    + ` const s = net.createServer(); s.listen(p, () => { console.log("BOUND " + p); s.close(); });`
+    + ` s.on("error", (e) => { console.error(e.message); process.exit(1); });`;
+  const outcome = await runBatch(state, root, [unit("S1", ["node", "-e", bind])], 60_000);
+  const [result] = outcome.results;
+  assert.equal(result.outcome, "green", result.stderr);
+  assert.match(result.stdout, /^BOUND /);
+  assert.equal(path.dirname(result.stdout.trim().slice("BOUND ".length)), result.tmpdir, "the command ran under the batch's own TMPDIR");
+  assert.ok(result.tmpdir.startsWith(path.join(os.tmpdir(), "sasu-suite-")), result.tmpdir);
+  assert.ok(!result.tmpdir.startsWith(root), "TMPDIR no longer inherits the run directory's depth");
+  assert.ok(!fs.existsSync(result.tmpdir), "the batch removes the TMPDIR it created");
+  assert.ok(!fs.existsSync(path.join(root, state.runDir, "suite-runtime", "tmp")), "no tmp is created under the run directory any more");
 });

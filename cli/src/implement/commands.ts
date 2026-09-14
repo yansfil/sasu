@@ -842,6 +842,7 @@ function writeMechanicalLog(
   run: Omit<MechanicalRunRecord, "logPath">,
   stdout: string,
   stderr: string,
+  tmpdir: string,
 ): string {
   const key = sha256(`${run.startedAt}\0${run.cwd}\0${run.command}`).slice(0, 16);
   const relative = `${state.runDir}/artifacts/logs/mechanical-${key}.log`;
@@ -849,6 +850,7 @@ function writeMechanicalLog(
   writeTextAtomic(absolute, [
     `command: ${run.command}`,
     `cwd: ${run.cwd}`,
+    `tmpdir: ${tmpdir}`,
     `startedAt: ${run.startedAt}`,
     `finishedAt: ${run.finishedAt}`,
     `durationMs: ${run.durationMs}`,
@@ -1375,7 +1377,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     const batch = await runBatch(state, requireWorkRoot(state), units, config.verify.commandTimeoutMs, (completed) => {
       const base: Omit<MechanicalRunRecord, "logPath"> = { command: completed.unit.command, cwd: completed.unit.cwd, startedAt: completed.startedAt, finishedAt: completed.finishedAt,
         durationMs: completed.durationMs, exitCode: completed.exitCode, mutatedTree: completed.mutatedTree, status: completed.outcome === "green" ? "PASS" : "FAIL" };
-      const logPath = writeMechanicalLog(state.projectRoot, state, base, completed.stdout, completed.stderr);
+      const logPath = writeMechanicalLog(state.projectRoot, state, base, completed.stdout, completed.stderr, completed.tmpdir);
       update((fresh, held) => { const run = { ...base, logPath }; held.mechanical.push(run); upsertCommandArtifacts(fresh, run, fresh.projectRoot); attributeToSuite(fresh, completed, attempt.id, logPath); });
       progress(`${base.status}: ${base.command} (${(base.durationMs / 1000).toFixed(1)}s)`);
     }, executionHooks());

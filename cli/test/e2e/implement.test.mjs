@@ -60,7 +60,10 @@ test("thirty requirements receive grouped evidence grounds in independent review
   assert.deepEqual(attempt.reviews.code.result.assessments[0].requirementRefs, [], "code-wide grounds do not repeat Fidelity accounting");
   assert.equal(attempt.mechanical.length, 1);
   assert.equal(attempt.mechanical[0].exitCode, 0);
-  assert.ok(fs.readFileSync(path.join(root, attempt.mechanical[0].logPath), "utf8").includes("REAL-SUITE-OUTPUT"));
+  const mechanicalLog = fs.readFileSync(path.join(root, attempt.mechanical[0].logPath), "utf8");
+  assert.ok(mechanicalLog.includes("REAL-SUITE-OUTPUT"));
+  const tmpdir = mechanicalLog.match(/^tmpdir: (.+)$/m)?.[1];
+  assert.ok(tmpdir !== undefined && !tmpdir.startsWith(root) && !fs.existsSync(tmpdir), `the log names the batch TMPDIR, which lived outside the run directory and is gone: ${tmpdir}`);
   for (const role of ["fidelity", "code"]) assert.deepEqual(attempt.reviews[role].result, reviewWithAssessments(root, REVIEW_PASS, role));
   const finalized = ok(run(root, ["implement", "finalize"]));
   const receipt = JSON.parse(fs.readFileSync(path.join(root, finalized.detail.completion.receiptPath), "utf8"));
