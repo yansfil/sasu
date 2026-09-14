@@ -89,6 +89,22 @@ export function validateImplementationReviewResult(value: unknown, context: Impl
     const missing = context.requiredRequirementRefs.filter((ref) => !covered.has(ref));
     if (missing.length > 0) return `fidelity assessments missing required references: ${missing.join(", ")}`;
   }
+  // A focused round exists because something changed. If every ground in it is
+  // carried, the round re-reviewed nothing and proved nothing, yet it reaches
+  // PASS and finalize like any other - measured 2026-09-14: registering an
+  // evidence file that contradicted a Behavior produced 0 reviewed and 3
+  // carried grounds, PASS, exit 0. The per-ground checks above cannot catch it
+  // because they only invalidate grounds that CITE the changed reference, and
+  // nothing obliges an assessment to cite a file nobody read.
+  //
+  // This is the structural half the harness owns (PRINCIPLES 7): at least one
+  // ground in the round must be reviewed. Which one, and how far it reaches,
+  // stays the reviewer's judgment. A round whose scope invalidated nothing is
+  // exempt, because then carrying everything is the honest answer.
+  if (focused !== null && (focused.invalidatedEvidenceRefs.length > 0 || focused.reopenedRequirementRefs.length > 0)
+      && assessments.every((entry) => entry.basis === "carried")) {
+    return `${role} carried every ground in a focused round that invalidated ${focused.invalidatedEvidenceRefs.length} reference(s) and reopened ${focused.reopenedRequirementRefs.length} requirement(s); at least one ground must be reviewed, or widen the scope`;
+  }
   return { ...reviewed, assessments, ...(declared === undefined ? {} : { scope: declared }) };
 }
 

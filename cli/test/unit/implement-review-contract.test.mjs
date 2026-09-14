@@ -95,6 +95,23 @@ const focusedScope = () => ({ mode: 'focused', anchorAttemptId: 'V1',
 const focused = (assessments, extra = {}) => validateImplementationReviewResult({ ...result(assessments), ...extra }, { ...context, scope: focusedScope() }, 'fidelity');
 const carried = (requirementRefs, evidenceRefs = ['src/public.mjs', 'smoke.log']) => ({ ...assessment(requirementRefs), evidenceRefs, basis: 'carried' });
 
+// A focused round exists because something changed. Carrying every ground in
+// it re-reviews nothing, yet it used to reach PASS and finalize: registering
+// an evidence file that contradicted a Behavior produced 0 reviewed and 3
+// carried grounds, exit 0 (2026-09-14). The per-ground checks cannot catch it,
+// because they only invalidate grounds that CITE the changed reference and
+// nothing obliges an assessment to cite a file nobody read.
+test('a focused round that invalidated something must review at least one ground', () => {
+  const code = (assessments, scope = focusedScope()) => validateImplementationReviewResult(result(assessments), { ...context, scope }, 'code');
+  assert.match(String(code([carried([])])), /carried every ground in a focused round/, 'all-carried in a round with changes proves nothing');
+  assert.equal(typeof code([carried([]), assessment([])]), 'object', 'one reviewed ground is the floor, not a full re-review');
+  assert.equal(typeof code([carried([])], { ...focusedScope(), invalidatedEvidenceRefs: [], reopenedRequirementRefs: [] }), 'object',
+    'a round that invalidated nothing may honestly carry everything');
+  // Widening to the whole contract is the other way out, and it is not carrying.
+  assert.match(String(validateImplementationReviewResult({ ...result([carried([])]), scope: { basis: 'widened', reason: 'read it all' } }, { ...context, scope: focusedScope() }, 'code')),
+    /cannot carry grounds in a round the reviewer widened/);
+});
+
 test('carried grounds are accepted only in a focused round, only for a satisfied anchor ground on unchanged evidence, and never for a reopened requirement', () => {
   assert.match(String(validate(result([carried(behaviors)]))), /cannot carry grounds outside a focused round/);
   assert.match(String(validate({ ...result([assessment(behaviors)]), scope: { basis: 'focused', reason: 'x' } })), /scope is accepted only in a focused round/);
@@ -102,7 +119,10 @@ test('carried grounds are accepted only in a focused round, only for a satisfied
   assert.equal(typeof accepted, 'object', String(accepted));
   assert.equal(accepted.assessments[0].basis, 'carried');
   assert.equal(accepted.assessments[1].basis, undefined, 'a reviewed ground records no basis, exactly as a full review does');
-  assert.match(String(focused([carried(behaviors.slice(0, 2), ['src/public.mjs']), assessment(behaviors.slice(2))])), /^(?!.*refused).*/, 'a subset of the anchor evidence is still the anchor ground');
+  // Not a regex over String(result): a refusal is a string and an acceptance
+  // is an object, so `String(...)` of the accepted case is "[object Object]"
+  // and any negative-match pattern passes whatever happens (2026-09-14).
+  assert.equal(typeof focused([carried(behaviors.slice(0, 2), ['src/public.mjs']), assessment(behaviors.slice(2))]), 'object', 'a subset of the anchor evidence is still the anchor ground');
   assert.match(String(focused([carried(['B3']), assessment(behaviors.filter((ref) => ref !== 'B3'))])), /named by an open blocking finding: B3/);
   assert.match(String(focused([carried(behaviors.slice(15, 17), ['src/unread.mjs']), assessment([...behaviors.slice(0, 15), ...behaviors.slice(17)])])), /citing evidence that changed since attempt V1: src\/unread.mjs/);
   assert.match(String(focused([carried(behaviors.slice(0, 2), ['src/public.mjs', 'src/unread.mjs']), assessment(behaviors.slice(2))])), /citing evidence that changed/);
