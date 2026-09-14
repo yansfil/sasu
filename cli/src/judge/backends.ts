@@ -656,13 +656,25 @@ export const AGENTIC_READ_MAX_ROUNDS = DEFAULT_READ_MAX_ROUNDS;
  * 2026-09-10, 20 Read calls in a single turn - so 30 of them permits hundreds
  * of reads and this bounds runaway, not reading.
  *
- * The value is unchanged from what that arithmetic produced and has never been
- * justified in its own unit. There is one uncensored turn observation to date,
- * 21 turns for a fidelity review that answered
- * (agents/benchmarks/max-turns-20260910), so choosing this number deliberately
- * needs more samples than that.
+ * The value stayed at what that arithmetic produced, 30, until 2026-09-14,
+ * never justified in its own unit: one uncensored turn observation, 21 turns
+ * for a fidelity review that answered (agents/benchmarks/max-turns-20260910).
+ *
+ * 2026-09-14: raised from 30 to 80 on measurement. At 30 the cap sat inside
+ * the healthy range: 19 completed production exploring reviews read 11-48
+ * files, and the 4 calls the cap discarded had read 45, 46, 53 and 65 -
+ * overlapping the completed ones, so at 30 the cap was a coin flip on a
+ * healthy review (PRINCIPLES 11), and because claude is already the fallback
+ * each hit ended the whole verify attempt as ERROR (issue #2: 538s of Code
+ * review discarded after 927s of attempt). Under cap 80 the five uncensored
+ * benchmark reviews finished at num_turns 36-49 with no cap contact
+ * (agents/benchmarks/max-turns-20260910/report.md, section 5), which makes
+ * 80 the smallest round value at 1.6x the largest healthy observation. The
+ * bounds that actually hold an exploring claude call are the char budget
+ * below, checked from the finished trace, and the call timeout; this is the
+ * runaway stop above both, not the read budget.
  */
-export const CLAUDE_MAX_API_TURNS = 30;
+export const CLAUDE_MAX_API_TURNS = 80;
 /**
  * Raised from 384,000 on 2026-09-11 by user decision, not by measurement, and
  * that provenance is the reason a later measurement alone cannot lower it.
