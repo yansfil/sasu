@@ -1,0 +1,452 @@
+[
+  {
+    "round": "R5-code-lane-backend-error",
+    "expected": "attempt error at review; fidelity settled, code lane backend error",
+    "verifyStatus": 1,
+    "verifyWallMs": 79749,
+    "sabotage": [
+      {
+        "at": 358,
+        "action": "observed",
+        "pid": 17335,
+        "head": "git rev-parse --verify HEAD "
+      },
+      {
+        "at": 688,
+        "action": "observed",
+        "pid": 17455,
+        "head": "(git) "
+      },
+      {
+        "at": 1029,
+        "action": "observed",
+        "pid": 17582,
+        "head": "node <home>/.nvm/versions/node/v24.12.0/bin/npm test "
+      },
+      {
+        "at": 1687,
+        "action": "observed",
+        "pid": 17775,
+        "head": "git show 8144438776adb7e2c59b96fd9051003a765688a0:lib/report1.mjs "
+      },
+      {
+        "at": 2364,
+        "action": "observed",
+        "pid": 17920,
+        "head": "node <home>/Library/pnpm/global/5/.pnpm/@openai+codex@0.154.0/node_modules/@openai/codex/bin/codex.js exec --strict-config --config default_permissions=\"review-evidence\" --config permissions"
+      },
+      {
+        "at": 6913,
+        "action": "observed",
+        "pid": 18279,
+        "head": "node <home>/Library/pnpm/global/5/.pnpm/@openai+codex@0.154.0/node_modules/@openai/codex/bin/codex.js exec --strict-config --config default_permissions=\"review-evidence\" --config permissions"
+      },
+      {
+        "at": 6919,
+        "action": "SIGKILL code-lane codex",
+        "pid": 18296,
+        "head": "node <home>/Library/pnpm/global/5/.pnpm/@openai+codex@0.154.0/node_modules/@openai/codex/bin/codex.js exec --strict-config --config default_permissions=\"review-evidence\" --config permissions"
+      },
+      {
+        "at": 8226,
+        "action": "SIGKILL code-lane claude fallback",
+        "pid": 18504,
+        "head": "claude -p --output-format stream-json --verbose --safe-mode --no-session-persistence --disable-slash-commands --strict-mcp-config --tools Read,Grep,Glob --disallowedTools Bash,Edit,Write,NotebookEdit,"
+      }
+    ],
+    "verdict": "ERROR",
+    "error": {
+      "stage": "review",
+      "code": "judge-error",
+      "message": "judge-auth-or-runtime (backend: claude): exit code null"
+    },
+    "deviations": [],
+    "reviewScope": {
+      "mode": "focused",
+      "reason": "attempt 57d092c5-03c6-44ca-abf0-4e8045204185 settled every lane on the same contract and policy; 0 path(s) and 0 evidence file(s) changed since",
+      "referenceAttemptId": "57d092c5-03c6-44ca-abf0-4e8045204185",
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 621
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 77421,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "fallback": null,
+      "readRounds": 4,
+      "readOutputChars": 12325,
+      "usage": {
+        "inputTokens": 158512,
+        "outputTokens": 3491,
+        "cachedInputTokens": 129792,
+        "reasoningOutputTokens": 2390
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "No product or evidence paths changed since the anchor attempt; the changed-file chunks and complete public command, value, formatter, caller, and error-path sources were inspected."
+      },
+      "carriedAssessments": 2,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24"
+          ],
+          "conclusion": "satisfied",
+          "basis": "carried"
+        },
+        {
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "carried"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save catches a plain object such as {message:\"disk full\"}, but its ternary only extracts messages from Error instances or string throws. The call save({write(){throw {message:\"disk full\"};}}, \"draft\")"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The save catch logic is unchanged and still fails to report a string message property on a non-Error thrown object.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "ERROR",
+      "durationMs": 6236,
+      "carriedFrom": null,
+      "backend": "claude",
+      "model": "claude-sonnet-5",
+      "attempts": 1,
+      "retries": [
+        "judge-auth-or-runtime/null",
+        "judge-auth-or-runtime/null"
+      ],
+      "fallback": {
+        "at": "2026-09-14T13:48:32.779Z",
+        "backend": "codex",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
+        "durationMs": 5931,
+        "attempts": 1,
+        "outcome": "judge-auth-or-runtime",
+        "reason": "primary judge authentication or runtime failed"
+      },
+      "readRounds": null,
+      "readOutputChars": null,
+      "usage": null,
+      "error": "judge-auth-or-runtime (backend: claude): exit code null",
+      "scope": null,
+      "carriedAssessments": null,
+      "assessments": null,
+      "findings": null,
+      "dispositions": null
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ]
+      }
+    ],
+    "findingCount": 3,
+    "attemptCount": 6
+  },
+  {
+    "round": "R6-same-input-after-error",
+    "expected": "repair: fidelity reused, only code lane executed",
+    "verifyStatus": 1,
+    "verifyWallMs": 89765,
+    "sabotage": [],
+    "verdict": "FAIL",
+    "error": null,
+    "deviations": [],
+    "reviewScope": {
+      "mode": "repair",
+      "reason": "attempt d6250914-0574-4b1b-a58c-9b3b291b389b settled fidelity on this exact input and lost code to a backend error",
+      "referenceAttemptId": "d6250914-0574-4b1b-a58c-9b3b291b389b",
+      "executedLanes": [
+        "code"
+      ],
+      "carriedLanes": [
+        "fidelity"
+      ]
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 620
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 77421,
+      "carriedFrom": "d6250914-0574-4b1b-a58c-9b3b291b389b",
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "fallback": null,
+      "readRounds": 4,
+      "readOutputChars": 12325,
+      "usage": {
+        "inputTokens": 158512,
+        "outputTokens": 3491,
+        "cachedInputTokens": 129792,
+        "reasoningOutputTokens": 2390
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "No product or evidence paths changed since the anchor attempt; the changed-file chunks and complete public command, value, formatter, caller, and error-path sources were inspected."
+      },
+      "carriedAssessments": 2,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24"
+          ],
+          "conclusion": "satisfied",
+          "basis": "carried"
+        },
+        {
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "carried"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save catches a plain object such as {message:\"disk full\"}, but its ternary only extracts messages from Error instances or string throws. The call save({write(){throw {message:\"disk full\"};}}, \"draft\")"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The save catch logic is unchanged and still fails to report a string message property on a non-Error thrown object.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 87784,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "fallback": null,
+      "readRounds": 5,
+      "readOutputChars": 10730,
+      "usage": {
+        "inputTokens": 189696,
+        "outputTokens": 3728,
+        "cachedInputTokens": 161280,
+        "reasoningOutputTokens": 2775
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "No product or evidence files changed since the anchor attempt; the run-owned change chunks, public dispatch, formatter, value functions, callers, and save error path were re-read."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save({write(){throw {message:\"disk full\"};}}, \"draft\") returns error:\"store failure\" instead of error:\"disk full\" because the catch logic only extracts messages from Error instances or strings."
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The save catch path remains unchanged and still ignores string message properties on non-Error thrown objects.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ]
+      }
+    ],
+    "findingCount": 3,
+    "attemptCount": 7
+  }
+]

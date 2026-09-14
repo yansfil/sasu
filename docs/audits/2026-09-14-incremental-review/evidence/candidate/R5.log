@@ -1,0 +1,1027 @@
+$ sasu implement verify --json
+--- stdout ---
+{
+  "contractVersion": "0.10.0",
+  "ok": false,
+  "action": "verify",
+  "exitCode": 1,
+  "message": "verification ERROR; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "d6250914-0574-4b1b-a58c-9b3b291b389b",
+      "prdSha256": "8844bf1b840f15d95f149f222f1d6b1925b24741f2bde11265583bc43038d55f",
+      "reviewContext": {
+        "requiredRequirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31"
+        ],
+        "actualEvidenceRefs": [
+          ".gitignore",
+          "lib/report1.mjs",
+          "lib/report10.mjs",
+          "lib/report11.mjs",
+          "lib/report12.mjs",
+          "lib/report13.mjs",
+          "lib/report14.mjs",
+          "lib/report15.mjs",
+          "lib/report16.mjs",
+          "lib/report17.mjs",
+          "lib/report18.mjs",
+          "lib/report19.mjs",
+          "lib/report2.mjs",
+          "lib/report20.mjs",
+          "lib/report21.mjs",
+          "lib/report22.mjs",
+          "lib/report23.mjs",
+          "lib/report24.mjs",
+          "lib/report25.mjs",
+          "lib/report26.mjs",
+          "lib/report27.mjs",
+          "lib/report28.mjs",
+          "lib/report29.mjs",
+          "lib/report3.mjs",
+          "lib/report30.mjs",
+          "lib/report31.mjs",
+          "lib/report32.mjs",
+          "lib/report33.mjs",
+          "lib/report34.mjs",
+          "lib/report35.mjs",
+          "lib/report36.mjs",
+          "lib/report37.mjs",
+          "lib/report38.mjs",
+          "lib/report39.mjs",
+          "lib/report4.mjs",
+          "lib/report40.mjs",
+          "lib/report41.mjs",
+          "lib/report42.mjs",
+          "lib/report43.mjs",
+          "lib/report44.mjs",
+          "lib/report45.mjs",
+          "lib/report46.mjs",
+          "lib/report47.mjs",
+          "lib/report48.mjs",
+          "lib/report49.mjs",
+          "lib/report5.mjs",
+          "lib/report50.mjs",
+          "lib/report51.mjs",
+          "lib/report52.mjs",
+          "lib/report53.mjs",
+          "lib/report54.mjs",
+          "lib/report55.mjs",
+          "lib/report56.mjs",
+          "lib/report57.mjs",
+          "lib/report58.mjs",
+          "lib/report59.mjs",
+          "lib/report6.mjs",
+          "lib/report60.mjs",
+          "lib/report7.mjs",
+          "lib/report8.mjs",
+          "lib/report9.mjs",
+          "package.json",
+          "smoke.test.mjs",
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/observations/runtime.log",
+          "agents/runs/exp/artifacts/logs/mechanical-1236ff270f36abc0.log",
+          "agents/review-input/changes/lib/report1.mjs.diff",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "agents/review-input/changes/src/public.mjs.diff",
+          "agents/review-input/changes/src/values.mjs.diff"
+        ],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31",
+          "D-01",
+          "D-02"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31",
+          "D-01",
+          "D-02",
+          ".gitignore",
+          "lib/report1.mjs",
+          "lib/report10.mjs",
+          "lib/report11.mjs",
+          "lib/report12.mjs",
+          "lib/report13.mjs",
+          "lib/report14.mjs",
+          "lib/report15.mjs",
+          "lib/report16.mjs",
+          "lib/report17.mjs",
+          "lib/report18.mjs",
+          "lib/report19.mjs",
+          "lib/report2.mjs",
+          "lib/report20.mjs",
+          "lib/report21.mjs",
+          "lib/report22.mjs",
+          "lib/report23.mjs",
+          "lib/report24.mjs",
+          "lib/report25.mjs",
+          "lib/report26.mjs",
+          "lib/report27.mjs",
+          "lib/report28.mjs",
+          "lib/report29.mjs",
+          "lib/report3.mjs",
+          "lib/report30.mjs",
+          "lib/report31.mjs",
+          "lib/report32.mjs",
+          "lib/report33.mjs",
+          "lib/report34.mjs",
+          "lib/report35.mjs",
+          "lib/report36.mjs",
+          "lib/report37.mjs",
+          "lib/report38.mjs",
+          "lib/report39.mjs",
+          "lib/report4.mjs",
+          "lib/report40.mjs",
+          "lib/report41.mjs",
+          "lib/report42.mjs",
+          "lib/report43.mjs",
+          "lib/report44.mjs",
+          "lib/report45.mjs",
+          "lib/report46.mjs",
+          "lib/report47.mjs",
+          "lib/report48.mjs",
+          "lib/report49.mjs",
+          "lib/report5.mjs",
+          "lib/report50.mjs",
+          "lib/report51.mjs",
+          "lib/report52.mjs",
+          "lib/report53.mjs",
+          "lib/report54.mjs",
+          "lib/report55.mjs",
+          "lib/report56.mjs",
+          "lib/report57.mjs",
+          "lib/report58.mjs",
+          "lib/report59.mjs",
+          "lib/report6.mjs",
+          "lib/report60.mjs",
+          "lib/report7.mjs",
+          "lib/report8.mjs",
+          "lib/report9.mjs",
+          "package.json",
+          "smoke.test.mjs",
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/observations/runtime.log",
+          "agents/runs/exp/artifacts/logs/mechanical-1236ff270f36abc0.log",
+          "agents/review-input/changes/lib/report1.mjs.diff",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "agents/review-input/changes/src/public.mjs.diff",
+          "agents/review-input/changes/src/values.mjs.diff",
+          "agents/review-input/source-index.md"
+        ],
+        "priorFindingIds": [
+          "F1"
+        ],
+        "humanSources": {
+          "Decisions": "command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs.\nThe user requested all thirty values through one shared formatter.\nsave never throws; a store failure is reported as ok false with the error message and the original value.\nCallers must be able to retry with the same value.",
+          "Risks": "None.",
+          "instruction": "- D-01: command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs. (근거: The user requested all thirty values through one shared formatter.)\n- D-02: save never throws; a store failure is reported as ok false with the error message and the original value. (근거: Callers must be able to retry with the same value.)",
+          "D-01": "command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs.",
+          "D-02": "save never throws; a store failure is reported as ok false with the error message and the original value."
+        },
+        "scope": {
+          "mode": "focused",
+          "anchorAttemptId": "57d092c5-03c6-44ca-abf0-4e8045204185",
+          "anchorAssessments": {
+            "fidelity": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs dispatches inputs 1 through 24 to matching value functions, values.mjs returns the corresponding numbers, and every result passes through present.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs dispatches inputs 25 through 30 to matching value functions, values.mjs returns those numbers, and present returns each result unchanged.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "save catches store failures and preserves the original value, but does not extract a string message from thrown non-Error objects.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "code": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30",
+                  "D-01"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs maps each requested number to the corresponding value function, values.mjs returns the exact numbers 1 through 30, and format.mjs passes each result through unchanged.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "save catches store.write failures and preserves the original value, but its message extraction omits plain objects with a string message property, violating the required failure report.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ]
+          },
+          "invalidatedEvidenceRefs": [],
+          "reopenedRequirementRefs": [
+            "B31",
+            "D-02"
+          ]
+        },
+        "identity": "55c70b90f83d604f896d2c945dd0218cda88a7737f6720bcf8ab54f14b8295c2",
+        "ledgerSnapshot": {
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31",
+                "D-02"
+              ],
+              "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+              "evidenceRefs": [
+                "src/public.mjs",
+                "smoke.test.mjs"
+              ],
+              "nextAction": "When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+              "id": "F1",
+              "originAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+              "status": "open",
+              "history": [
+                {
+                  "at": "2026-09-14T13:38:07.438Z",
+                  "attemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+                  "status": "open",
+                  "reason": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+                  "evidenceRefs": [
+                    "src/public.mjs",
+                    "smoke.test.mjs"
+                  ]
+                },
+                {
+                  "at": "2026-09-14T13:40:03.547Z",
+                  "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+                  "status": "open",
+                  "reason": "fidelity: open: src/public.mjs was not among the files changed since the anchor attempt (only src/format.mjs changed); the same non-Error/non-string fallback logic that ignores a thrown object's .message property is still present verbatim.; save still does not always report the store failure's message. src/public.mjs's catch path is unchanged since the anchor attempt: for save({write(){throw {message:\"disk full\"};}}, \"draft\") the thrown value is not `instanceof Error` and not a string, so the ternary falls through to the \"store failure\" fallback instead of extracting \"disk full\", even though the object has a string message property. The input value is still preserved correctly, but the reported error message is wrong for this class of thrown values. When the thrown value has a string `.message` property (Error or plain object), return that message; only fall back to a generic string when no such property exists.\ncode: open: The save catch expression remains unchanged and still ignores string message properties on non-Error thrown objects.; save still fails to report a thrown object's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path rejects the non-Error object and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+                  "evidenceRefs": [
+                    "src/public.mjs"
+                  ]
+                },
+                {
+                  "at": "2026-09-14T13:41:31.229Z",
+                  "attemptId": "03a1d8fa-a862-47eb-b571-a5e5c3cf5c0a",
+                  "status": "open",
+                  "reason": "fidelity: open: The non-Error thrown-object message handling remains unchanged in src/public.mjs.; save({write(){throw {message:\"disk full\"};}}, \"draft\") catches the plain object, but because it is neither an Error nor a string, returns error:\"store failure\" instead of error:\"disk full\". The original value is preserved. When a thrown value has a string message property, return that message while retaining the fallback for other thrown values.\ncode: open: src/public.mjs is unchanged and still omits string message properties on non-Error thrown objects.; save ignores a thrown object's string message property. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), it returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. Extract and return error.message when it is a string, while retaining the existing fallback for other thrown values.",
+                  "evidenceRefs": [
+                    "src/public.mjs"
+                  ]
+                },
+                {
+                  "at": "2026-09-14T13:43:31.490Z",
+                  "attemptId": "57d092c5-03c6-44ca-abf0-4e8045204185",
+                  "status": "open",
+                  "reason": "fidelity: open: The save catch logic is unchanged and still ignores string message properties on non-Error thrown objects.; save does not report the message from a thrown plain object. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path falls back to error:\"store failure\" because it only accepts Error instances or strings, although it preserves the input value. Return error.message when it is a string, while retaining the existing fallback for other thrown values.\ncode: open: src/public.mjs remains unchanged since the anchor attempt and still ignores string message properties on non-Error thrown objects.; save preserves the input value and does not rethrow, but for save({write(){throw {message:\"disk full\"};}}, \"draft\") the catch path falls back to error:\"store failure\" because it only extracts messages from Error instances or string throws. Extract and return a string error.message for any thrown value, while retaining the generic fallback when no string message exists.",
+                  "evidenceRefs": [
+                    "src/public.mjs"
+                  ]
+                }
+              ],
+              "responses": []
+            },
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B25",
+                "B26",
+                "B27",
+                "B28",
+                "B29",
+                "B30",
+                "D-01"
+              ],
+              "problem": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] which is value25, value25() returns 25, then command passes 25 into present(25); since 25 > 24 the function returns undefined instead of 25. The same path applies identically to command(26) through command(30), each returning undefined instead of 26..30. This directly contradicts D-01 ('command(n) returns the number n for 1 through 30 ... and formats every value through present') and violates B25-B30. The sealed smoke.test.mjs only checks command(1) and command(2), so npm test's exit 0 does not exercise or catch this.",
+              "evidenceRefs": [
+                "src/format.mjs",
+                "src/public.mjs",
+                "src/values.mjs",
+                "agents/review-input/changes/src/format.mjs.diff",
+                "smoke.test.mjs"
+              ],
+              "nextAction": "Fix present() to pass numeric values through unchanged for the full 1-30 range (remove the >24 short-circuit, or only special-case values that are actually out of the approved 1-30 domain) so command(25)..command(30) return 25..30.",
+              "id": "F2",
+              "originAttemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+              "status": "resolved",
+              "history": [
+                {
+                  "at": "2026-09-14T13:40:03.547Z",
+                  "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+                  "status": "open",
+                  "reason": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] which is value25, value25() returns 25, then command passes 25 into present(25); since 25 > 24 the function returns undefined instead of 25. The same path applies identically to command(26) through command(30), each returning undefined instead of 26..30. This directly contradicts D-01 ('command(n) returns the number n for 1 through 30 ... and formats every value through present') and violates B25-B30. The sealed smoke.test.mjs only checks command(1) and command(2), so npm test's exit 0 does not exercise or catch this.",
+                  "evidenceRefs": [
+                    "src/format.mjs",
+                    "src/public.mjs",
+                    "src/values.mjs",
+                    "agents/review-input/changes/src/format.mjs.diff",
+                    "smoke.test.mjs"
+                  ]
+                },
+                {
+                  "at": "2026-09-14T13:41:31.229Z",
+                  "attemptId": "03a1d8fa-a862-47eb-b571-a5e5c3cf5c0a",
+                  "status": "resolved",
+                  "reason": "fidelity: resolved: src/format.mjs now returns values unchanged, so the prior >24 truncation no longer affects command(25) through command(30).\ncode: resolved: format.mjs now returns its input unchanged, so command(25) through command(30) return their requested numbers.",
+                  "evidenceRefs": [
+                    "src/format.mjs",
+                    "src/public.mjs",
+                    "src/values.mjs"
+                  ]
+                }
+              ],
+              "responses": []
+            },
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B25",
+                "B26",
+                "B27",
+                "B28",
+                "B29",
+                "B30",
+                "D-01"
+              ],
+              "problem": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24.",
+              "evidenceRefs": [
+                "src/public.mjs",
+                "src/values.mjs",
+                "src/format.mjs",
+                "agents/review-input/changes/src/format.mjs.diff"
+              ],
+              "nextAction": "Remove the formatter truncation so present preserves all requested values from 1 through 30.",
+              "id": "F3",
+              "originAttemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+              "status": "resolved",
+              "history": [
+                {
+                  "at": "2026-09-14T13:40:03.547Z",
+                  "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+                  "status": "open",
+                  "reason": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24.",
+                  "evidenceRefs": [
+                    "src/public.mjs",
+                    "src/values.mjs",
+                    "src/format.mjs",
+                    "agents/review-input/changes/src/format.mjs.diff"
+                  ]
+                },
+                {
+                  "at": "2026-09-14T13:41:31.229Z",
+                  "attemptId": "03a1d8fa-a862-47eb-b571-a5e5c3cf5c0a",
+                  "status": "resolved",
+                  "reason": "fidelity: resolved: The formatter truncation described by this duplicate finding is removed; values 25 through 30 dispatch to matching functions and pass through present unchanged.\ncode: resolved: The formatter truncation is removed; the public dispatch reaches value25 through value30 and present preserves each result.",
+                  "evidenceRefs": [
+                    "src/format.mjs",
+                    "src/public.mjs",
+                    "src/values.mjs"
+                  ]
+                }
+              ],
+              "responses": []
+            }
+          ],
+          "riskFindings": [],
+          "claims": []
+        }
+      },
+      "verdict": "ERROR",
+      "phase": "complete",
+      "inputFingerprint": "bea475a11b544f4cb2394a8d0bc69ab6331d81d29025424bcb2140e07dc7224c",
+      "sourceFingerprint": "b50ee4a349d7a2c4971e93563664cf425da76d649263878e13500029154906a7",
+      "startedAt": "2026-09-14T13:48:31.303Z",
+      "finishedAt": "2026-09-14T13:49:50.484Z",
+      "durationMs": 79180,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-14T13:48:31.567Z",
+          "finishedAt": "2026-09-14T13:48:32.188Z",
+          "durationMs": 621,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/exp/artifacts/logs/mechanical-1236ff270f36abc0.log"
+        }
+      ],
+      "reviewScope": {
+        "mode": "focused",
+        "reason": "attempt 57d092c5-03c6-44ca-abf0-4e8045204185 settled every lane on the same contract and policy; 0 path(s) and 0 evidence file(s) changed since",
+        "referenceAttemptId": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "executedLanes": [
+          "fidelity",
+          "code"
+        ],
+        "carriedLanes": []
+      },
+      "reviews": {
+        "fidelity": {
+          "invocationId": "d46c5e0b-0034-461c-b334-cb84543429e5",
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The command path satisfies B1-B30 through shared formatting and matching value functions. B31 remains unmet because save ignores string message properties on non-Error thrown objects.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "problem": "save catches a plain object such as {message:\"disk full\"}, but its ternary only extracts messages from Error instances or string throws. The call save({write(){throw {message:\"disk full\"};}}, \"draft\") therefore returns {ok:false,error:\"store failure\",value:\"draft\"} instead of reporting \"disk full\", although it preserves the input value and does not throw.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs"
+                ],
+                "nextAction": "Extract and return error.message whenever it is a string, while retaining the generic fallback for thrown values without a usable message.",
+                "priorFindingId": "F1"
+              }
+            ],
+            "priorDispositions": [
+              {
+                "findingId": "F1",
+                "status": "open",
+                "reason": "The save catch logic is unchanged and still fails to report a string message property on a non-Error thrown object.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The public command dispatches indices 1 through 24 to matching value functions, and each result passes through present, which returns the value unchanged.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ],
+                "basis": "carried"
+              },
+              {
+                "requirementRefs": [
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The public dispatch includes value25 through value30, each returns its matching number, and present returns those results unchanged.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ],
+                "basis": "carried"
+              },
+              {
+                "requirementRefs": [
+                  "B31"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "save preserves the original value and returns ok false without rethrowing, but does not report the message from a thrown non-Error object with a string message property.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "scope": {
+              "basis": "focused",
+              "reason": "No product or evidence paths changed since the anchor attempt; the changed-file chunks and complete public command, value, formatter, caller, and error-path sources were inspected."
+            }
+          },
+          "startedAt": "2026-09-14T13:48:32.760Z",
+          "finishedAt": "2026-09-14T13:49:50.181Z",
+          "durationMs": 77421,
+          "error": null
+        },
+        "code": {
+          "invocationId": "a330d0f5-a17a-44aa-82ed-fcb1505a699c",
+          "verdict": "ERROR",
+          "result": null,
+          "startedAt": "2026-09-14T13:48:32.779Z",
+          "finishedAt": "2026-09-14T13:48:39.015Z",
+          "durationMs": 6236,
+          "error": {
+            "code": "judge-auth-or-runtime",
+            "message": "judge-auth-or-runtime (backend: claude): exit code null",
+            "cause": {
+              "code": "judge-auth-or-runtime",
+              "backend": "claude",
+              "reason": null
+            }
+          }
+        }
+      },
+      "risk": null,
+      "error": {
+        "stage": "review",
+        "code": "judge-error",
+        "message": "judge-auth-or-runtime (backend: claude): exit code null"
+      }
+    },
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+        "evidenceRefs": [
+          "src/public.mjs",
+          "smoke.test.mjs"
+        ],
+        "nextAction": "When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+        "id": "F1",
+        "originAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-14T13:38:07.438Z",
+            "attemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+            "status": "open",
+            "reason": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+            "evidenceRefs": [
+              "src/public.mjs",
+              "smoke.test.mjs"
+            ]
+          },
+          {
+            "at": "2026-09-14T13:40:03.547Z",
+            "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+            "status": "open",
+            "reason": "fidelity: open: src/public.mjs was not among the files changed since the anchor attempt (only src/format.mjs changed); the same non-Error/non-string fallback logic that ignores a thrown object's .message property is still present verbatim.; save still does not always report the store failure's message. src/public.mjs's catch path is unchanged since the anchor attempt: for save({write(){throw {message:\"disk full\"};}}, \"draft\") the thrown value is not `instanceof Error` and not a string, so the ternary falls through to the \"store failure\" fallback instead of extracting \"disk full\", even though the object has a string message property. The input value is still preserved correctly, but the reported error message is wrong for this class of thrown values. When the thrown value has a string `.message` property (Error or plain object), return that message; only fall back to a generic string when no such property exists.\ncode: open: The save catch expression remains unchanged and still ignores string message properties on non-Error thrown objects.; save still fails to report a thrown object's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path rejects the non-Error object and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+            "evidenceRefs": [
+              "src/public.mjs"
+            ]
+          },
+          {
+            "at": "2026-09-14T13:41:31.229Z",
+            "attemptId": "03a1d8fa-a862-47eb-b571-a5e5c3cf5c0a",
+            "status": "open",
+            "reason": "fidelity: open: The non-Error thrown-object message handling remains unchanged in src/public.mjs.; save({write(){throw {message:\"disk full\"};}}, \"draft\") catches the plain object, but because it is neither an Error nor a string, returns error:\"store failure\" instead of error:\"disk full\". The original value is preserved. When a thrown value has a string message property, return that message while retaining the fallback for other thrown values.\ncode: open: src/public.mjs is unchanged and still omits string message properties on non-Error thrown objects.; save ignores a thrown object's string message property. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), it returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. Extract and return error.message when it is a string, while retaining the existing fallback for other thrown values.",
+            "evidenceRefs": [
+              "src/public.mjs"
+            ]
+          },
+          {
+            "at": "2026-09-14T13:43:31.490Z",
+            "attemptId": "57d092c5-03c6-44ca-abf0-4e8045204185",
+            "status": "open",
+            "reason": "fidelity: open: The save catch logic is unchanged and still ignores string message properties on non-Error thrown objects.; save does not report the message from a thrown plain object. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path falls back to error:\"store failure\" because it only accepts Error instances or strings, although it preserves the input value. Return error.message when it is a string, while retaining the existing fallback for other thrown values.\ncode: open: src/public.mjs remains unchanged since the anchor attempt and still ignores string message properties on non-Error thrown objects.; save preserves the input value and does not rethrow, but for save({write(){throw {message:\"disk full\"};}}, \"draft\") the catch path falls back to error:\"store failure\" because it only extracts messages from Error instances or string throws. Extract and return a string error.message for any thrown value, while retaining the generic fallback when no string message exists.",
+            "evidenceRefs": [
+              "src/public.mjs"
+            ]
+          },
+          {
+            "at": "2026-09-14T13:49:50.189Z",
+            "attemptId": "d6250914-0574-4b1b-a58c-9b3b291b389b",
+            "status": "open",
+            "reason": "fidelity: open: The save catch logic is unchanged and still fails to report a string message property on a non-Error thrown object.; save catches a plain object such as {message:\"disk full\"}, but its ternary only extracts messages from Error instances or string throws. The call save({write(){throw {message:\"disk full\"};}}, \"draft\") therefore returns {ok:false,error:\"store failure\",value:\"draft\"} instead of reporting \"disk full\", although it preserves the input value and does not throw. Extract and return error.message whenever it is a string, while retaining the generic fallback for thrown values without a usable message.\ncode: no completed disposition; remains open",
+            "evidenceRefs": [
+              "src/public.mjs",
+              "smoke.test.mjs"
+            ]
+          }
+        ],
+        "responses": []
+      }
+    ],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 4,
+      "totalAttempts": 6,
+      "budget": 5,
+      "budgetExhausted": false,
+      "consecutiveErrors": 1,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": "claude/judge-auth-or-runtime",
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 0,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    },
+    "requirementGrounds": [
+      {
+        "requirementRef": "B1",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B2",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B3",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B4",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B5",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B6",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B7",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B8",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B9",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B10",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B11",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B12",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B13",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B14",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B15",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B16",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B17",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B18",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B19",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B20",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B21",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B22",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B23",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B24",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B25",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B26",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B27",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B28",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B29",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B30",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "57d092c5-03c6-44ca-abf0-4e8045204185",
+        "carriedThrough": 1
+      },
+      {
+        "requirementRef": "B31",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "d6250914-0574-4b1b-a58c-9b3b291b389b",
+        "carriedThrough": 0
+      }
+    ]
+  },
+  "summary": [
+    "verification ERROR; active run retained",
+    "Review scope: focused (reference attempt 57d092c5-03c6-44ca-abf0-4e8045204185); attempt 57d092c5-03c6-44ca-abf0-4e8045204185 settled every lane on the same contract and policy; 0 path(s) and 0 evidence file(s) changed since",
+    "fidelity: 1 assessment(s) reviewed, 2 carried",
+    "Requirement grounds: 1 reviewed in this attempt, 30 carried from 57d092c5-03c6-44ca-abf0-4e8045204185, 0 without a current ground",
+    "F1 [defect] save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. - When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values."
+  ]
+}
+
+--- stderr ---
+[implement:verify] running 1 required command(s)
+[implement:verify] PASS: npm test (0.6s)
+[implement:verify] review focused: attempt 57d092c5-03c6-44ca-abf0-4e8045204185 settled every lane on the same contract and policy; 0 path(s) and 0 evidence file(s) changed since; executing fidelity, code
+sasu: WARNING: judge-backend-advisory (codex, implement:fidelity): Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+sasu: WARNING: judge-backend-advisory (codex, implement:code): Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+[implement:verify] verification ERROR; 79.2s
+

@@ -1,0 +1,443 @@
+[
+  {
+    "round": "R1-initial-full",
+    "expected": "PASS",
+    "verifyStatus": 1,
+    "verifyWallMs": 79076,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": null,
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 806
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 76968,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 10116,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 112494,
+        "outputTokens": 3333,
+        "cachedInputTokens": 84992,
+        "reasoningOutputTokens": 2586
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31"
+          ],
+          "problem": "save does not guarantee never-throw behavior for every store failure. If store.write throws an object whose String conversion throws, the catch handler itself throws at String(error), so no {ok:false,"
+        }
+      ],
+      "dispositions": []
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 52183,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 10493,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 110980,
+        "outputTokens": 2203,
+        "cachedInputTokens": 83968,
+        "reasoningOutputTokens": 1481
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save can throw while constructing its failure response. If store.write throws an Error whose message getter throws, the catch handler's error.message expression propagates that secondary exception ins"
+        }
+      ],
+      "dispositions": []
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31"
+        ],
+        "problem": "save does not guarantee never-throw behavior for every store failure. If store.write throws an object whose String conversion throws, the catch handler itself throws at String(error), so no {ok:false,"
+      },
+      {
+        "id": "F2",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save can throw while constructing its failure response. If store.write throws an Error whose message getter throws, the catch handler's error.message expression propagates that secondary exception ins"
+      }
+    ],
+    "findingCount": 2
+  },
+  {
+    "round": "R2-local-refactor",
+    "expected": "PASS",
+    "verifyStatus": 1,
+    "verifyWallMs": 62797,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": null,
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 530
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [
+        "src/values.mjs"
+      ],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 61301,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 10825,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 113986,
+        "outputTokens": 2413,
+        "cachedInputTokens": 90112,
+        "reasoningOutputTokens": 1491
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31"
+          ],
+          "problem": "save does not guarantee never-throw behavior. If store.write throws an object whose String conversion throws, the catch handler throws at String(error) instead of returning ok:false with the original "
+        },
+        {
+          "kind": "defect",
+          "refs": [
+            "B31"
+          ],
+          "problem": "save can throw while constructing its failure response. If store.write throws an Error whose message getter throws, error.message propagates that secondary exception instead of returning ok:false with"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The current src/public.mjs still uses String(error) for non-Error failures, so a throwing conversion remains able to escape save.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "open",
+          "reason": "The current src/public.mjs still directly reads error.message for Error failures, so a throwing message getter remains able to escape save.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 61054,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 10825,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 113504,
+        "outputTokens": 2499,
+        "cachedInputTokens": 89088,
+        "reasoningOutputTokens": 1426
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31"
+          ],
+          "problem": "save does not guarantee never-throw behavior for every store failure. If store.write throws an object whose String conversion throws, the catch handler throws at String(error), so no failure result is"
+        },
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save can throw while constructing its failure response. If store.write throws an Error whose message getter throws, error instanceof Error succeeds but error.message propagates the secondary exception"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The catch handler still calls String(error) without protecting against a throwing conversion.",
+          "evidenceRefs": [
+            "src/public.mjs",
+            "D-02"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "open",
+          "reason": "The catch handler still reads error.message without protecting against a throwing getter.",
+          "evidenceRefs": [
+            "src/public.mjs",
+            "B31",
+            "D-02"
+          ]
+        }
+      ]
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31"
+        ],
+        "problem": "save does not guarantee never-throw behavior for every store failure. If store.write throws an object whose String conversion throws, the catch handler itself throws at String(error), so no {ok:false,"
+      },
+      {
+        "id": "F2",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save can throw while constructing its failure response. If store.write throws an Error whose message getter throws, the catch handler's error.message expression propagates that secondary exception ins"
+      }
+    ],
+    "findingCount": 2
+  }
+]

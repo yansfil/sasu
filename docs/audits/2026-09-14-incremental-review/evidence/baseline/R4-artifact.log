@@ -1,0 +1,29 @@
+$ sasu implement artifact --kind log --path agents/observations/runtime.log --description Runtime observation of command(n) for n in 1, 15, 29, 30 on the current source --source operator, node -e over the working tree --collected-at 2026-09-14T13:41:19.213Z --target src/public.mjs working tree --environment local node
+--- stdout ---
+{
+  "contractVersion": "0.10.0",
+  "ok": true,
+  "action": "artifact",
+  "exitCode": 0,
+  "message": "1 run evidence file(s) registered; unchanged bytes retain their original observation time",
+  "detail": {
+    "artifacts": [
+      {
+        "kind": "log",
+        "path": "agents/observations/runtime.log",
+        "description": "Runtime observation of command(n) for n in 1, 15, 29, 30 on the current source",
+        "sha256": "27edcce4f52d4463d133be4f007609b50536b3ac4439cb0c4d6eb358fbb6f86e",
+        "bytes": 208,
+        "registeredAt": "2026-09-14T13:41:19.485Z",
+        "observedAt": "2026-09-14T13:41:19.213Z",
+        "sourceDigest": "b50ee4a349d7a2c4971e93563664cf425da76d649263878e13500029154906a7",
+        "provenance": "operator, node -e over the working tree",
+        "target": "src/public.mjs working tree",
+        "environment": "local node"
+      }
+    ]
+  }
+}
+
+--- stderr ---
+

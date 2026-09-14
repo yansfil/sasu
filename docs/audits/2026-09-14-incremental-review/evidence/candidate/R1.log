@@ -1,0 +1,678 @@
+$ sasu implement verify
+--- stdout ---
+{
+  "contractVersion": "0.10.0",
+  "ok": true,
+  "action": "verify",
+  "exitCode": 0,
+  "message": "verification PASS; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+      "prdSha256": "8844bf1b840f15d95f149f222f1d6b1925b24741f2bde11265583bc43038d55f",
+      "reviewContext": {
+        "requiredRequirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31"
+        ],
+        "actualEvidenceRefs": [
+          ".gitignore",
+          "lib/report1.mjs",
+          "lib/report10.mjs",
+          "lib/report11.mjs",
+          "lib/report12.mjs",
+          "lib/report13.mjs",
+          "lib/report14.mjs",
+          "lib/report15.mjs",
+          "lib/report16.mjs",
+          "lib/report17.mjs",
+          "lib/report18.mjs",
+          "lib/report19.mjs",
+          "lib/report2.mjs",
+          "lib/report20.mjs",
+          "lib/report21.mjs",
+          "lib/report22.mjs",
+          "lib/report23.mjs",
+          "lib/report24.mjs",
+          "lib/report25.mjs",
+          "lib/report26.mjs",
+          "lib/report27.mjs",
+          "lib/report28.mjs",
+          "lib/report29.mjs",
+          "lib/report3.mjs",
+          "lib/report30.mjs",
+          "lib/report31.mjs",
+          "lib/report32.mjs",
+          "lib/report33.mjs",
+          "lib/report34.mjs",
+          "lib/report35.mjs",
+          "lib/report36.mjs",
+          "lib/report37.mjs",
+          "lib/report38.mjs",
+          "lib/report39.mjs",
+          "lib/report4.mjs",
+          "lib/report40.mjs",
+          "lib/report41.mjs",
+          "lib/report42.mjs",
+          "lib/report43.mjs",
+          "lib/report44.mjs",
+          "lib/report45.mjs",
+          "lib/report46.mjs",
+          "lib/report47.mjs",
+          "lib/report48.mjs",
+          "lib/report49.mjs",
+          "lib/report5.mjs",
+          "lib/report50.mjs",
+          "lib/report51.mjs",
+          "lib/report52.mjs",
+          "lib/report53.mjs",
+          "lib/report54.mjs",
+          "lib/report55.mjs",
+          "lib/report56.mjs",
+          "lib/report57.mjs",
+          "lib/report58.mjs",
+          "lib/report59.mjs",
+          "lib/report6.mjs",
+          "lib/report60.mjs",
+          "lib/report7.mjs",
+          "lib/report8.mjs",
+          "lib/report9.mjs",
+          "package.json",
+          "smoke.test.mjs",
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/runs/exp/artifacts/logs/mechanical-080e67db3277d441.log",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "agents/review-input/changes/src/public.mjs.diff",
+          "agents/review-input/changes/src/values.mjs.diff"
+        ],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31",
+          "D-01",
+          "D-02"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31",
+          "D-01",
+          "D-02",
+          ".gitignore",
+          "lib/report1.mjs",
+          "lib/report10.mjs",
+          "lib/report11.mjs",
+          "lib/report12.mjs",
+          "lib/report13.mjs",
+          "lib/report14.mjs",
+          "lib/report15.mjs",
+          "lib/report16.mjs",
+          "lib/report17.mjs",
+          "lib/report18.mjs",
+          "lib/report19.mjs",
+          "lib/report2.mjs",
+          "lib/report20.mjs",
+          "lib/report21.mjs",
+          "lib/report22.mjs",
+          "lib/report23.mjs",
+          "lib/report24.mjs",
+          "lib/report25.mjs",
+          "lib/report26.mjs",
+          "lib/report27.mjs",
+          "lib/report28.mjs",
+          "lib/report29.mjs",
+          "lib/report3.mjs",
+          "lib/report30.mjs",
+          "lib/report31.mjs",
+          "lib/report32.mjs",
+          "lib/report33.mjs",
+          "lib/report34.mjs",
+          "lib/report35.mjs",
+          "lib/report36.mjs",
+          "lib/report37.mjs",
+          "lib/report38.mjs",
+          "lib/report39.mjs",
+          "lib/report4.mjs",
+          "lib/report40.mjs",
+          "lib/report41.mjs",
+          "lib/report42.mjs",
+          "lib/report43.mjs",
+          "lib/report44.mjs",
+          "lib/report45.mjs",
+          "lib/report46.mjs",
+          "lib/report47.mjs",
+          "lib/report48.mjs",
+          "lib/report49.mjs",
+          "lib/report5.mjs",
+          "lib/report50.mjs",
+          "lib/report51.mjs",
+          "lib/report52.mjs",
+          "lib/report53.mjs",
+          "lib/report54.mjs",
+          "lib/report55.mjs",
+          "lib/report56.mjs",
+          "lib/report57.mjs",
+          "lib/report58.mjs",
+          "lib/report59.mjs",
+          "lib/report6.mjs",
+          "lib/report60.mjs",
+          "lib/report7.mjs",
+          "lib/report8.mjs",
+          "lib/report9.mjs",
+          "package.json",
+          "smoke.test.mjs",
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/runs/exp/artifacts/logs/mechanical-080e67db3277d441.log",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "agents/review-input/changes/src/public.mjs.diff",
+          "agents/review-input/changes/src/values.mjs.diff",
+          "agents/review-input/source-index.md"
+        ],
+        "priorFindingIds": [],
+        "humanSources": {
+          "Decisions": "command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs.\nThe user requested all thirty values through one shared formatter.\nsave never throws; a store failure is reported as ok false with the error message and the original value.\nCallers must be able to retry with the same value.",
+          "Risks": "None.",
+          "instruction": "- D-01: command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs. (근거: The user requested all thirty values through one shared formatter.)\n- D-02: save never throws; a store failure is reported as ok false with the error message and the original value. (근거: Callers must be able to retry with the same value.)",
+          "D-01": "command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs.",
+          "D-02": "save never throws; a store failure is reported as ok false with the error message and the original value."
+        },
+        "scope": {
+          "mode": "full"
+        },
+        "identity": "1994a378d47de0db96ee3aa03da656b3755b11bed5c75df1f60abdb9ed5d909d",
+        "ledgerSnapshot": {
+          "findings": [],
+          "riskFindings": [],
+          "claims": []
+        }
+      },
+      "verdict": "PASS",
+      "phase": "complete",
+      "inputFingerprint": "ade5ce5756b4d16dcbf0f68204a93fa74531b918c62f879a43ec657267968c34",
+      "sourceFingerprint": "cb40519100b4d38bd5e450825c77d50c80a3fcffd0a56c84f37f404cf31265c5",
+      "startedAt": "2026-09-14T13:35:19.073Z",
+      "finishedAt": "2026-09-14T13:36:34.076Z",
+      "durationMs": 75002,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-14T13:35:19.280Z",
+          "finishedAt": "2026-09-14T13:35:20.271Z",
+          "durationMs": 991,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/exp/artifacts/logs/mechanical-080e67db3277d441.log"
+        }
+      ],
+      "reviewScope": {
+        "mode": "full",
+        "reason": "first review of this run",
+        "referenceAttemptId": null,
+        "executedLanes": [
+          "fidelity",
+          "code"
+        ],
+        "carriedLanes": []
+      },
+      "reviews": {
+        "fidelity": {
+          "invocationId": "5b6ba31b-80fe-4967-8f38-736635ad7bea",
+          "verdict": "PASS",
+          "result": {
+            "summary": "The complete approved contract is fulfilled by the inspected source; all command values 1-30 dispatch through the shared formatter, and save reports write failures without throwing while preserving the input value. The official npm test execution also passed.",
+            "findings": [],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "src/public.mjs maps indices 0-29 to value1-value30 and passes each result through present; src/values.mjs returns the corresponding number for every function.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "save wraps store.write in a try/catch, returns ok false with a normalized error message and the original value on failure, and the official smoke execution confirms the failure path.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs",
+                  "agents/runs/exp/artifacts/logs/mechanical-080e67db3277d441.log"
+                ]
+              }
+            ]
+          },
+          "startedAt": "2026-09-14T13:35:20.855Z",
+          "finishedAt": "2026-09-14T13:36:27.171Z",
+          "durationMs": 66316,
+          "error": null
+        },
+        "code": {
+          "invocationId": "81e948c0-3661-465f-ac79-2bf697e378ce",
+          "verdict": "PASS",
+          "result": {
+            "summary": "The inspected implementation satisfies the complete contract: command(1..30) dispatches through values.mjs and present, and save reports synchronous store failures without throwing while preserving the input value. The official npm test exits 0.",
+            "findings": [],
+            "priorDispositions": [],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30",
+                  "D-01"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs imports all thirty value functions, dispatches n through the corresponding array slot, and passes every result to present; values.mjs returns the matching literal for each value.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "save calls the injected store synchronously inside a try/catch and returns ok false with a derived error message and the original value on failure; the smoke test exercises the thrown-error path and the official log records exit 0.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs",
+                  "agents/runs/exp/artifacts/logs/mechanical-080e67db3277d441.log"
+                ]
+              }
+            ]
+          },
+          "startedAt": "2026-09-14T13:35:20.864Z",
+          "finishedAt": "2026-09-14T13:36:33.911Z",
+          "durationMs": 73047,
+          "error": null
+        }
+      },
+      "risk": null,
+      "error": null
+    },
+    "findings": [],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 0,
+      "totalAttempts": 1,
+      "budget": 5,
+      "budgetExhausted": false,
+      "consecutiveErrors": 0,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": null,
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 0,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    },
+    "requirementGrounds": [
+      {
+        "requirementRef": "B1",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B2",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B3",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B4",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B5",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B6",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B7",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B8",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B9",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B10",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B11",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B12",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B13",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B14",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B15",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B16",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B17",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B18",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B19",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B20",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B21",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B22",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B23",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B24",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B25",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B26",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B27",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B28",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B29",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B30",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B31",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+        "carriedThrough": 0
+      }
+    ]
+  },
+  "summary": [
+    "verification PASS; active run retained",
+    "Review scope: full; first review of this run",
+    "Requirement grounds: 31 reviewed in this attempt, 0 carried from no earlier attempt, 0 without a current ground"
+  ]
+}
+
+--- stderr ---
+[implement:verify] running 1 required command(s)
+[implement:verify] PASS: npm test (1.0s)
+[implement:verify] review full: first review of this run; executing fidelity, code
+sasu: WARNING: judge-backend-advisory (codex, implement:fidelity): Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+sasu: WARNING: judge-backend-advisory (codex, implement:code): Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+[implement:verify] verification PASS; 75.0s
+

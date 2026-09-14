@@ -58,4 +58,13 @@ What is added: one planning module, six optional record fields, one optional ass
 
 ## Live measurement
 
-See the audit directory for the protocol, raw records and the comparison table.
+Protocol, raw records and the full tables: [`docs/audits/2026-09-14-incremental-review/`](../audits/2026-09-14-incremental-review/results.md).
+Two builds (main `89756b5` and this branch) ran the same seven-round fixture concurrently with real judges on 2026-09-14.
+
+- Repair round (one lane killed, then the same input again): the candidate reran only the lost Code lane, 1 judge call instead of 2, 90 s instead of 119 s wall, 10,730 instead of 24,573 metered read chars, 189,696 instead of 329,455 input tokens.
+  The reused Fidelity record is byte-equal to its origin, the suite ran again, finding ids were kept, and the fresh lane was built from the pinned ledger snapshot.
+- Focused rounds (R2 to R4): the harness planned `focused` every time and each role declared a traced scope, but no role carried a ground because every requirement on this fixture reaches the changed file through one call path.
+  Cost did not drop there (492 s versus 460 s wall over five verifies, more input tokens for the anchor grounds document); the cost side of the focused round is unproven until a fixture where most requirements do not reach the change is measured.
+- Detection: the planted shared-helper defect (R3) was found by both roles on both builds and resolved by both in R3b.
+  The contradicting-evidence round (R4) was missed by both builds alike.
+  No round detected less on the candidate than on the baseline.

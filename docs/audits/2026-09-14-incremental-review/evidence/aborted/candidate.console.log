@@ -1,0 +1,2 @@
+[candidate] R1-initial-full: verify=0 verdict=PASS scope=full wall=53s fid=PASS/41s/10r/7563c code=PASS/51s/3r/10750c
+[candidate] R2-local-refactor: verify=1 verdict=FAIL scope=focused wall=74s fid=PASS/37s/3r/7614c code=FAIL/73s/4r/10636c

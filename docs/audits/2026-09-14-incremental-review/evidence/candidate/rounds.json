@@ -1,0 +1,1154 @@
+[
+  {
+    "round": "R1-initial-full",
+    "expected": "PASS",
+    "verifyStatus": 0,
+    "verifyWallMs": 75445,
+    "verdict": "PASS",
+    "error": null,
+    "reviewScope": {
+      "mode": "full",
+      "reason": "first review of this run",
+      "referenceAttemptId": null,
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 991
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "PASS",
+      "durationMs": 66316,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 4,
+      "readOutputChars": 11285,
+      "commands": 4,
+      "usage": {
+        "inputTokens": 143677,
+        "outputTokens": 2534,
+        "cachedInputTokens": 130816,
+        "reasoningOutputTokens": 1620
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [],
+      "dispositions": []
+    },
+    "code": {
+      "verdict": "PASS",
+      "durationMs": 73047,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 4,
+      "readOutputChars": 11923,
+      "commands": 4,
+      "usage": {
+        "inputTokens": 141924,
+        "outputTokens": 3155,
+        "cachedInputTokens": 128768,
+        "reasoningOutputTokens": 2268
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [],
+      "dispositions": []
+    },
+    "openFindings": [],
+    "findingCount": 0
+  },
+  {
+    "round": "R2-local-refactor",
+    "expected": "PASS",
+    "verifyStatus": 1,
+    "verifyWallMs": 93437,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": {
+      "mode": "focused",
+      "reason": "attempt b6070005-a0f9-45a3-8451-b639c9b24b38 settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since",
+      "referenceAttemptId": "b6070005-a0f9-45a3-8451-b639c9b24b38",
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 619
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [
+        "src/values.mjs"
+      ],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "PASS",
+      "durationMs": 91808,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 2,
+      "retries": [
+        "judge-invalid-output/shell-composition"
+      ],
+      "readRounds": 3,
+      "readOutputChars": 7987,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 116592,
+        "outputTokens": 2784,
+        "cachedInputTokens": 99328,
+        "reasoningOutputTokens": 2128
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "The only product change since the anchor is src/values.mjs; its callers and dependents were traced, and save remains independently bounded in src/public.mjs."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [],
+      "dispositions": []
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 60524,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 4,
+      "readOutputChars": 11198,
+      "commands": 4,
+      "usage": {
+        "inputTokens": 142700,
+        "outputTokens": 2555,
+        "cachedInputTokens": 117504,
+        "reasoningOutputTokens": 1700
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "Reviewed all change chunks, the public API and its callers, formatter and value dependencies, save error paths, and the official smoke execution."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\""
+        }
+      ],
+      "dispositions": []
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\""
+      }
+    ],
+    "findingCount": 1
+  },
+  {
+    "round": "R3-shared-helper-defect",
+    "expected": "FAIL naming some of B25..B30",
+    "verifyStatus": 1,
+    "verifyWallMs": 116171,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": {
+      "mode": "focused",
+      "reason": "attempt 5683d9c7-79f1-4aa7-a2ab-02bb16b18119 settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since",
+      "referenceAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 523
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [
+        "src/format.mjs"
+      ],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 114651,
+      "carriedFrom": null,
+      "backend": "claude",
+      "model": "claude-sonnet-5",
+      "attempts": 1,
+      "retries": [
+        "judge-invalid-output/shell-composition",
+        "judge-invalid-output/shell-composition"
+      ],
+      "readRounds": 9,
+      "readOutputChars": 8142,
+      "commands": null,
+      "usage": {
+        "inputTokens": 10,
+        "outputTokens": 4959,
+        "cachedInputTokens": 87693,
+        "reasoningOutputTokens": 2573
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "Only src/format.mjs changed since the anchor attempt; traced its sole caller (present, imported by src/public.mjs) and confirmed the reach is bounded to command()'s formatting step for all 30 values plus the still-open save/F1 concern in the unchanged public.mjs. No shared runtime, build, or dependency manifest was touched, so the round stays focused rather than widened."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "problem": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] "
+        },
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save still does not always report the store failure's message. src/public.mjs's catch path is unchanged since the anchor attempt: for save({write(){throw {message:\"disk full\"};}}, \"draft\") the thrown "
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "src/public.mjs was not among the files changed since the anchor attempt (only src/format.mjs changed); the same non-Error/non-string fallback logic that ignores a thrown object's .message property is still present verbatim.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 75690,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 4,
+      "readOutputChars": 31305,
+      "commands": 4,
+      "usage": {
+        "inputTokens": 157366,
+        "outputTokens": 3248,
+        "cachedInputTokens": 137984,
+        "reasoningOutputTokens": 2145
+      },
+      "error": null,
+      "scope": {
+        "basis": "widened",
+        "reason": "The changed formatter is shared by the public command path, so the full command and save contract, callers, error paths, and sealed suite evidence were re-reviewed."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "problem": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24."
+        },
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save still fails to report a thrown object's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path rejects the non-Error object and returns error:\"store failure\" instead "
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The save catch expression remains unchanged and still ignores string message properties on non-Error thrown objects.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\""
+      },
+      {
+        "id": "F2",
+        "kind": "defect",
+        "refs": [
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "problem": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] "
+      },
+      {
+        "id": "F3",
+        "kind": "defect",
+        "refs": [
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "problem": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24."
+      }
+    ],
+    "findingCount": 3
+  },
+  {
+    "round": "R3b-helper-fix",
+    "expected": "PASS with F resolved",
+    "verifyStatus": 1,
+    "verifyWallMs": 87631,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": {
+      "mode": "focused",
+      "reason": "attempt 915397d4-8126-4c1d-bb1b-e8f140adc05c settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since",
+      "referenceAttemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 730
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [
+        "src/format.mjs"
+      ],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 85733,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 8868,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 121125,
+        "outputTokens": 3926,
+        "cachedInputTokens": 107520,
+        "reasoningOutputTokens": 2780
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "Re-reviewed the changed formatter, its callers and dependencies, the unchanged save error path, and the registered smoke execution; the formatter's reach is bounded to public.mjs."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31"
+          ],
+          "problem": "save({write(){throw {message:\"disk full\"};}}, \"draft\") catches the plain object, but because it is neither an Error nor a string, returns error:\"store failure\" instead of error:\"disk full\". The origin"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The non-Error thrown-object message handling remains unchanged in src/public.mjs.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "resolved",
+          "reason": "src/format.mjs now returns values unchanged, so the prior >24 truncation no longer affects command(25) through command(30).",
+          "evidenceRefs": [
+            "src/format.mjs",
+            "src/public.mjs",
+            "src/values.mjs"
+          ]
+        },
+        {
+          "findingId": "F3",
+          "status": "resolved",
+          "reason": "The formatter truncation described by this duplicate finding is removed; values 25 through 30 dispatch to matching functions and pass through present unchanged.",
+          "evidenceRefs": [
+            "src/format.mjs",
+            "src/public.mjs",
+            "src/values.mjs"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 72272,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 5,
+      "readOutputChars": 8933,
+      "commands": 5,
+      "usage": {
+        "inputTokens": 182748,
+        "outputTokens": 3109,
+        "cachedInputTokens": 151040,
+        "reasoningOutputTokens": 1946
+      },
+      "error": null,
+      "scope": {
+        "basis": "widened",
+        "reason": "The changed formatter is shared by every public command result, so the complete command contract and the existing save error path were re-reviewed."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save ignores a thrown object's string message property. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), it returns error:\"store failure\" instead of error:\"disk full\", although it preserves"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "src/public.mjs is unchanged and still omits string message properties on non-Error thrown objects.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "resolved",
+          "reason": "format.mjs now returns its input unchanged, so command(25) through command(30) return their requested numbers.",
+          "evidenceRefs": [
+            "src/format.mjs",
+            "src/public.mjs",
+            "src/values.mjs"
+          ]
+        },
+        {
+          "findingId": "F3",
+          "status": "resolved",
+          "reason": "The formatter truncation is removed; the public dispatch reaches value25 through value30 and present preserves each result.",
+          "evidenceRefs": [
+            "src/format.mjs",
+            "src/public.mjs",
+            "src/values.mjs"
+          ]
+        }
+      ]
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\""
+      }
+    ],
+    "findingCount": 3
+  },
+  {
+    "round": "R4-contradicting-evidence",
+    "expected": "not a clean PASS on B30: a finding or an unresolved B30 assessment",
+    "verifyStatus": 1,
+    "verifyWallMs": 120203,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": {
+      "mode": "focused",
+      "reason": "attempt 03a1d8fa-a862-47eb-b571-a5e5c3cf5c0a settled every lane on the same contract and policy; 1 path(s) and 1 evidence file(s) changed since",
+      "referenceAttemptId": "03a1d8fa-a862-47eb-b571-a5e5c3cf5c0a",
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 524
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [
+        "lib/report1.mjs"
+      ],
+      "newEvidence": [
+        "agents/observations/runtime.log"
+      ]
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 96753,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 4,
+      "readOutputChars": 16051,
+      "commands": 4,
+      "usage": {
+        "inputTokens": 163064,
+        "outputTokens": 4591,
+        "cachedInputTokens": 144128,
+        "reasoningOutputTokens": 3440
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "Reviewed all changed chunks, the changed unrelated report module, the public command and save dependency paths, source implementations, smoke test, and registered runtime evidence. The report module change is isolated from the public API."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31"
+          ],
+          "problem": "save does not report the message from a thrown plain object. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path falls back to error:\"store failure\" because it only accepts Erro"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The save catch logic is unchanged and still ignores string message properties on non-Error thrown objects.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 118443,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 6,
+      "readOutputChars": 17146,
+      "commands": 6,
+      "usage": {
+        "inputTokens": 227122,
+        "outputTokens": 5587,
+        "cachedInputTokens": 207104,
+        "reasoningOutputTokens": 4518
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "The only post-anchor product change is an unrelated report1 comment change with no callers in the workspace; the public command path and the open save error path were re-reviewed."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save preserves the input value and does not rethrow, but for save({write(){throw {message:\"disk full\"};}}, \"draft\") the catch path falls back to error:\"store failure\" because it only extracts messages"
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "src/public.mjs remains unchanged since the anchor attempt and still ignores string message properties on non-Error thrown objects.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        }
+      ]
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\""
+      }
+    ],
+    "findingCount": 3
+  }
+]

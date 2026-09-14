@@ -1,0 +1,365 @@
+[
+  {
+    "round": "R1-initial-full",
+    "expected": "PASS",
+    "verifyStatus": 0,
+    "verifyWallMs": 53057,
+    "verdict": "PASS",
+    "error": null,
+    "reviewScope": {
+      "mode": "full",
+      "reason": "first review of this run",
+      "referenceAttemptId": null,
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 858
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "PASS",
+      "durationMs": 41147,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 10,
+      "readOutputChars": 7563,
+      "commands": 10,
+      "usage": {
+        "inputTokens": 81573,
+        "outputTokens": 1610,
+        "cachedInputTokens": 66816,
+        "reasoningOutputTokens": 1032
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [],
+      "dispositions": []
+    },
+    "code": {
+      "verdict": "PASS",
+      "durationMs": 50843,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 10750,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 111224,
+        "outputTokens": 1972,
+        "cachedInputTokens": 83968,
+        "reasoningOutputTokens": 1262
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [],
+      "dispositions": []
+    },
+    "openFindings": [],
+    "findingCount": 0
+  },
+  {
+    "round": "R2-local-refactor",
+    "expected": "PASS",
+    "verifyStatus": 1,
+    "verifyWallMs": 74475,
+    "verdict": "FAIL",
+    "error": null,
+    "reviewScope": {
+      "mode": "focused",
+      "reason": "attempt 8caff01e-e44a-4a7c-aad0-e0fafb12d692 settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since",
+      "referenceAttemptId": "8caff01e-e44a-4a7c-aad0-e0fafb12d692",
+      "executedLanes": [
+        "fidelity",
+        "code"
+      ],
+      "carriedLanes": []
+    },
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 535
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [
+        "src/values.mjs"
+      ],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "PASS",
+      "durationMs": 36733,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 3,
+      "readOutputChars": 7614,
+      "commands": 3,
+      "usage": {
+        "inputTokens": 112254,
+        "outputTokens": 1153,
+        "cachedInputTokens": 100352,
+        "reasoningOutputTokens": 541
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "Reviewed all changed hunks, their public dispatch and error paths, the complete relevant source, and the official execution log."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [],
+      "dispositions": []
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 72872,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "readRounds": 4,
+      "readOutputChars": 10636,
+      "commands": 4,
+      "usage": {
+        "inputTokens": 143322,
+        "outputTokens": 3029,
+        "cachedInputTokens": 118528,
+        "reasoningOutputTokens": 2052
+      },
+      "error": null,
+      "scope": {
+        "basis": "focused",
+        "reason": "Reviewed all changed chunks, the public entrypoint, its value and formatter dependencies, callers, save error path, and the official test log; the changed value module has a bounded public dependency path and no external integration boundary."
+      },
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "The catch handler can throw while constructing the failure response. For example, save({write(){throw Object.create(null)}}, \"draft\") reaches String(error), which throws because the object has no prim"
+        }
+      ],
+      "dispositions": []
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "The catch handler can throw while constructing the failure response. For example, save({write(){throw Object.create(null)}}, \"draft\") reaches String(error), which throws because the object has no prim"
+      }
+    ],
+    "findingCount": 1
+  }
+]

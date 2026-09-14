@@ -1,0 +1,74 @@
+$ sasu implement start --prd agents/prd/exp/prd.md --dirty-attribution run-owned
+--- stdout ---
+{
+  "contractVersion": "0.10.0",
+  "ok": true,
+  "action": "start",
+  "exitCode": 0,
+  "message": "implement run started: exp",
+  "detail": {
+    "schema": "sasu.implement.state.v10",
+    "status": "active",
+    "topicSlug": "exp",
+    "prdPath": "agents/prd/exp/prd.md",
+    "prdSnapshotPath": "agents/runs/exp/prd.md",
+    "baselineAttribution": {
+      "disposition": "clean",
+      "paths": [],
+      "baselineDigest": "1173e3f7b35fc7565b5aa31bd251a488c06a2ba68b00b77f106036e642d46097",
+      "head": "8144438776adb7e2c59b96fd9051003a765688a0"
+    },
+    "workingRoot": "<exp>/candidate/project",
+    "worktree": null,
+    "reviewProfile": "standard",
+    "escalations": {
+      "used": 0,
+      "limit": 3,
+      "remaining": 3
+    },
+    "requirementCount": 31,
+    "suite": {
+      "green": 0,
+      "total": 1,
+      "red": []
+    },
+    "findings": [],
+    "humanConfirmations": [],
+    "riskFindings": {
+      "open": [],
+      "openCount": 0
+    },
+    "verification": {
+      "verdict": "NOT_RUN",
+      "attempts": 0,
+      "budget": {
+        "fixAttempts": 0,
+        "totalAttempts": 0,
+        "budget": 5,
+        "budgetExhausted": false,
+        "consecutiveErrors": 0,
+        "judgeErrorThreshold": 3,
+        "judgeErrorCause": null,
+        "judgeErrorLoop": false,
+        "prejudgeFailures": 0,
+        "prejudgeFailureLimit": 3,
+        "prejudgeFailureLoop": false,
+        "grants": 0
+      },
+      "latest": null
+    },
+    "activeVerification": null,
+    "artifacts": [],
+    "retirement": null,
+    "completion": null,
+    "delivery": {
+      "eligible": false,
+      "reasons": [
+        "run is active"
+      ]
+    }
+  }
+}
+
+--- stderr ---
+

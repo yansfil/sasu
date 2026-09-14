@@ -1,0 +1,548 @@
+[
+  {
+    "round": "R5-code-lane-backend-error",
+    "expected": "attempt error at review; fidelity settled, code lane backend error",
+    "verifyStatus": 1,
+    "verifyWallMs": 93620,
+    "sabotage": [
+      {
+        "at": 687,
+        "action": "observed",
+        "pid": 24580,
+        "head": "git ls-files --cached --others --exclude-standard -z "
+      },
+      {
+        "at": 1019,
+        "action": "observed",
+        "pid": 24623,
+        "head": "npm test "
+      },
+      {
+        "at": 1684,
+        "action": "observed",
+        "pid": 24984,
+        "head": "git diff --no-index --no-ext-diff --no-textconv --no-renames --no-prefix a/lib/report1.mjs b/lib/report1.mjs "
+      },
+      {
+        "at": 2014,
+        "action": "observed",
+        "pid": 25093,
+        "head": "/bin/sh <home>/Library/pnpm/codex exec --strict-config --config default_permissions=\"review-evidence\" --config permissions.review-evidence.filesystem={\":minimal\"=\"read\",\"/var/folders/_c/xjlz"
+      },
+      {
+        "at": 6439,
+        "action": "observed",
+        "pid": 26147,
+        "head": "node <home>/Library/pnpm/global/5/.pnpm/@openai+codex@0.154.0/node_modules/@openai/codex/bin/codex.js exec --strict-config --config default_permissions=\"review-evidence\" --config permissions"
+      },
+      {
+        "at": 6448,
+        "action": "SIGKILL code-lane codex",
+        "pid": 26176,
+        "head": "node <home>/Library/pnpm/global/5/.pnpm/@openai+codex@0.154.0/node_modules/@openai/codex/bin/codex.js exec --strict-config --config default_permissions=\"review-evidence\" --config permissions"
+      },
+      {
+        "at": 7758,
+        "action": "SIGKILL code-lane claude fallback",
+        "pid": 26579,
+        "head": "claude -p --output-format stream-json --verbose --safe-mode --no-session-persistence --disable-slash-commands --strict-mcp-config --tools Read,Grep,Glob --disallowedTools Bash,Edit,Write,NotebookEdit,"
+      }
+    ],
+    "verdict": "ERROR",
+    "error": {
+      "stage": "review",
+      "code": "judge-error",
+      "message": "judge-auth-or-runtime (backend: claude): exit code null"
+    },
+    "deviations": [],
+    "reviewScope": null,
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 812
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 91375,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "fallback": null,
+      "readRounds": 3,
+      "readOutputChars": 8662,
+      "usage": {
+        "inputTokens": 126197,
+        "outputTokens": 4342,
+        "cachedInputTokens": 106496,
+        "reasoningOutputTokens": 3093
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save({write(){throw {message:\"disk full\"}}}, \"draft\") catches the failure but accepts messages only from Error instances or directly thrown strings, so it returns error \"store failure\" instead of \"dis"
+        },
+        {
+          "kind": "advisory",
+          "refs": [],
+          "problem": "The smoke suite checks only command(1), command(2), and an Error-based save failure, leaving command(3..30) and object-shaped thrown messages without direct regression coverage."
+        },
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "The duplicate open finding remains valid: a thrown object with a string message property falls through save's message extraction and produces the generic \"store failure\" error."
+        },
+        {
+          "kind": "advisory",
+          "refs": [],
+          "problem": "The duplicate coverage finding remains applicable because the registered smoke test still exercises only two command values and one Error-based failure."
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The current save implementation is unchanged and still mishandles thrown non-Error objects with string message properties.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "open",
+          "reason": "The current smoke suite and official passing log still cover only command(1), command(2), and an Error-based save failure.",
+          "evidenceRefs": [
+            "smoke.test.mjs",
+            "agents/runs/exp/artifacts/logs/mechanical-e144c29e560d9c00.log"
+          ]
+        },
+        {
+          "findingId": "F5",
+          "status": "open",
+          "reason": "The object-with-message save defect remains present in the current source.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F6",
+          "status": "open",
+          "reason": "The smoke-test coverage gap remains unchanged in the current source and execution log.",
+          "evidenceRefs": [
+            "smoke.test.mjs",
+            "agents/runs/exp/artifacts/logs/mechanical-e144c29e560d9c00.log"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "ERROR",
+      "durationMs": 5823,
+      "carriedFrom": null,
+      "backend": "claude",
+      "model": "claude-sonnet-5",
+      "attempts": 1,
+      "retries": [
+        "judge-auth-or-runtime/null",
+        "judge-auth-or-runtime/null"
+      ],
+      "fallback": {
+        "at": "2026-09-14T13:49:46.045Z",
+        "backend": "codex",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
+        "durationMs": 5518,
+        "attempts": 1,
+        "outcome": "judge-auth-or-runtime",
+        "reason": "primary judge authentication or runtime failed"
+      },
+      "readRounds": null,
+      "readOutputChars": null,
+      "usage": null,
+      "error": "judge-auth-or-runtime (backend: claude): exit code null",
+      "scope": null,
+      "carriedAssessments": null,
+      "assessments": null,
+      "findings": null,
+      "dispositions": null
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ]
+      },
+      {
+        "id": "F2",
+        "kind": "advisory",
+        "refs": []
+      },
+      {
+        "id": "F5",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ]
+      },
+      {
+        "id": "F6",
+        "kind": "advisory",
+        "refs": []
+      }
+    ],
+    "findingCount": 6,
+    "attemptCount": 6
+  },
+  {
+    "round": "R6-same-input-after-error",
+    "expected": "full re-review of both lanes",
+    "verifyStatus": 1,
+    "verifyWallMs": 118610,
+    "sabotage": [],
+    "verdict": "FAIL",
+    "error": null,
+    "deviations": [],
+    "reviewScope": null,
+    "mechanical": [
+      {
+        "status": "PASS",
+        "durationMs": 633
+      }
+    ],
+    "roundContext": {
+      "changedPaths": [],
+      "newEvidence": []
+    },
+    "fidelity": {
+      "verdict": "FAIL",
+      "durationMs": 116829,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "fallback": null,
+      "readRounds": 4,
+      "readOutputChars": 12130,
+      "usage": {
+        "inputTokens": 165657,
+        "outputTokens": 5807,
+        "cachedInputTokens": 147200,
+        "reasoningOutputTokens": 4628
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save({write(){throw {message:\"disk full\"}}},\"draft\") catches the object, rejects it because it is neither an Error nor a string, and returns error \"store failure\" instead of \"disk full\"."
+        },
+        {
+          "kind": "advisory",
+          "refs": [],
+          "problem": "The smoke suite covers only command(1), command(2), and an Error-based save failure; it does not directly regression-test command(3..30) or object-shaped thrown messages."
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The object-with-message save defect remains present in src/public.mjs.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "open",
+          "reason": "The smoke suite remains limited to two command values and one Error-based failure.",
+          "evidenceRefs": [
+            "smoke.test.mjs",
+            "agents/runs/exp/artifacts/logs/mechanical-b5477a596fc26d58.log"
+          ]
+        },
+        {
+          "findingId": "F5",
+          "status": "open",
+          "reason": "This duplicate save defect remains covered by the same unresolved object-message counterexample.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F6",
+          "status": "open",
+          "reason": "This duplicate coverage advisory remains applicable because the smoke suite is unchanged.",
+          "evidenceRefs": [
+            "smoke.test.mjs",
+            "agents/runs/exp/artifacts/logs/mechanical-b5477a596fc26d58.log"
+          ]
+        }
+      ]
+    },
+    "code": {
+      "verdict": "FAIL",
+      "durationMs": 68482,
+      "carriedFrom": null,
+      "backend": "codex",
+      "model": "gpt-5.6-luna",
+      "attempts": 1,
+      "retries": [],
+      "fallback": null,
+      "readRounds": 4,
+      "readOutputChars": 12443,
+      "usage": {
+        "inputTokens": 163798,
+        "outputTokens": 2915,
+        "cachedInputTokens": 146176,
+        "reasoningOutputTokens": 1830
+      },
+      "error": null,
+      "scope": null,
+      "carriedAssessments": 0,
+      "assessments": [
+        {
+          "refs": [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+            "B13",
+            "B14",
+            "B15",
+            "B16",
+            "B17",
+            "B18",
+            "B19",
+            "B20",
+            "B21",
+            "B22",
+            "B23",
+            "B24",
+            "B25",
+            "B26",
+            "B27",
+            "B28",
+            "B29",
+            "B30",
+            "D-01"
+          ],
+          "conclusion": "satisfied",
+          "basis": "reviewed"
+        },
+        {
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "conclusion": "unresolved",
+          "basis": "reviewed"
+        }
+      ],
+      "findings": [
+        {
+          "kind": "defect",
+          "refs": [
+            "B31",
+            "D-02"
+          ],
+          "problem": "save only extracts messages from Error instances or directly thrown strings. If store.write throws {message:\"disk full\"}, the catch path returns error \"store failure\" instead of \"disk full\", although "
+        },
+        {
+          "kind": "advisory",
+          "refs": [],
+          "problem": "The registered smoke test covers only command(1), command(2), and an Error-based save failure, so it does not directly protect command(3..30) or object-shaped thrown messages."
+        }
+      ],
+      "dispositions": [
+        {
+          "findingId": "F1",
+          "status": "open",
+          "reason": "The current src/public.mjs still rejects non-Error objects with string message properties and returns the generic fallback.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F2",
+          "status": "open",
+          "reason": "The current smoke test remains limited to two command values and one Error-based failure.",
+          "evidenceRefs": [
+            "smoke.test.mjs"
+          ]
+        },
+        {
+          "findingId": "F5",
+          "status": "open",
+          "reason": "This duplicate object-with-message save defect remains present.",
+          "evidenceRefs": [
+            "src/public.mjs"
+          ]
+        },
+        {
+          "findingId": "F6",
+          "status": "open",
+          "reason": "This duplicate smoke-test coverage gap remains present.",
+          "evidenceRefs": [
+            "smoke.test.mjs"
+          ]
+        }
+      ]
+    },
+    "openFindings": [
+      {
+        "id": "F1",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ]
+      },
+      {
+        "id": "F2",
+        "kind": "advisory",
+        "refs": []
+      },
+      {
+        "id": "F5",
+        "kind": "defect",
+        "refs": [
+          "B31",
+          "D-02"
+        ]
+      },
+      {
+        "id": "F6",
+        "kind": "advisory",
+        "refs": []
+      }
+    ],
+    "findingCount": 6,
+    "attemptCount": 7
+  }
+]

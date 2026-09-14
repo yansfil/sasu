@@ -1,0 +1,5 @@
+[candidate] killed code-lane codex pid 18296 at 6919ms
+[candidate] killed code-lane claude pid 18504 at 8226ms
+[candidate] R5-code-lane-backend-error: verify=1 verdict=ERROR error=judge-auth-or-runtime (backend: claude): exit code null scope=focused carried=[] wall=80s fid=FAIL/77s/4r/12325c/from=- code=ERROR/6s/nullr/nullc err=judge-auth-or-runtime (backend: claude): exit code null
+[candidate] R6-same-input-after-error: verify=1 verdict=FAIL error=- scope=repair carried=["fidelity"] wall=90s fid=FAIL/77s/4r/12325c/from=d6250914 code=FAIL/88s/5r/10730c err=-
+[candidate] done

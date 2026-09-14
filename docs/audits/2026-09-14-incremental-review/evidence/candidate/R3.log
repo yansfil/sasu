@@ -1,0 +1,1070 @@
+$ sasu implement verify
+--- stdout ---
+{
+  "contractVersion": "0.10.0",
+  "ok": false,
+  "action": "verify",
+  "exitCode": 1,
+  "message": "verification FAIL; active run retained",
+  "detail": {
+    "attempt": {
+      "id": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+      "prdSha256": "8844bf1b840f15d95f149f222f1d6b1925b24741f2bde11265583bc43038d55f",
+      "reviewContext": {
+        "requiredRequirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31"
+        ],
+        "actualEvidenceRefs": [
+          ".gitignore",
+          "lib/report1.mjs",
+          "lib/report10.mjs",
+          "lib/report11.mjs",
+          "lib/report12.mjs",
+          "lib/report13.mjs",
+          "lib/report14.mjs",
+          "lib/report15.mjs",
+          "lib/report16.mjs",
+          "lib/report17.mjs",
+          "lib/report18.mjs",
+          "lib/report19.mjs",
+          "lib/report2.mjs",
+          "lib/report20.mjs",
+          "lib/report21.mjs",
+          "lib/report22.mjs",
+          "lib/report23.mjs",
+          "lib/report24.mjs",
+          "lib/report25.mjs",
+          "lib/report26.mjs",
+          "lib/report27.mjs",
+          "lib/report28.mjs",
+          "lib/report29.mjs",
+          "lib/report3.mjs",
+          "lib/report30.mjs",
+          "lib/report31.mjs",
+          "lib/report32.mjs",
+          "lib/report33.mjs",
+          "lib/report34.mjs",
+          "lib/report35.mjs",
+          "lib/report36.mjs",
+          "lib/report37.mjs",
+          "lib/report38.mjs",
+          "lib/report39.mjs",
+          "lib/report4.mjs",
+          "lib/report40.mjs",
+          "lib/report41.mjs",
+          "lib/report42.mjs",
+          "lib/report43.mjs",
+          "lib/report44.mjs",
+          "lib/report45.mjs",
+          "lib/report46.mjs",
+          "lib/report47.mjs",
+          "lib/report48.mjs",
+          "lib/report49.mjs",
+          "lib/report5.mjs",
+          "lib/report50.mjs",
+          "lib/report51.mjs",
+          "lib/report52.mjs",
+          "lib/report53.mjs",
+          "lib/report54.mjs",
+          "lib/report55.mjs",
+          "lib/report56.mjs",
+          "lib/report57.mjs",
+          "lib/report58.mjs",
+          "lib/report59.mjs",
+          "lib/report6.mjs",
+          "lib/report60.mjs",
+          "lib/report7.mjs",
+          "lib/report8.mjs",
+          "lib/report9.mjs",
+          "package.json",
+          "smoke.test.mjs",
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/runs/exp/artifacts/logs/mechanical-a84b9a1bdca19603.log",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "agents/review-input/changes/src/public.mjs.diff",
+          "agents/review-input/changes/src/values.mjs.diff"
+        ],
+        "requirementRefs": [
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31",
+          "D-01",
+          "D-02"
+        ],
+        "evidenceRefs": [
+          "PRD",
+          "Decisions",
+          "Risks",
+          "instruction",
+          "B1",
+          "B2",
+          "B3",
+          "B4",
+          "B5",
+          "B6",
+          "B7",
+          "B8",
+          "B9",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14",
+          "B15",
+          "B16",
+          "B17",
+          "B18",
+          "B19",
+          "B20",
+          "B21",
+          "B22",
+          "B23",
+          "B24",
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "B31",
+          "D-01",
+          "D-02",
+          ".gitignore",
+          "lib/report1.mjs",
+          "lib/report10.mjs",
+          "lib/report11.mjs",
+          "lib/report12.mjs",
+          "lib/report13.mjs",
+          "lib/report14.mjs",
+          "lib/report15.mjs",
+          "lib/report16.mjs",
+          "lib/report17.mjs",
+          "lib/report18.mjs",
+          "lib/report19.mjs",
+          "lib/report2.mjs",
+          "lib/report20.mjs",
+          "lib/report21.mjs",
+          "lib/report22.mjs",
+          "lib/report23.mjs",
+          "lib/report24.mjs",
+          "lib/report25.mjs",
+          "lib/report26.mjs",
+          "lib/report27.mjs",
+          "lib/report28.mjs",
+          "lib/report29.mjs",
+          "lib/report3.mjs",
+          "lib/report30.mjs",
+          "lib/report31.mjs",
+          "lib/report32.mjs",
+          "lib/report33.mjs",
+          "lib/report34.mjs",
+          "lib/report35.mjs",
+          "lib/report36.mjs",
+          "lib/report37.mjs",
+          "lib/report38.mjs",
+          "lib/report39.mjs",
+          "lib/report4.mjs",
+          "lib/report40.mjs",
+          "lib/report41.mjs",
+          "lib/report42.mjs",
+          "lib/report43.mjs",
+          "lib/report44.mjs",
+          "lib/report45.mjs",
+          "lib/report46.mjs",
+          "lib/report47.mjs",
+          "lib/report48.mjs",
+          "lib/report49.mjs",
+          "lib/report5.mjs",
+          "lib/report50.mjs",
+          "lib/report51.mjs",
+          "lib/report52.mjs",
+          "lib/report53.mjs",
+          "lib/report54.mjs",
+          "lib/report55.mjs",
+          "lib/report56.mjs",
+          "lib/report57.mjs",
+          "lib/report58.mjs",
+          "lib/report59.mjs",
+          "lib/report6.mjs",
+          "lib/report60.mjs",
+          "lib/report7.mjs",
+          "lib/report8.mjs",
+          "lib/report9.mjs",
+          "package.json",
+          "smoke.test.mjs",
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/runs/exp/artifacts/logs/mechanical-a84b9a1bdca19603.log",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "agents/review-input/changes/src/public.mjs.diff",
+          "agents/review-input/changes/src/values.mjs.diff",
+          "agents/review-input/source-index.md"
+        ],
+        "priorFindingIds": [
+          "F1"
+        ],
+        "humanSources": {
+          "Decisions": "command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs.\nThe user requested all thirty values through one shared formatter.\nsave never throws; a store failure is reported as ok false with the error message and the original value.\nCallers must be able to retry with the same value.",
+          "Risks": "None.",
+          "instruction": "- D-01: command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs. (근거: The user requested all thirty values through one shared formatter.)\n- D-02: save never throws; a store failure is reported as ok false with the error message and the original value. (근거: Callers must be able to retry with the same value.)",
+          "D-01": "command(n) returns the number n for 1 through 30 and formats every value through present in src/format.mjs.",
+          "D-02": "save never throws; a store failure is reported as ok false with the error message and the original value."
+        },
+        "scope": {
+          "mode": "focused",
+          "anchorAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+          "anchorAssessments": {
+            "fidelity": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs maps indices 1 through 30 to value1 through value30 and passes each result through present; values.mjs returns the corresponding number for every function.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "save wraps store.write in a catch path that returns ok false, a normalized error message, and the original value; the official npm test also confirms the failure path.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs",
+                  "agents/runs/exp/artifacts/logs/mechanical-9e49aae8ac69eb5c.log"
+                ]
+              }
+            ],
+            "code": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24",
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30",
+                  "D-01"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "The public command maps each input 1 through 30 to the corresponding value function and passes the result through present; values.mjs returns each matching number, including value7's 3 + 4 result.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "The synchronous store failure path never throws and preserves value, but its message extraction omits thrown objects with a string message property.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs"
+                ]
+              }
+            ]
+          },
+          "invalidatedEvidenceRefs": [
+            "agents/review-input/changes/src/format.mjs.diff",
+            "src/format.mjs"
+          ],
+          "reopenedRequirementRefs": [
+            "B31",
+            "D-02"
+          ]
+        },
+        "identity": "8e7642eea815eaeb5a3c9262a90e3451fa8579199f4c80889d75e6a706267190",
+        "ledgerSnapshot": {
+          "findings": [
+            {
+              "kind": "defect",
+              "requirementRefs": [
+                "B31",
+                "D-02"
+              ],
+              "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+              "evidenceRefs": [
+                "src/public.mjs",
+                "smoke.test.mjs"
+              ],
+              "nextAction": "When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+              "id": "F1",
+              "originAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+              "status": "open",
+              "history": [
+                {
+                  "at": "2026-09-14T13:38:07.438Z",
+                  "attemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+                  "status": "open",
+                  "reason": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+                  "evidenceRefs": [
+                    "src/public.mjs",
+                    "smoke.test.mjs"
+                  ]
+                }
+              ],
+              "responses": []
+            }
+          ],
+          "riskFindings": [],
+          "claims": []
+        }
+      },
+      "verdict": "FAIL",
+      "phase": "complete",
+      "inputFingerprint": "3185e5a2f788444097761f4e758877a5fbfd2bed518a7bb9fdef1a083ad35d05",
+      "sourceFingerprint": "def4c4de0fcfb26452afc6578ab690a334bb931b32c0c94fd3a483784205d414",
+      "startedAt": "2026-09-14T13:38:07.871Z",
+      "finishedAt": "2026-09-14T13:40:03.765Z",
+      "durationMs": 115893,
+      "prelint": {
+        "ok": true,
+        "findings": []
+      },
+      "mechanical": [
+        {
+          "command": "npm test",
+          "cwd": ".",
+          "startedAt": "2026-09-14T13:38:08.009Z",
+          "finishedAt": "2026-09-14T13:38:08.532Z",
+          "durationMs": 523,
+          "exitCode": 0,
+          "mutatedTree": false,
+          "status": "PASS",
+          "logPath": "agents/runs/exp/artifacts/logs/mechanical-a84b9a1bdca19603.log"
+        }
+      ],
+      "reviewScope": {
+        "mode": "focused",
+        "reason": "attempt 5683d9c7-79f1-4aa7-a2ab-02bb16b18119 settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since",
+        "referenceAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+        "executedLanes": [
+          "fidelity",
+          "code"
+        ],
+        "carriedLanes": []
+      },
+      "reviews": {
+        "fidelity": {
+          "invocationId": "86adb41f-bac1-4681-977d-410a4a4a899a",
+          "verdict": "FAIL",
+          "result": {
+            "summary": "public.mjs and values.mjs correctly wire command(1..30) to value1..value30, but the newly added src/format.mjs present() helper discards any numeric result greater than 24, so command(25) through command(30) return undefined instead of the required numbers, breaking B25-B30/D-01 even though the sealed smoke suite (which only exercises command(1),command(2)) shows a green exit. The previously open F1 defect on save's error-message extraction for non-Error thrown values is unchanged (public.mjs was not touched since the anchor attempt) and remains unresolved, keeping B31/D-02 unresolved as well.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30",
+                  "D-01"
+                ],
+                "problem": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] which is value25, value25() returns 25, then command passes 25 into present(25); since 25 > 24 the function returns undefined instead of 25. The same path applies identically to command(26) through command(30), each returning undefined instead of 26..30. This directly contradicts D-01 ('command(n) returns the number n for 1 through 30 ... and formats every value through present') and violates B25-B30. The sealed smoke.test.mjs only checks command(1) and command(2), so npm test's exit 0 does not exercise or catch this.",
+                "evidenceRefs": [
+                  "src/format.mjs",
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "agents/review-input/changes/src/format.mjs.diff",
+                  "smoke.test.mjs"
+                ],
+                "nextAction": "Fix present() to pass numeric values through unchanged for the full 1-30 range (remove the >24 short-circuit, or only special-case values that are actually out of the approved 1-30 domain) so command(25)..command(30) return 25..30."
+              },
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "problem": "save still does not always report the store failure's message. src/public.mjs's catch path is unchanged since the anchor attempt: for save({write(){throw {message:\"disk full\"};}}, \"draft\") the thrown value is not `instanceof Error` and not a string, so the ternary falls through to the \"store failure\" fallback instead of extracting \"disk full\", even though the object has a string message property. The input value is still preserved correctly, but the reported error message is wrong for this class of thrown values.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ],
+                "nextAction": "When the thrown value has a string `.message` property (Error or plain object), return that message; only fall back to a generic string when no such property exists.",
+                "priorFindingId": "F1"
+              }
+            ],
+            "priorDispositions": [
+              {
+                "findingId": "F1",
+                "status": "open",
+                "reason": "src/public.mjs was not among the files changed since the anchor attempt (only src/format.mjs changed); the same non-Error/non-string fallback logic that ignores a thrown object's .message property is still present verbatim.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs's actions array maps index n-1 to value1..value24, each of which returns the matching literal (value7 computes 3+4=7); present(value) for any value <=24 returns it unchanged (the `value > 24` branch is not taken), so command(1)..command(24) each return the correct number. Re-reviewed because src/format.mjs changed since the anchor.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "present(value) unconditionally returns undefined for any number greater than 24, so command(25) through command(30) each return undefined instead of the required 25..30; see accompanying defect finding for the concrete trace.",
+                "evidenceRefs": [
+                  "src/format.mjs",
+                  "src/public.mjs",
+                  "src/values.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "save does report ok:false and preserves the original value on any store throw, and correctly extracts the message for genuine Error instances (confirmed by smoke.test.mjs and the passing npm test log), but for non-Error thrown values carrying a string .message property it still returns the generic 'store failure' fallback instead of that message, per open finding F1, which is unchanged since the anchor attempt.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs",
+                  "agents/runs/exp/artifacts/logs/mechanical-a84b9a1bdca19603.log"
+                ]
+              }
+            ],
+            "scope": {
+              "basis": "focused",
+              "reason": "Only src/format.mjs changed since the anchor attempt; traced its sole caller (present, imported by src/public.mjs) and confirmed the reach is bounded to command()'s formatting step for all 30 values plus the still-open save/F1 concern in the unchanged public.mjs. No shared runtime, build, or dependency manifest was touched, so the round stays focused rather than widened."
+            }
+          },
+          "startedAt": "2026-09-14T13:38:08.892Z",
+          "finishedAt": "2026-09-14T13:40:03.543Z",
+          "durationMs": 114651,
+          "error": null
+        },
+        "code": {
+          "invocationId": "b609b5f6-755b-41d7-be3b-9ba3dd2048ee",
+          "verdict": "FAIL",
+          "result": {
+            "summary": "The implementation satisfies command(1) through command(24), but command(25) through command(30) are truncated by the formatter. The prior save error-message defect remains open. The sealed smoke suite passes but does not exercise these failures.",
+            "findings": [
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30",
+                  "D-01"
+                ],
+                "problem": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs",
+                  "agents/review-input/changes/src/format.mjs.diff"
+                ],
+                "nextAction": "Remove the formatter truncation so present preserves all requested values from 1 through 30."
+              },
+              {
+                "kind": "defect",
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "problem": "save still fails to report a thrown object's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path rejects the non-Error object and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "smoke.test.mjs"
+                ],
+                "nextAction": "When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+                "priorFindingId": "F1"
+              }
+            ],
+            "priorDispositions": [
+              {
+                "findingId": "F1",
+                "status": "open",
+                "reason": "The save catch expression remains unchanged and still ignores string message properties on non-Error thrown objects.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "assessments": [
+              {
+                "requirementRefs": [
+                  "B1",
+                  "B2",
+                  "B3",
+                  "B4",
+                  "B5",
+                  "B6",
+                  "B7",
+                  "B8",
+                  "B9",
+                  "B10",
+                  "B11",
+                  "B12",
+                  "B13",
+                  "B14",
+                  "B15",
+                  "B16",
+                  "B17",
+                  "B18",
+                  "B19",
+                  "B20",
+                  "B21",
+                  "B22",
+                  "B23",
+                  "B24"
+                ],
+                "conclusion": "satisfied",
+                "rationale": "public.mjs dispatches inputs through the corresponding value functions, values.mjs returns the exact values 1 through 24, and present preserves numbers at or below 24.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B25",
+                  "B26",
+                  "B27",
+                  "B28",
+                  "B29",
+                  "B30",
+                  "D-01"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "The public dispatch reaches value25 through value30, but present explicitly returns undefined for every numeric result greater than 24, so the requested values are not returned.",
+                "evidenceRefs": [
+                  "src/public.mjs",
+                  "src/values.mjs",
+                  "src/format.mjs"
+                ]
+              },
+              {
+                "requirementRefs": [
+                  "B31",
+                  "D-02"
+                ],
+                "conclusion": "unresolved",
+                "rationale": "save catches store.write failures and preserves the input value, but its message extraction only accepts Error instances or string throws; an object with a string message is reduced to the generic fallback.",
+                "evidenceRefs": [
+                  "src/public.mjs"
+                ]
+              }
+            ],
+            "scope": {
+              "basis": "widened",
+              "reason": "The changed formatter is shared by the public command path, so the full command and save contract, callers, error paths, and sealed suite evidence were re-reviewed."
+            }
+          },
+          "startedAt": "2026-09-14T13:38:08.905Z",
+          "finishedAt": "2026-09-14T13:39:24.595Z",
+          "durationMs": 75690,
+          "error": null
+        }
+      },
+      "risk": null,
+      "error": null
+    },
+    "findings": [
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B31",
+          "D-02"
+        ],
+        "problem": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+        "evidenceRefs": [
+          "src/public.mjs",
+          "smoke.test.mjs"
+        ],
+        "nextAction": "When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+        "id": "F1",
+        "originAttemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-14T13:38:07.438Z",
+            "attemptId": "5683d9c7-79f1-4aa7-a2ab-02bb16b18119",
+            "status": "open",
+            "reason": "save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value.",
+            "evidenceRefs": [
+              "src/public.mjs",
+              "smoke.test.mjs"
+            ]
+          },
+          {
+            "at": "2026-09-14T13:40:03.547Z",
+            "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+            "status": "open",
+            "reason": "fidelity: open: src/public.mjs was not among the files changed since the anchor attempt (only src/format.mjs changed); the same non-Error/non-string fallback logic that ignores a thrown object's .message property is still present verbatim.; save still does not always report the store failure's message. src/public.mjs's catch path is unchanged since the anchor attempt: for save({write(){throw {message:\"disk full\"};}}, \"draft\") the thrown value is not `instanceof Error` and not a string, so the ternary falls through to the \"store failure\" fallback instead of extracting \"disk full\", even though the object has a string message property. The input value is still preserved correctly, but the reported error message is wrong for this class of thrown values. When the thrown value has a string `.message` property (Error or plain object), return that message; only fall back to a generic string when no such property exists.\ncode: open: The save catch expression remains unchanged and still ignores string message properties on non-Error thrown objects.; save still fails to report a thrown object's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path rejects the non-Error object and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+            "evidenceRefs": [
+              "src/public.mjs"
+            ]
+          }
+        ],
+        "responses": []
+      },
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "problem": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] which is value25, value25() returns 25, then command passes 25 into present(25); since 25 > 24 the function returns undefined instead of 25. The same path applies identically to command(26) through command(30), each returning undefined instead of 26..30. This directly contradicts D-01 ('command(n) returns the number n for 1 through 30 ... and formats every value through present') and violates B25-B30. The sealed smoke.test.mjs only checks command(1) and command(2), so npm test's exit 0 does not exercise or catch this.",
+        "evidenceRefs": [
+          "src/format.mjs",
+          "src/public.mjs",
+          "src/values.mjs",
+          "agents/review-input/changes/src/format.mjs.diff",
+          "smoke.test.mjs"
+        ],
+        "nextAction": "Fix present() to pass numeric values through unchanged for the full 1-30 range (remove the >24 short-circuit, or only special-case values that are actually out of the approved 1-30 domain) so command(25)..command(30) return 25..30.",
+        "id": "F2",
+        "originAttemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-14T13:40:03.547Z",
+            "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+            "status": "open",
+            "reason": "src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] which is value25, value25() returns 25, then command passes 25 into present(25); since 25 > 24 the function returns undefined instead of 25. The same path applies identically to command(26) through command(30), each returning undefined instead of 26..30. This directly contradicts D-01 ('command(n) returns the number n for 1 through 30 ... and formats every value through present') and violates B25-B30. The sealed smoke.test.mjs only checks command(1) and command(2), so npm test's exit 0 does not exercise or catch this.",
+            "evidenceRefs": [
+              "src/format.mjs",
+              "src/public.mjs",
+              "src/values.mjs",
+              "agents/review-input/changes/src/format.mjs.diff",
+              "smoke.test.mjs"
+            ]
+          }
+        ],
+        "responses": []
+      },
+      {
+        "kind": "defect",
+        "requirementRefs": [
+          "B25",
+          "B26",
+          "B27",
+          "B28",
+          "B29",
+          "B30",
+          "D-01"
+        ],
+        "problem": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24.",
+        "evidenceRefs": [
+          "src/public.mjs",
+          "src/values.mjs",
+          "src/format.mjs",
+          "agents/review-input/changes/src/format.mjs.diff"
+        ],
+        "nextAction": "Remove the formatter truncation so present preserves all requested values from 1 through 30.",
+        "id": "F3",
+        "originAttemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "status": "open",
+        "history": [
+          {
+            "at": "2026-09-14T13:40:03.547Z",
+            "attemptId": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+            "status": "open",
+            "reason": "command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24.",
+            "evidenceRefs": [
+              "src/public.mjs",
+              "src/values.mjs",
+              "src/format.mjs",
+              "agents/review-input/changes/src/format.mjs.diff"
+            ]
+          }
+        ],
+        "responses": []
+      }
+    ],
+    "riskFindings": [],
+    "verificationBudget": {
+      "fixAttempts": 2,
+      "totalAttempts": 3,
+      "budget": 5,
+      "budgetExhausted": false,
+      "consecutiveErrors": 0,
+      "judgeErrorThreshold": 3,
+      "judgeErrorCause": null,
+      "judgeErrorLoop": false,
+      "prejudgeFailures": 0,
+      "prejudgeFailureLimit": 3,
+      "prejudgeFailureLoop": false,
+      "grants": 0
+    },
+    "requirementGrounds": [
+      {
+        "requirementRef": "B1",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B2",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B3",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B4",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B5",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B6",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B7",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B8",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B9",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B10",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B11",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B12",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B13",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B14",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B15",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B16",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B17",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B18",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B19",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B20",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B21",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B22",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B23",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B24",
+        "conclusion": "satisfied",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B25",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B26",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B27",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B28",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B29",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B30",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      },
+      {
+        "requirementRef": "B31",
+        "conclusion": "unresolved",
+        "reviewedInAttempt": "915397d4-8126-4c1d-bb1b-e8f140adc05c",
+        "carriedThrough": 0
+      }
+    ]
+  },
+  "summary": [
+    "verification FAIL; active run retained",
+    "Review scope: focused (reference attempt 5683d9c7-79f1-4aa7-a2ab-02bb16b18119); attempt 5683d9c7-79f1-4aa7-a2ab-02bb16b18119 settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since",
+    "fidelity: 3 assessment(s) reviewed, 0 carried",
+    "code: 3 assessment(s) reviewed, 0 carried; widened: The changed formatter is shared by the public command path, so the full command and save contract, callers, error paths, and sealed suite evidence were re-reviewed.",
+    "Requirement grounds: 31 reviewed in this attempt, 0 carried from no earlier attempt, 0 without a current ground",
+    "F1 [defect] save does not always report the store failure's message. For save({write(){throw {message:\"disk full\"};}}, \"draft\"), the catch path sees a non-Error, non-string value and returns error:\"store failure\" instead of error:\"disk full\", although it preserves the original value. - When the thrown value has a string message property, return that message while retaining the existing fallback for other thrown values.",
+    "F2 [defect] src/format.mjs's present(value) returns undefined whenever the numeric value is greater than 24: `if (typeof value === \"number\" && value > 24) return undefined;`. Trace: command(25) calls actions[24] which is value25, value25() returns 25, then command passes 25 into present(25); since 25 > 24 the function returns undefined instead of 25. The same path applies identically to command(26) through command(30), each returning undefined instead of 26..30. This directly contradicts D-01 ('command(n) returns the number n for 1 through 30 ... and formats every value through present') and violates B25-B30. The sealed smoke.test.mjs only checks command(1) and command(2), so npm test's exit 0 does not exercise or catch this. - Fix present() to pass numeric values through unchanged for the full 1-30 range (remove the >24 short-circuit, or only special-case values that are actually out of the approved 1-30 domain) so command(25)..command(30) return 25..30.",
+    "F3 [defect] command(25) through command(30) return undefined. Each dispatched value function returns its number, but present returns undefined for numeric values greater than 24. - Remove the formatter truncation so present preserves all requested values from 1 through 30."
+  ]
+}
+
+--- stderr ---
+[implement:verify] running 1 required command(s)
+[implement:verify] PASS: npm test (0.5s)
+[implement:verify] review focused: attempt 5683d9c7-79f1-4aa7-a2ab-02bb16b18119 settled every lane on the same contract and policy; 1 path(s) and 0 evidence file(s) changed since; executing fidelity, code
+sasu: WARNING: judge-backend-advisory (codex, implement:fidelity): Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+sasu: WARNING: judge-backend-advisory (codex, implement:code): Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+[implement:verify] verification FAIL; 115.9s
+

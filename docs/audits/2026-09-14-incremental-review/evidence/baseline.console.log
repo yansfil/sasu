@@ -1,0 +1,6 @@
+[baseline] R1-initial-full: verify=1 verdict=FAIL scope=n/a wall=68s fid=FAIL/66s/3r/8942c code=PASS/57s/3r/10923c
+[baseline] R2-local-refactor: verify=1 verdict=FAIL scope=n/a wall=62s fid=FAIL/56s/2r/7987c code=FAIL/60s/3r/11198c
+[baseline] R3-shared-helper-defect: verify=1 verdict=FAIL scope=n/a wall=154s fid=FAIL/72s/3r/10496c code=FAIL/152s/2r/8119c
+[baseline] R3b-helper-fix: verify=1 verdict=FAIL scope=n/a wall=76s fid=FAIL/65s/3r/10688c code=FAIL/74s/3r/9852c
+[baseline] R4-contradicting-evidence: verify=1 verdict=FAIL scope=n/a wall=100s fid=FAIL/99s/4r/13677c code=FAIL/93s/5r/11983c
+[baseline] done

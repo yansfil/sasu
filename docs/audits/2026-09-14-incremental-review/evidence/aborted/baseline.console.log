@@ -1,0 +1,2 @@
+[baseline] R1-initial-full: verify=1 verdict=FAIL scope=n/a wall=79s fid=FAIL/77s/3r/10116c code=FAIL/52s/3r/10493c
+[baseline] R2-local-refactor: verify=1 verdict=FAIL scope=n/a wall=63s fid=FAIL/61s/3r/10825c code=FAIL/61s/3r/10825c
