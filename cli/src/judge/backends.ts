@@ -1065,21 +1065,27 @@ const RG_TYPE_NAME = /^[A-Za-z0-9]+$/;
  */
 function readCommandProblem(words: string[], evidencePaths: string[], explore = false, pipedInput = false): { reason: JudgeFailureReason; detail: string } | null {
   const evidence = new Set(evidencePaths);
-  const permitted = (command: "sed" | "rg", candidate: string): boolean => {
-    // Native fixed-root permissions already bound product reads. A guessed
-    // missing relative path is an ordinary rg ENOENT, not a policy violation:
-    // rejecting it discarded the original Code review after 17s (2026-09-09).
-    if (explore && command === "rg") return true;
-    const normalized = explore ? path.posix.normalize(candidate).replace(/\/$/, "") : candidate;
-    return evidence.has(normalized);
+  const permitted = (candidate: string): boolean => {
+    // Native fixed-root permissions already bound product reads, so inside
+    // the workspace (tokenEscapesWorkspace has already run) a guessed
+    // missing relative path is an ordinary ENOENT, not a policy violation.
+    // rg was exempted on 2026-09-09 after a guess discarded the original
+    // Code review at 17s; sed kept the exact-path allowlist, and every
+    // exploring audit rejection on record since is a sed guess - six of six
+    // across three repositories, 2026-09-13..14: a chunk read without its
+    // `.diff` suffix, `src/cli/mod.rs` guessed in a Rust tree, a batch of
+    // eight reads with one guessed `src/README.md`. Each threw away 24-195s
+    // of review, and one took a whole verify attempt with it (issue #2).
+    if (explore) return true;
+    return evidence.has(candidate);
   };
   const operandProblem = (command: "sed" | "rg", paths: string[]): { reason: JudgeFailureReason; detail: string } | null => {
     const escaped = paths.find(tokenEscapesWorkspace);
     if (escaped !== undefined) {
       return { reason: "out-of-workspace", detail: `${command} file operand escapes the evidence workspace: ${escaped}` };
     }
-    if (paths.every((candidate) => permitted(command, candidate))) return null;
-    if (!paths.some((candidate) => permitted(command, candidate))) {
+    if (paths.every(permitted)) return null;
+    if (!paths.some(permitted)) {
       return { reason: "missing-allowlisted-path", detail: `${command} named no allowlisted evidence path` };
     }
     return { reason: "non-read-command", detail: `${command} named a file operand outside the evidence allowlist` };

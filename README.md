@@ -183,7 +183,7 @@ For example, a changed save function leads the reviewer to its button caller and
 Codex uses native scoped permissions: the fixed copy is the only product/evidence read root, `:minimal` supplies the OS/runtime files needed to run the engine, and network access is disabled.
 The minimal runtime allowance is not extra product evidence or permission to explore host data.
 `--strict-config` rejects unsupported permission configuration.
-The CLI also audits the JSON command trace against copied paths and permitted read/search operations; a trace alone cannot prove the tool's working directory, so it is not the read boundary.
+The CLI also audits the JSON command trace against the copied root and permitted read/search operations; a trace alone cannot prove the tool's working directory, so it is not the read boundary.
 Product reads from the live worktree or other host locations, project execution, writes, network access, and repository history remain forbidden.
 Accepted command traces are recorded with the judge call so later review can answer what the judge inspected.
 Claude fallback sessions use `--restricted` and read/search tools inside the same disposable copied boundary.

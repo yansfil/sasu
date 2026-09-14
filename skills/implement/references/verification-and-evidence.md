@@ -51,7 +51,7 @@ Native restrictions enforce the product/evidence read boundary before access.
 Codex uses the absolute fixed root plus its `:minimal` OS/runtime substrate, disables network access, and rejects unsupported permission configuration with `--strict-config`.
 The runtime allowance lets the engine run; it is not extra source or evidence to inspect.
 Claude read-enabled fallback uses `--restricted` inside its disposable copy.
-The recorded command trace is additionally audited against copied paths and permitted reads/searches; the trace alone cannot attest to a tool-selected working directory.
+The recorded command trace is additionally audited against the copied root and permitted reads/searches; the trace alone cannot attest to a tool-selected working directory.
 Product reads from the live worktree or other host locations, project execution, writes, network access, and repository history remain forbidden.
 If required evidence is absent from the copy, the reviewer names the unmet contract, missing evidence, and specific question in an insufficient-evidence finding.
 Missing context remains unverified and never permits access outside the copied boundary.
