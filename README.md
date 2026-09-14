@@ -258,6 +258,10 @@ Read-only status and event waiting continue.
 Interrupted owners release the lease only after child process-group cleanup is established.
 
 A first failed verify keeps the run active with its attempt and open findings.
+The next round is decided by the harness and recorded on the attempt: `full` for a first or changed contract, intent, suite ledger, amendment or review policy; `focused` for a correction under an unchanged contract, anchored on the last attempt that settled every lane; `repair` for the exact same review input after a backend error, rerunning only the lost lanes and reusing the settled ones with `carriedFrom`.
+A focused round still runs every lane on the whole frozen source with the delta, the open findings and the role's own anchor grounds; a satisfied ground on unchanged evidence may be restated as carried, a requirement named by an open blocking finding may not, and a change whose reach cannot be bounded widens the round with a recorded reason.
+The sealed suite executes on every round.
+This is the user-approved [incremental review change](docs/plans/2026-09-14-incremental-review.md).
 Repair and explicitly verify again within the recorded correction bound.
 At a terminal failure, `finalize --status blocked` can write an honest receipt even when no judge returned successfully, naming the failed phase and unrun stages.
 Finalize itself runs no tests or judges and persists state before generating the receipt.

@@ -97,6 +97,11 @@ once on a required command, whose FAIL came from a gitignored service that had
 since been fixed).
 Fan out freely; before skipping, prove purity.
 
+The 2026-09-14 incremental review change applies exactly that test to re-verification.
+A focused round after a correction skips no lane and no requirement: every reviewer still runs on the whole frozen source, and only a satisfied ground whose cited bytes are unchanged may be restated as carried, with the reviewer answerable for the reach of the change.
+A repair round skips a lane only when the record proves the same review input - contract, source, evidence, findings ledger, review policy - and then the settled lane is reused byte for byte, named by the attempt it came from.
+The sealed suite is never reused, because nothing in the tree fingerprint can prove a command pure.
+
 ## 6. Observe flows and risk boundaries; review the whole contract
 
 The natural unit of actual observation is a coherent product flow or risk boundary.
@@ -149,6 +154,7 @@ A result names the current source and input identity on which it was earned.
 Settled role judgments retain their attempt, source, PRD, and input identity in `verificationAttempts`.
 Later corrections append a new attempt; CLI mutations cannot rewrite or delete settled historical judgments.
 Unrun means unrun, unavailable means unverified, and an old PASS never becomes current merely because the agent says so.
+A carried ground is not an old PASS made current by assertion: it is the same role's satisfied ground on bytes the harness shows unchanged, and the record points every requirement back to the attempt that last actually reviewed it.
 No configured tests is reported separately from successful test execution.
 
 A valid attempt records the phase where it stopped, including preflight or evidence errors before any judge call.

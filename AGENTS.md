@@ -186,6 +186,10 @@ its history.
 **Completion and convergence.** A first verify failure keeps the run active
 with a recorded attempt and open findings.
 Independent Fidelity and Code reviews run concurrently on the same complete contract and actual evidence, without the current peer verdict.
+The user-approved [2026-09-14 incremental review change](docs/plans/2026-09-14-incremental-review.md) replaces whole re-review on every correction with three harness-decided rounds: the first submission and any changed contract, intent, suite ledger, amendment or review policy get a `full` round; a correction under an unchanged contract gets a `focused` round anchored on the last attempt that settled every lane; the exact same review input after a backend error gets a `repair` round that reruns only the lost lanes and reuses the settled ones with `carriedFrom`.
+A focused round runs every lane on the whole frozen source with the delta, the open findings and the role's own anchor grounds; a role may restate a satisfied anchor ground as `carried` only on unchanged evidence, never for a requirement an open blocking finding names, and the reviewer widens to the whole contract when the reach of a change cannot be bounded.
+The sealed suite executes on every attempt because its purity cannot be proven from the tree.
+Status, verify and the receipt name the round's mode and reason and where each requirement's current ground was last actually reviewed.
 Fidelity accounts for every Bn exactly once in grouped assessments with concrete rationale and actual evidence references; Code records its own substantive grounds without another all-Bn form.
 Missing, duplicate, unknown, empty, invalid, or unresolved assessment coverage cannot silently pass.
 This guarantees inspectable structural coverage, not the correctness of semantic conclusions.

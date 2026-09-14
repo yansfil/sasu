@@ -197,6 +197,13 @@ The harness validates structural coverage, references, and inspectable grounds; 
 A claimed PASS cannot override an accompanying open defect.
 
 Fix concrete defects and supply missing observations, then explicitly verify again.
+The harness decides how the next round is spent and records the mode and reason on the attempt.
+The first submission, a changed contract, intent, suite ledger, amendment or review policy get a `full` round.
+A correction under an unchanged contract gets a `focused` round anchored on the last attempt that settled every lane: every lane runs on the whole frozen source and is told the changed paths, the new evidence, the open findings and its own anchor grounds, each marked by the harness as unchanged, changed or reopened.
+A role may restate a satisfied anchor ground as `basis: carried` only on unchanged evidence and never for a requirement an open blocking finding names; a change whose reach it cannot bound, or one that touches shared runtime, dependencies, configuration, build or verification tooling, widens the round to the whole contract with a recorded reason.
+The exact same review input after a backend error gets a `repair` round that reruns only the lost lanes and reuses the settled ones byte for byte under `carriedFrom`, without showing the rerun role its peer's verdict.
+The sealed suite executes on every round.
+Read the mode, reason and requirement grounds from `status` or the verify result before deciding what remains to review.
 Both roles receive the same prior open findings and must give explicit dispositions.
 A prior issue closes only when both resolve it with evidence; an error, missing result or disputed disposition keeps it open.
 Distinct defects are not collapsed merely because they cite the same requirement.

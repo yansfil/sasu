@@ -26,7 +26,7 @@ Explain why earlier observations still apply or recapture affected flows.
 Re-registering a file does not manufacture a new observation.
 
 Verify runs required suites sealed at start and deduplicates identical command/cwd/execution settings only within that attempt.
-Every new verification attempt executes its required suites; there is no cross-attempt test cache.
+Every new verification attempt executes its required suites; there is no cross-attempt test cache, including in a repair round that reuses settled review lanes.
 A suite failure prevents review and records the actual failed phase and output.
 An empty required suite is reported as no tests configured, never as successful execution.
 Suite exclusions require human authorization and preserve their prior results.
@@ -38,7 +38,8 @@ Settled judgments and their input identity remain unchanged in state history whe
 A distinct high-risk check uses the same fixed inputs when the profile requires it.
 The reviewer may cite any concrete approved requirement and actual counterevidence, including newly discovered omissions in unchanged files.
 Both roles must disposition every prior open issue; it closes only when both resolve it with evidence.
-A partial failure remains visible and cannot become a complete review.
+A partial failure remains visible and cannot become a complete review; on the exact same input the next verify reruns only the failed lanes and reuses the settled ones under `carriedFrom`.
+After a correction under an unchanged contract the round is focused: the reviewers receive the changed paths, new evidence and their own anchor grounds, still explore the whole frozen source, and may carry only satisfied grounds on unchanged evidence.
 
 The judge discovers and searches source only inside its disposable fixed review workspace.
 The product copy contains the same content-hashed Git-visible regular-file set used for source freshness: tracked files and nonignored untracked files, excluding root `agents/**` bookkeeping and symlinks.

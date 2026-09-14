@@ -74,6 +74,20 @@ The human-only `risk --non-convergent` declaration allows honest blocked closure
 Source, sealed PRD, linked intent, and registered evidence changes invalidate the current review.
 A new verify executes the sealed suites and reviews the current inputs.
 Old requirement results are never assembled into a new PASS.
+The harness chooses one of three rounds and records `reviewScope` with its mode, reason and reference attempt:
+
+| Round | When | What runs |
+| --- | --- | --- |
+| `full` | First submission; contract, intent, suite ledger, amendment or review policy changed; no earlier attempt settled every lane without error | Every lane reviews the whole contract from scratch. |
+| `focused` | The contract and policy match the anchor, the last attempt that settled every lane | Every lane runs on the whole frozen source with the delta since the anchor, the open findings and its own anchor grounds; satisfied grounds on unchanged evidence may be carried. |
+| `repair` | The exact same review input as the previous attempt, which settled some lanes and lost the rest to a backend error | Only the lost lanes run; settled lanes are reused byte for byte with `carriedFrom`. |
+
+In a focused round each assessment may carry `basis: carried` only when the same role settled it satisfied at the anchor, every cited reference was cited there and none changed since, and no open blocking finding names its requirements; a carried ground citing anything else is refused as reviewer output.
+The reviewer records `scope: { basis: focused | widened, reason }` and widens when a change touches shared runtime, dependencies, configuration, build or verification tooling, or when its reach cannot be bounded from the frozen source; a widened round accepts no carried grounds.
+A repair round hands the rerun role the findings, risk ledger and claims exactly as its settled peer saw them, never the peer's result, and rebuilds the shared ledger from that snapshot so the reused findings keep their ids and are not entered twice.
+Any accepted domain command since the errored attempt, a changed input, or a changed review policy makes the next round full or focused instead.
+The sealed suite executes on every round; its results are never reused because purity cannot be proven.
+`status`, the verify result and the receipt report the mode, the reason, and for each requirement the attempt that last actually reviewed its Fidelity ground and how many times it was carried.
 The CLI preserves each settled role result in the existing `verificationAttempts` history with its attempt, source, PRD, and input identity.
 Later corrections append a new attempt; CLI mutations cannot rewrite or delete a settled historical judgment.
 `state.json` remains the only physical state record, with no separate review ledger file or second writer.
