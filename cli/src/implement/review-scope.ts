@@ -104,7 +104,7 @@ function repairObstacle(state: ImplementState, current: UnifiedVerificationAttem
   if (settled.length === 0) return `attempt ${previous.id} settled no lane`;
   if (lost.length === 0) return `attempt ${previous.id} settled every lane`;
   if (previous.inputFingerprint !== current.inputFingerprint) return `inputs changed since attempt ${previous.id}`;
-  if (previous.reviewPolicySha256 === undefined || previous.reviewContext.identity === undefined || previous.reviewContext.ledgerSnapshot === undefined) return `attempt ${previous.id} predates repair records`;
+  if (previous.reviewPolicySha256 === undefined || previous.reviewContext.ledgerSnapshot === undefined) return `attempt ${previous.id} predates repair records`;
   if (previous.reviewPolicySha256 !== policySha256) return `review policy changed since attempt ${previous.id}`;
   const lastVerify = state.verbs.map((verb) => verb.verb === "verify" && verb.outcome === "accepted").lastIndexOf(true);
   if (state.verbs.slice(lastVerify + 1).some((verb) => verb.outcome === "accepted")) return `a domain command was accepted after attempt ${previous.id}`;
@@ -139,24 +139,28 @@ function focusedObstacle(current: UnifiedVerificationAttempt, anchor: UnifiedVer
 export function planReview(
   state: ImplementState,
   current: UnifiedVerificationAttempt,
-  options: { policySha256: string; ledger: ReviewLedgerSnapshot; allowRepair: boolean },
+  options: { policySha256: string; ledger: ReviewLedgerSnapshot },
 ): ReviewPlan {
   const priorAttempts = state.verificationAttempts.filter((entry) => entry.id !== current.id);
   const previous = priorAttempts.at(-1);
   const required = requiredLanes(state);
-  if (options.allowRepair) {
-    const obstacle = repairObstacle(state, current, previous, options.policySha256);
-    if (obstacle === null) {
-      const settled = settledLanes(previous!).filter((lane) => required.includes(lane));
-      return {
-        record: { mode: "repair", reason: `attempt ${previous!.id} settled ${settled.join(", ")} on this exact input and lost ${required.filter((lane) => !settled.includes(lane)).join(", ")} to a backend error`,
-          referenceAttemptId: previous!.id, executedLanes: required.filter((lane) => !settled.includes(lane)), carriedLanes: settled },
-        scope: previous!.reviewContext!.scope ?? { mode: "full" },
-        ledger: structuredClone(previous!.reviewContext!.ledgerSnapshot!),
-        reference: previous!,
-        roundContext: structuredClone(previous!.roundContext),
-      };
-    }
+  // This decision is final. There used to be a second gate after input
+  // preparation - an `identity` digest of the prepared review context,
+  // compared against the reference attempt's - but on a repair the context
+  // is built from the reference's own pinned snapshot and scope, and its other
+  // parts derive from the fingerprint and policy compared above, so the two
+  // digests were the same records hashed twice and the gate could not fire.
+  // Sameness is proven here or not at all.
+  if (repairObstacle(state, current, previous, options.policySha256) === null) {
+    const settled = settledLanes(previous!).filter((lane) => required.includes(lane));
+    return {
+      record: { mode: "repair", reason: `attempt ${previous!.id} settled ${settled.join(", ")} on this exact input and lost ${required.filter((lane) => !settled.includes(lane)).join(", ")} to a backend error`,
+        referenceAttemptId: previous!.id, executedLanes: required.filter((lane) => !settled.includes(lane)), carriedLanes: settled },
+      scope: previous!.reviewContext!.scope ?? { mode: "full" },
+      ledger: structuredClone(previous!.reviewContext!.ledgerSnapshot!),
+      reference: previous!,
+      roundContext: structuredClone(previous!.roundContext),
+    };
   }
   const anchor = focusAnchor(state, priorAttempts);
   const obstacle = priorAttempts.length === 0 ? "first review of this run" : focusedObstacle(current, anchor, options.policySha256);

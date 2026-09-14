@@ -237,7 +237,15 @@ function assertReviewContext(value: unknown): void {
   for (const [ref, source] of Object.entries(value["humanSources"])) {
     if (ref.trim() === "" || typeof source !== "string") throw new Error(`malformed implement state: ${label}.humanSources must map exact references to source text`);
   }
-  if (value["identity"] !== undefined) assertSha256(value["identity"], `${label}.identity`);
+  // `identity` digested the prepared review input so a repair could compare it
+  // with the reference attempt's. On a repair that input is built from the
+  // reference's own pinned snapshot and scope, and its other parts follow
+  // from the fingerprint and policy already compared, so the two digests were
+  // one set of records hashed twice and the comparison never failed. A record
+  // carrying it was written by a CLI whose repair gate was partly fictional;
+  // it is refused rather than read around (repository constant: no read path
+  // for a retired shape).
+  if (value["identity"] !== undefined) throw new Error(`malformed implement state: ${label}.identity was retired; last read by commit dd19ce3`);
   if (value["scope"] !== undefined) {
     const scope = value["scope"];
     assertRecord(scope, `${label}.scope`);

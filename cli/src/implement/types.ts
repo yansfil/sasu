@@ -228,12 +228,13 @@ export interface ImplementationReviewContext extends ReviewValidationContext {
   /** Absent only on records made before scoped review existed; those attempts were full reviews. */
   scope?: ReviewScope;
   /**
-   * sha256 of this context minus the harness's own suite logs, which are
-   * re-executed and renamed on every attempt. Two attempts with equal
-   * identities showed their reviewers the same contract, source, evidence,
-   * findings and scope; that equality is what licenses a repair round.
+   * The ledger the reviewers of this attempt were shown; a repair round hands
+   * the same bytes to the lane it reruns and rebuilds the ledger from them.
+   * What licenses the repair is the attempt's `inputFingerprint`,
+   * `reviewPolicySha256` and the verb log, compared in `planReview`; no digest
+   * of this context is pinned, because on a repair the context is built from
+   * these same records and a digest of it could only agree with itself.
    */
-  identity?: string;
   ledgerSnapshot?: ReviewLedgerSnapshot;
 }
 /** How one attempt chose to spend its review, recorded for the operator and the receipt. */

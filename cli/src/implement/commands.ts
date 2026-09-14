@@ -1383,11 +1383,6 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
   const requirementRefs = [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)];
   const humanSources = { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) };
   const priorFindingIds = ledger.findings.filter((entry) => entry.status === "open").map((entry) => entry.id);
-  // The harness's own suite logs are re-executed and renamed every attempt;
-  // everything else the reviewer is shown is what the identity names.
-  const mechanicalLogs = new Set(artifacts.filter((entry) => entry.command !== undefined).map((entry) => entry.path));
-  const identity = sha256(JSON.stringify({ requirementRefs, requiredRequirementRefs: state.requirements.map((entry) => entry.id), evidenceRefs: refs.filter((entry) => !mechanicalLogs.has(entry)),
-    actualEvidenceRefs: actualEvidenceRefs.filter((entry) => !mechanicalLogs.has(entry)), priorFindingIds, humanSources, scope: plan.scope, ledger }));
   const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
     changedPaths: changed, workspacePaths: [...paths, ...chunkPaths, ...generatedDocPaths], changeSet: diff.changeSet, checks,
     sourceDigest: attempt.sourceFingerprint, artifacts,
@@ -1396,7 +1391,7 @@ function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt
       // is not implementation material, and the contract already says so
       // ("path metadata alone do not establish implementation").
       actualEvidenceRefs, requirementRefs, evidenceRefs: refs, priorFindingIds, humanSources,
-      scope: plan.scope, identity, ledgerSnapshot: ledger },
+      scope: plan.scope, ledgerSnapshot: ledger },
     priorFindings: ledger.findings, priorRiskResult: priorRisk,
     roundContext: plan.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
     claims: ledger.claims };
@@ -1480,17 +1475,8 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       if (integrity.length) throw new Error(integrity.join("; "));
       const active = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
       const currentLedger = ledgerSnapshot(state);
-      let plan = planReview(state, active, { policySha256, ledger: currentLedger, allowRepair: true });
-      let prepared = reviewInputs(state, active, inputs, plan);
-      if (plan.record.mode === "repair" && prepared.material.referenceContext.identity !== plan.reference!.reviewContext!.identity) {
-        // The plan's conditions are the record's account of sameness; the
-        // identity is the input's own. When they disagree the input wins
-        // and every lane runs - a repair is never assumed, only proven.
-        const summary = `repair refused: the prepared review input differs from attempt ${plan.reference!.id}; every lane runs`;
-        update((fresh) => { fresh.deviations.push({ at: nowIso(), type: "repair-refused", summary }); });
-        plan = planReview(state, active, { policySha256, ledger: currentLedger, allowRepair: false });
-        prepared = reviewInputs(state, active, inputs, plan);
-      }
+      const plan = planReview(state, active, { policySha256, ledger: currentLedger });
+      const prepared = reviewInputs(state, active, inputs, plan);
       const referenceContext = prepared.material.referenceContext;
       const executed = new Set(plan.record.executedLanes);
       active.roundContext = { ...plan.roundContext, requirementRefs: [...referenceContext.requirementRefs], evidenceRefs: [...referenceContext.evidenceRefs] };

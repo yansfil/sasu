@@ -9,7 +9,7 @@ const CONTRACT = "c".repeat(64);
 const assessment = (requirementRefs, evidenceRefs = ["src/a.mjs"], conclusion = "satisfied") => ({ requirementRefs, conclusion, rationale: "grounds", evidenceRefs });
 const lane = (result, verdict = "PASS") => ({ invocationId: `inv-${Math.random().toString(16).slice(2)}`, startedAt: AT, finishedAt: AT, durationMs: 1, verdict, result, judge: null, error: null });
 const review = (assessments) => ({ summary: "s", findings: [], priorDispositions: [], assessments });
-const context = (extra = {}) => ({ requirementRefs: ["B1", "B2"], requiredRequirementRefs: ["B1", "B2"], evidenceRefs: ["src/a.mjs", "src/b.mjs"], actualEvidenceRefs: ["src/a.mjs", "src/b.mjs"], priorFindingIds: [], humanSources: {}, scope: { mode: "full" }, identity: "d".repeat(64), ledgerSnapshot: { findings: [], riskFindings: [], claims: [] }, ...extra });
+const context = (extra = {}) => ({ requirementRefs: ["B1", "B2"], requiredRequirementRefs: ["B1", "B2"], evidenceRefs: ["src/a.mjs", "src/b.mjs"], actualEvidenceRefs: ["src/a.mjs", "src/b.mjs"], priorFindingIds: [], humanSources: {}, scope: { mode: "full" }, ledgerSnapshot: { findings: [], riskFindings: [], claims: [] }, ...extra });
 const manifest = (entries) => ({ source: entries.map(([path, sha]) => ({ path, state: "present", sha256: sha })), evidence: [] });
 
 function settledAttempt(id, overrides = {}) {
@@ -20,7 +20,7 @@ function settledAttempt(id, overrides = {}) {
 function currentAttempt(id, overrides = {}) {
   return attemptFixture({ id, contractFingerprint: CONTRACT, reviewPolicySha256: POLICY, inputFingerprint: SHA, inputManifest: manifest([["src/a.mjs", "1".repeat(64)], ["src/b.mjs", "3".repeat(64)]]), ...overrides });
 }
-const options = (state, extra = {}) => ({ policySha256: POLICY, ledger: ledgerSnapshot(state), allowRepair: true, ...extra });
+const options = (state, extra = {}) => ({ policySha256: POLICY, ledger: ledgerSnapshot(state), ...extra });
 
 test("the first review of a run is full, and a settled prior on the same contract and policy makes the next round focused on what changed", () => {
   const first = stateFixture("/tmp/x", { requirements: [{ id: "B1", behavior: "a", decisionIds: [] }, { id: "B2", behavior: "b", decisionIds: [] }] });
@@ -106,10 +106,15 @@ test("a previous attempt that lost one lane to a backend error on this exact inp
   }
   state.verbs.push({ id: 2, at: AT, verb: "amend", issuer: "human", target: null, reason: "refused", outcome: "rejected", rejection: { check: "authority", message: "m" } });
   assert.equal(planReview(state, state.verificationAttempts[1], options(state)).record.mode, "repair", "a refused command changed nothing");
-  // Different input, a different policy, or a caller that forbids reuse: no repair.
+  // Different input or a different policy: no repair.
   assert.notEqual(planReview(state, { ...state.verificationAttempts[1], inputFingerprint: "9".repeat(64) }, options(state)).record.mode, "repair");
   assert.notEqual(planReview(state, state.verificationAttempts[1], options(state, { policySha256: "9".repeat(64) })).record.mode, "repair");
-  assert.notEqual(planReview(state, state.verificationAttempts[1], options(state, { allowRepair: false })).record.mode, "repair");
+  // The record above pins no `identity` digest: the repair is licensed by the
+  // input fingerprint, the policy and the verb log, and by nothing the
+  // preparation step recomputes from those same records. A context that
+  // still carries the retired digest is refused by the state reader, not
+  // read around (see implement-store.test.mjs).
+  assert.equal(planReview(state, state.verificationAttempts[1], options(state)).record.mode, "repair", "a repair needs no identity digest on the reference attempt");
 });
 
 test("the round context is measured against the last attempt a reviewer saw, not a later interrupted one", () => {

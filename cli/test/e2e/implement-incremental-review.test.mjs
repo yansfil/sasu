@@ -163,7 +163,7 @@ test("a role lost to a backend error is repaired on the same input without rerun
   assert.equal(repair.reviews.code.verdict, "PASS");
   assert.equal(repair.verdict, "FAIL");
   assert.equal(repair.inputFingerprint, errored.inputFingerprint);
-  assert.equal(repair.reviewContext.identity, errored.reviewContext.identity);
+  assert.equal(repair.reviewContext.identity, undefined, "the repair is licensed by the fingerprint, the policy and the verb log; no recomputed digest of those same records is pinned");
   assert.deepEqual(repair.roundContext.changedPaths, errored.roundContext.changedPaths);
   const codePrompt = prompt(env, "code");
   assert.doesNotMatch(codePrompt, new RegExp(found.problem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the rerun role must not see its peer's verdict");

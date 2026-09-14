@@ -322,8 +322,8 @@ test("an artifact's source digest is optional for older records and a SHA-256 wh
 // A reused lane is an earlier attempt's record byte for byte, named by the
 // repair record that reused it. Anything else is a rewritten judgment behind
 // an old invocation id, which is exactly the record this reader must refuse.
-test("a carried lane must match its origin attempt and be named by the repair record; scope and identity fields keep their shapes", () => {
-  const origin = attemptFixture({ id: "V1", verdict: "ERROR", phase: "complete", reviewContext: { ...REVIEW_CONTEXT, scope: { mode: "full" }, identity: "d".repeat(64), ledgerSnapshot: { findings: [], riskFindings: [], claims: [] } },
+test("a carried lane must match its origin attempt and be named by the repair record; scope fields keep their shapes and the retired identity digest is refused", () => {
+  const origin = attemptFixture({ id: "V1", verdict: "ERROR", phase: "complete", reviewContext: { ...REVIEW_CONTEXT, scope: { mode: "full" }, ledgerSnapshot: { findings: [], riskFindings: [], claims: [] } },
     reviews: { fidelity: reviewFixture(), code: { ...reviewFixture({ verdict: "ERROR", result: null }), error: { code: "judge-timeout", message: "t" } } }, error: { stage: "review", code: "judge-error", message: "code lane failed" } });
   const repair = attemptFixture({ id: "V2", verdict: "PASS", phase: "complete", reviewContext: origin.reviewContext,
     reviewScope: { mode: "repair", reason: "V1 settled fidelity and lost code", referenceAttemptId: "V1", executedLanes: ["code"], carriedLanes: ["fidelity"] },
@@ -337,7 +337,12 @@ test("a carried lane must match its origin attempt and be named by the repair re
     [s => s.verificationAttempts[1].reviewScope.mode = "focused", /carried origin|only a repair attempt reuses lanes/],
     [s => s.verificationAttempts[1].reviewScope.executedLanes = ["risk", "design"], /reviewScope.executedLanes\[\]/],
     [s => s.verificationAttempts[1].reviewContext.scope = { mode: "focused", anchorAttemptId: "V1" }, /scope.invalidatedEvidenceRefs/],
-    [s => s.verificationAttempts[1].reviewContext.identity = "short", /identity/],
+    // `identity` hashed the prepared review input and was compared, on a
+    // repair, against the reference attempt's digest of the same records: a
+    // value derived from the fingerprint, the policy and the pinned snapshot
+    // could never differ from itself, so the check never fired. The digest is
+    // retired; a record still carrying it is refused, not read around.
+    [s => s.verificationAttempts[1].reviewContext.identity = "d".repeat(64), /reviewContext\.identity was retired/],
     [s => s.verificationAttempts[0].contractFingerprint = "nope", /contractFingerprint/],
   ]) {
     const changed = structuredClone(baseline); mutate(changed);
