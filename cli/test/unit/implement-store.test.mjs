@@ -343,4 +343,21 @@ test("a carried lane must match its origin attempt and be named by the repair re
     const changed = structuredClone(baseline); mutate(changed);
     assert.throws(() => parseImplementState(JSON.stringify(changed)), reason);
   }
+
+  // A carry of a carry. Two consecutive failures of the same lane are ordinary
+  // (a backend outage lasts longer than one attempt), and the reader used to
+  // refuse the writer's own output here: it stripped one `carriedFrom` from
+  // the new record and compared it against an origin that still carried the
+  // other, so the comparison could never match. `carriedFrom` names where the
+  // judgment was produced, not the attempt it was copied through, so the
+  // chained record points past the reference to V1 (2026-09-14).
+  const chained = attemptFixture({ id: "V3", verdict: "PASS", phase: "complete", reviewContext: origin.reviewContext,
+    reviewScope: { mode: "repair", reason: "V2 lost code again", referenceAttemptId: "V2", executedLanes: ["code"], carriedLanes: ["fidelity"] },
+    reviews: { fidelity: { ...reviewFixture(), carriedFrom: "V1" }, code: reviewFixture({ invocationId: "J3" }) } });
+  const chainedState = stateFixture(undefined, { verificationAttempts: [origin, repair, chained] });
+  assert.doesNotThrow(() => parseImplementState(JSON.stringify(chainedState)), "a repair may reuse a lane the reference had itself carried");
+  const stacked = structuredClone(chainedState);
+  stacked.verificationAttempts[2].reviews.fidelity.carriedFrom = "V2";
+  assert.throws(() => parseImplementState(JSON.stringify(stacked)), /carried origin the attempt's repair record does not/,
+    "naming the attempt it was copied through instead of the origin is the record that broke");
 });

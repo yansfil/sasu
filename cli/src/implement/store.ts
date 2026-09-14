@@ -486,9 +486,21 @@ export function parseImplementState(text: string): ImplementState {
           const origin = candidate.verificationAttempts.find((entry) => entry.id === result.carriedFrom);
           const lane = field === "risk" ? "risk" : field === "reviews.fidelity" ? "fidelity" : "code";
           const original = origin === undefined ? undefined : lane === "risk" ? origin.risk : origin.reviews[lane];
-          if (origin === undefined || origin === attempt || attempt.reviewScope?.mode !== "repair" || attempt.reviewScope.referenceAttemptId !== result.carriedFrom || !attempt.reviewScope.carriedLanes.includes(lane)) throw new Error(`malformed implement state: ${field} names a carried origin the attempt's repair record does not`);
+          // The reference is the attempt this repair reused; the origin is
+          // where that judgment was first produced, which is the reference
+          // itself unless the reference had already carried it. Requiring the
+          // reference to BE the origin breaks the moment a carry is carried.
+          const referenceId = attempt.reviewScope?.mode === "repair" ? attempt.reviewScope.referenceAttemptId : undefined;
+          const reference = candidate.verificationAttempts.find((entry) => entry.id === referenceId);
+          const referenced = reference === undefined ? undefined : lane === "risk" ? reference.risk : reference.reviews[lane];
+          const expectedOrigin = referenced == null ? undefined : referenced.carriedFrom ?? referenceId;
+          if (origin === undefined || origin === attempt || attempt.reviewScope?.mode !== "repair" || expectedOrigin !== result.carriedFrom || !attempt.reviewScope.carriedLanes.includes(lane)) throw new Error(`malformed implement state: ${field} names a carried origin the attempt's repair record does not`);
+          // Both sides lose the pointer before the comparison. The judgment is
+          // what must match byte for byte; where it was copied through is not
+          // part of it.
           const { carriedFrom, ...reused } = result;
-          if (original == null || JSON.stringify(reused) !== JSON.stringify(original)) throw new Error(`malformed implement state: carried ${field} differs from attempt ${carriedFrom}`);
+          const { carriedFrom: _originCarriedFrom, ...originalJudgment } = original ?? {};
+          if (original == null || JSON.stringify(reused) !== JSON.stringify(originalJudgment)) throw new Error(`malformed implement state: carried ${field} differs from attempt ${carriedFrom}`);
         }
         if (field !== "risk" && result.result === undefined) throw new Error(`malformed implement state: ${field}.result must be null or an object`);
         if (result.result !== null && field !== "risk") {

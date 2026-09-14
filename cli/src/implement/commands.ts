@@ -793,7 +793,11 @@ function riskNonConvergent(projectRoot: string, args: ImplementArgs): ImplementC
   // finding has already survived. Corroboration in the record, never the gate.
   const originIndex = state.verificationAttempts.findIndex((attempt) => attempt.id === entry.originAttemptId);
   const roundsUnchanged = originIndex === -1 ? 0 : state.verificationAttempts.length - originIndex - 1;
-  entry.nonConvergence = { at: nowIso(), approval, reason, declaredBy: "human", roundsUnchanged };
+  const declaredAt = nowIso();
+  entry.nonConvergence = { at: declaredAt, approval, reason, declaredBy: "human", roundsUnchanged };
+  // Recorded for the same reason as `risk --accept` above: a repair round
+  // rebuilds the ledger from a snapshot taken before this declaration.
+  recordVerb(state, { verb: "risk-non-convergent", issuer: resolveIssuer(flag(args, "issuer")), target: id, reason: approval, at: declaredAt, outcome: "accepted" });
   persistState(statePath, state);
   return result(
     "risk",
@@ -828,8 +832,17 @@ function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
     });
   }
   if (entry.status === "fixed") throw new Error(`${id} is already fixed by a later risk review`);
+  const acceptedAt = nowIso();
   entry.status = "accepted";
-  entry.resolution = { at: nowIso(), evidence };
+  entry.resolution = { at: acceptedAt, evidence };
+  // A human decision on the ledger is a domain command and must be recorded
+  // as one. Without this verb, `repairReason` sees no accepted command since
+  // the last attempt, chooses a repair round, and rebuilds the ledger from
+  // that attempt's pinned snapshot - which does not contain this acceptance.
+  // The approval then reverted to `open` with its evidence gone and no
+  // deviation recorded (2026-09-14). PRINCIPLES 10: human-only decisions are
+  // appended, never silently undone.
+  recordVerb(state, { verb: "risk", issuer: resolveIssuer(flag(args, "issuer")), target: id, reason: evidence, at: acceptedAt, outcome: "accepted" });
   persistState(statePath, state);
   const open = openRiskFindings(state);
   return result("risk", true, `${id} accepted; ${open.length} risk finding(s) remain open`, {
@@ -1490,8 +1503,14 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
         // Reused lanes are recorded before any fresh lane starts, so an
         // interruption after this point still shows which judgments this
         // attempt rests on and where they came from.
-        for (const role of ROUTINE_REVIEW_ROLES) if (plan.record.carriedLanes.includes(role)) held.reviews[role] = { ...structuredClone(reference!.reviews[role]!), carriedFrom: reference!.id };
-        if (plan.record.carriedLanes.includes("risk")) held.risk = { ...structuredClone(reference!.risk!), carriedFrom: reference!.id };
+        // `carriedFrom` names the attempt that actually produced the judgment,
+        // not the one it was copied through. Two consecutive failures of the
+        // same lane carry a carry: naming the reference would stack
+        // `carriedFrom` inside the copied record, and the reader compares a
+        // record with one stripped layer against an origin that still has the
+        // other, so the writer is refused by its own reader (2026-09-14).
+        for (const role of ROUTINE_REVIEW_ROLES) if (plan.record.carriedLanes.includes(role)) held.reviews[role] = { ...structuredClone(reference!.reviews[role]!), carriedFrom: reference!.reviews[role]!.carriedFrom ?? reference!.id };
+        if (plan.record.carriedLanes.includes("risk")) held.risk = { ...structuredClone(reference!.risk!), carriedFrom: reference!.risk!.carriedFrom ?? reference!.id };
       });
       progress(`review ${plan.record.mode}: ${plan.record.reason}; executing ${plan.record.executedLanes.join(", ")}${plan.record.carriedLanes.length > 0 ? `; reusing ${plan.record.carriedLanes.join(", ")} from attempt ${reference!.id}` : ""}`);
       const options = { cwd: prepared.cwd, agentic: true, explore: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
