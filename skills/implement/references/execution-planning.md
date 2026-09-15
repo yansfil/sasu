@@ -1,7 +1,7 @@
 # Execution Planning
 
 Read the complete PRD and its decision sources before implementing.
-The PRD owns requirements and approved structure; `state.json` owns actual executions, evidence identity, findings, authority, and completion.
+The PRD owns requirements and approved structure; `state.json` owns execution history, evidence identity, run authority, and the current deterministic report identity.
 Choose the work sequence yourself, grouping related files, product flows, and risk boundaries.
 Requirement IDs are references, not a task ledger.
 
@@ -38,9 +38,9 @@ Do not create a required task file, requirement PASS checklist, flow-ID table, o
 The independent review reads the full contract and shared actual evidence regardless of how implementation was divided.
 
 Report material contract changes to the coordinator before editing the sealed PRD.
-A human-authorized amendment preserves previous snapshots and approval evidence while invalidating the full review's freshness.
+A human-authorized amendment preserves previous snapshots and approval evidence while invalidating deterministic verification freshness.
 A bounded implementation choice within the approved structure may proceed under existing authority and be reported as an assumption or deviation.
 
 When implementation and observations are coherent, register useful evidence at run level and execute verify.
 A failed attempt leaves the run active for a concrete fix.
-Completion comes only from current required suites, independent review, open-issue and authority rules, and finalize's receipt.
+Delivery readiness comes from the current deterministic report, visible review notes, GitHub CI, and human review.

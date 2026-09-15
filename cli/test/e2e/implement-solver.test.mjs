@@ -46,7 +46,7 @@ test("AC33: the solver runs read-only and the run's only write happens after it 
   // And the write that did happen changed only the escalation ledger and the
   // event log - no row or verification moved under the solver.
   const after = state(root);
-  for (const key of ["requirements", "suite", "artifacts", "verificationAttempts", "findings"]) assert.deepEqual(after[key], before[key], `${key} must remain unchanged by diagnosis`);
+  for (const key of ["requirements", "suite", "artifacts", "verificationAttempts", "verificationReport"]) assert.deepEqual(after[key], before[key], `${key} must remain unchanged by diagnosis`);
   assert.equal(after.escalations.length, before.escalations.length + 1);
 });
 
@@ -94,10 +94,10 @@ test("AC34: the replacement briefing carries the three artifacts and no conversa
   assert.match(briefing, /clean context/);
   assert.match(briefing, /previous implementor's conversation is not available/);
 
-  // The ledger handed over is the row ledger, not a transcript.
-  const ledger = JSON.parse(fs.readFileSync(path.join(root, handoff.findingsPath), "utf8"));
-  assert.ok(Array.isArray(ledger.findings));
+  // The ledger handed over is current deterministic verification, not a transcript.
+  const ledger = JSON.parse(fs.readFileSync(path.join(root, handoff.verificationPath), "utf8"));
   assert.ok(Array.isArray(ledger.attempts));
+  assert.ok(Object.hasOwn(ledger, "currentReport"));
 });
 
 test("AC34: with no herdr the reset is reported as the supervisor's to perform, not silently skipped", () => {
@@ -141,21 +141,21 @@ test("AC35: the run-wide bound refuses the escalation past the constant", () => 
   assert.notEqual(refused.status, 0);
   assert.equal(refused.json.detail.rejectedCheck, "transition");
   assert.match(refused.json.message, new RegExp(`used all ${ESCALATE_LIMIT_PER_RUN} escalations`));
-  assert.match(refused.json.message, /amend the PRD or finalize blocked/);
+  assert.match(refused.json.message, /amend the PRD or record the unresolved limitation/);
   assert.equal(state(root).escalations.length, ESCALATE_LIMIT_PER_RUN, "a refused escalation is not charged");
 });
 
-test("AC35: escalate needs a reason and a target that exists", () => {
+test("AC35: escalate needs a reason and accepts a freeform diagnostic target", () => {
   const root = makeProject();
   const env = stubEnv(root);
   const noReason = run(root, ["implement", "escalate", "--issuer", "observer"], env);
   assert.notEqual(noReason.status, 0);
   assert.match(noReason.json.message, /requires --reason/);
 
-  const badTarget = escalate(root, env, ["--target", "B9"]);
-  assert.notEqual(badTarget.status, 0);
-  assert.match(badTarget.json.message, /unknown --target B9; name an open finding/);
-  assert.equal(state(root).escalations.length, 0, "neither refusal spent an escalation");
+  const labeled = escalate(root, env, ["--target", "B9"]);
+  assert.equal(labeled.status, 0, labeled.stderr + labeled.stdout);
+  assert.equal(state(root).escalations.at(-1).target, "B9");
+  assert.equal(state(root).escalations.length, 1, "only the actual diagnosis spends an escalation");
 });
 
 test("AC35: the implementor may not summon its own replacement", () => {
@@ -207,8 +207,7 @@ test("AC41: once the bound is spent, status names the run's state and the move t
   const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
   assert.match(summary, /escalations: 3 of 3 used/);
   assert.match(summary, /bound (?:is )?spent/);
-  assert.match(summary, /amend.*human approval/);
-  assert.match(summary, /finalize.*blocked/);
+  assert.match(summary, /run native agent review/);
   // ...and the verb it can no longer issue is not offered.
   assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
 });
@@ -227,7 +226,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   assert.match(prompt, /## What the implementor is stuck on/);
   assert.match(prompt, /## Why the supervisor escalated/);
   assert.match(prompt, /## Sealed PRD/);
-  assert.match(prompt, /## Run findings and actual attempts/);
+  assert.match(prompt, /## Deterministic verification history/);
 
   // The output shape, recorded on success.
   const record = state(root).escalations.at(-1);
@@ -239,7 +238,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   assert.equal(record.diagnosis, DIAGNOSIS.summary);
 
   // The three handoff artifacts, in the shape a replacement is briefed with.
-  assert.deepEqual(Object.keys(record.handoff).sort(), ["diagnosisPath", "findingsPath", "prdSnapshotPath"]);
+  assert.deepEqual(Object.keys(record.handoff).sort(), ["diagnosisPath", "prdSnapshotPath", "verificationPath"]);
   for (const rel of Object.values(record.handoff)) {
     assert.ok(fs.existsSync(path.join(root, rel)), `${rel} must exist for the replacement to read`);
   }
@@ -250,7 +249,7 @@ test("AC43: the solver's input envelope and its output both hold their declared 
   const briefing = summoned.json.detail.briefing;
   assert.match(briefing, /1\. The sealed PRD/);
   assert.match(briefing, /2\. The solver's diagnosis/);
-  assert.match(briefing, /3\. The findings and actual attempts/);
+  assert.match(briefing, /3\. The deterministic verification history/);
 
   // ...and a failed summon records the other half of the shape.
   const failing = makeProject();

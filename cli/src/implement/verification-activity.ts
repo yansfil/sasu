@@ -1,20 +1,7 @@
 import crypto from "node:crypto";
 import os from "node:os";
-import { loadState, nowIso, persistState, StateConflictError } from "./store";
-import { reconcileAttemptLedger, reconciliationBase } from "./convergence";
+import { loadState, nowIso, persistClose, persistState, StateConflictError } from "./store";
 import type { ImplementState, UnifiedVerificationAttempt } from "./types";
-
-export function preserveSettledFindings(state: ImplementState, attempt: UnifiedVerificationAttempt, at: string): void {
-  // The verdict and shared ledger are committed together. NOT_RUN means the
-  // owner died before that write; retain any independently settled exceptions
-  // so the next repair cannot forget them. Never apply a settled round twice.
-  if (attempt.verdict !== "NOT_RUN") return;
-  const settled = reconcileAttemptLedger(reconciliationBase(state, attempt), attempt, {
-    fidelity: attempt.reviews.fidelity?.result ?? null, code: attempt.reviews.code?.result ?? null, risk: attempt.risk?.result ?? null,
-  }, at);
-  state.findings = settled.findings;
-  state.riskFindings = settled.riskFindings;
-}
 
 /**
  * ESRCH is the only answer that means "not there". Everything else is a
@@ -71,7 +58,6 @@ export function assertNoActiveVerification(state: ImplementState): boolean {
   const attempt = state.verificationAttempts.find((entry) => entry.id === active.attemptId);
   if (attempt === undefined) throw new Error("active verification attempt is missing");
   const at = nowIso();
-  preserveSettledFindings(state, attempt, at);
   attempt.verdict = "ERROR";
   attempt.finishedAt = at;
   attempt.durationMs = Math.max(0, Date.parse(at) - Date.parse(attempt.startedAt));
@@ -100,6 +86,7 @@ export function beginVerification(statePath: string, state: ImplementState, atte
 /** Latest-state merge preserves refusals appended while suites or judges run. */
 export function progressVerification(
   statePath: string, state: ImplementState, apply: (fresh: ImplementState) => void,
+  derived?: (fresh: ImplementState) => Array<{ file: string; text: string }>,
 ): ImplementState {
   const active = state.activeVerification;
   if (active === undefined) throw new Error("this command holds no verification execution lease");
@@ -109,7 +96,11 @@ export function progressVerification(
     if (fresh.status !== "active" || fresh.prd.sha256 !== active.prdSha256
       || fresh.activeVerification.inputFingerprint !== active.inputFingerprint) throw new Error("verification pinned input changed during execution");
     apply(fresh);
-    try { persistState(statePath, fresh, { verificationToken: active.token }); }
+    try {
+      const files = derived?.(fresh);
+      if (files === undefined) persistState(statePath, fresh, { verificationToken: active.token });
+      else persistClose(statePath, fresh, files, { verificationToken: active.token });
+    }
     catch (error) {
       if (error instanceof StateConflictError && retry < 2) continue;
       throw error;
@@ -144,12 +135,13 @@ export function cancelVerificationExecution(statePath: string, state: ImplementS
 
 export function finishVerification(
   statePath: string, state: ImplementState, applyResult?: (fresh: ImplementState) => void,
+  derived?: (fresh: ImplementState) => Array<{ file: string; text: string }>,
 ): ImplementState {
   return progressVerification(statePath, state, (fresh) => {
     assertChildrenExited(fresh);
     applyResult?.(fresh);
     delete fresh.activeVerification;
-  });
+  }, derived);
 }
 
 /**
@@ -182,7 +174,6 @@ export async function recoverVerification(statePath: string, state: ImplementSta
     assertChildrenExited(fresh);
     const attempt = fresh.verificationAttempts.find((entry) => entry.id === active.attemptId)!;
     const at = nowIso();
-    preserveSettledFindings(fresh, attempt, at);
     attempt.verdict = "ERROR";
     attempt.finishedAt = at;
     attempt.durationMs = Math.max(0, Date.parse(at) - Date.parse(attempt.startedAt));

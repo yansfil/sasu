@@ -118,7 +118,7 @@ It is bookkeeping for the current run and never a second semantic completion aut
 
 ## Delivery behavior
 
-`ship` validates the current deterministic report, the Git head, base freshness, staging boundary, CI, mergeability, and explicit merge approval.
+`ship` validates the current deterministic report, the exact committed Git head, delivery path boundary, base freshness, CI, mergeability, and explicit merge approval.
 It includes agent-authored review notes in the pull request when present but never requires a reviewer process to have succeeded for an ordinary change.
 A reviewer failure stays visible as unavailable.
 High-risk review requirements belong to GitHub review policy and human approval, not to a mutable local receipt.

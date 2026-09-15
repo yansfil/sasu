@@ -2,6 +2,7 @@
 "use strict";
 
 const fs = require("fs");
+const crypto = require("node:crypto");
 const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
@@ -40,7 +41,7 @@ function main() {
   const [command, ...rest] = process.argv.slice(2);
   const options = parseArgs(rest);
   try {
-    if (options["allow-stale"]) throw new Error("--allow-stale is retired; delivery requires a current verification and receipt");
+    if (options["allow-stale"]) throw new Error("--allow-stale is retired; delivery requires a current deterministic verification report");
     if (command === "preflight") return cmdPreflight(options);
     if (command === "body") return cmdBody(options);
     if (command === "local") return cmdLocal(options);
@@ -252,17 +253,18 @@ function resolveState(options) {
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
-  assertSchema(state, "sasu.implement.state.v10", "state");
+  assertSchema(state, "sasu.implement.state.v11.stateless-verification", "state");
   const stateDir = path.dirname(statePath);
-  const receiptPath = path.join(stateDir, "receipt.json");
-  const resultPath = path.join(stateDir, "implementation-result.md");
-  if (!fs.existsSync(receiptPath)) throw new Error(`Receipt file not found: ${receiptPath}`);
-  const receipt = readJson(receiptPath);
-  assertSchema(receipt, "sasu.implement.receipt.v6", "receipt");
+  const reportPath = path.join(stateDir, "verification-report.json");
+  const resultPath = path.join(stateDir, "verification-report.md");
+  if (!fs.existsSync(reportPath)) throw new Error(`Verification report not found: ${reportPath}. Run sasu implement verify first.`);
+  const reportText = fs.readFileSync(reportPath, "utf8");
+  const report = JSON.parse(reportText);
+  assertSchema(report, "sasu.verification-report.v1", "verification report");
   return {
-    // Git operations (staging, commit, push) happen in the JUDGED tree: the
+    // Git delivery operations happen in the JUDGED tree: the
     // run's worktree when isolated, else the record tree. Records (state,
-    // receipt, result) are always read from the record tree via statePath.
+    // verification reports are always read from the record tree via statePath.
     repoRoot: state.worktree && state.worktree.path
       ? resolveInput(state.worktree.path, repoRoot)
       : state.projectRoot
@@ -271,43 +273,30 @@ function resolveState(options) {
     statePath,
     stateDir,
     state,
-    receiptPath,
-    receipt,
+    reportPath,
+    report,
+    reportSha256: crypto.createHash("sha256").update(reportText).digest("hex"),
     resultPath,
   };
 }
 
-const SHIPPABLE_RECEIPT_STATUSES = new Set(["complete", "complete-pending-human"]);
-const LAST_SUPPORTED_COMMIT = "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
-const LAST_EXPERIMENTAL_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
+const LAST_SUPPORTED_COMMIT = "9149d982";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
-    const supportCommit = ["sasu.implement.state.v9.parallel-review", "sasu.implement.receipt.v5.parallel-review"].includes(value?.schema)
-      ? LAST_EXPERIMENTAL_COMMIT : LAST_SUPPORTED_COMMIT;
-    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supportCommit}. Start a new run with the current contract.`);
+    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${LAST_SUPPORTED_COMMIT}. Start a new run with the current contract.`);
   }
 }
 
-function assertCompleteReceipt(context) {
-  if (!SHIPPABLE_RECEIPT_STATUSES.has(context.receipt.status)) {
-    throw new Error(`Cannot ship receipt status '${context.receipt.status}'. Run implement to completion first.`);
-  }
-  // Eligibility is derived by the CLI from current human responses and open
-  // blockers. Status alone cannot distinguish pending consent from rejection.
-  if (context.receipt.delivery?.eligible !== true) {
-    throw new Error(`Receipt is not delivery-eligible: ${(context.receipt.delivery?.reasons || ["missing eligibility"]).join("; ")}`);
-  }
-  for (const role of ["fidelity", "code"]) {
-    const review = context.receipt.reviews?.[role];
-    // Human confirmation and accepted risk can settle a historical FAIL.
-    // Require both actual results without replacing the CLI's eligibility gate.
-    if (!review?.result || !["PASS", "FAIL"].includes(review.verdict)) {
-      throw new Error(`Receipt ${role} review has no completed result. Run implement to completion first.`);
-    }
-  }
+function assertCurrentVerification(context) {
+  if (context.report.status !== "PASS") throw new Error(`Cannot deliver verification report status '${context.report.status}'. Fix the deterministic failure and rerun verify.`);
   const verification = verifyDelivery(context);
-  if (!verification.ok) throw new Error(`Receipt verification failed: ${verification.violations.join("; ")}`);
+  if (!verification.ok) throw new Error(`Verification report check failed: ${verification.violations.join("; ")}`);
+}
+
+function verificationIdentity(report, reportSha256) {
+  const keys = ["schema", "inputFingerprint", "prdSha256", "baseSha", "headSha", "sourceFingerprint", "generatedAt", "status", "jsonPath", "markdownPath"];
+  return { ...Object.fromEntries(keys.map(key => [key, report[key]])), reportSha256 };
 }
 
 function projectDeliveryConfig(context) {
@@ -330,26 +319,20 @@ function projectDeliveryConfig(context) {
 }
 
 function deliveryConfig(context, options = {}) {
-  // A run-level declaration is authoritative because it is part of the
-  // reviewed delivery contract; project config supplies the default when the
-  // run does not declare a delivery override.
+  // The project config is the delivery contract. Verification reports contain
+  // execution facts and do not silently override delivery policy.
   const project = projectDeliveryConfig(context);
   const stateDelivery = context.state.delivery && typeof context.state.delivery === "object"
     ? context.state.delivery
     : {};
-  const receiptDelivery = context.receipt.delivery && typeof context.receipt.delivery === "object"
-    ? context.receipt.delivery
-    : {};
-  const delivery = { ...project, ...stateDelivery, ...receiptDelivery };
+  const delivery = { ...project, ...stateDelivery };
   const staging = {
     ...(project.staging && typeof project.staging === "object" ? project.staging : {}),
     ...(stateDelivery.staging && typeof stateDelivery.staging === "object" ? stateDelivery.staging : {}),
-    ...(receiptDelivery.staging && typeof receiptDelivery.staging === "object" ? receiptDelivery.staging : {}),
   };
   const ci = {
     ...(project.ci && typeof project.ci === "object" ? project.ci : {}),
     ...(stateDelivery.ci && typeof stateDelivery.ci === "object" ? stateDelivery.ci : {}),
-    ...(receiptDelivery.ci && typeof receiptDelivery.ci === "object" ? receiptDelivery.ci : {}),
   };
   const mode = String(delivery.mode || "local").trim().toLowerCase();
   if (!["local", "pr"].includes(mode)) {
@@ -393,30 +376,28 @@ function verifyDelivery(context) {
   const detail = parsed.detail || {};
   const violations = [];
   if (result.status !== 0 || parsed.ok !== true) violations.push(parsed.message || `status exited ${result.status}`);
-  if (!SHIPPABLE_RECEIPT_STATUSES.has(detail.status)) violations.push(`implement state is ${detail.status || "unknown"}, not complete or complete-pending-human`);
+  if (detail.status === "retired") violations.push("implement run is retired");
   if (!detail.verification || detail.verification.verdict !== "PASS") {
     violations.push(`implementation verification is ${detail.verification ? detail.verification.verdict : "missing"}, not PASS`);
   }
   for (const problem of detail.artifactProblems || []) violations.push(problem);
   if (detail.delivery?.eligible !== true) violations.push(`implement delivery is ineligible: ${(detail.delivery?.reasons || ["missing eligibility"]).join("; ")}`);
-  if (!detail.completion || detail.completion.fingerprint !== context.receipt.completionFingerprint) {
-    violations.push("receipt completion fingerprint does not match sasu implement status");
-  }
-  // The installed ship script cannot import a checkout-specific validator.
-  // The current CLI owns validation; bind the derived receipt to its exact
-  // settled judgments so an edited receipt cannot invent coverage or grounds.
   const latest = detail.verification?.latest;
-  if (!latest || context.receipt.verificationAttemptId !== latest.id
-      || context.receipt.prdSha256 !== latest.prdSha256
-      || context.receipt.inputFingerprint !== latest.inputFingerprint
-      || context.receipt.sourceFingerprint !== latest.sourceFingerprint
-      || !isDeepStrictEqual(context.receipt.reviewContext, latest.reviewContext)) {
-    violations.push("receipt review input identity does not match sasu implement status");
+  if (!latest || context.report.inputFingerprint !== latest.inputFingerprint
+      || context.report.prdSha256 !== latest.prdSha256
+      || context.report.sourceFingerprint !== latest.sourceFingerprint) {
+    violations.push("verification report input identity does not match sasu implement status");
   }
-  for (const role of ["fidelity", "code"]) {
-    if (!isDeepStrictEqual(context.receipt.reviews?.[role], latest?.reviews?.[role])) {
-      violations.push(`receipt ${role} review does not match the CLI's settled judgment`);
-    }
+  if (!isDeepStrictEqual(detail.verificationReport, verificationIdentity(context.report, context.reportSha256))) {
+    violations.push("verification report does not match the current state identity");
+  }
+  const head = currentHead(context.repoRoot);
+  if (context.report.headSha !== head) {
+    violations.push(`verification report head ${context.report.headSha || "missing"} does not match current HEAD ${head}`);
+  }
+  const pending = gitStatusPaths(context.repoRoot);
+  if (pending.length > 0) {
+    violations.push(`Git-visible changes remain after verification: ${pending.join(", ")}. Commit them and rerun deterministic verification before delivery`);
   }
   context.verifiedDelivery = { ok: violations.length === 0, violations, status: detail };
   return context.verifiedDelivery;
@@ -434,51 +415,35 @@ function cell(text) {
   return String(text || "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
 }
 
-function summarizeHumanConfirmations(receipt) {
-  const open = receipt.humanConfirmations.filter(finding => finding.status === "open");
-  if (open.length === 0) return "- No outstanding human confirmations.";
+function summarizeVerification(report) {
   return [
-    "| ID | Pending judgment | Contract source | Next action |",
-    "| --- | --- | --- | --- |",
-    ...open.map(finding => `| ${cell(finding.id)} | ${cell(finding.problem)} | ${cell(finding.human?.sourceRef)} | ${cell(finding.nextAction)} |`),
-    "",
-    "The permitted post-completion judgments above remain open. The user responds with `sasu implement confirm --issuer human --id <id> --evidence \"<user words>\"`. An explicit rejection makes delivery ineligible.",
+    `- Deterministic verification: ${report.status}`,
+    `- PRD SHA: ${report.prdSha256}`,
+    `- Base SHA: ${report.baseSha || "unavailable"}`,
+    `- Head SHA: ${report.headSha || "unavailable"}`,
+    `- Source fingerprint: ${report.sourceFingerprint}`,
+    `- Generated: ${report.generatedAt}`,
+    "- Agent reviews are visible advisory notes produced by native runtime subagents.",
   ].join("\n");
 }
 
-function summarizeVerification(receipt) {
-  return [
-    ...[["fidelity", "Fidelity"], ["code", "Code"]].flatMap(([role, label]) => {
-      const review = receipt.reviews?.[role];
-      return [
-        `- ${label} review: ${review?.verdict || "NOT_RUN"}`,
-        review?.result?.summary ? `- ${label} summary: ${review.result.summary}` : `- No ${label} review summary recorded.`,
-      ];
-    }),
-    `- Reviewed source: ${receipt.sourceFingerprint} (attempt ${receipt.verificationAttemptId})`,
-    `- Completion fingerprint: ${receipt.completionFingerprint}`,
-    `- Distinct risk review: ${receipt.risk?.verdict || "NOT_REQUIRED"}`,
-    ...receipt.riskFindings.map(finding => `- ${finding.id} (risk ${finding.severity}, ${finding.status}): ${finding.text}${finding.resolution ? ` - ${finding.resolution.evidence}` : ""}`),
-    ...receipt.findings.filter(finding => finding.status === "open")
-      .map(finding => `- ${finding.id} (${finding.kind}): ${finding.problem} ${finding.nextAction}`),
-  ].join("\n");
+function summarizeEvidence(report) {
+  if (!report.evidence.length) return "- No separately registered runtime evidence.";
+  return report.evidence.map(artifact => `- ${artifact.path} (${artifact.kind}, observed ${artifact.observedAt}, sha256 ${artifact.sha256}): ${artifact.provenance}`).join("\n");
 }
 
-function summarizeEvidence(receipt) {
-  if (!receipt.artifacts.length) return "- No registered observation files. This is not a claim of runtime or visual verification.";
-  return receipt.artifacts.map(artifact => `- ${artifact.path}: ${artifact.description}${artifact.provenance ? ` (source: ${artifact.provenance}; observed: ${artifact.observedAt})` : ""}`).join("\n");
-}
-
-function summarizeTests(receipt) {
-  const commands = receipt.mechanical;
-  if (!commands.length) return "- No suite commands executed in the final verification attempt.";
-  return commands.map(command => `- \`${command.command}\` (cwd: ${command.cwd}, exit ${command.exitCode}, ${command.finishedAt})`).join("\n");
+function summarizeTests(report) {
+  const commands = report.requiredCommands;
+  if (!commands.length) return "- No required project suites are configured or detected.";
+  return commands.map(command => command.excluded
+    ? `- ${command.id}: EXCLUDED - \`${command.command}\``
+    : `- ${command.id}: ${command.result?.status || "UNRUN"} - \`${command.command}\`${command.result ? ` (cwd: ${command.cwd}, exit ${command.result.exitCode})` : ""}`).join("\n");
 }
 
 function summarizeChangedFiles(context) {
   try {
-    const plan = stageablePaths(context, deliveryConfig(context));
-    return plan.stage.length ? plan.stage.map(item => `- ${item}`).join("\n") : "- No staged file paths planned";
+    const plan = verifiedPathPlan(context, deliveryConfig(context));
+    return plan.changed.length ? plan.changed.map(item => `- ${item}`).join("\n") : "- No changed product paths recorded";
   } catch {
     const status = gitStatusPaths(context.repoRoot).filter(item => !item.includes("/artifacts/"));
     return status.length ? status.map(item => `- ${item}`).join("\n") : "- No pending file paths found";
@@ -486,7 +451,7 @@ function summarizeChangedFiles(context) {
 }
 
 function deliverySummary(context) {
-  const delivery = context.state.delivery || context.receipt.delivery || {};
+  const delivery = context.state.delivery || {};
   const staging = delivery.staging || {};
   const include = optionList(staging.include);
   const exclude = optionList(staging.exclude);
@@ -500,15 +465,15 @@ function deliverySummary(context) {
 }
 
 function agentFill(instructions) {
-  return `<!-- AGENT-FILL: ${instructions} Ground it in implementation-result.md and the recorded reviews. Delete this comment after writing. -->`;
+  return `<!-- AGENT-FILL: ${instructions} Ground it in verification-report.md and the visible native-agent review notes. Delete this comment after writing. -->`;
 }
 
 function buildBodyDraft(context) {
   const state = context.state;
-  const receipt = context.receipt;
+  const report = context.report;
   const resultRel = fs.existsSync(context.resultPath) ? toRepoRelative(context.resultPath, context.repoRoot) : null;
   const implementationState = toRepoRelative(context.statePath, context.repoRoot);
-  const receiptPath = toRepoRelative(context.receiptPath, context.repoRoot);
+  const reportPath = toRepoRelative(context.reportPath, context.repoRoot);
   const lines = [
     "## Summary",
     "",
@@ -530,24 +495,28 @@ function buildBodyDraft(context) {
     "",
     `- PRD: ${state.prdPath || "unknown"}`,
     `- Implementation state: ${implementationState}`,
-    `- Receipt: ${receiptPath} (status: ${receipt.status})`,
-    resultRel ? `- Result report: ${resultRel}` : "- Result report: not found",
+    `- Verification report: ${reportPath} (status: ${report.status})`,
+    resultRel ? `- Verification summary: ${resultRel}` : "- Verification summary: not found",
     "",
     "## Actual Tests",
     "",
-    summarizeTests(receipt),
+    summarizeTests(report),
     "",
     "## Actual Observations",
     "",
-    summarizeEvidence(receipt),
+    summarizeEvidence(report),
     "",
-    "## Comprehensive Review",
+    "## Deterministic Verification",
     "",
-    summarizeVerification(receipt),
+    summarizeVerification(report),
     "",
-    "## Open Human Confirmations",
+    "## Agent Review: Fix Now",
     "",
-    summarizeHumanConfirmations(receipt),
+    agentFill("Summarize concrete bugs found by Fidelity, Code, or Security reviewers that belong to the current behavior and touched flow. Record how each was fixed, or explain the unresolved concern for human judgment. Write `None` when no such finding remains."),
+    "",
+    "## Agent Review: Follow-up Improvements",
+    "",
+    agentFill("List useful cleanup, refactoring, polish, or product expansion that is outside the current contract. These are advisory and do not block this pull request. Write `None` when there are no follow-ups."),
     "",
     "## Delivery Staging",
     "",
@@ -571,15 +540,15 @@ function defaultBodyPath(context) {
 function validateBodyText(text, bodyPath) {
   const problems = [];
   if (AGENT_FILL_PATTERN.test(text)) {
-    problems.push("body still contains AGENT-FILL placeholders; write the prose sections from implementation-result.md first");
+    problems.push("body still contains AGENT-FILL placeholders; write the prose sections from the verification report and visible review notes first");
   }
   for (const pattern of ATTRIBUTION_PATTERNS) {
     if (pattern.test(text)) {
       problems.push(`body contains AI agent attribution matching ${pattern}; PR metadata must be written as project work`);
     }
   }
-  if (!/receipt/i.test(text)) {
-    problems.push("body does not reference the implementation receipt");
+  if (!/verification report/i.test(text)) {
+    problems.push("body does not reference the deterministic verification report");
   }
   if (/!\[[^\]]*\]\(\s*https:\/\/raw\.githubusercontent\.com\//i.test(text)) {
     problems.push("body embeds raw.githubusercontent.com images; use GitHub user-attachments or github.com/<owner>/<repo>/blob/<commit-or-branch>/<path>?raw=true so private repo screenshots render for reviewers");
@@ -594,7 +563,7 @@ function resolveBodyPath(context, options) {
   if (!fs.existsSync(bodyPath)) {
     throw new Error([
       `PR body not found: ${bodyPath}`,
-      "Run 'body' to generate the draft, fill the AGENT-FILL sections from implementation-result.md, then rerun ship.",
+      "Run 'body' to generate the draft, fill the AGENT-FILL sections from the verification report and visible review notes, then rerun ship.",
     ].join("\n"));
   }
   validateBodyText(fs.readFileSync(bodyPath, "utf8"), bodyPath);
@@ -642,8 +611,8 @@ function pathMatches(candidate, patterns) {
 /** Product paths come from the CLI-owned reviewed attribution, including its
  * exclusion of dirty changes that existed before this run. */
 function runOwnedPaths(context) {
-  if (!Array.isArray(context.receipt.ownedFiles)) throw new Error("receipt.ownedFiles must be an array");
-  return context.receipt.ownedFiles.map(item => {
+  if (!Array.isArray(context.report.ownedFiles)) throw new Error("verification report ownedFiles must be an array");
+  return context.report.ownedFiles.map(item => {
     const normalized = normalizeRepoPath(item);
     if (!normalized || path.isAbsolute(normalized) || normalized.split("/").includes("..") || isUnsafeBroadWriteScope(normalized)
         || normalized.startsWith(`${NAMESPACE_ROOT}/`)) throw new Error(`Invalid run-owned product path: ${item}`);
@@ -691,74 +660,22 @@ function deliveryPathPolicy(context, config, options = {}) {
   };
 }
 
-function stagedPaths(repoRoot) {
-  return run("git", ["diff", "--cached", "--name-only"], { cwd: repoRoot }).stdout
-    .split(/\r?\n/)
-    .map(normalizeRepoPath)
-    .filter(Boolean);
-}
-
-function assertStagedPathsArePlanned(plan, staged) {
-  const planned = new Set(plan.stage);
-  const unexpected = staged.filter(item => !planned.has(item));
-  if (unexpected.length > 0) {
-    throw new Error([
-      "Refusing to commit pre-staged paths outside the delivery plan.",
-      `Unexpected staged paths: ${unexpected.join(", ")}`,
-      "Unstage them or include them through the approved delivery allowlist before retrying.",
-    ].join("\n"));
-  }
-}
-
-function stageablePaths(context, config, options = {}) {
-  const changed = gitStatusPaths(context.repoRoot);
+function verifiedPathPlan(context, config, options = {}) {
   const policy = deliveryPathPolicy(context, config, options);
-  const { includes, excluded, allowed } = policy;
-  for (const include of includes) {
-    if (!changed.some(item => pathMatches(item, [include]))) {
-      process.stderr.write(`warning: include entry '${include}' matches no changed path; it will stage nothing\n`);
-    }
-  }
-  const ignored = changed.filter(item => pathMatches(item, excluded));
-  const candidates = changed.filter(item => !pathMatches(item, excluded));
-  const unrelated = candidates.filter(item => !pathMatches(item, allowed));
-  if (unrelated.length) {
+  const changed = Array.isArray(context.report.ownedFiles)
+    ? context.report.ownedFiles.map(normalizeRepoPath).filter(Boolean)
+    : [];
+  const forbidden = changed.filter(item => pathMatches(item, policy.excluded) || !pathMatches(item, policy.allowed));
+  if (forbidden.length > 0) {
     throw new Error([
-      "Refusing to stage changes outside the PRD delivery allowlist.",
-      `Allowed prefixes: ${allowed.length ? allowed.join(", ") : "(none)"}`,
-      `Excluded prefixes: ${excluded.length ? excluded.join(", ") : "(none)"}`,
-      `Unrelated paths: ${unrelated.join(", ")}`,
-      "Move unrelated changes out of the worktree, add an approved delivery.staging.include entry, or pass --include for an intentional path.",
+      "Verified implementation includes paths outside the PRD delivery allowlist.",
+      `Allowed prefixes: ${policy.allowed.length ? policy.allowed.join(", ") : "(none)"}`,
+      `Excluded prefixes: ${policy.excluded.length ? policy.excluded.join(", ") : "(none)"}`,
+      `Unexpected paths: ${forbidden.join(", ")}`,
+      "Change the delivery policy, then rerun deterministic verification before delivery.",
     ].join("\n"));
   }
-  return { changed, allowed, excluded, ignored, stage: candidates };
-}
-
-function stageAndCommit(context, options, title) {
-  const repoRoot = context.repoRoot;
-  const config = deliveryConfig(context, options);
-  const plan = stageablePaths(context, config, options);
-  assertStagedPathsArePlanned(plan, stagedPaths(repoRoot));
-  if (plan.stage.length) {
-    run("git", ["add", "-A", "--", ...plan.stage], { cwd: repoRoot });
-  }
-  const stagedPathsAfterAdd = stagedPaths(repoRoot);
-  assertStagedPathsArePlanned(plan, stagedPathsAfterAdd);
-  if (!stagedPathsAfterAdd.length) return { committed: false, commit: null, staged: [] };
-  const message = String(options["commit-message"] || title || `Ship ${context.state.topicSlug || "PRD implementation"}`);
-  const commitArgs = ["commit"];
-  if (options["no-gpg-sign"]) commitArgs.push("--no-gpg-sign");
-  commitArgs.push("-m", message);
-  run("git", commitArgs, { cwd: repoRoot });
-  const commit = run("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot }).stdout.trim();
-  return {
-    committed: true,
-    commit,
-    staged: stagedPathsAfterAdd,
-    changed: plan.changed,
-    ignored: plan.ignored,
-    allowed: plan.allowed,
-  };
+  return { changed, stage: [], ignored: [], allowed: policy.allowed, excluded: policy.excluded };
 }
 
 function baselineHead(context) {
@@ -823,29 +740,7 @@ function assertDeliveryPaths(context, config, paths, options, label) {
   return policy;
 }
 
-function checkpointPromotion(context, config, options) {
-  if (!/^checkpoint:\s*/i.test(commitSubject(context.repoRoot))) return null;
-  const baseline = baselineHead(context);
-  if (!baseline) {
-    return { eligible: false, reason: "the run has no recorded baseline HEAD" };
-  }
-  const head = currentHead(context.repoRoot);
-  if (!isAncestor(context.repoRoot, baseline, head)) {
-    return { eligible: false, reason: `HEAD ${head} is not descended from baseline ${baseline}` };
-  }
-  const remoteRefs = remoteRefsContainingHead(context.repoRoot);
-  if (remoteRefs === null) {
-    return { eligible: false, reason: "could not prove that the checkpoint is absent from all remotes" };
-  }
-  if (remoteRefs.length > 0) {
-    return { eligible: false, reason: `the checkpoint is already reachable from ${remoteRefs.join(", ")}` };
-  }
-  const paths = pathsBetween(context.repoRoot, baseline, head);
-  assertDeliveryPaths(context, config, paths, options, "Existing checkpoint");
-  return { eligible: true, baseline, paths };
-}
-
-function existingLocalCommit(context, config, options) {
+function existingVerifiedCommit(context, config, options, localOnly) {
   const baseline = baselineHead(context);
   const head = currentHead(context.repoRoot);
   if (!baseline || baseline === head) return null;
@@ -855,12 +750,14 @@ function existingLocalCommit(context, config, options) {
   const paths = pathsBetween(context.repoRoot, baseline, head);
   if (!paths.length) return null;
   assertDeliveryPaths(context, config, paths, options, "Existing implementation history");
-  const remoteRefs = remoteRefsContainingHead(context.repoRoot);
-  if (remoteRefs === null) {
-    throw new Error("Cannot record an existing local commit because remote reachability could not be checked.");
-  }
-  if (remoteRefs.length > 0) {
-    throw new Error(`Existing implementation HEAD is already reachable from ${remoteRefs.join(", ")}; local delivery will not claim an externally pushed commit.`);
+  if (localOnly) {
+    const remoteRefs = remoteRefsContainingHead(context.repoRoot);
+    if (remoteRefs === null) {
+      throw new Error("Cannot record an existing local commit because remote reachability could not be checked.");
+    }
+    if (remoteRefs.length > 0) {
+      throw new Error(`Existing implementation HEAD is already reachable from ${remoteRefs.join(", ")}; local delivery will not claim an externally pushed commit.`);
+    }
   }
   const info = commitInfo(context.repoRoot);
   return {
@@ -877,45 +774,11 @@ function existingLocalCommit(context, config, options) {
   };
 }
 
-function localStageAndCommit(context, options) {
-  const repoRoot = context.repoRoot;
+function verifiedCommit(context, options, localOnly = false) {
   const config = deliveryConfig(context, options);
-  const plan = stageablePaths(context, config, options);
-  assertStagedPathsArePlanned(plan, stagedPaths(repoRoot));
-  if (plan.stage.length) run("git", ["add", "-A", "--", ...plan.stage], { cwd: repoRoot });
-  const staged = stagedPaths(repoRoot);
-  assertStagedPathsArePlanned(plan, staged);
-
-  const checkpoint = checkpointPromotion(context, config, options);
-  if (checkpoint && !checkpoint.eligible) {
-    throw new Error(`Cannot promote the automatic checkpoint into the local delivery commit: ${checkpoint.reason}. Commit the implementation manually after reviewing its history.`);
-  }
-  if (!staged.length && !checkpoint) {
-    const existing = existingLocalCommit(context, config, options);
-    if (existing) return existing;
-    throw new Error("Local delivery found no allowlisted implementation changes to commit. The receipt may have been finalized after the implementation was already committed.");
-  }
-
-  const message = String(options["commit-message"] || `Implement ${context.state.topicSlug || "PRD implementation"}`).trim();
-  if (!message) throw new Error("--commit-message must not be empty");
-  const commitArgs = ["commit"];
-  if (checkpoint) commitArgs.push("--amend");
-  if (options["no-gpg-sign"]) commitArgs.push("--no-gpg-sign");
-  commitArgs.push("-m", message);
-  run("git", commitArgs, { cwd: repoRoot });
-  const info = commitInfo(repoRoot);
-  return {
-    committed: true,
-    existing: false,
-    promotedCheckpoint: Boolean(checkpoint),
-    commit: info.commit,
-    short: info.short,
-    subject: info.subject,
-    staged,
-    changed: checkpoint ? Array.from(new Set([...checkpoint.paths, ...plan.changed])) : plan.changed,
-    ignored: plan.ignored,
-    allowed: plan.allowed,
-  };
+  const existing = existingVerifiedCommit(context, config, options, localOnly);
+  if (existing) return existing;
+  throw new Error("Delivery requires an implementation commit after the recorded baseline. Commit the final source and evidence, then rerun deterministic verification.");
 }
 
 // --- branch / PR / CI ---------------------------------------------------
@@ -1049,7 +912,7 @@ function deliveryResultPath(context) {
 
 function cmdPreflight(options) {
   const context = resolveState(options);
-  assertCompleteReceipt(context);
+  assertCurrentVerification(context);
   const config = deliveryConfig(context, options);
   const gh = run("gh", ["auth", "status"], { cwd: context.repoRoot, allowFailure: true });
   const bodyPath = options.body ? resolveInput(options.body, context.repoRoot) : defaultBodyPath(context);
@@ -1068,7 +931,7 @@ function cmdPreflight(options) {
     ok: true,
     repoRoot: context.repoRoot,
     statePath: toRepoRelative(context.statePath, context.repoRoot),
-    receiptPath: toRepoRelative(context.receiptPath, context.repoRoot),
+    verificationReportPath: toRepoRelative(context.reportPath, context.repoRoot),
     delivery: config,
     modeOk: config.mode === "pr",
     deliveryFreshness: freshness,
@@ -1076,14 +939,14 @@ function cmdPreflight(options) {
     body: { path: toRepoRelative(bodyPath, context.repoRoot), status: bodyStatus },
     currentBranch: currentBranch(context.repoRoot),
     gitStatus: gitStatus(context.repoRoot),
-    stagePlan: stageablePaths(context, config, options),
+    stagePlan: verifiedPathPlan(context, config, options),
     ghAuthOk: gh.status === 0,
   }, null, 2) + "\n");
 }
 
 function cmdBody(options) {
   const context = resolveState(options);
-  assertCompleteReceipt(context);
+  assertCurrentVerification(context);
   const output = options.output ? resolveInput(options.output, context.repoRoot) : defaultBodyPath(context);
   if (fs.existsSync(output) && !options.force) {
     throw new Error(`PR body already exists: ${output}. Edit it in place, or pass --force to regenerate the draft (this discards its content).`);
@@ -1093,7 +956,7 @@ function cmdBody(options) {
     ok: true,
     bodyPath: toRepoRelative(output, context.repoRoot),
     resultReport: fs.existsSync(context.resultPath) ? toRepoRelative(context.resultPath, context.repoRoot) : null,
-    next: "Fill every AGENT-FILL section with prose grounded in implementation-result.md and the recorded reviews, then run ship.",
+    next: "Fill every AGENT-FILL section from verification-report.md and the visible native-agent review notes, then run ship.",
   }, null, 2) + "\n");
 }
 
@@ -1115,10 +978,10 @@ function localResult(context, config, freshness, commit, rules) {
     status: "committed",
     mode: "local",
     recordedAt: new Date().toISOString(),
-    receipt: {
-      path: toRepoRelative(context.receiptPath, context.repoRoot),
-      status: context.receipt.status,
-      completionFingerprint: context.receipt.completionFingerprint || null,
+    verificationReport: {
+      path: toRepoRelative(context.reportPath, context.repoRoot),
+      status: context.report.status,
+      inputFingerprint: context.report.inputFingerprint,
     },
     branch: currentBranch(context.repoRoot),
     implementationHead: commit.commit,
@@ -1133,7 +996,7 @@ function localResult(context, config, freshness, commit, rules) {
 
 function cmdLocal(options) {
   const context = resolveState(options);
-  assertCompleteReceipt(context);
+  assertCurrentVerification(context);
   const config = deliveryConfig(context, options);
   if (config.mode !== "local") {
     throw new Error([
@@ -1147,7 +1010,7 @@ function cmdLocal(options) {
     throw new Error([
       "Implementation state is not local-delivery-fresh:",
       ...(freshness.violations || []).map(item => `- ${item}`),
-      "Return to implement, rerun affected verification and reviews, finalize a fresh receipt, then retry local delivery.",
+      "Return to implement, rerun deterministic verification for the current head, then retry local delivery.",
     ].join("\n"));
   }
 
@@ -1175,7 +1038,7 @@ function cmdLocal(options) {
 
   const overrides = [];
   const rules = runRulesGate(context, options, overrides);
-  const commit = localStageAndCommit(context, options);
+  const commit = verifiedCommit(context, options, true);
   const result = localResult(context, config, freshness, commit, { ...rules, overrides });
   writeFile(deliveryResultPath(context), JSON.stringify(result, null, 2));
   appendJsonl(shipLogPath(context), {
@@ -1200,7 +1063,7 @@ function cmdLocal(options) {
 
 function cmdShip(options) {
   const context = resolveState(options);
-  assertCompleteReceipt(context);
+  assertCurrentVerification(context);
   const config = deliveryConfig(context, options);
   const overrides = [];
 
@@ -1219,7 +1082,7 @@ function cmdShip(options) {
     throw new Error([
       "Implementation state is not delivery-fresh:",
       ...(freshness.violations || []).map(item => `- ${item}`),
-      "Return to implement, refresh verification and finalize a current receipt before delivery.",
+      "Return to implement and refresh deterministic verification for the current head before delivery.",
     ].join("\n"));
   }
 
@@ -1240,7 +1103,7 @@ function cmdShip(options) {
   const title = String(options.title || `Ship ${context.state.topicSlug || "PRD implementation"}`);
   const bodyPath = resolveBodyPath(context, options);
   const branch = ensureBranch(context, config);
-  const commit = stageAndCommit(context, options, title);
+  const commit = verifiedCommit(context, options);
   run("git", ["push", "-u", "origin", branch], { cwd: context.repoRoot });
   const pr = createOrUpdatePr(context, config, title, bodyPath, Boolean(options.draft));
   const ci = options["no-watch"] ? null : watchCi(context, { ...options, pr: pr.url });
@@ -1273,7 +1136,7 @@ function cmdShip(options) {
 }
 
 // Learned-invariant gate: changed files are matched against agents/rules
-// triggers and each armed check runs before anything is staged or pushed.
+// triggers and each armed check runs before anything is pushed.
 // Failures are fail-closed; --skip-rules needs a --reason and lands in the
 // ship log like every other override.
 function runRulesGate(context, options, overrides) {
@@ -1321,7 +1184,7 @@ function runRulesGate(context, options, overrides) {
 
 function cmdWatchCi(options) {
   const context = resolveState(options);
-  assertCompleteReceipt(context);
+  assertCurrentVerification(context);
   const ci = watchCi(context, options);
   appendJsonl(shipLogPath(context), {
     ts: new Date().toISOString(),
@@ -1363,7 +1226,7 @@ function mergeMethod(options) {
 
 function cmdMerge(options) {
   const context = resolveState(options);
-  assertCompleteReceipt(context);
+  assertCurrentVerification(context);
   const config = deliveryConfig(context, options);
   const approval = typeof options.approval === "string" ? options.approval.trim() : "";
   if (!approval) {
@@ -1385,13 +1248,13 @@ function cmdMerge(options) {
     throw new Error([
       "Implementation state is not merge-fresh:",
       ...(freshness.violations || []).map(item => `- ${item}`),
-      "Return to implement, rerun verification with Fidelity and Code review, finalize a fresh receipt, then ship again.",
+      "Return to implement, rerun deterministic verification for the current head, then ship again.",
     ].join("\n"));
   }
   const base = baseFreshness(context.repoRoot, config.baseBranch);
   if (base.fresh !== true) {
     throw new Error(base.fresh === false
-      ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh implement verification/reviews/receipt, and re-ship before merge.`
+      ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh deterministic verification, and re-ship before merge.`
       : `Could not prove freshness against origin/${base.base}; merge fails closed until the base comparison succeeds.`);
   }
   if (currentBranch(context.repoRoot) !== config.branch) {
@@ -1437,9 +1300,9 @@ function cmdMerge(options) {
     status: "merged",
     recordedAt: new Date().toISOString(),
     approval,
-    receipt: {
-      path: toRepoRelative(context.receiptPath, context.repoRoot),
-      status: context.receipt.status,
+    verificationReport: {
+      path: toRepoRelative(context.reportPath, context.repoRoot),
+      status: context.report.status,
     },
     branch: config.branch,
     baseBranch: config.baseBranch,

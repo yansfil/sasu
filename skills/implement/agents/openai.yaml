@@ -1,4 +1,4 @@
 interface:
   display_name: "implement"
-  short_description: "Implement complete PRDs with independent review and current receipts"
-  default_prompt: "Use $implement to implement the approved complete PRD, collect actual shared evidence, run required suites and concurrent independent Fidelity and Code reviews, and finalize an honest current receipt."
+  short_description: "Implement PRDs with deterministic checks and visible review"
+  default_prompt: "Use $implement to implement the approved PRD, collect actual evidence, run deterministic verification, ask native review subagents for advice, fix current-scope defects, and deliver the current result."

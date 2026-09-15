@@ -132,8 +132,8 @@ Do not treat PR delivery as an implementation detail that can be decided later.
 Represent delivery mode in the existing sections instead of adding a new one:
 
 - Add a Decisions row for the accepted delivery choice and the rejected alternatives.
-- Add a Behaviors row only for implementation work that must be complete before the receipt, such as release notes or PR-ready evidence.
-- Keep branch creation, push, PR URL, CI verdict, and merge result out of the Behaviors table because `$ship` records them after the implementation receipt.
+- Add a Behaviors row only for product work that the implementation itself must complete, such as release notes or PR-ready evidence.
+- Keep branch creation, push, PR URL, CI verdict, and merge result out of the Behaviors table because `$ship` records delivery separately.
 
 When the repository has `agents/config.json`, read it before drafting and reflect relevant defaults in the PRD.
 The config is not a substitute for human approval when delivery can create branches, commits, pull requests, deployments, external calls, or CI spend.

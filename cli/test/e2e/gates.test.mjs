@@ -437,7 +437,7 @@ test("freshness: editing the qa-log after a gap-audit PASS surfaces STALE in gat
   assert.match(restored.stdout, /gate:gap-audit\] PASS/);
 });
 
-test("gate status reports all three gates and the judge call count", () => {
+test("gate status reports both semantic document gates and the judge call count", () => {
   const dir = makeProject();
   runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md"], {
     stub: stubFile(dir, { verdict: "PASS", findings: [] }),
@@ -597,11 +597,12 @@ test("json contract: doctor, status, and override all emit contractVersion-tagge
   assert.equal(overrideParsed.status.effective, "PASS");
 });
 
-test("the duplicate PRD verify completion path is explicitly retired", () => {
+test("the standalone semantic verify gate is explicitly retired", () => {
   const dir = makeProject({git: true});
-  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--prd", "prd.md"]);
+  const result = runCli(dir, ["gate", "verify", "--slug", "fixture", "--contract", "prd.md"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /retired|removed/i);
+  assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture")), false);
 });
 
 test("delegated run: --assume-human-findings converts non-P0 human findings to a recorded ledger and proceeds", () => {

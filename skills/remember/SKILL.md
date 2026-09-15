@@ -4,7 +4,7 @@ description: |
   Land a lesson as an enforcement asset so the same mistake cannot repeat.
   Use when the user invokes "$remember", says "remember this", "learn from
   this", "don't do that again", "배워둬", "기억해둬", "같은 실수 하지마",
-  when a finalize receipt suggests lessons from recorded deviations, or when
+  when a verification report or pull request review suggests a reusable lesson, or when
   a painful debugging/rework session just ended and its cause is nameable.
 ---
 
@@ -16,7 +16,7 @@ A lesson that only becomes prose is not learned; it must end up somewhere that a
 
 Match the user's language by default.
 
-Read current receipt findings, recorded deviations, actual execution results, and proposals as candidate evidence.
+Read current review findings, recorded deviations, actual execution results, and proposals as candidate evidence.
 Do not infer a lesson from retired row outcomes, scores, or review lanes, and do not treat an advisory as user approval.
 Keep only actionable recurrence prevention with a concrete source; current confirmation and registration boundaries below still apply.
 
@@ -39,7 +39,7 @@ Every lesson gets classified twice, then landed:
 ## Inputs
 
 - An explicit lesson from the user in conversation.
-- `rememberSuggestions` from a `finalize` receipt, and the `deviations` array in the latest run's `state.json`.
+- Fix now dispositions, Follow-up improvements, and the `deviations` array in the latest run's `state.json`.
 - A just-finished incident: name the cause before it evaporates.
 
 ## Mandatory Confirmation Gate
@@ -128,7 +128,7 @@ Pending lessons are visible debt: `ship` warns on every ship and `doctor` report
 You do not need to re-teach landed lessons; the harness carries them:
 
 - `ship` matches every changed file against invariant triggers and fails closed on a failing check (`--skip-rules --reason` is the only way past, and it lands in the ship log).
-- implement's execution planning (run automatically at `init`, rerun by `plan-execution`) injects invariants whose triggers overlap the run's write scopes as verification items, so the receipt depends on them.
+- implementation planning applies invariants whose triggers overlap the touched paths, so deterministic checks and review cover them.
 - `sasu-setup doctor` rot-checks the ledger: missing landings, dead triggers, and pending debt.
 
 ## Hard Stops

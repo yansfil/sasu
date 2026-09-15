@@ -18,12 +18,12 @@ The Sasu harness remains the independent verification authority.
 
 The Spec Owner owns conversation continuity, qa-log closure when applicable, PRD authorship, PRD gates, and the pre-implementation summary.
 The Observer owns conversation continuity, delegation, liveness, exception triage, recovery, and the final user-facing report.
-The Implementor owns implementation repository writes, focused checks, evidence registration, verification, fixes, finalization, and conditional delivery from a ready PRD.
+The Implementor owns implementation repository writes, focused checks, evidence registration, deterministic verification, native review disposition, fixes, and conditional delivery from a ready PRD.
 It never authors or repairs the qa-log or PRD.
 While the implementation phase is active, only the Implementor may mutate implementation files after dispatch; the CLI alone writes Sasu run state.
 All sealed PRD changes require human authorization, recorded by `sasu implement amend --issuer human --approval '<verbatim user approval>' --reason '<why and what changed>'`.
 Existing authorization that covers the change is sufficient; the Implementor does not edit the PRD or qa-log on its own.
-The Observer may read repository state, `sasu gate status`, `sasu implement status`, receipts, and the Implementor transcript.
+The Observer may read repository state, `sasu gate status`, `sasu implement status`, verification reports and the Implementor transcript.
 It must not become a second implementor or repeat verification.
 
 ## Resolve The Current Role
@@ -132,7 +132,7 @@ Under Claude Code that is the Bash tool's `run_in_background`; under Codex it is
 A foreground wait holds the turn, so the user cannot reach the Observer for as long as the run lasts, which is the one thing the Observer exists to stay available for.
 A background waiter outlives the turn and re-invokes the Observer when it exits.
 
-The waiter is a one-shot, so the loop is arm, wake, judge, arm again.
+The waiter is a one-shot, so the loop is arm, wake, inspect, arm again.
 Re-arm after every wake except `implementor-gone`, which means the watched target can no longer be followed - it may have died, but a moved pane or a changed identity reports identically, so inspect it before deciding on any recovery and never start a replacement on that signal alone.
 `await` prints the next command with the cursor already advanced and the probe flag carried over; run that, rather than rebuilding it from memory.
 Failing to re-arm does not raise an error: the implementor keeps working and nobody is watching.
@@ -150,7 +150,7 @@ Use Sasu state, not transcript keywords, as the source of truth.
 ## Exception-Only Intervention
 
 The normal path is silent.
-The Observer intervenes only on `blocked`, an idle or done agent without the required receipt, `unknown` or exited runtime state, a scope or authority violation, or an explicit user change.
+The Observer intervenes only on `blocked`, an idle or done agent without a current deterministic report, `unknown` or exited runtime state, a scope or authority violation, or an explicit user change.
 
 Before waiting for an answer, the Implementor must emit this packet as final text and end its turn instead of opening an interactive question UI:
 
@@ -168,7 +168,7 @@ The Observer resolves a block without asking the user when the answer is already
 For `$please`, this includes reversible product, copy, and implementation choices that can be listed for final review.
 Send an in-contract decision back to the same Implementor and require it to record the assumption in the final report, never by editing the sealed PRD.
 For a required contract change, preserve existing applicable human authority and send the proposed amendment to the same Implementor through the coordinator.
-A live verify execution lease refuses all domain mutations, including amendment, retirement, escalation, adoption, risk decisions, and confirmation.
+A live verify execution lease refuses all domain mutations, including amendment, retirement, escalation, adoption, other domain mutations.
 Wait for completion or verified process-group cleanup; a settled pane or lost target alone is not proof that its children have stopped.
 
 If the block changes scope, an acceptance criterion, major structure, or product behavior, the Observer must not authorize divergence or edit the sealed PRD while implementation continues.
@@ -184,7 +184,7 @@ Do not send a blind "continue" to a stopped agent.
 Inspect the lifecycle state, recent output, and Sasu status first.
 
 - On a soft `blocked` state, resolve it under the policy above and resume the same Implementor.
-- On idle or done without a receipt, ask the Implementor for its exact stage and next action, then continue if no hard stop exists.
+- On idle or done without a current deterministic report, ask the Implementor for its exact stage and next action, then continue if no hard stop exists.
 - On `unknown`, inspect the pane process and Sasu state before deciding that the agent died.
 - If the Implementor died, start one replacement in a fresh marked pane and hand off the original invocation, current diff, ready PRD, and Sasu status.
   The original user's `$please` or `$implement` invocation is the only takeover evidence available for the same task; never compose adoption evidence.
@@ -192,5 +192,5 @@ Inspect the lifecycle state, recent output, and Sasu status first.
   If that blocker repeats, stop the automatic loop and surface the failed approach and recommended replan to the user.
 
 Completion is the pipeline's own authority and nothing else's: a `done` or settled screen is a cue to look, never evidence that work finished.
-For implementation, require a complete `sasu implement status`, `receipt.json`, and `implementation-result.md`.
+For implementation, require a current PASS from `sasu implement status`, `verification-report.json`, `verification-report.md`, and visible native-agent review notes or an explicit `REVIEW_UNAVAILABLE`.
 The Observer reports the Implementor pane ID, final status, autonomous decisions, user-review items, verification result, and measured PRD and implementation timing.

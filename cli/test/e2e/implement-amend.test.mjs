@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { PRD_PATH, REVIEW_PASS, makeProject, readState, run, start, stub, ok } from "../helpers/implement-fixture.mjs";
+import { PRD_PATH, makeProject, readState, run, start, stub, ok } from "../helpers/implement-fixture.mjs";
 
 function amend(root, issuer = "human", extra = []) {
   return run(root, ["implement", "amend", "--issuer", issuer, "--approval", "I approve this changed requirement and review profile.", "--reason", "Approved contract correction", ...extra]);
@@ -28,10 +28,11 @@ test("only a human amendment reseals the full PRD and refreshes mirrored executi
   assert.match(after.requirements[0].behavior, /corrected public command/);
   assert.equal(fs.readFileSync(path.join(root, after.prd.snapshotPath), "utf8"), newText);
   assert.equal(fs.readFileSync(path.join(root, after.amendments[0].previousSnapshotPath), "utf8"), oldText);
-  assert.notEqual(run(root, ["implement", "finalize"]).status, 0, "a previous whole review cannot be reused on an amended contract");
-  const risk = { verdict: "PASS", findings: [], priorDispositions: [] };
-  ok(run(root, ["implement", "verify"], { env: stub(root, REVIEW_PASS, risk) }));
-  ok(run(root, ["implement", "finalize"]));
+  assert.equal(after.verificationReport, null, "an amendment invalidates the previous report");
+  ok(run(root, ["implement", "verify"], { env: stub(root) }));
+  const refreshed = readState(root);
+  assert.equal(refreshed.verificationReport.status, "PASS");
+  assert.notEqual(refreshed.verificationReport.inputFingerprint, before.verificationReport.inputFingerprint);
 });
 
 test("the sealed suite survives config weakening and exclusion requires approval while retaining its failed result", () => {
@@ -52,6 +53,7 @@ test("the sealed suite survives config weakening and exclusion requires approval
   assert.equal(after.suite.exclusions[0].approval, "I approve this changed requirement and review profile.");
   assert.deepEqual(after.suite.results, before.suite.results, "excluding never deletes actual execution history");
   ok(run(root, ["implement", "verify"], { env: stub(root) }));
-  assert.equal(readState(root).verificationAttempts.at(-1).mechanical.length, 0);
-  ok(run(root, ["implement", "finalize"]));
+  const verified = readState(root);
+  assert.equal(verified.verificationAttempts.at(-1).mechanical.length, 0);
+  assert.equal(verified.verificationReport.status, "PASS");
 });

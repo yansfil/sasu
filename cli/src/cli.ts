@@ -12,10 +12,9 @@ import {
   runOverride,
   runReopen,
   runSpecGate,
-  runVerifyGate,
   type GateCommandResult,
 } from "./gates/commands";
-import type { GateId, GateStatusView } from "./gates/store";
+import type { GateStatusView } from "./gates/store";
 import {
   readInterviewStatus,
   runInterviewCheckpoint,
@@ -43,12 +42,9 @@ Usage:
   sasu gate delegate  --slug <topic> --evidence "<verbatim delegating user message>" [--json]
   sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
   sasu gate answer    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user answer to the NEEDS_HUMAN bundle>" [--json]
-  sasu gate override  --slug <topic> --gate <gap-audit|spec|verify> --reason "<why>" [--json]
-  sasu gate verify    --slug <topic> --contract <path> [--base <git-ref>] [--json]
+  sasu gate override  --slug <topic> --gate <gap-audit|spec> --reason "<why>" [--json]
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
-  sasu implement confirm  --issuer human --id <confirmation-id> --evidence "<the user's own words>" [--reject] [--json]
-    (records a human response and refreshes a closed run's receipt; explicit rejection blocks delivery.)
   sasu implement amend    --issuer human --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates full-review freshness.)
   sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--json]
@@ -58,13 +54,10 @@ Usage:
   sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--notify-after <epoch-ms>] [--json]
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
-  sasu implement risk     --accept --id <RF#> --evidence "<verbatim user approval>" [--slug <topic> | --state <path>] [--json]
-  sasu implement risk     --non-convergent --issuer human --id <RF#> --approval "<verbatim user approval>" --reason "<why no round can fix it>" [--json]
-  sasu implement verify   [--slug <topic> | --state <path>] [--grant-budget "<verbatim user approval>"] [--json]
-    (executes the required suite, then independent parallel Fidelity and Code reviews with recorded requirement/evidence grounds; high-risk review stays separate.
-     The round is full on a first or changed contract, focused on the delta after a correction, or a repair that reruns only the lanes a backend error lost on the same input.)
+  sasu implement verify   [--slug <topic> | --state <path>] [--json]
+    (executes the sealed required suite, validates current source and evidence, and writes a fresh verification-report.json and verification-report.md.
+     Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.)
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
-  sasu implement finalize [--slug <topic> | --state <path>] [--status <complete|blocked>] [--json]
     (state-changing commands accept --issuer <implementor|observer|human>, default implementor; issuer is an audited declaration, not authentication.
      Mutating another session's run requires --adopt "<verbatim user approval>"; all domain mutations are refused during a live verify lease.)
   sasu prd readiness       --prd <path> [--json]
@@ -240,7 +233,7 @@ function printStatusView(view: GateStatusView): void {
   // A judge-error loop prints the honest 0/N, so the numbers alone read as "two
   // attempts left" while every one of them is a broken backend call. The flag has
   // to say so here, or `sasu gate status` is the one surface that hides the
-  // terminal cause the receipt and the Stop hook both report.
+  // terminal cause the verification report and the Stop hook both report.
   const terminal = view.effective === "NEEDS_HUMAN"
     ? ` - NEEDS HUMAN: every open finding needs a human decision; ask the user the ${view.findings.length} question(s) below as one bundle, then record their words with: sasu gate answer --slug ${view.topic} --gate ${view.gate} --evidence "<the user's words>"`
     : view.reopenRequired
@@ -306,23 +299,6 @@ function emitGateResult(result: GateCommandResult, asJson: boolean): never {
     process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...result }, null, 2)}\n`);
   } else {
     if (result.prelint) printPrelint(result.prelint);
-    if (result.mechanical) {
-      for (const run of result.mechanical.runs) {
-        process.stdout.write(`[mechanical:${run.kind}] ${run.ok ? "ok" : `FAIL (exit ${run.exitCode})`} ${run.command}\n`);
-        if (!run.ok) process.stdout.write(`${run.tail}\n`);
-      }
-      if (result.mechanical.configSuggestion) {
-        process.stdout.write(
-          `note: verify commands were auto-detected; pin them in agents/config.json under verify.commands: ${JSON.stringify(result.mechanical.configSuggestion)}\n`,
-        );
-      }
-    }
-    if (result.review) {
-      process.stdout.write(`[review] ${result.review.summary}\n`);
-      for (const finding of result.review.findings) {
-        process.stdout.write(`[review:${finding.kind}] ${finding.problem} - ${finding.nextAction}\n`);
-      }
-    }
     if (result.error) {
       const structuralRefusal = new Set(["gate-in-flight", "reopen-required"]);
       const label = structuralRefusal.has(result.error.code) ? "gate refusal" : "judge error";
@@ -496,7 +472,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "verify") {
-    fail("`sasu verify` was removed; use `sasu implement verify` for an implementation run or `sasu gate verify` for a standalone diff gate");
+    fail("`sasu verify` was removed; use `sasu implement verify` for an implementation run or run the repository checks directly for quick work");
   }
 
   if (command === "rules") {
@@ -579,16 +555,7 @@ async function main(): Promise<void> {
   if (command === "gate") {
     const config = loadConfig(projectRoot);
     if (subcommand === "verify") {
-      const topic = requireFlag(args, "slug");
-      const retired = ["prd", "skip-mechanical", "allow-open-rows"].filter((name) => args.flags.has(name));
-      if (retired.length > 0) {
-        fail(`gate verify ${retired.map((name) => `--${name}`).join(" ")} was removed in contract 0.9.0; use implement verify for an approved PRD or gate verify --contract for quick work. Last supported commit: 488d3cc.`);
-      }
-      const result = await runVerifyGate(projectRoot, config, topic, {
-        contractPath: requireFlag(args, "contract"),
-        baseRef: typeof args.flags.get("base") === "string" ? (args.flags.get("base") as string) : undefined,
-      });
-      emitGateResult(result, asJson);
+      fail("`sasu gate verify` is retired; use `sasu implement verify` for an implementation run or run the repository checks directly for quick work");
     }
     if (subcommand === "gap-audit") {
       const result = await runGapAudit(projectRoot, config, requireFlag(args, "slug"), requireFlag(args, "qa-log"), {
@@ -623,7 +590,6 @@ async function main(): Promise<void> {
         }
         printStatusView(status["gap-audit"]);
         printStatusView(status.spec);
-        printStatusView(status.verify);
         process.stdout.write(`judge calls recorded: ${status.judgeCallCount}\n`);
       }
       exit(0);
@@ -689,10 +655,10 @@ async function main(): Promise<void> {
     }
     if (subcommand === "override") {
       const gate = requireFlag(args, "gate");
-      if (gate !== "gap-audit" && gate !== "spec" && gate !== "verify") {
-        fail("--gate must be one of: gap-audit, spec, verify");
+      if (gate !== "gap-audit" && gate !== "spec") {
+        fail("--gate must be one of: gap-audit, spec");
       }
-      const view = runOverride(projectRoot, requireFlag(args, "slug"), gate as GateId, requireFlag(args, "reason"));
+      const view = runOverride(projectRoot, requireFlag(args, "slug"), gate, requireFlag(args, "reason"));
       if (asJson) {
         process.stdout.write(
           `${JSON.stringify({ contractVersion: contractVersion(), overridden: true, gate, status: view }, null, 2)}\n`,

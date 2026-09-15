@@ -7,7 +7,6 @@ import { spawn, spawnSync } from "node:child_process";
 export const CLI = path.resolve(import.meta.dirname, "../../dist/cli.js");
 export const PRD_PATH = "agents/prd/fixture/prd.md";
 export const STATE_PATH = "agents/runs/fixture/state.json";
-export const REVIEW_PASS = { summary: "The full approved contract is satisfied by the supplied implementation and evidence.", findings: [], priorDispositions: [] };
 
 export function prd({ profile = "standard", sourceIntake = "current conversation", count = 2, extraRows = [], risks = "None.", decisions } = {}) {
   const rows = Array.from({ length: count }, (_, index) => `| B${index + 1} | Requirement ${index + 1}: the public command preserves value ${index + 1}. | D-01 |`);
@@ -106,55 +105,11 @@ export function start(root, options = {}) {
   return workRoot;
 }
 
-// Findings-focused test inputs share this envelope, while each CLI role gets
-// explicit grounds against its actual fixture contract. An explicit assessments
-// field is never filled or repaired, so malformed-result tests reach validation.
-export function reviewWithAssessments(root, review = REVIEW_PASS, role = "fidelity") {
-  if (typeof review !== "object" || review === null || "assessments" in review) return review;
-  const state = readState(root);
-  const workRoot = state.worktree?.path ?? root;
-  const evidenceRef = ["implementation.txt", "impl.txt"].find((relative) => fs.existsSync(path.join(workRoot, relative)))
-    ?? state.artifacts[0]?.path ?? "implementation.txt";
-  const blockers = Array.isArray(review.findings) ? review.findings.filter((finding) => finding.kind === "defect" || finding.kind === "human-confirmation" && finding.human?.timing === "prerequisite") : [];
-  const unresolvedRefs = [...new Set(blockers.flatMap((finding) => finding.requirementRefs ?? []))];
-  const pendingHuman = Array.isArray(review.findings) ? review.findings.filter((finding) => finding.kind === "human-confirmation" && finding.human?.timing === "post-completion") : [];
-  const pendingRefs = [...new Set(pendingHuman.flatMap((finding) => finding.requirementRefs ?? []))].filter((ref) => !unresolvedRefs.includes(ref));
-  const satisfiedRefs = state.requirements.map((entry) => entry.id).filter((ref) => !unresolvedRefs.includes(ref) && !pendingRefs.includes(ref));
-  const assessments = [];
-  if (blockers.length > 0) assessments.push({
-    requirementRefs: unresolvedRefs, conclusion: "unresolved",
-    rationale: "The fixture's blocking findings identify the concrete missing behavior or prerequisite.",
-    evidenceRefs: [...new Set(blockers.flatMap((finding) => finding.evidenceRefs ?? [evidenceRef]))],
-  });
-  if (pendingHuman.length > 0) assessments.push({
-    requirementRefs: pendingRefs, conclusion: "pending-human",
-    rationale: "The approved authority explicitly reserves this judgment for human input after completion.",
-    evidenceRefs: [...new Set(pendingHuman.flatMap((finding) => finding.evidenceRefs ?? []))],
-  });
-  if ((role === "fidelity" && satisfiedRefs.length > 0) || (role === "code" && blockers.length === 0 && pendingHuman.length === 0)) assessments.push({
-    requirementRefs: role === "fidelity" ? satisfiedRefs : [], conclusion: "satisfied",
-    rationale: role === "fidelity"
-      ? "The shared fixture source preserves the requested values for these behaviors."
-      : "The fixture's public implementation preserves its input without introducing another storage or dispatch path.",
-    evidenceRefs: [evidenceRef],
-  });
-  return { ...review, assessments };
-}
-
-export function stub(root, review = REVIEW_PASS, risk) {
-  const file = path.join(root, "agents/judge.json");
-  const capture = path.join(root, "agents/captures");
-  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:fidelity": reviewWithAssessments(root, review, "fidelity"), "implement:code": reviewWithAssessments(root, review, "code"), ...(risk ? { "implement:risk": risk } : {}) } }));
-  return { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture };
-}
+export function stub() { return {}; }
 
 export function registerEvidence(root, { relative = "agents/observations/runtime.log", content = "Actual fixture observation\n", env = {} } = {}) {
   fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
   fs.writeFileSync(path.join(root, relative), content);
   ok(run(root, ["implement", "artifact", "--kind", "log", "--path", relative, "--description", "Fixture runtime observation", "--source", "fixture operator", "--collected-at", "2026-09-08T00:00:00.000Z", "--target", "fixture public command", "--environment", "disposable project"], { env }));
   return relative;
-}
-
-export function defect({ ref = "B1", problem = "The approved value is absent from the public implementation.", priorFindingId } = {}) {
-  return { kind: "defect", requirementRefs: [ref], problem, evidenceRefs: ["implementation.txt"], nextAction: "Implement the missing approved value.", ...(priorFindingId ? { priorFindingId } : {}) };
 }

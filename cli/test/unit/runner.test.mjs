@@ -980,7 +980,7 @@ test("an over-budget reply that is not JSON is recorded as unparsed", async () =
 });
 
 // The probe runs the caller's validator, and validators throw: the implement
-// review validator's `reconcileReviewFindings` does, and only that one lane
+// gate validators do, and only that one lane
 // catches it itself (implement/commands.ts:1397-1398). Everywhere else this
 // is the only net, and an escaping throw would replace `read-budget-exceeded`
 // with an unhandled exception and lose the fallback crossing with it.

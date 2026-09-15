@@ -1,35 +1,23 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { laneEffortFor, type SasuConfig } from "../config";
-import { resolveBackend } from "../judge/backends";
 import { effectiveJudgeProfile, runJudge, judgeCallRecordFrom } from "../judge/runner";
 import {
   JudgeError,
   describeJudgeFailureCause,
   judgeFailureCause,
-  readEvidence,
   validateGapVerdict,
-  validateReviewResult,
-  type ReviewResult,
-  type ReviewFinding,
   type Finding,
   type GapVerdict,
   type JudgeCallRecord,
 } from "../judge/types";
-import { runMechanical, type MechanicalResult, type ResolvedCommand } from "../mechanical";
-import { EVIDENCE_MAX_BYTES, parseContract, type ParsedContract } from "./contract";
 import { prelintPrdCitedQuestions, prelintPrdDecisionIds, runPrelint, type PrelintResult } from "./prelint";
 
 import {
   GAP_AUDIT_LANES,
   SPEC_LANES,
-  VERIFY_DIFF_MAX_CHARS,
-  fullContractReviewPrompt,
   gapAuditPrompt,
   specGatePrompt,
-  type CheckResult,
-  type EvidenceMaterial,
   type JudgeLane,
   type PriorFinding,
 } from "./prompts";
@@ -59,20 +47,8 @@ export interface GateCommandResult {
   status: GateStatusView;
   /** Deterministic pre-judge lint result; separate from judge findings by design (D-10). */
   prelint?: PrelintResult;
-  mechanical?: MechanicalResult;
-  review?: ReviewResult;
   inputs?: GateInput[];
-  evidence?: Omit<EvidenceMaterial, "text">[];
-  checks?: CheckResult[];
   zeroJudgeCalls?: boolean;
-  /**
-   * Set when the verify gate resolved ZERO mechanical commands:
-   * an empty runs list looks like success, but it means the
-   * promised $0 pre-judge filter was silently inactive (audited run 2026-08:
-   * package.json lived under app/, nothing was detected, and every failure was
-   * discovered by the paid judge instead).
-   */
-  mechanicalWarning?: string;
   error?: { code: string; message: string; recovery: string };
 }
 
@@ -821,221 +797,6 @@ export async function runSpecGate(
   return { ...result, prelint };
 }
 
-/** Quick alone uses this gate. PRD implementations have one completion path: implement verify/finalize. */
-export interface VerifyOptions {
-  contractPath: string;
-  /** Internal test seam only; never exposed as a CLI option. */
-  diffText?: string;
-  baseRef?: string;
-}
-
-function resolveGitDiffSource(projectRoot: string, baseRef: string | undefined): string {
-  try {
-    const sha = execFileSync("git", ["rev-parse", "--verify", `${baseRef ?? "HEAD"}^{commit}`], { cwd: projectRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return `git:${sha}`;
-  } catch { return `git:unresolved:${baseRef ?? "HEAD"}`; }
-}
-
-function armedRerunRefusal(projectRoot: string, record: GateRecord | undefined, diffSource: string | null): boolean {
-  if (!record || !["FAIL", "BLOCK"].includes(record.verdict ?? "") || record.overridden || record.failedStage !== "semantic" || record.usedLiveMaterial !== false) return false;
-  if (record.docKind !== "contract" || !/^git:[0-9a-f]{40,64}$/.test(record.diffSource ?? "") || (diffSource !== null && record.diffSource !== diffSource)) return false;
-  if (!record.inputs || staleInputsFor(projectRoot, record).length > 0 || !record.judgedDiffSha256) return false;
-  const last = record.history.at(-1);
-  if (!last || last.at !== record.lastRunAt || last.verdict !== record.verdict || last.diffSource !== record.diffSource || last.failedStage !== record.failedStage || last.usedLiveMaterial !== record.usedLiveMaterial || last.docKind !== record.docKind) return false;
-  return gitLib.judgedDiffSha256(projectRoot, record.diffSource!.slice(4)) === record.judgedDiffSha256;
-}
-
-export function verifyRerunWouldBeRefused(projectRoot: string, topic: string): boolean {
-  return armedRerunRefusal(projectRoot, new GateStore(projectRoot, topic).load().gates.verify, null);
-}
-
-function contractMechanicalCommands(contract: ParsedContract): ResolvedCommand[] {
-  return [...contract.checks.map((check) => ({ kind: "check" as const, command: check.command, source: "contract" as const })), ...contract.captures.map((capture) => ({ kind: "capture" as const, command: capture.command, source: "contract" as const }))];
-}
-
-function quickFindings(review: ReviewResult, prior: (ReviewFinding & { id: string })[]): (ReviewFinding & { id?: string })[] {
-  const retained = prior.filter((finding) => finding.kind === "human-confirmation" || review.priorDispositions.some((d) => d.findingId === finding.id && d.status === "open"));
-  const current = new Map(retained.map((finding) => [finding.id, finding]));
-  const fresh: (ReviewFinding & { id?: string })[] = [];
-  for (const finding of review.findings) {
-    if (finding.priorFindingId) {
-      const existing = prior.find((item) => item.id === finding.priorFindingId)!;
-      current.set(existing.id, existing.kind === "human-confirmation" ? existing : { ...finding, id: existing.id });
-    } else fresh.push(finding);
-  }
-  return [...current.values(), ...fresh];
-}
-
-function gateFinding(finding: ReviewFinding & { id?: string }): Finding {
-  return { ...(finding.id ? { id: finding.id } : {}), area: finding.requirementRefs.join(", ") || "full-contract", severity: finding.kind === "advisory" ? "P2" : "P1", missing: finding.problem, recommendation: finding.nextAction, requiresHuman: finding.kind === "human-confirmation" };
-}
-
-export async function runVerifyGate(projectRoot: string, config: SasuConfig, topic: string, options: VerifyOptions): Promise<GateCommandResult> {
-  if (!options.contractPath) throw new Error("gate verify requires --contract; gate verify --prd is retired. Use sasu implement verify for an approved PRD. Last supporting commit: 488d3cc7d6e99742e7f68a1680fcb101710c8e20");
-  const store = new GateStore(projectRoot, topic);
-  const release = store.tryAcquireRunLock("verify");
-  if (release === null) throw new Error("verify is currently in flight; wait for its actual execution to finish");
-  try {
-    let state = store.load();
-    const current = gateStatus(state, "verify", config.judge.retryBudget, projectRoot);
-    if (current.budgetExhausted || current.cycleExhausted || current.judgeErrorLoop) throw new Error("verify is blocked at its retry limit; report the recorded blocker or obtain the user's existing gate budget authorization");
-    const document = readInputFile(projectRoot, options.contractPath, "contract");
-    const prelint = runPrelint("contract", document.content);
-    if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "verify", prelint);
-    emitPrelintWarnings(prelint);
-    const contract = parseContract(document.content);
-    const inputs: GateInput[] = [document.input, { path: "agents/config.json", kind: "config", sha256: hashGateInput(path.join(projectRoot, "agents/config.json"), "config")! }];
-    const diffSource = options.diffText !== undefined ? "injected" : resolveGitDiffSource(projectRoot, options.baseRef);
-    // Only a genuinely static failed question can be refused. Any actual command,
-    // capture or independent source read disarms this source-only comparison.
-    if (armedRerunRefusal(projectRoot, state.gates.verify, diffSource)) throw new Error("verify gate rerun short-circuit: unchanged pinned static review input. Fix the recorded findings or report blocked; no attempt or judge call was recorded. A user-only gate override remains a recorded deviation, not verification PASS.");
-    const diff = options.diffText ?? gitLib.judgedDiff(projectRoot, options.baseRef);
-    if (diff === null) throw new Error(`could not read the diff against ${options.baseRef ?? "HEAD"}; point --base at an existing commit`);
-    if (diff.trim() === "") throw new Error(`empty diff: nothing to verify against ${options.baseRef ?? "HEAD"}`);
-    const records: JudgeCallRecord[] = [];
-    const mechanical = runMechanical(projectRoot, config, contractMechanicalCommands(contract));
-    const checks = mechanical.runs.map((run) => ({ command: run.command, exitCode: run.exitCode, tail: run.tail }));
-    const mechanicalWarning = mechanical.runs.length === 0 ? "No mechanical commands were detected or configured. No tests ran." : undefined;
-    const baseResult = { prelint, mechanical, inputs, checks, ...(mechanicalWarning ? { mechanicalWarning } : {}) };
-    if (!mechanical.ok) {
-      state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: mechanical.runs.filter((run) => !run.ok).map((run) => ({ area: "mechanical", severity: "P0", missing: `${run.kind} failed (exit ${run.exitCode}): ${run.command}`, recommendation: "Fix the failing command and rerun verify.", requiresHuman: false })), inputs, failedStage: "mechanical", artifactPayload: { schema: "sasu.quick.receipt.v2", mechanical, inputs, checks } }, records);
-      return { ...baseResult, ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), evidence: [], zeroJudgeCalls: true };
-    }
-    const evidence = collectEvidence(projectRoot, contract, config);
-    inputs.push(...evidence.inputs);
-    if (evidence.findings.length > 0) {
-      state = recordGateResult(store, state, "verify", { kind: "verdict", verdict: "FAIL", findings: evidence.findings, inputs, failedStage: "evidence", artifactPayload: { schema: "sasu.quick.receipt.v2", mechanical, inputs, evidence: evidence.artifacts } }, records);
-      return { ...baseResult, ok: false, status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), evidence: evidence.artifacts, zeroJudgeCalls: true };
-    }
-    const requirements = contract.criteria.map((criterion) => criterion.id);
-    const diffBlocks = splitDiffByFile(diff);
-    const changedFiles = diffBlocks.map((block) => block.path);
-    const allowedRefs = [...new Set([...requirements, options.contractPath, "Human Review", ...changedFiles, ...evidence.material.map((item) => item.path), ...checks.map((check) => check.command)])];
-    const prior = (state.gates.verify?.reviewFindings ?? []).filter((finding) => finding.kind !== "advisory");
-    const agentic = diff.length > VERIFY_DIFF_MAX_CHARS;
-    if (agentic && !resolveBackend(effectiveJudgeProfile(config, "routine").primary.backend).agentic) throw new Error("review input too large for the configured backend; full diff was not truncated and no review was performed");
-    // The allowlist the agentic reviewer is actually given, hoisted so the
-    // check below can see it: `agentic` is decided by diff size alone, and a
-    // change that is purely deletions leaves nothing on disk to copy.
-    //
-    // The key is the diff's own deletion marker, not `fs.existsSync`. Those
-    // answer different questions, and a proxy that silently turns the read-
-    // evidence check below into a no-op is the worst way to be wrong: with
-    // core.quotePath at its default every non-ASCII filename used to miss on
-    // disk, so a Korean-named change large enough to go agentic emptied this
-    // list, told the reviewer its files were gone, and passed the gate on a
-    // diffstat (measured 2026-09-11; the decode is in unquoteDiffPath).
-    const readablePaths = agentic ? diffBlocks.filter((block) => !block.deleted).map((block) => block.path) : [];
-    // And a file the diff says is there but the tree does not have is a
-    // contradiction between two views of the same change, not an allowlist
-    // entry to drop quietly (engineering item 4). Raising it means the next
-    // path-shaped surprise stops verify instead of leaking a PASS.
-    //
-    // What this asks is whether the path resolves, not whether the judge can
-    // read it, and `existsSync` follows links - so a dangling symlink in the
-    // judged diff surfaces here as this exception even though the link itself
-    // is present. That is the thin proxy left in a check whose whole point was
-    // that F3 used a proxy for a condition. `lstatSync` would make that case
-    // ordinary again, at the cost of putting a path the judge cannot open onto
-    // the allowlist; failing loudly is the side to be wrong on, so it stays.
-    if (agentic) {
-      const missing = readablePaths.filter((file) => !fs.existsSync(path.join(projectRoot, file)));
-      if (missing.length > 0) throw new Error(`the judged diff names ${missing.length} file(s) the working tree does not have and does not mark as deleted (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", ..." : ""}); the diff and the tree disagree, so the review allowlist cannot be built`);
-    }
-    const prompt = fullContractReviewPrompt({ contract: document.content, diff: agentic ? diffStatFromText(diff) : diff, evidence: evidence.material, checks, priorFindings: prior, evidenceRefs: allowedRefs, agentic, readablePaths: readablePaths.length });
-    const artifactBase = { schema: "sasu.quick.receipt.v2", mechanical, inputs, evidence: evidence.artifacts, checks, promptSha256: sha256Of(prompt), diffSource };
-    try {
-      const outcome = await runJudge(config, "gate:verify", "routine", prompt, (value, activity) => {
-        const validated = validateReviewResult(value, { requirementRefs: requirements, evidenceRefs: allowedRefs, priorFindingIds: prior.map((finding) => finding.id), humanSources: { "Human Review": contract.humanReview.map((item) => item.text).join("\n"), [options.contractPath]: document.content } });
-        if (typeof validated === "string") return validated;
-        for (const finding of validated.findings) {
-          const previous = prior.find((item) => item.id === finding.priorFindingId);
-          if (previous && previous.kind !== finding.kind) return `unresolved review finding ${previous.id} cannot change kind; resolve it explicitly with evidence before reporting a different concern`;
-        }
-        // Positive evidence, not "is it zero": an unmetered call proves no
-        // reading either way, and mapping that to zero would reject an honest
-        // backend while mapping it to satisfied would promote unverified
-        // reading to a PASS (PRINCIPLES item 10). The two rejections stay
-        // distinct so the record says which one happened.
-        // Only when there was something to read. This rejection exists to stop
-        // a verdict reached without opening the allowlisted source, and an
-        // empty allowlist has no such source: a large enough deletion went
-        // agentic on diff size, copied no files, and was then refused for not
-        // reading them, so it could not pass this gate at all. The premise was
-        // always "reading was possible" and was never written down.
-        if (agentic && readablePaths.length > 0) {
-          const evidence = readEvidence(activity);
-          if (evidence === "none-observed") return "whole-contract review requires recorded reads of the allowlisted source; the harness observed zero read commands and zero tool rounds for this call, and no code was inlined";
-          if (evidence === "unmetered") return "whole-contract review requires recorded reads of the allowlisted source; this backend attested no command trace and no round count, so its reading is unverified rather than zero";
-        }
-        return validated;
-      }, { cwd: projectRoot, effort: laneEffortFor(config, "verify"), ...(evidence.images.length ? { images: evidence.images } : {}), ...(agentic ? { agentic: true, evidencePaths: readablePaths } : {}) });
-      records.push(outcome.record);
-      // A command or judge is allowed to observe, never silently move the source
-      // whose receipt it will create. Re-read pinned inputs and diff after both.
-      const inputsDrifted = inputs.some((input) => hashGateInput(path.join(projectRoot, input.path), input.kind) !== input.sha256);
-      const currentDiff = options.diffText ?? gitLib.judgedDiff(projectRoot, options.baseRef);
-      if (inputsDrifted || currentDiff !== diff) throw new JudgeError("judge-invalid-output", outcome.record.backend, "review inputs changed during execution; run verify against the current source", "invalid-contract");
-      const review = outcome.value;
-      const open = quickFindings(review, prior);
-      // Declared human input is a conservative handoff. It never removes an AC,
-      // and a reviewer cannot silently grant authorization by omitting the item.
-      const declaredHuman: Finding[] = contract.humanReview.map((item) => ({ area: "human-review", severity: "P1", missing: item.text, recommendation: "Obtain the person's decision and update the compact contract with the actual response.", requiresHuman: true }));
-      const defects = open.filter((finding) => finding.kind === "defect");
-      const human = open.some((finding) => finding.kind === "human-confirmation") || declaredHuman.length > 0;
-      const verdict = defects.length > 0 ? "FAIL" : human ? "NEEDS_HUMAN" : "PASS";
-      state = recordGateResult(store, state, "verify", { kind: "verdict", verdict, findings: [...open.filter((finding) => finding.kind !== "advisory").map(gateFinding), ...declaredHuman], warnings: open.filter((finding) => finding.kind === "advisory").map(gateFinding), review, reviewFindings: open.filter((finding) => finding.kind !== "advisory"), inputs, judgedDiffSha256: gitLib.judgedDiffHash(diff), ...(verdict !== "PASS" ? { failedStage: defects.length ? "semantic" : "human" } : {}), diffSource, usedLiveMaterial: agentic || mechanical.runs.length > 0 || evidence.material.length > 0, docKind: "contract", artifactPayload: { ...artifactBase, review, verdict, openFindings: open } }, records);
-      return { ...baseResult, ok: verdict === "PASS", status: gateStatus(state, "verify", config.judge.retryBudget, projectRoot), review, evidence: evidence.artifacts, zeroJudgeCalls: false };
-    } catch (error) {
-      return { ...baseResult, ...recordJudgeFailure(store, state, "verify", config, error, records, topic, artifactBase), evidence: evidence.artifacts };
-    }
-  } finally { release(); }
-}
-
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
-const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-function containmentProblem(projectRoot: string, resolved: string): string | null {
-  try {
-    const realRoot = fs.realpathSync(projectRoot);
-    const realFile = fs.realpathSync(resolved);
-    const relative = path.relative(realRoot, realFile);
-    const stat = fs.statSync(realFile);
-    if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return "resolves outside the project";
-    if (!stat.isFile()) return "is not an ordinary file";
-    if (stat.nlink > 1) return "is a hard link whose content may live outside the project";
-    return null;
-  } catch { return "cannot be resolved to an ordinary file inside the project"; }
-}
-interface EvidenceLane { findings: Finding[]; artifacts: Omit<EvidenceMaterial, "text">[]; material: EvidenceMaterial[]; images: string[]; inputs: GateInput[]; }
-function collectEvidence(projectRoot: string, contract: ParsedContract, config: SasuConfig): EvidenceLane {
-  const lane: EvidenceLane = { findings: [], artifacts: [], material: [], images: [], inputs: [] };
-  const selected = effectiveJudgeProfile(config, "routine");
-  const canAttach = resolveBackend(selected.primary.backend).attachments || (selected.fallback !== null && resolveBackend(selected.fallback.backend).attachments);
-  const declared = [...contract.evidence.map((item) => ({ path: item.path, producedBy: undefined as string | undefined })), ...contract.captures.map((item) => ({ path: item.path, producedBy: item.command }))];
-  for (const artifact of new Map(declared.map((item) => [item.path, item])).values()) {
-    const resolved = path.join(projectRoot, artifact.path);
-    let problem = containmentProblem(projectRoot, resolved);
-    let material: EvidenceMaterial | undefined;
-    if (problem === null) {
-      const raw = fs.readFileSync(resolved);
-      const isImage = IMAGE_EXTENSIONS.has(path.extname(artifact.path).toLowerCase());
-      const sha256 = sha256Of(raw);
-      const provenance = artifact.producedBy ? `Harness capture during this verify attempt: ${artifact.producedBy}` : "Submitted shared artifact; observation time/target must be assessed from its actual provenance, not its hash";
-      material = { path: artifact.path, bytes: raw.length, sha256, provenance, ...(artifact.producedBy ? { producedBy: artifact.producedBy } : {}), ...(isImage ? { attachedImage: true } : { text: raw.toString("utf8") }) };
-      lane.inputs.push({ path: artifact.path, kind: "evidence", sha256 });
-      const { text: _text, ...summary } = material;
-      lane.artifacts.push(summary);
-      if (raw.length === 0) problem = "is empty";
-      else if (raw.length > (isImage ? IMAGE_MAX_BYTES : EVIDENCE_MAX_BYTES)) problem = "exceeds the evidence input budget; no bytes were silently truncated";
-      else if (isImage && !canAttach) problem = "cannot be read by the configured backend: attachment support is required; this is not human approval";
-      else if (!isImage && raw.includes(0)) problem = "is binary and cannot be read as text evidence";
-    }
-    if (problem !== null) lane.findings.push({ area: "evidence", severity: "P0", missing: `${artifact.path}: ${problem}`, recommendation: "Provide readable evidence inside the project, with a capable configured backend.", requiresHuman: false });
-    else if (material) { lane.material.push(material); if (material.attachedImage) lane.images.push(resolved); }
-  }
-  return lane;
-}
-
 function recordJudgeFailure(
   store: GateStore,
   state: ReturnType<GateStore["load"]>,
@@ -1098,7 +859,7 @@ function recordJudgeFailure(
   const recovery = status.judgeErrorLoop
     ? `The judge has now failed ${status.consecutiveErrors}/${status.judgeErrorThreshold} times in a row with the same cause (${status.judgeErrorCause ?? describeJudgeFailureCause(judgeFailureCause(error))}) and without returning a verdict, so this is a backend failure, not a verification failure: `
       + `the fix budget is untouched (attempts ${status.attempts}/${status.budget}) because there were never any findings to fix. `
-      + `${recoveryByCode[error.code] ?? "Fix the cause and re-run."} If the backend cannot be fixed here, close the run out honestly as blocked - the gate counts as the blocker and the receipt records the judge-error loop as the cause. `
+      + `${recoveryByCode[error.code] ?? "Fix the cause and re-run."} If the backend cannot be fixed here, close the run out honestly as blocked - the gate state records the judge-error loop as the cause. `
       + `${overrideRecovery(topic, gate)}`
     : `${recoveryByCode[error.code] ?? "Re-run after fixing the cause."} ${overrideRecovery(topic, gate)}`;
   return {
@@ -1209,13 +970,12 @@ export function readGateStatus(
   projectRoot: string,
   config: SasuConfig,
   topic: string,
-): Record<GateId, GateStatusView> & { judgeCallCount: number; delegation: GatesState["delegation"] | null } {
+): Record<"gap-audit" | "spec", GateStatusView> & { judgeCallCount: number; delegation: GatesState["delegation"] | null } {
   const store = new GateStore(projectRoot, topic);
   const state = store.load();
   return {
     "gap-audit": gateStatus(state, "gap-audit", config.judge.retryBudget, projectRoot, store.isGateInFlight("gap-audit")),
     spec: gateStatus(state, "spec", config.judge.retryBudget, projectRoot, store.isGateInFlight("spec")),
-    verify: gateStatus(state, "verify", config.judge.retryBudget, projectRoot, store.isGateInFlight("verify")),
     judgeCallCount: state.judgeCalls.length,
     delegation: state.delegation ?? null,
   };
@@ -1235,141 +995,4 @@ export function runDelegateClear(projectRoot: string, topic: string): { cleared:
   const had = state.delegation !== undefined;
   clearDelegation(store, state);
   return { cleared: had };
-}
-
-const gitLib = require("../../lib/git.js") as {
-  isExcludedFromDiff: (file: string) => boolean;
-  judgedDiff: (projectRoot: string, baseRef: string | undefined) => string | null;
-  judgedDiffSha256: (projectRoot: string, baseRef: string | undefined) => string | null;
-  judgedDiffHash: (diffText: string) => string;
-};
-
-export const isExcludedFromDiff = gitLib.isExcludedFromDiff;
-
-interface DiffFileBlock {
-  /** Path of the change (b-side; a-side for deletions). */
-  path: string;
-  text: string;
-  /**
-   * Whether this block says the file is gone, read from the block's own
-   * markers rather than from the filesystem. "Nothing to read here" is a fact
-   * the diff states; asking the tree instead answers a different question
-   * ("did I fail to find it"), and the two sets part company for any reason a
-   * path fails to resolve.
-   */
-  deleted: boolean;
-}
-
-/**
- * Decode one `diff --git` path token.
- *
- * git quotes a path whose bytes are not printable ASCII, and with the default
- * core.quotePath=true that means every non-ASCII name: `café.js` arrives as
- * `"a/caf\303\251.js"`. Stripping the quotes without decoding leaves a path
- * carrying literal backslashes, which resolves to no file at all - measured
- * 2026-09-11 in a scratch repo where `git diff HEAD -- .` over `café.js` and
- * `설계.md` parsed to paths `fs.existsSync` reports false for, on the same
- * `git diff HEAD -- .` that judgedDiff runs in production.
- *
- * The escapes are C-style, so the octal ones are bytes and must be decoded as
- * bytes and only then read as UTF-8: one Korean character is three of them.
- */
-function unquoteDiffPath(token: string): string {
-  if (token.length < 2 || !token.startsWith("\"") || !token.endsWith("\"")) return token;
-  const body = token.slice(1, -1);
-  const bytes: number[] = [];
-  const simple: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
-  for (let index = 0; index < body.length; index += 1) {
-    const char = body[index]!;
-    if (char !== "\\") {
-      bytes.push(...Buffer.from(char, "utf8"));
-      continue;
-    }
-    const next = body[index + 1];
-    if (next === undefined) break;
-    const octal = body.slice(index + 1).match(/^[0-7]{1,3}/);
-    if (octal) {
-      bytes.push(parseInt(octal[0], 8) & 0xff);
-      index += octal[0].length;
-      continue;
-    }
-    const known = simple[next];
-    // An escape this function does not know is data, not a directive: keeping
-    // the character is what the raw path had before git quoted it.
-    bytes.push(...Buffer.from(known === undefined ? next : String.fromCharCode(known), "utf8"));
-    index += 1;
-  }
-  return Buffer.from(bytes).toString("utf8");
-}
-
-/**
- * The two path tokens of a `diff --git` header, each quoted or bare and
- * independently so: a rename into a non-ASCII name quotes only the b side.
- */
-function diffHeaderPaths(line: string): { a: string; b: string } | null {
-  const HEADER = "diff --git ";
-  if (!line.startsWith(HEADER)) return null;
-  const rest = line.slice(HEADER.length);
-  if (rest.startsWith("\"")) {
-    let end = 1;
-    while (end < rest.length && rest[end] !== "\"") end += rest[end] === "\\" ? 2 : 1;
-    if (end >= rest.length || rest[end + 1] !== " ") return null;
-    return { a: unquoteDiffPath(rest.slice(0, end + 1)), b: unquoteDiffPath(rest.slice(end + 2)) };
-  }
-  const quotedB = rest.indexOf(' "b/');
-  if (quotedB >= 0) return { a: rest.slice(0, quotedB), b: unquoteDiffPath(rest.slice(quotedB + 1)) };
-  // Both bare. A bare path may still contain spaces, so the split is the lazy
-  // one the anchored pattern finds, unchanged from before this decoded.
-  const bare = rest.match(/^(a\/.+?) (b\/.+)$/);
-  return bare ? { a: bare[1]!, b: bare[2]! } : null;
-}
-
-function stripDiffPrefix(token: string): string {
-  return token.startsWith("a/") || token.startsWith("b/") ? token.slice(2) : token;
-}
-
-/** Split a curated unified diff into per-file blocks on `diff --git` headers. */
-export function splitDiffByFile(diff: string): DiffFileBlock[] {
-  const blocks: DiffFileBlock[] = [];
-  let current: DiffFileBlock | null = null;
-  let buffer: string[] = [];
-  const flush = () => {
-    if (current) {
-      current.text = buffer.join("\n");
-      current.deleted = buffer.some((line) => line.startsWith("deleted file mode ") || line === "+++ /dev/null");
-      blocks.push(current);
-    }
-    buffer = [];
-  };
-  for (const line of diff.split("\n")) {
-    const header = diffHeaderPaths(line);
-    if (header) {
-      flush();
-      const aPath = stripDiffPrefix(header.a);
-      const bPath = stripDiffPrefix(header.b);
-      current = { path: bPath === "dev/null" ? aPath : bPath, text: "", deleted: false };
-    }
-    if (current) buffer.push(line);
-  }
-  flush();
-  return blocks;
-}
-
-/**
- * Diff-stat for the agentic fallback prompt: file list plus added/removed line
- * counts, computed from the diff text itself so an injected test diff and a
- * git-generated one produce the same summary shape.
- */
-export function diffStatFromText(diff: string): string {
-  const blocks = splitDiffByFile(diff);
-  const lines = blocks.map((block) => {
-    let added = 0;
-    let removed = 0;
-    for (const line of block.text.split("\n")) {
-      if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
-      else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
-    }
-    return `${block.path} | +${added} -${removed}`;
-  });
-  return `${lines.join("\n")}\n${blocks.length} file(s) changed`;
 }

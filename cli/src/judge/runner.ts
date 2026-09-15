@@ -234,7 +234,7 @@ function withEffortOverride(
  * The caller's validator runs here on text that will be thrown away, so it
  * must not change anything. Audited 2026-09-11 across all six call sites:
  * four are schema checks, one is a read-only comparison, and the implement
- * review validator's `reconcileReviewFindings` clones its input
+ * gate validators clone their input
  * (convergence.ts) and has its result discarded.
  *
  * `observation` is the live activity object, and arguments evaluate before
