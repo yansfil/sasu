@@ -190,8 +190,8 @@ function requireFlag(args: Args, name: string): string {
  * preflight reported "did not return JSON". Throwing a sentinel unwinds every
  * caller to main's catch, which sets process.exitCode and lets Node drain both
  * standard streams naturally - so the fix covers every command that prints,
- * not the one that was caught. Waiting for callbacks from empty writes instead
- * deadlocked behind a synchronous parent pipe on Linux CI on 2026-09-15.
+ * not the one that was caught. This also avoids platform-specific assumptions
+ * about when callbacks from empty writes run.
  */
 class Exit {
   constructor(readonly code: number) {}
