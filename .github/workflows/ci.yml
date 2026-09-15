@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix cli ci
+
+      - name: Build CLI
+        run: npm --prefix cli run build
+
+      - name: Run repository tests
+        run: node --test tests/*.test.mjs
+
+      - name: Run CLI unit tests
+        run: npm --prefix cli test
+
+      - name: Run CLI end-to-end tests
+        run: npm --prefix cli run test:e2e
