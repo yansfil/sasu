@@ -188,9 +188,10 @@ function requireFlag(args: Args, name: string): string {
  * --json | wc -c` printed exactly 65536 of 194,916 bytes, the Task Factory
  * daemon parsing it failed and moved the card to Needs human, and prd_ship's
  * preflight reported "did not return JSON". Throwing a sentinel unwinds every
- * caller to main's catch, which waits for both standard streams to report
- * their queues drained before letting the process go - so the fix covers
- * every command that prints, not the one that was caught.
+ * caller to main's catch, which sets process.exitCode and lets Node drain both
+ * standard streams naturally - so the fix covers every command that prints,
+ * not the one that was caught. Waiting for callbacks from empty writes instead
+ * deadlocked behind a synchronous parent pipe on Linux CI on 2026-09-15.
  */
 class Exit {
   constructor(readonly code: number) {}
@@ -201,15 +202,7 @@ function exit(code: number): never {
 }
 
 function exitAfterFlush(code: number): void {
-  let pending = 2;
-  const drained = (): void => {
-    pending -= 1;
-    if (pending === 0) process.exit(code);
-  };
-  // An empty write queues behind everything already written and calls back
-  // once the OS has taken all of it.
-  process.stdout.write("", drained);
-  process.stderr.write("", drained);
+  process.exitCode = code;
 }
 
 function fail(message: string): never {
