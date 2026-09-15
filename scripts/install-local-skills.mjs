@@ -40,7 +40,7 @@ const home = process.env.HOME || "";
 
 // Pre-rename install directories that this pipeline used to own, including
 // the retired ho-* compatibility aliases.
-const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver", "ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-ship"];
+const LEGACY_DIRS = ["intake", "prd", "prd-implement", "prd-setup", "prd-ship", "listen", "promise", "fulfill", "pantry", "deliver", "ho-interview", "ho-scope", "ho-spec", "ho-build", "ho-ship", "benchmark-implement"];
 // Frontmatter names that mark a legacy install as ours: any current name plus
 // every earlier generation (butler set, pre-rename prd-* set).
 const OWNED_LEGACY_NAMES = [...SKILL_NAMES, ...LEGACY_DIRS];

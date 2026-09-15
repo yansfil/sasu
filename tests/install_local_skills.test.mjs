@@ -137,15 +137,19 @@ test("installer removes owned legacy directories and keeps foreign ones", () => 
   const ownedAlias = path.join(home, ".codex", "skills", "ho-build");
   fs.mkdirSync(ownedAlias, { recursive: true });
   fs.writeFileSync(path.join(ownedAlias, "SKILL.md"), "---\nname: ho-build\n---\n\n# ho-build compatibility alias\n");
+  const retiredBenchmark = path.join(home, ".codex", "skills", "benchmark-implement");
+  fs.mkdirSync(retiredBenchmark, { recursive: true });
+  fs.writeFileSync(path.join(retiredBenchmark, "SKILL.md"), "---\nname: benchmark-implement\n---\n\n# retired receipt benchmark\n");
   // An unrelated skill that happens to use a legacy directory name.
   const foreignLegacy = path.join(home, ".codex", "skills", "intake");
   fs.mkdirSync(foreignLegacy, { recursive: true });
   fs.writeFileSync(path.join(foreignLegacy, "SKILL.md"), "---\nname: someone-elses-intake\n---\n\n# other\n");
 
   const report = JSON.parse(runInstaller(home).stdout);
-  assert.deepEqual(report.removedLegacy.codex, [ownedLegacy, ownedAlias]);
+  assert.deepEqual(report.removedLegacy.codex, [ownedLegacy, ownedAlias, retiredBenchmark]);
   assert.equal(fs.existsSync(ownedLegacy), false);
   assert.equal(fs.existsSync(ownedAlias), false);
+  assert.equal(fs.existsSync(retiredBenchmark), false);
   assert.equal(fs.existsSync(foreignLegacy), true);
 });
 
