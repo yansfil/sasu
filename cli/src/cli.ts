@@ -32,7 +32,7 @@ import { runRulesCommand, runSetupCommand } from "./support/commands";
 import { ensureSetup } from "./support/ensure-setup";
 import { currentHerdrRole, HERDR_ROLE_ENV_KEY } from "./runs/session";
 
-const USAGE = `sasu - harness CLI: judge gates, verification, doctor
+const USAGE = `sasu - harness CLI: document gates, implementation verification, doctor
 
 Usage:
   sasu --contract-version
@@ -46,7 +46,7 @@ Usage:
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
   sasu implement amend    --issuer human --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
-    (archives and re-seals the edited PRD, refreshes metadata, and invalidates full-review freshness.)
+    (archives and re-seals the edited PRD, refreshes metadata, and invalidates the current verification report.)
   sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--json]
     (starts exactly one marked implementor beside this pane with the handoff packet on stdin; recursive dispatch is refused.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
@@ -116,7 +116,8 @@ words with 'gate answer', which seals PASS without another judge call), and
 PASS seals the cycle. A sealed input change stops at $0 until the user
 explicitly opens a new cycle with 'gate reopen'. --grant-budget only retries a
 judge backend that failed three times in a row with the same structured cause
-and no verdict. Verify keeps its separately configured fix retry budget.
+and no verdict. Implementation verification is deterministic and has no
+reviewer retry budget.
 
 Gates are hard blocks: agents must never run 'gate override' on a user's behalf.
 --assume-human-findings exists for delegated runs only (the user invoked $please
@@ -131,11 +132,9 @@ per-call --assume-human-findings value must exactly match the stored record.
 Judgment runs as one-shot calls - a CLI session (claude -p / codex exec) or a
 Messages-API request (backend 'api', judge.profiles.*.baseUrl to point it at a
 compatible origin instead of api.anthropic.com); this CLI never executes
-implementation work. Each gate's lanes spend a budget measured for
-that gate, not the profile's: gap-audit and spec at high, verify at medium
-(gap-audit and spec are open searches where budget buys coverage; verify is a
-bounded full-contract comparison where it does not). 'judge.laneEffort'
-pins one budget across all three - measure with cli/scripts/effort_sweep.mjs
+implementation work. Each document gate's lanes use the measured high budget
+because gap-audit and spec are open searches where budget buys coverage.
+'judge.laneEffort' pins one budget across both - measure with cli/scripts/effort_sweep.mjs
 before setting it, never guess.`;
 
 interface Args {
