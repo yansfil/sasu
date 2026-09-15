@@ -46,20 +46,9 @@ Never recursively dispatch an Implementor.
 
 During implementation, preserve every requirement, run actual product observation, and register material evidence.
 Run `sasu implement verify` for deterministic checks.
-After PASS, use the runtime's native subagent facility to run Fidelity and Code reviews in parallel.
-Add Security for high-risk work.
-Sasu does not launch, limit, retry, or score these reviewers.
-
-Place review output under:
-
-- `Fix now` for concrete defects in the approved behavior or touched flow;
-- `Follow-up improvements` for useful work outside the current contract;
-- `What was checked` for source, tests, flows, and unavailable evidence.
-
-Fix valid current-scope findings.
-If source or evidence changes, rerun deterministic verification and request review for the new head.
-Do not loop on unchanged input to seek a favorable opinion.
-Report reviewer failure as `REVIEW_UNAVAILABLE` without rewriting deterministic PASS.
+Follow the CLI's `Next action:` response after verification.
+On PASS it tells the current runtime which native review subagents to run, what they return, how to record unavailability, and when a changed head needs fresh verification and review.
+The `implement` skill remains the authority for review scope and disposition.
 
 Use `$ship` for the configured delivery mode.
 The pull request carries the current verification report, evidence, Fix now dispositions, Follow-up improvements, CI status, and human review focus.

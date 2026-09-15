@@ -936,6 +936,24 @@ function effectiveVerdict(attempt: UnifiedVerificationAttempt): VerificationStat
   return attempt.verdict;
 }
 
+function nativeReviewNames(state: ImplementState): string {
+  return state.prd.reviewProfile === "high-risk" ? "Fidelity, Code, and Security" : "Fidelity and Code";
+}
+
+function verificationNextActions(state: ImplementState, verdict: VerificationStatus): string[] {
+  if (verdict !== "PASS") {
+    return [
+      "Next action: fix the deterministic failures in the report, then rerun sasu implement verify.",
+      "Do not review or ship this head until deterministic verification passes.",
+    ];
+  }
+  return [
+    `Next action: spawn native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head.`,
+    "Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.",
+    "Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.",
+  ];
+}
+
 function delivery(state: ImplementState, freshness: string[] = []) {
   const reasons = [...freshness];
   if (state.status === "retired") reasons.push("run is retired");
@@ -991,6 +1009,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   } catch (error) { problems.push(error instanceof Error ? error.message : String(error)); fingerprint = "INPUT_ERROR"; }
   if (problems.length > 0) fingerprint = "INPUT_ERROR";
   const detail = publicState(state, sourceDigest, fingerprint);
+  const verificationVerdict = (detail.verification as {verdict:string}).verdict;
   const currentDelivery = delivery(state, problems.concat((detail.verification as {verdict:string}).verdict === "STALE" ? ["verification is STALE"] : []));
   return result("status", true, `${state.topicSlug}: ${state.status}`, { ...detail, delivery: currentDelivery, artifactProblems: problems,
     herdr: { available: herdr.available, unavailableHoles: (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]), reason: herdr.reason } }, [
@@ -998,11 +1017,11 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       `Source: ${sourceDigest ?? "unavailable"}; ${state.requirements.length} requirements retained in the contract`,
       `Required suite: ${JSON.stringify(suiteScore(state))}`,
       `Verification report: ${state.verificationReport?.markdownPath ?? "not generated"}`,
-      `Agent Review: run native Fidelity and Code subagents; record Fix now and Follow-up improvements in the PR`,
+      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `spawn native ${nativeReviewNames(state)} subagents in parallel; record Fix now and Follow-up improvements in the PR` : "wait for a current deterministic PASS"}`,
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
       ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),
-      `Next: ${state.status === "active" ? "run native agent review, fix in-scope findings, rerun deterministic verify after source changes, then deliver" : "start a new run if more work is required"}`,
+      `Next: ${state.status !== "active" ? "start a new run if more work is required" : verificationVerdict === "PASS" && currentDelivery.eligible ? "run native agent review, fix in-scope findings, rerun deterministic verify after source changes, then deliver" : "resolve the reported deterministic or freshness failure and rerun verify"}`,
     ]);
 }
 
@@ -1082,6 +1101,7 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
     jsonPath,
     markdownPath,
   };
+  const nextActions = verificationNextActions(state, status);
   const evidence = state.artifacts
     .filter((entry) => entry.command === undefined)
     .map((entry) => ({
@@ -1113,7 +1133,7 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
     agentReview: {
       status: "NOT_RUN",
       authority: "advisory",
-      instruction: "Run native Fidelity and Code subagents. Put blocking findings under Fix now and useful non-blocking ideas under Follow-up improvements.",
+      instruction: nextActions.join(" "),
     },
   };
   const commandLines = requiredCommands.length === 0
@@ -1140,8 +1160,7 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
     "",
     "## Agent Review",
     "",
-    "Run native Fidelity and Code subagents from the active runtime.",
-    "Their output is advisory and belongs in the PR under Fix now and Follow-up improvements.",
+    ...nextActions,
     "",
   ].join("\n");
   const json = jsonText(data);
@@ -1276,7 +1295,8 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const final = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
   progress(`verification ${final.verdict}; ${(final.durationMs / 1000).toFixed(1)}s`);
   const message = `deterministic verification ${final.verdict}; report ${report.identity.markdownPath}`;
-  return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), report: report.identity, agentReview: "run native Fidelity and Code subagents from the workflow skill; their availability does not change this result" }, [message]);
+  const nextActions = verificationNextActions(state, final.verdict);
+  return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), report: report.identity, agentReview: nextActions.join(" ") }, nextActions);
 }
 
 function recordRefusal(projectRoot: string, args: ImplementArgs, subject: IssuedCommand, issuer: IssuerLabel, check: "authority" | "transition" | "arguments", message: string): void {

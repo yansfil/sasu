@@ -62,13 +62,13 @@ test("implement references stay direct, bounded, and navigable", () => {
 
 test("implement entrypoint keeps deterministic verification and visible review boundaries", () => {
   const skill = fs.readFileSync(skillPath, "utf8");
+  const reviewReference = fs.readFileSync(path.join(referencesDir, "reviews-and-finalization.md"), "utf8");
   const requiredContracts = [
     /`state\.json` stores run ownership/,
     /writes the current `verification-report\.json` and `verification-report\.md`/,
     /It does not start reviewers/,
+    /follow the CLI's `Next action:` response/,
     /native subagent facility directly/,
-    /Sasu imposes no reviewer turn limit/,
-    /REVIEW_UNAVAILABLE/,
     /^## Review Disposition$/m,
     /^## Delivery$/m,
     /^## Final Report$/m,
@@ -76,6 +76,9 @@ test("implement entrypoint keeps deterministic verification and visible review b
 
   for (const contract of requiredContracts) {
     assert.match(skill, contract);
+  }
+  for (const contract of [/Sasu sets no reviewer turn limit/, /REVIEW_UNAVAILABLE/, /^### Fix now$/m, /^### Follow-up improvements$/m, /^### What was checked$/m]) {
+    assert.match(reviewReference, contract);
   }
 });
 
@@ -89,9 +92,7 @@ test("gen-prd and implement preserve all requirements without per-requirement ce
   }
   assert.match(genPrd, /\| D-n \| 결정 \| 근거 \|/);
   assert.match(genPrd, /\| # \| 사용자가 관찰하는 행동 \| 결정 \|/);
-  assert.match(implement, /Do not launch review through Sasu CLI/);
-  assert.match(implement, /Fix now/);
-  assert.match(implement, /Follow-up improvements/);
+  assert.match(implement, /follow the CLI's `Next action:` response/);
   const activeDocuments = [
     genPrd, implement,
     ...expectedReferences.map((name) => fs.readFileSync(path.join(referencesDir, name), "utf8")),

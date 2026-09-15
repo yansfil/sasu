@@ -86,6 +86,17 @@ sasu implement retire
 It does not start models, impose reviewer turn limits, parse reviewer output, or decide whether a pull request may merge.
 Any source or material evidence change makes the report stale until verification runs again.
 
+Its normal response gives the calling agent the next action directly:
+
+```text
+[implement:verify] ok - deterministic verification PASS; report agents/runs/example/verification-report.md
+Next action: spawn native Fidelity and Code review subagents in parallel from this runtime for this exact verified head.
+Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.
+Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.
+```
+
+On FAIL or ERROR, the response tells the agent to fix the deterministic failure and rerun verification before review or delivery.
+
 Retired receipt, finalize, confirm, and implementation-risk commands fail explicitly.
 Old state and report shapes are rejected rather than silently migrated.
 
@@ -139,7 +150,3 @@ Standalone Git checkpoint hooks remain opt-in:
 node scripts/hooks/install.mjs
 node scripts/hooks/install.mjs --uninstall
 ```
-
-## License
-
-See [LICENSE](LICENSE).

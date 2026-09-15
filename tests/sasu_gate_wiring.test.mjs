@@ -18,13 +18,15 @@ test("interview and PRD skills keep their existing specification gates", () => {
 
 test("implement separates deterministic CLI verification from native review", () => {
   const skill = readSkill("implement");
+  const review = fs.readFileSync(path.join(repoRoot, "skills", "implement", "references", "reviews-and-finalization.md"), "utf8");
   assert.match(skill, /sasu implement verify/);
   assert.match(skill, /runs every sealed required suite/);
   assert.match(skill, /does not start reviewers/);
   assert.match(skill, /native subagent facility directly/);
-  assert.match(skill, /Fidelity and Code in parallel/);
-  assert.match(skill, /Sasu imposes no reviewer turn limit/);
-  assert.match(skill, /REVIEW_UNAVAILABLE/);
+  assert.match(skill, /follow the CLI's `Next action:` response/);
+  assert.match(review, /Fidelity and Code concurrently/);
+  assert.match(review, /Sasu sets no reviewer turn limit/);
+  assert.match(review, /REVIEW_UNAVAILABLE/);
   assert.match(skill, /GitHub Actions/);
 });
 
@@ -35,9 +37,8 @@ test("please composes the established gates, implementation, review, and deliver
   assert.match(skill, /implement\/SKILL\.md/);
   assert.match(skill, /ship\/SKILL\.md/);
   assert.match(skill, /sasu implement verify/);
-  assert.match(skill, /native subagent facility/);
-  assert.match(skill, /Fix now/);
-  assert.match(skill, /Follow-up improvements/);
+  assert.match(skill, /Follow the CLI's `Next action:` response/);
+  assert.match(skill, /`implement` skill remains the authority for review scope and disposition/);
   assert.match(skill, /Never run `sasu gate override` yourself/);
 });
 

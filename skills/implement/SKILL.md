@@ -88,36 +88,11 @@ Any source or evidence change makes the earlier report stale.
 
 ## Native Agent Review
 
-After deterministic PASS, use the runtime's native subagent facility directly.
-Do not launch review through Sasu CLI, a shell command, Herdr pane, or a background model process.
-Run Fidelity and Code in parallel against the same approved PRD, current base/head diff, source, suite results, and material evidence.
-Add Security for `high-risk` work.
-
+After deterministic verification, follow the CLI's `Next action:` response as the workflow continuation.
+On PASS it names the native review roles, parallel execution, response sections, failure recording, and rerun condition for the exact verified head.
+Use the runtime's native subagent facility directly, never a Sasu judge command or hidden background model process.
 Sasu imposes no reviewer turn limit.
-The parent agent must be able to inspect progress, tool use, failures, and the final response.
-Do not recursively spawn reviewers and do not automatically retry the same head until PASS.
-A runtime failure becomes `REVIEW_UNAVAILABLE` with its visible cause.
-It does not change deterministic PASS into FAIL.
-
-Give each reviewer this output contract in ordinary Markdown:
-
-```markdown
-## Fix now
-
-- Concrete bug, affected behavior, code or evidence location, severity, and recommended fix.
-
-## Follow-up improvements
-
-- Useful cleanup, refactoring, polish, or product expansion outside the current contract.
-
-## What was checked
-
-- Files, flows, tests, and evidence actually inspected, plus anything unavailable.
-```
-
-Fidelity checks the complete approved behavior and observable outcome.
-Code checks implementation, integration, concurrency, data flow, and error paths.
-Security checks authentication, authorization, secrets, destructive data, and abuse boundaries when required.
+Use the `reviews-and-finalization.md` reference above for reviewer scope and disposition rules.
 
 ## Review Disposition
 

@@ -1,6 +1,6 @@
 # Autonomous review of a fixed source copy
 
-Status: implementation and repository verification complete; the large-case semantic replay retains an unresolved timeout.
+Status: the reviewer machinery in this plan was superseded by the [2026-09-15 stateless verification decision](2026-09-15-stateless-verification.md); its source-capacity measurements remain historical evidence.
 The original diagnosis and size-only reconstruction below are historical evidence.
 Successful harness checks and live execution do not imply a successful whole-product verification or receipt.
 

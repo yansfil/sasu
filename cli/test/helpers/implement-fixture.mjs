@@ -79,6 +79,10 @@ export function run(root, args, { env = {}, cli = CLI } = {}) {
   return { ...result, json };
 }
 
+export function runText(root, args, { env = {}, cli = CLI } = {}) {
+  return spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8", env: isolatedEnv(env), timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+}
+
 export function runAsync(root, args, env = {}) {
   const child = spawn(process.execPath, [CLI, ...args, "--json"], { cwd: root, env: isolatedEnv(env), stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";

@@ -46,6 +46,9 @@ The CLI owns only reproducible facts:
 - expose every failed or unrun check directly to the caller.
 
 The CLI does not start a model, count model turns, parse reviewer JSON, retry a reviewer, reconcile finding identifiers, or combine reviewer verdicts into delivery eligibility.
+Its normal response returns a short natural-language `Next action:` for the calling agent.
+PASS names the native reviewers, response sections, Sasu's lack of a reviewer turn cap, unavailable-review behavior, and rerun condition; FAIL and ERROR direct the agent back to the deterministic failure.
+The skill keeps the reviewer role definitions and judgment boundaries instead of duplicating the entire sequence.
 
 ### Runtime workflow skill
 

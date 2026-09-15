@@ -207,7 +207,8 @@ test("AC41: once the bound is spent, status names the run's state and the move t
   const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
   assert.match(summary, /escalations: 3 of 3 used/);
   assert.match(summary, /bound (?:is )?spent/);
-  assert.match(summary, /run native agent review/);
+  assert.match(summary, /resolve the reported deterministic or freshness failure and rerun verify/);
+  assert.doesNotMatch(summary, /run native agent review/);
   // ...and the verb it can no longer issue is not offered.
   assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
 });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { STATE_PATH, makeProject, readState, run, start, ok } from "../helpers/implement-fixture.mjs";
+import { STATE_PATH, makeProject, readState, run, runText, start, ok } from "../helpers/implement-fixture.mjs";
 
 function readReport(root) {
   const state = readState(root);
@@ -26,9 +26,10 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
     "--environment", "disposable project",
   ]));
   const capture = path.join(root, "agents", "captures");
-  const verified = ok(run(root, ["implement", "verify"], {
+  const verified = runText(root, ["implement", "verify"], {
     env: { SASU_JUDGE_BACKEND: "missing-backend", SASU_JUDGE_STUB_CAPTURE_DIR: capture },
-  }));
+  });
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
 
   const state = readState(root);
   const report = readReport(root);
@@ -46,7 +47,10 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
     environment: "disposable project",
   }]);
   assert.equal(report.agentReview.status, "NOT_RUN");
-  assert.equal(verified.detail.agentReview.includes("native Fidelity and Code subagents"), true);
+  assert.match(verified.stdout, /Next action: spawn native Fidelity and Code review subagents in parallel/);
+  assert.match(verified.stdout, /Fix now, Follow-up improvements, and What was checked/);
+  assert.match(verified.stdout, /Sasu sets no reviewer turn limit/);
+  assert.match(verified.stdout, /REVIEW_UNAVAILABLE/);
   assert.equal(fs.existsSync(capture), false, "deterministic verify must not invoke a model backend");
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
 
@@ -56,9 +60,11 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
 });
 
 test("source drift makes the report stale until deterministic verify is rerun", () => {
-  const root = makeProject();
+  const root = makeProject({ profile: "high-risk" });
   start(root);
-  ok(run(root, ["implement", "verify"]));
+  const verified = runText(root, ["implement", "verify"]);
+  assert.equal(verified.status, 0, verified.stderr + verified.stdout);
+  assert.match(verified.stdout, /Fidelity, Code, and Security/);
   const first = readState(root).verificationReport;
 
   fs.appendFileSync(path.join(root, "implementation.txt"), "related bug fix\n");
@@ -76,7 +82,7 @@ test("source drift makes the report stale until deterministic verify is rerun", 
 test("a failed required suite writes an honest failed report and remains caller-visible", () => {
   const root = makeProject({ testExit: 7 });
   start(root);
-  const failed = run(root, ["implement", "verify"]);
+  const failed = runText(root, ["implement", "verify"]);
   assert.notEqual(failed.status, 0);
 
   const state = readState(root);
@@ -86,6 +92,9 @@ test("a failed required suite writes an honest failed report and remains caller-
   assert.equal(state.verificationAttempts.at(-1).mechanical[0].exitCode, 7);
   assert.equal(report.status, "FAIL");
   assert.equal(report.requiredCommands[0].result.status, "RED");
+  assert.match(failed.stdout, /fix the deterministic failures/);
+  assert.doesNotMatch(failed.stdout, /spawn native/);
+  assert.match(report.agentReview.instruction, /Do not review or ship this head/);
   assert.equal(ok(run(root, ["implement", "status"])).detail.delivery.eligible, false);
 });
 
