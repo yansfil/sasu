@@ -77,7 +77,16 @@ test("implement entrypoint keeps deterministic verification and visible review b
   for (const contract of requiredContracts) {
     assert.match(skill, contract);
   }
-  for (const contract of [/Sasu sets no reviewer turn limit/, /REVIEW_UNAVAILABLE/, /^### Fix now$/m, /^### Follow-up improvements$/m, /^### What was checked$/m]) {
+  for (const contract of [
+    /Fidelity checks every approved behavior/,
+    /Code checks implementation quality, integration, concurrency, data flow, and error paths/,
+    /Security checks authentication, authorization, secrets, destructive data, and abuse boundaries/,
+    /Sasu sets no reviewer turn limit/,
+    /REVIEW_UNAVAILABLE/,
+    /^### Fix now$/m,
+    /^### Follow-up improvements$/m,
+    /^### What was checked$/m,
+  ]) {
     assert.match(reviewReference, contract);
   }
 });

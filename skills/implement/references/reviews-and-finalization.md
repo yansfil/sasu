@@ -15,6 +15,12 @@ Add Security for a `high-risk` PRD.
 Give every reviewer the approved PRD, current base/head, current source, deterministic verification report, and registered evidence.
 Do not invoke a Sasu judge command or background model process.
 
+## Reviewer scopes
+
+Fidelity checks every approved behavior against the observable implementation outcome and actual evidence.
+Code checks implementation quality, integration, concurrency, data flow, and error paths.
+Security checks authentication, authorization, secrets, destructive data, and abuse boundaries when the PRD is `high-risk`.
+
 Sasu sets no reviewer turn limit.
 Use the runtime's visible progress and transcript to supervise the work.
 Ask one review set per current head.
